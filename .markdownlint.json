@@ -1,0 +1,11 @@
+{
+  "//": "Fractadyne docs: keep correctness rules (e.g. MD051 link fragments) on; relax purely-cosmetic ones. ASCII diagrams and bold sub-labels are intentional.",
+  "default": true,
+  "MD013": false,
+  "MD031": false,
+  "MD032": false,
+  "MD033": false,
+  "MD036": false,
+  "MD040": false,
+  "MD060": false
+}

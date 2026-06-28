@@ -1,0 +1,12 @@
+[package]
+name = "fractadyne-gpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPU rendering for Fractadyne (wgpu via egui_wgpu). M0: direct Mandelbrot."
+
+[dependencies]
+fractadyne-core.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true   # re-exports wgpu, so our wgpu version matches eframe's
+bytemuck.workspace = true

@@ -1,0 +1,8 @@
+[package]
+name = "fractadyne-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Render orchestration: scheduler, tiling, tile cache (planned — DESIGN.md §11)."
+
+[dependencies]

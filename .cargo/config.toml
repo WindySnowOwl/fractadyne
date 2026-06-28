@@ -1,0 +1,10 @@
+# Build workaround for this environment.
+#
+# Cargo's pipelined compilation here produces rmeta-only artifacts that rustc
+# can't resolve to their rlibs, failing the final link with:
+#   "only metadata stub found for rlib dependency ..."
+#   "crate `naga` required to be available in rlib format, but was not found in this form"
+# Single-crate builds work; only the full dependency graph (wgpu/egui/eframe) trips it.
+# Disabling pipelining builds full rlibs throughout and links reliably.
+[build]
+pipelining = false

@@ -1,0 +1,8 @@
+[package]
+name = "fractadyne-fractals"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Built-in fractal definitions + info metadata (planned — DESIGN.md §4)."
+
+[dependencies]

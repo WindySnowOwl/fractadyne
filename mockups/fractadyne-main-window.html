@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fractadyne — UI Mockup (main window)</title>
+<style>
+  /* Tokens from UI-DESIGN.md §9 (dark-first, neutral chrome, amber accent) */
+  :root{
+    --bg-base:#1A1B1E; --bg-panel:#232428; --bg-elevated:#2C2E33;
+    --border:#3A3D44; --text:#E6E7EA; --text2:#9DA1A8; --text-dis:#5C6069;
+    --accent:#E0A030; --accent-hover:#ECB14A;
+    --success:#5BBF7A; --warning:#E0A030; --error:#E0584B;
+    --ui: "Segoe UI", Inter, system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace;
+    --r:5px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg-base); color:var(--text);
+    font-family:var(--ui); font-size:13px;
+    display:grid; grid-template-rows:auto 1fr auto; height:100vh; overflow:hidden;
+  }
+
+  /* ---- Menu / toolbar ---- */
+  .menubar{
+    display:flex; align-items:center; gap:14px;
+    background:var(--bg-panel); border-bottom:1px solid var(--border);
+    padding:0 10px; height:38px; user-select:none;
+  }
+  .brand{font-weight:600; letter-spacing:.3px}
+  .brand .dyne{color:var(--accent)}
+  .menus{display:flex; gap:2px}
+  .menus button, .tool{
+    background:transparent; border:0; color:var(--text2);
+    padding:6px 8px; border-radius:var(--r); font:inherit; cursor:pointer;
+  }
+  .menus button:hover, .tool:hover{background:var(--bg-elevated); color:var(--text)}
+  .spacer{flex:1}
+  .toolbar-right{display:flex; align-items:center; gap:6px}
+  select, .selectish{
+    background:var(--bg-elevated); color:var(--text);
+    border:1px solid var(--border); border-radius:var(--r);
+    padding:5px 8px; font:inherit;
+  }
+  select:focus{outline:1px solid var(--accent); border-color:var(--accent)}
+  .tool{border:1px solid transparent; color:var(--text); padding:5px 9px}
+  .tool.active{background:rgba(224,160,48,.15); border-color:var(--accent); color:var(--accent)}
+
+  /* ---- Workspace ---- */
+  .workspace{
+    display:grid; grid-template-columns:262px 1fr 286px; min-height:0;
+  }
+  .workspace.no-panels{grid-template-columns:0 1fr 0}
+  .workspace.no-panels .panel{display:none}
+
+  .panel{
+    background:var(--bg-panel); overflow-y:auto; padding:12px;
+  }
+  .panel.left{border-right:1px solid var(--border)}
+  .panel.right{border-left:1px solid var(--border)}
+  .panel-title{
+    font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--text2); margin:4px 0 8px;
+  }
+  .group{margin-bottom:18px}
+  .field{display:flex; align-items:center; justify-content:space-between; gap:8px; margin:7px 0}
+  .field label{color:var(--text2)}
+  .num{
+    font-family:var(--mono); background:var(--bg-elevated); color:var(--text);
+    border:1px solid var(--border); border-radius:var(--r);
+    padding:4px 7px; width:74px; text-align:right;
+  }
+  .coord{
+    font-family:var(--mono); font-size:12px; width:100%;
+    background:var(--bg-elevated); color:var(--text);
+    border:1px solid var(--border); border-radius:var(--r);
+    padding:6px 7px; margin-top:3px; resize:none; line-height:1.45;
+    word-break:break-all;
+  }
+  .field.col{display:block}
+  input[type=range]{
+    -webkit-appearance:none; appearance:none; width:140px; height:4px;
+    background:var(--border); border-radius:3px; outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:13px; height:13px; border-radius:50%;
+    background:var(--accent); cursor:pointer; border:2px solid #1b1500;
+  }
+  .row{display:flex; gap:6px; align-items:center}
+  .btn{
+    background:var(--bg-elevated); color:var(--text); border:1px solid var(--border);
+    border-radius:var(--r); padding:5px 9px; font:inherit; cursor:pointer;
+  }
+  .btn:hover{border-color:var(--accent)}
+  .btn.primary{background:var(--accent); color:#1b1500; border-color:var(--accent); font-weight:600}
+  .btn.primary:hover{background:var(--accent-hover)}
+  .btn.sm{padding:3px 7px}
+  .expander{color:var(--text2); cursor:pointer; padding:6px 0; border-top:1px solid var(--border); margin-top:6px}
+  .expander:hover{color:var(--text)}
+
+  /* gradient stop editor (the one custom widget) */
+  .gradient-wrap{margin:6px 0 2px}
+  .gradient{
+    height:24px; border-radius:var(--r); border:1px solid var(--border);
+    background:linear-gradient(90deg,#0b1e3a 0%, #3a1f6e 28%, #b9521f 55%, #f2c14e 80%, #fff 100%);
+    position:relative;
+  }
+  .stops{position:relative; height:14px; margin-top:2px}
+  .stop{
+    position:absolute; top:0; width:10px; height:10px; transform:translateX(-50%) rotate(45deg);
+    border:1px solid #000; border-radius:2px; cursor:grab;
+  }
+
+  /* ---- Canvas ---- */
+  .canvas{position:relative; min-width:0; display:grid; grid-template-columns:1fr}
+  .workspace.dual .canvas{grid-template-columns:1fr 1fr; gap:1px; background:var(--border)}
+  .stage{position:relative; overflow:hidden; background:#07070d}
+  .stage .img{
+    position:absolute; inset:0;
+    background:
+      radial-gradient(circle at 42% 54%, #07070d 0 6%, rgba(0,0,0,0) 6.4%),
+      repeating-radial-gradient(circle at 42% 54%, #122149 0 9px, #34205c 9px 14px, #8a3b2a 14px 18px, #e7b85a 18px 21px, #122149 21px 31px),
+      radial-gradient(circle at 71% 33%, #07070d 0 2.6%, rgba(0,0,0,0) 2.9%),
+      repeating-radial-gradient(circle at 71% 33%, #122149 0 5px, #34205c 5px 8px, #8a3b2a 8px 10px, #e7b85a 10px 12px, #122149 12px 18px);
+    filter:saturate(1.05);
+  }
+  .stage .tag{
+    position:absolute; left:10px; top:8px; font-family:var(--mono); font-size:11px;
+    color:#dfe3ea; background:rgba(0,0,0,.45); padding:3px 7px; border-radius:4px;
+  }
+  .canvas-overlay{
+    position:absolute; right:10px; top:8px; display:flex; flex-direction:column; gap:6px; z-index:2;
+  }
+  .canvas-overlay .tool{
+    background:rgba(20,20,24,.7); border:1px solid var(--border); width:30px; height:30px;
+    display:flex; align-items:center; justify-content:center; font-size:15px;
+  }
+  .dual-hint{
+    position:absolute; left:10px; bottom:8px; font-size:11px; color:var(--text2);
+    background:rgba(0,0,0,.4); padding:2px 7px; border-radius:4px; display:none;
+  }
+  .workspace.dual .dual-hint{display:block}
+
+  /* ---- Status bar ---- */
+  .statusbar{
+    display:flex; align-items:center; gap:18px; height:26px; padding:0 12px;
+    background:var(--bg-panel); border-top:1px solid var(--border);
+    font-family:var(--mono); font-size:11.5px; color:var(--text2);
+  }
+  .statusbar .state{display:flex; align-items:center; gap:7px; color:var(--text)}
+  .dot{width:9px; height:9px; border-radius:50%; background:var(--success)}
+  .dot.busy{background:var(--accent); animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .statusbar .sp{flex:1}
+  .k{color:var(--text-dis)}
+
+  .badge{
+    position:fixed; right:10px; bottom:32px; z-index:9;
+    background:rgba(224,160,48,.12); color:var(--accent); border:1px solid var(--accent);
+    border-radius:999px; padding:3px 10px; font-size:11px; font-family:var(--mono);
+  }
+</style>
+</head>
+<body>
+
+  <!-- Menu / toolbar -->
+  <div class="menubar">
+    <span class="brand">Fract<span class="dyne">adyne</span></span>
+    <div class="menus">
+      <button>File</button><button>Fractal</button><button>View</button>
+      <button>Tools</button><button>Help</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="toolbar-right">
+      <select title="Active fractal">
+        <option>Mandelbrot</option><option>Julia</option><option>Burning Ship</option>
+        <option>L-system</option><option>Cellular automaton</option>
+      </select>
+      <button class="tool" id="dualBtn" title="Toggle dual linked view">▣ Dual</button>
+      <button class="tool active" id="panelBtn" title="Toggle side panels">▭ Panels</button>
+      <button class="tool" title="Settings">⚙</button>
+      <button class="tool" title="Theme (dark)">◐</button>
+    </div>
+  </div>
+
+  <!-- Workspace -->
+  <div class="workspace" id="ws">
+
+    <!-- Left: Parameters / Location -->
+    <aside class="panel left">
+      <div class="group">
+        <div class="panel-title">Parameters</div>
+        <div class="field"><label>Type</label>
+          <select><option>Mandelbrot</option><option>Julia</option></select></div>
+        <div class="field"><label>Power</label><input class="num" value="2"></div>
+        <div class="field"><label>Bailout</label><input class="num" value="256"></div>
+        <div class="field"><label>Max iter</label><input type="range" min="100" max="50000" value="5000"></div>
+      </div>
+
+      <div class="group">
+        <div class="panel-title">Location</div>
+        <div class="field col"><label>Center x</label>
+          <textarea class="coord" rows="2">-0.743643887037158704752191506114774</textarea></div>
+        <div class="field col"><label>Center y</label>
+          <textarea class="coord" rows="2">0.131825904205311970493132056385139</textarea></div>
+        <div class="field"><label>Zoom</label><input type="range" min="0" max="100" value="63"></div>
+        <div class="row" style="justify-content:flex-end">
+          <button class="btn sm">−</button><button class="btn sm">+</button>
+          <button class="btn sm">Reset</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Center: canvas -->
+    <section class="canvas" id="canvas">
+      <div class="stage">
+        <div class="img"></div>
+        <div class="tag" id="stageTagA">Mandelbrot · parameter plane</div>
+        <div class="canvas-overlay">
+          <button class="tool" title="Zoom in">⊕</button>
+          <button class="tool" title="Zoom out">⊟</button>
+        </div>
+        <div class="dual-hint">Hover to preview Julia →</div>
+      </div>
+      <!-- second stage injected for dual view -->
+    </section>
+
+    <!-- Right: Coloring / Palette -->
+    <aside class="panel right">
+      <div class="group">
+        <div class="panel-title">Coloring</div>
+        <div class="field"><label>Algorithm</label>
+          <select><option>Smooth iteration</option><option>Escape time</option>
+            <option>Distance estimate</option><option>Orbit trap</option></select></div>
+        <div class="field"><label>Palette</label>
+          <select><option>Ember</option><option>Nebula</option><option>Ice</option><option>Grayscale</option></select></div>
+
+        <div class="gradient-wrap">
+          <div class="gradient"></div>
+          <div class="stops">
+            <div class="stop" style="left:4%;  background:#0b1e3a"></div>
+            <div class="stop" style="left:30%; background:#3a1f6e"></div>
+            <div class="stop" style="left:56%; background:#b9521f"></div>
+            <div class="stop" style="left:80%; background:#f2c14e"></div>
+            <div class="stop" style="left:98%; background:#ffffff"></div>
+          </div>
+        </div>
+
+        <div class="field"><label>Cycle</label><input type="range" min="0" max="100" value="35"></div>
+        <div class="field"><label>Offset</label><input type="range" min="0" max="100" value="12"></div>
+      </div>
+
+      <div class="group">
+        <div class="expander">▸ Advanced (interior, orbit traps, custom shader)</div>
+        <div class="expander">▸ Formula editor…</div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Status bar -->
+  <div class="statusbar">
+    <span class="state"><span class="dot" id="dot"></span><span id="stateText">Done</span></span>
+    <span><span class="k">depth</span> 1e-42</span>
+    <span><span class="k">iter</span> 5,000</span>
+    <span><span class="k">x,y</span> -0.74364&hellip;, 0.13182&hellip;</span>
+    <span class="sp"></span>
+    <span><span class="k">GPU</span> RTX 30xx</span>
+    <span>100%</span>
+  </div>
+
+  <div class="badge">static mockup · not the running app</div>
+
+<script>
+  // Toggle side panels (Tier 1 <-> Tier 2)
+  const ws = document.getElementById('ws');
+  const panelBtn = document.getElementById('panelBtn');
+  panelBtn.onclick = () => {
+    ws.classList.toggle('no-panels');
+    panelBtn.classList.toggle('active', !ws.classList.contains('no-panels'));
+  };
+
+  // Toggle dual linked view (adds/removes a second stage)
+  const dualBtn = document.getElementById('dualBtn');
+  const canvas = document.getElementById('canvas');
+  let secondStage = null;
+  document.getElementById('stageTagA');
+  dualBtn.onclick = () => {
+    const on = ws.classList.toggle('dual');
+    dualBtn.classList.toggle('active', on);
+    if (on && !secondStage){
+      secondStage = document.createElement('div');
+      secondStage.className = 'stage';
+      secondStage.innerHTML =
+        '<div class="img" style="background-position:30% 40%"></div>' +
+        '<div class="tag">Julia · dynamical plane (live)</div>';
+      canvas.appendChild(secondStage);
+    } else if (!on && secondStage){
+      secondStage.remove(); secondStage = null;
+    }
+    document.getElementById('stageTagA').textContent =
+      on ? 'Mandelbrot · parameter plane' : 'Mandelbrot · parameter plane';
+  };
+
+  // Tiny demo: click the status dot to simulate a render cycle
+  const dot = document.getElementById('dot'), st = document.getElementById('stateText');
+  document.querySelector('.state').onclick = () => {
+    dot.classList.add('busy'); st.textContent = 'Rendering 80%';
+    setTimeout(()=>{ st.textContent='Refining'; }, 700);
+    setTimeout(()=>{ dot.classList.remove('busy'); st.textContent='Done'; }, 1500);
+  };
+</script>
+</body>
+</html>
