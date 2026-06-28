@@ -24,6 +24,12 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Fractadyne branding & theme** — a dark "deep-space" UI theme with cyan/magenta
+  accents (selection, links, hovered widgets), a painted brand mark + wordmark in the
+  top bar, and a procedural window/taskbar icon.
+- **Animated 3D relief lighting** — "Rotate light" spins the relief light direction over
+  time (shares the Speed slider), alongside the animated distance glow and palette cycling.
+
 - **Auto-incrementing build versioning** + this changelog; version shown in the title
   bar, Help menu, and export metadata.
 - **Randomized palette mode** — palette animation can synthesize and continuously morph

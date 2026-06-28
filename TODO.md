@@ -371,6 +371,15 @@ perturbation + series approximation + glitch correction. The headline feature.
       extension; full-precision center. For debugging / automated golden-image checks.
 - [ ] **Record-to-video / frame export** from a script (offline, deterministic).
 
+## Branding & UI (M7)
+
+- [x] **Fractadyne theme + branding** — dark deep-space theme with cyan/magenta accents
+      (`apply_brand_theme`), painted brand mark + wordmark in the top bar
+      (`brand_wordmark`), and a procedural window icon (`brand_icon`).
+- [x] **Animated relief lighting** — "Rotate light" spins the light direction over time
+      (shares the Speed slider), complementing the animated distance glow + palette cycle.
+- [ ] **Theme polish** — optional light/preset themes, custom font, accent picker.
+
 ## Survey-driven roadmap (2026-06-28)
 
 Gaps vs. Ultra Fractal / Kalles Fraktaler / XaoS / Mandelbulber / Apophysis, prioritized

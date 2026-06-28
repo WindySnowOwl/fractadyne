@@ -62,6 +62,9 @@ pub struct SessionState {
     pub light_angle: f32,
     #[serde(default = "default_light_height")]
     pub light_height: f32,
+    /// Rotate the relief light direction over time.
+    #[serde(default)]
+    pub light_anim: bool,
     /// Distance-estimate glow: enabled, blend strength, contour width, animate flag.
     #[serde(default)]
     pub de: bool,
@@ -151,6 +154,7 @@ impl Default for SessionState {
             light: false,
             light_angle: default_light_angle(),
             light_height: default_light_height(),
+            light_anim: false,
             de: false,
             de_strength: default_de_strength(),
             de_width: default_de_width(),

@@ -264,6 +264,79 @@ fn version_string() -> String {
     format!("{APP_VERSION} (build {BUILD_SEQ})")
 }
 
+// ---- Fractadyne branding ----
+/// Primary brand accent (cyan) and secondary (magenta) — used across the themed UI.
+const BRAND_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x3A, 0xD0, 0xE0);
+const BRAND_ACCENT2: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x7A, 0xC8);
+
+/// Apply the Fractadyne dark theme (deep-space panels + cyan accents).
+fn apply_brand_theme(ctx: &egui::Context) {
+    let mut v = egui::Visuals::dark();
+    let panel = egui::Color32::from_rgb(0x14, 0x19, 0x21);
+    let bg = egui::Color32::from_rgb(0x0C, 0x0F, 0x14);
+    v.panel_fill = panel;
+    v.window_fill = panel;
+    v.extreme_bg_color = bg;
+    v.faint_bg_color = egui::Color32::from_rgb(0x1A, 0x20, 0x2A);
+    v.hyperlink_color = BRAND_ACCENT;
+    v.selection.bg_fill = egui::Color32::from_rgb(0x1C, 0x5A, 0x64);
+    v.selection.stroke = egui::Stroke::new(1.0, BRAND_ACCENT);
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, BRAND_ACCENT);
+    v.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, BRAND_ACCENT);
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.0, BRAND_ACCENT);
+    ctx.set_visuals(v);
+}
+
+/// Painted brand mark (a concentric "fractal eye") + wordmark, for the top bar.
+/// Painted rather than glyph-based so it renders identically on any font set.
+fn brand_wordmark(ui: &mut egui::Ui) {
+    let h = ui.spacing().interact_size.y;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(h, h), egui::Sense::hover());
+    let p = ui.painter();
+    let c = rect.center();
+    let r = rect.height() * 0.42;
+    p.circle_stroke(c, r, egui::Stroke::new(2.0, BRAND_ACCENT));
+    p.circle_stroke(c, r * 0.6, egui::Stroke::new(1.5, BRAND_ACCENT2));
+    p.circle_filled(c, r * 0.2, BRAND_ACCENT);
+    ui.label(egui::RichText::new("Fractadyne").color(BRAND_ACCENT).strong());
+}
+
+/// Procedural window icon: concentric accent rings on a dark disc (transparent corners).
+fn brand_icon() -> egui::IconData {
+    let n: u32 = 64;
+    let mut rgba = vec![0u8; (n * n * 4) as usize];
+    let center = (n as f32 - 1.0) * 0.5;
+    let acc = [0x3A_u8, 0xD0, 0xE0];
+    let acc2 = [0xE0_u8, 0x7A, 0xC8];
+    let bg = [0x0C_u8, 0x0F, 0x14];
+    for y in 0..n {
+        for x in 0..n {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            let d = (dx * dx + dy * dy).sqrt() / (n as f32 * 0.5);
+            let i = ((y * n + x) * 4) as usize;
+            if d > 1.0 {
+                rgba[i + 3] = 0; // transparent outside the disc
+                continue;
+            }
+            // concentric rings blending the two accents over the dark disc
+            let ring = 0.5 + 0.5 * (d * 22.0).cos();
+            let t = (ring * (1.0 - d)).clamp(0.0, 1.0);
+            let blend = 0.5 + 0.5 * (d * 6.0).cos();
+            let a0 = [
+                (acc[0] as f32 * blend + acc2[0] as f32 * (1.0 - blend)),
+                (acc[1] as f32 * blend + acc2[1] as f32 * (1.0 - blend)),
+                (acc[2] as f32 * blend + acc2[2] as f32 * (1.0 - blend)),
+            ];
+            for k in 0..3 {
+                rgba[i + k] = (bg[k] as f32 + (a0[k] - bg[k] as f32) * t) as u8;
+            }
+            rgba[i + 3] = 255;
+        }
+    }
+    egui::IconData { rgba, width: n, height: n }
+}
+
 /// "Zoom home" animation pacing: seconds per octave-ish of zoom-out, clamped so a
 /// shallow view still glides and an extreme one doesn't take forever.
 const HOME_SECONDS_PER_LOGMAG: f64 = 0.45;
@@ -291,7 +364,8 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([640.0, 400.0])
-            .with_title(format!("Fractadyne v{}", version_string())),
+            .with_title(format!("Fractadyne v{}", version_string()))
+            .with_icon(brand_icon()),
         ..Default::default()
     };
 
@@ -1156,6 +1230,7 @@ struct FractadyneApp {
     light: bool,
     light_angle: f32,  // radians
     light_height: f32, // relief strength (smaller = sharper)
+    light_anim: bool,  // rotate the light direction over time
     /// Distance-estimate glow (contour bands near the boundary), + animation.
     de: bool,
     de_strength: f32,
@@ -1184,6 +1259,7 @@ impl FractadyneApp {
             .as_ref()
             .expect("Fractadyne requires the wgpu backend (eframe Renderer::Wgpu)");
         install_renderer(render_state);
+        apply_brand_theme(&cc.egui_ctx);
         let gpu_name = render_state.adapter.get_info().name;
 
         // CLI modes (headless, for automation / debugging):
@@ -1294,6 +1370,7 @@ impl FractadyneApp {
             light: s.light,
             light_angle: s.light_angle,
             light_height: s.light_height,
+            light_anim: s.light_anim,
             de: s.de,
             de_strength: s.de_strength,
             de_width: s.de_width,
@@ -1416,6 +1493,7 @@ impl FractadyneApp {
             light: self.light,
             light_angle: self.light_angle,
             light_height: self.light_height,
+            light_anim: self.light_anim,
             de: self.de,
             de_strength: self.de_strength,
             de_width: self.de_width,
@@ -2752,6 +2830,13 @@ impl FractadyneApp {
             self.de_phase = (self.de_phase + self.palette_anim_speed * dt).rem_euclid(1.0);
             self.schedule_repaint(ctx);
         }
+        // Rotate the relief light direction (cheap — it's a color-pass param).
+        if self.light && self.light_anim && self.palette_anim_speed > 0.0 {
+            self.light_angle = (self.light_angle
+                + self.palette_anim_speed * dt * std::f32::consts::TAU)
+                .rem_euclid(std::f32::consts::TAU);
+            self.schedule_repaint(ctx);
+        }
         if self.palette_anim == PaletteAnim::Off || self.palette_anim_speed <= 0.0 {
             return;
         }
@@ -3074,6 +3159,8 @@ impl eframe::App for FractadyneApp {
         // `menu::bar`, which would claim the full width and push the toolbar down.)
         egui::TopBottomPanel::top("topbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
+                    brand_wordmark(ui);
+                    ui.separator();
                     ui.menu_button("File", |ui| {
                         if ui.button("📂  Open view…").clicked() {
                             self.open_view();
@@ -3456,6 +3543,8 @@ impl eframe::App for FractadyneApp {
                             .logarithmic(true),
                     )
                     .on_hover_text("Lower = sharper relief; higher = softer/flatter.");
+                    ui.checkbox(&mut self.light_anim, "Rotate light")
+                        .on_hover_text("Spin the light direction over time (uses the Speed slider).");
                 });
                 ui.checkbox(&mut self.de, "Distance glow")
                     .on_hover_text(
