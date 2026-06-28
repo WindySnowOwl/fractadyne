@@ -1195,12 +1195,17 @@ impl FractadyneApp {
         let auto_benchmark_out = out_path.clone();
         let auto_render_out = out_path.clone();
 
-        // Restore the last session (or defaults).
+        // Restore the last session (or defaults). The center comes from the
+        // full-precision decimal strings when present (deep-zoom locations survive
+        // restart); older session files without them fall back to the f64 fields.
         let s = fractadyne_state::load();
         let mut viewport = Viewport::new(1280.0, 720.0);
-        viewport.center_x = fractadyne_core::BigFloat::from_f64(s.center_x, 64);
-        viewport.center_y = fractadyne_core::BigFloat::from_f64(s.center_y, 64);
+        viewport.center_x = fractadyne_core::parse_bf(&s.center_x_str)
+            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(s.center_x, 64));
+        viewport.center_y = fractadyne_core::parse_bf(&s.center_y_str)
+            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(s.center_y, 64));
         viewport.units_per_pixel = s.units_per_pixel;
+        viewport.precision = fractadyne_core::precision_for_magnification(viewport.magnification());
 
         let mut app = Self {
             viewport,
@@ -1356,6 +1361,8 @@ impl FractadyneApp {
         let cur = fractadyne_state::SessionState {
             center_x: fractadyne_core::to_f64(&self.viewport.center_x),
             center_y: fractadyne_core::to_f64(&self.viewport.center_y),
+            center_x_str: fractadyne_core::to_decimal_string(&self.viewport.center_x),
+            center_y_str: fractadyne_core::to_decimal_string(&self.viewport.center_y),
             units_per_pixel: self.viewport.units_per_pixel,
             max_iter: self.max_iter,
             auto_iter: self.auto_iter,
@@ -1386,7 +1393,11 @@ impl FractadyneApp {
         let now = ctx.input(|i| i.time);
         if cur != self.last_state {
             self.last_state = cur;
-            self.dirty_since = Some(now);
+            // Mark dirty on the FIRST change only — don't keep pushing the timer
+            // forward on every frame, or a continuously-changing field (e.g. the
+            // animated palette offset) would prevent the 1 s idle save from ever
+            // firing (it would only save on close). This way it saves ~every 1 s.
+            self.dirty_since.get_or_insert(now);
         }
         let closing = ctx.input(|i| i.viewport().close_requested());
         if let Some(t) = self.dirty_since {

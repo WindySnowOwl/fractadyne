@@ -7,12 +7,19 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Persisted session. Coordinates are `f64` for now; arbitrary-precision strings
-/// arrive with the deep-zoom engine (M2).
+/// Persisted session. The center is stored at **full precision** as decimal strings
+/// (`center_x_str`/`center_y_str`) so deep-zoom locations survive quit/restart; the
+/// `f64` `center_x`/`center_y` remain for display and backward compatibility with
+/// older session files (used as a fallback when the strings are absent).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct SessionState {
     pub center_x: f64,
     pub center_y: f64,
+    /// Full-precision center (decimal). Empty ⇒ fall back to the `f64` fields.
+    #[serde(default)]
+    pub center_x_str: String,
+    #[serde(default)]
+    pub center_y_str: String,
     pub units_per_pixel: f64,
     pub max_iter: u32,
     pub auto_iter: bool,
@@ -91,6 +98,8 @@ impl Default for SessionState {
         Self {
             center_x: -0.5,
             center_y: 0.0,
+            center_x_str: String::new(),
+            center_y_str: String::new(),
             units_per_pixel: 3.0 / 720.0,
             max_iter: 256,
             auto_iter: true,
