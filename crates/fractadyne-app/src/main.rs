@@ -32,8 +32,6 @@ struct Perf {
     last_eff_iter: u32,
     last_precision: usize,
     last_orbit_len: u32,
-    /// Throttle for stderr logging.
-    last_log: Option<Instant>,
 }
 
 impl Default for Perf {
@@ -52,7 +50,6 @@ impl Default for Perf {
             last_eff_iter: 0,
             last_precision: 0,
             last_orbit_len: 0,
-            last_log: None,
         }
     }
 }
@@ -3925,32 +3922,6 @@ impl eframe::App for FractadyneApp {
         }
         if self.perf.enabled {
             self.schedule_repaint(ctx); // keep metrics live while the panel is shown
-            let do_log = self
-                .perf
-                .last_log
-                .map_or(true, |t| t.elapsed().as_secs_f64() >= 1.0);
-            if do_log {
-                self.perf.last_log = Some(Instant::now());
-                let fps = if self.perf.frame_ms > 0.0 {
-                    1000.0 / self.perf.frame_ms
-                } else {
-                    0.0
-                };
-                eprintln!(
-                    "[perf] fps={:.1} frame={:.1}ms cpu={:.1}ms recompute={:.2}ms total={} {:.0}/s mode={} iter={} prec={}bit orbit={} zoom={:.3e}",
-                    fps,
-                    self.perf.frame_ms,
-                    self.perf.cpu_ms,
-                    self.perf.recompute_ms,
-                    self.perf.recompute_total,
-                    self.perf.recompute_per_s,
-                    if self.perf.last_mode == 1 { "direct" } else { "perturb" },
-                    self.perf.last_eff_iter,
-                    self.perf.last_precision,
-                    self.perf.last_orbit_len,
-                    self.viewport.magnification(),
-                );
-            }
         }
         self.perf.cpu_ms = ema(self.perf.cpu_ms, frame_start.elapsed().as_secs_f64() * 1000.0);
 
