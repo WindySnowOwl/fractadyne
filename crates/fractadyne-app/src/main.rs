@@ -2015,9 +2015,28 @@ impl FractadyneApp {
         // Cap supersampling first (keeps native resolution); only at extreme depth on a
         // very large window is the iteration count itself clamped.
         let px = (resolution[0].max(1) as u64) * (resolution[1].max(1) as u64);
-        let iter_cap = (WORK_BUDGET / px).clamp(64, 50_000) as u32;
-        let gpu_iter = eff_iter.min(iter_cap);
-        let max_ss = ((WORK_BUDGET / (px * gpu_iter.max(1) as u64)) as f64)
+        // Keep the full iteration count — clamping iterations at deep zoom made the whole
+        // view escape "late"/never, rendering as flat interior (the uniform screen). To
+        // stay under the GPU-watchdog budget (texels × iters), reduce the iteration-
+        // texture *resolution* instead (the color pass upscales it): graceful softness
+        // on a big window at extreme depth, never a blank. ss is fit afterward.
+        let gpu_iter = eff_iter.min(50_000);
+        let want = px.saturating_mul(gpu_iter.max(1) as u64);
+        let res_scale = if want > WORK_BUDGET {
+            (WORK_BUDGET as f64 / want as f64).sqrt()
+        } else {
+            1.0
+        };
+        let resolution = if res_scale < 1.0 {
+            [
+                ((resolution[0] as f64 * res_scale) as u32).max(16),
+                ((resolution[1] as f64 * res_scale) as u32).max(16),
+            ]
+        } else {
+            resolution
+        };
+        let spx = (resolution[0] as u64) * (resolution[1] as u64);
+        let max_ss = ((WORK_BUDGET / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
             .sqrt()
             .max(1.0) as u32;
         let ss = if interacting { 1 } else { self.aa.min(max_ss) };

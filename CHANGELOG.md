@@ -56,6 +56,14 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Fixed (post-baseline, this session)
 
+- **Uniform render at extreme depth on a large window** — the GPU-watchdog budget
+  (texels × iterations) was kept by *clamping the iteration count*; on a big window
+  (>~1.2 Mpx, i.e. maximized or with Windows display scaling) at very deep zoom that
+  capped iterations well below what the detail needs, so the whole view escaped
+  "late"/never and rendered as flat interior. Now the budget is met by reducing the
+  iteration-texture *resolution* (the color pass upscales it) while keeping the full
+  iteration count — graceful softness instead of a blank. (`--render` was unaffected,
+  which is why a bookmark looked detailed when exported but blank live.)
 - **Uniform/blank render after a cold jump to deep zoom (bookmark reload, Open view,
   `--render`)** — `best_reference` ranked candidate reference points using `f64`
   coordinates, which all collapse to the same value at deep zoom, so the search
