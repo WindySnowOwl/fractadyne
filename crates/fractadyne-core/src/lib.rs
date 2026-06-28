@@ -481,19 +481,28 @@ pub fn best_reference(
     if best_len >= scan {
         return best;
     }
+    // Search a 5×5 grid at several **scales** (fraction of span), concentrated toward
+    // the center where the user is looking. A single coarse ±0.5-span grid is too
+    // sparse: at deep zoom the detail is thin filaments, and a wide window spreads the
+    // grid into the gaps between them → every candidate escapes fast → a useless
+    // reference → uniform render. The inner scales reliably sample the central detail
+    // regardless of window width. Fine→coarse so a good hit returns early.
     const N: usize = 5;
-    for j in 0..N {
-        for i in 0..N {
-            let fx = (i as f64 + 0.5) / N as f64 - 0.5;
-            let fy = (j as f64 + 0.5) / N as f64 - 0.5;
-            let px = center[0].add(&bf(fx * span[0], p), p, RM);
-            let py = center[1].add(&bf(fy * span[1], p), p, RM);
-            let len = score(&px, &py);
-            if len > best_len {
-                best_len = len;
-                best = [px, py];
-                if best_len >= scan {
-                    return best;
+    const SCALES: [f64; 4] = [0.04, 0.12, 0.28, 0.5];
+    for &sc in &SCALES {
+        for j in 0..N {
+            for i in 0..N {
+                let fx = (i as f64 / (N as f64 - 1.0) - 0.5) * 2.0 * sc;
+                let fy = (j as f64 / (N as f64 - 1.0) - 0.5) * 2.0 * sc;
+                let px = center[0].add(&bf(fx * span[0], p), p, RM);
+                let py = center[1].add(&bf(fy * span[1], p), p, RM);
+                let len = score(&px, &py);
+                if len > best_len {
+                    best_len = len;
+                    best = [px, py];
+                    if best_len >= scan {
+                        return best;
+                    }
                 }
             }
         }
