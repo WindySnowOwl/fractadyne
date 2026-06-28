@@ -3140,6 +3140,19 @@ impl eframe::App for FractadyneApp {
                     ui.menu_button("Help", |ui| {
                         ui.label(format!("Fractadyne v{}", version_string()));
                         ui.label(egui::RichText::new("Native fractal explorer").weak().small());
+                        ui.separator();
+                        ui.label(egui::RichText::new("License").weak().small());
+                        ui.label("MIT OR Apache-2.0");
+                        ui.label(
+                            egui::RichText::new("© 2026 Rithea Hong. Dual-licensed; use \
+                                 under either license at your option.")
+                                .weak()
+                                .small(),
+                        );
+                        ui.hyperlink_to(
+                            "Source \u{2197}",
+                            "https://github.com/WindySnowOwl/fractadyne",
+                        );
                     });
 
                 ui.separator();
