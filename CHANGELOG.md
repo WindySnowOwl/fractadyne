@@ -56,6 +56,16 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Fixed (post-baseline, this session)
 
+- **Deep zoom lost on quit/restart (uniform screen after relaunch)** — the auto-saved
+  session stored the center as `f64`, so restoring a deep view truncated the coordinate
+  to ~16 digits → a wrong location → uniform. The session now persists the center as a
+  full-precision decimal string (like bookmarks/exports) and restores via `parse_bf`,
+  falling back to `f64` for old session files. Also fixed the autosave debounce, which
+  reset its timer every frame so an animating palette offset blocked the idle save
+  (it now saves ~every second). Plus **multi-scale reference search**: the perturbation
+  reference picker sampled a single coarse grid over the full view, which on a wide
+  window at deep zoom landed between the thin filaments → a useless reference → uniform;
+  it now samples several scales concentrated toward the center.
 - **Uniform render at extreme depth on a large window** — the GPU-watchdog budget
   (texels × iterations) was kept by *clamping the iteration count*; on a big window
   (>~1.2 Mpx, i.e. maximized or with Windows display scaling) at very deep zoom that

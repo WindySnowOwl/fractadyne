@@ -164,8 +164,11 @@ perturbation + series approximation + glitch correction. The headline feature.
       f32. Removes the interior speckle that appeared past ~10¹⁵× (was f32 delta
       precision, **not** iterations); should hold clean to ~10²²–10²³×. Assumes a
       fused `fma` (true on NVIDIA/AMD/Intel targets). df64 delta later if needed.
-- [ ] **df64/full-precision persisted center** — save/restore currently round-trips
-      the center through f64; keep full bignum precision across save/restore (minor).
+- [x] **Full-precision persisted center** — session now stores `center_x_str`/
+      `center_y_str` (decimal, full precision) and restores via `parse_bf` (fallback to
+      the old f64 fields). Deep-zoom locations now survive quit/restart instead of
+      truncating to f64 → a wrong spot → uniform screen. Also fixed the autosave
+      debounce so an animating palette offset no longer blocks the idle save.
 - [ ] Re-add `zoom_to_rect` unit test (dropped in the dd rewrite).
 - [x] **UI digit separators** — commas on zoom/iter, spaces grouping coordinate digits.
 - [x] **Floatexp perturbation δ (unlimited depth)** — the df32 δ has f32's *exponent*
