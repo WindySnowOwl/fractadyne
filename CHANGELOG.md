@@ -24,6 +24,10 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Go-to location dialog + navigation undo/redo** — View → "Go to location…" to
+  view/edit/paste/copy the exact center (full precision) + zoom; navigation history
+  records each settled location and discrete jumps, with Backspace = undo view,
+  Shift+Backspace / Ctrl+Y = redo (and View-menu items). Keys are ignored while typing.
 - **Fractadyne branding & theme** — a dark "deep-space" UI theme with cyan/magenta
   accents (selection, links, hovered widgets), a painted brand mark + wordmark in the
   top bar, and a procedural window/taskbar icon.

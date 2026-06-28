@@ -402,8 +402,12 @@ for fun, informative value, and ease of use.
       perturbation (verified at 1e8×).
 - [ ] **More coloring methods** — orbit traps (point/line/shape), stripe / triangle-
       inequality average (TIA), interior coloring, histogram/equalized auto-coloring.
-- [ ] **Goto-location dialog + navigation undo/redo** — type/paste/copy exact
-      center+zoom; Backspace to undo a zoom. Cheap, big everyday ease-of-use.
+- [x] **Goto-location dialog + navigation undo/redo** — View → "Go to location…":
+      view/edit/paste/copy the exact center (full precision) + zoom, with validation.
+      Navigation history records each settled location (+ discrete jumps); **Backspace**
+      = undo view, **Shift+Backspace / Ctrl+Y** = redo (also in the View menu), gated so
+      it doesn't fire while typing. (Single view; dual skipped.) *(Follow-up: this is
+      the basis for the `.fdn` share format — same key=value, hardened parse.)*
 - [ ] **Period / minibrot finder ("zoom to center")** — Newton-Raphson snap to a
       minibrot's exact center + period (Kalles Fraktaler's killer deep-zoom aid).
 - [ ] **Minimap / "you are here" overview + zoom-depth context.**

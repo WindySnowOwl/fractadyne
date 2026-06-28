@@ -950,6 +950,15 @@ struct BookmarkFile {
     bookmark: Vec<Bookmark>,
 }
 
+/// A navigation history entry (location only) for undo/redo.
+#[derive(Clone)]
+struct ViewSnapshot {
+    cx: fractadyne_core::BigFloat,
+    cy: fractadyne_core::BigFloat,
+    upp: f64,
+    prec: usize,
+}
+
 /// One exported image discovered by the gallery browser.
 struct GalleryEntry {
     path: std::path::PathBuf,
@@ -1211,6 +1220,16 @@ struct FractadyneApp {
     bookmarks: Vec<Bookmark>,
     bookmarks_open: bool,
     bookmark_name: String,
+    /// Navigation history (location undo/redo) + settle-edge tracking.
+    nav_undo: Vec<ViewSnapshot>,
+    nav_redo: Vec<ViewSnapshot>,
+    nav_was_interacting: bool,
+    /// Go-to-location dialog state.
+    goto_open: bool,
+    goto_x: String,
+    goto_y: String,
+    goto_zoom: String,
+    goto_msg: Option<String>,
     /// Performance/diagnostic tracking + overlay.
     perf: Perf,
     max_iter: u32,
@@ -1355,6 +1374,14 @@ impl FractadyneApp {
             bookmarks: Self::load_bookmarks(),
             bookmarks_open: false,
             bookmark_name: String::new(),
+            nav_undo: Vec::new(),
+            nav_redo: Vec::new(),
+            nav_was_interacting: false,
+            goto_open: false,
+            goto_x: String::new(),
+            goto_y: String::new(),
+            goto_zoom: String::new(),
+            goto_msg: None,
             perf: Perf {
                 // Default on; `--no-perf` disables, `--perf` forces on.
                 enabled: !std::env::args().any(|a| a == "--no-perf"),
@@ -1389,6 +1416,7 @@ impl FractadyneApp {
         if app.auto_render {
             app.apply_cli_render(&args);
         }
+        app.nav_undo.push(app.snapshot_view()); // baseline for navigation undo
         app
     }
 
@@ -1873,6 +1901,7 @@ impl FractadyneApp {
             fractadyne_core::precision_for_magnification(self.viewport.magnification());
         self.invalidate_refs();
         self.zoom_vel = 0.0;
+        self.record_nav();
     }
 
     /// Open a previously-exported PNG/EXR and restore its view (via a native dialog).
@@ -2728,6 +2757,90 @@ impl FractadyneApp {
         ui.monospace(format!("recompute tot {:>5}", p.recompute_total));
     }
 
+    /// Snapshot the current location for navigation history.
+    fn snapshot_view(&self) -> ViewSnapshot {
+        ViewSnapshot {
+            cx: self.viewport.center_x.clone(),
+            cy: self.viewport.center_y.clone(),
+            upp: self.viewport.units_per_pixel,
+            prec: self.viewport.precision,
+        }
+    }
+
+    /// Restore a navigation snapshot (location only).
+    fn apply_snapshot(&mut self, s: &ViewSnapshot) {
+        self.viewport.center_x = s.cx.clone();
+        self.viewport.center_y = s.cy.clone();
+        self.viewport.units_per_pixel = s.upp;
+        self.viewport.precision = s.prec;
+        self.zoom_vel = 0.0;
+        self.invalidate_refs();
+    }
+
+    /// Record the current location onto the undo history (deduped vs. the top), and
+    /// clear the redo stack. Called when the view settles and after discrete jumps.
+    fn record_nav(&mut self) {
+        let snap = self.snapshot_view();
+        let dup = self.nav_undo.last().is_some_and(|t| {
+            t.upp == snap.upp && t.cx == snap.cx && t.cy == snap.cy
+        });
+        if !dup {
+            self.nav_undo.push(snap);
+            if self.nav_undo.len() > 256 {
+                self.nav_undo.remove(0);
+            }
+            self.nav_redo.clear();
+        }
+    }
+
+    /// Step back / forward through visited locations.
+    fn undo_view(&mut self) {
+        if self.nav_undo.len() < 2 {
+            return;
+        }
+        let cur = self.nav_undo.pop().unwrap();
+        self.nav_redo.push(cur);
+        let prev = self.nav_undo.last().unwrap().clone();
+        self.apply_snapshot(&prev);
+        self.nav_was_interacting = false;
+    }
+    fn redo_view(&mut self) {
+        if let Some(s) = self.nav_redo.pop() {
+            self.apply_snapshot(&s);
+            self.nav_undo.push(s);
+            self.nav_was_interacting = false;
+        }
+    }
+
+    /// Open the go-to-location dialog, pre-filled with the current view.
+    fn open_goto(&mut self) {
+        self.goto_x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
+        self.goto_y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
+        self.goto_zoom = format!("{:e}", self.viewport.magnification());
+        self.goto_msg = None;
+        self.goto_open = true;
+    }
+
+    /// Apply the go-to-location dialog: parse + validate, then jump (recording history).
+    fn apply_goto(&mut self) {
+        let cx = fractadyne_core::parse_bf(self.goto_x.trim());
+        let cy = fractadyne_core::parse_bf(self.goto_y.trim());
+        let mag = self.goto_zoom.trim().parse::<f64>().ok();
+        match (cx, cy, mag) {
+            (Some(cx), Some(cy), Some(mag)) if mag.is_finite() && mag > 0.0 => {
+                self.viewport.set_center_mag(cx, cy, mag);
+                self.zoom_vel = 0.0;
+                self.invalidate_refs();
+                self.record_nav();
+                self.goto_msg = None;
+                self.goto_open = false;
+            }
+            _ => {
+                self.goto_msg = Some("Invalid input — check the coordinates and zoom.".into());
+            }
+        }
+    }
+
     /// Reset the current view to the fractal's default (both panels in dual view).
     fn reset_view(&mut self) {
         self.viewport.reset();
@@ -2741,6 +2854,7 @@ impl FractadyneApp {
         }
         self.zoom_vel = 0.0;
         self.invalidate_refs();
+        self.record_nav();
     }
 
     /// Begin a smooth zoom-out back to the home view. If already at (or near) home,
@@ -3082,6 +3196,22 @@ impl eframe::App for FractadyneApp {
             }
         }
 
+        // Navigation undo/redo (Backspace / Shift+Backspace or Ctrl+Y), unless typing.
+        if !ctx.wants_keyboard_input() {
+            let (undo, redo) = ctx.input(|i| {
+                let bs = i.key_pressed(egui::Key::Backspace);
+                (
+                    bs && !i.modifiers.shift,
+                    (bs && i.modifiers.shift) || (i.modifiers.command && i.key_pressed(egui::Key::Y)),
+                )
+            });
+            if undo {
+                self.undo_view();
+            } else if redo {
+                self.redo_view();
+            }
+        }
+
         // CLI render-and-exit: render one image offscreen, save it, and quit.
         if self.auto_render && !self.auto_render_done {
             if let Some((dev, q)) = &gpu {
@@ -3205,6 +3335,23 @@ impl eframe::App for FractadyneApp {
                         });
                     });
                     ui.menu_button("View", |ui| {
+                        if ui.button("Go to location…").clicked() {
+                            self.open_goto();
+                            ui.close_menu();
+                        }
+                        ui.add_enabled_ui(self.nav_undo.len() > 1, |ui| {
+                            if ui.button("Undo view  (Backspace)").clicked() {
+                                self.undo_view();
+                                ui.close_menu();
+                            }
+                        });
+                        ui.add_enabled_ui(!self.nav_redo.is_empty(), |ui| {
+                            if ui.button("Redo view  (Shift+Backspace)").clicked() {
+                                self.redo_view();
+                                ui.close_menu();
+                            }
+                        });
+                        ui.separator();
                         if ui
                             .checkbox(&mut self.dual, "Dual view (Mandelbrot ↔ Julia)")
                             .clicked()
@@ -3781,6 +3928,57 @@ impl eframe::App for FractadyneApp {
                 }
             });
 
+        // ---- go to location ----
+        if self.goto_open {
+            let mut open = self.goto_open;
+            let mut go = false;
+            let mut copy = false;
+            egui::Window::new("Go to location")
+                .open(&mut open)
+                .resizable(false)
+                .default_width(420.0)
+                .show(ctx, |ui| {
+                    ui.label(egui::RichText::new("Center X").weak().small());
+                    ui.add(egui::TextEdit::singleline(&mut self.goto_x).desired_width(f32::INFINITY));
+                    ui.label(egui::RichText::new("Center Y").weak().small());
+                    ui.add(egui::TextEdit::singleline(&mut self.goto_y).desired_width(f32::INFINITY));
+                    ui.label(egui::RichText::new("Zoom (magnification)").weak().small());
+                    ui.add(egui::TextEdit::singleline(&mut self.goto_zoom).desired_width(220.0));
+                    if let Some(m) = &self.goto_msg {
+                        ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), m);
+                    }
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        go = ui.button("Go").clicked();
+                        if ui.button("Copy").on_hover_text("Copy this location to the clipboard").clicked() {
+                            copy = true;
+                        }
+                        if ui.button("Use current").clicked() {
+                            self.goto_x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
+                            self.goto_y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
+                            self.goto_zoom = format!("{:e}", self.viewport.magnification());
+                            self.goto_msg = None;
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new("Paste a center/zoom from someone else, or Copy to share.")
+                            .weak()
+                            .small(),
+                    );
+                });
+            if copy {
+                ctx.copy_text(format!(
+                    "center_x={}\ncenter_y={}\nzoom={}",
+                    self.goto_x, self.goto_y, self.goto_zoom
+                ));
+            }
+            if go {
+                self.apply_goto(); // clears goto_open on success
+            }
+            // Closed if the user hit the window's ✕ (open=false) or Go succeeded.
+            self.goto_open = open && self.goto_open;
+        }
+
         // ---- bookmarks manager ----
         if self.bookmarks_open {
             let mut open = self.bookmarks_open;
@@ -4103,6 +4301,15 @@ impl eframe::App for FractadyneApp {
             self.schedule_repaint(ctx); // keep metrics live while the panel is shown
         }
         self.perf.cpu_ms = ema(self.perf.cpu_ms, frame_start.elapsed().as_secs_f64() * 1000.0);
+
+        // Navigation history: record a location each time the single view settles after
+        // a pan/zoom gesture (its own dedup avoids repeats). Discrete jumps record
+        // explicitly. Skipped in dual view.
+        let interacting_now = ctx.input(|i| i.time) - self.settle_t < SETTLE_DELAY;
+        if self.nav_was_interacting && !interacting_now && !self.dual {
+            self.record_nav();
+        }
+        self.nav_was_interacting = interacting_now;
 
         // Frame-rate cap: pace the main thread so we don't render faster than the cap
         // (paired with vsync this snaps to a clean sub-rate, e.g. 60 on a 120 Hz panel).
