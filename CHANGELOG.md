@@ -54,6 +54,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   instantly. Bookmarks menu + ★ toolbar button + a Manage… window (add/name/list/delete);
   persisted to `bookmarks.toml` in the config dir.
 
+- **Distance-estimate relief lighting** — optional 3D/embossed shading from the
+  fractal's derivative (`dz/dc`), tracked in floatexp so it works at any zoom depth
+  (direct + perturbation paths; holomorphic families). Coloring-panel toggle + light
+  angle/relief sliders; `--light` CLI flag; persisted. Iteration texture is now
+  RGBA32F (the slope normal rides alongside the iteration value; alpha reserved for a
+  future DE glow).
+
 ### Fixed (post-baseline, this session)
 
 - **Deep zoom lost on quit/restart (uniform screen after relaunch)** — the auto-saved

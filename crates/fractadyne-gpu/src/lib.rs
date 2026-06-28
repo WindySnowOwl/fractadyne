@@ -13,7 +13,8 @@ use egui_wgpu::wgpu;
 use egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor};
 use std::sync::Arc;
 
-const ITER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+// RGBA: r = smooth iteration value, g/b = slope normal (x,y), a = reserved (DE).
+const ITER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -40,6 +41,10 @@ struct ColorUniforms {
     cycle: f32,
     offset: f32,
     ss: u32,
+    light: u32,         // 0 = off, 1 = slope/relief lighting from the stored normal
+    light_angle: f32,   // light direction (radians)
+    light_height: f32,  // relief strength (smaller = stronger; ~1.5 default)
+    _pad: u32,
     stops: [[f32; 4]; 8],
 }
 
@@ -356,6 +361,10 @@ pub struct MandelbrotParams {
     pub offset: f32,
     pub stop_count: u32,
     pub stops: [[f32; 4]; 8],
+    /// Slope/relief lighting from the distance-estimate normal.
+    pub light: u32,
+    pub light_angle: f32,
+    pub light_height: f32,
     pub resolution: [u32; 2],
     pub ss: u32,
     /// Which on-screen panel this is (distinct GPU resources per id).
@@ -413,6 +422,10 @@ impl CallbackTrait for MandelbrotParams {
             cycle: self.cycle,
             offset: self.offset,
             ss,
+            light: self.light,
+            light_angle: self.light_angle,
+            light_height: self.light_height,
+            _pad: 0,
             stops: self.stops,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
@@ -542,6 +555,9 @@ pub struct ExportRequest {
     pub offset: f32,
     pub stop_count: u32,
     pub stops: [[f32; 4]; 8],
+    pub light: u32,
+    pub light_angle: f32,
+    pub light_height: f32,
 }
 
 /// The actual `(width, height)` an export produced after clamping to the GPU's
@@ -668,6 +684,10 @@ pub fn render_export(
         cycle: req.cycle,
         offset: req.offset,
         ss,
+        light: req.light,
+        light_angle: req.light_angle,
+        light_height: req.light_height,
+        _pad: 0,
         stops: req.stops,
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));

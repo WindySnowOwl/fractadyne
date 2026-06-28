@@ -55,6 +55,13 @@ pub struct SessionState {
     /// Palette animation speed (offset cycles per second).
     #[serde(default = "default_palette_anim_speed")]
     pub palette_anim_speed: f32,
+    /// Distance-estimate relief lighting: enabled, light angle (rad), relief strength.
+    #[serde(default)]
+    pub light: bool,
+    #[serde(default = "default_light_angle")]
+    pub light_angle: f32,
+    #[serde(default = "default_light_height")]
+    pub light_height: f32,
 }
 
 fn default_zoom_rate() -> f32 {
@@ -93,6 +100,14 @@ fn default_palette_anim_speed() -> f32 {
     0.15
 }
 
+fn default_light_angle() -> f32 {
+    2.2 // radians (~126°), light from upper-left
+}
+
+fn default_light_height() -> f32 {
+    1.2
+}
+
 impl Default for SessionState {
     fn default() -> Self {
         Self {
@@ -116,6 +131,9 @@ impl Default for SessionState {
             export_dual_mode: default_export_dual_mode(),
             palette_anim: default_palette_anim(),
             palette_anim_speed: default_palette_anim_speed(),
+            light: false,
+            light_angle: default_light_angle(),
+            light_height: default_light_height(),
         }
     }
 }

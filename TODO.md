@@ -371,6 +371,50 @@ perturbation + series approximation + glitch correction. The headline feature.
       extension; full-precision center. For debugging / automated golden-image checks.
 - [ ] **Record-to-video / frame export** from a script (offline, deterministic).
 
+## Survey-driven roadmap (2026-06-28)
+
+Gaps vs. Ultra Fractal / Kalles Fraktaler / XaoS / Mandelbulber / Apophysis, prioritized
+for fun, informative value, and ease of use.
+
+### Tier 1 — best value, good fit for the escape-time engine
+- [x] **Distance-estimate slope/relief lighting** — tracks the derivative `dz/dc`
+      (`dz/dz0` in Julia mode) and shades by the slope normal → embossed, lit 3D look.
+      Works on the **direct path** (Cdf derivative) and the **perturbation paths**
+      (floatexp derivative, so it holds at any depth — verified at 1e8×). Holomorphic
+      families (Mandelbrot / Multibrot 3/4/5). Iter texture now RGBA32F (r=iter,
+      g/b=normal, a=reserved for DE); light angle/relief live in the color pass so they
+      re-light without re-iterating. Coloring panel toggle + angle/relief sliders;
+      `--light [--light-angle R]` CLI; persisted. *(Follow-up: DE-based glow/crisp
+      coloring using the |derivative| magnitude — channel a is reserved for it.)*
+- [ ] **More coloring methods** — orbit traps (point/line/shape), stripe / triangle-
+      inequality average (TIA), interior coloring, histogram/equalized auto-coloring.
+- [ ] **Goto-location dialog + navigation undo/redo** — type/paste/copy exact
+      center+zoom; Backspace to undo a zoom. Cheap, big everyday ease-of-use.
+- [ ] **Period / minibrot finder ("zoom to center")** — Newton-Raphson snap to a
+      minibrot's exact center + period (Kalles Fraktaler's killer deep-zoom aid).
+- [ ] **Minimap / "you are here" overview + zoom-depth context.**
+- [ ] **Gradient / palette editor** (also listed under M1) — needed to exploit the above.
+- [ ] **Famous-locations tour + "random interesting location" + help/keyboard overlay** —
+      best onboarding-per-effort.
+
+### Tier 2 — high value, larger effort
+- [ ] **Shareable settings file `.fdn` + paste-text + (optional) QR code** — save the
+      full view/fractal/coloring state to a `.fdn` file or a copyable text block; load
+      from file **or** a paste dialog so people can reproduce an exact location/look.
+      Optional QR-code generate/scan for the (compact) parameter string.
+      **SECURITY: treat all loaded `.fdn`/pasted/QR data as untrusted.** Strict parse:
+      key=value allow-list only, bounded lengths, validate/clamp every numeric field,
+      reject unknown keys, no code/formula execution, no file paths, cap decoded size,
+      and fuzz the decoder. (Reuse the hardened view-metadata parser; never `eval`.)
+- [ ] **Zoom-movie / frame→video export** — build on scripting + headless render.
+- [ ] **Layers + blend modes** (Ultra Fractal-style compositing).
+- [ ] **Formula DSL / custom formulas** (M6).
+- [ ] **Series approximation + multi-reference glitch correction** (faster/cleaner deep).
+
+### Tier 3 — big bets (separate engines)
+- [ ] **3D fractals** (Mandelbulb / Mandelbox, ray-marched).
+- [ ] **Flame / IFS fractals; L-systems; cellular automata.**
+
 ## Backlog (later milestones — DESIGN.md §15)
 
 - **M4** more fractal variety: L-systems, cellular automata

@@ -1152,6 +1152,10 @@ struct FractadyneApp {
     cycle: f32,
     /// Palette offset slider (0..1).
     offset: f32,
+    /// Distance-estimate relief lighting (slope shading from the derivative).
+    light: bool,
+    light_angle: f32,  // radians
+    light_height: f32, // relief strength (smaller = sharper)
     /// Auto-scale iteration count with zoom depth (else use `max_iter` as-is).
     auto_iter: bool,
     /// Continuous-zoom speed multiplier (1.0 = default `ZOOM_RATE`).
@@ -1281,6 +1285,9 @@ impl FractadyneApp {
             palette_idx: s.palette_idx,
             cycle: s.cycle,
             offset: s.offset,
+            light: s.light,
+            light_angle: s.light_angle,
+            light_height: s.light_height,
             auto_iter: s.auto_iter,
             zoom_rate: s.zoom_rate,
             aa: s.aa,
@@ -1343,6 +1350,12 @@ impl FractadyneApp {
         if let Some(p) = val("--palette").and_then(|s| s.parse::<usize>().ok()) {
             self.palette_idx = p.min(fractadyne_color::PRESETS.len() - 1);
         }
+        if args.iter().any(|a| a == "--light") {
+            self.light = true;
+        }
+        if let Some(a) = val("--light-angle").and_then(|s| s.parse::<f32>().ok()) {
+            self.light_angle = a;
+        }
         // Output format from the file extension.
         if let Some(out) = &self.auto_render_out {
             if out.extension().and_then(|e| e.to_str()) == Some("exr") {
@@ -1386,6 +1399,9 @@ impl FractadyneApp {
             },
             palette_anim: self.palette_anim.key().to_string(),
             palette_anim_speed: self.palette_anim_speed,
+            light: self.light,
+            light_angle: self.light_angle,
+            light_height: self.light_height,
         };
         let now = ctx.input(|i| i.time);
         if cur != self.last_state {
@@ -1550,6 +1566,9 @@ impl FractadyneApp {
             offset: self.offset,
             stop_count,
             stops,
+            light: self.light as u32,
+            light_angle: self.light_angle,
+            light_height: self.light_height,
         }
     }
 
@@ -2161,6 +2180,9 @@ impl FractadyneApp {
             offset: self.offset,
             stop_count,
             stops,
+            light: self.light as u32,
+            light_angle: self.light_angle,
+            light_height: self.light_height,
             resolution,
             ss,
             view_id,
@@ -3383,6 +3405,26 @@ impl eframe::App for FractadyneApp {
                 {
                     self.random_palette.reshuffle();
                 }
+                ui.separator();
+                ui.checkbox(&mut self.light, "3D relief lighting")
+                    .on_hover_text(
+                        "Shade the surface using the distance-estimate slope — an \
+                         embossed, lit look. (Holomorphic families: Mandelbrot / \
+                         Multibrot.)",
+                    );
+                ui.add_enabled_ui(self.light, |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut self.light_angle, 0.0..=std::f32::consts::TAU)
+                            .text("Light angle")
+                            .suffix(" rad"),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut self.light_height, 0.2..=4.0)
+                            .text("Relief")
+                            .logarithmic(true),
+                    )
+                    .on_hover_text("Lower = sharper relief; higher = softer/flatter.");
+                });
                 ui.separator();
                 ui.checkbox(&mut self.auto_iter, "Auto-scale iterations with zoom");
                 let label = if self.auto_iter { "Iterations (base)" } else { "Iterations" };

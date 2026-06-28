@@ -211,6 +211,43 @@ fn fe_mag2(a: Fe) -> f32 {
     return (a.m.re.x * a.m.re.x + a.m.im.x * a.m.im.x) * s;
 }
 
+// Slope normal for distance-estimate lighting: direction of u = z / (dz/dc).
+// Only the *direction* matters (the magnitude is normalized away), so any positive
+// real scale on the derivative — e.g. a floatexp exponent — cancels and we can pass
+// just the derivative's mantissa. Returns (0,0) when the derivative is unavailable
+// (→ the color pass leaves the pixel unlit).
+fn slope_normal(z: vec2<f32>, d: vec2<f32>) -> vec2<f32> {
+    // u = z · conj(d)  (same direction as z/d)
+    let ur = z.x * d.x + z.y * d.y;
+    let ui = z.y * d.x - z.x * d.y;
+    let m = sqrt(ur * ur + ui * ui);
+    if (m > 1.0e-30) {
+        return vec2<f32>(ur / m, ui / m);
+    }
+    return vec2<f32>(0.0, 0.0);
+}
+
+// floatexp constant 1, and floatexp × (plain f32 complex) — for the perturbation
+// derivative dz/dc, which grows past f32 range at depth (so it lives in floatexp).
+fn fe_one() -> Fe {
+    return fe_make(cset(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 0.0)), 0);
+}
+fn fe_mul_c(a: Fe, zr: f32, zi: f32) -> Fe {
+    let re = df_sub(df_mul_f32(a.m.re, zr), df_mul_f32(a.m.im, zi));
+    let im = df_add(df_mul_f32(a.m.re, zi), df_mul_f32(a.m.im, zr));
+    return fe_norm(cset(re, im), a.e);
+}
+// Derivative factor f'(z) = p·z^(p-1) for the holomorphic families (0..3), plain f32.
+fn deriv_factor(formula: u32, z: vec2<f32>) -> vec2<f32> {
+    if (formula == 0u) { return 2.0 * z; }
+    let z2 = vec2<f32>(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y);
+    if (formula == 1u) { return 3.0 * z2; }
+    let z3 = vec2<f32>(z2.x * z.x - z2.y * z.y, z2.x * z.y + z2.y * z.x);
+    if (formula == 2u) { return 4.0 * z3; }
+    let z4 = vec2<f32>(z2.x * z2.x - z2.y * z2.y, 2.0 * z2.x * z2.y);
+    return 5.0 * z4; // formula 3
+}
+
 // ---------------- iteration pass (perturbation; writes smooth escape value) -----
 // Per pixel: c = c0 + δc, z_n = Z_n + δz_n where Z_n is the reference orbit.
 //   δz_{n+1} = 2·Z_n·δz_n + δz_n² + δc      (δz, δc carried in df32 → deep zoom)
@@ -279,6 +316,11 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
         }
         var zprev = cset(zero, zero); // Phoenix needs z_{n-1}
         var power_f = 2.0;
+        // Derivative dz/dc (Mandelbrot mode) or dz/dz0 (Julia mode), for DE lighting.
+        // Tracked for the holomorphic families (0..3); others stay 0 → unlit.
+        let one = cset(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 0.0));
+        var dz: Cdf;
+        if (iu.julia == 1u) { dz = one; } else { dz = cset(zero, zero); }
         loop {
             if (iter >= iu.max_iter) { break; }
             if (newton) {
@@ -331,6 +373,21 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
                 } else {
                     zn = c_sqr(z);
                 }
+                // Derivative update D ← f'(z)·D (+1 in Mandelbrot mode), using current z.
+                if (iu.formula <= 3u) {
+                    var fp: Cdf;
+                    if (iu.formula == 0u) {
+                        fp = c_two(z);
+                    } else if (iu.formula == 1u) {
+                        fp = c_scale(c_sqr(z), 3.0);
+                    } else if (iu.formula == 2u) {
+                        fp = c_scale(c_mul(c_sqr(z), z), 4.0);
+                    } else {
+                        fp = c_scale(c_sqr(c_sqr(z)), 5.0);
+                    }
+                    dz = c_mul(fp, dz);
+                    if (iu.julia == 0u) { dz = c_add(dz, one); }
+                }
                 zn = c_add(zn, c);
                 zprev = z;
                 z = zn;
@@ -348,7 +405,8 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
-        return vec4<f32>(f32(iter) + 1.0 - nu, 0.0, 0.0, 1.0);
+        let nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
+        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, 0.0);
     } else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
         // i32 exponent), so the deviation never underflows f32 → unlimited depth. ~1.7×
@@ -369,12 +427,24 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
             dz = fe_zero();
             dc = pert;
         }
+        // Derivative dz/dc (Mandelbrot) or dz/dz0 (Julia) in floatexp, for DE lighting.
+        var D: Fe;
+        if (iu.julia == 1u) { D = fe_one(); } else { D = fe_zero(); }
         var ref_n: u32 = 0u;
         var power_f = 2.0;
         loop {
             if (iter >= iu.max_iter) { break; }
             let r = reference[ref_n];
             let Z = cset(vec2<f32>(r.x, r.z), vec2<f32>(r.y, r.w)); // reference Z_n (df32)
+
+            // Derivative update D ← f'(z_n)·D (+1 Mandelbrot) using full z_n = Z_n + δz_n.
+            if (iu.formula <= 3u) {
+                let dzc = fe_lo_f32(dz);
+                let zfn = vec2<f32>(r.x + dzc.x, r.y + dzc.y);
+                let fp = deriv_factor(iu.formula, zfn);
+                D = fe_mul_c(D, fp.x, fp.y);
+                if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
+            }
 
             if (iu.formula == 1u) {
                 // z³: δz' = 3Z²δz + 3Z δz² + δz³ + δc
@@ -453,7 +523,11 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
-        return vec4<f32>(f32(iter) + 1.0 - nu, 0.0, 0.0, 1.0);
+        var nrm = vec2<f32>(0.0, 0.0);
+        if (iu.formula <= 3u) {
+            nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
+        }
+        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, 0.0);
     } else {
         // df32 perturbation (mode 0): the fast path for the common deep range. Valid
         // until the df32 δ's f32 exponent underflows (~1e30×); deeper zoom uses mode 2.
@@ -467,12 +541,21 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
         var dz: Cdf;
         var dc: Cdf;
         if (iu.julia == 1u) { dz = pert; dc = zero; } else { dz = zero; dc = pert; }
+        // Derivative in floatexp (grows past f32 range at depth), for DE lighting.
+        var D: Fe;
+        if (iu.julia == 1u) { D = fe_one(); } else { D = fe_zero(); }
         var ref_n: u32 = 0u;
         var power_f = 2.0;
         loop {
             if (iter >= iu.max_iter) { break; }
             let r = reference[ref_n];
             let z = cset(vec2<f32>(r.x, r.z), vec2<f32>(r.y, r.w));
+            if (iu.formula <= 3u) {
+                let zfn = vec2<f32>(r.x + dz.re.x, r.y + dz.im.x); // full z_n
+                let fp = deriv_factor(iu.formula, zfn);
+                D = fe_mul_c(D, fp.x, fp.y);
+                if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
+            }
             if (iu.formula == 1u) {
                 power_f = 3.0;
                 let z2 = c_sqr(z); let dz2 = c_sqr(dz); let dz3 = c_mul(dz2, dz);
@@ -524,7 +607,11 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
-        return vec4<f32>(f32(iter) + 1.0 - nu, 0.0, 0.0, 1.0);
+        var nrm = vec2<f32>(0.0, 0.0);
+        if (iu.formula <= 3u) {
+            nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
+        }
+        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, 0.0);
     }
 }
 
@@ -534,6 +621,10 @@ struct ColorU {
     cycle: f32,
     offset: f32,
     ss: u32, // supersampling factor (iteration texture is screen × ss)
+    light: u32,        // 0 = off, 1 = slope/relief lighting
+    light_angle: f32,  // radians
+    light_height: f32, // relief strength
+    _pad: u32,
     stops: array<vec4<f32>, 8>, // rgb + position
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
@@ -570,8 +661,10 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let pix = vec2<i32>(uv * vec2<f32>(screen_dim)); // screen pixel index
     let maxc = vec2<i32>(tex_dim) - vec2<i32>(1, 1);
 
-    // Average the ss×ss block of iteration samples covering this pixel (SSAA).
+    // Average the ss×ss block of iteration samples covering this pixel (SSAA),
+    // accumulating the slope normal too (for distance-estimate relief lighting).
     var acc = vec3<f32>(0.0);
+    var nacc = vec2<f32>(0.0);
     var count = 0.0;
     for (var dj: u32 = 0u; dj < ss; dj = dj + 1u) {
         for (var di: u32 = 0u; di < ss; di = di + 1u) {
@@ -580,9 +673,23 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
                 vec2<i32>(0, 0),
                 maxc,
             );
-            acc = acc + shade(textureLoad(iter_tex, texel, 0).r);
+            let t = textureLoad(iter_tex, texel, 0);
+            acc = acc + shade(t.r);
+            nacc = nacc + vec2<f32>(t.g, t.b);
             count = count + 1.0;
         }
     }
-    return vec4<f32>(acc / count, 1.0);
+    var col = acc / count;
+    // Distance-estimate relief lighting: light the surface whose normal is the
+    // averaged slope. `light_height` raises the ambient floor (smaller = sharper).
+    if (cu.light == 1u) {
+        let n = nacc / count;
+        if (dot(n, n) > 1.0e-12) {
+            let ld = vec2<f32>(cos(cu.light_angle), sin(cu.light_angle));
+            let diff = dot(normalize(n), ld);
+            let lam = clamp((diff + cu.light_height) / (1.0 + cu.light_height), 0.0, 1.0);
+            col = col * lam;
+        }
+    }
+    return vec4<f32>(col, 1.0);
 }
