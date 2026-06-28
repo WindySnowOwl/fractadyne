@@ -315,27 +315,6 @@ fn step_bf(
     }
 }
 
-/// `f64` version of [`step_bf`] for cheap reference ranking.
-fn step_f64(zx: f64, zy: f64, cx: f64, cy: f64, formula: u32) -> (f64, f64) {
-    match formula {
-        1 => {
-            let (sx, sy) = (zx * zx - zy * zy, 2.0 * zx * zy);
-            (sx * zx - sy * zy + cx, sx * zy + sy * zx + cy)
-        }
-        2 => {
-            let (sx, sy) = (zx * zx - zy * zy, 2.0 * zx * zy);
-            (sx * sx - sy * sy + cx, 2.0 * sx * sy + cy)
-        }
-        3 => {
-            let (sx, sy) = (zx * zx - zy * zy, 2.0 * zx * zy);
-            let (qx, qy) = (sx * sx - sy * sy, 2.0 * sx * sy);
-            (qx * zx - qy * zy + cx, qx * zy + qy * zx + cy)
-        }
-        4 => (zx * zx - zy * zy + cx, -2.0 * zx * zy + cy),
-        _ => (zx * zx - zy * zy + cx, 2.0 * zx * zy + cy),
-    }
-}
-
 /// Compute the **orbit** of a point in `f64`, for the interactive orbit overlay.
 /// Mirrors the shader's direct iteration per `formula` (ids match `formula_id`).
 /// Returns the successive iterates `z₀, z₁, …` (including the start) until the
@@ -437,21 +416,37 @@ pub fn reference_orbit(
     (out, len)
 }
 
-/// Iterations before escape (or `max_iter`) in f64 — ranks candidate references.
-fn orbit_length(z0x: f64, z0y: f64, cx: f64, cy: f64, formula: u32, max_iter: u32) -> u32 {
-    let (mut zx, mut zy) = (z0x, z0y);
+/// Iterations before escape (or `max_iter`) in **arbitrary precision** — ranks
+/// candidate references at deep zoom, where `orbit_length`'s `f64` coordinates would
+/// all collapse to the same value and make the ranking meaningless.
+#[allow(clippy::too_many_arguments)]
+fn orbit_length_bf(
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> u32 {
+    let (mut zx, mut zy) = (z0x.clone(), z0y.clone());
     let mut n = 0u32;
     while n < max_iter {
-        let (nzx, nzy) = step_f64(zx, zy, cx, cy, formula);
+        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
         zx = nzx;
         zy = nzy;
         n += 1;
-        if zx * zx + zy * zy > 1.0e12 {
+        let (xv, yv) = (to_f64(&zx), to_f64(&zy));
+        if xv * xv + yv * yv > 1.0e12 {
             break;
         }
     }
     n
 }
+
+/// Iteration cap for reference-candidate scoring (surviving this long ⇒ great
+/// reference; bounds the cost of the 5×5 bignum search).
+const REF_SCORE_SCAN: u32 = 4096;
 
 /// Pick a reference within the view with the longest orbit (prefers an interior
 /// point). For a Julia view, candidates are `Z₀` values with the fixed `julia_c`;
@@ -466,16 +461,24 @@ pub fn best_reference(
     max_iter: u32,
     p: usize,
 ) -> [BigFloat; 2] {
-    let score = |px: f64, py: f64| -> u32 {
+    // Score candidates by orbit length in **bignum** (f64 coords collapse to the same
+    // value at deep zoom, which broke reference selection on cold jumps like bookmark
+    // reloads). Cap the scan: a point surviving this many iterations is already an
+    // excellent reference, and rebasing covers the rest — keeps the 5×5 search cheap.
+    let scan = max_iter.min(REF_SCORE_SCAN);
+    let jcx = bf(julia_c[0], p);
+    let jcy = bf(julia_c[1], p);
+    let zero = bf(0.0, p);
+    let score = |zx: &BigFloat, zy: &BigFloat| -> u32 {
         if julia {
-            orbit_length(px, py, julia_c[0], julia_c[1], formula, max_iter)
+            orbit_length_bf(zx, zy, &jcx, &jcy, formula, scan, p)
         } else {
-            orbit_length(0.0, 0.0, px, py, formula, max_iter)
+            orbit_length_bf(&zero, &zero, zx, zy, formula, scan, p)
         }
     };
     let mut best = [center[0].clone(), center[1].clone()];
-    let mut best_len = score(to_f64(&center[0]), to_f64(&center[1]));
-    if best_len >= max_iter {
+    let mut best_len = score(&center[0], &center[1]);
+    if best_len >= scan {
         return best;
     }
     const N: usize = 5;
@@ -485,11 +488,11 @@ pub fn best_reference(
             let fy = (j as f64 + 0.5) / N as f64 - 0.5;
             let px = center[0].add(&bf(fx * span[0], p), p, RM);
             let py = center[1].add(&bf(fy * span[1], p), p, RM);
-            let len = score(to_f64(&px), to_f64(&py));
+            let len = score(&px, &py);
             if len > best_len {
                 best_len = len;
                 best = [px, py];
-                if best_len >= max_iter {
+                if best_len >= scan {
                     return best;
                 }
             }
@@ -509,6 +512,36 @@ mod tests {
 
     fn approx(a: f64, b: f64) {
         assert!((a - b).abs() < 1e-9, "{a} !≈ {b}");
+    }
+
+    // Two centers differing only at the ~34th significant digit must remain distinct
+    // after parse_bf — i.e. parsing preserves deep digits (not truncated to f64).
+    #[test]
+    fn parse_bf_preserves_deep_digits() {
+        let s1 = "-0.7436438870371587047521915061147707";
+        let s2 = "-0.7436438870371587047521915061147000"; // differ ~digit 31
+        let a = parse_bf(s1).unwrap();
+        let b = parse_bf(s2).unwrap();
+        let diff = to_f64(&a.sub(&b, 256, RM)).abs();
+        assert!(
+            diff > 1e-40,
+            "parse_bf collapsed deep digits (diff={diff:e}) — bookmarks/exports would \
+             lose the location at deep zoom"
+        );
+    }
+
+    // Full round-trip: a deep center → decimal string → back must reproduce it to far
+    // below any pixel size reachable at practical zoom. (`to_decimal_string` caps the
+    // digit count, so it's not bit-exact, but the residual is ~1e-79 here — sub-pixel
+    // even past ~1e60×, so bookmarks/exports restore the location, not a nearby zone.)
+    #[test]
+    fn center_string_roundtrip_subpixel() {
+        let s = "-0.74364388703715870475219150611477078529733293886840544098878";
+        let a = parse_bf(s).unwrap();
+        let b = parse_bf(&to_decimal_string(&a)).unwrap();
+        let diff = to_f64(&a.sub(&b, 512, RM)).abs();
+        // 1e-50 ≈ one pixel at ~1e47× (1000-px wide); we expect far better (~1e-79).
+        assert!(diff < 1e-50, "center string round-trip too lossy (diff={diff:e})");
     }
 
     #[test]

@@ -126,7 +126,11 @@ perturbation + series approximation + glitch correction. The headline feature.
 - [x] **Perturbation pipeline** — CPU reference orbit (`f64`) → per-pixel `δz` on
       the GPU. Verified live; pushes usable zoom well past the `f32`-direct limit.
 - [x] **Reference picker** — choose a long-orbit/interior reference within the view
-      (`best_reference`); fixed the short-orbit interior artifacts.
+      (`best_reference`); fixed the short-orbit interior artifacts. **Now scores
+      candidates in bignum** (`orbit_length_bf`, capped) — f64 scoring collapsed at deep
+      zoom and made cold jumps (bookmark reload / Open view / `--render`) pick a poor
+      reference → uniform/glitch. Added BigFloat string round-trip tests (the bookmark
+      coordinate round-trips to ~1e-79, so it was never a precision problem).
 - [x] **Rebasing** (Zhuoran) — single-reference glitch handling; killed the on-zoom
       speckle and self-heals short references.
 - [x] **Supersampling (SSAA)** — Anti-alias control (Off / 2× / 3×); averages an

@@ -56,6 +56,15 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Fixed (post-baseline, this session)
 
+- **Uniform/blank render after a cold jump to deep zoom (bookmark reload, Open view,
+  `--render`)** — `best_reference` ranked candidate reference points using `f64`
+  coordinates, which all collapse to the same value at deep zoom, so the search
+  defaulted to the view center; if that sat in a fast-escape gap it was a poor
+  reference → glitchy/uniform. Gradual zoom hid this by carrying a good reference
+  chosen at shallower depth. Reference candidates are now scored in **arbitrary
+  precision** (`orbit_length_bf`, scan-capped), so cold jumps find a good reference at
+  any depth. (Confirmed the bookmark *coordinate* itself round-trips to ~1e-79 — far
+  sub-pixel — so it was never an imprecision; added round-trip tests as guards.)
 - **Soft "impressionist" frames while zooming deep** — the high-precision reference
   orbit was only refreshed once the view *settled*, so during motion a stale /
   out-of-view / under-precise reference made the perturbation blotchy until you paused.
