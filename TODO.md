@@ -400,8 +400,12 @@ for fun, informative value, and ease of use.
       Coloring panel: "Distance glow" toggle + Glow strength + Band width + "Animate glow"
       (flows the bands, shares the Speed slider). `--de` CLI; persisted. Works direct +
       perturbation (verified at 1e8×).
-- [ ] **More coloring methods** — orbit traps (point/line/shape), stripe / triangle-
-      inequality average (TIA), interior coloring, histogram/equalized auto-coloring.
+- [x] **More coloring methods** — Coloring → "Method": stripe average (+ density),
+      triangle-inequality average (TIA), orbit trap (point/cross/circle, colors interior),
+      distance estimate, and decomposition. Orbit stats accumulate into a second GPU
+      render target (only when a method needs it); works at any depth (direct + both
+      perturbation paths). Persisted; `--method/--stripe-freq/--trap` CLI. *(Follow-up:
+      histogram/equalized auto-coloring still open.)*
 - [x] **Goto-location dialog + navigation undo/redo** — View → "Go to location…":
       view/edit/paste/copy the exact center (full precision) + zoom, with validation.
       Navigation history records each settled location (+ discrete jumps); **Backspace**

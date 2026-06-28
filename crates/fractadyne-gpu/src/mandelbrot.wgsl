@@ -275,13 +275,84 @@ struct IterU {
     formula: u32,          // escape-time formula id (see fs_iterate)
     julia: u32,            // 0 = Mandelbrot mode (z0=0, c=pixel), 1 = Julia (z0=pixel, c=const)
     delta_exp: i32,        // shared base-2 exponent of the δ mantissas (step / ref_offset)
+    color_method: u32,     // selected coloring method (drives whether aux is accumulated)
+    stripe_freq: f32,      // stripe-average angular frequency
+    trap_type: u32,        // 0 = point, 1 = cross, 2 = unit circle
+    aux_on: u32,           // 1 = accumulate orbit statistics into the aux target
+    _pad: vec2<u32>,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo).
 @group(0) @binding(1) var<storage, read> reference: array<vec4<f32>>;
 
+// Two render targets: `main` = (smooth iter, normal.x, normal.y, DE log2);
+// `aux` = (stripe average, triangle-inequality average, orbit-trap distance,
+// decomposition angle) — orbit statistics for the extra coloring methods.
+struct FragOut {
+    @location(0) main: vec4<f32>,
+    @location(1) aux: vec4<f32>,
+};
+
+// Running orbit statistics, accumulated per iteration when `aux_on`.
+struct Aux {
+    sac_sum: f32,  // Σ stripe terms
+    sac_prev: f32, // Σ stripe terms excluding the last (for smooth blending)
+    tia_sum: f32,  // Σ triangle-inequality terms
+    tia_prev: f32,
+    n: f32,        // term count
+    prev_abs: f32, // |z| of the previous iteration (TIA needs it)
+    trap: f32,     // min orbit-trap distance so far
+};
+fn aux_init(z0: vec2<f32>) -> Aux {
+    var a: Aux;
+    a.sac_sum = 0.0; a.sac_prev = 0.0;
+    a.tia_sum = 0.0; a.tia_prev = 0.0;
+    a.n = 0.0; a.prev_abs = length(z0); a.trap = 1.0e30;
+    return a;
+}
+// Fold one orbit point z into the running statistics.
+fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
+    let cur_abs = length(zf);
+    // Orbit trap: nearest approach to a shape (point / axes-cross / unit circle).
+    var d: f32;
+    if (iu.trap_type == 1u) { d = min(abs(zf.x), abs(zf.y)); }
+    else if (iu.trap_type == 2u) { d = abs(cur_abs - 1.0); }
+    else { d = cur_abs; }
+    (*a).trap = min((*a).trap, d);
+    // Stripe average: smooth orbit average of a sinusoid of the argument.
+    let term = 0.5 + 0.5 * sin(iu.stripe_freq * atan2(zf.y, zf.x));
+    (*a).sac_prev = (*a).sac_sum;
+    (*a).sac_sum = (*a).sac_sum + term;
+    // Triangle-inequality average: where |z_{n+1}| sits between ||z_n|^p − |c|| and
+    // |z_n|^p + |c|. Needs a valid previous |z|.
+    if ((*a).n >= 1.0) {
+        let m = pow(max((*a).prev_abs, 1.0e-12), power_f);
+        let lower = abs(m - cmag);
+        let upper = m + cmag;
+        let tt = clamp((cur_abs - lower) / max(upper - lower, 1.0e-9), 0.0, 1.0);
+        (*a).tia_prev = (*a).tia_sum;
+        (*a).tia_sum = (*a).tia_sum + tt;
+    }
+    (*a).prev_abs = cur_abs;
+    (*a).n = (*a).n + 1.0;
+}
+// Pack the accumulated statistics into the aux target. `frac` is the fractional part
+// of the smooth iteration count (blends the last two averages for a continuous result).
+fn aux_pack(a: Aux, frac: f32, zf: vec2<f32>) -> vec4<f32> {
+    let sac_avg = a.sac_sum / max(a.n, 1.0);
+    let sac_prev = a.sac_prev / max(a.n - 1.0, 1.0);
+    let stripe = mix(sac_prev, sac_avg, frac);
+    let tn = max(a.n - 1.0, 1.0);
+    let tia_avg = a.tia_sum / tn;
+    let tia_prev = a.tia_prev / max(a.n - 2.0, 1.0);
+    let tia = mix(tia_prev, tia_avg, frac);
+    let decomp = atan2(zf.y, zf.x) * 0.15915494 + 0.5; // angle → 0..1
+    return vec4<f32>(stripe, tia, a.trap, decomp);
+}
+const AUX_NONE: vec4<f32> = vec4<f32>(0.0, 0.0, 1.0e30, 0.0);
+
 @fragment
-fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_iterate(in: VsOut) -> FragOut {
     // Pixel offset from the view center, from the *exact integer* texel coordinate
     // (in.pos is the texel center = integer + 0.5, exact in f32 up to 2^24) times
     // the df32 per-texel step.
@@ -332,6 +403,8 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
         let one = cset(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 0.0));
         var dz: Cdf;
         if (iu.julia == 1u) { dz = one; } else { dz = cset(zero, zero); }
+        let cmag = length(vec2<f32>(c.re.x, c.im.x));
+        var aux = aux_init(vec2<f32>(z.re.x, z.im.x));
         loop {
             if (iter >= iu.max_iter) { break; }
             if (newton) {
@@ -404,25 +477,29 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
                 z = zn;
                 iter = iter + 1u;
                 zf = vec2<f32>(z.re.x, z.im.x);
+                if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
                 if (dot(zf, zf) > bail2) { escaped = true; break; }
             }
         }
         if (!escaped) {
-            return vec4<f32>(-1.0, 0.0, 0.0, 1.0e30);
+            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
+            return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         if (newton) {
             // Color by convergence speed (iteration count).
-            return vec4<f32>(f32(iter), 0.0, 0.0, 1.0e30);
+            return FragOut(vec4<f32>(f32(iter), 0.0, 0.0, 1.0e30), AUX_NONE);
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+        let smit = f32(iter) + 1.0 - nu;
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
         if (iu.formula <= 3u) {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
             de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
         }
-        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, de);
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
         // i32 exponent), so the deviation never underflows f32 → unlimited depth. ~1.7×
@@ -446,6 +523,13 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
         // Derivative dz/dc (Mandelbrot) or dz/dz0 (Julia) in floatexp, for DE lighting.
         var D: Fe;
         if (iu.julia == 1u) { D = fe_one(); } else { D = fe_zero(); }
+        let cmag = select(
+            length(vec2<f32>(iu.center.x, iu.center.y)),
+            length(vec2<f32>(iu.julia_c.x, iu.julia_c.y)),
+            iu.julia == 1u,
+        );
+        let r0i = reference[0];
+        var aux = aux_init(vec2<f32>(r0i.x, r0i.y));
         var ref_n: u32 = 0u;
         var power_f = 2.0;
         loop {
@@ -519,6 +603,7 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
             let rn = reference[ref_n];
             let dzf = fe_lo_f32(dz);
             zf = vec2<f32>(rn.x + dzf.x, rn.y + dzf.y);
+            if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
             let z2 = dot(zf, zf);
             if (z2 > bail2) { escaped = true; break; }
 
@@ -535,17 +620,20 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
             }
         }
         if (!escaped) {
-            return vec4<f32>(-1.0, 0.0, 0.0, 1.0e30);
+            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
+            return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+        let smit = f32(iter) + 1.0 - nu;
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
         if (iu.formula <= 3u) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
-        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, de);
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else {
         // df32 perturbation (mode 0): the fast path for the common deep range. Valid
         // until the df32 δ's f32 exponent underflows (~1e30×); deeper zoom uses mode 2.
@@ -562,6 +650,13 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
         // Derivative in floatexp (grows past f32 range at depth), for DE lighting.
         var D: Fe;
         if (iu.julia == 1u) { D = fe_one(); } else { D = fe_zero(); }
+        let cmag = select(
+            length(vec2<f32>(iu.center.x, iu.center.y)),
+            length(vec2<f32>(iu.julia_c.x, iu.julia_c.y)),
+            iu.julia == 1u,
+        );
+        let r0i = reference[0];
+        var aux = aux_init(vec2<f32>(r0i.x, r0i.y));
         var ref_n: u32 = 0u;
         var power_f = 2.0;
         loop {
@@ -608,6 +703,7 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
             let zr_full = df_add(vec2<f32>(rn.x, rn.z), dz.re);
             let zi_full = df_add(vec2<f32>(rn.y, rn.w), dz.im);
             zf = vec2<f32>(zr_full.x, zi_full.x);
+            if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
             let z2 = dot(zf, zf);
             if (z2 > bail2) { escaped = true; break; }
             let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
@@ -621,17 +717,20 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
             }
         }
         if (!escaped) {
-            return vec4<f32>(-1.0, 0.0, 0.0, 1.0e30);
+            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
+            return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+        let smit = f32(iter) + 1.0 - nu;
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
         if (iu.formula <= 3u) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
-        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, de);
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
 }
 
@@ -648,11 +747,12 @@ struct ColorU {
     de_strength: f32,  // glow blend amount (0..1)
     de_width: f32,     // distance-contour spacing (octaves per band)
     de_phase: f32,     // animated phase (cycles the glow bands)
-    _pad: u32,
+    color_method: u32, // 0 smooth, 1 stripe, 2 triangle-ineq, 3 orbit-trap, 4 distance, 5 decomposition
     stops: array<vec4<f32>, 8>, // rgb + position
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
+@group(0) @binding(2) var aux_tex: texture_2d<f32>;
 
 fn palette(t_in: f32) -> vec3<f32> {
     let t = fract(t_in);
@@ -669,11 +769,30 @@ fn palette(t_in: f32) -> vec3<f32> {
     return col;
 }
 
-fn shade(v: f32) -> vec3<f32> {
-    if (v < 0.0) {
-        return vec3<f32>(0.02, 0.02, 0.03); // interior
+const INTERIOR_COL: vec3<f32> = vec3<f32>(0.02, 0.02, 0.03);
+
+// Map one texel (main + aux statistics) to a color, per the selected method.
+// `m` = (smooth iter, normal.x, normal.y, DE log2); `a` = (stripe, TIA, trap, decomp).
+fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
+    var pv: f32;
+    var interior: bool = (m.r < 0.0);
+    if (cu.color_method == 1u) {
+        pv = a.r;                                  // stripe average (0..1)
+    } else if (cu.color_method == 2u) {
+        pv = a.g;                                  // triangle-inequality average (0..1)
+    } else if (cu.color_method == 3u) {
+        interior = false;                          // orbit trap colors interior too
+        pv = -log2(max(a.b, 1.0e-20));             // nearer approach → larger value
+    } else if (cu.color_method == 4u) {
+        interior = (m.a > 1.0e20);                 // DE unavailable → interior
+        pv = m.a;                                  // distance estimate (log2 pixels)
+    } else if (cu.color_method == 5u) {
+        pv = a.a;                                  // decomposition angle (0..1)
+    } else {
+        pv = m.r;                                  // smooth iteration count
     }
-    return palette(v * cu.cycle + cu.offset);
+    if (interior) { return INTERIOR_COL; }
+    return palette(pv * cu.cycle + cu.offset);
 }
 
 @fragment
@@ -699,7 +818,8 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
                 maxc,
             );
             let t = textureLoad(iter_tex, texel, 0);
-            acc = acc + shade(t.r);
+            let ta = textureLoad(aux_tex, texel, 0);
+            acc = acc + shade(t, ta);
             nacc = nacc + vec2<f32>(t.g, t.b);
             dacc = dacc + t.a;
             count = count + 1.0;

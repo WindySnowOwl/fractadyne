@@ -31,6 +31,10 @@ struct IterUniforms {
     formula: u32, // escape-time formula id
     julia: u32,   // 0 = Mandelbrot mode, 1 = Julia mode
     delta_exp: i32, // shared base-2 exponent of the δ mantissas (step / ref_offset)
+    color_method: u32, // selected coloring method (drives aux accumulation)
+    stripe_freq: f32,  // stripe-average angular frequency
+    trap_type: u32,    // orbit-trap shape: 0 point, 1 cross, 2 circle
+    aux_on: u32,       // 1 = accumulate orbit statistics into the aux target
     _pad: [u32; 2],
 }
 
@@ -48,7 +52,7 @@ struct ColorUniforms {
     de_strength: f32,
     de_width: f32,
     de_phase: f32,
-    _pad: u32,
+    color_method: u32,
     stops: [[f32; 4]; 8],
 }
 
@@ -66,6 +70,9 @@ struct IterKey {
     formula: u32,
     julia: u32,
     delta_exp: i32,
+    color_method: u32,
+    stripe_freq: f32,
+    trap_type: u32,
 }
 
 /// Per-view GPU resources (one set per on-screen panel, keyed by `view_id`). Each
@@ -79,6 +86,7 @@ struct ViewResources {
     orbit_cap: u32,
     color_bg: wgpu::BindGroup,
     tex_view: wgpu::TextureView,
+    aux_view: wgpu::TextureView,
     size: [u32; 2],
     last_orbit_id: u64,
     last_iter_key: Option<IterKey>,
@@ -140,6 +148,7 @@ fn make_color_bg(
     layout: &wgpu::BindGroupLayout,
     color_uniform: &wgpu::Buffer,
     tex_view: &wgpu::TextureView,
+    aux_view: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fractadyne.color_bg"),
@@ -150,6 +159,10 @@ fn make_color_bg(
                 binding: 1,
                 resource: wgpu::BindingResource::TextureView(tex_view),
             },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(aux_view),
+            },
         ],
     })
 }
@@ -159,9 +172,19 @@ fn fullscreen_pipeline(
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     fs_entry: &str,
-    format: wgpu::TextureFormat,
+    formats: &[wgpu::TextureFormat],
     label: &str,
 ) -> wgpu::RenderPipeline {
+    let targets: Vec<Option<wgpu::ColorTargetState>> = formats
+        .iter()
+        .map(|&format| {
+            Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })
+        })
+        .collect();
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
@@ -174,11 +197,7 @@ fn fullscreen_pipeline(
         fragment: Some(wgpu::FragmentState {
             module: shader,
             entry_point: Some(fs_entry),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
+            targets: &targets,
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState::default(),
@@ -224,21 +243,19 @@ impl Renderer {
             ],
         });
 
+        let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
         let color_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("fractadyne.color_bgl"),
-            entries: &[
-                uniform_entry,
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &[uniform_entry, tex_entry(1), tex_entry(2)],
         });
 
         let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -253,10 +270,12 @@ impl Renderer {
         });
 
         let iter_pipeline = fullscreen_pipeline(
-            device, &shader, &iter_layout, "fs_iterate", ITER_FORMAT, "fractadyne.iter_pipeline",
+            device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+            "fractadyne.iter_pipeline",
         );
         let color_pipeline = fullscreen_pipeline(
-            device, &shader, &color_layout, "fs_color", target_format, "fractadyne.color_pipeline",
+            device, &shader, &color_layout, "fs_color", &[target_format],
+            "fractadyne.color_pipeline",
         );
 
         Self {
@@ -294,7 +313,9 @@ impl ViewResources {
 
         let size = [1u32, 1u32];
         let tex_view = make_iter_texture(device, size);
-        let color_bg = make_color_bg(device, color_bgl, &color_uniform, &tex_view);
+        let aux_view = make_iter_texture(device, size);
+        let color_bg =
+            make_color_bg(device, color_bgl, &color_uniform, &tex_view, &aux_view);
 
         Self {
             iter_uniform,
@@ -304,6 +325,7 @@ impl ViewResources {
             orbit_cap,
             color_bg,
             tex_view,
+            aux_view,
             size,
             last_orbit_id: u64::MAX,
             last_iter_key: None,
@@ -317,7 +339,10 @@ impl ViewResources {
         size: [u32; 2],
     ) {
         self.tex_view = make_iter_texture(device, size);
-        self.color_bg = make_color_bg(device, color_bgl, &self.color_uniform, &self.tex_view);
+        self.aux_view = make_iter_texture(device, size);
+        self.color_bg = make_color_bg(
+            device, color_bgl, &self.color_uniform, &self.tex_view, &self.aux_view,
+        );
         self.size = size;
         self.last_iter_key = None;
     }
@@ -374,10 +399,20 @@ pub struct MandelbrotParams {
     pub de_strength: f32,
     pub de_width: f32,
     pub de_phase: f32,
+    /// Coloring method: 0 smooth, 1 stripe avg, 2 triangle-ineq, 3 orbit trap,
+    /// 4 distance, 5 decomposition. Methods 1/2/3/5 accumulate orbit statistics.
+    pub color_method: u32,
+    pub stripe_freq: f32,
+    pub trap_type: u32,
     pub resolution: [u32; 2],
     pub ss: u32,
     /// Which on-screen panel this is (distinct GPU resources per id).
     pub view_id: u32,
+}
+
+/// Whether a coloring method needs the per-iteration orbit statistics (aux target).
+fn method_needs_aux(method: u32) -> bool {
+    matches!(method, 1 | 2 | 3 | 5)
 }
 
 impl CallbackTrait for MandelbrotParams {
@@ -438,7 +473,7 @@ impl CallbackTrait for MandelbrotParams {
             de_strength: self.de_strength,
             de_width: self.de_width,
             de_phase: self.de_phase,
-            _pad: 0,
+            color_method: self.color_method,
             stops: self.stops,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
@@ -464,6 +499,9 @@ impl CallbackTrait for MandelbrotParams {
             formula: self.formula,
             julia: self.julia,
             delta_exp: self.delta_exp,
+            color_method: self.color_method,
+            stripe_freq: self.stripe_freq,
+            trap_type: self.trap_type,
         };
         if view.last_iter_key != Some(key) {
             // Per-texel step *mantissa*: (span / texture dim) scaled by 2^-delta_exp so
@@ -488,20 +526,25 @@ impl CallbackTrait for MandelbrotParams {
                 formula: self.formula,
                 julia: self.julia,
                 delta_exp: self.delta_exp,
+                color_method: self.color_method,
+                stripe_freq: self.stripe_freq,
+                trap_type: self.trap_type,
+                aux_on: method_needs_aux(self.color_method) as u32,
                 _pad: [0; 2],
             };
             queue.write_buffer(&view.iter_uniform, 0, bytemuck::bytes_of(&iu));
             {
+                let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                });
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("fractadyne.iterate_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view.tex_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
+                    color_attachments: &[attach(&view.tex_view), attach(&view.aux_view)],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
@@ -575,6 +618,9 @@ pub struct ExportRequest {
     pub de_strength: f32,
     pub de_width: f32,
     pub de_phase: f32,
+    pub color_method: u32,
+    pub stripe_freq: f32,
+    pub trap_type: u32,
 }
 
 /// The actual `(width, height)` an export produced after clamping to the GPU's
@@ -644,21 +690,19 @@ pub fn render_export(
             },
         ],
     });
+    let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
     let color_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("export.color_bgl"),
-        entries: &[
-            uniform_entry,
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-        ],
+        entries: &[uniform_entry, tex_entry(1), tex_entry(2)],
     });
     let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("export.iter_layout"),
@@ -671,10 +715,11 @@ pub fn render_export(
         push_constant_ranges: &[],
     });
     let iter_pipeline = fullscreen_pipeline(
-        device, &shader, &iter_layout, "fs_iterate", ITER_FORMAT, "export.iter_pipeline",
+        device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+        "export.iter_pipeline",
     );
     let color_pipeline = fullscreen_pipeline(
-        device, &shader, &color_layout, "fs_color", EXPORT_FORMAT, "export.color_pipeline",
+        device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "export.color_pipeline",
     );
 
     let uniform = |label, size| {
@@ -708,7 +753,7 @@ pub fn render_export(
         de_strength: req.de_strength,
         de_width: req.de_width,
         de_phase: req.de_phase,
-        _pad: 0,
+        color_method: req.color_method,
         stops: req.stops,
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
@@ -753,11 +798,16 @@ pub fn render_export(
                 formula: req.formula,
                 julia: req.julia,
                 delta_exp: req.delta_exp,
+                color_method: req.color_method,
+                stripe_freq: req.stripe_freq,
+                trap_type: req.trap_type,
+                aux_on: method_needs_aux(req.color_method) as u32,
                 _pad: [0; 2],
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
             let iter_view = make_iter_texture(device, [iw, ih]);
+            let aux_view = make_iter_texture(device, [iw, ih]);
             let color_tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("export.color_tex"),
                 size: wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
@@ -769,7 +819,8 @@ pub fn render_export(
                 view_formats: &[],
             });
             let color_view = color_tex.create_view(&wgpu::TextureViewDescriptor::default());
-            let color_bg = make_color_bg(device, &color_bgl, &color_uniform, &iter_view);
+            let color_bg =
+                make_color_bg(device, &color_bgl, &color_uniform, &iter_view, &aux_view);
 
             let unpadded_bpr = tw * bpp;
             let padded_bpr = unpadded_bpr.div_ceil(align) * align;
@@ -784,16 +835,17 @@ pub fn render_export(
                 label: Some("export.encoder"),
             });
             {
+                let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                });
                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("export.iter_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &iter_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
+                    color_attachments: &[attach(&iter_view), attach(&aux_view)],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,

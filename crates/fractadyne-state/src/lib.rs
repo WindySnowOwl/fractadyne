@@ -74,6 +74,16 @@ pub struct SessionState {
     pub de_width: f32,
     #[serde(default)]
     pub de_anim: bool,
+    /// Coloring method: "smooth" | "stripe" | "triangle" | "trap" | "distance" |
+    /// "decomposition".
+    #[serde(default = "default_color_method")]
+    pub color_method: String,
+    /// Stripe-average angular frequency (method = "stripe").
+    #[serde(default = "default_stripe_freq")]
+    pub stripe_freq: f32,
+    /// Orbit-trap shape: "point" | "cross" | "circle" (method = "trap").
+    #[serde(default = "default_trap_type")]
+    pub trap_type: String,
 }
 
 fn default_zoom_rate() -> f32 {
@@ -128,6 +138,18 @@ fn default_de_width() -> f32 {
     1.0
 }
 
+fn default_color_method() -> String {
+    "smooth".to_string()
+}
+
+fn default_stripe_freq() -> f32 {
+    6.0
+}
+
+fn default_trap_type() -> String {
+    "point".to_string()
+}
+
 impl Default for SessionState {
     fn default() -> Self {
         Self {
@@ -159,6 +181,9 @@ impl Default for SessionState {
             de_strength: default_de_strength(),
             de_width: default_de_width(),
             de_anim: false,
+            color_method: default_color_method(),
+            stripe_freq: default_stripe_freq(),
+            trap_type: default_trap_type(),
         }
     }
 }

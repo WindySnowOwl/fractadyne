@@ -24,13 +24,23 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **More coloring methods** — a Coloring → "Method" picker beyond smooth iteration:
+  **stripe average** (flowing sinusoidal orbit bands, with a density slider),
+  **triangle-inequality average**, **orbit trap** (point / cross / circle shapes, colors
+  the interior too), **distance estimate** (shades by proximity to the boundary), and
+  **decomposition** (binary external-angle cells). Orbit statistics are accumulated on
+  the GPU into a second render target (added only when a method needs it, so smooth/
+  distance keep full speed) and work at any zoom depth (direct + both perturbation
+  paths). Persisted; CLI `--method NAME [--stripe-freq N] [--trap point|cross|circle]`.
+
 - **Go-to location dialog + navigation undo/redo** — View → "Go to location…" to
   view/edit/paste/copy the exact center (full precision) + zoom; navigation history
   records each settled location and discrete jumps, with Backspace = undo view,
   Shift+Backspace / Ctrl+Y = redo (and View-menu items). Keys are ignored while typing.
-- **Fractadyne branding & theme** — a dark "deep-space" UI theme with cyan/magenta
-  accents (selection, links, hovered widgets), a painted brand mark + wordmark in the
-  top bar, and a procedural window/taskbar icon.
+- **Fractadyne branding & theme** — a charcoal dark UI theme with amber (#E0A030)
+  accents (selection, links, hovered/active widgets), the two-color "Fracta·dyne"
+  logotype in the top bar, and a procedural amber-ring window/taskbar icon — matching
+  the `design/Fractadyne.dc.html` mockup.
 - **Animated 3D relief lighting** — "Rotate light" spins the relief light direction over
   time (shares the Speed slider), alongside the animated distance glow and palette cycling.
 

@@ -264,51 +264,61 @@ fn version_string() -> String {
     format!("{APP_VERSION} (build {BUILD_SEQ})")
 }
 
-// ---- Fractadyne branding ----
-/// Primary brand accent (cyan) and secondary (magenta) — used across the themed UI.
-const BRAND_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x3A, 0xD0, 0xE0);
-const BRAND_ACCENT2: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x7A, 0xC8);
+// ---- Fractadyne branding (matches design/Fractadyne.dc.html) ----
+/// Brand accent (amber #E0A030) + logotype text color (#E6E7EA). The wordmark is
+/// "Fracta" (text) + "dyne" (amber).
+const BRAND_ACCENT: egui::Color32 = egui::Color32::from_rgb(0xE0, 0xA0, 0x30);
+const BRAND_TEXT: egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE7, 0xEA);
 
-/// Apply the Fractadyne dark theme (deep-space panels + cyan accents).
+/// Apply the Fractadyne dark theme (charcoal panels + amber accents, per the design).
 fn apply_brand_theme(ctx: &egui::Context) {
     let mut v = egui::Visuals::dark();
-    let panel = egui::Color32::from_rgb(0x14, 0x19, 0x21);
-    let bg = egui::Color32::from_rgb(0x0C, 0x0F, 0x14);
+    let panel = egui::Color32::from_rgb(0x1A, 0x1B, 0x1E);
     v.panel_fill = panel;
     v.window_fill = panel;
-    v.extreme_bg_color = bg;
-    v.faint_bg_color = egui::Color32::from_rgb(0x1A, 0x20, 0x2A);
+    v.extreme_bg_color = egui::Color32::from_rgb(0x10, 0x10, 0x15);
+    v.faint_bg_color = egui::Color32::from_rgb(0x23, 0x24, 0x28);
     v.hyperlink_color = BRAND_ACCENT;
-    v.selection.bg_fill = egui::Color32::from_rgb(0x1C, 0x5A, 0x64);
+    v.selection.bg_fill = egui::Color32::from_rgb(0x4A, 0x38, 0x14);
     v.selection.stroke = egui::Stroke::new(1.0, BRAND_ACCENT);
+    v.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(0x23, 0x24, 0x28);
+    v.widgets.inactive.bg_fill = egui::Color32::from_rgb(0x2C, 0x2E, 0x33);
+    v.widgets.hovered.bg_fill = egui::Color32::from_rgb(0x3A, 0x3D, 0x44);
+    v.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(0x3A, 0x3D, 0x44);
     v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, BRAND_ACCENT);
     v.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, BRAND_ACCENT);
+    v.widgets.active.bg_fill = egui::Color32::from_rgb(0x45, 0x49, 0x52);
     v.widgets.active.bg_stroke = egui::Stroke::new(1.0, BRAND_ACCENT);
+    v.widgets.open.bg_fill = egui::Color32::from_rgb(0x2C, 0x2E, 0x33);
     ctx.set_visuals(v);
 }
 
-/// Painted brand mark (a concentric "fractal eye") + wordmark, for the top bar.
-/// Painted rather than glyph-based so it renders identically on any font set.
+/// The two-color "Fractadyne" logotype (Fracta + amber dyne), for the top bar.
 fn brand_wordmark(ui: &mut egui::Ui) {
-    let h = ui.spacing().interact_size.y;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(h, h), egui::Sense::hover());
-    let p = ui.painter();
-    let c = rect.center();
-    let r = rect.height() * 0.42;
-    p.circle_stroke(c, r, egui::Stroke::new(2.0, BRAND_ACCENT));
-    p.circle_stroke(c, r * 0.6, egui::Stroke::new(1.5, BRAND_ACCENT2));
-    p.circle_filled(c, r * 0.2, BRAND_ACCENT);
-    ui.label(egui::RichText::new("Fractadyne").color(BRAND_ACCENT).strong());
+    let font = egui::FontId::proportional(15.0);
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        "Fracta",
+        0.0,
+        egui::TextFormat { font_id: font.clone(), color: BRAND_TEXT, ..Default::default() },
+    );
+    job.append(
+        "dyne",
+        0.0,
+        egui::TextFormat { font_id: font, color: BRAND_ACCENT, ..Default::default() },
+    );
+    ui.add_space(2.0);
+    ui.label(job);
 }
 
-/// Procedural window icon: concentric accent rings on a dark disc (transparent corners).
+/// Procedural window icon: concentric amber rings on a dark disc (transparent corners).
 fn brand_icon() -> egui::IconData {
     let n: u32 = 64;
     let mut rgba = vec![0u8; (n * n * 4) as usize];
     let center = (n as f32 - 1.0) * 0.5;
-    let acc = [0x3A_u8, 0xD0, 0xE0];
-    let acc2 = [0xE0_u8, 0x7A, 0xC8];
-    let bg = [0x0C_u8, 0x0F, 0x14];
+    let acc = [0xE0_u8, 0xA0, 0x30];
+    let acc2 = [0xFF_u8, 0xCB, 0x6B];
+    let bg = [0x10_u8, 0x10, 0x15];
     for y in 0..n {
         for x in 0..n {
             let dx = x as f32 - center;
@@ -335,6 +345,32 @@ fn brand_icon() -> egui::IconData {
         }
     }
     egui::IconData { rgba, width: n, height: n }
+}
+
+// ---- coloring-method <-> persisted-string mapping ----
+/// Coloring methods, in selection order (index = GPU `color_method` id).
+const COLOR_METHODS: [(&str, &str); 6] = [
+    ("smooth", "Smooth iteration"),
+    ("stripe", "Stripe average"),
+    ("triangle", "Triangle inequality"),
+    ("trap", "Orbit trap"),
+    ("distance", "Distance estimate"),
+    ("decomposition", "Decomposition"),
+];
+const TRAP_TYPES: [(&str, &str); 3] =
+    [("point", "Point"), ("cross", "Cross"), ("circle", "Circle")];
+
+fn method_from_str(s: &str) -> u32 {
+    COLOR_METHODS.iter().position(|(k, _)| *k == s).unwrap_or(0) as u32
+}
+fn method_to_str(m: u32) -> &'static str {
+    COLOR_METHODS.get(m as usize).map(|(k, _)| *k).unwrap_or("smooth")
+}
+fn trap_from_str(s: &str) -> u32 {
+    TRAP_TYPES.iter().position(|(k, _)| *k == s).unwrap_or(0) as u32
+}
+fn trap_to_str(t: u32) -> &'static str {
+    TRAP_TYPES.get(t as usize).map(|(k, _)| *k).unwrap_or("point")
 }
 
 /// "Zoom home" animation pacing: seconds per octave-ish of zoom-out, clamped so a
@@ -1256,6 +1292,11 @@ struct FractadyneApp {
     de_width: f32,
     de_anim: bool,
     de_phase: f32, // runtime (animated)
+    /// Coloring method (0 smooth, 1 stripe, 2 triangle-ineq, 3 orbit trap,
+    /// 4 distance, 5 decomposition) + its parameters.
+    color_method: u32,
+    stripe_freq: f32,
+    trap_type: u32,
     /// Auto-scale iteration count with zoom depth (else use `max_iter` as-is).
     auto_iter: bool,
     /// Continuous-zoom speed multiplier (1.0 = default `ZOOM_RATE`).
@@ -1403,6 +1444,9 @@ impl FractadyneApp {
             de_width: s.de_width,
             de_anim: s.de_anim,
             de_phase: 0.0,
+            color_method: method_from_str(&s.color_method),
+            stripe_freq: s.stripe_freq,
+            trap_type: trap_from_str(&s.trap_type),
             auto_iter: s.auto_iter,
             zoom_rate: s.zoom_rate,
             aa: s.aa,
@@ -1475,6 +1519,15 @@ impl FractadyneApp {
         if args.iter().any(|a| a == "--de") {
             self.de = true;
         }
+        if let Some(m) = val("--method") {
+            self.color_method = method_from_str(m);
+        }
+        if let Some(f) = val("--stripe-freq").and_then(|s| s.parse::<f32>().ok()) {
+            self.stripe_freq = f.clamp(1.0, 24.0);
+        }
+        if let Some(t) = val("--trap") {
+            self.trap_type = trap_from_str(t);
+        }
         // Output format from the file extension.
         if let Some(out) = &self.auto_render_out {
             if out.extension().and_then(|e| e.to_str()) == Some("exr") {
@@ -1526,6 +1579,9 @@ impl FractadyneApp {
             de_strength: self.de_strength,
             de_width: self.de_width,
             de_anim: self.de_anim,
+            color_method: method_to_str(self.color_method).to_string(),
+            stripe_freq: self.stripe_freq,
+            trap_type: trap_to_str(self.trap_type).to_string(),
         };
         let now = ctx.input(|i| i.time);
         if cur != self.last_state {
@@ -1686,7 +1742,7 @@ impl FractadyneApp {
             mode,
             formula: self.fractal.formula_id(),
             julia: julia as u32,
-            cycle: 0.004 + self.cycle * 0.06,
+            cycle: self.color_cycle(),
             offset: self.offset,
             stop_count,
             stops,
@@ -1697,6 +1753,9 @@ impl FractadyneApp {
             de_strength: self.de_strength,
             de_width: self.de_width,
             de_phase: self.de_phase,
+            color_method: self.color_method,
+            stripe_freq: self.stripe_freq,
+            trap_type: self.trap_type,
         }
     }
 
@@ -2305,7 +2364,7 @@ impl FractadyneApp {
             julia: julia as u32,
             span: [span_x, span_y],
             max_iter: gpu_iter,
-            cycle: 0.004 + self.cycle * 0.06,
+            cycle: self.color_cycle(),
             offset: self.offset,
             stop_count,
             stops,
@@ -2316,9 +2375,24 @@ impl FractadyneApp {
             de_strength: self.de_strength,
             de_width: self.de_width,
             de_phase: self.de_phase,
+            color_method: self.color_method,
+            stripe_freq: self.stripe_freq,
+            trap_type: self.trap_type,
             resolution,
             ss,
             view_id,
+        }
+    }
+
+    /// Palette-cycle scaling for the GPU. The bounded statistical methods (stripe /
+    /// triangle-inequality / decomposition) produce a 0..1 value, so they want a few
+    /// cycles across the palette; the unbounded ones (iteration / trap / distance) use
+    /// the fine per-unit scaling.
+    fn color_cycle(&self) -> f32 {
+        if matches!(self.color_method, 1 | 2 | 5) {
+            0.5 + self.cycle * 4.0
+        } else {
+            0.004 + self.cycle * 0.06
         }
     }
 
@@ -3640,6 +3714,35 @@ impl eframe::App for FractadyneApp {
 
                 ui.label(egui::RichText::new("COLORING").weak().small());
                 ui.add_space(4.0);
+                egui::ComboBox::from_label("Method")
+                    .selected_text(COLOR_METHODS[self.color_method as usize].1)
+                    .show_ui(ui, |ui| {
+                        for (i, (_, name)) in COLOR_METHODS.iter().enumerate() {
+                            ui.selectable_value(&mut self.color_method, i as u32, *name);
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "How escape data maps to color. Stripe / triangle-inequality / \
+                         orbit-trap / decomposition reveal orbit structure; distance \
+                         shades by proximity to the boundary.",
+                    );
+                if self.color_method == 1 {
+                    ui.add(
+                        egui::Slider::new(&mut self.stripe_freq, 1.0..=24.0)
+                            .text("Stripe density")
+                            .logarithmic(true),
+                    );
+                }
+                if self.color_method == 3 {
+                    egui::ComboBox::from_label("Trap shape")
+                        .selected_text(TRAP_TYPES[self.trap_type as usize].1)
+                        .show_ui(ui, |ui| {
+                            for (i, (_, name)) in TRAP_TYPES.iter().enumerate() {
+                                ui.selectable_value(&mut self.trap_type, i as u32, *name);
+                            }
+                        });
+                }
                 egui::ComboBox::from_label("Palette")
                     .selected_text(fractadyne_color::PRESETS[self.palette_idx].name)
                     .show_ui(ui, |ui| {
