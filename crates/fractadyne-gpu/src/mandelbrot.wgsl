@@ -237,6 +237,17 @@ fn fe_mul_c(a: Fe, zr: f32, zi: f32) -> Fe {
     let im = df_add(df_mul_f32(a.m.re, zi), df_mul_f32(a.m.im, zr));
     return fe_norm(cset(re, im), a.e);
 }
+// log2 of the distance estimate in *pixels*: de = |z|·ln|z| / |dz/dc|, then / step.
+//   |D| = sqrt(dmag2)·2^dexp ;  pixel step = |iu.step.x|·2^iu.delta_exp.
+// Returned as a log so the color pass can build animated distance contours cheaply.
+fn de_log2(z2: f32, dmag2: f32, dexp: f32) -> f32 {
+    let zm = sqrt(max(z2, 1.0));
+    let num = zm * log(zm); // |z|·ln|z|
+    let dlog2 = 0.5 * log2(max(dmag2, 1.0e-30)) + dexp;
+    let steplog = log2(max(abs(iu.step.x), 1.0e-30)) + f32(iu.delta_exp);
+    return log2(max(num, 1.0e-30)) - dlog2 - steplog;
+}
+
 // Derivative factor f'(z) = p·z^(p-1) for the holomorphic families (0..3), plain f32.
 fn deriv_factor(formula: u32, z: vec2<f32>) -> vec2<f32> {
     if (formula == 0u) { return 2.0 * z; }
@@ -397,16 +408,21 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
             }
         }
         if (!escaped) {
-            return vec4<f32>(-1.0, 0.0, 0.0, 1.0);
+            return vec4<f32>(-1.0, 0.0, 0.0, 1.0e30);
         }
         if (newton) {
             // Color by convergence speed (iteration count).
-            return vec4<f32>(f32(iter), 0.0, 0.0, 1.0);
+            return vec4<f32>(f32(iter), 0.0, 0.0, 1.0e30);
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
-        let nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
-        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, 0.0);
+        var nrm = vec2<f32>(0.0, 0.0);
+        var de = 1.0e30;
+        if (iu.formula <= 3u) {
+            nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
+            de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
+        }
+        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, de);
     } else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
         // i32 exponent), so the deviation never underflows f32 → unlimited depth. ~1.7×
@@ -519,15 +535,17 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
             }
         }
         if (!escaped) {
-            return vec4<f32>(-1.0, 0.0, 0.0, 1.0);
+            return vec4<f32>(-1.0, 0.0, 0.0, 1.0e30);
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
         var nrm = vec2<f32>(0.0, 0.0);
+        var de = 1.0e30;
         if (iu.formula <= 3u) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
+            de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
-        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, 0.0);
+        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, de);
     } else {
         // df32 perturbation (mode 0): the fast path for the common deep range. Valid
         // until the df32 δ's f32 exponent underflows (~1e30×); deeper zoom uses mode 2.
@@ -603,15 +621,17 @@ fn fs_iterate(in: VsOut) -> @location(0) vec4<f32> {
             }
         }
         if (!escaped) {
-            return vec4<f32>(-1.0, 0.0, 0.0, 1.0);
+            return vec4<f32>(-1.0, 0.0, 0.0, 1.0e30);
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
         var nrm = vec2<f32>(0.0, 0.0);
+        var de = 1.0e30;
         if (iu.formula <= 3u) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
+            de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
-        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, 0.0);
+        return vec4<f32>(f32(iter) + 1.0 - nu, nrm.x, nrm.y, de);
     }
 }
 
@@ -624,6 +644,10 @@ struct ColorU {
     light: u32,        // 0 = off, 1 = slope/relief lighting
     light_angle: f32,  // radians
     light_height: f32, // relief strength
+    de_on: u32,        // 0 = off, 1 = distance-estimate glow
+    de_strength: f32,  // glow blend amount (0..1)
+    de_width: f32,     // distance-contour spacing (octaves per band)
+    de_phase: f32,     // animated phase (cycles the glow bands)
     _pad: u32,
     stops: array<vec4<f32>, 8>, // rgb + position
 };
@@ -665,6 +689,7 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     // accumulating the slope normal too (for distance-estimate relief lighting).
     var acc = vec3<f32>(0.0);
     var nacc = vec2<f32>(0.0);
+    var dacc = 0.0;
     var count = 0.0;
     for (var dj: u32 = 0u; dj < ss; dj = dj + 1u) {
         for (var di: u32 = 0u; di < ss; di = di + 1u) {
@@ -676,6 +701,7 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             let t = textureLoad(iter_tex, texel, 0);
             acc = acc + shade(t.r);
             nacc = nacc + vec2<f32>(t.g, t.b);
+            dacc = dacc + t.a;
             count = count + 1.0;
         }
     }
@@ -689,6 +715,17 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             let diff = dot(normalize(n), ld);
             let lam = clamp((diff + cu.light_height) / (1.0 + cu.light_height), 0.0, 1.0);
             col = col * lam;
+        }
+    }
+    // Distance-estimate glow: bright contour bands at log-distance intervals from the
+    // boundary; they densify near the filaments (→ glow) and flow when `de_phase`
+    // animates. `de` channel carries log2(distance in pixels); ≥20 means "far"/none.
+    if (cu.de_on == 1u) {
+        let dl = dacc / count;
+        if (dl < 20.0) {
+            let phase = dl / max(cu.de_width, 0.05) - cu.de_phase;
+            let band = pow(0.5 + 0.5 * cos(phase * 6.2831853), 3.0);
+            col = mix(col, vec3<f32>(1.0), clamp(band * cu.de_strength, 0.0, 1.0));
         }
     }
     return vec4<f32>(col, 1.0);

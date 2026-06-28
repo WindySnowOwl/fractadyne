@@ -384,8 +384,13 @@ for fun, informative value, and ease of use.
       families (Mandelbrot / Multibrot 3/4/5). Iter texture now RGBA32F (r=iter,
       g/b=normal, a=reserved for DE); light angle/relief live in the color pass so they
       re-light without re-iterating. Coloring panel toggle + angle/relief sliders;
-      `--light [--light-angle R]` CLI; persisted. *(Follow-up: DE-based glow/crisp
-      coloring using the |derivative| magnitude — channel a is reserved for it.)*
+      `--light [--light-angle R]` CLI; persisted.
+- [x] **Distance-estimate glow + animation** — the derivative magnitude → distance
+      estimate (stored as log2(pixels) in the iter texture's alpha); the color pass draws
+      bright distance-contour bands that densify into glowing filaments near the boundary.
+      Coloring panel: "Distance glow" toggle + Glow strength + Band width + "Animate glow"
+      (flows the bands, shares the Speed slider). `--de` CLI; persisted. Works direct +
+      perturbation (verified at 1e8×).
 - [ ] **More coloring methods** — orbit traps (point/line/shape), stripe / triangle-
       inequality average (TIA), interior coloring, histogram/equalized auto-coloring.
 - [ ] **Goto-location dialog + navigation undo/redo** — type/paste/copy exact

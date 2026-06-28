@@ -44,6 +44,10 @@ struct ColorUniforms {
     light: u32,         // 0 = off, 1 = slope/relief lighting from the stored normal
     light_angle: f32,   // light direction (radians)
     light_height: f32,  // relief strength (smaller = stronger; ~1.5 default)
+    de_on: u32,         // 0 = off, 1 = distance-estimate glow
+    de_strength: f32,
+    de_width: f32,
+    de_phase: f32,
     _pad: u32,
     stops: [[f32; 4]; 8],
 }
@@ -365,6 +369,11 @@ pub struct MandelbrotParams {
     pub light: u32,
     pub light_angle: f32,
     pub light_height: f32,
+    /// Distance-estimate glow (contour bands; `de_phase` animates them).
+    pub de_on: u32,
+    pub de_strength: f32,
+    pub de_width: f32,
+    pub de_phase: f32,
     pub resolution: [u32; 2],
     pub ss: u32,
     /// Which on-screen panel this is (distinct GPU resources per id).
@@ -425,6 +434,10 @@ impl CallbackTrait for MandelbrotParams {
             light: self.light,
             light_angle: self.light_angle,
             light_height: self.light_height,
+            de_on: self.de_on,
+            de_strength: self.de_strength,
+            de_width: self.de_width,
+            de_phase: self.de_phase,
             _pad: 0,
             stops: self.stops,
         };
@@ -558,6 +571,10 @@ pub struct ExportRequest {
     pub light: u32,
     pub light_angle: f32,
     pub light_height: f32,
+    pub de_on: u32,
+    pub de_strength: f32,
+    pub de_width: f32,
+    pub de_phase: f32,
 }
 
 /// The actual `(width, height)` an export produced after clamping to the GPU's
@@ -687,6 +704,10 @@ pub fn render_export(
         light: req.light,
         light_angle: req.light_angle,
         light_height: req.light_height,
+        de_on: req.de_on,
+        de_strength: req.de_strength,
+        de_width: req.de_width,
+        de_phase: req.de_phase,
         _pad: 0,
         stops: req.stops,
     };

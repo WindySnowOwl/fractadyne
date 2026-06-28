@@ -1156,6 +1156,12 @@ struct FractadyneApp {
     light: bool,
     light_angle: f32,  // radians
     light_height: f32, // relief strength (smaller = sharper)
+    /// Distance-estimate glow (contour bands near the boundary), + animation.
+    de: bool,
+    de_strength: f32,
+    de_width: f32,
+    de_anim: bool,
+    de_phase: f32, // runtime (animated)
     /// Auto-scale iteration count with zoom depth (else use `max_iter` as-is).
     auto_iter: bool,
     /// Continuous-zoom speed multiplier (1.0 = default `ZOOM_RATE`).
@@ -1288,6 +1294,11 @@ impl FractadyneApp {
             light: s.light,
             light_angle: s.light_angle,
             light_height: s.light_height,
+            de: s.de,
+            de_strength: s.de_strength,
+            de_width: s.de_width,
+            de_anim: s.de_anim,
+            de_phase: 0.0,
             auto_iter: s.auto_iter,
             zoom_rate: s.zoom_rate,
             aa: s.aa,
@@ -1356,6 +1367,9 @@ impl FractadyneApp {
         if let Some(a) = val("--light-angle").and_then(|s| s.parse::<f32>().ok()) {
             self.light_angle = a;
         }
+        if args.iter().any(|a| a == "--de") {
+            self.de = true;
+        }
         // Output format from the file extension.
         if let Some(out) = &self.auto_render_out {
             if out.extension().and_then(|e| e.to_str()) == Some("exr") {
@@ -1402,6 +1416,10 @@ impl FractadyneApp {
             light: self.light,
             light_angle: self.light_angle,
             light_height: self.light_height,
+            de: self.de,
+            de_strength: self.de_strength,
+            de_width: self.de_width,
+            de_anim: self.de_anim,
         };
         let now = ctx.input(|i| i.time);
         if cur != self.last_state {
@@ -1569,6 +1587,10 @@ impl FractadyneApp {
             light: self.light as u32,
             light_angle: self.light_angle,
             light_height: self.light_height,
+            de_on: self.de as u32,
+            de_strength: self.de_strength,
+            de_width: self.de_width,
+            de_phase: self.de_phase,
         }
     }
 
@@ -2183,6 +2205,10 @@ impl FractadyneApp {
             light: self.light as u32,
             light_angle: self.light_angle,
             light_height: self.light_height,
+            de_on: self.de as u32,
+            de_strength: self.de_strength,
+            de_width: self.de_width,
+            de_phase: self.de_phase,
             resolution,
             ss,
             view_id,
@@ -2719,10 +2745,16 @@ impl FractadyneApp {
 
     /// Advance the palette animation for this frame (offset shift, or random morph).
     fn advance_palette_anim(&mut self, ctx: &egui::Context) {
+        let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1) as f32;
+        // Distance-estimate glow cycling — flows the contour bands (independent of the
+        // palette animation; shares the Speed slider). Phase is in cycles, period 1.
+        if self.de && self.de_anim && self.palette_anim_speed > 0.0 {
+            self.de_phase = (self.de_phase + self.palette_anim_speed * dt).rem_euclid(1.0);
+            self.schedule_repaint(ctx);
+        }
         if self.palette_anim == PaletteAnim::Off || self.palette_anim_speed <= 0.0 {
             return;
         }
-        let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1) as f32;
         let step = self.palette_anim_speed * dt;
         match self.palette_anim {
             PaletteAnim::Forward => self.offset = (self.offset + step).fract(),
@@ -3424,6 +3456,22 @@ impl eframe::App for FractadyneApp {
                             .logarithmic(true),
                     )
                     .on_hover_text("Lower = sharper relief; higher = softer/flatter.");
+                });
+                ui.checkbox(&mut self.de, "Distance glow")
+                    .on_hover_text(
+                        "Bright distance-estimate contour bands that densify into glowing \
+                         filaments near the boundary. (Holomorphic families.)",
+                    );
+                ui.add_enabled_ui(self.de, |ui| {
+                    ui.add(egui::Slider::new(&mut self.de_strength, 0.0..=1.0).text("Glow"));
+                    ui.add(
+                        egui::Slider::new(&mut self.de_width, 0.15..=4.0)
+                            .text("Band width")
+                            .logarithmic(true),
+                    )
+                    .on_hover_text("Spacing of the distance contours (octaves per band).");
+                    ui.checkbox(&mut self.de_anim, "Animate glow")
+                        .on_hover_text("Flow the glow bands over time (uses the Speed slider).");
                 });
                 ui.separator();
                 ui.checkbox(&mut self.auto_iter, "Auto-scale iterations with zoom");

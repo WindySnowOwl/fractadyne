@@ -62,6 +62,15 @@ pub struct SessionState {
     pub light_angle: f32,
     #[serde(default = "default_light_height")]
     pub light_height: f32,
+    /// Distance-estimate glow: enabled, blend strength, contour width, animate flag.
+    #[serde(default)]
+    pub de: bool,
+    #[serde(default = "default_de_strength")]
+    pub de_strength: f32,
+    #[serde(default = "default_de_width")]
+    pub de_width: f32,
+    #[serde(default)]
+    pub de_anim: bool,
 }
 
 fn default_zoom_rate() -> f32 {
@@ -108,6 +117,14 @@ fn default_light_height() -> f32 {
     1.2
 }
 
+fn default_de_strength() -> f32 {
+    0.6
+}
+
+fn default_de_width() -> f32 {
+    1.0
+}
+
 impl Default for SessionState {
     fn default() -> Self {
         Self {
@@ -134,6 +151,10 @@ impl Default for SessionState {
             light: false,
             light_angle: default_light_angle(),
             light_height: default_light_height(),
+            de: false,
+            de_strength: default_de_strength(),
+            de_width: default_de_width(),
+            de_anim: false,
         }
     }
 }

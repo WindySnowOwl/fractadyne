@@ -58,8 +58,11 @@ Baseline for tracked versioning. Notable capabilities already present:
   fractal's derivative (`dz/dc`), tracked in floatexp so it works at any zoom depth
   (direct + perturbation paths; holomorphic families). Coloring-panel toggle + light
   angle/relief sliders; `--light` CLI flag; persisted. Iteration texture is now
-  RGBA32F (the slope normal rides alongside the iteration value; alpha reserved for a
-  future DE glow).
+  RGBA32F (the slope normal rides alongside the iteration value).
+- **Distance-estimate glow (+ animation)** — bright distance-contour bands that densify
+  into glowing filaments near the boundary, from the derivative magnitude (distance
+  estimate). "Distance glow" toggle + Glow/Band-width sliders + "Animate glow" (flows
+  the bands). `--de` CLI flag; persisted. Works at any depth (verified at 1e8×).
 
 ### Fixed (post-baseline, this session)
 
