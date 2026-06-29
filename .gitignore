@@ -13,6 +13,12 @@
 /validation/current/
 /validation/report-*.md
 
+# Default CLI output filenames (when --out is omitted), written to the cwd
+/compare_heatmap.png
+/fractadyne_render.png
+/fractadyne_iter.exr
+/fractadyne_benchmark.txt
+
 # Log files
 *.log
 
