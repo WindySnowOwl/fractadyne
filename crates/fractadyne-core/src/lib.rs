@@ -78,6 +78,63 @@ pub fn parse_bf(s: &str) -> Option<BigFloat> {
         .filter(|b| !b.is_nan() && !b.is_inf())
 }
 
+/// A location parsed from a Kalles Fraktaler `.kfr` file: full-precision center, zoom
+/// (magnification), and optional iteration count.
+pub struct KfrView {
+    pub cx: BigFloat,
+    pub cy: BigFloat,
+    pub zoom: f64,
+    pub iterations: Option<u32>,
+}
+
+/// Parse a positive, finite zoom from a `.kfr` `Zoom:` value; an over-range value (e.g.
+/// `1E1000`) is clamped rather than rejected.
+fn parse_kfr_zoom(s: &str) -> Option<f64> {
+    let z: f64 = s.trim().parse().ok()?;
+    if z.is_nan() || z <= 0.0 {
+        return None;
+    }
+    Some(z.min(1.0e300)) // inf.min ⇒ clamp; matches the viewport's f64 upp range
+}
+
+/// Parse a **Kalles Fraktaler `.kfr`** location (a simple `Key: value` text format) into a
+/// [`KfrView`]. **Hardened for untrusted input:** total size and line/value lengths are
+/// bounded, only the `Re`/`Im`/`Zoom`/`Iterations` keys are read (everything else ignored —
+/// no formulas, paths, or code), the center is validated through [`parse_bf`] (rejecting
+/// non-finite), and zoom/iterations are clamped. Returns `None` unless a valid Re, Im, and
+/// Zoom are present.
+pub fn parse_kfr(text: &str) -> Option<KfrView> {
+    if text.len() > 4_000_000 {
+        return None; // refuse absurdly large inputs
+    }
+    let (mut re, mut im, mut zoom, mut iters) = (None, None, None, None);
+    for line in text.lines().take(20_000) {
+        let Some((key, val)) = line.split_once(':') else {
+            continue;
+        };
+        let (key, val) = (key.trim(), val.trim());
+        if val.len() > 100_000 {
+            continue; // bounded value length (deep coords are long, but not unbounded)
+        }
+        if key.eq_ignore_ascii_case("Re") {
+            re = Some(val);
+        } else if key.eq_ignore_ascii_case("Im") {
+            im = Some(val);
+        } else if key.eq_ignore_ascii_case("Zoom") {
+            zoom = parse_kfr_zoom(val);
+        } else if key.eq_ignore_ascii_case("Iterations") {
+            iters = val.parse::<u64>().ok().map(|v| v.min(1_000_000) as u32);
+        }
+        // every other key is ignored by design
+    }
+    Some(KfrView {
+        cx: parse_bf(re?)?,
+        cy: parse_bf(im?)?,
+        zoom: zoom?,
+        iterations: iters,
+    })
+}
+
 /// Mantissa bits needed to position sub-pixel at the given magnification (+ guard).
 pub fn precision_for_magnification(mag: f64) -> usize {
     let octaves = mag.max(1.0).log2().ceil() as usize;
@@ -1154,6 +1211,55 @@ mod tests {
         }
         for v in ["", "abc", "hello", "..", "+-", "inf", "-inf", "NaN"] {
             assert!(parse_bf(v).is_none(), "accepted garbage {v:?}");
+        }
+    }
+
+    // ---- Phase 6.3: Kalles Fraktaler .kfr import (hardened, fuzzed) ----
+    #[test]
+    fn parse_kfr_valid_and_robust() {
+        // A well-formed .kfr (unknown keys must be ignored, key case ignored).
+        let kfr = "Re: -0.743643887037151\nIm: 0.131825904205330\nZoom: 800\n\
+                   Iterations: 2000\nColors: 1 2 3\nLocation: ignored\n";
+        let v = parse_kfr(kfr).expect("valid .kfr rejected");
+        assert!((to_f64(&v.cx) - (-0.743643887037151)).abs() < 1e-12);
+        assert!((to_f64(&v.cy) - 0.131825904205330).abs() < 1e-12);
+        assert_eq!(v.zoom, 800.0);
+        assert_eq!(v.iterations, Some(2000));
+        // Over-range zoom clamps; iterations clamp; case-insensitive keys.
+        let v = parse_kfr("re: -1\nIM: 0\nZOOM: 1E1000\niterations: 99999999999\n").unwrap();
+        assert_eq!(v.zoom, 1.0e300);
+        assert_eq!(v.iterations, Some(1_000_000));
+        // Missing required fields → None.
+        assert!(parse_kfr("Re: 0\nIm: 0\n").is_none(), "missing Zoom accepted");
+        assert!(parse_kfr("Im: 0\nZoom: 2\n").is_none(), "missing Re accepted");
+        // Invalid center → None (parse_bf rejects).
+        assert!(parse_kfr("Re: abc\nIm: 0\nZoom: 2\n").is_none());
+    }
+
+    #[test]
+    fn fuzz_parse_kfr_panic_free() {
+        let mut s = 0x1234_5678_9abc_def1u64;
+        let mut next = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        let charset = b"ReImZoomIterations:-+0.9eE \n\t\0xyz";
+        for _ in 0..20_000 {
+            let len = (next() % 200) as usize;
+            let mut buf = String::with_capacity(len);
+            for _ in 0..len {
+                buf.push(charset[(next() as usize) % charset.len()] as char);
+            }
+            let _ = parse_kfr(&buf); // must not panic
+        }
+        // Oversized / adversarial inputs.
+        let _ = parse_kfr(&"Re: 1\n".repeat(100_000));
+        let _ = parse_kfr(&format!("Re: -0.{}\nIm: 0\nZoom: 2\n", "1".repeat(200_000)));
+        let _ = parse_kfr(&"X".repeat(5_000_000));
+        for m in ["", ":", "Re:", "Zoom:::", "Re: \0\0\0\nIm:\nZoom:e"] {
+            let _ = parse_kfr(m);
         }
     }
 }

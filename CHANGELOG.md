@@ -71,7 +71,12 @@ Baseline for tracked versioning. Notable capabilities already present:
   (R=smooth iteration, G/B=slope normal, A=log₂ DE-in-pixels) with a documented layout, so
   a reviewer can diff iteration data directly (no coloring confound); and `--compare A B`
   reports max/mean per-pixel difference (channel-0 iteration data + finite all-channels) and
-  writes a difference heatmap — for A/B against another build or imported renderer data. **Golden-image regression**: `--selftest --bless` records
+  writes a difference heatmap — for A/B against another build or imported renderer data.
+  **Cross-renderer import:** Locations → "Import .kfr…" (and `--import-kfr FILE`) loads a
+  Kalles Fraktaler location via a **hardened, fuzzed** parser (size/length-bounded, strict
+  key allow-list, every field validated/clamped, no paths/code) — so the identical
+  coordinate can be opened in a trusted third-party renderer for the strongest external
+  cross-check. Verified bit-identical to a direct render of the same coordinates. **Golden-image regression**: `--selftest --bless` records
   reference PNGs under `validation/golden/`; subsequent runs diff against them with a pixel
   tolerance. Every run writes a **readable, verifiable Markdown report**
   (`validation/report.md`) with full provenance (version, GPU, CPU, OS), each check's

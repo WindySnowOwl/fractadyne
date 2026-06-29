@@ -2156,6 +2156,18 @@ impl FractadyneApp {
         if app.auto_render {
             app.apply_cli_render(&args);
         }
+        // `--import-kfr FILE`: load a Kalles Fraktaler location at startup (and before any
+        // `--render`), so it works both live and headless.
+        if let Some(p) = args
+            .iter()
+            .position(|a| a == "--import-kfr")
+            .and_then(|i| args.get(i + 1))
+        {
+            match app.load_kfr_file(std::path::Path::new(p)) {
+                Ok(m) => println!("{m}"),
+                Err(e) => eprintln!("--import-kfr: {e}"),
+            }
+        }
         app.nav_undo.push(app.snapshot_view()); // baseline for navigation undo
         app
     }
@@ -5041,6 +5053,47 @@ impl FractadyneApp {
         self.help_open = open;
     }
 
+    /// Load a Kalles Fraktaler `.kfr` location file and jump to it. Defensive: bounds the
+    /// file size and delegates to the hardened `parse_kfr`. (KF's zoom and ours are both
+    /// linear magnification from the home view — close enough that the location lands at
+    /// essentially the right place and scale.)
+    fn load_kfr_file(&mut self, path: &std::path::Path) -> Result<String, String> {
+        let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+        if meta.len() > 4_000_000 {
+            return Err("file too large (not a .kfr location?)".into());
+        }
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let v = fractadyne_core::parse_kfr(&text)
+            .ok_or("not a valid .kfr location (need Re / Im / Zoom)")?;
+        let zoom = v.zoom;
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        if let Some(it) = v.iterations {
+            self.max_iter = it.clamp(64, 50_000);
+            self.auto_iter = false;
+        }
+        self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
+        self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
+        self.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+        Ok(format!("Imported .kfr location @ {}×", fmt_zoom(zoom)))
+    }
+
+    /// File-dialog import of a Kalles Fraktaler `.kfr` location.
+    fn import_kfr(&mut self, ctx: &egui::Context) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Kalles Fraktaler location", &["kfr"])
+            .pick_file()
+        else {
+            return;
+        };
+        match self.load_kfr_file(&path) {
+            Ok(m) => self.set_toast(m, ctx),
+            Err(e) => self.set_toast(format!("Import failed: {e}"), ctx),
+        }
+    }
+
     /// Reset the current view to the fractal's default (both panels in dual view).
     fn reset_view(&mut self) {
         self.viewport.reset();
@@ -5772,6 +5825,15 @@ impl eframe::App for FractadyneApp {
                             .clicked()
                         {
                             self.random_location(&ctx);
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui
+                            .button("Import .kfr…")
+                            .on_hover_text("Load a Kalles Fraktaler location file")
+                            .clicked()
+                        {
+                            self.import_kfr(&ctx);
                             ui.close_menu();
                         }
                     });

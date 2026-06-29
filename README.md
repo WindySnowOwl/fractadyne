@@ -48,6 +48,7 @@ fractadyne --find-minibrot --center X Y --zoom M   # print nearby minibrot perio
 fractadyne --selftest [--bless] [--out report.md]  # validation suite; exit 0 = all passed
 fractadyne --render-iter --out img.exr [view opts] # export raw iteration data (EXR) for review
 fractadyne --compare A B [--out heatmap.png]       # diff two renders/EXRs: max/mean Δ + heatmap
+fractadyne --import-kfr loc.kfr [--render ...]      # load a Kalles Fraktaler location
 ```
 
 ## Validation
@@ -70,8 +71,10 @@ or internal cross-checks):
 - **External checkability** — a committed location catalog (`validation/catalog.toml`)
   of full-precision coordinates with known answers; raw-iteration **EXR export**
   (`--render-iter`) so a reviewer can diff iteration data against their own renderer,
-  free of any coloring confound; and **`--compare A B`** (max/mean Δ + difference heatmap)
-  for A/B against another build or imported data.
+  free of any coloring confound; **`--compare A B`** (max/mean Δ + difference heatmap)
+  for A/B against another build or imported data; and **Kalles Fraktaler `.kfr` import**
+  (hardened, fuzzed parser) so the *identical* coordinate can be loaded into a trusted
+  third-party renderer (Fraktaler-3 / Kalles Fraktaler) and cross-checked.
 
 ## Controls
 
