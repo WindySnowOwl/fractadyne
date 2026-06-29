@@ -45,7 +45,10 @@ Baseline for tracked versioning. Notable capabilities already present:
   and the **render pipeline** is checked for the non-Mandelbrot family shaders in
   `--selftest` (Multibrot-3 180°, Tricorn / Celtic real-axis). The exact-landmark catalog
   is extended (cardioid cusp c=¼, period-1↔2 neck c=−¾, period-2 disk, cardioid boundary
-  parametrization). **Golden-image regression**: `--selftest --bless` records
+  parametrization). **Invariance/consistency** checks target the tier crossovers:
+  resolution independence (N vs 3N — validates δc construction), max-iter monotonic
+  stability, zoom-sequence consistency across the direct→df32 seam, pan consistency, and
+  render determinism. **Golden-image regression**: `--selftest --bless` records
   reference PNGs under `validation/golden/`; subsequent runs diff against them with a pixel
   tolerance. Every run writes a **readable, verifiable Markdown report**
   (`validation/report.md`) with full provenance (version, GPU, CPU, OS), each check's

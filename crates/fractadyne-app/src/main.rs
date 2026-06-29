@@ -3124,6 +3124,185 @@ impl FractadyneApp {
             }
         }
 
+        // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
+        {
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.color_method = 0;
+            self.use_custom_palette = false;
+            self.auto_iter = false;
+            let cxb = fractadyne_core::parse_bf(SX).unwrap();
+            let cyb = fractadyne_core::parse_bf(SY).unwrap();
+            // Build a square Mandelbrot iteration render at an explicit center/zoom/size.
+            let build = |cx: &fractadyne_core::BigFloat, cy: &fractadyne_core::BigFloat,
+                         mag: f64, size: u32, max: u32|
+             -> Option<Vec<f32>> {
+                let mut vp = Viewport::new(size as f64, size as f64);
+                vp.center_x = cx.clone();
+                vp.center_y = cy.clone();
+                vp.units_per_pixel = 3.0 / (size as f64 * mag);
+                vp.precision = fractadyne_core::precision_for_magnification(mag);
+                let mut req = self.current_export_request_for(&vp, false);
+                req.width = size;
+                req.height = size;
+                req.ss = 1;
+                req.max_iter = max;
+                fractadyne_gpu::render_iter(device, queue, &req).ok().map(|r| r.pixels)
+            };
+            let steep = |px: &[f32], sz: usize, i: usize, j: usize| -> bool {
+                let g = px[(j * sz + i) * 4];
+                for (di, dj) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+                    let (ni, nj) = (i as isize + di, j as isize + dj);
+                    if ni >= 0 && nj >= 0 && (ni as usize) < sz && (nj as usize) < sz {
+                        let gn = px[(nj as usize * sz + ni as usize) * 4];
+                        if (g < 0.0) != (gn < 0.0) || (g >= 0.0 && gn >= 0.0 && (g - gn).abs() > 2.0) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            };
+            let agree = |a: f32, b: f32| (a < 0.0) == (b < 0.0) && (a < 0.0 || (a - b).abs() < 0.5);
+            let nn = N as usize;
+
+            // 3.1 Resolution independence: an N×N pixel (i,j) shares its exact complex
+            // coordinate with the 3N×3N pixel (3i+1, 3j+1); their dwell must match.
+            if let (Some(p1), Some(p3)) =
+                (build(&cxb, &cyb, 1.0e6, N, 2000), build(&cxb, &cyb, 1.0e6, N * 3, 2000))
+            {
+                let n3 = nn * 3;
+                let (mut checked, mut bad) = (0u64, 0u64);
+                for j in 0..nn {
+                    for i in 0..nn {
+                        if steep(&p1, nn, i, j) {
+                            continue;
+                        }
+                        let (i3, j3) = (3 * i + 1, 3 * j + 1);
+                        checked += 1;
+                        if !agree(p1[(j * nn + i) * 4], p3[(j3 * n3 + i3) * 4]) {
+                            bad += 1;
+                        }
+                    }
+                }
+                checks.push(SelfCheck {
+                    category: "Consistency",
+                    name: "resolution independence (N vs 3N)".into(),
+                    params: format!("seahorse, 1e6×, {checked} smooth px"),
+                    result: format!("{bad} differ"),
+                    threshold: "0 differ",
+                    pass: bad == 0 && checked > 0,
+                });
+            }
+
+            // 3.2 Max-iter monotonic stability: a pixel already escaped at a low max_iter keeps
+            // its dwell at a higher max_iter (raising the cap only escapes more interior pixels).
+            if let (Some(pa), Some(pb)) =
+                (build(&cxb, &cyb, 1.0e6, N, 500), build(&cxb, &cyb, 1.0e6, N, 3000))
+            {
+                let (mut checked, mut bad) = (0u64, 0u64);
+                for k in 0..(nn * nn) {
+                    let a = pa[k * 4];
+                    if a >= 0.0 {
+                        checked += 1;
+                        if !agree(a, pb[k * 4]) {
+                            bad += 1;
+                        }
+                    }
+                }
+                checks.push(SelfCheck {
+                    category: "Consistency",
+                    name: "max-iter monotonic stability".into(),
+                    params: format!("seahorse, 1e6×, 500→3000 iter, {checked} escaped px"),
+                    result: format!("{bad} changed dwell"),
+                    threshold: "0 changed",
+                    pass: bad == 0 && checked > 0,
+                });
+            }
+
+            // 3.3 Zoom-sequence consistency ACROSS THE direct→perturbation crossover: a view at
+            // 4e3× (direct) and at 1.2e4× (perturbation, 3× deeper) must agree where they
+            // overlap — shallower pixel k ↔ deeper pixel (3k+1−N). Strongest test of the seam.
+            if let (Some(ps), Some(pd)) =
+                (build(&cxb, &cyb, 4.0e3, N, 3000), build(&cxb, &cyb, 1.2e4, N, 3000))
+            {
+                let (mut checked, mut bad) = (0u64, 0u64);
+                for j in 0..nn {
+                    for k in 0..nn {
+                        let id = 3 * k as isize + 1 - nn as isize;
+                        let jd = 3 * j as isize + 1 - nn as isize;
+                        if id < 0 || jd < 0 || id as usize >= nn || jd as usize >= nn {
+                            continue;
+                        }
+                        if steep(&ps, nn, k, j) {
+                            continue;
+                        }
+                        checked += 1;
+                        if !agree(ps[(j * nn + k) * 4], pd[(jd as usize * nn + id as usize) * 4]) {
+                            bad += 1;
+                        }
+                    }
+                }
+                // Reference differs between the two zooms, so an isolated boundary pixel may
+                // flip by 1 iteration; a true seam bug would differ over a large region.
+                checks.push(SelfCheck {
+                    category: "Consistency",
+                    name: "zoom-sequence across direct→df32 seam".into(),
+                    params: format!("seahorse, 4e3×↔1.2e4×, {checked} overlap px"),
+                    result: format!("{bad} differ"),
+                    threshold: "<0.1% differ",
+                    pass: checked > 0 && (bad as f64) < 0.001 * checked as f64,
+                });
+            }
+
+            // 3.4 Pan consistency: shift the center by an integer pixel count; the overlapping
+            // region must be identical — A(i,j) == B(i−shift, j).
+            let shift = (N / 4) as usize;
+            let stepx = (3.0 / 1.0e6) / N as f64;
+            let cxb2 = fractadyne_core::add_f64(&cxb, shift as f64 * stepx, fractadyne_core::precision_for_magnification(1.0e6));
+            if let (Some(pa), Some(pb)) =
+                (build(&cxb, &cyb, 1.0e6, N, 2000), build(&cxb2, &cyb, 1.0e6, N, 2000))
+            {
+                let (mut checked, mut bad) = (0u64, 0u64);
+                for j in 0..nn {
+                    for i in shift..nn {
+                        if steep(&pa, nn, i, j) {
+                            continue;
+                        }
+                        checked += 1;
+                        if !agree(pa[(j * nn + i) * 4], pb[(j * nn + (i - shift)) * 4]) {
+                            bad += 1;
+                        }
+                    }
+                }
+                // Reference recomputed for the shifted center, so an isolated boundary pixel
+                // may flip by 1; a true offset bug would shift the whole overlap.
+                checks.push(SelfCheck {
+                    category: "Consistency",
+                    name: "pan consistency".into(),
+                    params: format!("seahorse, 1e6×, +{shift}px, {checked} overlap px"),
+                    result: format!("{bad} differ"),
+                    threshold: "<0.1% differ",
+                    pass: checked > 0 && (bad as f64) < 0.001 * checked as f64,
+                });
+            }
+
+            // 3.5 Determinism: the same request rendered twice must be bit-identical.
+            if let (Some(p1), Some(p2)) =
+                (build(&cxb, &cyb, 1.0e6, N, 2000), build(&cxb, &cyb, 1.0e6, N, 2000))
+            {
+                let identical = p1.len() == p2.len()
+                    && p1.iter().zip(&p2).all(|(a, b)| a.to_bits() == b.to_bits());
+                checks.push(SelfCheck {
+                    category: "Consistency",
+                    name: "render determinism (2 runs)".into(),
+                    params: "seahorse, 1e6×".into(),
+                    result: if identical { "bit-identical".into() } else { "NON-DETERMINISTIC".into() },
+                    threshold: "bit-identical",
+                    pass: identical,
+                });
+            }
+        }
+
         // ---- golden-image regression (set deterministic coloring per spec) ----
         let bless = std::env::args().any(|a| a == "--bless");
         let report_path = std::env::args()

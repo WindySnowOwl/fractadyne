@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.0 (build 86)
-- **Generated:** 2026-06-29 04:20:58 UTC (unix 1782706858)
+- **Version:** 0.1.0 (build 88)
+- **Generated:** 2026-06-29 11:55:07 UTC (unix 1782734107)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -27,8 +27,13 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Symmetry (render) | Multibrot-3 180° rotation | origin view, span 3, 44944 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |
 | Symmetry (render) | Tricorn real-axis reflection | origin view, span 3, 44846 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |
 | Symmetry (render) | Celtic real-axis reflection | origin view, span 3, 42414 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |
+| Consistency | resolution independence (N vs 3N) | seahorse, 1e6×, 25551 smooth px | 0 differ | 0 differ | ✅ PASS |
+| Consistency | max-iter monotonic stability | seahorse, 1e6×, 500→3000 iter, 15722 escaped px | 0 changed dwell | 0 changed | ✅ PASS |
+| Consistency | zoom-sequence across direct→df32 seam | seahorse, 4e3×↔1.2e4×, 1814 overlap px | 0 differ | <0.1% differ | ✅ PASS |
+| Consistency | pan consistency | seahorse, 1e6×, +55px, 23099 overlap px | 1 differ | <0.1% differ | ✅ PASS |
+| Consistency | render determinism (2 runs) | seahorse, 1e6× | bit-identical | bit-identical | ✅ PASS |
 
-**14/14 checks passed.**
+**19/19 checks passed.**
 
 ## Golden images (320×240)
 
