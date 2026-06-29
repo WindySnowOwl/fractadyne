@@ -2208,6 +2208,7 @@ impl FractadyneApp {
         eff_iter: u32,
         precision: usize,
         julia: bool,
+        ref_override: Option<[fractadyne_core::BigFloat; 2]>,
     ) -> (
         std::sync::Arc<Vec<[f32; 4]>>,
         u32,
@@ -2215,15 +2216,19 @@ impl FractadyneApp {
     ) {
         let formula = self.fractal.formula_id();
         let (jcx, jcy) = self.julia_c;
-        let rp = fractadyne_core::best_reference(
-            center_bf,
-            [span.0, span.1],
-            formula,
-            julia,
-            [jcx, jcy],
-            eff_iter,
-            precision,
-        );
+        // A correct perturbation render is invariant to which valid in-view reference is
+        // used; `ref_override` lets the validator force a specific reference (Phase 1.2).
+        let rp = ref_override.unwrap_or_else(|| {
+            fractadyne_core::best_reference(
+                center_bf,
+                [span.0, span.1],
+                formula,
+                julia,
+                [jcx, jcy],
+                eff_iter,
+                precision,
+            )
+        });
         let zero = fractadyne_core::BigFloat::from_f64(0.0, precision);
         let (z0x, z0y, cx0, cy0) = if julia {
             (
@@ -2278,7 +2283,7 @@ impl FractadyneApp {
         if mode != 1 {
             let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
             let (orbit_arc, len, rp) =
-                self.compute_reference(&center_bf, (span_x, span_y), eff_iter, precision, julia);
+                self.compute_reference(&center_bf, (span_x, span_y), eff_iter, precision, julia, None);
             orbit = orbit_arc;
             orbit_len = len;
             let dx = fractadyne_core::sub_f64(&vp.center_x, &rp[0], precision) * dscale;
@@ -2925,6 +2930,94 @@ impl FractadyneApp {
                 }
             }
 
+            // (D2) Reference independence — a correct perturbation render is invariant to the
+            // chosen valid reference. Render with 3 distinct in-view references (the auto
+            // `best_reference` plus two offset points), take the per-pixel majority dwell as
+            // oracle-free truth, and assert the *auto* reference dissents from consensus on a
+            // tiny, localized fraction (dissenters are exactly the glitched pixels). The
+            // offset references are deliberately allowed to be poorer — they just provide
+            // independent votes.
+            {
+                let mag = 1.0e8;
+                let base = make(SX, SY, mag); // mode 0, best_reference
+                let prec = fractadyne_core::precision_for_magnification(mag);
+                let cxb = fractadyne_core::parse_bf(SX).unwrap();
+                let cyb = fractadyne_core::parse_bf(SY).unwrap();
+                let span = base.span[0];
+                let dscale = 2f64.powi(-base.delta_exp);
+                let with_ref = |ox: f64, oy: f64| -> fractadyne_gpu::ExportRequest {
+                    let ref_pt = [
+                        fractadyne_core::add_f64(&cxb, ox, prec),
+                        fractadyne_core::add_f64(&cyb, oy, prec),
+                    ];
+                    let (orbit, len, rp) = self.compute_reference(
+                        &[cxb.clone(), cyb.clone()], (span, span), base.max_iter, prec, false, Some(ref_pt),
+                    );
+                    let dx = fractadyne_core::sub_f64(&cxb, &rp[0], prec) * dscale;
+                    let dy = fractadyne_core::sub_f64(&cyb, &rp[1], prec) * dscale;
+                    let (dxh, dyh) = (dx as f32, dy as f32);
+                    let mut r = base.clone();
+                    r.orbit = orbit;
+                    r.orbit_len = len;
+                    r.ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
+                    r
+                };
+                let altb = with_ref(0.25 * span, 0.20 * span);
+                let altc = with_ref(-0.22 * span, -0.18 * span);
+                if let (Some(pa), Some(pb), Some(pc)) =
+                    (render(&base), render(&altb), render(&altc))
+                {
+                    let nn = N as usize;
+                    let eq = |x: f32, y: f32| ((x < 0.0) == (y < 0.0)) && (x < 0.0 || (x - y).abs() < 0.5);
+                    // Skip boundary pixels (dwell ill-conditioned there — a sub-ULP reference
+                    // difference legitimately flips n); count only smooth-region disagreement.
+                    let steep = |i: usize, j: usize| -> bool {
+                        let g = pa[(j * nn + i) * 4];
+                        for (di, dj) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+                            let (ni, nj) = (i as isize + di, j as isize + dj);
+                            if ni >= 0 && nj >= 0 && (ni as usize) < nn && (nj as usize) < nn {
+                                let gn = pa[(nj as usize * nn + ni as usize) * 4];
+                                if (g < 0.0) != (gn < 0.0) || (g >= 0.0 && gn >= 0.0 && (g - gn).abs() > 2.0) {
+                                    return true;
+                                }
+                            }
+                        }
+                        false
+                    };
+                    let (mut smooth, mut auto_dissent, mut no_majority) = (0u64, 0u64, 0u64);
+                    for j in 0..nn {
+                        for i in 0..nn {
+                            if steep(i, j) {
+                                continue;
+                            }
+                            let k = j * nn + i;
+                            let (a, b, c) = (pa[k * 4], pb[k * 4], pc[k * 4]);
+                            let (ab, ac, bc) = (eq(a, b), eq(a, c), eq(b, c));
+                            smooth += 1;
+                            if ab || ac {
+                                // auto in the majority — clean
+                            } else if bc {
+                                auto_dissent += 1;
+                            } else {
+                                no_majority += 1;
+                            }
+                        }
+                    }
+                    let frac = (auto_dissent + no_majority) as f64 / smooth.max(1) as f64;
+                    checks.push(SelfCheck {
+                        category: "Glitch",
+                        name: "reference independence (3-ref majority)".into(),
+                        params: "seahorse, 1e8×, auto vs 2 offset refs (smooth region)".into(),
+                        result: format!(
+                            "{} smooth px: auto dissent {auto_dissent}, no-majority {no_majority} ({:.4}%)",
+                            smooth, frac * 100.0
+                        ),
+                        threshold: "<0.2% of smooth pixels",
+                        pass: frac < 0.002,
+                    });
+                }
+            }
+
             // (E) Real-axis symmetry + interior/exterior presence + finiteness @home.
             let req = make("-0.5", "0.0", 1.0);
             if let Some(px) = render(&req) {
@@ -3317,7 +3410,7 @@ impl FractadyneApp {
             if recompute {
                 let t = Instant::now();
                 let (orbit, orbit_len, rp) =
-                    self.compute_reference(&center_bf, (span_x, span_y), eff_iter, precision, julia);
+                    self.compute_reference(&center_bf, (span_x, span_y), eff_iter, precision, julia, None);
                 let vc = &mut self.ref_cache[vi];
                 vc.ref_pt = Some(rp);
                 vc.orbit = orbit;

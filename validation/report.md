@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.0 (build 80)
-- **Generated:** 2026-06-29 03:49:27 UTC (unix 1782704967)
+- **Version:** 0.1.0 (build 85)
+- **Generated:** 2026-06-29 04:06:21 UTC (unix 1782705981)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -21,10 +21,11 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Bignum oracle | naive bignum dwell vs GPU @1e16x | mode 0, 15606 iter, 25 samples | 25 agree, 0 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
 | Bignum oracle | naive bignum dwell vs GPU @1e24x | mode 0, 22409 iter, 25 samples | 25 agree, 0 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
 | Bignum oracle | naive bignum dwell vs GPU @1e30x | mode 2, 27512 iter, 25 samples | 25 agree, 0 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
+| Glitch | reference independence (3-ref majority) | seahorse, 1e8×, auto vs 2 offset refs (smooth region) | 16650 smooth px: auto dissent 0, no-majority 0 (0.0000%) | <0.2% of smooth pixels | ✅ PASS |
 | Invariant | real-axis mirror symmetry | home view (-0.5, 0) | mean Δ=0.00000 iter | mean<0.05 | ✅ PASS |
 | Invariant | home has interior + exterior | home view | interior=true, exterior=true | both present | ✅ PASS |
 
-**10/10 checks passed.**
+**11/11 checks passed.**
 
 ## Golden images (320×240)
 

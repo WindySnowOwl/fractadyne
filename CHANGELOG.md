@@ -34,9 +34,12 @@ Baseline for tracked versioning. Notable capabilities already present:
   comparing the **integer escape count** across a **depth battery (1e6× … 1e30×)** that
   exercises whichever render mode the depth selector actually uses (df32 perturbation and
   floatexp), excluding only ill-conditioned boundary samples — independent deep-zoom
-  correctness, not just internal consistency. Plus floatexp-vs-df32 agreement, real-axis
-  symmetry, interior/exterior presence, and finiteness (via a new `render_iter` that reads
-  back the raw iteration texture). **Golden-image regression**: `--selftest --bless` records
+  correctness, not just internal consistency. Plus a **reference-independence** check
+  (renders one view with three distinct in-view references and a reference-override path;
+  the auto reference must agree with the per-pixel majority across the smooth region — an
+  oracle-free glitch detector that also seeds multi-reference correction), floatexp-vs-df32
+  agreement, real-axis symmetry, interior/exterior presence, and finiteness (via a new
+  `render_iter` that reads back the raw iteration texture). **Golden-image regression**: `--selftest --bless` records
   reference PNGs under `validation/golden/`; subsequent runs diff against them with a pixel
   tolerance. Every run writes a **readable, verifiable Markdown report**
   (`validation/report.md`) with full provenance (version, GPU, CPU, OS), each check's
