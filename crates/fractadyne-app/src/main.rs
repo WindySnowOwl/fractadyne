@@ -6674,3 +6674,46 @@ impl eframe::App for FractadyneApp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Phase 5.1: fuzz the view-metadata parser chain (untrusted: loaded from PNG tEXt
+    // chunks / pasted). `meta_get` + the downstream numeric parsers must never panic and
+    // must produce bounded output on arbitrary input.
+    #[test]
+    fn fuzz_metadata_parser_panic_free() {
+        let mut s = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        let charset = b"=\n\r key value-+0.123eE\t\0[]\"";
+        for _ in 0..20_000 {
+            let len = (next() % 96) as usize;
+            let mut buf = String::with_capacity(len);
+            for _ in 0..len {
+                buf.push(charset[(next() as usize) % charset.len()] as char);
+            }
+            for k in ["center_x", "center_y", "zoom", "fractal", "julia", "max_iter", "missing"] {
+                let v = meta_get(&buf, k);
+                assert!(v.len() <= buf.len(), "meta_get returned oversized value");
+            }
+            // The real downstream parsers applied to extracted values must not panic.
+            let _ = fractadyne_core::parse_bf(&meta_get(&buf, "center_x"));
+            let _ = fractadyne_core::parse_bf(&meta_get(&buf, "center_y"));
+            let _ = meta_get(&buf, "zoom").parse::<f64>();
+            let _ = meta_get(&buf, "max_iter").parse::<u32>();
+            let _ = FractalKind::from_name(&meta_get(&buf, "fractal"));
+        }
+        // Adversarial explicit metadata blobs.
+        for m in ["", "=", "\n\n\n", "center_x=", "=value", "zoom=NaN", "max_iter=-1",
+                  "center_x=1e999999999", "fractal=\0\0\0", "a=b=c=d", "zoom=  inf  "] {
+            let _ = fractadyne_core::parse_bf(&meta_get(m, "center_x"));
+            let _ = meta_get(m, "zoom").parse::<f64>();
+        }
+    }
+}

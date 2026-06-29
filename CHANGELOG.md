@@ -63,7 +63,10 @@ Baseline for tracked versioning. Notable capabilities already present:
   independently-known answers (period + nucleus, set membership) that `--selftest` verifies
   — doubling as published *challenge coordinates*; and a **Coverage & scope** section in the
   report stating exactly what each oracle checks and, importantly, where the deep regime is
-  *not* independently oracle-checked. **Golden-image regression**: `--selftest --bless` records
+  *not* independently oracle-checked. **Fuzz tests** (dependency-free, deterministic) hammer
+  the untrusted-input parsers — the arbitrary-precision coordinate parser and the
+  view-metadata parser chain — asserting they never panic on random/adversarial/oversized
+  input. This hardened `parse_bf` to also reject non-finite (±∞/NaN) coordinates. **Golden-image regression**: `--selftest --bless` records
   reference PNGs under `validation/golden/`; subsequent runs diff against them with a pixel
   tolerance. Every run writes a **readable, verifiable Markdown report**
   (`validation/report.md`) with full provenance (version, GPU, CPU, OS), each check's

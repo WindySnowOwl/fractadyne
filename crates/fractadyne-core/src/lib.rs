@@ -68,9 +68,14 @@ pub fn to_decimal_string(bf: &BigFloat) -> String {
     bf.to_string()
 }
 
-/// Parse a decimal string back to a `BigFloat` (round-trips `to_decimal_string`).
+/// Parse a decimal string back to a `BigFloat` (round-trips `to_decimal_string`). Rejects
+/// non-finite results (NaN / ±∞) so a malformed or out-of-range coordinate can't slip
+/// through — callers treat `None` as "invalid input".
 pub fn parse_bf(s: &str) -> Option<BigFloat> {
-    s.trim().parse::<BigFloat>().ok().filter(|b| !b.is_nan())
+    s.trim()
+        .parse::<BigFloat>()
+        .ok()
+        .filter(|b| !b.is_nan() && !b.is_inf())
 }
 
 /// Mantissa bits needed to position sub-pixel at the given magnification (+ guard).
@@ -1107,6 +1112,48 @@ mod tests {
             let (bx, by) = (0.5 * th.cos() - 0.25 * (2.0 * th).cos(), 0.5 * th.sin() - 0.25 * (2.0 * th).sin());
             let (inx, iny) = (bx * 0.92 + 0.0 * 0.08, by * 0.92); // pull 8% toward interior point ~0
             assert_eq!(dwell_family(0, inx, iny, 5000), None, "inside cardioid boundary escaped at θ={th}");
+        }
+    }
+
+    // ---- Phase 5.1: fuzz the untrusted coordinate parser (panic-free + round-trip) ----
+    #[test]
+    fn fuzz_parse_bf_panic_free_and_roundtrips() {
+        // Deterministic pseudo-random fuzzing — `parse_bf` ingests pasted/loaded text and
+        // must never panic, only return None on garbage.
+        let mut s = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        let charset = b"0123456789.-+eE  \t";
+        for _ in 0..20_000 {
+            let len = (next() % 48) as usize;
+            let mut buf = String::with_capacity(len);
+            for _ in 0..len {
+                buf.push(charset[(next() as usize) % charset.len()] as char);
+            }
+            let _ = parse_bf(&buf); // must not panic
+        }
+        // Adversarial explicit inputs.
+        for a in [
+            "", " ", "\t", "-", "+", ".", "-.", "e", "E", "1e", "1e+", "-1.5e-3", "1e308",
+            "1e-308", "1e1000", "-0", "0.0000", "1_000", "0x1f", "NaN", "nan", "inf", "-inf",
+            "infinity", "１２３", "1.2.3", "--1", "++1", "1e1e1", ".5", "5.", "  -3.0  ",
+        ] {
+            let _ = parse_bf(a);
+        }
+        // Long inputs: bounded work, no hang/panic.
+        let _ = parse_bf(&"9".repeat(5000));
+        let _ = parse_bf(&format!("-0.{}", "1234567890".repeat(400)));
+        // Sanity: well-formed values parse to Some; clear garbage to None. (Exact value
+        // round-trips are covered by `center_string_roundtrip_subpixel`.)
+        for v in ["0", "-0.5", "-1.7548776662466927", "1e-40", "3.14159"] {
+            assert!(parse_bf(v).is_some(), "rejected valid input {v}");
+        }
+        for v in ["", "abc", "hello", "..", "+-", "inf", "-inf", "NaN"] {
+            assert!(parse_bf(v).is_none(), "accepted garbage {v:?}");
         }
     }
 }
