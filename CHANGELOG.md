@@ -83,6 +83,43 @@ Baseline for tracked versioning. Notable capabilities already present:
   parameters/result/threshold/verdict, golden checksums, and the exact `--render` command
   to reproduce each golden — so a third party can independently re-run and confirm.
 
+- **Cross-renderer cross-check (Fraktaler-3)** — `--crosscheck-f3 raw.exr --center X Y
+  --zoom-f3 Z [--iter K] [--er R]` validates against **Fraktaler-3** (Claude
+  Heiland-Allen's independent GPU-perturbation renderer) at the *iteration* level. F3's raw
+  EXR carries the integer escape count in a `UINT` channel `N` (exterior `n + 1024`,
+  interior `0xFFFFFFFF`); we recover each pixel's exact `c` from F3's documented pixel
+  mapping — including replicating its deterministic triangular sub-pixel **jitter**
+  (`burtle_hash`/`triangle`, applied even at `subframes = 1`) and the vertical EXR flip —
+  and compare F3's count to our independent arbitrary-precision **CPU bignum dwell oracle**
+  (the same oracle `--selftest` checks our GPU pipeline against, so the results compose
+  transitively into `our GPU ≈ Fraktaler-3`). Boundary/max-iteration-cliff pixels are
+  excluded as genuinely ULP-ambiguous. Measured: **100%** interior/exterior membership and
+  **100%** of exterior counts agree to within one iteration (≈79% exact; the residual ±1 is
+  the `≥`-vs-`>` escape-test convention at band edges), holding undiminished at **10⁶×**
+  zoom. New `fractadyne-export::read_exr_channel_f32` reads an arbitrary named EXR channel
+  (UINT/F16/F32 → f32). Reproduction recipe + results table:
+  [validation/crosscheck-fraktaler3.md](validation/crosscheck-fraktaler3.md). (Uses an
+  external F3 EXR by design; kept entirely separate from `--selftest`, which uses no
+  external data.)
+
+- **Extreme-depth precision validation** — `--validate-deep [--out report.md]` validates the
+  arbitrary-precision arithmetic core at magnifications far beyond `f64` range — **1e1000×,
+  1e10000×, 1e100000×, and 1e1000000×** (≈3.3-million-bit precision). With no external
+  corpus at this depth it uses the standard precision-doubling technique: iterate `z²+c`
+  from a full-mantissa interior point (seeded by `√½` so the multiply exercises real carries
+  across every limb) at precision `p` and again at `p+256`, and require the results agree to
+  ≈`p` bits, plus a decimal `to_string → parse` coordinate round-trip. Feasible because
+  `astro-float` switches to **FFT multiplication** above ~5400 limbs (measured ~32 ms per
+  iteration at 3.3 M bits — near-linear, not quadratic) and the check is **single-point**
+  (a per-pixel dwell oracle would take years that deep). New core API:
+  `precision_for_octaves` (bypasses the `f64` magnification overflow), `deep_consistency_bits`,
+  `deep_roundtrip_bits`; new `fractadyne-core` tests (`deep_precision_self_consistent_1e1000`,
+  plus an `#[ignore]`d 1e100000× case). This surfaced that the renderer's **live** zoom is
+  capped near **1e308×** by the viewport's `f64` `units_per_pixel`/`magnification` (the
+  bignum *center* is unlimited; the *scale* underflows) — tracked in TODO as a floatexp /
+  log-magnitude scale rework. Recipe + measured cost-scaling table:
+  [validation/extreme-depth.md](validation/extreme-depth.md).
+
 - **In-app Help & reference** — Help → "Help & reference…" (or F1 / ?) opens a multi-section
   window with a table of contents: Overview, Navigation, Coloring & options, Fractals
   (mathematically accurate per-family formulas + descriptions, Julia mode, deep-zoom

@@ -49,6 +49,11 @@ fractadyne --selftest [--bless] [--out report.md]  # validation suite; exit 0 = 
 fractadyne --render-iter --out img.exr [view opts] # export raw iteration data (EXR) for review
 fractadyne --compare A B [--out heatmap.png]       # diff two renders/EXRs: max/mean Δ + heatmap
 fractadyne --import-kfr loc.kfr [--render ...]      # load a Kalles Fraktaler location
+fractadyne --crosscheck-f3 raw.exr --center X Y --zoom-f3 Z [--iter K] [--er R]
+                                                    # compare a Fraktaler-3 raw EXR's exact
+                                                    # iteration counts to our CPU bignum oracle
+fractadyne --validate-deep [--out report.md]        # extreme-depth precision self-consistency
+                                                    # battery (1e1000 … 1e1000000×)
 ```
 
 ## Validation
@@ -75,6 +80,21 @@ or internal cross-checks):
   for A/B against another build or imported data; and **Kalles Fraktaler `.kfr` import**
   (hardened, fuzzed parser) so the *identical* coordinate can be loaded into a trusted
   third-party renderer (Fraktaler-3 / Kalles Fraktaler) and cross-checked.
+- **Cross-renderer cross-check** — `--crosscheck-f3` compares **Fraktaler-3**'s raw
+  iteration EXR (its `N` channel) against our independent arbitrary-precision CPU dwell
+  oracle, pixel for pixel. Two fully independent engines agree on **100%** of
+  interior/exterior membership and **100%** of exterior escape counts to within one
+  iteration — undiminished at 10⁶× zoom. Since `--selftest` checks our GPU pipeline
+  against that same oracle, the two compose transitively. See
+  [validation/crosscheck-fraktaler3.md](validation/crosscheck-fraktaler3.md) to reproduce.
+- **Extreme-depth precision validation** — `--validate-deep` exercises the
+  arbitrary-precision arithmetic core at magnifications far beyond `f64` range, up to
+  **10⁶ ᵈⁱᵍⁱᵗˢ of zoom (1e1000000×, ~3.3-million-bit precision)**, via precision-doubling
+  self-consistency + coordinate round-trip. Feasible because `astro-float` uses FFT
+  multiplication (~32 ms/iteration even at 3.3 M bits) and the check is single-point, not
+  per-pixel. (A per-pixel oracle isn't feasible that deep, and the renderer's `f64`
+  `units_per_pixel` caps *live* zoom near 1e308× — a separate, tracked limit.) See
+  [validation/extreme-depth.md](validation/extreme-depth.md).
 
 ## Controls
 

@@ -136,9 +136,87 @@ pub fn parse_kfr(text: &str) -> Option<KfrView> {
 }
 
 /// Mantissa bits needed to position sub-pixel at the given magnification (+ guard).
+///
+/// Note: `mag` is `f64`, so this saturates near `1e308×` (and the viewport's `f64`
+/// `units_per_pixel` is the actual render-depth ceiling). To reason about precision past
+/// that — e.g. for extreme-depth *arithmetic* validation — use [`precision_for_octaves`].
 pub fn precision_for_magnification(mag: f64) -> usize {
     let octaves = mag.max(1.0).log2().ceil() as usize;
     (octaves + 64).max(64)
+}
+
+/// Mantissa bits for a magnification of `2^octaves` (+ 64 guard bits). Unlike
+/// [`precision_for_magnification`] this takes the octave count directly, so it stays valid
+/// for magnifications far beyond `f64` range (e.g. `1e1000000×` ≈ 3.32M octaves → ~3.32M
+/// bits) — used by the extreme-depth validation battery.
+pub fn precision_for_octaves(octaves: u64) -> usize {
+    (octaves as usize).saturating_add(64).max(64)
+}
+
+/// Leading base-2 bits of agreement between two `BigFloat`s: ≈ `−log₂(|a−b| / |b|)`.
+/// Returns `p` when they match to the working precision (the difference rounds to zero).
+fn agree_bits(a: &BigFloat, b: &BigFloat, p: usize) -> i64 {
+    let diff = a.sub(b, p, RM);
+    let ed = match diff.exponent() {
+        Some(e) => e as i64,
+        None => return p as i64, // difference is exactly zero → full agreement
+    };
+    let eb = b.exponent().map(|e| e as i64).unwrap_or(0);
+    (eb - ed).max(0)
+}
+
+/// A full-mantissa interior point (inside the main cardioid, so it never escapes), seeded
+/// by `√½` so every limb is populated — exercising real carries in the bignum multiply
+/// rather than the sparse mantissas a dyadic point like `c = −0.5` would produce.
+fn deep_test_point(p: usize) -> (BigFloat, BigFloat) {
+    let s = BigFloat::from_f64(0.5, p).sqrt(p, RM); // 0.70710678… (irrational ⇒ full mantissa)
+    let cx = s
+        .mul(&BigFloat::from_f64(0.3, p), p, RM)
+        .sub(&BigFloat::from_f64(0.5, p), p, RM); // ≈ −0.288 (interior)
+    let cy = s.mul(&BigFloat::from_f64(0.01, p), p, RM); // ≈ 0.0071
+    (cx, cy)
+}
+
+fn iter_zsq_c(cx: &BigFloat, cy: &BigFloat, k: u32, p: usize) -> (BigFloat, BigFloat) {
+    let two = BigFloat::from_f64(2.0, p);
+    let mut zx = BigFloat::from_f64(0.0, p);
+    let mut zy = BigFloat::from_f64(0.0, p);
+    for _ in 0..k {
+        let x2 = zx.mul(&zx, p, RM);
+        let y2 = zy.mul(&zy, p, RM);
+        let nzy = zx.mul(&zy, p, RM).mul(&two, p, RM).add(cy, p, RM);
+        zx = x2.sub(&y2, p, RM).add(cx, p, RM);
+        zy = nzy;
+    }
+    (zx, zy)
+}
+
+/// Extreme-depth **precision self-consistency** probe (needs no external oracle): iterate
+/// `z²+c` for `k` steps from a full-mantissa interior point at precision `p`, and again at
+/// `p + guard` bits, then return how many leading base-2 bits of the result agree.
+///
+/// This is the standard precision-doubling validation technique: if the `p`-bit answer is
+/// stable under a precision increase it is almost certainly correct. Sound `p`-bit
+/// arithmetic gives agreement ≈ `p − log₂(k)`; a precision-propagation or arithmetic bug at
+/// that bit-width collapses it. Feasible to any depth (cost ∝ `k · M(p)` with FFT multiply),
+/// unlike a per-pixel dwell oracle.
+pub fn deep_consistency_bits(p: usize, guard: usize, k: u32) -> i64 {
+    let pg = p + guard;
+    let (cx, cy) = deep_test_point(pg);
+    let lo = iter_zsq_c(&cx, &cy, k, p);
+    let hi = iter_zsq_c(&cx, &cy, k, pg);
+    agree_bits(&lo.0, &hi.0, pg).min(agree_bits(&lo.1, &hi.1, pg))
+}
+
+/// Round-trip a full-mantissa coordinate through decimal at precision `p`
+/// (`to_decimal_string` → `parse_bf`) and return the bits of agreement — validates the
+/// persisted-coordinate I/O path (the deep-zoom save/restore format) at extreme precision.
+pub fn deep_roundtrip_bits(p: usize) -> i64 {
+    let (cx, _) = deep_test_point(p);
+    match parse_bf(&to_decimal_string(&cx)) {
+        Some(back) => agree_bits(&cx, &back, p),
+        None => -1,
+    }
 }
 
 fn bf(v: f64, p: usize) -> BigFloat {
@@ -781,6 +859,36 @@ mod tests {
 
     fn approx(a: f64, b: f64) {
         assert!((a - b).abs() < 1e-9, "{a} !≈ {b}");
+    }
+
+    fn octaves_for(exp_decimal: f64) -> u64 {
+        (exp_decimal * std::f64::consts::LN_10 / std::f64::consts::LN_2).ceil() as u64
+    }
+
+    // Extreme-depth arithmetic validation (feasible single-point form): at a magnification of
+    // 1e1000× — far beyond f64 range — the arbitrary-precision z²+c iteration must be stable
+    // under a precision increase (agree to ≈ p bits) and the coordinate must survive a decimal
+    // round-trip. Fast (~3.4k-bit precision); the deeper 1e100000×/1e1000000× cases run via
+    // `--validate-deep` (seconds–minutes) and the #[ignore]d test below.
+    #[test]
+    fn deep_precision_self_consistent_1e1000() {
+        let p = precision_for_octaves(octaves_for(1_000.0));
+        let agree = deep_consistency_bits(p, 256, 2_000);
+        assert!(agree >= p as i64 - 128, "self-consistency {agree} of {p} bits");
+        let rt = deep_roundtrip_bits(p);
+        assert!(rt >= p as i64 - 256, "round-trip {rt} of {p} bits");
+    }
+
+    // Same check at 1e100000× (~332k-bit precision). Opt-in (slow, ~seconds):
+    // `cargo test -p fractadyne-core -- --ignored deep_precision_self_consistent_1e100000`.
+    #[test]
+    #[ignore = "slow: ~332k-bit precision, runs in seconds"]
+    fn deep_precision_self_consistent_1e100000() {
+        let p = precision_for_octaves(octaves_for(100_000.0));
+        let agree = deep_consistency_bits(p, 256, 400);
+        assert!(agree >= p as i64 - 128, "self-consistency {agree} of {p} bits");
+        let rt = deep_roundtrip_bits(p);
+        assert!(rt >= p as i64 - 256, "round-trip {rt} of {p} bits");
     }
 
     // Two centers differing only at the ~34th significant digit must remain distinct

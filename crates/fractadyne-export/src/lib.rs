@@ -58,6 +58,57 @@ pub fn read_exr_rgba_f32(path: &Path) -> Option<(u32, u32, Vec<f32>)> {
     Some((w as u32, h as u32, data))
 }
 
+/// Decode a single named channel from an EXR to `(width, height, Vec<f32>)`, converting
+/// UINT / F16 / F32 sample types to `f32` (row-major, one value per pixel).
+///
+/// Used for cross-renderer validation against **Fraktaler-3**, whose raw EXR stores the
+/// integer escape count in a UINT channel named `"N"` (exterior `n + 1024`, interior
+/// `0xFFFFFFFF`) and the smooth fraction in float channel `"NF"`.
+pub fn read_exr_channel_f32(path: &Path, name: &str) -> Option<(u32, u32, Vec<f32>)> {
+    use exr::prelude::*;
+    let image = read()
+        .no_deep_data()
+        .largest_resolution_level()
+        .all_channels()
+        .first_valid_layer()
+        .all_attributes()
+        .from_file(path)
+        .ok()?;
+    let layer = &image.layer_data;
+    let (w, h) = (layer.size.0, layer.size.1);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let chan = layer
+        .channel_data
+        .list
+        .iter()
+        .find(|c| c.name.to_string() == name)?;
+    let data: Vec<f32> = match &chan.sample_data {
+        FlatSamples::F16(v) => v.iter().map(|x| x.to_f32()).collect(),
+        FlatSamples::F32(v) => v.clone(),
+        FlatSamples::U32(v) => v.iter().map(|&x| x as f32).collect(),
+    };
+    if data.len() != w * h {
+        return None;
+    }
+    Some((w as u32, h as u32, data))
+}
+
+/// List the channel names present in an EXR's first valid layer (diagnostics / discovery).
+pub fn list_exr_channels(path: &Path) -> Option<Vec<String>> {
+    use exr::prelude::*;
+    let image = read()
+        .no_deep_data()
+        .largest_resolution_level()
+        .all_channels()
+        .first_valid_layer()
+        .all_attributes()
+        .from_file(path)
+        .ok()?;
+    Some(image.layer_data.channel_data.list.iter().map(|c| c.name.to_string()).collect())
+}
+
 /// Decode a PNG at full resolution to `(width, height, rgba8)` (for golden-image diffs).
 pub fn read_png_rgba8(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
     let file = std::fs::File::open(path).ok()?;

@@ -180,6 +180,17 @@ perturbation + series approximation + glitch correction. The headline feature.
       via `--render` at 1e15/1e25/1e27(df32)/1e29/1e32(floatexp); shallow unchanged;
       crossover seamless. Benchmark score held (3220). Depth now bounded by the center
       coordinate precision (auto-scales while zooming) + iteration budget, not f32.
+- [ ] **Lift the ~1e308× render ceiling (floatexp / log-magnitude scale)** — the bignum
+      center is unlimited precision (no coordinate jump at any depth), but the viewport
+      *scale* is `f64`: `units_per_pixel` underflows and `magnification()` overflows near
+      **1e308×**, which is the real live-zoom wall today (not the center). Replace the `f64`
+      scale with a floatexp / stored-log-magnitude representation, and add
+      `precision_for_octaves`-style paths wherever `precision_for_magnification(f64)` is
+      used (it saturates past 1e308). The GPU delta path already carries a separate base-2
+      `delta_exp`, so the shader side is largely ready; this is mostly the CPU `Viewport`
+      (units_per_pixel, magnification, zoom/pan/box-zoom, display). Unlocks zooms that the
+      arithmetic core already validates to **1e1000000×** (see `--validate-deep` /
+      [validation/extreme-depth.md](validation/extreme-depth.md)).
 - [ ] **Full glitch correction** (Pauldelbrot criterion + multi-reference recompute).
 - [x] **AA auto-drop during motion** — full AA only when the view settles (smooth
       deep zoom; sharp still image).
@@ -447,6 +458,23 @@ for fun, informative value, and ease of use.
       key=value allow-list only, bounded lengths, validate/clamp every numeric field,
       reject unknown keys, no code/formula execution, no file paths, cap decoded size,
       and fuzz the decoder. (Reuse the hardened view-metadata parser; never `eval`.)
+- [ ] **Auto-zoom (autopilot) — follow interesting areas downward** — a hands-free
+      continuous deep zoom that re-targets toward detail each step, like XaoS's autopilot /
+      Kalles Fraktaler's "zoom sequence." Common steering methods to evaluate: (a) **DE /
+      gradient-magnitude saliency** — pick the sub-region with the strongest boundary
+      response (highest distance-estimate contrast / iteration-gradient / local variance),
+      keeping the target a margin off the set so it never bottoms out in solid interior or
+      escapes to flat exterior; (b) **edge/entropy detection** on the iteration field
+      (Sobel / Shannon entropy per candidate tile) to favor structurally rich regions; (c)
+      **minibrot-seeking** — reuse `find_nucleus` to lock onto a nearby minibrot and zoom
+      to its nucleus for an endlessly-detailed descent; (d) **boundary-tracking** —
+      bisect toward the set boundary (as `random_location` already does) and follow it.
+      Re-evaluate the target every K frames within the current view (cheap, from the
+      existing iteration texture), steer the center with a smoothed/eased lerp (reuse the
+      continuous-zoom + `home_lerp` machinery) to avoid jerks, and stop/zoom-out on
+      dead-ends (uniform region) or at a depth cap. Hook into the toolbar + a keybind;
+      respects the perturbation/AA-on-settle pipeline. Pairs naturally with the
+      zoom-movie / frame→video export below (deterministic autopilot path → render farm).
 - [ ] **Zoom-movie / frame→video export** — build on scripting + headless render.
 - [ ] **Layers + blend modes** (Ultra Fractal-style compositing).
 - [ ] **Formula DSL / custom formulas** (M6).
