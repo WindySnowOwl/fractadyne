@@ -3301,6 +3301,92 @@ impl FractadyneApp {
                     pass: identical,
                 });
             }
+
+            // ---- Phase 4: derivative-dependent checks (DE / dz/dc) ----
+            // The distance estimate (alpha channel = log2 DE-in-pixels) and slope normal are
+            // derived from the floatexp dz/dc; validate them independently of the dwell.
+            if let Some(px) = build(&cxb, &cyb, 1.0e6, N, 4000) {
+                let de_px = |k: usize| -> Option<f32> {
+                    let a = px[k * 4 + 3];
+                    (a < 20.0).then(|| 2.0_f32.powf(a)) // >=20 ⇒ "far/unavailable"
+                };
+
+                // 4.2 DE self-consistency: an exterior pixel touching the interior (boundary
+                // ≤1px away) cannot have a large distance estimate — that's a direct
+                // contradiction exposing a derivative-formula error.
+                let (mut bnd, mut viol) = (0u64, 0u64);
+                for j in 1..nn - 1 {
+                    for i in 1..nn - 1 {
+                        let k = j * nn + i;
+                        if px[k * 4] < 0.0 {
+                            continue; // interior
+                        }
+                        let touches_interior = [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)]
+                            .iter()
+                            .any(|&(di, dj)| {
+                                px[(((j as isize + dj) as usize) * nn + (i as isize + di) as usize) * 4] < 0.0
+                            });
+                        if touches_interior {
+                            bnd += 1;
+                            // boundary-adjacent ⇒ DE must be small (≤ a few px), and available.
+                            if de_px(k).map(|d| d > 16.0).unwrap_or(true) {
+                                viol += 1;
+                            }
+                        }
+                    }
+                }
+                checks.push(SelfCheck {
+                    category: "Derivative",
+                    name: "distance-estimate self-consistency".into(),
+                    params: format!("seahorse, 1e6×, {bnd} boundary px"),
+                    result: format!("{viol} with DE>16px at boundary"),
+                    threshold: "<0.5% of boundary px",
+                    pass: bnd > 0 && (viol as f64) < 0.005 * bnd as f64,
+                });
+
+                // 4.1 DE lower bound (Koebe ¼ theorem): a disk of radius DE/4 about an exterior
+                // point contains no boundary. Verify with an INDEPENDENT CPU dwell at the disk
+                // rim — catches dz/dc under-estimation (DE too large) invisible to dwell tests.
+                let step = (3.0 / 1.0e6) / N as f64;
+                let cx0 = fractadyne_core::to_f64(&cxb);
+                let cy0 = fractadyne_core::to_f64(&cyb);
+                let half = N as f64 / 2.0;
+                let (mut checked, mut koebe_viol) = (0u64, 0u64);
+                let g = (N / 12).max(1) as usize;
+                let mut j = 0usize;
+                while j < nn {
+                    let mut i = 0usize;
+                    while i < nn {
+                        let k = j * nn + i;
+                        if px[k * 4] >= 0.0 {
+                            if let Some(d) = de_px(k) {
+                                if (1.0..=4096.0).contains(&d) {
+                                    let r = d as f64 * step * 0.25; // Koebe-safe radius (world)
+                                    let cre = cx0 + ((i as f64 + 0.5) - half) * step;
+                                    let cim = cy0 + (half - (j as f64 + 0.5)) * step;
+                                    checked += 1;
+                                    for (ox, oy) in [(r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)] {
+                                        if mandel_escapes(cre + ox, cim + oy, 4000).is_none() {
+                                            koebe_viol += 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        i += g;
+                    }
+                    j += g;
+                }
+                checks.push(SelfCheck {
+                    category: "Derivative",
+                    name: "DE lower bound (Koebe ¼)".into(),
+                    params: format!("seahorse, 1e6×, {checked} sampled exterior px"),
+                    result: format!("{koebe_viol} disks contain interior"),
+                    threshold: "0",
+                    pass: checked > 0 && koebe_viol == 0,
+                });
+            }
         }
 
         // ---- golden-image regression (set deterministic coloring per spec) ----

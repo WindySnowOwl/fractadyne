@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.0 (build 88)
-- **Generated:** 2026-06-29 11:55:07 UTC (unix 1782734107)
+- **Version:** 0.1.0 (build 90)
+- **Generated:** 2026-06-29 12:03:15 UTC (unix 1782734595)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -32,8 +32,10 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Consistency | zoom-sequence across direct→df32 seam | seahorse, 4e3×↔1.2e4×, 1814 overlap px | 0 differ | <0.1% differ | ✅ PASS |
 | Consistency | pan consistency | seahorse, 1e6×, +55px, 23099 overlap px | 1 differ | <0.1% differ | ✅ PASS |
 | Consistency | render determinism (2 runs) | seahorse, 1e6× | bit-identical | bit-identical | ✅ PASS |
+| Derivative | distance-estimate self-consistency | seahorse, 1e6×, 1037 boundary px | 0 with DE>16px at boundary | <0.5% of boundary px | ✅ PASS |
+| Derivative | DE lower bound (Koebe ¼) | seahorse, 1e6×, 12 sampled exterior px | 0 disks contain interior | 0 | ✅ PASS |
 
-**19/19 checks passed.**
+**21/21 checks passed.**
 
 ## Golden images (320×240)
 
