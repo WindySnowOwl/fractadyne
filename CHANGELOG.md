@@ -24,6 +24,59 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Validation & self-test suite** — a layered correctness harness with no external data
+  (exact mathematics + internal cross-checks), designed to be independently verifiable.
+  `cargo test -p fractadyne-core` adds exact-ground-truth tests: hyperbolic-component
+  nuclei & periods (recovered to 1e-9), Misiurewicz pre-periodicity, closed-form interior
+  membership, and dwell symmetry. `fractadyne --selftest` runs a GPU validation suite
+  (exit code 0/1) checking the perturbation path against an independent **CPU f64 dwell**
+  and a **naive arbitrary-precision (bignum) dwell oracle** (no perturbation, no reference)
+  comparing the **integer escape count** across a **depth battery (1e6× … 1e30×)** that
+  exercises whichever render mode the depth selector actually uses (df32 perturbation and
+  floatexp), excluding only ill-conditioned boundary samples — independent deep-zoom
+  correctness, not just internal consistency. Plus floatexp-vs-df32 agreement, real-axis
+  symmetry, interior/exterior presence, and finiteness (via a new `render_iter` that reads
+  back the raw iteration texture). **Golden-image regression**: `--selftest --bless` records
+  reference PNGs under `validation/golden/`; subsequent runs diff against them with a pixel
+  tolerance. Every run writes a **readable, verifiable Markdown report**
+  (`validation/report.md`) with full provenance (version, GPU, CPU, OS), each check's
+  parameters/result/threshold/verdict, golden checksums, and the exact `--render` command
+  to reproduce each golden — so a third party can independently re-run and confirm.
+
+- **In-app Help & reference** — Help → "Help & reference…" (or F1 / ?) opens a multi-section
+  window with a table of contents: Overview, Navigation, Coloring & options, Fractals
+  (mathematically accurate per-family formulas + descriptions, Julia mode, deep-zoom
+  support), How it works (escape-time, arbitrary precision, perturbation, floatexp,
+  distance estimation), Command line, Shortcuts, and About. Written for newcomers.
+
+- **Famous-locations tour, random location & help overlay** — a **Locations** menu with
+  curated named Mandelbrot spots (Seahorse / Elephant Valley, spirals, a mini-Mandelbrot,
+  a deep seahorse) that jump at full precision, plus **"🎲 Random location"** which finds
+  a detail-rich boundary point (bisecting between an interior anchor and a random exterior
+  direction) and zooms in a random amount. A **Keyboard & controls** overlay (Help menu /
+  **F1** / **?**) documents every shortcut and the new coloring/minimap/minibrot features.
+
+- **Custom gradient / palette editor** — Coloring → "Edit gradient…" (or the "Custom"
+  palette entry) opens an editor with a live gradient preview, a color picker and
+  position slider per stop, add/remove (up to 8 stops), and "Copy preset…" to seed from a
+  built-in. The custom gradient is persisted and used everywhere the palette is (live
+  view, export, minimap thumbnail).
+
+- **Minimap overview ("you are here")** — View → "Minimap overview" shows a small static
+  home-view thumbnail (rendered via the export pipeline, cached per fractal/palette/
+  method) in the bottom-left, with a marker for the current location (the view rectangle
+  when shallow, a crosshair when the view is sub-pixel deep) and the live zoom-depth
+  label. Click it to jump to a region at home zoom. Persisted; shown in single
+  Mandelbrot-mode (hidden in dual / Julia).
+
+- **Period / minibrot finder ("zoom to center")** — View → "Find minibrot center" (or
+  press **M**) snaps the view center to the nearby minibrot's exact nucleus and reports
+  its period in a transient toast. Detects the atom-domain period (global argmin of |Zₙ|
+  on the critical orbit), then Newton-refines `c` in arbitrary precision until the orbit
+  closes (`Z_period(c) = 0`), recovering the true smallest period and rejecting runaway
+  Newton / non-nuclei. Holomorphic families (Mandelbrot / Multibrot). Verified deep
+  (period-998 at 2e7×). Headless `--find-minibrot --center X Y [--zoom M] [--fractal N]`.
+
 - **More coloring methods** — a Coloring → "Method" picker beyond smooth iteration:
   **stripe average** (flowing sinusoidal orbit bands, with a density slider),
   **triangle-inequality average**, **orbit trap** (point / cross / circle shapes, colors
@@ -85,6 +138,25 @@ Baseline for tracked versioning. Notable capabilities already present:
   the bands). `--de` CLI flag; persisted. Works at any depth (verified at 1e8×).
 
 ### Fixed (post-baseline, this session)
+
+- **Speckle/noise across the exterior at deep zoom on a large window** — a very high
+  iteration count (e.g. a base of 50,000) over-resolved the boundary's sub-pixel "dust"
+  into per-pixel noise *and* consumed the entire GPU-watchdog budget (forcing low
+  resolution and no anti-aliasing). Rendering now caps the iteration count at a
+  **zoom-scaled** value (`~2000 + 256·octaves`) — generous enough that normal
+  auto-iteration is never limited, but an inflated manual base is — applied to both the
+  live view and exports so they match. Result: coherent structure instead of dust. When
+  the budget still can't afford true supersampling, a color-pass box filter anti-aliases
+  the settled view; at extreme depth it falls back to reducing resolution (box-filtered).
+  The perf panel's "eff iter" now reports the count actually rendered.
+- **Quick export froze the app / could crash on a deep view** — the export's reference
+  orbit was built on the main thread (briefly freezing the UI), and `render_export` tiled
+  by texture/buffer size only, so a single tile at a huge iteration count was an enormous
+  GPU submission that monopolized the shared device (freezing the live UI) and could trip
+  the OS GPU watchdog (TDR → device-lost). Exports now use the same zoom-appropriate
+  iteration cap, and export tiles are additionally bounded by **iteration work** so each
+  GPU submission stays short — the UI stays responsive and the watchdog never fires. (A
+  3840×2160, 2× export of a deep view now finishes in a few seconds.)
 
 - **Deep zoom lost on quit/restart (uniform screen after relaunch)** — the auto-saved
   session stored the center as `f64`, so restoring a deep view truncated the coordinate

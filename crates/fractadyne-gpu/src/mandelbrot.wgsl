@@ -748,6 +748,10 @@ struct ColorU {
     de_width: f32,     // distance-contour spacing (octaves per band)
     de_phase: f32,     // animated phase (cycles the glow bands)
     color_method: u32, // 0 smooth, 1 stripe, 2 triangle-ineq, 3 orbit-trap, 4 distance, 5 decomposition
+    aa_filter: u32,    // color-pass box-filter taps per axis (≥1); >1 anti-aliases an upscaled iter texture
+    _capad0: u32,
+    _capad1: u32,
+    _capad2: u32,
     stops: array<vec4<f32>, 8>, // rgb + position
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
@@ -804,14 +808,18 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let pix = vec2<i32>(uv * vec2<f32>(screen_dim)); // screen pixel index
     let maxc = vec2<i32>(tex_dim) - vec2<i32>(1, 1);
 
-    // Average the ss×ss block of iteration samples covering this pixel (SSAA),
-    // accumulating the slope normal too (for distance-estimate relief lighting).
+    // Average a `taps×taps` block of iteration samples covering this pixel. With
+    // supersampling, taps = ss (true SSAA). When the iteration texture was rendered
+    // below display resolution (work-budget at deep zoom on a big window), `aa_filter`
+    // widens the box so the upscaled, finely-banded texture is anti-aliased instead of
+    // point-sampled into speckle. Also accumulates the slope normal (relief lighting).
+    let taps = max(ss, max(cu.aa_filter, 1u));
     var acc = vec3<f32>(0.0);
     var nacc = vec2<f32>(0.0);
     var dacc = 0.0;
     var count = 0.0;
-    for (var dj: u32 = 0u; dj < ss; dj = dj + 1u) {
-        for (var di: u32 = 0u; di < ss; di = di + 1u) {
+    for (var dj: u32 = 0u; dj < taps; dj = dj + 1u) {
+        for (var di: u32 = 0u; di < taps; di = di + 1u) {
             let texel = clamp(
                 pix * i32(ss) + vec2<i32>(i32(di), i32(dj)),
                 vec2<i32>(0, 0),

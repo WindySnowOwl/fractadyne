@@ -515,6 +515,204 @@ pub fn sub_f64(a: &BigFloat, b: &BigFloat, p: usize) -> f64 {
     to_f64(&a.sub(b, p, RM))
 }
 
+/// `a + b` (with `b` an `f64`), arbitrary precision — add a small pixel offset to a
+/// full-precision center without losing the center's digits.
+pub fn add_f64(a: &BigFloat, b: f64, p: usize) -> BigFloat {
+    a.add(&BigFloat::from_f64(b, p), p, RM)
+}
+
+/// Naïve **arbitrary-precision** Mandelbrot dwell — an independent oracle (no perturbation,
+/// no reference orbit) valid at *any* depth, since the center is bignum. Iterates `z → z² + c`
+/// entirely in `astro_float`. Returns `Some((n, smooth))` on escape — `n` is the first
+/// iteration with `|zₙ|² > bailout2`, `smooth = n + 1 − log₂(½·ln|z|²/ln2)` — or `None` for
+/// interior (reached `max`). `bailout2` must match the renderer's (256² = 65536) for `n` to
+/// agree exactly.
+pub fn naive_dwell_bf(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    max: u32,
+    bailout2: f64,
+    p: usize,
+) -> Option<(u32, f32)> {
+    let mut zx = bf(0.0, p);
+    let mut zy = bf(0.0, p);
+    for iter in 1..=max {
+        let x2 = zx.mul(&zx, p, RM);
+        let y2 = zy.mul(&zy, p, RM);
+        // zy = 2·zx·zy + cy ; zx = x² − y² + cx
+        let nzy = zx.mul(&zy, p, RM).mul(&bf(2.0, p), p, RM).add(cy, p, RM);
+        zx = x2.sub(&y2, p, RM).add(cx, p, RM);
+        zy = nzy;
+        let m2 = to_f64(&zx) * to_f64(&zx) + to_f64(&zy) * to_f64(&zy);
+        if m2 > bailout2 {
+            let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+            return Some((iter, iter as f32 + 1.0 - nu as f32));
+        }
+    }
+    None
+}
+
+// ---------------- period / minibrot-nucleus finder --------------------------------
+// "Zoom to center": from a view center, snap to the exact center (nucleus) of the
+// nearby minibrot and report its period. Mandelbrot/Multibrot only (holomorphic, so
+// Newton on the critical-orbit map applies).
+
+/// The exact center + period of a minibrot found near a view center.
+pub struct Nucleus {
+    pub period: u32,
+    pub cx: BigFloat,
+    pub cy: BigFloat,
+}
+
+/// The integer power `k` of the `z^k + c` families; `None` for the non-holomorphic
+/// formulas (Tricorn, Burning Ship, …) where this method doesn't apply.
+fn formula_power(formula: u32) -> Option<u32> {
+    match formula {
+        0 => Some(2),
+        1 => Some(3),
+        2 => Some(4),
+        3 => Some(5),
+        _ => None,
+    }
+}
+
+/// `-a` in arbitrary precision.
+fn neg_bf(a: &BigFloat, p: usize) -> BigFloat {
+    bf(0.0, p).sub(a, p, RM)
+}
+
+/// `z^e` for `e ≥ 1` by repeated multiplication (small exponents only).
+fn cpow_bf(zx: &BigFloat, zy: &BigFloat, e: u32, p: usize) -> (BigFloat, BigFloat) {
+    let mut rx = zx.clone();
+    let mut ry = zy.clone();
+    for _ in 1..e {
+        let (nx, ny) = cmul_bf(&rx, &ry, zx, zy, p);
+        rx = nx;
+        ry = ny;
+    }
+    (rx, ry)
+}
+
+fn mag2_bf(zx: &BigFloat, zy: &BigFloat) -> f64 {
+    let (mx, my) = (to_f64(zx), to_f64(zy));
+    mx * mx + my * my
+}
+
+/// Iteration `n` where the critical orbit `Z_0 = 0, Z_{n+1} = Z_n^k + c` makes its
+/// closest approach to the critical point (global argmin of `|Z_n|`, n in 1..=`max`,
+/// stopping on escape) — the period of the smallest atom domain enclosing `c`. This may
+/// be an integer multiple of the true period for strongly-interior points, which is
+/// harmless for Newton (`Z_p = 0 ⟹ Z_{2p} = 0`); the true period is recovered after
+/// convergence via [`reduce_period`].
+fn detect_period(cx: &BigFloat, cy: &BigFloat, formula: u32, max: u32, p: usize) -> Option<u32> {
+    formula_power(formula)?;
+    let mut zx = bf(0.0, p);
+    let mut zy = bf(0.0, p);
+    let mut best_p = 0u32;
+    let mut best_m = f64::INFINITY;
+    for n in 1..=max.max(1) {
+        let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
+        zx = nx;
+        zy = ny;
+        let m = mag2_bf(&zx, &zy);
+        if m < best_m {
+            best_m = m;
+            best_p = n;
+        }
+        if m > 1.0e12 {
+            break; // escaped
+        }
+    }
+    (best_p > 0).then_some(best_p)
+}
+
+/// True (smallest) period at a converged nucleus `c`: the first `n` for which
+/// `|Z_n|² < tol²` (the critical orbit returns to 0). `None` if the orbit never returns
+/// within `p_est` steps — i.e. `c` is not actually a nucleus (Newton didn't converge).
+fn reduce_period(cx: &BigFloat, cy: &BigFloat, formula: u32, p_est: u32, tol2: f64, p: usize) -> Option<u32> {
+    let mut zx = bf(0.0, p);
+    let mut zy = bf(0.0, p);
+    for n in 1..=p_est {
+        let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
+        zx = nx;
+        zy = ny;
+        if mag2_bf(&zx, &zy) < tol2 {
+            return Some(n);
+        }
+    }
+    None
+}
+
+/// Find the minibrot nucleus near `center` at the given magnification, for the
+/// holomorphic families. Detects the period (atom domain), then Newton-refines `c` so
+/// the critical orbit closes exactly: solve `Z_period(c) = 0` via
+/// `c ← c − Z_period / (dZ_period/dc)` in arbitrary precision. Returns `None` if the
+/// formula is unsupported, no period is found, or Newton diverges away from the view.
+pub fn find_nucleus(
+    center: &[BigFloat; 2],
+    mag: f64,
+    formula: u32,
+    max_period: u32,
+) -> Option<Nucleus> {
+    let p = precision_for_magnification(mag);
+    let k = formula_power(formula)?;
+    let p_est = detect_period(&center[0], &center[1], formula, max_period, p)?;
+
+    let span = 3.0 / mag.max(1.0); // approx view width in complex units
+    let tol = span * 1.0e-9;
+    let one = bf(1.0, p);
+    let kf = bf(k as f64, p);
+
+    let mut cx = center[0].clone();
+    let mut cy = center[1].clone();
+    let period = p_est;
+    for _ in 0..64 {
+        // Z_period and its derivative D = dZ/dc, from Z_0 = 0, D_0 = 0:
+        //   D_{n+1} = k·Z_n^{k-1}·D_n + 1 ;  Z_{n+1} = Z_n^k + c
+        let mut zx = bf(0.0, p);
+        let mut zy = bf(0.0, p);
+        let mut dx = bf(0.0, p);
+        let mut dy = bf(0.0, p);
+        for _ in 0..period {
+            let (zk1x, zk1y) = if k == 2 { (zx.clone(), zy.clone()) } else { cpow_bf(&zx, &zy, k - 1, p) };
+            let (mzx, mzy) = cmul_bf(&zk1x, &zk1y, &dx, &dy, p); // Z^{k-1}·D
+            let ndx = mzx.mul(&kf, p, RM).add(&one, p, RM);
+            let ndy = mzy.mul(&kf, p, RM);
+            let (nzx, nzy) = step_bf(&zx, &zy, &cx, &cy, formula, p);
+            zx = nzx;
+            zy = nzy;
+            dx = ndx;
+            dy = ndy;
+        }
+        // Newton step: c -= Z / D = Z · conj(D) / |D|²
+        let denom = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
+        if to_f64(&denom) == 0.0 {
+            return None;
+        }
+        let (numx, numy) = cmul_bf(&zx, &zy, &dx, &neg_bf(&dy, p), p);
+        let stepx = numx.div(&denom, p, RM);
+        let stepy = numy.div(&denom, p, RM);
+        cx = cx.sub(&stepx, p, RM);
+        cy = cy.sub(&stepy, p, RM);
+        let stepm = (to_f64(&stepx).powi(2) + to_f64(&stepy).powi(2)).sqrt();
+        if stepm < tol {
+            break;
+        }
+    }
+
+    // Reject runaway Newton: the nucleus should sit within a few view-widths of where
+    // we started (otherwise it converged to some unrelated far component).
+    let dx = sub_f64(&cx, &center[0], p);
+    let dy = sub_f64(&cy, &center[1], p);
+    if (dx * dx + dy * dy).sqrt() > span * 8.0 {
+        return None;
+    }
+    // Verify Newton landed on a real nucleus and recover the true (smallest) period.
+    let tol2 = (span * 1.0e-3).powi(2);
+    let period = reduce_period(&cx, &cy, formula, period, tol2, p)?;
+    Some(Nucleus { period, cx, cy })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -644,5 +842,116 @@ mod tests {
             reference_orbit(&bf(0.0, 64), &bf(0.0, 64), &r[0], &r[1], 0, 500, 64).1,
             501
         );
+    }
+
+    // The period-2 disk's nucleus is exactly c = -1. Starting near it, the finder must
+    // report period 2 and Newton-snap to (-1, 0).
+    #[test]
+    fn find_nucleus_period2_disk() {
+        let n = find_nucleus(&[bf(-1.01, 80), bf(0.012, 80)], 50.0, 0, 2000).unwrap();
+        assert_eq!(n.period, 2);
+        approx(to_f64(&n.cx), -1.0);
+        approx(to_f64(&n.cy), 0.0);
+    }
+
+    // The period-3 bulb's nucleus is c ≈ -0.122561 + 0.744862 i.
+    #[test]
+    fn find_nucleus_period3_bulb() {
+        let n = find_nucleus(&[bf(-0.12, 80), bf(0.74, 80)], 80.0, 0, 4000).unwrap();
+        assert_eq!(n.period, 3);
+        assert!((to_f64(&n.cx) - (-0.122561)).abs() < 1e-5, "cx={}", to_f64(&n.cx));
+        assert!((to_f64(&n.cy) - 0.744862).abs() < 1e-5, "cy={}", to_f64(&n.cy));
+    }
+
+    // ---- analytic ground-truth validation (no external data; exact mathematics) ----
+
+    /// Plain-f64 Mandelbrot escape-time dwell (test ground truth). `None` = interior
+    /// (did not escape within `max`).
+    fn dwell(cx: f64, cy: f64, max: u32) -> Option<u32> {
+        let (mut zx, mut zy) = (0.0_f64, 0.0_f64);
+        for i in 0..max {
+            let (x2, y2) = (zx * zx, zy * zy);
+            if x2 + y2 > 4.0 {
+                return Some(i);
+            }
+            zy = 2.0 * zx * zy + cy;
+            zx = x2 - y2 + cx;
+        }
+        None
+    }
+
+    /// Exact membership of the main cardioid: a point is inside iff
+    /// `q·(q + (x − ¼)) < ¼·y²` with `q = (x − ¼)² + y²`.
+    fn in_main_cardioid(x: f64, y: f64) -> bool {
+        let xm = x - 0.25;
+        let q = xm * xm + y * y;
+        q * (q + xm) < 0.25 * y * y
+    }
+
+    /// Exact membership of the period-2 bulb: the disc of radius ¼ around c = −1.
+    fn in_period2_bulb(x: f64, y: f64) -> bool {
+        (x + 1.0) * (x + 1.0) + y * y < 0.0625
+    }
+
+    // Points proven interior by the closed-form cardioid/bulb tests must never escape;
+    // points well outside the set must escape quickly. Validates the escape iteration.
+    #[test]
+    fn interior_closed_form_never_escapes() {
+        let interior = [(-0.5, 0.0), (0.0, 0.0), (-0.1, 0.1), (-1.0, 0.0), (-0.9, 0.1)];
+        for (x, y) in interior {
+            assert!(in_main_cardioid(x, y) || in_period2_bulb(x, y), "({x},{y}) not classified interior");
+            assert_eq!(dwell(x, y, 20_000), None, "interior point ({x},{y}) escaped");
+        }
+        let exterior = [(2.0, 0.0), (0.4, 0.4), (-0.8, 0.4), (0.3, 0.6)];
+        for (x, y) in exterior {
+            assert!(dwell(x, y, 20_000).is_some(), "exterior point ({x},{y}) did not escape");
+        }
+    }
+
+    // The set is symmetric about the real axis: dwell(x, y) == dwell(x, −y).
+    #[test]
+    fn dwell_symmetric_about_real_axis() {
+        for &(x, y) in &[(0.3, 0.5), (-0.75, 0.13), (-0.1, 0.9), (0.28, 0.012)] {
+            assert_eq!(dwell(x, y, 5_000), dwell(x, -y, 5_000), "asymmetry at ({x},{y})");
+        }
+    }
+
+    // A table of exact hyperbolic-component nuclei: the finder must recover both the
+    // period and the coordinates. These are mathematical constants (Munafo mu-ency / KF).
+    #[test]
+    fn known_nuclei_table() {
+        // (period, cx, cy, search-start offset)
+        let table: &[(u32, f64, f64)] = &[
+            (2, -1.0, 0.0),
+            (4, -1.3107026413368328, 0.0),
+            (3, -1.7548776662466927, 0.0),
+            (3, -0.1225611668766536, 0.7448617666197446),
+        ];
+        for &(period, cx, cy) in table {
+            // Start slightly off the exact nucleus so Newton has to converge to it.
+            let start = [bf(cx + 1.0e-3, 96), bf(cy + 1.0e-3, 96)];
+            let n = find_nucleus(&start, 200.0, 0, 8000)
+                .unwrap_or_else(|| panic!("no nucleus found near period-{period} ({cx},{cy})"));
+            assert_eq!(n.period, period, "wrong period for ({cx},{cy})");
+            assert!((to_f64(&n.cx) - cx).abs() < 1e-9, "cx off: {} vs {cx}", to_f64(&n.cx));
+            assert!((to_f64(&n.cy) - cy).abs() < 1e-9, "cy off: {} vs {cy}", to_f64(&n.cy));
+        }
+    }
+
+    // Misiurewicz points are pre-periodic: the critical orbit reaches a repelling cycle
+    // after a transient. c = −2 lands on the fixed point 2; c = i reaches a 2-cycle.
+    #[test]
+    fn misiurewicz_preperiodic() {
+        // c = −2: 0 → −2 → 2 → 2 → … (fixed at 2 from iterate 2 on).
+        let o = orbit_points((0.0, 0.0), (-2.0, 0.0), 0, 30, 1.0e6);
+        assert!((o[2].0 - 2.0).abs() < 1e-9 && o[2].1.abs() < 1e-9);
+        assert!((o[10].0 - 2.0).abs() < 1e-6, "c=-2 not fixed at 2: {:?}", o[10]);
+        // c = i: 0 → i → (−1+i) → −i → (−1+i) → −i → … (pre-period 1, period 2).
+        let o = orbit_points((0.0, 0.0), (0.0, 1.0), 0, 40, 1.0e6);
+        let a = o[20];
+        let b = o[22];
+        assert!((a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6, "c=i not 2-periodic: {a:?} {b:?}");
+        let mid = o[21];
+        assert!((a.0 - mid.0).abs() + (a.1 - mid.1).abs() > 0.5, "c=i collapsed to a fixed point");
     }
 }

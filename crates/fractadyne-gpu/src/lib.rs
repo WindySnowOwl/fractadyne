@@ -53,6 +53,8 @@ struct ColorUniforms {
     de_width: f32,
     de_phase: f32,
     color_method: u32,
+    aa_filter: u32,
+    _capad: [u32; 3],
     stops: [[f32; 4]; 8],
 }
 
@@ -404,6 +406,9 @@ pub struct MandelbrotParams {
     pub color_method: u32,
     pub stripe_freq: f32,
     pub trap_type: u32,
+    /// Color-pass box-filter taps per axis (≥1). >1 anti-aliases an upscaled iteration
+    /// texture (set when the work-budget reduced its resolution below the display).
+    pub aa_filter: u32,
     pub resolution: [u32; 2],
     pub ss: u32,
     /// Which on-screen panel this is (distinct GPU resources per id).
@@ -474,6 +479,8 @@ impl CallbackTrait for MandelbrotParams {
             de_width: self.de_width,
             de_phase: self.de_phase,
             color_method: self.color_method,
+            aa_filter: self.aa_filter.max(1),
+            _capad: [0; 3],
             stops: self.stops,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
@@ -592,6 +599,7 @@ const EXPORT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 /// Everything needed to render one frame offscreen at an arbitrary resolution.
 /// Mirrors the live view's parameters (the app fills it from the current view).
+#[derive(Clone)]
 pub struct ExportRequest {
     pub width: u32,
     pub height: u32,
@@ -621,6 +629,7 @@ pub struct ExportRequest {
     pub color_method: u32,
     pub stripe_freq: f32,
     pub trap_type: u32,
+    pub aa_filter: u32,
 }
 
 /// The actual `(width, height)` an export produced after clamping to the GPU's
@@ -654,10 +663,16 @@ pub fn render_export(
     let full_ih = h as f32 * ss as f32;
     // Tile size (output px): keep tile×ss within the texture cap and the per-tile
     // readback buffer (tile²·16 B) within the buffer-size limit. Tiling lets exports
-    // exceed the single-texture/buffer limits without crashing.
+    // exceed the single-texture/buffer limits without crashing. Also bound each tile by
+    // *iteration work* (tile²·ss²·iter) so a single GPU submission can't run long enough
+    // to trip the OS watchdog (TDR ≈ 2 s → device-lost) or monopolize the shared device
+    // and freeze the live UI — the render stays responsive across many short tiles.
+    const TILE_WORK_BUDGET: u64 = 20_000_000_000;
     let by_tex = (max_dim / ss).max(1);
     let by_buf = (((max_buf / 16) as f64).sqrt() as u32).max(256);
-    let tile = by_tex.min(by_buf).min(2048).max(1);
+    let work_per_px = (ss as u64 * ss as u64) * (req.max_iter.max(1) as u64);
+    let by_work = (((TILE_WORK_BUDGET / work_per_px.max(1)) as f64).sqrt() as u32).max(64);
+    let tile = by_tex.min(by_buf).min(by_work).min(2048).max(1);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("fractadyne.export_shader"),
@@ -754,6 +769,8 @@ pub fn render_export(
         de_width: req.de_width,
         de_phase: req.de_phase,
         color_method: req.color_method,
+        aa_filter: req.aa_filter.max(1),
+        _capad: [0; 3],
         stops: req.stops,
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
@@ -922,4 +939,199 @@ pub fn render_export(
     }
 
     Ok(ExportResult { width: w, height: h, ss, pixels })
+}
+
+/// Render only the **iteration pass** for a single (clamped) tile and read back the raw
+/// iteration texture — RGBA32F per pixel: `(smooth_iter, normal.x, normal.y, DE_log2)`,
+/// with `smooth_iter < 0` marking interior. For validation (`--selftest`): comparing raw
+/// dwell across render modes is far more sensitive than comparing final colors. Always
+/// `ss = 1`; size is clamped to the device's max 2D texture dimension.
+pub fn render_iter(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+) -> Result<ExportResult, String> {
+    let max_dim = device.limits().max_texture_dimension_2d;
+    let w = req.width.clamp(1, max_dim);
+    let h = req.height.clamp(1, max_dim);
+
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fractadyne.selftest_shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("mandelbrot.wgsl").into()),
+    });
+    let iter_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("selftest.iter_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("selftest.iter_layout"),
+        bind_group_layouts: &[&iter_bgl],
+        push_constant_ranges: &[],
+    });
+    let iter_pipeline = fullscreen_pipeline(
+        device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+        "selftest.iter_pipeline",
+    );
+
+    let iter_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("selftest.iter_uniform"),
+        size: std::mem::size_of::<IterUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let orbit_buf = make_orbit_buffer(device, req.orbit.len().max(1) as u32);
+    if !req.orbit.is_empty() {
+        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
+    }
+    let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf);
+
+    let dscale = 2f64.powi(-req.delta_exp);
+    let split = |v: f64| -> (f32, f32) {
+        let hi = v as f32;
+        (hi, (v - hi as f64) as f32)
+    };
+    let (sxh, sxl) = split(req.span[0] / w as f64 * dscale);
+    let (syh, syl) = split(req.span[1] / h as f64 * dscale);
+    let iu = IterUniforms {
+        step: [sxh, sxl, syh, syl],
+        ref_offset: req.ref_offset,
+        center: req.center,
+        julia_c: req.julia_c,
+        res: [w as f32, h as f32],
+        px_offset: [0.0, 0.0],
+        max_iter: req.max_iter,
+        orbit_len: req.orbit_len,
+        mode: req.mode,
+        formula: req.formula,
+        julia: req.julia,
+        delta_exp: req.delta_exp,
+        color_method: 0,
+        stripe_freq: 1.0,
+        trap_type: 0,
+        aux_on: 0,
+        _pad: [0; 2],
+    };
+    queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
+
+    let tex = |label| {
+        device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: ITER_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default())
+    };
+    let aux_view = tex("selftest.iter_aux");
+    let main_tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("selftest.iter_main"),
+        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: ITER_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let main_copy_view = main_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let bpp = 16u32;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let unpadded_bpr = w * bpp;
+    let padded_bpr = unpadded_bpr.div_ceil(align) * align;
+    let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("selftest.readback"),
+        size: (padded_bpr * h) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let mut enc =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("selftest.enc") });
+    {
+        let attach = |v| Some(wgpu::RenderPassColorAttachment {
+            view: v,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: wgpu::StoreOp::Store,
+            },
+        });
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("selftest.iter_pass"),
+            color_attachments: &[attach(&main_copy_view), attach(&aux_view)],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&iter_pipeline);
+        pass.set_bind_group(0, &iter_bg, &[]);
+        pass.draw(0..3, 0..1);
+    }
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &main_tex,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &out_buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bpr),
+                rows_per_image: Some(h),
+            },
+        },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+    );
+    queue.submit(std::iter::once(enc.finish()));
+
+    let slice = out_buf.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    let _ = device.poll(wgpu::Maintain::Wait);
+    rx.recv().map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+
+    let data = slice.get_mapped_range();
+    let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
+    let row_floats = (w * 4) as usize;
+    for r in 0..h {
+        let src = (r * padded_bpr) as usize;
+        let src_row: &[f32] = bytemuck::cast_slice(&data[src..src + unpadded_bpr as usize]);
+        let dst = (r as usize) * row_floats;
+        pixels[dst..dst + row_floats].copy_from_slice(src_row);
+    }
+    drop(data);
+    out_buf.unmap();
+
+    Ok(ExportResult { width: w, height: h, ss: 1, pixels })
 }

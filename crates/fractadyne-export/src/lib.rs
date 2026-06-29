@@ -17,6 +17,50 @@ fn srgb_encode(c: f32) -> f32 {
     }
 }
 
+/// Convert a linear RGBA `f32` buffer to 8-bit sRGB RGBA bytes — identical to what
+/// [`write_png`] stores. Exposed so callers (e.g. golden-image validation) can compare a
+/// fresh render against a decoded PNG on the exact same footing.
+pub fn to_srgb8(rgba: &[f32]) -> Vec<u8> {
+    let n = rgba.len() / 4;
+    let mut out = Vec::with_capacity(n * 4);
+    for px in rgba[..n * 4].chunks_exact(4) {
+        out.push((srgb_encode(px[0]) * 255.0 + 0.5) as u8);
+        out.push((srgb_encode(px[1]) * 255.0 + 0.5) as u8);
+        out.push((srgb_encode(px[2]) * 255.0 + 0.5) as u8);
+        out.push((px[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+    }
+    out
+}
+
+/// Decode a PNG at full resolution to `(width, height, rgba8)` (for golden-image diffs).
+pub fn read_png_rgba8(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let (w, h) = (info.width, info.height);
+    let ch = match info.color_type {
+        png::ColorType::Rgba => 4usize,
+        png::ColorType::Rgb => 3,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Grayscale => 1,
+        _ => return None,
+    };
+    let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4];
+    for (i, px) in buf.chunks_exact(ch).take((w * h) as usize).enumerate() {
+        let (r, g, b, a) = match ch {
+            4 => (px[0], px[1], px[2], px[3]),
+            3 => (px[0], px[1], px[2], 255),
+            2 => (px[0], px[0], px[0], px[1]),
+            _ => (px[0], px[0], px[0], 255),
+        };
+        rgba[i * 4..i * 4 + 4].copy_from_slice(&[r, g, b, a]);
+    }
+    Some((w, h, rgba))
+}
+
 /// tEXt keyword under which the reloadable view state is stored.
 pub const META_KEYWORD: &str = "Fractadyne";
 

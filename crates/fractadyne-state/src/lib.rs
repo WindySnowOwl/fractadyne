@@ -84,6 +84,22 @@ pub struct SessionState {
     /// Orbit-trap shape: "point" | "cross" | "circle" (method = "trap").
     #[serde(default = "default_trap_type")]
     pub trap_type: String,
+    /// Show the minimap overview ("you are here").
+    #[serde(default)]
+    pub minimap: bool,
+    /// Custom gradient stops `[pos, r, g, b]` (linear RGB) from the gradient editor.
+    #[serde(default)]
+    pub custom_palette: Vec<[f32; 4]>,
+    /// Use the custom gradient instead of the selected preset.
+    #[serde(default)]
+    pub use_custom_palette: bool,
+    /// Whether the right-hand control panel is shown.
+    #[serde(default = "default_true")]
+    pub right_panel_open: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_zoom_rate() -> f32 {
@@ -184,6 +200,10 @@ impl Default for SessionState {
             color_method: default_color_method(),
             stripe_freq: default_stripe_freq(),
             trap_type: default_trap_type(),
+            minimap: false,
+            custom_palette: Vec::new(),
+            use_custom_palette: false,
+            right_panel_open: true,
         }
     }
 }

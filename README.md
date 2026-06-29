@@ -42,8 +42,29 @@ Pinned to egui / eframe **0.31** (wgpu backend).
 ```sh
 fractadyne --benchmark [--out report.txt]   # run a fixed deep-zoom tour; report perf + system info; quit
 fractadyne --render --out img.png [--fractal Mandelbrot --center X Y --zoom M \
-           --size W --ss N --iter K --julia --julia-c RE IM --palette I]
+           --size W --ss N --iter K --julia --julia-c RE IM --palette I \
+           --method stripe --stripe-freq N --trap point|cross|circle --light --de]
+fractadyne --find-minibrot --center X Y --zoom M   # print nearby minibrot period + nucleus
+fractadyne --selftest                              # GPU validation suite; exit 0 = all passed
 ```
+
+## Validation
+
+Correctness is checked at two layers (no external data — everything is exact mathematics
+or internal cross-checks):
+
+- **Numeric ground truth** (`cargo test -p fractadyne-core`) — exact hyperbolic-component
+  nuclei & periods, Misiurewicz pre-periodicity, closed-form interior membership, real-axis
+  symmetry, and full-precision coordinate round-trips.
+- **GPU render validation** (`fractadyne --selftest`, exit code 0/1) — the perturbation
+  path is checked against an independent **CPU f64 dwell** and **arbitrary-precision
+  (bignum) dwell** (including at extreme depth beyond f64's reach), plus **floatexp vs
+  df32** agreement, render symmetry, interior/exterior presence, and NaN/finiteness.
+- **Golden-image regression** — `fractadyne --selftest --bless` records reference PNGs
+  under `validation/golden/`; later runs diff against them. Every run writes a readable,
+  verifiable report to `validation/report.md` with full provenance (version, GPU, CPU,
+  OS), per-check parameters/thresholds/verdicts, golden checksums, and the exact
+  `--render` command to reproduce each reference — so anyone can independently confirm.
 
 ## Controls
 

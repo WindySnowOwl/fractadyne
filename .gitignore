@@ -8,6 +8,11 @@
 # Local diagnostic screenshots
 /diag/
 
+# Validation: commit the golden references + a checked-in report, but ignore the
+# per-run timestamped reports and the freshly-rendered comparison images.
+/validation/current/
+/validation/report-*.md
+
 # Log files
 *.log
 

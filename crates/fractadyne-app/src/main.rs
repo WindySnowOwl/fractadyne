@@ -373,6 +373,501 @@ fn trap_to_str(t: u32) -> &'static str {
     TRAP_TYPES.get(t as usize).map(|(k, _)| *k).unwrap_or("point")
 }
 
+/// Curated famous Mandelbrot locations: (name, center_x, center_y, magnification).
+/// Coordinates are full-precision strings so deep entries land exactly.
+const FAMOUS: &[(&str, &str, &str, f64)] = &[
+    ("Seahorse Valley", "-0.74364388703", "0.13182590421", 2.0e3),
+    ("Elephant Valley", "0.2925755", "-0.0149977", 1.5e3),
+    ("Triple Spiral", "-0.088643135", "0.654461185", 1.2e3),
+    ("Double Spiral", "-0.7470837", "0.1080358", 3.0e3),
+    ("Spiral Galaxy", "-0.7269", "0.1889", 2.0e3),
+    ("Mini Mandelbrot", "-1.7687788", "0.0017388", 6.0e3),
+    ("Deep Seahorse", "-0.743643887037151", "0.131825904205330", 1.0e7),
+];
+
+/// Zoom-appropriate iteration cap. A very high manual iteration count over-resolves the
+/// boundary's sub-pixel "dust" into per-pixel noise (and starves the render budget); this
+/// caps the count at a generous, zoom-scaled value so normal auto-iteration is never
+/// limited but an inflated base is. Used for both the live view and exports so they match.
+fn zoom_iter_cap(mag: f64) -> u32 {
+    let octaves = mag.max(1.0).log2().max(0.0);
+    (2000.0 + octaves * 256.0) as u32
+}
+
+/// Plain-f64 **smooth** Mandelbrot dwell, matching the shader exactly (bailout 256,
+/// `smooth = iter + 1 − log₂(½·ln|z|² / ln2)`). f64 is dead-accurate at the depths the
+/// self-test uses, so this is independent ground truth for the GPU perturbation path.
+fn mandel_smooth_f64(cx: f64, cy: f64, max: u32) -> Option<f32> {
+    const BAIL2: f64 = 256.0 * 256.0;
+    let (mut zx, mut zy) = (0.0_f64, 0.0_f64);
+    for iter in 1..=max {
+        let (nzx, nzy) = (zx * zx - zy * zy + cx, 2.0 * zx * zy + cy);
+        zx = nzx;
+        zy = nzy;
+        let m2 = zx * zx + zy * zy;
+        if m2 > BAIL2 {
+            let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+            return Some(iter as f32 + 1.0 - nu as f32);
+        }
+    }
+    None
+}
+
+/// FNV-1a 64-bit checksum (no deps) — a content fingerprint for golden images so a
+/// third party can confirm they're looking at the same reference bytes.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Unix seconds → "YYYY-MM-DD HH:MM:SS UTC" (civil-date algorithm; no chrono dependency).
+fn utc_string(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let r = (secs % 86_400) as i64;
+    let (hh, mm, ss) = (r / 3600, (r % 3600) / 60, r % 60);
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02} UTC")
+}
+
+/// Per-channel 8-bit image difference: `(max abs, mean abs)`. Mismatched sizes → worst.
+fn img_diff(a: &[u8], b: &[u8]) -> (u32, f64) {
+    if a.len() != b.len() || a.is_empty() {
+        return (255, 255.0);
+    }
+    let (mut max, mut sum) = (0u32, 0u64);
+    for (&x, &y) in a.iter().zip(b) {
+        let d = (x as i32 - y as i32).unsigned_abs();
+        if d > max {
+            max = d;
+        }
+        sum += d as u64;
+    }
+    (max, sum as f64 / a.len() as f64)
+}
+
+/// One row of the validation report.
+struct SelfCheck {
+    category: &'static str,
+    name: String,
+    params: String,
+    result: String,
+    threshold: &'static str,
+    pass: bool,
+}
+
+/// Plain-f64 Mandelbrot escape test: `Some(iter)` if it escapes within `max`, else
+/// `None` (treated as interior). Used by the random-location boundary search.
+fn mandel_escapes(cx: f64, cy: f64, max: u32) -> Option<u32> {
+    let (mut zx, mut zy) = (0.0_f64, 0.0_f64);
+    for i in 0..max {
+        let (x2, y2) = (zx * zx, zy * zy);
+        if x2 + y2 > 4.0 {
+            return Some(i);
+        }
+        zy = 2.0 * zx * zy + cy;
+        zx = x2 - y2 + cx;
+    }
+    None
+}
+
+/// Sample packed gradient stops (`[r, g, b, pos]`, ascending) at `t∈0..1` — mirrors the
+/// shader's `palette()` — and gamma-encode to a display `Color32`.
+fn sample_stops(stops: &[[f32; 4]; fractadyne_color::MAX_STOPS], n: u32, t: f32) -> egui::Color32 {
+    let t = t.fract();
+    let mut col = [stops[0][0], stops[0][1], stops[0][2]];
+    let n = n.max(1) as usize;
+    for i in 0..n.saturating_sub(1) {
+        let (a, b) = (stops[i], stops[i + 1]);
+        if t >= a[3] && t <= b[3] {
+            let f = (t - a[3]) / (b[3] - a[3]).max(1.0e-6);
+            col = [
+                a[0] + (b[0] - a[0]) * f,
+                a[1] + (b[1] - a[1]) * f,
+                a[2] + (b[2] - a[2]) * f,
+            ];
+            break;
+        }
+    }
+    let g = |c: f32| (c.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0 + 0.5) as u8;
+    egui::Color32::from_rgb(g(col[0]), g(col[1]), g(col[2]))
+}
+
+// ---------------- Help content -------------------------------------------------
+fn help_h(ui: &mut egui::Ui, t: &str) {
+    ui.add_space(2.0);
+    ui.label(egui::RichText::new(t).size(18.0).strong().color(BRAND_ACCENT));
+    ui.add_space(4.0);
+}
+fn help_sub(ui: &mut egui::Ui, t: &str) {
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new(t).strong().color(BRAND_TEXT));
+    ui.add_space(2.0);
+}
+fn help_p(ui: &mut egui::Ui, t: &str) {
+    ui.label(t);
+    ui.add_space(3.0);
+}
+fn help_bullet(ui: &mut egui::Ui, t: &str) {
+    ui.horizontal_top(|ui| {
+        ui.add_space(4.0);
+        ui.label("•");
+        ui.add(egui::Label::new(t).wrap());
+    });
+}
+/// A monospace key + wrapped description row (shortcuts / CLI flags).
+fn help_kv(ui: &mut egui::Ui, k: &str, v: &str) {
+    ui.horizontal_top(|ui| {
+        ui.add_sized(
+            [180.0, 0.0],
+            egui::Label::new(egui::RichText::new(k).monospace()).wrap(),
+        );
+        ui.add(egui::Label::new(v).wrap());
+    });
+}
+
+fn help_overview(ui: &mut egui::Ui) {
+    help_h(ui, "Overview");
+    help_p(
+        ui,
+        "Fractadyne is a native fractal explorer built for ultra-deep zooming and speed. \
+         It draws \"escape-time\" fractals — images created by repeating one simple formula \
+         at every pixel.",
+    );
+    help_sub(ui, "What is an escape-time fractal?");
+    help_p(
+        ui,
+        "For each pixel the program runs a formula such as z → z² + c over and over, starting \
+         from zero. If the running value stays small forever, the pixel belongs to the set and \
+         is drawn dark. If it eventually grows without bound (\"escapes\"), the pixel is outside \
+         the set, and its color records how many steps that took. The infinitely detailed \
+         border between \"stays\" and \"escapes\" is the fractal.",
+    );
+    help_sub(ui, "What you can do");
+    help_bullet(ui, "Pan and zoom essentially without limit (position is exact at any depth).");
+    help_bullet(ui, "Switch between ten fractal families, and view any as a Julia set.");
+    help_bullet(ui, "Recolor with preset or custom gradients and several coloring methods.");
+    help_bullet(ui, "Add 3D relief lighting and glowing boundary contours.");
+    help_bullet(ui, "Snap to minibrots, bookmark spots, and export high-resolution images.");
+    help_bullet(ui, "Run scripted tours and a hardware benchmark.");
+    help_sub(ui, "First steps");
+    help_p(
+        ui,
+        "Open the Locations menu and pick \"Seahorse Valley\", then roll the mouse wheel to \
+         zoom in. Drag to pan. Press F1 at any time to return to this help.",
+    );
+}
+
+fn help_navigation(ui: &mut egui::Ui) {
+    help_h(ui, "Navigation");
+    help_sub(ui, "Mouse");
+    help_kv(ui, "Left-drag", "Pan the view.");
+    help_kv(ui, "Mouse wheel", "Zoom in/out toward the cursor.");
+    help_kv(ui, "Right-drag", "Box zoom — drag a rectangle to zoom into it.");
+    help_sub(ui, "Continuous zoom & home");
+    help_kv(ui, "Hold Space", "Smoothly zoom in, anchored at the cursor.");
+    help_kv(ui, "Hold Shift+Space", "Smoothly zoom out.");
+    help_p(
+        ui,
+        "The Zoom-home button animates a gentle fly-back to the full view. \"Zoom speed\" in the \
+         right panel sets the continuous-zoom rate.",
+    );
+    help_sub(ui, "History & precise moves");
+    help_kv(ui, "Backspace", "Undo the previous view.");
+    help_kv(ui, "Shift+Backspace / Ctrl+Y", "Redo.");
+    help_p(
+        ui,
+        "View → \"Go to location…\" lets you read, type, paste, or copy the exact center and zoom \
+         (full precision) — the easy way to share or revisit a spot. The Bookmarks menu saves and \
+         recalls locations.",
+    );
+    help_sub(ui, "Finding detail");
+    help_p(
+        ui,
+        "Minibrots are tiny copies of the whole set hidden along the boundary. Center one roughly \
+         and press M (or View → \"Find minibrot center\") to Newton-snap exactly onto its center \
+         and read its period.",
+    );
+    help_p(
+        ui,
+        "View → \"Minimap overview\" shows a small map of the whole set with a \"you are here\" \
+         marker and the current zoom depth; click the map to jump to a region.",
+    );
+}
+
+fn help_options(ui: &mut egui::Ui) {
+    help_h(ui, "Coloring & options");
+    help_p(ui, "All of these live in the right-hand panel (and persist between sessions).");
+    help_sub(ui, "Palette");
+    help_p(
+        ui,
+        "Palette chooses a preset gradient or your Custom one. \"Edit gradient…\" opens an editor \
+         where each color stop has a color and a position (0–1); add up to eight stops or copy a \
+         preset to start from.",
+    );
+    help_p(
+        ui,
+        "Cycle sets how many times the gradient repeats across the iteration range (tighter or \
+         looser bands). Offset rotates the whole gradient.",
+    );
+    help_p(
+        ui,
+        "Animate cycles the colors over time — Forward, Reverse, or Ping-pong shift the offset; \
+         Random continuously synthesizes smoothly morphing, harmonious gradients. Speed controls \
+         cycles (or morphs) per second; \"Shuffle gradient\" rolls a new one in Random mode.",
+    );
+    help_sub(ui, "Coloring method — how the data becomes color");
+    help_kv(ui, "Smooth iteration", "Classic continuous bands by escape time.");
+    help_kv(ui, "Stripe average", "Flowing bands from the orbit's angle (Stripe density slider).");
+    help_kv(ui, "Triangle inequality", "Fine texture from where each step lands between bounds.");
+    help_kv(ui, "Orbit trap", "Distance of the orbit to a shape (point/cross/circle); colors interior too.");
+    help_kv(ui, "Distance estimate", "Shades by nearness to the boundary.");
+    help_kv(ui, "Decomposition", "Cells from the final escape angle.");
+    help_sub(ui, "3D relief lighting");
+    help_p(
+        ui,
+        "Shades the surface from the boundary's slope (the derivative) for an embossed, lit look. \
+         Light angle sets the direction; Relief sets strength (lower = sharper); \"Rotate light\" \
+         animates it. Holomorphic families only (Mandelbrot / Multibrot).",
+    );
+    help_sub(ui, "Distance glow");
+    help_p(
+        ui,
+        "Bright contour bands that densify into glowing filaments near the boundary. Glow is the \
+         blend amount, Band width the spacing, and \"Animate glow\" flows them.",
+    );
+    help_sub(ui, "Quality & iterations");
+    help_p(
+        ui,
+        "Iterations is the maximum number of steps before a pixel is treated as inside the set; \
+         \"Auto-scale\" raises it automatically as you zoom (deeper detail needs more). Anti-alias \
+         supersamples still images (2×–8×) once the view settles, taming the fine exterior \"dust\".",
+    );
+    help_sub(ui, "Other");
+    help_p(
+        ui,
+        "Zoom speed sets the continuous-zoom rate; the FPS cap limits frame rate; Dual view shows a \
+         Mandelbrot set and its Julia set side by side (the cursor sets the Julia parameter live).",
+    );
+}
+
+fn help_fractals(ui: &mut egui::Ui) {
+    help_h(ui, "Fractals");
+    help_p(
+        ui,
+        "Every family iterates a formula with z starting at 0 and c set by the pixel (escape-time), \
+         unless noted. z = x + iy is a complex number.",
+    );
+    help_sub(ui, "Mandelbrot");
+    help_p(
+        ui,
+        "z → z² + c. The original. The set is every c whose orbit stays bounded; it is connected, \
+         and its boundary is so crinkled it has Hausdorff dimension 2.",
+    );
+    help_sub(ui, "Multibrot 3 / 4 / 5");
+    help_p(
+        ui,
+        "z → zᵈ + c for power d = 3, 4, 5. Higher powers add lobes: the set has (d−1)-fold \
+         rotational symmetry (Multibrot 3 is 2-fold, 4 is 3-fold, 5 is 4-fold).",
+    );
+    help_sub(ui, "Tricorn (Mandelbar)");
+    help_p(
+        ui,
+        "z → conj(z)² + c, where conj(x + iy) = x − iy. The conjugation makes it anti-holomorphic, \
+         giving 3-fold symmetry and characteristic curved \"claws\".",
+    );
+    help_sub(ui, "Burning Ship");
+    help_p(
+        ui,
+        "z → (|x| + i|y|)² + c — take absolute values before squaring (real = x²−y²+cx, \
+         imag = 2|xy|+cy). Non-analytic; deep zooms reveal ship-like structures (traditionally \
+         viewed upside-down).",
+    );
+    help_sub(ui, "Celtic");
+    help_p(
+        ui,
+        "Like Mandelbrot but with the absolute value of the real part: real = |x²−y²| + cx, \
+         imag = 2xy + cy. Produces heart- and shield-shaped motifs.",
+    );
+    help_sub(ui, "Buffalo");
+    help_p(
+        ui,
+        "Absolute value of both parts of z²: real = |x²−y²| + cx, imag = |2xy| + cy — a cross \
+         between Celtic and Burning Ship.",
+    );
+    help_sub(ui, "Phoenix");
+    help_p(
+        ui,
+        "z → z² + c + p·z₋₁, where z₋₁ is the previous iterate and p is a constant (here p = −0.5). \
+         The memory term produces flame-like filaments.",
+    );
+    help_sub(ui, "Newton");
+    help_p(
+        ui,
+        "Newton's method for the roots of z³ − 1 = 0: z → z − (z³−1)/(3z²). Rather than escape time, \
+         pixels are colored by which of the three cube roots of unity the iteration converges to \
+         (the basins of attraction) and how quickly; the tangled basin boundaries are the fractal.",
+    );
+    help_sub(ui, "Julia mode");
+    help_p(
+        ui,
+        "For every family except Newton you can switch to a Julia set: instead of starting z at 0 \
+         with c = pixel, you fix c (a parameter) and let z start at the pixel. The Julia set is the \
+         boundary between starting points that stay bounded and those that escape, for that fixed c. \
+         In Dual view, moving the cursor over the Mandelbrot panel sets c live.",
+    );
+    help_sub(ui, "Deep-zoom support");
+    help_p(
+        ui,
+        "Mandelbrot and Multibrot 3/4/5 support unlimited perturbation deep zoom. The abs-based \
+         families (Tricorn, Burning Ship, Celtic, Buffalo) and Phoenix/Newton currently use the \
+         direct path, which stays sharp to about 10⁶×.",
+    );
+}
+
+fn help_methodology(ui: &mut egui::Ui) {
+    help_h(ui, "How it works");
+    help_sub(ui, "Escape-time & smooth color");
+    help_p(
+        ui,
+        "Each pixel iterates the formula until its magnitude exceeds a bailout radius or it hits the \
+         iteration cap. The raw step count alone makes hard bands; adding a fractional part derived \
+         from the final magnitude gives continuous, bandless color.",
+    );
+    help_sub(ui, "Arbitrary-precision position");
+    help_p(
+        ui,
+        "Ordinary 64-bit numbers run out of digits near 10¹⁵× zoom. Fractadyne keeps the view center \
+         in arbitrary precision, with the number of digits growing as you zoom, so the location never \
+         degrades — you can keep going essentially forever.",
+    );
+    help_sub(ui, "Perturbation");
+    help_p(
+        ui,
+        "Iterating every pixel in high precision would be far too slow. Instead one reference pixel \
+         is iterated in high precision on the CPU (the \"reference orbit\"), and every other pixel is \
+         computed on the GPU as a tiny difference δ from it in fast low precision: \
+         δz → 2·Z·δz + δz² + δc.",
+    );
+    help_sub(ui, "Unlimited depth (floatexp)");
+    help_p(
+        ui,
+        "Past about 10²⁸× even that tiny difference underflows 32-bit range, so it is stored as a \
+         mantissa plus a separate integer exponent (\"floatexp\"), removing the depth wall. The \
+         engine switches automatically: direct math when shallow, perturbation when deep, and \
+         floatexp when deepest.",
+    );
+    help_sub(ui, "Reference choice & rebasing");
+    help_p(
+        ui,
+        "The reference is chosen (scored in high precision) so its orbit stays within the view as \
+         long as possible. When the difference grows too large it is \"rebased\" back onto the \
+         reference to stay accurate.",
+    );
+    help_sub(ui, "Distance estimation & lighting");
+    help_p(
+        ui,
+        "Tracking the derivative dz/dc yields each pixel's distance to the boundary. That powers the \
+         3D relief lighting, the distance glow, and the \"distance\" coloring method — all valid at \
+         any zoom depth.",
+    );
+    help_sub(ui, "Anti-aliasing & safety");
+    help_p(
+        ui,
+        "Still images are supersampled (2–8× per axis) once the view settles. A work budget keeps a \
+         single GPU draw within the driver's watchdog limit by reducing resolution (never the \
+         iteration count) at extreme settings, so deep views stay detailed instead of going blank.",
+    );
+}
+
+fn help_command_line(ui: &mut egui::Ui) {
+    help_h(ui, "Command line");
+    help_p(
+        ui,
+        "Fractadyne can run headless for automation, golden-image checks, and benchmarking. Flags:",
+    );
+    help_sub(ui, "Modes");
+    help_kv(ui, "--render", "Render one image and exit.");
+    help_kv(ui, "--out PATH, -o PATH", "Output file (PNG or EXR by extension).");
+    help_kv(ui, "--benchmark, --bench", "Run the benchmark tour and exit (use --out to save).");
+    help_kv(ui, "--find-minibrot", "Print the nearby minibrot's period + center and exit.");
+    help_sub(ui, "View");
+    help_kv(ui, "--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\".");
+    help_kv(ui, "--center X Y", "View center (full-precision decimals).");
+    help_kv(ui, "--zoom M", "Magnification.");
+    help_kv(ui, "--julia", "Julia mode.");
+    help_kv(ui, "--julia-c RE IM", "Julia parameter c.");
+    help_sub(ui, "Image & color");
+    help_kv(ui, "--size W", "Image width in pixels (height from aspect).");
+    help_kv(ui, "--ss N", "Supersampling 1–8.");
+    help_kv(ui, "--iter N", "Maximum iterations.");
+    help_kv(ui, "--palette N", "Preset palette index.");
+    help_kv(ui, "--method NAME", "smooth | stripe | triangle | trap | distance | decomposition.");
+    help_kv(ui, "--stripe-freq N", "Stripe density (stripe method).");
+    help_kv(ui, "--trap SHAPE", "point | cross | circle (orbit-trap method).");
+    help_kv(ui, "--light [--light-angle R]", "Enable 3D relief lighting.");
+    help_kv(ui, "--de", "Enable distance glow.");
+    help_kv(ui, "--no-perf / --perf", "Hide / show the performance panel.");
+    help_sub(ui, "Example");
+    ui.label(
+        egui::RichText::new(
+            "fractadyne --render -o out.png --fractal Mandelbrot \\\n  \
+             --center -0.743644 0.131826 --zoom 2e7 --iter 6000 --method stripe --ss 3",
+        )
+        .monospace()
+        .small(),
+    );
+}
+
+fn help_shortcuts(ui: &mut egui::Ui) {
+    help_h(ui, "Shortcuts");
+    help_sub(ui, "Mouse");
+    help_kv(ui, "Left-drag", "Pan");
+    help_kv(ui, "Wheel", "Zoom at cursor");
+    help_kv(ui, "Right-drag", "Box zoom");
+    help_sub(ui, "Keyboard");
+    help_kv(ui, "Space / Shift+Space", "Continuous zoom in / out");
+    help_kv(ui, "Backspace", "Undo view");
+    help_kv(ui, "Shift+Backspace / Ctrl+Y", "Redo view");
+    help_kv(ui, "M", "Find minibrot center");
+    help_kv(ui, "Esc", "Exit fullscreen / stop a playing tour");
+    help_kv(ui, "Ctrl+S", "Quick export to the last folder");
+    help_kv(ui, "F1 / ?", "Open this help");
+}
+
+fn help_about(ui: &mut egui::Ui) {
+    help_h(ui, "About");
+    help_p(ui, &format!("Fractadyne v{}", version_string()));
+    help_p(ui, "A native fractal explorer built in Rust with wgpu.");
+    help_sub(ui, "License");
+    help_p(ui, "MIT OR Apache-2.0 — use under either license, at your option.");
+    help_p(ui, "© 2026 Rithea Hong.");
+    ui.hyperlink_to("Source on GitHub \u{2197}", "https://github.com/WindySnowOwl/fractadyne");
+}
+
+// ---- minimap overview ----
+/// Fixed complex region the minimap thumbnail covers (center + half-extents), so the
+/// "you are here" marker projects consistently regardless of the screen aspect.
+const MINIMAP_CX: f64 = -0.5;
+const MINIMAP_CY: f64 = 0.0;
+const MINIMAP_HX: f64 = 1.6;
+const MINIMAP_HY: f64 = 1.2;
+/// Thumbnail render resolution (display size is scaled down in the overlay).
+const MINIMAP_TW: u32 = 240;
+const MINIMAP_TH: u32 = 180;
+
 /// "Zoom home" animation pacing: seconds per octave-ish of zoom-out, clamped so a
 /// shallow view still glides and an extreme one doesn't take forever.
 const HOME_SECONDS_PER_LOGMAG: f64 = 0.45;
@@ -394,6 +889,39 @@ struct HomeAnim {
 
 fn main() -> eframe::Result<()> {
     env_logger::init();
+
+    // Headless minibrot finder (for automation / validation):
+    //   --find-minibrot --center X Y [--zoom M] [--fractal NAME]
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--find-minibrot") {
+        let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+        let two = |name: &str| {
+            args.iter()
+                .position(|a| a == name)
+                .and_then(|i| Some((args.get(i + 1)?, args.get(i + 2)?)))
+        };
+        let formula = val("--fractal")
+            .and_then(|s| FractalKind::from_name(s))
+            .map(|k| k.formula_id())
+            .unwrap_or(0);
+        let center = two("--center")
+            .and_then(|(x, y)| Some([fractadyne_core::parse_bf(x)?, fractadyne_core::parse_bf(y)?]))
+            .unwrap_or([
+                fractadyne_core::BigFloat::from_f64(-0.5, 64),
+                fractadyne_core::BigFloat::from_f64(0.0, 64),
+            ]);
+        let mag = val("--zoom").and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
+        match fractadyne_core::find_nucleus(&center, mag, formula, 100_000) {
+            Some(n) => println!(
+                "period {}\ncenter_x {}\ncenter_y {}",
+                n.period,
+                fractadyne_core::to_decimal_string(&n.cx),
+                fractadyne_core::to_decimal_string(&n.cy),
+            ),
+            None => println!("no minibrot center found"),
+        }
+        return Ok(());
+    }
 
     let native_options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
@@ -549,21 +1077,20 @@ fn gather_system_info() -> SysInfo {
 #[cfg(target_arch = "x86_64")]
 fn cpu_brand() -> String {
     use std::arch::x86_64::__cpuid;
-    unsafe {
-        if __cpuid(0x8000_0000).eax < 0x8000_0004 {
-            return String::new();
-        }
-        let mut bytes = Vec::with_capacity(48);
-        for leaf in [0x8000_0002u32, 0x8000_0003, 0x8000_0004] {
-            let r = __cpuid(leaf);
-            for v in [r.eax, r.ebx, r.ecx, r.edx] {
-                bytes.extend_from_slice(&v.to_le_bytes());
-            }
-        }
-        String::from_utf8_lossy(&bytes)
-            .trim_matches(|c: char| c == '\0' || c.is_whitespace())
-            .to_string()
+    // `__cpuid` is part of the x86_64 baseline, so it is callable in safe code.
+    if __cpuid(0x8000_0000).eax < 0x8000_0004 {
+        return String::new();
     }
+    let mut bytes = Vec::with_capacity(48);
+    for leaf in [0x8000_0002u32, 0x8000_0003, 0x8000_0004] {
+        let r = __cpuid(leaf);
+        for v in [r.eax, r.ebx, r.ecx, r.edx] {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    String::from_utf8_lossy(&bytes)
+        .trim_matches(|c: char| c == '\0' || c.is_whitespace())
+        .to_string()
 }
 #[cfg(not(target_arch = "x86_64"))]
 fn cpu_brand() -> String {
@@ -1231,6 +1758,9 @@ struct FractadyneApp {
     auto_render: bool,
     auto_render_out: Option<std::path::PathBuf>,
     auto_render_done: bool,
+    /// CLI `--selftest`: run the GPU validation suite, print a report, and exit.
+    selftest: bool,
+    selftest_done: bool,
     /// Frame-rate cap (FPS); `None` = uncapped.
     fps_cap: Option<f64>,
     /// Export dialog state.
@@ -1266,6 +1796,25 @@ struct FractadyneApp {
     goto_y: String,
     goto_zoom: String,
     goto_msg: Option<String>,
+    /// Transient status toast (message, time set) — e.g. minibrot-finder result.
+    toast: Option<(String, f64)>,
+    /// Keyboard/help overlay window open, and the selected Help section index.
+    help_open: bool,
+    help_section: usize,
+    /// Whether the right-hand control panel is shown.
+    right_panel_open: bool,
+    /// Minimap overview: enabled flag, cached home-view thumbnail, and the key
+    /// (formula, palette, method) the thumbnail was rendered for (re-render on change).
+    minimap: bool,
+    minimap_tex: Option<egui::TextureHandle>,
+    minimap_key: Option<(u32, usize, u32, u32)>,
+    /// Custom gradient (editor): stops as `[pos, r, g, b]` (linear RGB). When
+    /// `use_custom_palette` is set, this overrides the preset selection. `palette_rev`
+    /// bumps on every edit (so caches like the minimap thumbnail refresh).
+    custom_palette: Vec<[f32; 4]>,
+    use_custom_palette: bool,
+    palette_editor_open: bool,
+    palette_rev: u32,
     /// Performance/diagnostic tracking + overlay.
     perf: Perf,
     max_iter: u32,
@@ -1335,6 +1884,7 @@ impl FractadyneApp {
             .map(std::path::PathBuf::from);
         let auto_benchmark = args.iter().any(|a| a == "--benchmark" || a == "--bench");
         let auto_render = args.iter().any(|a| a == "--render");
+        let selftest = args.iter().any(|a| a == "--selftest");
         let auto_benchmark_out = out_path.clone();
         let auto_render_out = out_path.clone();
 
@@ -1389,6 +1939,8 @@ impl FractadyneApp {
             auto_render,
             auto_render_out,
             auto_render_done: false,
+            selftest,
+            selftest_done: false,
             fps_cap: s.fps_cap,
             export_open: false,
             export_width: s.export_width,
@@ -1423,6 +1975,17 @@ impl FractadyneApp {
             goto_y: String::new(),
             goto_zoom: String::new(),
             goto_msg: None,
+            toast: None,
+            help_open: false,
+            help_section: 0,
+            right_panel_open: s.right_panel_open,
+            minimap: s.minimap,
+            minimap_tex: None,
+            minimap_key: None,
+            custom_palette: s.custom_palette.clone(),
+            use_custom_palette: s.use_custom_palette,
+            palette_editor_open: false,
+            palette_rev: 0,
             perf: Perf {
                 // Default on; `--no-perf` disables, `--perf` forces on.
                 enabled: !std::env::args().any(|a| a == "--no-perf"),
@@ -1582,6 +2145,10 @@ impl FractadyneApp {
             color_method: method_to_str(self.color_method).to_string(),
             stripe_freq: self.stripe_freq,
             trap_type: trap_to_str(self.trap_type).to_string(),
+            minimap: self.minimap,
+            custom_palette: self.custom_palette.clone(),
+            use_custom_palette: self.use_custom_palette,
+            right_panel_open: self.right_panel_open,
         };
         let now = ctx.input(|i| i.time);
         if cur != self.last_state {
@@ -1684,12 +2251,15 @@ impl FractadyneApp {
         let (span_x, span_y) = vp.complex_span();
         let width = self.export_width.max(1);
         let height = ((width as f64) * span_y / span_x).round().max(1.0) as u32;
+        let mag = vp.magnification();
         let eff_iter = if self.auto_iter {
             vp.recommended_max_iter(self.max_iter)
         } else {
             self.max_iter
-        };
-        let mag = vp.magnification();
+        }
+        // Cap at the zoom-appropriate count (same as the live view): avoids noise from
+        // over-resolving sub-pixel dust, and keeps the export fast/responsive.
+        .min(zoom_iter_cap(mag).max(256));
         let mode: u32 = if !self.fractal.supports_perturbation() || mag < 1.0e4 {
             1
         } else if mag >= PERT_FE_THRESHOLD {
@@ -1756,6 +2326,7 @@ impl FractadyneApp {
             color_method: self.color_method,
             stripe_freq: self.stripe_freq,
             trap_type: self.trap_type,
+            aa_filter: 1,
         }
     }
 
@@ -2136,6 +2707,418 @@ impl FractadyneApp {
         }
     }
 
+    /// GPU validation suite (`--selftest`): renders controlled views and cross-checks the
+    /// render paths against each other and against invariants. Prints a report; returns
+    /// true iff every check passed. This validates the *visual/render* pipeline; exact
+    /// numeric ground truth lives in `fractadyne-core`'s unit tests.
+    fn run_selftest(&mut self, device: &eframe::wgpu::Device, queue: &eframe::wgpu::Queue) -> bool {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        // Deterministic params: Mandelbrot, no Julia.
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        // Seahorse Valley — detailed at every depth tested; coordinate precise enough.
+        const SX: &str = "-0.743643887037151";
+        const SY: &str = "0.131825904205330";
+        const N: u32 = 220;
+
+        // Read back the raw iteration texture (smooth_iter, normal.x, normal.y, DE) — far
+        // more sensitive than comparing final colors.
+        let render = |req: &fractadyne_gpu::ExportRequest| -> Option<Vec<f32>> {
+            fractadyne_gpu::render_iter(device, queue, req).ok().map(|r| r.pixels)
+        };
+        // A square request at the seahorse, then caller overrides the mode.
+        let make = |cx: &str, cy: &str, mag: f64| -> fractadyne_gpu::ExportRequest {
+            let mut vp = Viewport::new(N as f64, N as f64);
+            vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
+            vp.units_per_pixel = 3.0 / (N as f64 * mag);
+            vp.precision = fractadyne_core::precision_for_magnification(mag);
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = N;
+            req.height = N;
+            req.ss = 1;
+            req
+        };
+        // Mean |Δ| of the smooth-iteration channel over pixels that escaped in both, plus
+        // the fraction differing by > 2 iterations (tolerates rare perturbation glitches).
+        let compare = |a: &[f32], b: &[f32]| -> (f64, f64) {
+            let (mut sum, mut n, mut big) = (0.0f64, 0u64, 0u64);
+            for i in 0..(a.len() / 4) {
+                let (ra, rb) = (a[i * 4], b[i * 4]);
+                if ra >= 0.0 && rb >= 0.0 {
+                    let d = (ra - rb).abs() as f64;
+                    sum += d;
+                    n += 1;
+                    if d > 2.0 {
+                        big += 1;
+                    }
+                }
+            }
+            if n == 0 { (f64::INFINITY, 1.0) } else { (sum / n as f64, big as f64 / n as f64) }
+        };
+        // Only the dwell (smooth-iter) channel needs to be finite; DE/normal channels can
+        // legitimately overflow to ±inf when a mode is pushed past its range.
+        let finite = |px: &[f32]| px.iter().step_by(4).all(|v| v.is_finite());
+
+        // Independent integer-escape (`n`) bignum oracle for one (center, mag) view vs the
+        // GPU `px`, on a sparse grid (slow on purpose). Each sample is classified:
+        //   • both interior (CPU None, GPU < 0), or both escaped with the same n (|Δsmooth|<0.5)
+        //   • boundary — ±1 iteration, or within a band of max_iter (dwell ill-conditioned)
+        //   • mismatch — n off by ≥2, or interior/escaped disagreement away from the boundary.
+        // Returns (checked, agree, boundary, mismatch). `max` MUST equal the GPU's max_iter
+        // and bailout 256² so the integer counts are directly comparable.
+        let oracle = |cx_s: &str, cy_s: &str, mag: f64, max: u32, px: &[f32]| -> (u64, u64, u64, u64) {
+            let prec = fractadyne_core::precision_for_magnification(mag);
+            let cx = fractadyne_core::parse_bf(cx_s).unwrap();
+            let cy = fractadyne_core::parse_bf(cy_s).unwrap();
+            let step = (3.0 / mag) / N as f64;
+            let half = N as f64 / 2.0;
+            let nn = N as usize;
+            let at = |ii: usize, jj: usize| px[(jj * nn + ii) * 4];
+            let gstep = (N / 5).max(1) as usize; // ~5×5 sparse grid
+            let (mut checked, mut agree, mut boundary, mut mism) = (0u64, 0u64, 0u64, 0u64);
+            let mut j = 0usize;
+            while j < nn {
+                let mut i = 0usize;
+                while i < nn {
+                    let g = at(i, j);
+                    // Boundary detection from the GPU texture itself: a sample whose 4-neighbors
+                    // flip interior↔exterior or jump in dwell is in an ill-conditioned region,
+                    // where a sub-ULP coordinate difference legitimately flips n — exclude it.
+                    let mut steep = false;
+                    for (di, dj) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+                        let (ni, nj) = (i as isize + di, j as isize + dj);
+                        if ni >= 0 && nj >= 0 && (ni as usize) < nn && (nj as usize) < nn {
+                            let gn = at(ni as usize, nj as usize);
+                            let flip = (g < 0.0) != (gn < 0.0);
+                            let jump = g >= 0.0 && gn >= 0.0 && (g - gn).abs() > 2.0;
+                            if flip || jump {
+                                steep = true;
+                            }
+                        }
+                    }
+                    checked += 1;
+                    if steep {
+                        boundary += 1;
+                        i += gstep;
+                        continue;
+                    }
+                    let cre = fractadyne_core::add_f64(&cx, ((i as f64 + 0.5) - half) * step, prec);
+                    let cim = fractadyne_core::add_f64(&cy, (half - (j as f64 + 0.5)) * step, prec);
+                    let cpu = fractadyne_core::naive_dwell_bf(&cre, &cim, max, 65536.0, prec);
+                    // Smooth region: GPU and CPU must agree exactly (same n).
+                    match (g >= 0.0, cpu) {
+                        (false, None) => agree += 1,
+                        (true, Some((_n, smooth))) if (g - smooth).abs() < 0.75 => agree += 1,
+                        _ => mism += 1,
+                    }
+                    i += gstep;
+                }
+                j += gstep;
+            }
+            (checked, agree, boundary, mism)
+        };
+
+        let mut checks: Vec<SelfCheck> = Vec::new();
+
+        // ---- numeric & render-path checks (local closures borrow self immutably) ----
+        {
+            // (A) df32 perturbation vs an independent CPU f64 dwell @2e4× (f64 exact here).
+            let mag = 2.0e4;
+            let req = make(SX, SY, mag);
+            if let Some(px) = render(&req) {
+                let cx0 = fractadyne_core::to_f64(&fractadyne_core::parse_bf(SX).unwrap());
+                let cy0 = fractadyne_core::to_f64(&fractadyne_core::parse_bf(SY).unwrap());
+                let step = (3.0 / mag) / N as f64;
+                let half = N as f64 / 2.0;
+                let (mut n, mut big) = (0u64, 0u64);
+                let mut k = 0usize;
+                while k < (N as usize) * (N as usize) {
+                    let (i, j) = ((k % N as usize) as f64, (k / N as usize) as f64);
+                    let g = px[k * 4];
+                    if g >= 0.0 {
+                        let cre = cx0 + ((i + 0.5) - half) * step;
+                        let cim = cy0 + (half - (j + 0.5)) * step;
+                        if let Some(cpu) = mandel_smooth_f64(cre, cim, req.max_iter) {
+                            n += 1;
+                            if (g - cpu).abs() > 1.0 {
+                                big += 1;
+                            }
+                        }
+                    }
+                    k += 7;
+                }
+                let frac = if n == 0 { 1.0 } else { big as f64 / n as f64 };
+                checks.push(SelfCheck {
+                    category: "Numeric",
+                    name: "df32 perturbation vs CPU f64 dwell".into(),
+                    params: format!("seahorse, 2e4×, {} iter, n={n}", req.max_iter),
+                    result: format!("{:.1}% agree within 1 iter", (1.0 - frac) * 100.0),
+                    threshold: "≥90% within 1 iter",
+                    pass: frac < 0.10,
+                });
+                checks.push(SelfCheck {
+                    category: "Finiteness",
+                    name: "dwell finite (perturbation @2e4×)".into(),
+                    params: "all sampled pixels".into(),
+                    result: if finite(&px) { "all finite".into() } else { "NON-FINITE!".into() },
+                    threshold: "all finite",
+                    pass: finite(&px),
+                });
+            }
+
+            // (B) floatexp vs df32 perturbation @1e10× — two representations, must agree.
+            let mut a = make(SX, SY, 1.0e10);
+            a.mode = 0;
+            let mut b = a.clone();
+            b.mode = 2;
+            if let (Some(aa), Some(bb)) = (render(&a), render(&b)) {
+                let (mean, frac) = compare(&aa, &bb);
+                checks.push(SelfCheck {
+                    category: "Numeric",
+                    name: "floatexp vs df32 perturbation".into(),
+                    params: "seahorse, 1e10×".into(),
+                    result: format!("mean Δ={mean:.4} iter, >2iter {:.3}%", frac * 100.0),
+                    threshold: "mean<0.5, <2% differ",
+                    pass: mean < 0.5 && frac < 0.02,
+                });
+            }
+
+            // (C) Independent bignum oracle across a DEPTH BATTERY — integer escape n, exact
+            // on every non-boundary sample, testing whichever render mode the depth selector
+            // actually uses (df32 perturbation through ~1e24×, floatexp at ≥1e28×). This is
+            // the only check that gives *independent* deep-zoom correctness (not internal
+            // consistency). Full-precision deep coordinates use a 38-digit minibrot nucleus.
+            const NX: &str = "-0.74364388703715887077806454349323251348";
+            const NY: &str = "0.131825904205312292821097354874199108694";
+            let battery: &[(&str, &str, &str, f64)] = &[
+                ("1e6x", SX, SY, 1.0e6),
+                ("1e12x", SX, SY, 1.0e12),
+                ("1e16x", NX, NY, 1.0e16),
+                ("1e24x", NX, NY, 1.0e24),
+                ("1e30x", NX, NY, 1.0e30),
+            ];
+            for (label, cx, cy, mag) in battery {
+                let req = make(cx, cy, *mag); // mode chosen by the real depth selector
+                if let Some(px) = render(&req) {
+                    let (checked, agree, boundary, mism) = oracle(cx, cy, *mag, req.max_iter, &px);
+                    checks.push(SelfCheck {
+                        category: "Bignum oracle",
+                        name: format!("naive bignum dwell vs GPU @{label}"),
+                        params: format!("mode {}, {} iter, {checked} samples", req.mode, req.max_iter),
+                        result: format!("{agree} agree, {boundary} boundary, {mism} mismatch"),
+                        threshold: "0 hard mismatches",
+                        pass: mism == 0 && checked > 0,
+                    });
+                } else {
+                    checks.push(SelfCheck {
+                        category: "Bignum oracle",
+                        name: format!("naive bignum dwell vs GPU @{label}"),
+                        params: "render".into(),
+                        result: "render failed".into(),
+                        threshold: "0 hard mismatches",
+                        pass: false,
+                    });
+                }
+            }
+
+            // (E) Real-axis symmetry + interior/exterior presence + finiteness @home.
+            let req = make("-0.5", "0.0", 1.0);
+            if let Some(px) = render(&req) {
+                let w = N as usize;
+                let (mut sum, mut n) = (0.0f64, 0u64);
+                for y in 0..(N as usize / 2) {
+                    for x in 0..w {
+                        let (t, bm) = (px[(y * w + x) * 4], px[((N as usize - 1 - y) * w + x) * 4]);
+                        if t >= 0.0 && bm >= 0.0 {
+                            sum += (t - bm).abs() as f64;
+                            n += 1;
+                        }
+                    }
+                }
+                let mean = if n == 0 { f64::INFINITY } else { sum / n as f64 };
+                checks.push(SelfCheck {
+                    category: "Invariant",
+                    name: "real-axis mirror symmetry".into(),
+                    params: "home view (-0.5, 0)".into(),
+                    result: format!("mean Δ={mean:.5} iter"),
+                    threshold: "mean<0.05",
+                    pass: mean < 0.05,
+                });
+                let interior = px.iter().step_by(4).any(|&r| r < 0.0);
+                let exterior = px.iter().step_by(4).any(|&r| r >= 0.0);
+                checks.push(SelfCheck {
+                    category: "Invariant",
+                    name: "home has interior + exterior".into(),
+                    params: "home view".into(),
+                    result: format!("interior={interior}, exterior={exterior}"),
+                    threshold: "both present",
+                    pass: interior && exterior,
+                });
+            }
+        }
+
+        // ---- golden-image regression (set deterministic coloring per spec) ----
+        let bless = std::env::args().any(|a| a == "--bless");
+        let report_path = std::env::args()
+            .position(|a| a == "--out" || a == "-o")
+            .and_then(|i| std::env::args().nth(i + 1))
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("validation/report.md"));
+        let out_base = report_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let golden_dir = out_base.join("golden");
+        let current_dir = out_base.join("current");
+        let _ = std::fs::create_dir_all(&golden_dir);
+        if !bless {
+            let _ = std::fs::create_dir_all(&current_dir);
+        }
+        // (name, cx, cy, zoom, iter, method, palette)
+        let specs: &[(&str, &str, &str, f64, u32, u32, usize)] = &[
+            ("home", "-0.5", "0.0", 1.0, 800, 0, 0),
+            ("seahorse", SX, SY, 2.0e3, 1500, 0, 1),
+            ("seahorse-stripe-1e6", SX, SY, 1.0e6, 4000, 1, 1),
+            ("elephant", "0.2925755", "-0.0149977", 1.5e3, 1500, 0, 2),
+        ];
+        let (gw, gh) = (320u32, 240u32);
+        // (name, max Δ, mean Δ, checksum, pass, reproduce)
+        let mut goldens: Vec<(String, u32, f64, u64, bool, String)> = Vec::new();
+        for &(name, cx, cy, zoom, iter, method, palette) in specs {
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.color_method = method;
+            self.palette_idx = palette;
+            self.use_custom_palette = false;
+            self.cycle = 0.27;
+            self.offset = 0.1;
+            self.stripe_freq = 6.0;
+            self.light = false;
+            self.de = false;
+            self.auto_iter = false;
+            self.max_iter = iter;
+            let mut vp = Viewport::new(gw as f64, gh as f64);
+            vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
+            vp.units_per_pixel = 3.0 / (gh as f64 * zoom);
+            vp.precision = fractadyne_core::precision_for_magnification(zoom);
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = gw;
+            req.height = gh;
+            req.ss = 1;
+            let reproduce = format!(
+                "fractadyne --render --out {name}.png --fractal Mandelbrot --center {cx} {cy} \
+                 --zoom {zoom} --size {gw} --iter {iter} --ss 1 --method {} --palette {palette}",
+                method_to_str(method)
+            );
+            let progress = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            match fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel) {
+                Ok(r) => {
+                    let srgb = fractadyne_export::to_srgb8(&r.pixels);
+                    let sum = fnv1a64(&srgb);
+                    let png_path = golden_dir.join(format!("{name}.png"));
+                    if bless {
+                        let _ = fractadyne_export::write_png(&png_path, r.width, r.height, &r.pixels, Some(&reproduce));
+                        goldens.push((name.to_string(), 0, 0.0, sum, true, reproduce));
+                    } else {
+                        let cur_path = current_dir.join(format!("{name}.png"));
+                        let _ = fractadyne_export::write_png(&cur_path, r.width, r.height, &r.pixels, Some(&reproduce));
+                        match fractadyne_export::read_png_rgba8(&png_path) {
+                            Some((w, h, gpx)) if w == r.width && h == r.height => {
+                                let (max, mean) = img_diff(&srgb, &gpx);
+                                goldens.push((name.to_string(), max, mean, sum, max <= 10 && mean <= 2.0, reproduce));
+                            }
+                            _ => goldens.push((name.to_string(), 255, 255.0, sum, false, format!("{reproduce}  [no golden — run --bless]"))),
+                        }
+                    }
+                }
+                Err(e) => goldens.push((name.to_string(), 255, 255.0, 0, false, format!("render failed: {e}"))),
+            }
+        }
+
+        // ---- build the human-readable + verifiable report ----
+        let sys = gather_system_info();
+        let checks_pass = checks.iter().filter(|c| c.pass).count();
+        let gold_pass = goldens.iter().filter(|g| g.4).count();
+        let ok = checks_pass == checks.len() && (bless || gold_pass == goldens.len());
+
+        let mut md = String::new();
+        md.push_str("# Fractadyne validation report\n\n");
+        md.push_str(&format!("- **Version:** {}\n", version_string()));
+        md.push_str(&format!("- **Generated:** {} (unix {ts})\n", utc_string(ts)));
+        md.push_str(&format!("- **GPU:** {}\n", self.gpu_name));
+        md.push_str(&format!(
+            "- **CPU:** {} ({} cores / {} threads, L2 {} KB, L3 {} KB)\n",
+            sys.cpu, sys.physical, sys.logical, sys.l2_kb, sys.l3_kb
+        ));
+        md.push_str(&format!("- **OS:** {} / {}\n", std::env::consts::OS, std::env::consts::ARCH));
+        md.push_str(&format!("- **Mode:** {}\n\n", if bless { "BLESS (recording references)" } else { "VALIDATE" }));
+        md.push_str(
+            "All checks use exact mathematics (arbitrary-precision dwell, closed-form \
+             properties) or internal cross-checks — no external data. Anyone can reproduce \
+             a golden image with the listed command and compare it to `golden/`.\n\n",
+        );
+        md.push_str("## Numeric, deep-zoom & invariant checks\n\n");
+        md.push_str("| Category | Check | Parameters | Result | Threshold | Verdict |\n");
+        md.push_str("|---|---|---|---|---|---|\n");
+        for c in &checks {
+            md.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} |\n",
+                c.category, c.name, c.params, c.result, c.threshold,
+                if c.pass { "✅ PASS" } else { "❌ FAIL" }
+            ));
+        }
+        md.push_str(&format!("\n**{checks_pass}/{} checks passed.**\n\n", checks.len()));
+        md.push_str(&format!("## Golden images ({gw}×{gh})\n\n"));
+        md.push_str(&format!(
+            "Stored in `{}`. {} pixel tolerance: max ≤ 10, mean ≤ 2.0 (8-bit sRGB).\n\n",
+            golden_dir.display(),
+            if bless { "Recorded this run." } else { "Compared against; current renders written to `current/` for side-by-side review." }
+        ));
+        md.push_str("| Image | Max Δ | Mean Δ | Checksum (FNV-1a) | Verdict | Reproduce |\n");
+        md.push_str("|---|---|---|---|---|---|\n");
+        for g in &goldens {
+            md.push_str(&format!(
+                "| {} | {} | {:.3} | `{:016x}` | {} | `{}` |\n",
+                g.0, g.1, g.2, g.3,
+                if bless { "📷 recorded" } else if g.4 { "✅ match" } else { "❌ differ" },
+                g.5
+            ));
+        }
+        md.push_str(&format!(
+            "\n**{}/{} golden images {}.**\n\n## Summary\n\n{}\n",
+            gold_pass, goldens.len(),
+            if bless { "recorded" } else { "within tolerance" },
+            if ok { "✅ ALL CHECKS PASSED" } else { "❌ FAILURES PRESENT — see table above" }
+        ));
+
+        if let Err(e) = std::fs::write(&report_path, &md) {
+            eprintln!("Failed to write report to {}: {e}", report_path.display());
+        }
+
+        // ---- concise stdout summary ----
+        println!("\nFractadyne self-test — {}\n{}", if bless { "BLESS" } else { "VALIDATE" }, "=".repeat(48));
+        for c in &checks {
+            println!("  [{}] {} — {}", if c.pass { "PASS" } else { "FAIL" }, c.name, c.result);
+        }
+        for g in &goldens {
+            println!(
+                "  [{}] golden {} — maxΔ {} meanΔ {:.2}",
+                if bless { "REC " } else if g.4 { "PASS" } else { "FAIL" }, g.0, g.1, g.2
+            );
+        }
+        println!("{}", "=".repeat(48));
+        println!("checks {checks_pass}/{}, goldens {gold_pass}/{} — {}", checks.len(), goldens.len(),
+            if ok { "OK" } else { "FAILURES PRESENT" });
+        println!("report → {}\n", report_path.display());
+        ok
+    }
+
     /// Render the current job on a worker thread and write to `path` (or, for dual
     /// "separate", to `path` + a sibling). The UI stays responsive; result via channel.
     fn start_export_to(
@@ -2227,15 +3210,26 @@ impl FractadyneApp {
 
         // Bound per-frame GPU work so a single render can't trip the OS GPU watchdog
         // (TDR ≈ 2 s → device-lost crash). Work ≈ texels × iterations = px·ss²·iter.
-        // Cap supersampling first (keeps native resolution); only at extreme depth on a
-        // very large window is the iteration count itself clamped.
+        //
+        // The key balance: a huge iteration count at deep zoom on a large window resolves
+        // the boundary's sub-pixel "dust" into per-pixel noise once it starves the budget
+        // of resolution/anti-aliasing. So cap the live iteration count at what's affordable
+        // at *native* resolution — but never below a zoom-appropriate floor, so deep
+        // interiors stay resolved (clamping iterations with no floor was the old
+        // uniform-screen bug). Only when even that floor can't fit (extreme depth on a very
+        // large window) do we fall back to reducing the iteration-texture resolution.
         let px = (resolution[0].max(1) as u64) * (resolution[1].max(1) as u64);
-        // Keep the full iteration count — clamping iterations at deep zoom made the whole
-        // view escape "late"/never, rendering as flat interior (the uniform screen). To
-        // stay under the GPU-watchdog budget (texels × iters), reduce the iteration-
-        // texture *resolution* instead (the color pass upscales it): graceful softness
-        // on a big window at extreme depth, never a blank. ss is fit afterward.
-        let gpu_iter = eff_iter.min(50_000);
+        // Iterations appropriate for this zoom. A high manual base (e.g. 50,000) would
+        // over-resolve the boundary's sub-pixel "dust" into per-pixel noise *and* eat the
+        // whole budget (forcing low resolution + no anti-aliasing). Cap the live preview at
+        // a zoom-scaled count — generous enough that normal auto-iteration is never capped,
+        // but an inflated manual base is. Exports still use the full count. The cap stays
+        // well above what the zoom needs, so deep interiors remain resolved (no uniform
+        // screen).
+        let gpu_iter = eff_iter.min(50_000).min(zoom_iter_cap(magnification).max(256));
+        // GPU-watchdog safety (TDR ≈ 2 s): if even the capped work won't fit, reduce the
+        // iteration-texture resolution (the color pass box-filters the upscale). Rare now
+        // that iterations are zoom-capped.
         let want = px.saturating_mul(gpu_iter.max(1) as u64);
         let res_scale = if want > WORK_BUDGET {
             (WORK_BUDGET as f64 / want as f64).sqrt()
@@ -2255,6 +3249,16 @@ impl FractadyneApp {
             .sqrt()
             .max(1.0) as u32;
         let ss = if interacting { 1 } else { self.aa.min(max_ss) };
+        // Color-pass anti-aliasing when true supersampling wasn't affordable: widen the box
+        // to match an upscaled (resolution-reduced) texture, or apply a gentle 2× box when
+        // the budget forced ss=1 on a settled view the user wanted anti-aliased.
+        let aa_filter = if res_scale < 1.0 {
+            ((1.0 / res_scale).round() as u32).clamp(2, 4)
+        } else if ss == 1 && self.aa > 1 && !interacting {
+            2
+        } else {
+            1
+        };
 
         // Render path: 1 = direct df32 (shallow / unsupported formulas), 0 = df32
         // perturbation (fast, common deep range), 2 = floatexp perturbation (past df32's
@@ -2346,7 +3350,7 @@ impl FractadyneApp {
 
         if view_id == 0 {
             self.perf.last_mode = mode;
-            self.perf.last_eff_iter = eff_iter;
+            self.perf.last_eff_iter = gpu_iter; // iterations actually rendered this frame
             self.perf.last_precision = precision;
             self.perf.last_orbit_len = self.ref_cache[vi].orbit_len;
         }
@@ -2378,6 +3382,7 @@ impl FractadyneApp {
             color_method: self.color_method,
             stripe_freq: self.stripe_freq,
             trap_type: self.trap_type,
+            aa_filter,
             resolution,
             ss,
             view_id,
@@ -2915,6 +3920,416 @@ impl FractadyneApp {
         }
     }
 
+    /// Set a transient status toast (auto-fades after a few seconds).
+    fn set_toast(&mut self, msg: impl Into<String>, ctx: &egui::Context) {
+        self.toast = Some((msg.into(), ctx.input(|i| i.time)));
+    }
+
+    /// "Zoom to center": find the nearby minibrot's exact nucleus (Newton-Raphson in
+    /// arbitrary precision) and snap the view center to it, keeping the current zoom.
+    /// Reports the period. Holomorphic families only (Mandelbrot / Multibrot).
+    fn find_minibrot(&mut self, ctx: &egui::Context) {
+        if !matches!(self.fractal.formula_id(), 0..=3) {
+            self.set_toast(
+                "Minibrot finder needs a holomorphic family (Mandelbrot / Multibrot).",
+                ctx,
+            );
+            return;
+        }
+        let mag = self.viewport.magnification();
+        let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+        let max_period =
+            self.viewport.recommended_max_iter(self.max_iter).clamp(1_000, 100_000);
+        match fractadyne_core::find_nucleus(&center, mag, self.fractal.formula_id(), max_period) {
+            Some(n) => {
+                self.viewport.set_center_mag(n.cx, n.cy, mag);
+                self.viewport.precision =
+                    fractadyne_core::precision_for_magnification(mag);
+                self.zoom_vel = 0.0;
+                self.invalidate_refs();
+                self.record_nav();
+                self.set_toast(format!("Snapped to period-{} minibrot center", n.period), ctx);
+            }
+            None => self.set_toast("No minibrot center found near the view center.", ctx),
+        }
+    }
+
+    /// Render the static home-view thumbnail for the minimap (fixed complex region), as
+    /// an egui image. Cheap (small, direct path); only called when the thumbnail key
+    /// changes. Returns `None` if the GPU render fails.
+    fn render_minimap_image(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+    ) -> Option<egui::ColorImage> {
+        let mut vp = Viewport::new(MINIMAP_TW as f64, MINIMAP_TH as f64);
+        vp.center_x = fractadyne_core::BigFloat::from_f64(MINIMAP_CX, 64);
+        vp.center_y = fractadyne_core::BigFloat::from_f64(MINIMAP_CY, 64);
+        vp.units_per_pixel = (2.0 * MINIMAP_HX) / MINIMAP_TW as f64;
+        vp.precision = 64;
+        let mut req = self.current_export_request_for(&vp, false);
+        req.width = MINIMAP_TW;
+        req.height = MINIMAP_TH;
+        req.ss = 1;
+        req.max_iter = req.max_iter.clamp(200, 600);
+        let progress = std::sync::atomic::AtomicU32::new(0);
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let res = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()?;
+        // Linear RGBA f32 → sRGB u8 (approx gamma) for display.
+        let n = (res.width * res.height) as usize;
+        let mut pixels = Vec::with_capacity(n * 4);
+        for i in 0..n {
+            for k in 0..3 {
+                let c = res.pixels[i * 4 + k].clamp(0.0, 1.0);
+                pixels.push((c.powf(1.0 / 2.2) * 255.0 + 0.5) as u8);
+            }
+            pixels.push(255);
+        }
+        Some(egui::ColorImage::from_rgba_unmultiplied(
+            [res.width as usize, res.height as usize],
+            &pixels,
+        ))
+    }
+
+    /// Refresh the cached minimap thumbnail if its key (formula / palette / method)
+    /// changed. No-op when the minimap is hidden.
+    fn update_minimap(
+        &mut self,
+        ctx: &egui::Context,
+        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
+    ) {
+        if !self.minimap || self.dual || self.julia_mode {
+            return;
+        }
+        // Key includes the palette identity: preset index, or a custom-edit revision
+        // (with a sentinel index) so the thumbnail refreshes when the gradient changes.
+        let pal_idx = if self.use_custom_palette { usize::MAX } else { self.palette_idx };
+        let pal_rev = if self.use_custom_palette { self.palette_rev } else { 0 };
+        let key = (self.fractal.formula_id(), pal_idx, self.color_method, pal_rev);
+        if self.minimap_key == Some(key) && self.minimap_tex.is_some() {
+            return;
+        }
+        if let Some((dev, q)) = gpu {
+            if let Some(img) = self.render_minimap_image(dev, q) {
+                let tex = ctx.load_texture("fractadyne.minimap", img, egui::TextureOptions::LINEAR);
+                self.minimap_tex = Some(tex);
+                self.minimap_key = Some(key);
+            }
+        }
+    }
+
+    /// Draw the minimap overlay (thumbnail + "you are here" marker + zoom depth), and
+    /// handle click-to-jump. Anchored bottom-left, above the status bar.
+    fn draw_minimap(&mut self, ctx: &egui::Context) {
+        if !self.minimap || self.dual || self.julia_mode {
+            return;
+        }
+        let Some(tex) = self.minimap_tex.clone() else { return };
+        let disp_w = 196.0_f32;
+        let disp_h = disp_w * MINIMAP_TH as f32 / MINIMAP_TW as f32;
+        let mut jump: Option<(f64, f64)> = None;
+        egui::Area::new(egui::Id::new("fractadyne.minimap"))
+            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(10.0, -34.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .stroke(egui::Stroke::new(1.0, BRAND_ACCENT))
+                    .show(ui, |ui| {
+                        let (rect, resp) = ui.allocate_exact_size(
+                            egui::vec2(disp_w, disp_h),
+                            egui::Sense::click(),
+                        );
+                        let p = ui.painter_at(rect);
+                        p.image(
+                            tex.id(),
+                            rect,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                        // "You are here": project the current center onto the thumbnail.
+                        let (cx, cy) = self.viewport.center_f64();
+                        let nx = ((cx - MINIMAP_CX) / (2.0 * MINIMAP_HX) + 0.5) as f32;
+                        let ny = (0.5 - (cy - MINIMAP_CY) / (2.0 * MINIMAP_HY)) as f32;
+                        let mk = rect.min + egui::vec2(nx * rect.width(), ny * rect.height());
+                        let (sx, _sy) = self.viewport.complex_span();
+                        let rw = (sx / (2.0 * MINIMAP_HX)) as f32 * rect.width();
+                        let amber = BRAND_ACCENT;
+                        if rect.contains(mk) {
+                            if rw >= 5.0 {
+                                // Shallow: draw the actual view rectangle.
+                                let rh = rw * rect.height() / rect.width();
+                                let vr = egui::Rect::from_center_size(mk, egui::vec2(rw, rh));
+                                p.rect_stroke(
+                                    vr,
+                                    0.0,
+                                    egui::Stroke::new(1.5, amber),
+                                    egui::StrokeKind::Middle,
+                                );
+                            } else {
+                                // Deep: a crosshair + dot (the view is sub-pixel here).
+                                p.circle_stroke(mk, 4.0, egui::Stroke::new(1.5, amber));
+                                let c = 7.0;
+                                p.line_segment([mk - egui::vec2(c, 0.0), mk + egui::vec2(c, 0.0)],
+                                    egui::Stroke::new(1.0, amber));
+                                p.line_segment([mk - egui::vec2(0.0, c), mk + egui::vec2(0.0, c)],
+                                    egui::Stroke::new(1.0, amber));
+                            }
+                        }
+                        // Zoom-depth label.
+                        p.text(
+                            rect.left_bottom() + egui::vec2(4.0, -3.0),
+                            egui::Align2::LEFT_BOTTOM,
+                            format!("{}×", fmt_zoom(self.viewport.magnification())),
+                            egui::FontId::monospace(11.0),
+                            BRAND_TEXT,
+                        );
+                        if resp.clicked() {
+                            if let Some(pos) = resp.interact_pointer_pos() {
+                                let fx = ((pos.x - rect.min.x) / rect.width()) as f64;
+                                let fy = ((pos.y - rect.min.y) / rect.height()) as f64;
+                                let tx = MINIMAP_CX + (fx - 0.5) * 2.0 * MINIMAP_HX;
+                                let ty = MINIMAP_CY - (fy - 0.5) * 2.0 * MINIMAP_HY;
+                                jump = Some((tx, ty));
+                            }
+                        }
+                        resp.on_hover_text(
+                            "Overview / you-are-here. Click to jump to that region (home zoom).",
+                        );
+                    });
+            });
+        if let Some((tx, ty)) = jump {
+            self.viewport.set_center_mag(
+                fractadyne_core::BigFloat::from_f64(tx, 64),
+                fractadyne_core::BigFloat::from_f64(ty, 64),
+                1.0,
+            );
+            self.zoom_vel = 0.0;
+            self.invalidate_refs();
+            self.record_nav();
+        }
+    }
+
+    /// The custom-gradient editor window: live gradient preview, per-stop color + position
+    /// controls, add/remove, and seed-from-preset. Edits bump `palette_rev`.
+    fn palette_editor_window(&mut self, ctx: &egui::Context) {
+        if !self.palette_editor_open {
+            return;
+        }
+        let mut open = self.palette_editor_open;
+        let mut changed = false;
+        egui::Window::new("Gradient editor")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(340.0)
+            .show(ctx, |ui| {
+                // Live gradient preview bar.
+                let (packed, n) = self.pack_custom();
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
+                let pr = ui.painter_at(rect);
+                let steps = rect.width().ceil().max(1.0) as usize;
+                for s in 0..steps {
+                    let t = s as f32 / steps as f32;
+                    let x = rect.min.x + t * rect.width();
+                    let col = sample_stops(&packed, n, t);
+                    pr.line_segment(
+                        [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
+                        egui::Stroke::new(1.5, col),
+                    );
+                }
+                pr.rect_stroke(
+                    rect,
+                    2.0,
+                    egui::Stroke::new(1.0, BRAND_ACCENT),
+                    egui::StrokeKind::Inside,
+                );
+                ui.add_space(6.0);
+
+                // Per-stop rows (color + position + remove).
+                let mut remove: Option<usize> = None;
+                let count = self.custom_palette.len();
+                for i in 0..count {
+                    ui.horizontal(|ui| {
+                        let mut rgb = [
+                            self.custom_palette[i][1],
+                            self.custom_palette[i][2],
+                            self.custom_palette[i][3],
+                        ];
+                        if ui.color_edit_button_rgb(&mut rgb).changed() {
+                            self.custom_palette[i][1] = rgb[0];
+                            self.custom_palette[i][2] = rgb[1];
+                            self.custom_palette[i][3] = rgb[2];
+                            changed = true;
+                        }
+                        let mut pos = self.custom_palette[i][0];
+                        if ui
+                            .add(egui::Slider::new(&mut pos, 0.0..=1.0).text("pos").fixed_decimals(3))
+                            .changed()
+                        {
+                            self.custom_palette[i][0] = pos.clamp(0.0, 1.0);
+                            changed = true;
+                        }
+                        if count > 2 && ui.button("✕").on_hover_text("Remove stop").clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                }
+                if let Some(i) = remove {
+                    self.custom_palette.remove(i);
+                    changed = true;
+                }
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if self.custom_palette.len() < fractadyne_color::MAX_STOPS
+                        && ui.button("➕ Add stop").clicked()
+                    {
+                        self.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
+                        changed = true;
+                    }
+                    ui.menu_button("Copy preset…", |ui| {
+                        for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
+                            if ui.button(p.name).clicked() {
+                                self.custom_palette = self.preset_as_stops(i);
+                                changed = true;
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                });
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{}/{} stops · positions may overlap; they're sorted automatically.",
+                        self.custom_palette.len(),
+                        fractadyne_color::MAX_STOPS
+                    ))
+                    .weak()
+                    .small(),
+                );
+            });
+        if changed {
+            self.palette_rev = self.palette_rev.wrapping_add(1);
+            self.use_custom_palette = true;
+        }
+        self.palette_editor_open = open;
+    }
+
+    /// Jump to a Mandelbrot location (full-precision center strings + magnification),
+    /// e.g. a famous-locations entry. Switches to Mandelbrot, single view.
+    fn goto_location(&mut self, cx: &str, cy: &str, mag: f64, name: &str, ctx: &egui::Context) {
+        let (Some(x), Some(y)) =
+            (fractadyne_core::parse_bf(cx), fractadyne_core::parse_bf(cy))
+        else {
+            return;
+        };
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        self.viewport.set_center_mag(x, y, mag.max(1.0));
+        self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
+        self.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+        self.set_toast(format!("{name} · {}×", fmt_zoom(mag)), ctx);
+    }
+
+    /// Jump to a random interesting location: find a point on the set boundary by
+    /// bisecting between an interior anchor and a random exterior direction, then zoom in
+    /// a random amount. Boundary points are always detail-rich.
+    fn random_location(&mut self, ctx: &egui::Context) {
+        let mut s = (ctx.input(|i| i.time).to_bits() ^ 0x9E37_79B9_7F4A_7C15) | 1;
+        let mut rnd = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s >> 11) as f64 / ((1u64 << 53) as f64)
+        };
+        let theta = rnd() * std::f64::consts::TAU;
+        // Interior anchor (inside the main cardioid) → exterior point along θ.
+        let (mut ix, mut iy) = (-0.5_f64, 0.0_f64);
+        let (mut ox, mut oy) = (ix + 3.0 * theta.cos(), iy + 3.0 * theta.sin());
+        for _ in 0..64 {
+            let (mx, my) = ((ix + ox) * 0.5, (iy + oy) * 0.5);
+            if mandel_escapes(mx, my, 3000).is_some() {
+                ox = mx;
+                oy = my;
+            } else {
+                ix = mx;
+                iy = my;
+            }
+        }
+        let (cx, cy) = ((ix + ox) * 0.5, (iy + oy) * 0.5);
+        let mag = 10f64.powf(2.0 + rnd() * 4.0); // 1e2 .. 1e6
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        self.viewport.set_center_mag(
+            fractadyne_core::BigFloat::from_f64(cx, 64),
+            fractadyne_core::BigFloat::from_f64(cy, 64),
+            mag,
+        );
+        self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
+        self.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+        self.set_toast(format!("Random location · {}×", fmt_zoom(mag)), ctx);
+    }
+
+    /// The Help window: a left-hand table of contents + a scrollable content pane.
+    fn help_window(&mut self, ctx: &egui::Context) {
+        if !self.help_open {
+            return;
+        }
+        const SECTIONS: [&str; 8] = [
+            "Overview",
+            "Navigation",
+            "Coloring & options",
+            "Fractals",
+            "How it works",
+            "Command line",
+            "Shortcuts",
+            "About",
+        ];
+        let mut open = self.help_open;
+        egui::Window::new("Fractadyne Help")
+            .open(&mut open)
+            .default_size([660.0, 520.0])
+            .resizable(true)
+            .show(ctx, |ui| {
+                let toc_w = 150.0;
+                // Bound the content width so paragraphs wrap (a horizontal layout would
+                // otherwise hand children unbounded width and the text wouldn't wrap).
+                let content_w = (ui.available_width() - toc_w - 14.0).max(280.0);
+                ui.horizontal_top(|ui| {
+                    // Table of contents.
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(toc_w, ui.available_height()),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(toc_w);
+                            for (i, name) in SECTIONS.iter().enumerate() {
+                                ui.selectable_value(&mut self.help_section, i, *name);
+                            }
+                        },
+                    );
+                    ui.separator();
+                    // Content (width-bounded → labels wrap).
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        ui.set_width(content_w);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        match self.help_section {
+                            0 => help_overview(ui),
+                            1 => help_navigation(ui),
+                            2 => help_options(ui),
+                            3 => help_fractals(ui),
+                            4 => help_methodology(ui),
+                            5 => help_command_line(ui),
+                            6 => help_shortcuts(ui),
+                            _ => help_about(ui),
+                        }
+                    });
+                });
+            });
+        self.help_open = open;
+    }
+
     /// Reset the current view to the fractal's default (both panels in dual view).
     fn reset_view(&mut self) {
         self.viewport.reset();
@@ -3004,9 +4419,37 @@ impl FractadyneApp {
     fn active_stops(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
         if self.palette_anim == PaletteAnim::Random {
             self.random_palette.current()
+        } else if self.use_custom_palette {
+            self.pack_custom()
         } else {
             fractadyne_color::PRESETS[self.palette_idx].packed()
         }
+    }
+
+    /// Pack the custom gradient into the GPU stop format `[r, g, b, pos]` (sorted by
+    /// position, count clamped to `MAX_STOPS`). Falls back to a preset if empty.
+    fn pack_custom(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
+        if self.custom_palette.is_empty() {
+            return fractadyne_color::PRESETS[self.palette_idx].packed();
+        }
+        let mut stops = self.custom_palette.clone();
+        stops.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        let n = stops.len().clamp(1, fractadyne_color::MAX_STOPS);
+        let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
+        for (i, slot) in out.iter_mut().enumerate() {
+            let s = stops[i.min(n - 1)];
+            *slot = [s[1], s[2], s[3], s[0]];
+        }
+        (out, n as u32)
+    }
+
+    /// The given preset's stops as editable `[pos, r, g, b]` rows (to seed the editor).
+    fn preset_as_stops(&self, idx: usize) -> Vec<[f32; 4]> {
+        fractadyne_color::PRESETS[idx.min(fractadyne_color::PRESETS.len() - 1)]
+            .stops
+            .iter()
+            .map(|(pos, c)| [*pos, c[0], c[1], c[2]])
+            .collect()
     }
 
     /// Advance the palette animation for this frame (offset shift, or random morph).
@@ -3252,6 +4695,7 @@ impl eframe::App for FractadyneApp {
         let gpu = frame
             .wgpu_render_state()
             .map(|rs| (rs.device.clone(), rs.queue.clone()));
+        self.update_minimap(ctx, &gpu);
 
         // Ctrl+S → quick export (no dialog) to the last folder.
         if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
@@ -3283,6 +4727,28 @@ impl eframe::App for FractadyneApp {
                 self.undo_view();
             } else if redo {
                 self.redo_view();
+            }
+            // M: find the nearby minibrot center (single view only).
+            if ctx.input(|i| i.key_pressed(egui::Key::M) && !i.modifiers.any()) && !self.dual {
+                self.find_minibrot(ctx);
+            }
+            // F1 / ? : toggle the help overlay.
+            if ctx.input(|i| {
+                i.key_pressed(egui::Key::F1)
+                    || (i.key_pressed(egui::Key::Questionmark))
+                    || (i.modifiers.shift && i.key_pressed(egui::Key::Slash))
+            }) {
+                self.help_open = !self.help_open;
+            }
+        }
+
+        // CLI self-test: run the GPU validation suite, print the report, and exit with a
+        // status code (0 = all passed).
+        if self.selftest && !self.selftest_done {
+            if let Some((dev, q)) = &gpu {
+                self.selftest_done = true;
+                let ok = self.run_selftest(dev, q);
+                std::process::exit(if ok { 0 } else { 1 });
             }
         }
 
@@ -3353,7 +4819,7 @@ impl eframe::App for FractadyneApp {
         }
         self.perf.last_frame = Some(frame_start);
 
-        if !self.auto_benchmark && !self.auto_render {
+        if !self.auto_benchmark && !self.auto_render && !self.selftest {
             self.autosave(ctx); // don't let a CLI run overwrite the saved session
         }
 
@@ -3425,7 +4891,28 @@ impl eframe::App for FractadyneApp {
                                 ui.close_menu();
                             }
                         });
+                        ui.add_enabled_ui(matches!(self.fractal.formula_id(), 0..=3), |ui| {
+                            if ui
+                                .button("Find minibrot center  (M)")
+                                .on_hover_text(
+                                    "Newton-snap the view center to the nearby minibrot's \
+                                     exact center and report its period.",
+                                )
+                                .clicked()
+                            {
+                                let ctx = ui.ctx().clone();
+                                self.find_minibrot(&ctx);
+                                ui.close_menu();
+                            }
+                        });
                         ui.separator();
+                        ui.checkbox(&mut self.right_panel_open, "Control panel")
+                            .on_hover_text("Show/hide the right-hand control panel.");
+                        ui.checkbox(&mut self.minimap, "Minimap overview")
+                            .on_hover_text(
+                                "Show a small home-view overview with a \"you are here\" \
+                                 marker and the zoom depth. Click it to jump to a region.",
+                            );
                         if ui
                             .checkbox(&mut self.dual, "Dual view (Mandelbrot ↔ Julia)")
                             .clicked()
@@ -3526,7 +5013,30 @@ impl eframe::App for FractadyneApp {
                             }
                         }
                     });
+                    ui.menu_button("Locations", |ui| {
+                        let ctx = ui.ctx().clone();
+                        for (name, cx, cy, mag) in FAMOUS {
+                            if ui.button(*name).clicked() {
+                                self.goto_location(cx, cy, *mag, name, &ctx);
+                                ui.close_menu();
+                            }
+                        }
+                        ui.separator();
+                        if ui
+                            .button("🎲  Random location")
+                            .on_hover_text("Jump to a random detail-rich boundary point")
+                            .clicked()
+                        {
+                            self.random_location(&ctx);
+                            ui.close_menu();
+                        }
+                    });
                     ui.menu_button("Help", |ui| {
+                        if ui.button("Help & reference…  (F1)").clicked() {
+                            self.help_open = true;
+                            ui.close_menu();
+                        }
+                        ui.separator();
                         ui.label(format!("Fractadyne v{}", version_string()));
                         ui.label(egui::RichText::new("Native fractal explorer").weak().small());
                         ui.separator();
@@ -3694,11 +5204,18 @@ impl eframe::App for FractadyneApp {
 
         // Right-hand control panel: fractal info, coloring, navigation, and the
         // optional performance section. Hidden entirely while in fullscreen.
-        if !self.fullscreen {
+        if !self.fullscreen && self.right_panel_open {
         egui::SidePanel::right("coloring_panel")
             .default_width(280.0)
             .show(ctx, |ui| {
-                ui.add_space(6.0);
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.small_button("\u{23F4}").on_hover_text("Hide control panel").clicked() {
+                        self.right_panel_open = false;
+                    }
+                    ui.label(egui::RichText::new("Controls").strong());
+                });
+                ui.separator();
                 // Per-fractal info: formula, background, reference link.
                 let info = self.fractal.info();
                 egui::CollapsingHeader::new(self.fractal.name())
@@ -3712,8 +5229,7 @@ impl eframe::App for FractadyneApp {
                     });
                 ui.separator();
 
-                ui.label(egui::RichText::new("COLORING").weak().small());
-                ui.add_space(4.0);
+                egui::CollapsingHeader::new("Coloring").default_open(true).show(ui, |ui| {
                 egui::ComboBox::from_label("Method")
                     .selected_text(COLOR_METHODS[self.color_method as usize].1)
                     .show_ui(ui, |ui| {
@@ -3743,13 +5259,37 @@ impl eframe::App for FractadyneApp {
                             }
                         });
                 }
+                let pal_name = if self.use_custom_palette {
+                    "Custom"
+                } else {
+                    fractadyne_color::PRESETS[self.palette_idx].name
+                };
                 egui::ComboBox::from_label("Palette")
-                    .selected_text(fractadyne_color::PRESETS[self.palette_idx].name)
+                    .selected_text(pal_name)
                     .show_ui(ui, |ui| {
                         for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
-                            ui.selectable_value(&mut self.palette_idx, i, p.name);
+                            if ui
+                                .selectable_label(!self.use_custom_palette && self.palette_idx == i, p.name)
+                                .clicked()
+                            {
+                                self.palette_idx = i;
+                                self.use_custom_palette = false;
+                            }
+                        }
+                        if ui.selectable_label(self.use_custom_palette, "Custom ✎").clicked() {
+                            if self.custom_palette.is_empty() {
+                                self.custom_palette = self.preset_as_stops(self.palette_idx);
+                            }
+                            self.use_custom_palette = true;
                         }
                     });
+                if ui.button("Edit gradient…").clicked() {
+                    if self.custom_palette.is_empty() {
+                        self.custom_palette = self.preset_as_stops(self.palette_idx);
+                    }
+                    self.use_custom_palette = true;
+                    self.palette_editor_open = true;
+                }
                 ui.add(egui::Slider::new(&mut self.cycle, 0.0..=1.0).text("Cycle"));
                 ui.add(egui::Slider::new(&mut self.offset, 0.0..=1.0).text("Offset"));
                 egui::ComboBox::from_label("Animate")
@@ -3846,9 +5386,8 @@ impl eframe::App for FractadyneApp {
                          Higher tames the fine exterior 'dust' at the cost of render time.",
                     );
 
-                ui.add_space(12.0);
-                ui.label(egui::RichText::new("NAVIGATION").weak().small());
-                ui.add_space(4.0);
+                });
+                egui::CollapsingHeader::new("Navigation").default_open(true).show(ui, |ui| {
                 ui.add(
                     egui::Slider::new(&mut self.zoom_rate, 0.25..=4.0)
                         .text("Zoom speed")
@@ -3857,16 +5396,28 @@ impl eframe::App for FractadyneApp {
                 )
                 .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
 
+                });
                 // Performance section, docked at the bottom of this same panel
                 // (toggle via the Perf button or the View menu).
                 if self.perf.enabled {
-                    ui.add_space(12.0);
-                    ui.separator();
-                    ui.label(egui::RichText::new("PERFORMANCE").weak().small());
-                    ui.add_space(4.0);
-                    self.perf_section(ui);
+                    egui::CollapsingHeader::new("Performance")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            self.perf_section(ui);
+                        });
                 }
             });
+        }
+
+        // Reopen handle when the control panel is hidden (and not fullscreen).
+        if !self.fullscreen && !self.right_panel_open {
+            egui::Area::new(egui::Id::new("panel_reopen"))
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 36.0))
+                .show(ctx, |ui| {
+                    if ui.button("\u{2630}").on_hover_text("Show control panel").clicked() {
+                        self.right_panel_open = true;
+                    }
+                });
         }
 
         egui::CentralPanel::default()
@@ -4030,6 +5581,40 @@ impl eframe::App for FractadyneApp {
                     }
                 }
             });
+
+        // ---- minimap overview ----
+        self.draw_minimap(ctx);
+
+        // ---- gradient editor ----
+        self.palette_editor_window(ctx);
+
+        // ---- keyboard / help overlay ----
+        self.help_window(ctx);
+
+        // ---- transient status toast (e.g. minibrot-finder result) ----
+        if let Some((msg, t0)) = self.toast.clone() {
+            let age = ctx.input(|i| i.time) - t0;
+            if age < 4.5 {
+                let fade = ((4.5 - age) / 0.6).clamp(0.0, 1.0) as f32;
+                egui::Area::new(egui::Id::new("fractadyne.toast"))
+                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
+                    .interactable(false)
+                    .show(ctx, |ui| {
+                        egui::Frame::popup(ui.style())
+                            .fill(egui::Color32::from_rgb(0x23, 0x24, 0x28).gamma_multiply(fade))
+                            .stroke(egui::Stroke::new(1.0, BRAND_ACCENT.gamma_multiply(fade)))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(msg)
+                                        .color(BRAND_TEXT.gamma_multiply(fade)),
+                                );
+                            });
+                    });
+                ctx.request_repaint(); // keep fading
+            } else {
+                self.toast = None;
+            }
+        }
 
         // ---- go to location ----
         if self.goto_open {

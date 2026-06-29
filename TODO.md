@@ -412,12 +412,31 @@ for fun, informative value, and ease of use.
       = undo view, **Shift+Backspace / Ctrl+Y** = redo (also in the View menu), gated so
       it doesn't fire while typing. (Single view; dual skipped.) *(Follow-up: this is
       the basis for the `.fdn` share format — same key=value, hardened parse.)*
-- [ ] **Period / minibrot finder ("zoom to center")** — Newton-Raphson snap to a
-      minibrot's exact center + period (Kalles Fraktaler's killer deep-zoom aid).
-- [ ] **Minimap / "you are here" overview + zoom-depth context.**
-- [ ] **Gradient / palette editor** (also listed under M1) — needed to exploit the above.
-- [ ] **Famous-locations tour + "random interesting location" + help/keyboard overlay** —
-      best onboarding-per-effort.
+- [x] **Period / minibrot finder ("zoom to center")** — View → "Find minibrot center"
+      (or **M**) snaps the view center to the nearby minibrot's exact nucleus and reports
+      its period via a transient toast. Detects the atom-domain period (global argmin of
+      |Zₙ|), Newton-refines `c` so the critical orbit closes (`Z_period(c)=0`) in
+      arbitrary precision, then recovers the true smallest period; rejects runaway Newton
+      / non-nuclei. Holomorphic families (Mandelbrot / Multibrot). Unit-tested
+      (period-2 → c=−1, period-3 bulb); verified deep (period-998 at 2e7×). Headless
+      `--find-minibrot --center X Y [--zoom M] [--fractal NAME]`.
+- [x] **Minimap / "you are here" overview + zoom-depth context** — View → "Minimap
+      overview" shows a small static home-view thumbnail (rendered once per fractal/
+      palette/method via the export pipeline) in the bottom-left, with a "you are here"
+      marker (view rectangle when shallow, crosshair when sub-pixel deep) and the live
+      zoom-depth label. Click to jump to a region at home zoom. Persisted; single
+      Mandelbrot-mode only (hidden in dual / Julia).
+- [x] **Gradient / palette editor** (custom palettes) — Coloring → "Edit gradient…" (or
+      the "Custom" palette entry) opens an editor with a live gradient preview, per-stop
+      color picker + position slider, add/remove stops (up to 8), and "Copy preset…" to
+      seed from a built-in. Custom gradient persists and renders everywhere (live, export,
+      minimap). Verified end-to-end via a custom-palette render.
+- [x] **Famous-locations tour + "random interesting location" + help/keyboard overlay** —
+      a **Locations** menu with curated named Mandelbrot spots (Seahorse/Elephant Valley,
+      spirals, mini-Mandelbrot, a deep seahorse) that jump (full-precision) + a "🎲 Random
+      location" that bisects to a random detail-rich boundary point and zooms in. A
+      **Keyboard & controls** overlay (Help menu / **F1** / **?**) lists all shortcuts and
+      feature tips. Famous coordinates verified to render detail.
 
 ### Tier 2 — high value, larger effort
 - [ ] **Shareable settings file `.fdn` + paste-text + (optional) QR code** — save the
