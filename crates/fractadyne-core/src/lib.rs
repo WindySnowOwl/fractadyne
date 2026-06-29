@@ -954,4 +954,159 @@ mod tests {
         let mid = o[21];
         assert!((a.0 - mid.0).abs() + (a.1 - mid.1).abs() > 0.5, "c=i collapsed to a fixed point");
     }
+
+    // ---- family symmetries (Phase 2.1; §9 claims verified here, then encoded) ----
+
+    /// Escape-time dwell for any escape-time family (z₀ = 0, c = point), mirroring the
+    /// shader's direct iteration. Bailout `|z| > 2` (classification is bailout-independent).
+    fn dwell_family(formula: u32, cx: f64, cy: f64, max: u32) -> Option<u32> {
+        let (mut x, mut y) = (0.0_f64, 0.0_f64);
+        for i in 1..=max {
+            let (nx, ny) = match formula {
+                1 => (x * x * x - 3.0 * x * y * y + cx, 3.0 * x * x * y - y * y * y + cy), // z³
+                2 => {
+                    let (ax, ay) = (x * x - y * y, 2.0 * x * y); // z²
+                    (ax * ax - ay * ay + cx, 2.0 * ax * ay + cy) // (z²)²
+                }
+                3 => {
+                    let (ax, ay) = (x * x - y * y, 2.0 * x * y);
+                    let (bx, by) = (ax * ax - ay * ay, 2.0 * ax * ay); // z⁴
+                    (bx * x - by * y + cx, bx * y + by * x + cy) // z⁴·z
+                }
+                4 => (x * x - y * y + cx, -2.0 * x * y + cy),               // Tricorn conj(z)²
+                5 => (x * x - y * y + cx, 2.0 * (x * y).abs() + cy),         // Burning Ship
+                6 => ((x * x - y * y).abs() + cx, 2.0 * x * y + cy),         // Celtic
+                7 => ((x * x - y * y).abs() + cx, (2.0 * x * y).abs() + cy), // Buffalo
+                _ => (x * x - y * y + cx, 2.0 * x * y + cy),                 // Mandelbrot
+            };
+            x = nx;
+            y = ny;
+            if x * x + y * y > 4.0 {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    fn rot(cx: f64, cy: f64, deg: f64) -> (f64, f64) {
+        let t = deg * std::f64::consts::PI / 180.0;
+        (cx * t.cos() - cy * t.sin(), cx * t.sin() + cy * t.cos())
+    }
+
+    /// Count dwell mismatches over a grid under a coordinate transform.
+    fn mismatches(formula: u32, xform: &dyn Fn(f64, f64) -> (f64, f64)) -> (u32, u32) {
+        let (mut total, mut bad) = (0u32, 0u32);
+        let mut iy = -30i32;
+        while iy <= 30 {
+            let mut ix = -30i32;
+            while ix <= 30 {
+                let (cx, cy) = (ix as f64 * 0.06, iy as f64 * 0.06);
+                let (tx, ty) = xform(cx, cy);
+                total += 1;
+                if dwell_family(formula, cx, cy, 600) != dwell_family(formula, tx, ty, 600) {
+                    bad += 1;
+                }
+                ix += 1;
+            }
+            iy += 1;
+        }
+        (total, bad)
+    }
+
+    // Multibrot z^d+c has (d−1)-fold rotational symmetry in c; the exact rotations (180°,
+    // 90°) negate/swap coordinates in float, so dwell must match *exactly*. (§9: confirmed.)
+    #[test]
+    fn multibrot_rotational_symmetry_exact() {
+        // Multibrot-3 (d=3): 2-fold, 180° → (−cx, −cy).
+        let (_, b3) = mismatches(1, &|x, y| (-x, -y));
+        assert_eq!(b3, 0, "Multibrot-3 not 180°-symmetric ({b3} mismatches)");
+        // Multibrot-5 (d=5): 4-fold, 90° → (−cy, cx).
+        let (_, b5) = mismatches(3, &|x, y| (-y, x));
+        assert_eq!(b5, 0, "Multibrot-5 not 90°-symmetric ({b5} mismatches)");
+    }
+
+    // 120° rotations (Multibrot-4, Tricorn) involve an irrational sine, so allow a handful
+    // of boundary flips from float error; the symmetry must otherwise hold. (§9: verified.)
+    #[test]
+    fn threefold_rotational_symmetry_120deg() {
+        let (t4, b4) = mismatches(2, &|x, y| rot(x, y, 120.0)); // Multibrot-4: 3-fold
+        assert!(b4 * 100 < t4, "Multibrot-4 not ~120°-symmetric ({b4}/{t4})");
+        let (tt, bt) = mismatches(4, &|x, y| rot(x, y, 120.0)); // Tricorn: 3-fold
+        assert!(bt * 100 < tt, "Tricorn not ~120°-symmetric ({bt}/{tt})");
+    }
+
+    // Reflection axes (§9: verify, do not assume). Celtic is symmetric about the real axis;
+    // Burning Ship and Buffalo have NO axis reflection (their parts are even in x and y).
+    #[test]
+    fn abs_variation_reflection_axes() {
+        // Celtic (6): real-axis reflection cy → −cy is exact.
+        let (_, bc) = mismatches(6, &|x, y| (x, -y));
+        assert_eq!(bc, 0, "Celtic not real-axis-symmetric ({bc} mismatches)");
+        // Mandelbrot (0): real-axis reflection, exact.
+        let (_, bm) = mismatches(0, &|x, y| (x, -y));
+        assert_eq!(bm, 0, "Mandelbrot not real-axis-symmetric ({bm} mismatches)");
+        // Burning Ship (5) and Buffalo (7): neither axis is a symmetry — confirm both
+        // candidate reflections produce many mismatches (documents the asymmetry).
+        for formula in [5u32, 7u32] {
+            let (t, bx) = mismatches(formula, &|x, y| (-x, y));
+            let (_, by) = mismatches(formula, &|x, y| (x, -y));
+            assert!(bx * 20 > t && by * 20 > t, "formula {formula} unexpectedly symmetric (x:{bx} y:{by} / {t})");
+        }
+    }
+
+    // Julia symmetry (dynamical plane): for z^d+c, f_c(ωz)=f_c(z) when ωᵈ=1, so the dwell is
+    // invariant under z → ωz for every c. Quadratic case: z → −z (point symmetry).
+    #[test]
+    fn julia_quadratic_point_symmetry() {
+        // Julia: z₀ = pixel, c fixed. dwell(−z₀) must equal dwell(z₀).
+        let jc = (-0.512_511_498_387_07_f64, 0.521_295_242_424_99);
+        let julia_dwell = |zx: f64, zy: f64| -> Option<u32> {
+            let (mut x, mut y) = (zx, zy);
+            for i in 1..=2000u32 {
+                let (nx, ny) = (x * x - y * y + jc.0, 2.0 * x * y + jc.1);
+                x = nx;
+                y = ny;
+                if x * x + y * y > 4.0 {
+                    return Some(i);
+                }
+            }
+            None
+        };
+        let mut iy = -20i32;
+        while iy <= 20 {
+            let mut ix = -20i32;
+            while ix <= 20 {
+                let (zx, zy) = (ix as f64 * 0.08, iy as f64 * 0.08);
+                assert_eq!(julia_dwell(zx, zy), julia_dwell(-zx, -zy), "Julia not (−z)-symmetric at ({zx},{zy})");
+                ix += 1;
+            }
+            iy += 1;
+        }
+    }
+
+    // Extended landmark catalog (§2.2): exact interior/exterior across hyperbolic-component
+    // boundaries — cardioid cusp c=¼, period-1↔2 neck c=−¾, period-2 disk tip c=−5/4.
+    #[test]
+    fn landmark_boundary_classification() {
+        // Cusp at c = 1/4: just inside is interior, just outside escapes.
+        assert_eq!(dwell_family(0, 0.24, 0.0, 5000), None, "inside cusp escaped");
+        assert!(dwell_family(0, 0.26, 0.0, 5000).is_some(), "outside cusp didn't escape");
+        // Neck c = −3/4: interior on both the cardioid and period-2 sides.
+        assert_eq!(dwell_family(0, -0.74, 0.0, 5000), None, "cardioid side escaped");
+        assert_eq!(dwell_family(0, -0.76, 0.0, 5000), None, "period-2 side escaped");
+        // Period-2 disk |c+1| < 1/4 (centered at −1): interior. (Just past the real-axis
+        // tip −5/4 is the period-4 window — also interior — so leave the disk vertically to
+        // reach the exterior.)
+        assert_eq!(dwell_family(0, -1.0, 0.0, 5000), None, "period-2 center escaped");
+        assert_eq!(dwell_family(0, -1.24, 0.0, 5000), None, "inside period-2 disk escaped");
+        assert!(dwell_family(0, -1.0, 0.5, 5000).is_some(), "exterior (−1+0.5i) didn't escape");
+        // Cardioid boundary parametrization c(θ)=e^{iθ}/2 − e^{2iθ}/4: a point pulled
+        // slightly inward from the boundary is interior.
+        for k in 0..8 {
+            let th = k as f64 * std::f64::consts::TAU / 8.0;
+            let (bx, by) = (0.5 * th.cos() - 0.25 * (2.0 * th).cos(), 0.5 * th.sin() - 0.25 * (2.0 * th).sin());
+            let (inx, iny) = (bx * 0.92 + 0.0 * 0.08, by * 0.92); // pull 8% toward interior point ~0
+            assert_eq!(dwell_family(0, inx, iny, 5000), None, "inside cardioid boundary escaped at θ={th}");
+        }
+    }
 }

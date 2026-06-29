@@ -3054,6 +3054,76 @@ impl FractadyneApp {
             }
         }
 
+        // ---- render-pipeline symmetry for the non-Mandelbrot family shaders ----
+        // The bignum oracle only validates the Mandelbrot shader; these exact symmetries
+        // (verified in fractadyne-core) are the main correctness signal for the other
+        // analytic-family shaders. Render an origin/real-axis-centered view and compare
+        // each pixel to its symmetry partner, excluding ill-conditioned boundary pixels.
+        {
+            let nn = N as usize;
+            let steep = |px: &[f32], i: usize, j: usize| -> bool {
+                let g = px[(j * nn + i) * 4];
+                for (di, dj) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+                    let (ni, nj) = (i as isize + di, j as isize + dj);
+                    if ni >= 0 && nj >= 0 && (ni as usize) < nn && (nj as usize) < nn {
+                        let gn = px[(nj as usize * nn + ni as usize) * 4];
+                        if (g < 0.0) != (gn < 0.0) || (g >= 0.0 && gn >= 0.0 && (g - gn).abs() > 2.0) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            };
+            let cases: &[(FractalKind, &str, fn(usize, usize, usize) -> (usize, usize))] = &[
+                (FractalKind::Multibrot3, "Multibrot-3 180° rotation", |i, j, n| (n - 1 - i, n - 1 - j)),
+                (FractalKind::Tricorn, "Tricorn real-axis reflection", |i, j, n| (i, n - 1 - j)),
+                (FractalKind::Celtic, "Celtic real-axis reflection", |i, j, n| (i, n - 1 - j)),
+            ];
+            for &(fractal, label, partner) in cases {
+                self.fractal = fractal;
+                self.julia_mode = false;
+                self.color_method = 0;
+                self.use_custom_palette = false;
+                self.auto_iter = false;
+                self.max_iter = 1500;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
+                vp.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
+                vp.units_per_pixel = 3.0 / N as f64; // span 3, origin-centered (whole set)
+                vp.precision = 64;
+                let mut req = self.current_export_request_for(&vp, false);
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                let px = fractadyne_gpu::render_iter(device, queue, &req).ok().map(|r| r.pixels);
+                if let Some(px) = px {
+                    let (mut total, mut bad) = (0u64, 0u64);
+                    for j in 0..nn {
+                        for i in 0..nn {
+                            if steep(&px, i, j) {
+                                continue;
+                            }
+                            let (pi, pj) = partner(i, j, nn);
+                            let (a, b) = (px[(j * nn + i) * 4], px[(pj * nn + pi) * 4]);
+                            let eq = (a < 0.0) == (b < 0.0) && (a < 0.0 || (a - b).abs() < 0.5);
+                            total += 1;
+                            if !eq {
+                                bad += 1;
+                            }
+                        }
+                    }
+                    checks.push(SelfCheck {
+                        category: "Symmetry (render)",
+                        name: label.into(),
+                        params: format!("origin view, span 3, {total} smooth px"),
+                        result: format!("{bad} asymmetric"),
+                        threshold: "0 asymmetric",
+                        pass: bad == 0 && total > 0,
+                    });
+                }
+            }
+        }
+
         // ---- golden-image regression (set deterministic coloring per spec) ----
         let bless = std::env::args().any(|a| a == "--bless");
         let report_path = std::env::args()

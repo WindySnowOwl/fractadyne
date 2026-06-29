@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.0 (build 85)
-- **Generated:** 2026-06-29 04:06:21 UTC (unix 1782705981)
+- **Version:** 0.1.0 (build 86)
+- **Generated:** 2026-06-29 04:20:58 UTC (unix 1782706858)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -24,8 +24,11 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Glitch | reference independence (3-ref majority) | seahorse, 1e8×, auto vs 2 offset refs (smooth region) | 16650 smooth px: auto dissent 0, no-majority 0 (0.0000%) | <0.2% of smooth pixels | ✅ PASS |
 | Invariant | real-axis mirror symmetry | home view (-0.5, 0) | mean Δ=0.00000 iter | mean<0.05 | ✅ PASS |
 | Invariant | home has interior + exterior | home view | interior=true, exterior=true | both present | ✅ PASS |
+| Symmetry (render) | Multibrot-3 180° rotation | origin view, span 3, 44944 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |
+| Symmetry (render) | Tricorn real-axis reflection | origin view, span 3, 44846 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |
+| Symmetry (render) | Celtic real-axis reflection | origin view, span 3, 42414 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |
 
-**11/11 checks passed.**
+**14/14 checks passed.**
 
 ## Golden images (320×240)
 

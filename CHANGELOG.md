@@ -39,7 +39,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   the auto reference must agree with the per-pixel majority across the smooth region — an
   oracle-free glitch detector that also seeds multi-reference correction), floatexp-vs-df32
   agreement, real-axis symmetry, interior/exterior presence, and finiteness (via a new
-  `render_iter` that reads back the raw iteration texture). **Golden-image regression**: `--selftest --bless` records
+  `render_iter` that reads back the raw iteration texture). **Family symmetries** are
+  verified exactly in `fractadyne-core` (Multibrot (d−1)-fold rotation, Tricorn 3-fold,
+  Julia z→−z, Celtic real-axis; confirmed Burning Ship / Buffalo have *no* axis symmetry)
+  and the **render pipeline** is checked for the non-Mandelbrot family shaders in
+  `--selftest` (Multibrot-3 180°, Tricorn / Celtic real-axis). The exact-landmark catalog
+  is extended (cardioid cusp c=¼, period-1↔2 neck c=−¾, period-2 disk, cardioid boundary
+  parametrization). **Golden-image regression**: `--selftest --bless` records
   reference PNGs under `validation/golden/`; subsequent runs diff against them with a pixel
   tolerance. Every run writes a **readable, verifiable Markdown report**
   (`validation/report.md`) with full provenance (version, GPU, CPU, OS), each check's
