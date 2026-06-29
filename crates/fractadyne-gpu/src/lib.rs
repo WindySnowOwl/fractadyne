@@ -55,6 +55,7 @@ struct ColorUniforms {
     color_method: u32,
     aa_filter: u32,
     _capad: [u32; 3],
+    interior_col: [f32; 4],
     stops: [[f32; 4]; 8],
 }
 
@@ -409,6 +410,9 @@ pub struct MandelbrotParams {
     /// Color-pass box-filter taps per axis (≥1). >1 anti-aliases an upscaled iteration
     /// texture (set when the work-budget reduced its resolution below the display).
     pub aa_filter: u32,
+    /// Color for in-set (non-escaping) pixels (rgb + unused). Lets binary/duotone modes
+    /// pick the interior color; defaults to near-black.
+    pub interior_col: [f32; 4],
     pub resolution: [u32; 2],
     pub ss: u32,
     /// Which on-screen panel this is (distinct GPU resources per id).
@@ -481,6 +485,7 @@ impl CallbackTrait for MandelbrotParams {
             color_method: self.color_method,
             aa_filter: self.aa_filter.max(1),
             _capad: [0; 3],
+            interior_col: self.interior_col,
             stops: self.stops,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
@@ -630,6 +635,7 @@ pub struct ExportRequest {
     pub stripe_freq: f32,
     pub trap_type: u32,
     pub aa_filter: u32,
+    pub interior_col: [f32; 4],
 }
 
 /// The actual `(width, height)` an export produced after clamping to the GPU's
@@ -771,6 +777,7 @@ pub fn render_export(
         color_method: req.color_method,
         aa_filter: req.aa_filter.max(1),
         _capad: [0; 3],
+        interior_col: req.interior_col,
         stops: req.stops,
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));

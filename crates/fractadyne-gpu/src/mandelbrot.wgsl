@@ -752,6 +752,7 @@ struct ColorU {
     _capad0: u32,
     _capad1: u32,
     _capad2: u32,
+    interior_col: vec4<f32>, // color for in-set (non-escaping) pixels; rgb in xyz
     stops: array<vec4<f32>, 8>, // rgb + position
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
@@ -773,8 +774,6 @@ fn palette(t_in: f32) -> vec3<f32> {
     return col;
 }
 
-const INTERIOR_COL: vec3<f32> = vec3<f32>(0.02, 0.02, 0.03);
-
 // Map one texel (main + aux statistics) to a color, per the selected method.
 // `m` = (smooth iter, normal.x, normal.y, DE log2); `a` = (stripe, TIA, trap, decomp).
 fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
@@ -795,7 +794,7 @@ fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
     } else {
         pv = m.r;                                  // smooth iteration count
     }
-    if (interior) { return INTERIOR_COL; }
+    if (interior) { return cu.interior_col.xyz; }
     return palette(pv * cu.cycle + cu.offset);
 }
 

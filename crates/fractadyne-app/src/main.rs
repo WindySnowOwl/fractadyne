@@ -646,9 +646,15 @@ fn help_options(ui: &mut egui::Ui) {
     help_sub(ui, "Palette");
     help_p(
         ui,
-        "Palette chooses a preset gradient or your Custom one. \"Edit gradient…\" opens an editor \
-         where each color stop has a color and a position (0–1); add up to eight stops or copy a \
-         preset to start from.",
+        "Palette chooses a preset gradient, your Custom one, or a two-color mode. \"Edit \
+         gradient…\" opens an editor where each color stop has a color and a position (0–1); add \
+         up to eight stops or copy a preset to start from.",
+    );
+    help_p(
+        ui,
+        "Duotone maps the value to a smooth two-color ramp (Shadow → Highlight). Binary (set) \
+         is a flat two-color view — one solid color for points inside the set and another for \
+         outside, with no gradient — the clearest way to see the set's shape.",
     );
     help_p(
         ui,
@@ -1848,6 +1854,13 @@ struct FractadyneApp {
     use_custom_palette: bool,
     palette_editor_open: bool,
     palette_rev: u32,
+    /// Two-color palette modes sharing the `lo`/`hi` colors (linear RGB), overriding
+    /// preset/custom: **duotone** maps the value to a smooth `lo → hi → lo` ramp; **binary**
+    /// paints a flat `hi` exterior with a flat `lo` interior (just in-set vs out-of-set).
+    use_duotone: bool,
+    use_binary: bool,
+    duotone_lo: [f32; 3],
+    duotone_hi: [f32; 3],
     /// Performance/diagnostic tracking + overlay.
     perf: Perf,
     max_iter: u32,
@@ -2019,6 +2032,10 @@ impl FractadyneApp {
             use_custom_palette: s.use_custom_palette,
             palette_editor_open: false,
             palette_rev: 0,
+            use_duotone: s.use_duotone,
+            use_binary: s.use_binary,
+            duotone_lo: s.duotone_lo,
+            duotone_hi: s.duotone_hi,
             perf: Perf {
                 // Default on; `--no-perf` disables, `--perf` forces on.
                 enabled: !std::env::args().any(|a| a == "--no-perf"),
@@ -2181,6 +2198,10 @@ impl FractadyneApp {
             minimap: self.minimap,
             custom_palette: self.custom_palette.clone(),
             use_custom_palette: self.use_custom_palette,
+            use_duotone: self.use_duotone,
+            use_binary: self.use_binary,
+            duotone_lo: self.duotone_lo,
+            duotone_hi: self.duotone_hi,
             right_panel_open: self.right_panel_open,
         };
         let now = ctx.input(|i| i.time);
@@ -2365,6 +2386,7 @@ impl FractadyneApp {
             stripe_freq: self.stripe_freq,
             trap_type: self.trap_type,
             aa_filter: 1,
+            interior_col: self.interior_color(),
         }
     }
 
@@ -3541,6 +3563,8 @@ impl FractadyneApp {
             self.color_method = method;
             self.palette_idx = palette;
             self.use_custom_palette = false;
+            self.use_duotone = false;
+            self.use_binary = false;
             self.cycle = 0.27;
             self.offset = 0.1;
             self.stripe_freq = 6.0;
@@ -3952,6 +3976,7 @@ impl FractadyneApp {
             stripe_freq: self.stripe_freq,
             trap_type: self.trap_type,
             aa_filter,
+            interior_col: self.interior_color(),
             resolution,
             ss,
             view_id,
@@ -4570,10 +4595,22 @@ impl FractadyneApp {
         if !self.minimap || self.dual || self.julia_mode {
             return;
         }
-        // Key includes the palette identity: preset index, or a custom-edit revision
-        // (with a sentinel index) so the thumbnail refreshes when the gradient changes.
-        let pal_idx = if self.use_custom_palette { usize::MAX } else { self.palette_idx };
-        let pal_rev = if self.use_custom_palette { self.palette_rev } else { 0 };
+        // Key includes the palette identity (preset index or a sentinel) and a revision so
+        // the thumbnail refreshes when the gradient / duotone colors change.
+        let duo_hash = self
+            .duotone_lo
+            .iter()
+            .chain(&self.duotone_hi)
+            .fold(0u32, |a, &c| a.wrapping_mul(16_777_619) ^ c.to_bits());
+        let (pal_idx, pal_rev) = if self.use_binary {
+            (usize::MAX - 2, duo_hash)
+        } else if self.use_duotone {
+            (usize::MAX - 1, duo_hash)
+        } else if self.use_custom_palette {
+            (usize::MAX, self.palette_rev)
+        } else {
+            (self.palette_idx, 0)
+        };
         let key = (self.fractal.formula_id(), pal_idx, self.color_method, pal_rev);
         if self.minimap_key == Some(key) && self.minimap_tex.is_some() {
             return;
@@ -4988,10 +5025,33 @@ impl FractadyneApp {
     fn active_stops(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
         if self.palette_anim == PaletteAnim::Random {
             self.random_palette.current()
+        } else if self.use_binary {
+            // Flat exterior: a single stop of the `hi` color (interior uses `lo`).
+            let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
+            out[0] = [self.duotone_hi[0], self.duotone_hi[1], self.duotone_hi[2], 0.0];
+            (out, 1)
+        } else if self.use_duotone {
+            // Smooth two-color ramp lo → hi → lo (seamless under cycling).
+            let (lo, hi) = (self.duotone_lo, self.duotone_hi);
+            let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
+            out[0] = [lo[0], lo[1], lo[2], 0.0];
+            out[1] = [hi[0], hi[1], hi[2], 0.5];
+            out[2] = [lo[0], lo[1], lo[2], 1.0];
+            (out, 3)
         } else if self.use_custom_palette {
             self.pack_custom()
         } else {
             fractadyne_color::PRESETS[self.palette_idx].packed()
+        }
+    }
+
+    /// In-set (interior) color for the GPU. Binary/duotone use the chosen `lo` color so the
+    /// set reads as one solid color; otherwise the default near-black.
+    fn interior_color(&self) -> [f32; 4] {
+        if self.use_binary || self.use_duotone {
+            [self.duotone_lo[0], self.duotone_lo[1], self.duotone_lo[2], 1.0]
+        } else {
+            [0.02, 0.02, 0.03, 1.0]
         }
     }
 
@@ -5828,7 +5888,11 @@ impl eframe::App for FractadyneApp {
                             }
                         });
                 }
-                let pal_name = if self.use_custom_palette {
+                let pal_name = if self.use_binary {
+                    "Binary (set)"
+                } else if self.use_duotone {
+                    "Duotone"
+                } else if self.use_custom_palette {
                     "Custom"
                 } else {
                     fractadyne_color::PRESETS[self.palette_idx].name
@@ -5836,13 +5900,13 @@ impl eframe::App for FractadyneApp {
                 egui::ComboBox::from_label("Palette")
                     .selected_text(pal_name)
                     .show_ui(ui, |ui| {
+                        let is_preset = !self.use_custom_palette && !self.use_duotone && !self.use_binary;
                         for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
-                            if ui
-                                .selectable_label(!self.use_custom_palette && self.palette_idx == i, p.name)
-                                .clicked()
-                            {
+                            if ui.selectable_label(is_preset && self.palette_idx == i, p.name).clicked() {
                                 self.palette_idx = i;
                                 self.use_custom_palette = false;
+                                self.use_duotone = false;
+                                self.use_binary = false;
                             }
                         }
                         if ui.selectable_label(self.use_custom_palette, "Custom ✎").clicked() {
@@ -5850,9 +5914,38 @@ impl eframe::App for FractadyneApp {
                                 self.custom_palette = self.preset_as_stops(self.palette_idx);
                             }
                             self.use_custom_palette = true;
+                            self.use_duotone = false;
+                            self.use_binary = false;
+                        }
+                        if ui.selectable_label(self.use_duotone, "Duotone").clicked() {
+                            self.use_duotone = true;
+                            self.use_custom_palette = false;
+                            self.use_binary = false;
+                        }
+                        if ui
+                            .selectable_label(self.use_binary, "Binary (set)")
+                            .on_hover_text("Flat two-color: in-set vs out-of-set, no gradient.")
+                            .clicked()
+                        {
+                            self.use_binary = true;
+                            self.use_custom_palette = false;
+                            self.use_duotone = false;
                         }
                     });
-                if ui.button("Edit gradient…").clicked() {
+                if self.use_duotone || self.use_binary {
+                    // Two shared colors. (Binary: interior/exterior; duotone: shadow/highlight.)
+                    let (lo_lbl, hi_lbl) = if self.use_binary {
+                        ("In-set", "Out-of-set")
+                    } else {
+                        ("Shadow", "Highlight")
+                    };
+                    ui.horizontal(|ui| {
+                        ui.color_edit_button_rgb(&mut self.duotone_lo);
+                        ui.label(lo_lbl);
+                        ui.color_edit_button_rgb(&mut self.duotone_hi);
+                        ui.label(hi_lbl);
+                    });
+                } else if ui.button("Edit gradient…").clicked() {
                     if self.custom_palette.is_empty() {
                         self.custom_palette = self.preset_as_stops(self.palette_idx);
                     }

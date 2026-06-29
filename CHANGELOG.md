@@ -24,6 +24,13 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Duotone & binary palette modes** — Coloring → Palette gains two two-color modes sharing
+  a pair of color pickers: **Duotone** maps the coloring value to a smooth Shadow→Highlight
+  ramp; **Binary (set)** is a flat two-color view (one solid color inside the set, another
+  outside, no gradient) — the clearest way to see the set's shape. The in-set (interior)
+  color is now selectable (a new shader uniform; defaults to the previous near-black, so
+  existing renders are unchanged). Persisted.
+
 - **Validation & self-test suite** — a layered correctness harness with no external data
   (exact mathematics + internal cross-checks), designed to be independently verifiable.
   `cargo test -p fractadyne-core` adds exact-ground-truth tests: hyperbolic-component

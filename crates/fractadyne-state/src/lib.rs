@@ -93,9 +93,27 @@ pub struct SessionState {
     /// Use the custom gradient instead of the selected preset.
     #[serde(default)]
     pub use_custom_palette: bool,
+    /// Duotone palette (two-color ramp) / binary palette (flat in-set vs out-of-set),
+    /// sharing the two colors (linear RGB).
+    #[serde(default)]
+    pub use_duotone: bool,
+    #[serde(default)]
+    pub use_binary: bool,
+    #[serde(default = "default_duotone_lo")]
+    pub duotone_lo: [f32; 3],
+    #[serde(default = "default_duotone_hi")]
+    pub duotone_hi: [f32; 3],
     /// Whether the right-hand control panel is shown.
     #[serde(default = "default_true")]
     pub right_panel_open: bool,
+}
+
+fn default_duotone_lo() -> [f32; 3] {
+    [0.04, 0.05, 0.12] // deep navy
+}
+
+fn default_duotone_hi() -> [f32; 3] {
+    [0.95, 0.80, 0.45] // warm cream
 }
 
 fn default_true() -> bool {
@@ -203,6 +221,10 @@ impl Default for SessionState {
             minimap: false,
             custom_palette: Vec::new(),
             use_custom_palette: false,
+            use_duotone: false,
+            use_binary: false,
+            duotone_lo: default_duotone_lo(),
+            duotone_hi: default_duotone_hi(),
             right_panel_open: true,
         }
     }
