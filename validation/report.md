@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.0 (build 90)
-- **Generated:** 2026-06-29 12:03:15 UTC (unix 1782734595)
+- **Version:** 0.1.0 (build 93)
+- **Generated:** 2026-06-29 12:15:28 UTC (unix 1782735328)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -34,8 +34,29 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Consistency | render determinism (2 runs) | seahorse, 1e6× | bit-identical | bit-identical | ✅ PASS |
 | Derivative | distance-estimate self-consistency | seahorse, 1e6×, 1037 boundary px | 0 with DE>16px at boundary | <0.5% of boundary px | ✅ PASS |
 | Derivative | DE lower bound (Koebe ¼) | seahorse, 1e6×, 12 sampled exterior px | 0 disks contain interior | 0 | ✅ PASS |
+| Catalog | period-2 disk center (c = -1) | zoom 5e1 | period 2 (want 2), nucleus Δ=1.6e-23 | period + nucleus | ✅ PASS |
+| Catalog | period-3 bulb nucleus | zoom 8e1 | period 3 (want 3), nucleus Δ=3.6e-16 | period + nucleus | ✅ PASS |
+| Catalog | period-3 antenna minibrot (real axis) | zoom 3e2 | period 3 (want 3), nucleus Δ=6.0e-17 | period + nucleus | ✅ PASS |
+| Catalog | period-4 window nucleus (real axis) | zoom 3e2 | period 4 (want 4), nucleus Δ=8.4e-17 | period + nucleus | ✅ PASS |
+| Catalog | deep period-998 minibrot (Seahorse Valley, 2e7x) | zoom 2e7 | period 998 (want 998), nucleus Δ=3.4e-41 | period + nucleus | ✅ PASS |
+| Catalog | main-cardioid interior (c = -0.5) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
+| Catalog | exterior point (c = 1) | interior expected false | oracle says interior=false | matches catalog | ✅ PASS |
+| Catalog | deep minibrot nucleus interior (full precision) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
 
-**21/21 checks passed.**
+**29/29 checks passed.**
+
+## Coverage & scope
+
+What each oracle independently verifies, and its validity range:
+
+- **Naive bignum dwell** (arbitrary precision, no perturbation/reference): exact integer escape count at **any depth** — the only fully independent deep-zoom oracle. Tested 1e6×–1e30× across the real render modes (df32 + floatexp).
+- **CPU f64 dwell**: exact only to ~f64 coordinate resolution (≲1e13×); used for the shallow cross-check.
+- **floatexp ↔ df32 agreement**: internal consistency in the overlap band; not an external oracle by itself.
+- **Reference independence**: oracle-free glitch detection (multi-reference majority); confirms the chosen reference is clean, doesn't prove a coordinate.
+- **Symmetries / landmarks / consistency / derivative checks**: exact mathematics, any depth, but each only constrains the property it tests.
+- **Catalog**: full-precision locations with externally known answers (period, nucleus, membership) — reproduce independently from `validation/catalog.toml`.
+
+**Not independently oracle-checked:** non-Mandelbrot family *dwell* at depth (only their symmetry is checked); interior-coloring/decomposition exactness; coloring beyond the integer dwell. Aim scrutiny there.
 
 ## Golden images (320×240)
 

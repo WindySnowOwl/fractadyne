@@ -51,7 +51,12 @@ Baseline for tracked versioning. Notable capabilities already present:
   render determinism. **Derivative checks** validate the `dz/dc`-derived distance estimate
   independently of dwell: DE self-consistency (a boundary-adjacent pixel can't claim a far
   boundary) and the Koebe-¼ lower bound (a disk of radius DE/4 is boundary-free, verified
-  against an independent CPU dwell). **Golden-image regression**: `--selftest --bless` records
+  against an independent CPU dwell). **External checkability:** a committed, human-readable
+  **location catalog** (`validation/catalog.toml`) of full-precision coordinates with
+  independently-known answers (period + nucleus, set membership) that `--selftest` verifies
+  — doubling as published *challenge coordinates*; and a **Coverage & scope** section in the
+  report stating exactly what each oracle checks and, importantly, where the deep regime is
+  *not* independently oracle-checked. **Golden-image regression**: `--selftest --bless` records
   reference PNGs under `validation/golden/`; subsequent runs diff against them with a pixel
   tolerance. Every run writes a **readable, verifiable Markdown report**
   (`validation/report.md`) with full provenance (version, GPU, CPU, OS), each check's

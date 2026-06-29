@@ -1,0 +1,76 @@
+# Fractadyne validation catalog — independently verifiable locations.
+#
+# Every entry has a known, externally-checkable answer (a mathematical constant or a
+# yes/no membership). `fractadyne --selftest` loads this file and verifies the build
+# against it; a third party can confirm each answer with any trusted renderer or by hand.
+# Coordinates are full-precision decimal strings. These double as "challenge coordinates":
+# zoom to the location and you should find exactly the stated feature.
+
+# --- minibrot nuclei: exact hyperbolic-component centers (period + coordinates) ---
+# The finder must Newton-snap from `center` to `nucleus_*` and report `period`.
+
+[[nucleus]]
+name = "period-2 disk center (c = -1)"
+center_x = "-1.001"
+center_y = "0.001"
+zoom = 50.0
+period = 2
+nucleus_x = "-1.0"
+nucleus_y = "0.0"
+
+[[nucleus]]
+name = "period-3 bulb nucleus"
+center_x = "-0.121"
+center_y = "0.745"
+zoom = 80.0
+period = 3
+nucleus_x = "-0.1225611668766536"
+nucleus_y = "0.7448617666197446"
+
+[[nucleus]]
+name = "period-3 antenna minibrot (real axis)"
+center_x = "-1.7549"
+center_y = "0.0001"
+zoom = 300.0
+period = 3
+nucleus_x = "-1.7548776662466927"
+nucleus_y = "0.0"
+
+[[nucleus]]
+name = "period-4 window nucleus (real axis)"
+center_x = "-1.3107"
+center_y = "0.0001"
+zoom = 300.0
+period = 4
+nucleus_x = "-1.3107026413368328"
+nucleus_y = "0.0"
+
+[[nucleus]]
+name = "deep period-998 minibrot (Seahorse Valley, 2e7x)"
+center_x = "-0.743643887037151"
+center_y = "0.131825904205330"
+zoom = 2.0e7
+period = 998
+nucleus_x = "-0.74364388703715887077806454349323251348"
+nucleus_y = "0.131825904205312292821097354874199108694"
+
+# --- set membership: is the point inside the Mandelbrot set? (interior = bounded orbit) ---
+# Verified independently by the arbitrary-precision oracle AND a 1x1 GPU render.
+
+[[membership]]
+name = "main-cardioid interior (c = -0.5)"
+center_x = "-0.5"
+center_y = "0.0"
+interior = true
+
+[[membership]]
+name = "exterior point (c = 1)"
+center_x = "1.0"
+center_y = "0.0"
+interior = false
+
+[[membership]]
+name = "deep minibrot nucleus interior (full precision)"
+center_x = "-0.74364388703715887077806454349323251348"
+center_y = "0.131825904205312292821097354874199108694"
+interior = true

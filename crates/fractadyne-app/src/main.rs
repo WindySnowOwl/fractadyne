@@ -468,6 +468,39 @@ struct SelfCheck {
     pass: bool,
 }
 
+/// Machine-readable validation catalog (`validation/catalog.toml`) — locations with
+/// independently verifiable answers, consumed by `--selftest` (Phase 6.1 / 6.6).
+#[derive(serde::Deserialize, Default)]
+struct Catalog {
+    #[serde(default)]
+    nucleus: Vec<NucleusEntry>,
+    #[serde(default)]
+    membership: Vec<MemberEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct NucleusEntry {
+    name: String,
+    #[serde(default)]
+    fractal: Option<String>,
+    center_x: String,
+    center_y: String,
+    zoom: f64,
+    period: u32,
+    #[serde(default)]
+    nucleus_x: Option<String>,
+    #[serde(default)]
+    nucleus_y: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct MemberEntry {
+    name: String,
+    center_x: String,
+    center_y: String,
+    interior: bool,
+}
+
 /// Plain-f64 Mandelbrot escape test: `Some(iter)` if it escapes within `max`, else
 /// `None` (treated as interior). Used by the random-location boundary search.
 fn mandel_escapes(cx: f64, cy: f64, max: u32) -> Option<u32> {
@@ -3389,6 +3422,92 @@ impl FractadyneApp {
             }
         }
 
+        // ---- catalog: independently verifiable locations (Phase 6.1 / 6.6) ----
+        // Loads validation/catalog.toml (committed, human-readable) and checks the build
+        // against each known answer, so external validation is one command.
+        if let Ok(text) = std::fs::read_to_string("validation/catalog.toml") {
+            match toml::from_str::<Catalog>(&text) {
+                Ok(cat) => {
+                    for e in &cat.nucleus {
+                        let formula = e.fractal.as_deref()
+                            .and_then(FractalKind::from_name)
+                            .map_or(0, |k| k.formula_id());
+                        let (Some(sx), Some(sy)) =
+                            (fractadyne_core::parse_bf(&e.center_x), fractadyne_core::parse_bf(&e.center_y))
+                        else {
+                            continue;
+                        };
+                        match fractadyne_core::find_nucleus(&[sx, sy], e.zoom, formula, 100_000) {
+                            Some(n) => {
+                                let mut pass = n.period == e.period;
+                                let mut detail = format!("period {} (want {})", n.period, e.period);
+                                if let (Some(nx), Some(ny)) = (&e.nucleus_x, &e.nucleus_y) {
+                                    if let (Some(ex), Some(ey)) =
+                                        (fractadyne_core::parse_bf(nx), fractadyne_core::parse_bf(ny))
+                                    {
+                                        let prec = fractadyne_core::precision_for_magnification(e.zoom * 1.0e3);
+                                        let dx = fractadyne_core::sub_f64(&n.cx, &ex, prec);
+                                        let dy = fractadyne_core::sub_f64(&n.cy, &ey, prec);
+                                        let dist = (dx * dx + dy * dy).sqrt();
+                                        let tol = (1.0e-10 / e.zoom).max(1.0e-25);
+                                        pass = pass && dist < tol;
+                                        detail = format!("{detail}, nucleus Δ={dist:.1e}");
+                                    }
+                                }
+                                checks.push(SelfCheck {
+                                    category: "Catalog",
+                                    name: e.name.clone(),
+                                    params: format!("zoom {:.0e}", e.zoom),
+                                    result: detail,
+                                    threshold: "period + nucleus",
+                                    pass,
+                                });
+                            }
+                            None => checks.push(SelfCheck {
+                                category: "Catalog",
+                                name: e.name.clone(),
+                                params: "find_nucleus".into(),
+                                result: "no nucleus found".into(),
+                                threshold: "period + nucleus",
+                                pass: false,
+                            }),
+                        }
+                    }
+                    // Membership: the independent arbitrary-precision oracle decides whether the
+                    // (full-precision) point is interior, and must match the catalog's known
+                    // answer. (GPU-vs-oracle agreement over full views is covered by the oracle
+                    // battery; a 1×1 render at the exact δc=0 center is an unrepresentative edge
+                    // case.) Precision is generous so deep points aren't truncated.
+                    let prec = fractadyne_core::precision_for_magnification(1.0e40);
+                    for e in &cat.membership {
+                        let (Some(cx), Some(cy)) =
+                            (fractadyne_core::parse_bf(&e.center_x), fractadyne_core::parse_bf(&e.center_y))
+                        else {
+                            continue;
+                        };
+                        let oracle_interior =
+                            fractadyne_core::naive_dwell_bf(&cx, &cy, 200_000, 65536.0, prec).is_none();
+                        checks.push(SelfCheck {
+                            category: "Catalog",
+                            name: e.name.clone(),
+                            params: format!("interior expected {}", e.interior),
+                            result: format!("oracle says interior={oracle_interior}"),
+                            threshold: "matches catalog",
+                            pass: oracle_interior == e.interior,
+                        });
+                    }
+                }
+                Err(err) => checks.push(SelfCheck {
+                    category: "Catalog",
+                    name: "parse validation/catalog.toml".into(),
+                    params: "TOML".into(),
+                    result: format!("parse error: {err}"),
+                    threshold: "valid",
+                    pass: false,
+                }),
+            }
+        }
+
         // ---- golden-image regression (set deterministic coloring per spec) ----
         let bless = std::env::args().any(|a| a == "--bless");
         let report_path = std::env::args()
@@ -3502,6 +3621,28 @@ impl FractadyneApp {
             ));
         }
         md.push_str(&format!("\n**{checks_pass}/{} checks passed.**\n\n", checks.len()));
+        // 6.5 Documented oracle scope — state plainly what is independently checked, and
+        // where it is *not*, so a reviewer knows exactly where to aim scrutiny.
+        md.push_str(
+            "## Coverage & scope\n\n\
+             What each oracle independently verifies, and its validity range:\n\n\
+             - **Naive bignum dwell** (arbitrary precision, no perturbation/reference): exact \
+             integer escape count at **any depth** — the only fully independent deep-zoom \
+             oracle. Tested 1e6×–1e30× across the real render modes (df32 + floatexp).\n\
+             - **CPU f64 dwell**: exact only to ~f64 coordinate resolution (≲1e13×); used for \
+             the shallow cross-check.\n\
+             - **floatexp ↔ df32 agreement**: internal consistency in the overlap band; not an \
+             external oracle by itself.\n\
+             - **Reference independence**: oracle-free glitch detection (multi-reference \
+             majority); confirms the chosen reference is clean, doesn't prove a coordinate.\n\
+             - **Symmetries / landmarks / consistency / derivative checks**: exact mathematics, \
+             any depth, but each only constrains the property it tests.\n\
+             - **Catalog**: full-precision locations with externally known answers (period, \
+             nucleus, membership) — reproduce independently from `validation/catalog.toml`.\n\n\
+             **Not independently oracle-checked:** non-Mandelbrot family *dwell* at depth \
+             (only their symmetry is checked); interior-coloring/decomposition exactness; \
+             coloring beyond the integer dwell. Aim scrutiny there.\n\n",
+        );
         md.push_str(&format!("## Golden images ({gw}×{gh})\n\n"));
         md.push_str(&format!(
             "Stored in `{}`. {} pixel tolerance: max ≤ 10, mean ≤ 2.0 (8-bit sRGB).\n\n",
