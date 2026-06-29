@@ -962,6 +962,85 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
+    // Headless A/B comparison (no GPU): diff two renders / exported iteration files.
+    //   --compare A B [--out heatmap.png]
+    if let Some(i) = args.iter().position(|a| a == "--compare") {
+        let (a, b) = (args.get(i + 1), args.get(i + 2));
+        let (Some(a), Some(b)) = (a, b) else {
+            eprintln!("--compare needs two file paths");
+            return Ok(());
+        };
+        let out = args
+            .iter()
+            .position(|x| x == "--out" || x == "-o")
+            .and_then(|j| args.get(j + 1))
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("compare_heatmap.png"));
+        let load = |p: &str| -> Option<(u32, u32, Vec<f32>)> {
+            let path = std::path::Path::new(p);
+            match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+                Some("exr") => fractadyne_export::read_exr_rgba_f32(path),
+                Some("png") => fractadyne_export::read_png_rgba8(path)
+                    .map(|(w, h, bytes)| (w, h, bytes.iter().map(|&x| x as f32).collect())),
+                _ => None,
+            }
+        };
+        match (load(a), load(b)) {
+            (Some((wa, ha, pa)), Some((wb, hb, pb))) if wa == wb && ha == hb => {
+                let n = (wa as usize) * (ha as usize);
+                // Channel 0 (smooth iteration for EXR, red for PNG) is the primary signal.
+                // Channel 0 (smooth iteration / red) is always finite. The DE/normal
+                // channels carry ±∞/1e30 sentinels for interior/unavailable, so the
+                // all-channel stats skip non-finite and sentinel-scale diffs.
+                let (mut max0, mut sum0, mut differ) = (0.0f64, 0.0f64, 0u64);
+                let (mut maxall, mut sumall, mut nall) = (0.0f64, 0.0f64, 0u64);
+                for k in 0..n {
+                    let d0 = (pa[k * 4] - pb[k * 4]).abs() as f64;
+                    max0 = max0.max(d0);
+                    sum0 += d0;
+                    if d0 > 1e-6 {
+                        differ += 1;
+                    }
+                    for c in 0..4 {
+                        let d = (pa[k * 4 + c] - pb[k * 4 + c]).abs() as f64;
+                        if d.is_finite() && d < 1.0e20 {
+                            maxall = maxall.max(d);
+                            sumall += d;
+                            nall += 1;
+                        }
+                    }
+                }
+                println!("Comparison: {a}  vs  {b}");
+                println!("  size {wa}×{ha}");
+                println!("  channel 0: max Δ {max0:.6}, mean Δ {:.6}, {differ}/{n} pixels differ", sum0 / n as f64);
+                println!("  all channels (finite): max Δ {maxall:.6}, mean Δ {:.6}", sumall / nall.max(1) as f64);
+                // Heatmap of |Δ channel 0|, normalized to the max (grayscale).
+                let scale = if max0 > 0.0 { 1.0 / max0 as f32 } else { 0.0 };
+                let mut heat = vec![0.0f32; n * 4];
+                for k in 0..n {
+                    let t = (pa[k * 4] - pb[k * 4]).abs() * scale;
+                    heat[k * 4] = t;
+                    heat[k * 4 + 1] = t;
+                    heat[k * 4 + 2] = t;
+                    heat[k * 4 + 3] = 1.0;
+                }
+                match fractadyne_export::write_png(&out, wa, ha, &heat, None) {
+                    Ok(()) => println!("  heatmap → {}", out.display()),
+                    Err(e) => eprintln!("  heatmap write failed: {e}"),
+                }
+            }
+            (Some((wa, ha, _)), Some((wb, hb, _))) => {
+                eprintln!("dimension mismatch: {wa}×{ha} vs {wb}×{hb}");
+                return Ok(());
+            }
+            _ => {
+                eprintln!("failed to load one or both inputs (PNG/EXR only)");
+                return Ok(());
+            }
+        }
+        return Ok(());
+    }
+
     let native_options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
@@ -1797,6 +1876,8 @@ struct FractadyneApp {
     auto_render: bool,
     auto_render_out: Option<std::path::PathBuf>,
     auto_render_done: bool,
+    /// `--render-iter`: write the raw iteration texture as EXR instead of a colored image.
+    render_iter_mode: bool,
     /// CLI `--selftest`: run the GPU validation suite, print a report, and exit.
     selftest: bool,
     selftest_done: bool,
@@ -1929,7 +2010,8 @@ impl FractadyneApp {
             .and_then(|i| args.get(i + 1))
             .map(std::path::PathBuf::from);
         let auto_benchmark = args.iter().any(|a| a == "--benchmark" || a == "--bench");
-        let auto_render = args.iter().any(|a| a == "--render");
+        let render_iter_mode = args.iter().any(|a| a == "--render-iter");
+        let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode;
         let selftest = args.iter().any(|a| a == "--selftest");
         let auto_benchmark_out = out_path.clone();
         let auto_render_out = out_path.clone();
@@ -1985,6 +2067,7 @@ impl FractadyneApp {
             auto_render,
             auto_render_out,
             auto_render_done: false,
+            render_iter_mode,
             selftest,
             selftest_done: false,
             fps_cap: s.fps_cap,
@@ -2765,6 +2848,28 @@ impl FractadyneApp {
                 Ok(format!("Saved 2 files → {}", pmap.display()))
             }
         }
+    }
+
+    /// Render the **raw iteration texture** for the current view and write it as an EXR
+    /// (`--render-iter`): four 32-bit float channels — R = smooth iteration (negative ⇒
+    /// in-set/interior), G/B = slope normal (x, y), A = log₂(distance estimate in pixels).
+    /// Lets a reviewer diff iteration data directly, removing coloring as a confound.
+    /// Single-tile, clamped to the GPU's max texture dimension.
+    fn render_iter_to_file(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        path: &std::path::Path,
+    ) -> Result<String, String> {
+        let req = self.current_export_request_for(&self.viewport, self.julia_mode);
+        let r = fractadyne_gpu::render_iter(device, queue, &req)?;
+        let meta = format!(
+            "{}\n# iteration-data EXR: R=smooth_iter (<0 = interior), G=normal.x, \
+             B=normal.y, A=log2(distance_estimate_px)",
+            self.view_metadata()
+        );
+        fractadyne_export::write_exr(path, r.width, r.height, &r.pixels, Some(&meta))?;
+        Ok(format!("Saved iteration EXR {}×{} → {}", r.width, r.height, path.display()))
     }
 
     /// GPU validation suite (`--selftest`): renders controlled views and cross-checks the
@@ -5381,15 +5486,25 @@ impl eframe::App for FractadyneApp {
             }
         }
 
-        // CLI render-and-exit: render one image offscreen, save it, and quit.
+        // CLI render-and-exit: render one image offscreen (or the raw iteration EXR), save
+        // it, and quit.
         if self.auto_render && !self.auto_render_done {
             if let Some((dev, q)) = &gpu {
                 self.auto_render_done = true;
-                let out = self
-                    .auto_render_out
-                    .clone()
-                    .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_render.png"));
-                match self.render_to_file(dev, q, &out) {
+                let result = if self.render_iter_mode {
+                    let out = self
+                        .auto_render_out
+                        .clone()
+                        .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_iter.exr"));
+                    self.render_iter_to_file(dev, q, &out)
+                } else {
+                    let out = self
+                        .auto_render_out
+                        .clone()
+                        .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_render.png"));
+                    self.render_to_file(dev, q, &out)
+                };
+                match result {
                     Ok(m) => println!("{m}"),
                     Err(e) => eprintln!("Render failed: {e}"),
                 }

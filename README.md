@@ -45,7 +45,9 @@ fractadyne --render --out img.png [--fractal Mandelbrot --center X Y --zoom M \
            --size W --ss N --iter K --julia --julia-c RE IM --palette I \
            --method stripe --stripe-freq N --trap point|cross|circle --light --de]
 fractadyne --find-minibrot --center X Y --zoom M   # print nearby minibrot period + nucleus
-fractadyne --selftest                              # GPU validation suite; exit 0 = all passed
+fractadyne --selftest [--bless] [--out report.md]  # validation suite; exit 0 = all passed
+fractadyne --render-iter --out img.exr [view opts] # export raw iteration data (EXR) for review
+fractadyne --compare A B [--out heatmap.png]       # diff two renders/EXRs: max/mean Δ + heatmap
 ```
 
 ## Validation
@@ -65,6 +67,11 @@ or internal cross-checks):
   verifiable report to `validation/report.md` with full provenance (version, GPU, CPU,
   OS), per-check parameters/thresholds/verdicts, golden checksums, and the exact
   `--render` command to reproduce each reference — so anyone can independently confirm.
+- **External checkability** — a committed location catalog (`validation/catalog.toml`)
+  of full-precision coordinates with known answers; raw-iteration **EXR export**
+  (`--render-iter`) so a reviewer can diff iteration data against their own renderer,
+  free of any coloring confound; and **`--compare A B`** (max/mean Δ + difference heatmap)
+  for A/B against another build or imported data.
 
 ## Controls
 

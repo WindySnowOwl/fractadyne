@@ -32,6 +32,32 @@ pub fn to_srgb8(rgba: &[f32]) -> Vec<u8> {
     out
 }
 
+/// Decode an EXR at full resolution to `(width, height, rgba_f32)` (row-major, 4 floats
+/// per pixel). Used by the `--compare` tool to diff raw iteration data.
+pub fn read_exr_rgba_f32(path: &Path) -> Option<(u32, u32, Vec<f32>)> {
+    use exr::prelude::*;
+    let image = read_first_rgba_layer_from_file(
+        path,
+        |size: Vec2<usize>, _| -> (usize, usize, Vec<f32>) {
+            (size.0, size.1, vec![0.0f32; size.0 * size.1 * 4])
+        },
+        |buf: &mut (usize, usize, Vec<f32>), pos: Vec2<usize>, (r, g, b, a): (f32, f32, f32, f32)| {
+            let w = buf.0;
+            let i = (pos.1 * w + pos.0) * 4;
+            buf.2[i] = r;
+            buf.2[i + 1] = g;
+            buf.2[i + 2] = b;
+            buf.2[i + 3] = a;
+        },
+    )
+    .ok()?;
+    let (w, h, data) = image.layer_data.channel_data.pixels;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    Some((w as u32, h as u32, data))
+}
+
 /// Decode a PNG at full resolution to `(width, height, rgba8)` (for golden-image diffs).
 pub fn read_png_rgba8(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
     let file = std::fs::File::open(path).ok()?;

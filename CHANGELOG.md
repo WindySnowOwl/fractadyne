@@ -66,7 +66,12 @@ Baseline for tracked versioning. Notable capabilities already present:
   *not* independently oracle-checked. **Fuzz tests** (dependency-free, deterministic) hammer
   the untrusted-input parsers — the arbitrary-precision coordinate parser and the
   view-metadata parser chain — asserting they never panic on random/adversarial/oversized
-  input. This hardened `parse_bf` to also reject non-finite (±∞/NaN) coordinates. **Golden-image regression**: `--selftest --bless` records
+  input. This hardened `parse_bf` to also reject non-finite (±∞/NaN) coordinates.
+  **Comparison tooling:** `--render-iter` exports the raw iteration texture as an EXR
+  (R=smooth iteration, G/B=slope normal, A=log₂ DE-in-pixels) with a documented layout, so
+  a reviewer can diff iteration data directly (no coloring confound); and `--compare A B`
+  reports max/mean per-pixel difference (channel-0 iteration data + finite all-channels) and
+  writes a difference heatmap — for A/B against another build or imported renderer data. **Golden-image regression**: `--selftest --bless` records
   reference PNGs under `validation/golden/`; subsequent runs diff against them with a pixel
   tolerance. Every run writes a **readable, verifiable Markdown report**
   (`validation/report.md`) with full provenance (version, GPU, CPU, OS), each check's
