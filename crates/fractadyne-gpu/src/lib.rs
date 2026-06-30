@@ -65,7 +65,7 @@ struct IterKey {
     ref_offset: [f32; 4],
     center: [f32; 4],
     julia_c: [f32; 4],
-    span: [f64; 2],
+    span_mantissa: [f64; 2],
     max_iter: u32,
     size: [u32; 2],
     orbit_id: u64,
@@ -386,8 +386,8 @@ pub struct MandelbrotParams {
     pub formula: u32,
     /// 0 = Mandelbrot mode (z0=0, c=pixel), 1 = Julia mode (z0=pixel, c=const).
     pub julia: u32,
-    /// Full complex width/height of the view.
-    pub span: [f64; 2],
+    /// Complex span *mantissa* (`span · 2^-delta_exp`, O(1)) — see [`fractadyne_core::GpuScale`].
+    pub span_mantissa: [f64; 2],
     pub max_iter: u32,
     pub cycle: f32,
     pub offset: f32,
@@ -503,7 +503,7 @@ impl CallbackTrait for MandelbrotParams {
             ref_offset: self.ref_offset,
             center: self.center,
             julia_c: self.julia_c,
-            span: self.span,
+            span_mantissa: self.span_mantissa,
             max_iter: self.max_iter,
             size,
             orbit_id: self.orbit_id,
@@ -516,15 +516,15 @@ impl CallbackTrait for MandelbrotParams {
             trap_type: self.trap_type,
         };
         if view.last_iter_key != Some(key) {
-            // Per-texel step *mantissa*: (span / texture dim) scaled by 2^-delta_exp so
-            // it stays O(1) in df32 at any depth (the shared exponent carries the scale).
-            let scale = 2f64.powi(-self.delta_exp);
+            // Per-texel step *mantissa*: span_mantissa (= span · 2^-delta_exp, already O(1))
+            // divided by the texture dim. The shared exponent carries the true scale, so no
+            // tiny span / huge 2^-delta_exp ever appears here → no underflow/overflow at depth.
             let split = |v: f64| -> (f32, f32) {
                 let hi = v as f32;
                 (hi, (v - hi as f64) as f32)
             };
-            let (sxh, sxl) = split(self.span[0] / size[0] as f64 * scale);
-            let (syh, syl) = split(self.span[1] / size[1] as f64 * scale);
+            let (sxh, sxl) = split(self.span_mantissa[0] / size[0] as f64);
+            let (syh, syl) = split(self.span_mantissa[1] / size[1] as f64);
             let iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
                 ref_offset: self.ref_offset,
@@ -609,7 +609,8 @@ pub struct ExportRequest {
     pub width: u32,
     pub height: u32,
     pub ss: u32,
-    pub span: [f64; 2],
+    /// Complex span *mantissa* (`span · 2^-delta_exp`, O(1)) — see [`fractadyne_core::GpuScale`].
+    pub span_mantissa: [f64; 2],
     pub center: [f32; 4],
     pub ref_offset: [f32; 4],
     pub delta_exp: i32,
@@ -785,10 +786,9 @@ pub fn render_export(
         let hi = v as f32;
         (hi, (v - hi as f64) as f32)
     };
-    // Step mantissa scaled by 2^-delta_exp (shared exponent), like the live path.
-    let dscale = 2f64.powi(-req.delta_exp);
-    let (sxh, sxl) = split(req.span[0] / (w as f64 * ss as f64) * dscale);
-    let (syh, syl) = split(req.span[1] / (h as f64 * ss as f64) * dscale);
+    // Step mantissa = span_mantissa (already × 2^-delta_exp) / texdim — O(1), no overflow.
+    let (sxh, sxl) = split(req.span_mantissa[0] / (w as f64 * ss as f64));
+    let (syh, syl) = split(req.span_mantissa[1] / (h as f64 * ss as f64));
 
     let bpp = 16u32; // Rgba32Float
     let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -1013,13 +1013,12 @@ pub fn render_iter(
     }
     let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf);
 
-    let dscale = 2f64.powi(-req.delta_exp);
     let split = |v: f64| -> (f32, f32) {
         let hi = v as f32;
         (hi, (v - hi as f64) as f32)
     };
-    let (sxh, sxl) = split(req.span[0] / w as f64 * dscale);
-    let (syh, syl) = split(req.span[1] / h as f64 * dscale);
+    let (sxh, sxl) = split(req.span_mantissa[0] / w as f64);
+    let (syh, syl) = split(req.span_mantissa[1] / h as f64);
     let iu = IterUniforms {
         step: [sxh, sxl, syh, syl],
         ref_offset: req.ref_offset,

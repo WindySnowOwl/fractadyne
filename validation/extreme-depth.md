@@ -70,14 +70,14 @@ cargo test -p fractadyne-core -- --ignored deep_precision_self_consistent_1e1000
 ## Scope / caveat
 
 This validates the **arithmetic and precision core** (the depth-critical numerics), not a
-full rendered image at 1e1000000×. Two things prevent a rendered check that deep:
+full rendered image at 1e1000000×: a per-pixel arbitrary-precision dwell oracle is
+computationally infeasible there (see the cost table above).
 
-1. A per-pixel arbitrary-precision dwell oracle is computationally infeasible there (above).
-2. The renderer itself currently caps near **1e308×**: the viewport's `units_per_pixel` /
-   `magnification` are `f64`, so the *scale* underflows long before the bignum *center*
-   (which is unlimited precision) runs out of digits. Lifting that ceiling needs a
-   floatexp / log-magnitude scale representation (tracked in [TODO.md](../TODO.md)). The GPU
-   delta path already carries a separate base-2 exponent, so the shader side is mostly ready.
+The renderer's *scale* is no longer the limit — the viewport now uses an extended-range
+`FloatExp` (`m·2^e`) for `units_per_pixel`, so live zoom runs past the old `f64` ~1e308×
+ceiling (verified rendering correctly at **1e331×**; `--render --zoom-log2 L` drives it).
+What now bounds a *rendered* deep image is the reference-orbit / iteration cost and the
+coordinate precision you supply, not the scale representation.
 
 Independent per-pixel cross-checks (`--selftest` vs the bignum oracle to 1e30×;
 `--crosscheck-f3` vs Fraktaler-3) cover the renderable depth range; `--validate-deep` covers

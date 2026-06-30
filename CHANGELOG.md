@@ -120,6 +120,22 @@ Baseline for tracked versioning. Notable capabilities already present:
   log-magnitude scale rework. Recipe + measured cost-scaling table:
   [validation/extreme-depth.md](validation/extreme-depth.md).
 
+- **Lifted the ~1e308× live-zoom ceiling (extended-range scale)** — the viewport scale was
+  an `f64` (`units_per_pixel`), so it underflowed (and `magnification()` overflowed) near
+  **1e308×** — the real live-zoom wall, even though the arbitrary-precision *center* never
+  ran out of digits. Introduced `FloatExp` (`m · 2^e`, `i32` exponent) and made
+  `Viewport::units_per_pixel` use it, with `log2_magnification` + `precision_for_octaves`
+  driving precision past f64 range, `complex_span_fe` / `gpu_scale` (an O(1) span mantissa +
+  shared `delta_exp`) and `ref_offset_mantissa` feeding the GPU, `set_center_log2mag` +
+  `--render --zoom-log2 L` for deep jumps, an extra session field so deep locations persist,
+  and `fmt_zoom_log2` for the readout. **The WGSL shader was already exponent-aware (it
+  consumes mantissas + `delta_exp`), so it needed no change** — the fix was entirely
+  CPU-side. Verified: **bit-identical** to the previous build through 1e30× (selftest
+  goldens, maxΔ 0), the GPU renders correctly at **1e331×** (interior/exterior classified
+  exactly), 28 `fractadyne-core` tests pass (incl. a new past-1e308 scale test), and
+  `--selftest` stays 29/29 + 4/4. (Follow-ups: the goto dialog and exported-image metadata
+  still take `f64` zoom — fine to ~1e308×.)
+
 - **In-app Help & reference** — Help → "Help & reference…" (or F1 / ?) opens a multi-section
   window with a table of contents: Overview, Navigation, Coloring & options, Fractals
   (mathematically accurate per-family formulas + descriptions, Julia mode, deep-zoom

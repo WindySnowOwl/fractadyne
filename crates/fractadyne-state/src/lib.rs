@@ -20,7 +20,12 @@ pub struct SessionState {
     pub center_x_str: String,
     #[serde(default)]
     pub center_y_str: String,
+    /// Scale mantissa. Paired with `units_per_pixel_e` (a base-2 exponent) so deep-zoom
+    /// locations past `f64`'s ~1e308× range survive quit/restart. Old saves (no exponent
+    /// field) stored the full `f64` value here with an implicit exponent of 0 — still valid.
     pub units_per_pixel: f64,
+    #[serde(default)]
+    pub units_per_pixel_e: i32,
     pub max_iter: u32,
     pub auto_iter: bool,
     pub palette_idx: usize,
@@ -192,6 +197,7 @@ impl Default for SessionState {
             center_x_str: String::new(),
             center_y_str: String::new(),
             units_per_pixel: 3.0 / 720.0,
+            units_per_pixel_e: 0,
             max_iter: 256,
             auto_iter: true,
             palette_idx: 0,

@@ -42,8 +42,9 @@ Pinned to egui / eframe **0.31** (wgpu backend).
 ```sh
 fractadyne --benchmark [--out report.txt]   # run a fixed deep-zoom tour; report perf + system info; quit
 fractadyne --render --out img.png [--fractal Mandelbrot --center X Y --zoom M \
-           --size W --ss N --iter K --julia --julia-c RE IM --palette I \
+           --zoom-log2 L --size W --ss N --iter K --julia --julia-c RE IM --palette I \
            --method stripe --stripe-freq N --trap point|cross|circle --light --de]
+           # --zoom-log2 L sets magnification 2^L for depths past f64 range (≥ ~1e308×)
 fractadyne --find-minibrot --center X Y --zoom M   # print nearby minibrot period + nucleus
 fractadyne --selftest [--bless] [--out report.md]  # validation suite; exit 0 = all passed
 fractadyne --render-iter --out img.exr [view opts] # export raw iteration data (EXR) for review
@@ -92,8 +93,7 @@ or internal cross-checks):
   **10⁶ ᵈⁱᵍⁱᵗˢ of zoom (1e1000000×, ~3.3-million-bit precision)**, via precision-doubling
   self-consistency + coordinate round-trip. Feasible because `astro-float` uses FFT
   multiplication (~32 ms/iteration even at 3.3 M bits) and the check is single-point, not
-  per-pixel. (A per-pixel oracle isn't feasible that deep, and the renderer's `f64`
-  `units_per_pixel` caps *live* zoom near 1e308× — a separate, tracked limit.) See
+  per-pixel. (A per-pixel oracle isn't feasible that deep.) See
   [validation/extreme-depth.md](validation/extreme-depth.md).
 
 ## Controls

@@ -180,17 +180,21 @@ perturbation + series approximation + glitch correction. The headline feature.
       via `--render` at 1e15/1e25/1e27(df32)/1e29/1e32(floatexp); shallow unchanged;
       crossover seamless. Benchmark score held (3220). Depth now bounded by the center
       coordinate precision (auto-scales while zooming) + iteration budget, not f32.
-- [ ] **Lift the ~1e308× render ceiling (floatexp / log-magnitude scale)** — the bignum
-      center is unlimited precision (no coordinate jump at any depth), but the viewport
-      *scale* is `f64`: `units_per_pixel` underflows and `magnification()` overflows near
-      **1e308×**, which is the real live-zoom wall today (not the center). Replace the `f64`
-      scale with a floatexp / stored-log-magnitude representation, and add
-      `precision_for_octaves`-style paths wherever `precision_for_magnification(f64)` is
-      used (it saturates past 1e308). The GPU delta path already carries a separate base-2
-      `delta_exp`, so the shader side is largely ready; this is mostly the CPU `Viewport`
-      (units_per_pixel, magnification, zoom/pan/box-zoom, display). Unlocks zooms that the
-      arithmetic core already validates to **1e1000000×** (see `--validate-deep` /
-      [validation/extreme-depth.md](validation/extreme-depth.md)).
+- [x] **Lifted the ~1e308× render ceiling (extended-range `FloatExp` scale)** — the viewport
+      scale was `f64` (`units_per_pixel` underflowed, `magnification()` overflowed near
+      1e308×), which was the real live-zoom wall (the bignum center was already unlimited).
+      Replaced it with a `FloatExp` (`m·2^e`, i32 exponent): `Viewport::units_per_pixel` is
+      now `FloatExp`, with `log2_magnification` + `precision_for_octaves` driving precision,
+      `complex_span_fe`/`gpu_scale` (O(1) span mantissa + shared `delta_exp`) and
+      `ref_offset_mantissa` feeding the GPU (the shader was already exponent-aware — no WGSL
+      change), `set_center_log2mag` + `--zoom-log2` for deep jumps, session persistence via a
+      stored exponent, and `fmt_zoom_log2` for the readout. Verified: bit-identical to 1e30×
+      (selftest goldens), GPU renders correctly at **1e331×**, no regression. *(Follow-ups:
+      goto-dialog + exported-image metadata still take f64 zoom — fine to ~1e308×.)*
+- [ ] **Deep goto / exported-metadata zoom past 1e308×** — the "Go to location" dialog and
+      the reloadable PNG/EXR view-metadata still encode zoom as `f64`, so reloading a view
+      deeper than ~1e308× loses the scale (the center is fine). Carry log2-magnitude (or a
+      mantissa+exponent pair) through both, like the session state already does.
 - [ ] **Full glitch correction** (Pauldelbrot criterion + multi-reference recompute).
 - [x] **AA auto-drop during motion** — full AA only when the view settles (smooth
       deep zoom; sharp still image).

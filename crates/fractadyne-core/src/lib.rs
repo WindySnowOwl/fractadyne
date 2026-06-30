@@ -229,13 +229,142 @@ pub fn lerp_bf(a: &BigFloat, b: &BigFloat, t: f64, p: usize) -> BigFloat {
     a.add(&b.sub(a, p, RM).mul(&f, p, RM), p, RM)
 }
 
+// ---------------- extended-range scale (FloatExp) ---------------------------------
+
+fn ldexp_f64(m: f64, e: i32) -> f64 {
+    if e >= -1022 {
+        m * 2f64.powi(e.min(1023))
+    } else {
+        // Subnormal range: split the shift so neither factor overflows/underflows alone.
+        m * 2f64.powi(-1022) * 2f64.powi((e + 1022).max(-1074))
+    }
+}
+
+/// A real number `m · 2^e` with an `i32` base-2 exponent, so its magnitude reaches far past
+/// `f64`'s ~1e±308 range. Used for the viewport scale (`units_per_pixel`), which a plain
+/// `f64` underflows at extreme zoom. The mantissa is normalized to `|m| ∈ [1, 2)` (carrying
+/// the sign), or exactly `0`. Inputs are always well-conditioned (a normalized mantissa
+/// times a pixel count or zoom factor), so normalization needs only a small shift.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FloatExp {
+    pub m: f64,
+    pub e: i32,
+}
+
+impl FloatExp {
+    pub const ZERO: FloatExp = FloatExp { m: 0.0, e: 0 };
+
+    fn norm(mut m: f64, mut e: i32) -> FloatExp {
+        if m == 0.0 || !m.is_finite() {
+            return FloatExp { m, e: 0 };
+        }
+        let a = m.abs();
+        if !(1.0..2.0).contains(&a) {
+            let k = a.log2().floor() as i32;
+            m *= 2f64.powi(-k);
+            e += k;
+            while m.abs() >= 2.0 {
+                m *= 0.5;
+                e += 1;
+            }
+            while m.abs() < 1.0 {
+                m *= 2.0;
+                e -= 1;
+            }
+        }
+        FloatExp { m, e }
+    }
+
+    pub fn from_f64(v: f64) -> FloatExp {
+        FloatExp::norm(v, 0)
+    }
+
+    /// Construct from a raw `(mantissa, exponent)` pair, normalizing. Used to reload a
+    /// persisted scale (`m`, `e` stored separately so it survives past `f64` range).
+    pub fn new(m: f64, e: i32) -> FloatExp {
+        FloatExp::norm(m, e)
+    }
+
+    /// Saturating conversion to `f64` (`0` on underflow, `±∞` on overflow).
+    pub fn to_f64(self) -> f64 {
+        if self.m == 0.0 {
+            0.0
+        } else if self.e > 1023 {
+            self.m * f64::INFINITY
+        } else if self.e < -1074 {
+            0.0
+        } else {
+            ldexp_f64(self.m, self.e)
+        }
+    }
+
+    pub fn mul_f64(self, k: f64) -> FloatExp {
+        FloatExp::norm(self.m * k, self.e)
+    }
+
+    pub fn mul(self, o: FloatExp) -> FloatExp {
+        FloatExp::norm(self.m * o.m, self.e + o.e)
+    }
+
+    pub fn recip(self) -> FloatExp {
+        FloatExp::norm(1.0 / self.m, -self.e)
+    }
+
+    /// `log2` of the magnitude (finite for any representable value; `−∞` for `0`).
+    pub fn log2(self) -> f64 {
+        if self.m == 0.0 {
+            f64::NEG_INFINITY
+        } else {
+            self.m.abs().log2() + self.e as f64
+        }
+    }
+
+    /// Multiply by `2^x` for an arbitrary `f64` exponent (split into integer + fraction).
+    pub fn mul_pow2(self, x: f64) -> FloatExp {
+        let fl = x.floor();
+        FloatExp::norm(self.m * 2f64.powf(x - fl), self.e + fl as i32)
+    }
+
+    /// As a `BigFloat` at precision `p` (exact — mantissa scaled by `2^e` via the exponent).
+    pub fn to_bf(self, p: usize) -> BigFloat {
+        let mut b = BigFloat::from_f64(self.m, p);
+        if self.m != 0.0 {
+            if let Some(be) = b.exponent() {
+                b.set_exponent(be + self.e);
+            }
+        }
+        b
+    }
+}
+
+/// GPU scale parameters for a view: the shared base-2 exponent and the span *mantissas*
+/// (`span · 2^-delta_exp`, always O(1)), computed without ever forming the raw span (which
+/// underflows `f64` past ~1e308×). The GPU builds its per-texel step as
+/// `span_mantissa / texdim` and passes `delta_exp` to the shader unchanged.
+#[derive(Clone, Copy, Debug)]
+pub struct GpuScale {
+    pub delta_exp: i32,
+    pub span_mantissa: [f64; 2],
+}
+
+/// `(center − reference) · 2^-delta_exp` as an O(1) `f64` mantissa — the per-view reference
+/// offset for the GPU, computed in bignum then exponent-shifted so it never underflows.
+pub fn ref_offset_mantissa(center: &BigFloat, reference: &BigFloat, delta_exp: i32, p: usize) -> f64 {
+    let mut d = center.sub(reference, p, RM);
+    if let Some(e) = d.exponent() {
+        d.set_exponent(e - delta_exp);
+    }
+    to_f64(&d)
+}
+
 /// A rectangular view into the complex plane.
 #[derive(Clone, Debug)]
 pub struct Viewport {
     pub center_x: BigFloat,
     pub center_y: BigFloat,
-    /// Complex-plane units per pixel (isotropic). Smaller ⇒ deeper zoom.
-    pub units_per_pixel: f64,
+    /// Complex-plane units per pixel (isotropic), as an extended-range `FloatExp` so it
+    /// does not underflow past ~1e308× zoom. Smaller ⇒ deeper zoom.
+    pub units_per_pixel: FloatExp,
     pub width_px: f64,
     pub height_px: f64,
     /// Mantissa bits for the center (grows with zoom).
@@ -251,7 +380,7 @@ impl Viewport {
         Self {
             center_x: bf(-0.5, precision),
             center_y: bf(0.0, precision),
-            units_per_pixel: Self::REFERENCE_HEIGHT / height_px,
+            units_per_pixel: FloatExp::from_f64(Self::REFERENCE_HEIGHT / height_px),
             width_px: width_px.max(1.0),
             height_px,
             precision,
@@ -268,25 +397,30 @@ impl Viewport {
         self.precision = 64;
         self.center_x = bf(-0.5, self.precision);
         self.center_y = bf(0.0, self.precision);
-        self.units_per_pixel = Self::REFERENCE_HEIGHT / self.height_px;
+        self.units_per_pixel = FloatExp::from_f64(Self::REFERENCE_HEIGHT / self.height_px);
     }
 
     fn refresh_precision(&mut self) {
-        self.precision = precision_for_magnification(self.magnification());
+        self.precision = precision_for_octaves(self.log2_magnification().max(0.0).ceil() as u64);
+    }
+
+    /// Complex offset of a pixel from the view center, as a `BigFloat` (extended-range scale).
+    fn pixel_offset(&self, dpx: f64) -> BigFloat {
+        self.units_per_pixel.mul_f64(dpx).to_bf(self.precision)
     }
 
     /// Complex coordinate under a pixel (origin top-left, +y down on screen).
     pub fn pixel_to_complex(&self, px: f64, py: f64) -> (BigFloat, BigFloat) {
         let p = self.precision;
-        let ox = bf((px - self.width_px * 0.5) * self.units_per_pixel, p);
-        let oy = bf((py - self.height_px * 0.5) * self.units_per_pixel, p);
+        let ox = self.pixel_offset(px - self.width_px * 0.5);
+        let oy = self.pixel_offset(py - self.height_px * 0.5);
         (self.center_x.add(&ox, p, RM), self.center_y.sub(&oy, p, RM))
     }
 
     pub fn pan_pixels(&mut self, dx: f64, dy: f64) {
         let p = self.precision;
-        let ox = bf(dx * self.units_per_pixel, p);
-        let oy = bf(dy * self.units_per_pixel, p);
+        let ox = self.pixel_offset(dx);
+        let oy = self.pixel_offset(dy);
         self.center_x = self.center_x.sub(&ox, p, RM);
         self.center_y = self.center_y.add(&oy, p, RM);
     }
@@ -294,11 +428,11 @@ impl Viewport {
     /// Zoom by `factor` (< 1 zooms in) keeping the complex point under `(px,py)` fixed.
     pub fn zoom_at(&mut self, px: f64, py: f64, factor: f64) {
         let (cx, cy) = self.pixel_to_complex(px, py);
-        self.units_per_pixel *= factor;
+        self.units_per_pixel = self.units_per_pixel.mul_f64(factor);
         self.refresh_precision();
         let p = self.precision;
-        let ox = bf((px - self.width_px * 0.5) * self.units_per_pixel, p);
-        let oy = bf((py - self.height_px * 0.5) * self.units_per_pixel, p);
+        let ox = self.pixel_offset(px - self.width_px * 0.5);
+        let oy = self.pixel_offset(py - self.height_px * 0.5);
         self.center_x = cx.sub(&ox, p, RM);
         self.center_y = cy.add(&oy, p, RM);
     }
@@ -308,9 +442,9 @@ impl Viewport {
         let (cx, cy) = self.pixel_to_complex((px0 + px1) * 0.5, (py0 + py1) * 0.5);
         let box_w = (px1 - px0).abs().max(1.0);
         let box_h = (py1 - py0).abs().max(1.0);
-        let complex_w = box_w * self.units_per_pixel;
-        let complex_h = box_h * self.units_per_pixel;
-        self.units_per_pixel = (complex_w / self.width_px).max(complex_h / self.height_px);
+        // upp *= max(box_w/width, box_h/height) (the shared upp factor cancels in the ratio).
+        let t = (box_w / self.width_px).max(box_h / self.height_px);
+        self.units_per_pixel = self.units_per_pixel.mul_f64(t);
         self.refresh_precision();
         self.center_x = cx;
         self.center_y = cy;
@@ -331,7 +465,9 @@ impl Viewport {
         new_logmag: f64,
     ) {
         let upp_home = Self::REFERENCE_HEIGHT / self.height_px;
-        self.units_per_pixel = upp_home * (-new_logmag).exp();
+        // upp = upp_home · e^(−logmag) = upp_home · 2^(−logmag/ln2) (extended range).
+        self.units_per_pixel =
+            FloatExp::from_f64(upp_home).mul_pow2(-new_logmag / std::f64::consts::LN_2);
         self.refresh_precision();
         let p = self.precision;
         let frac = 1.0 - (-new_logmag).exp(); // 0 at home → ~1 when deep
@@ -343,28 +479,67 @@ impl Viewport {
         self.center_y = hy.add(&start_center.1.sub(&hy, p, RM).mul(&f, p, RM), p, RM);
     }
 
-    /// Set the view to an explicit center and magnification (1× = home framing).
-    /// Used by the scripting / benchmark camera player.
+    /// Set the view to an explicit center and magnification (1× = home framing). `mag` is
+    /// `f64`, so this reaches ~1e308×; for deeper jumps use [`set_center_log2mag`]. Used by
+    /// the scripting / benchmark camera player.
     pub fn set_center_mag(&mut self, cx: BigFloat, cy: BigFloat, mag: f64) {
-        self.units_per_pixel = Self::REFERENCE_HEIGHT / self.height_px / mag.max(1.0e-300);
+        self.units_per_pixel =
+            FloatExp::from_f64(Self::REFERENCE_HEIGHT / self.height_px).mul_f64(1.0 / mag.max(1.0e-300));
         self.refresh_precision();
         self.center_x = cx;
         self.center_y = cy;
     }
 
+    /// Set center + magnification by `log2(magnification)` — reaches arbitrary depth (past
+    /// `f64`'s 1e308× limit), unlike [`set_center_mag`].
+    pub fn set_center_log2mag(&mut self, cx: BigFloat, cy: BigFloat, log2mag: f64) {
+        self.units_per_pixel =
+            FloatExp::from_f64(Self::REFERENCE_HEIGHT / self.height_px).mul_pow2(-log2mag);
+        self.refresh_precision();
+        self.center_x = cx;
+        self.center_y = cy;
+    }
+
+    /// Complex span (width, height), as `f64` — saturates to `0` past ~1e308×. Use
+    /// [`Viewport::complex_span_fe`] for the extended-range value the deep render needs.
     pub fn complex_span(&self) -> (f64, f64) {
+        let (sx, sy) = self.complex_span_fe();
+        (sx.to_f64(), sy.to_f64())
+    }
+
+    /// Complex span (width, height) as extended-range `FloatExp` (no underflow at any depth).
+    pub fn complex_span_fe(&self) -> (FloatExp, FloatExp) {
         (
-            self.width_px * self.units_per_pixel,
-            self.height_px * self.units_per_pixel,
+            self.units_per_pixel.mul_f64(self.width_px),
+            self.units_per_pixel.mul_f64(self.height_px),
         )
     }
 
+    /// GPU scale: shared base-2 exponent + span mantissas (`span · 2^-delta_exp`, O(1)).
+    pub fn gpu_scale(&self) -> GpuScale {
+        let (sx, sy) = self.complex_span_fe();
+        let delta_exp = if sx.m == 0.0 { 0 } else { sx.log2().floor() as i32 };
+        let s = -(delta_exp as f64);
+        GpuScale {
+            delta_exp,
+            span_mantissa: [sx.mul_pow2(s).to_f64(), sy.mul_pow2(s).to_f64()],
+        }
+    }
+
+    /// `log2` of the magnification — finite at any depth (unlike `magnification()`, which
+    /// saturates to `∞` past ~1e308×). `magnification = REFERENCE_HEIGHT / (height · upp)`.
+    pub fn log2_magnification(&self) -> f64 {
+        (Self::REFERENCE_HEIGHT / self.height_px).log2() - self.units_per_pixel.log2()
+    }
+
     pub fn magnification(&self) -> f64 {
-        Self::REFERENCE_HEIGHT / (self.height_px * self.units_per_pixel)
+        FloatExp::from_f64(Self::REFERENCE_HEIGHT / self.height_px)
+            .mul(self.units_per_pixel.recip())
+            .to_f64()
     }
 
     pub fn recommended_max_iter(&self, base: u32) -> u32 {
-        let octaves = self.magnification().max(1.0).log2().max(0.0);
+        let octaves = self.log2_magnification().max(0.0);
         (base + (octaves * 220.0) as u32).min(50_000)
     }
 
@@ -376,9 +551,10 @@ impl Viewport {
     /// Complex coordinate under a pixel, as `f64` (for display; +y down on screen).
     pub fn complex_at_pixel_f64(&self, px: f64, py: f64) -> (f64, f64) {
         let (cx, cy) = self.center_f64();
+        let upp = self.units_per_pixel.to_f64();
         (
-            cx + (px - self.width_px * 0.5) * self.units_per_pixel,
-            cy - (py - self.height_px * 0.5) * self.units_per_pixel,
+            cx + (px - self.width_px * 0.5) * upp,
+            cy - (py - self.height_px * 0.5) * upp,
         )
     }
 }
@@ -594,7 +770,7 @@ const REF_SCORE_SCAN: u32 = 4096;
 #[allow(clippy::too_many_arguments)]
 pub fn best_reference(
     center: &[BigFloat; 2],
-    span: [f64; 2],
+    span: [FloatExp; 2],
     formula: u32,
     julia: bool,
     julia_c: [f64; 2],
@@ -634,8 +810,10 @@ pub fn best_reference(
             for i in 0..N {
                 let fx = (i as f64 / (N as f64 - 1.0) - 0.5) * 2.0 * sc;
                 let fy = (j as f64 / (N as f64 - 1.0) - 0.5) * 2.0 * sc;
-                let px = center[0].add(&bf(fx * span[0], p), p, RM);
-                let py = center[1].add(&bf(fy * span[1], p), p, RM);
+                // Offsets via the extended-range span so the grid doesn't collapse to the
+                // center past ~1e308× (where an f64 span would underflow to 0).
+                let px = center[0].add(&span[0].mul_f64(fx).to_bf(p), p, RM);
+                let py = center[1].add(&span[1].mul_f64(fy).to_bf(p), p, RM);
                 let len = score(&px, &py);
                 if len > best_len {
                     best_len = len;
@@ -946,13 +1124,13 @@ mod tests {
         let after = vp.pixel_to_complex(px, py);
         approx(to_f64(&before.0), to_f64(&after.0));
         approx(to_f64(&before.1), to_f64(&after.1));
-        assert!(vp.units_per_pixel < base_upp);
+        assert!(vp.units_per_pixel.log2() < base_upp.log2());
     }
 
     #[test]
     fn pan_moves_center() {
         let mut vp = Viewport::new(800.0, 600.0);
-        let upp = vp.units_per_pixel;
+        let upp = vp.units_per_pixel.to_f64();
         let (cx, cy) = vp.center_f64();
         vp.pan_pixels(10.0, -4.0);
         approx(to_f64(&vp.center_x), cx - 10.0 * upp);
@@ -965,12 +1143,42 @@ mod tests {
         approx(vp.magnification(), 1.0);
     }
 
+    // The viewport scale must survive past f64's ~1e308× ceiling: precision scales up, the
+    // magnitude stays exact (adjacent pixels map to distinct bignum coordinates rather than
+    // collapsing to the center as an f64 `units_per_pixel` would), and the GPU scale params
+    // stay well-formed (O(1) span mantissa + a deep shared exponent). This is what lets the
+    // renderer reach the depths `--validate-deep` validates arithmetically.
+    #[test]
+    fn viewport_scale_survives_past_f64_range() {
+        let mut vp = Viewport::new(1000.0, 1000.0);
+        vp.set_center_log2mag(bf(-0.5, 2048), bf(0.0, 2048), 1100.0); // ≈ 1e331× (past f64)
+        assert!(vp.precision > 1000, "precision did not scale: {}", vp.precision);
+        assert!((vp.log2_magnification() - 1100.0).abs() < 2.0, "log2mag off: {}", vp.log2_magnification());
+        // Adjacent pixels must differ (a plain-f64 upp would underflow to 0 → identical).
+        let p = vp.precision;
+        let (ax, _) = vp.pixel_to_complex(500.0, 500.0);
+        let (bx, _) = vp.pixel_to_complex(501.0, 500.0);
+        let diff = ax.sub(&bx, p, RM);
+        assert!(diff.exponent().is_some(), "adjacent pixels collapsed past 1e308×");
+        // GPU scale: O(1) span mantissa, deep shared exponent.
+        let gs = vp.gpu_scale();
+        assert!(
+            gs.span_mantissa[0].abs() >= 1.0 && gs.span_mantissa[0].abs() < 4.0,
+            "span mantissa not O(1): {}",
+            gs.span_mantissa[0]
+        );
+        assert!(gs.delta_exp < -1000, "delta_exp not deep: {}", gs.delta_exp);
+        // The per-pixel offset, rescaled by 2^-delta_exp, is the O(1) mantissa the GPU needs.
+        let off = ref_offset_mantissa(&ax, &bx, gs.delta_exp, p);
+        assert!(off.is_finite() && off != 0.0, "ref-offset mantissa degenerate: {off}");
+    }
+
     #[test]
     fn span_matches_extent() {
         let vp = Viewport::new(800.0, 600.0);
         let (sx, sy) = vp.complex_span();
-        approx(sx, vp.width_px * vp.units_per_pixel);
-        approx(sy, vp.height_px * vp.units_per_pixel);
+        approx(sx, vp.width_px * vp.units_per_pixel.to_f64());
+        approx(sy, vp.height_px * vp.units_per_pixel.to_f64());
     }
 
     #[test]
@@ -1001,7 +1209,7 @@ mod tests {
     fn best_reference_prefers_interior_center() {
         let r = best_reference(
             &[bf(-0.5, 64), bf(0.0, 64)],
-            [0.1, 0.1],
+            [FloatExp::from_f64(0.1), FloatExp::from_f64(0.1)],
             0,
             false,
             [0.0, 0.0],

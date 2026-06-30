@@ -172,16 +172,6 @@ impl RandomPalette {
     }
 }
 
-/// Shared base-2 exponent for the floatexp perturbation δ mantissas: `floor(log2(span))`,
-/// so the per-pixel offset mantissa stays O(1) in df32 at any zoom depth.
-fn delta_exponent(span_x: f64) -> i32 {
-    if span_x > 0.0 && span_x.is_finite() {
-        span_x.log2().floor() as i32
-    } else {
-        0
-    }
-}
-
 /// Linear RGBA interpolation between two colors (`t` in 0..1).
 fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
     let t = t.clamp(0.0, 1.0);
@@ -389,9 +379,11 @@ const FAMOUS: &[(&str, &str, &str, f64)] = &[
 /// boundary's sub-pixel "dust" into per-pixel noise (and starves the render budget); this
 /// caps the count at a generous, zoom-scaled value so normal auto-iteration is never
 /// limited but an inflated base is. Used for both the live view and exports so they match.
-fn zoom_iter_cap(mag: f64) -> u32 {
-    let octaves = mag.max(1.0).log2().max(0.0);
-    (2000.0 + octaves * 256.0) as u32
+/// Zoom-appropriate iteration cap from the zoom **octaves** (`log2(magnification)`), taken
+/// directly so it stays finite past 1e308× where `magnification()` saturates to `∞`.
+fn zoom_iter_cap(octaves: f64) -> u32 {
+    let o = octaves.max(0.0);
+    (2000.0 + o * 256.0).min(u32::MAX as f64) as u32
 }
 
 /// Plain-f64 **smooth** Mandelbrot dwell, matching the shader exactly (bailout 256,
@@ -845,7 +837,8 @@ fn help_command_line(ui: &mut egui::Ui) {
     help_sub(ui, "View");
     help_kv(ui, "--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\".");
     help_kv(ui, "--center X Y", "View center (full-precision decimals).");
-    help_kv(ui, "--zoom M", "Magnification.");
+    help_kv(ui, "--zoom M", "Magnification (f64, ≤ ~1e308×).");
+    help_kv(ui, "--zoom-log2 L", "Magnification = 2^L — for depths past f64 range (≥ ~1e308×).");
     help_kv(ui, "--julia", "Julia mode.");
     help_kv(ui, "--julia-c RE IM", "Julia parameter c.");
     help_sub(ui, "Image & color");
@@ -1355,6 +1348,19 @@ fn fmt_zoom(mag: f64) -> String {
         let s = format!("{mag:.2}");
         let s = s.trim_end_matches('0').trim_end_matches('.');
         s.to_string()
+    }
+}
+
+/// Format magnification from `log2(magnification)` — stays correct past `f64`'s 1e308×
+/// (where `magnification()` saturates to `∞`), formatting `2^log2mag` via base-10.
+fn fmt_zoom_log2(log2mag: f64) -> String {
+    if log2mag <= 1020.0 {
+        fmt_zoom(2f64.powf(log2mag.max(0.0)))
+    } else {
+        let log10 = log2mag * std::f64::consts::LOG10_2;
+        let e = log10.floor();
+        let m = 10f64.powf(log10 - e);
+        format!("{m:.2}e{e:.0}")
     }
 }
 
@@ -1900,7 +1906,7 @@ struct BookmarkFile {
 struct ViewSnapshot {
     cx: fractadyne_core::BigFloat,
     cy: fractadyne_core::BigFloat,
-    upp: f64,
+    upp: fractadyne_core::FloatExp,
     prec: usize,
 }
 
@@ -2289,8 +2295,10 @@ impl FractadyneApp {
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(s.center_x, 64));
         viewport.center_y = fractadyne_core::parse_bf(&s.center_y_str)
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(s.center_y, 64));
-        viewport.units_per_pixel = s.units_per_pixel;
-        viewport.precision = fractadyne_core::precision_for_magnification(viewport.magnification());
+        viewport.units_per_pixel =
+            fractadyne_core::FloatExp::new(s.units_per_pixel, s.units_per_pixel_e);
+        viewport.precision =
+            fractadyne_core::precision_for_octaves(viewport.log2_magnification().max(0.0).ceil() as u64);
 
         let mut app = Self {
             viewport,
@@ -2467,8 +2475,14 @@ impl FractadyneApp {
                 fractadyne_core::BigFloat::from_f64(dy, 64),
             )
         });
-        let zoom = val("--zoom").and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
-        self.viewport.set_center_mag(cx, cy, zoom.max(1.0e-300));
+        // `--zoom` is f64 (≤ ~1e308×); `--zoom-log2 L` sets magnification = 2^L for
+        // arbitrary depth past the f64 range (e.g. L=1100 ≈ 1e331×).
+        if let Some(l) = val("--zoom-log2").and_then(|s| s.parse::<f64>().ok()) {
+            self.viewport.set_center_log2mag(cx, cy, l);
+        } else {
+            let zoom = val("--zoom").and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
+            self.viewport.set_center_mag(cx, cy, zoom.max(1.0e-300));
+        }
         if let Some(w) = val("--size").and_then(|s| s.parse::<u32>().ok()) {
             self.export_width = w.clamp(16, 16384);
         }
@@ -2517,7 +2531,8 @@ impl FractadyneApp {
             center_y: fractadyne_core::to_f64(&self.viewport.center_y),
             center_x_str: fractadyne_core::to_decimal_string(&self.viewport.center_x),
             center_y_str: fractadyne_core::to_decimal_string(&self.viewport.center_y),
-            units_per_pixel: self.viewport.units_per_pixel,
+            units_per_pixel: self.viewport.units_per_pixel.m,
+            units_per_pixel_e: self.viewport.units_per_pixel.e,
             max_iter: self.max_iter,
             auto_iter: self.auto_iter,
             palette_idx: self.palette_idx,
@@ -2617,7 +2632,7 @@ impl FractadyneApp {
     fn compute_reference(
         &self,
         center_bf: &[fractadyne_core::BigFloat; 2],
-        span: (f64, f64),
+        span: (fractadyne_core::FloatExp, fractadyne_core::FloatExp),
         eff_iter: u32,
         precision: usize,
         julia: bool,
@@ -2666,10 +2681,11 @@ impl FractadyneApp {
         vp: &Viewport,
         julia: bool,
     ) -> fractadyne_gpu::ExportRequest {
-        let (span_x, span_y) = vp.complex_span();
+        let log2mag = vp.log2_magnification();
         let width = self.export_width.max(1);
-        let height = ((width as f64) * span_y / span_x).round().max(1.0) as u32;
-        let mag = vp.magnification();
+        // height from aspect: span_y/span_x = height_px/width_px (the scale cancels).
+        let height = ((width as f64) * vp.height_px / vp.width_px).round().max(1.0) as u32;
+        let mag = vp.magnification(); // saturates to ∞ past 1e308×; fine for the mode compares
         let eff_iter = if self.auto_iter {
             vp.recommended_max_iter(self.max_iter)
         } else {
@@ -2677,7 +2693,7 @@ impl FractadyneApp {
         }
         // Cap at the zoom-appropriate count (same as the live view): avoids noise from
         // over-resolving sub-pixel dust, and keeps the export fast/responsive.
-        .min(zoom_iter_cap(mag).max(256));
+        .min(zoom_iter_cap(log2mag).max(256));
         let mode: u32 = if !self.fractal.supports_perturbation() || mag < 1.0e4 {
             1
         } else if mag >= PERT_FE_THRESHOLD {
@@ -2685,10 +2701,10 @@ impl FractadyneApp {
         } else {
             0
         };
-        let precision = fractadyne_core::precision_for_magnification(mag);
+        let precision = vp.precision; // maintained by the viewport; valid at any depth
         let (cx, cy) = vp.center_f64();
-        let delta_exp = delta_exponent(span_x);
-        let dscale = 2f64.powi(-delta_exp);
+        let scale = vp.gpu_scale();
+        let delta_exp = scale.delta_exp;
 
         let mut ref_offset = [0.0_f32; 4];
         let mut orbit = std::sync::Arc::new(Vec::new());
@@ -2696,11 +2712,11 @@ impl FractadyneApp {
         if mode != 1 {
             let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
             let (orbit_arc, len, rp) =
-                self.compute_reference(&center_bf, (span_x, span_y), eff_iter, precision, julia, None);
+                self.compute_reference(&center_bf, vp.complex_span_fe(), eff_iter, precision, julia, None);
             orbit = orbit_arc;
             orbit_len = len;
-            let dx = fractadyne_core::sub_f64(&vp.center_x, &rp[0], precision) * dscale;
-            let dy = fractadyne_core::sub_f64(&vp.center_y, &rp[1], precision) * dscale;
+            let dx = fractadyne_core::ref_offset_mantissa(&vp.center_x, &rp[0], delta_exp, precision);
+            let dy = fractadyne_core::ref_offset_mantissa(&vp.center_y, &rp[1], delta_exp, precision);
             let dxh = dx as f32;
             let dyh = dy as f32;
             ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
@@ -2719,7 +2735,7 @@ impl FractadyneApp {
             width,
             height,
             ss: self.export_ss.max(1),
-            span: [span_x, span_y],
+            span_mantissa: scale.span_mantissa,
             center,
             ref_offset,
             delta_exp,
@@ -2809,7 +2825,7 @@ impl FractadyneApp {
             format!(
                 "{} {}×",
                 self.fractal.name(),
-                fmt_zoom(self.viewport.magnification())
+                fmt_zoom_log2(self.viewport.log2_magnification())
             )
         } else {
             name.trim().to_string()
@@ -2882,7 +2898,7 @@ impl FractadyneApp {
             jcy,
             fractadyne_core::to_decimal_string(&self.viewport.center_x),
             fractadyne_core::to_decimal_string(&self.viewport.center_y),
-            self.viewport.units_per_pixel,
+            self.viewport.units_per_pixel.to_f64(),
             self.viewport.magnification(),
             self.max_iter,
             self.auto_iter as u32,
@@ -2920,7 +2936,7 @@ impl FractadyneApp {
             self.viewport.center_y = cy;
         }
         if let Some(upp) = get("upp").and_then(|s| s.parse::<f64>().ok()) {
-            self.viewport.units_per_pixel = upp;
+            self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(upp);
         }
         if let Some(mi) = get("max_iter").and_then(|s| s.parse().ok()) {
             self.max_iter = mi;
@@ -3175,7 +3191,7 @@ impl FractadyneApp {
             let mut vp = Viewport::new(N as f64, N as f64);
             vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
             vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
-            vp.units_per_pixel = 3.0 / (N as f64 * mag);
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
             vp.precision = fractadyne_core::precision_for_magnification(mag);
             let mut req = self.current_export_request_for(&vp, false);
             req.width = N;
@@ -3379,18 +3395,19 @@ impl FractadyneApp {
                 let prec = fractadyne_core::precision_for_magnification(mag);
                 let cxb = fractadyne_core::parse_bf(SX).unwrap();
                 let cyb = fractadyne_core::parse_bf(SY).unwrap();
-                let span = base.span[0];
-                let dscale = 2f64.powi(-base.delta_exp);
+                // Actual complex span (shallow here): span_mantissa × 2^delta_exp.
+                let span = base.span_mantissa[0] * 2f64.powi(base.delta_exp);
+                let span_fe = fractadyne_core::FloatExp::from_f64(span);
                 let with_ref = |ox: f64, oy: f64| -> fractadyne_gpu::ExportRequest {
                     let ref_pt = [
                         fractadyne_core::add_f64(&cxb, ox, prec),
                         fractadyne_core::add_f64(&cyb, oy, prec),
                     ];
                     let (orbit, len, rp) = self.compute_reference(
-                        &[cxb.clone(), cyb.clone()], (span, span), base.max_iter, prec, false, Some(ref_pt),
+                        &[cxb.clone(), cyb.clone()], (span_fe, span_fe), base.max_iter, prec, false, Some(ref_pt),
                     );
-                    let dx = fractadyne_core::sub_f64(&cxb, &rp[0], prec) * dscale;
-                    let dy = fractadyne_core::sub_f64(&cyb, &rp[1], prec) * dscale;
+                    let dx = fractadyne_core::ref_offset_mantissa(&cxb, &rp[0], base.delta_exp, prec);
+                    let dy = fractadyne_core::ref_offset_mantissa(&cyb, &rp[1], base.delta_exp, prec);
                     let (dxh, dyh) = (dx as f32, dy as f32);
                     let mut r = base.clone();
                     r.orbit = orbit;
@@ -3525,7 +3542,7 @@ impl FractadyneApp {
                 let mut vp = Viewport::new(N as f64, N as f64);
                 vp.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
                 vp.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
-                vp.units_per_pixel = 3.0 / N as f64; // span 3, origin-centered (whole set)
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / N as f64); // span 3, origin-centered
                 vp.precision = 64;
                 let mut req = self.current_export_request_for(&vp, false);
                 req.width = N;
@@ -3576,7 +3593,7 @@ impl FractadyneApp {
                 let mut vp = Viewport::new(size as f64, size as f64);
                 vp.center_x = cx.clone();
                 vp.center_y = cy.clone();
-                vp.units_per_pixel = 3.0 / (size as f64 * mag);
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (size as f64 * mag));
                 vp.precision = fractadyne_core::precision_for_magnification(mag);
                 let mut req = self.current_export_request_for(&vp, false);
                 req.width = size;
@@ -3956,7 +3973,7 @@ impl FractadyneApp {
             let mut vp = Viewport::new(gw as f64, gh as f64);
             vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
             vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
-            vp.units_per_pixel = 3.0 / (gh as f64 * zoom);
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (gh as f64 * zoom));
             vp.precision = fractadyne_core::precision_for_magnification(zoom);
             let mut req = self.current_export_request_for(&vp, false);
             req.width = gw;
@@ -4169,8 +4186,9 @@ impl FractadyneApp {
         &mut self,
         center_bf: [fractadyne_core::BigFloat; 2],
         center: (f64, f64),
-        span: (f64, f64),
+        span: (fractadyne_core::FloatExp, fractadyne_core::FloatExp),
         magnification: f64,
+        log2mag: f64,
         fractal: FractalKind,
         julia: bool,
         eff_iter: u32,
@@ -4180,7 +4198,12 @@ impl FractadyneApp {
     ) -> MandelbrotParams {
         let (stops, stop_count) = self.active_stops();
         let (cx, cy) = center;
-        let (span_x, span_y) = span;
+        // Extended-range scale → shared base-2 exponent + O(1) span mantissas, so nothing
+        // underflows/overflows past ~1e308× (the per-pixel δ stays O(1); the GPU re-applies
+        // the exponent). `span.0`/`span.1` are FloatExp, valid at any depth.
+        let delta_exp = if span.0.m == 0.0 { 0 } else { span.0.log2().floor() as i32 };
+        let sm = -(delta_exp as f64);
+        let span_mantissa = [span.0.mul_pow2(sm).to_f64(), span.1.mul_pow2(sm).to_f64()];
 
         // Bound per-frame GPU work so a single render can't trip the OS GPU watchdog
         // (TDR ≈ 2 s → device-lost crash). Work ≈ texels × iterations = px·ss²·iter.
@@ -4200,7 +4223,7 @@ impl FractadyneApp {
         // but an inflated manual base is. Exports still use the full count. The cap stays
         // well above what the zoom needs, so deep interiors remain resolved (no uniform
         // screen).
-        let gpu_iter = eff_iter.min(50_000).min(zoom_iter_cap(magnification).max(256));
+        let gpu_iter = eff_iter.min(50_000).min(zoom_iter_cap(log2mag).max(256));
         // GPU-watchdog safety (TDR ≈ 2 s): if even the capped work won't fit, reduce the
         // iteration-texture resolution (the color pass box-filters the upscale). Rare now
         // that iterations are zoom-capped.
@@ -4244,20 +4267,19 @@ impl FractadyneApp {
         } else {
             0
         };
-        let precision = fractadyne_core::precision_for_magnification(magnification);
+        let precision = fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64);
         let vi = view_id as usize;
-
-        // Shared base-2 exponent for the δ mantissas: ~log2(span) so the per-pixel
-        // offset mantissa is O(1) regardless of depth (floatexp delta → unlimited zoom).
-        let delta_exp = delta_exponent(span_x);
-        let dscale = 2f64.powi(-delta_exp);
 
         let mut ref_offset = [0.0_f32; 4];
         if mode != 1 {
+            // Drift = |center − reference| / span, both as 2^-delta_exp mantissas so the
+            // ratio is exact at any depth (raw f64 differences underflow past ~1e308×).
             let drift = self.ref_cache[vi].ref_pt.as_ref().map(|r| {
-                let rx = fractadyne_core::to_f64(&r[0]);
-                let ry = fractadyne_core::to_f64(&r[1]);
-                (((cx - rx) / span_x).abs(), ((cy - ry) / span_y).abs())
+                let dx = fractadyne_core::ref_offset_mantissa(&center_bf[0], &r[0], delta_exp, precision)
+                    / span_mantissa[0];
+                let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &r[1], delta_exp, precision)
+                    / span_mantissa[1];
+                (dx.abs(), dy.abs())
             });
             // Recomputing the reference orbit is a slow bignum job. `best_reference`
             // legitimately sits up to ~0.4 span off-center, so we must NOT treat that
@@ -4291,7 +4313,7 @@ impl FractadyneApp {
             if recompute {
                 let t = Instant::now();
                 let (orbit, orbit_len, rp) =
-                    self.compute_reference(&center_bf, (span_x, span_y), eff_iter, precision, julia, None);
+                    self.compute_reference(&center_bf, span, eff_iter, precision, julia, None);
                 let vc = &mut self.ref_cache[vi];
                 vc.ref_pt = Some(rp);
                 vc.orbit = orbit;
@@ -4307,8 +4329,8 @@ impl FractadyneApp {
             let rp = self.ref_cache[vi].ref_pt.as_ref().unwrap();
             // δ = center − reference, carried as a mantissa scaled by 2^-delta_exp
             // (so it stays O(1) in df32 at any depth; the GPU re-applies the exponent).
-            let dx = fractadyne_core::sub_f64(&center_bf[0], &rp[0], precision) * dscale;
-            let dy = fractadyne_core::sub_f64(&center_bf[1], &rp[1], precision) * dscale;
+            let dx = fractadyne_core::ref_offset_mantissa(&center_bf[0], &rp[0], delta_exp, precision);
+            let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &rp[1], delta_exp, precision);
             let dxh = dx as f32;
             let dyh = dy as f32;
             ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
@@ -4340,7 +4362,7 @@ impl FractadyneApp {
             mode,
             formula: fractal.formula_id(),
             julia: julia as u32,
-            span: [span_x, span_y],
+            span_mantissa,
             max_iter: gpu_iter,
             cycle: self.color_cycle(),
             offset: self.offset,
@@ -4422,8 +4444,9 @@ impl FractadyneApp {
         };
         let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
         let center = vp.center_f64();
-        let span = vp.complex_span();
+        let span = vp.complex_span_fe();
         let mag = vp.magnification();
+        let log2mag = vp.log2_magnification();
         let res = [
             (rect.width() as f64 * ppp) as u32,
             (rect.height() as f64 * ppp) as u32,
@@ -4434,6 +4457,7 @@ impl FractadyneApp {
             center,
             span,
             mag,
+            log2mag,
             self.fractal,
             is_julia,
             eff_iter,
@@ -4579,7 +4603,7 @@ impl FractadyneApp {
     /// within the given panel rect. Inverse of `complex_at_pixel_f64`.
     fn complex_screen_pos(&self, c: (f64, f64), rect: egui::Rect, ppp: f64) -> egui::Pos2 {
         let (cx, cy) = self.viewport.center_f64();
-        let upp = self.viewport.units_per_pixel;
+        let upp = self.viewport.units_per_pixel.to_f64();
         let px = (c.0 - cx) / upp + self.viewport.width_px * 0.5;
         let py = self.viewport.height_px * 0.5 - (c.1 - cy) / upp;
         egui::pos2(
@@ -4615,7 +4639,7 @@ impl FractadyneApp {
             py: cursor_px.1,
             cx: cx0,
             cy: cy0,
-            upp: vp.units_per_pixel,
+            upp: vp.units_per_pixel.to_f64(),
             julia: is_julia,
             formula,
             jcx: self.julia_c.0,
@@ -4719,7 +4743,7 @@ impl FractadyneApp {
                 .collect()
         } else {
             let (cx, cy) = vp.center_f64();
-            let upp = vp.units_per_pixel;
+            let upp = vp.units_per_pixel.to_f64();
             pts.iter()
                 .map(|p| {
                     let px = (p.0 - cx) / upp + vp.width_px * 0.5;
@@ -4782,7 +4806,7 @@ impl FractadyneApp {
         ui.monospace(format!("orbit len  {:>7}", p.last_orbit_len));
         ui.monospace(format!("aa         {}x", self.aa));
         ui.monospace(format!("dual       {}", self.dual));
-        ui.monospace(format!("zoom       {}×", fmt_zoom(self.viewport.magnification())));
+        ui.monospace(format!("zoom       {}×", fmt_zoom_log2(self.viewport.log2_magnification())));
 
         // Julia parameter the Julia / dual view renders, plus how much c-space the
         // whole Mandelbrot panel covers. When "c/panel" drops far below one Julia
@@ -4796,7 +4820,7 @@ impl FractadyneApp {
             if self.julia_pin.is_some() {
                 ui.monospace("julia c    pinned");
             }
-            let c_per_panel = self.viewport.width_px * self.viewport.units_per_pixel;
+            let c_per_panel = self.viewport.width_px * self.viewport.units_per_pixel.to_f64();
             ui.monospace(format!("c/panel    {c_per_panel:.3e}"))
                 .on_hover_text(
                     "Width of c-space spanned by the whole Mandelbrot panel. When this \
@@ -4940,7 +4964,7 @@ impl FractadyneApp {
         let mut vp = Viewport::new(MINIMAP_TW as f64, MINIMAP_TH as f64);
         vp.center_x = fractadyne_core::BigFloat::from_f64(MINIMAP_CX, 64);
         vp.center_y = fractadyne_core::BigFloat::from_f64(MINIMAP_CY, 64);
-        vp.units_per_pixel = (2.0 * MINIMAP_HX) / MINIMAP_TW as f64;
+        vp.units_per_pixel = fractadyne_core::FloatExp::from_f64((2.0 * MINIMAP_HX) / MINIMAP_TW as f64);
         vp.precision = 64;
         let mut req = self.current_export_request_for(&vp, false);
         req.width = MINIMAP_TW;
@@ -5065,7 +5089,7 @@ impl FractadyneApp {
                         p.text(
                             rect.left_bottom() + egui::vec2(4.0, -3.0),
                             egui::Align2::LEFT_BOTTOM,
-                            format!("{}×", fmt_zoom(self.viewport.magnification())),
+                            format!("{}×", fmt_zoom_log2(self.viewport.log2_magnification())),
                             egui::FontId::monospace(11.0),
                             BRAND_TEXT,
                         );
@@ -6245,11 +6269,11 @@ impl eframe::App for FractadyneApp {
                 if self.dual {
                     ui.monospace(format!(
                         "zoom  M {}×   J {}×",
-                        fmt_zoom(self.viewport.magnification()),
-                        fmt_zoom(self.julia_viewport.magnification()),
+                        fmt_zoom_log2(self.viewport.log2_magnification()),
+                        fmt_zoom_log2(self.julia_viewport.log2_magnification()),
                     ));
                 } else {
-                    ui.monospace(format!("zoom {}×", fmt_zoom(self.viewport.magnification())));
+                    ui.monospace(format!("zoom {}×", fmt_zoom_log2(self.viewport.log2_magnification())));
                 }
                 ui.separator();
                 let eff_iter = if self.auto_iter {
@@ -6613,7 +6637,7 @@ impl eframe::App for FractadyneApp {
                 }
 
                 // Render the fractal at the current viewport with the chosen palette.
-                let (span_x, span_y) = self.viewport.complex_span();
+                let span_fe = self.viewport.complex_span_fe();
                 let eff_iter = if self.auto_iter {
                     self.viewport.recommended_max_iter(self.max_iter)
                 } else {
@@ -6635,6 +6659,7 @@ impl eframe::App for FractadyneApp {
                 let center_bf = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
                 let center = self.viewport.center_f64();
                 let mag = self.viewport.magnification();
+                let log2mag = self.viewport.log2_magnification();
                 let resolution = [
                     (rect.width() as f64 * ppp) as u32,
                     (rect.height() as f64 * ppp) as u32,
@@ -6642,8 +6667,9 @@ impl eframe::App for FractadyneApp {
                 let params = self.build_params(
                     center_bf,
                     center,
-                    (span_x, span_y),
+                    span_fe,
                     mag,
+                    log2mag,
                     self.fractal,
                     self.julia_mode,
                     eff_iter,
