@@ -319,6 +319,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   (they used to look static while panning deep). The magnification's scientific-notation
   mantissa is space-grouped in 5s (`3.38050 02722 7e15`) to match the coordinate readout.
 
+- **Prebuilt binaries via GitHub Releases** — `.github/workflows/release.yml` builds the
+  Windows x64 binary and, on a `v*` tag push, packages `fractadyne.exe` + README + licenses
+  into a versioned zip with a SHA-256 sidecar and publishes a GitHub Release (auto-generated
+  notes) via the `gh` CLI. A manual `workflow_dispatch` run uploads the zip as a test
+  artifact instead of publishing. Users can now download and run without the Rust toolchain
+  (README gained a **Download** section).
+
 ### Fixed (post-baseline, this session)
 
 - **Speckle/noise across the exterior at deep zoom on a large window** — a very high

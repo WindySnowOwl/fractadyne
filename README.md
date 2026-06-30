@@ -29,6 +29,14 @@ zoom** and performance.
 - **Tooling** — keyframe camera scripts, a built-in benchmark (FPS / CPU / GPU / RAM +
   system info), and headless CLI modes.
 
+## Download
+
+Prebuilt Windows (x64) binaries are attached to each [GitHub
+Release](../../releases) — grab the latest `fractadyne-vX.Y.Z-windows-x64.zip`, verify it
+against the accompanying `.sha256` if you like, unzip, and run `fractadyne.exe` (no install,
+no toolchain needed). Releases are built automatically from a tagged commit by
+[`.github/workflows/release.yml`](.github/workflows/release.yml).
+
 ## Build & run
 
 Requires the Rust toolchain (rustup).

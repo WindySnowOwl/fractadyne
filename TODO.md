@@ -411,14 +411,16 @@ perturbation + series approximation + glitch correction. The headline feature.
       precisely; opt-in per-frame logging of live interactive sessions; fold the series
       coefficients into the reference-orbit pass to cut the ~100 ms series-skip setup at depth.)*
 - [ ] **Record-to-video / frame export** from a script (offline, deterministic).
-- [ ] **Ship compiled binaries on GitHub (Releases)** — publish prebuilt executables so
-      users don't need the Rust toolchain. Tag a release (`vMAJOR.MINOR.PATCH`) and attach a
-      Windows `x86_64` build (the primary target; add Linux/macOS later if cross-building is
-      set up). Automate with a GitHub Actions workflow (`release.yml`) triggered on tag push:
-      build `--release`, then upload the artifact + a SHA-256 checksum to the release. Note
-      the local build constraints (`-j 1`, `debug=false`, no pipelining) are this machine's
-      page-file workaround — CI runners likely don't need them, but the release profile must
-      still link cleanly. Include the README build note + a short "Download" section.
+- [x] **Ship compiled binaries on GitHub (Releases)** — `.github/workflows/release.yml`
+      builds the Windows `x86_64` binary on `windows-latest` and, on a `v*` tag push,
+      packages `fractadyne.exe` + README + both licenses into a versioned zip with a SHA-256
+      sidecar and publishes a GitHub Release (auto-generated notes) via the `gh` CLI. A
+      manual `workflow_dispatch` run instead uploads the zip as a downloadable artifact (no
+      publish) for testing. Uses the standard `--release` profile (the local `-j1`/no-LTO
+      constraints are this machine's page-file workaround; runners don't need them). Verified
+      locally: the build command, output path, and the packaging/zip/checksum steps.
+      README gained a **Download** section. Possible later: Linux/macOS jobs (need GTK/X11
+      runner deps for `rfd`), code signing, and a more-optimized `dist` profile (LTO).
 - [x] **File format versioning + minimum-version validation** — the reloadable view metadata
       (exports / `.fdn` / bookmarks) now has a single source-of-truth `VIEW_FORMAT_VERSION`
       (export.rs); the writer emits it and `load_view_metadata` returns a `ViewLoad`

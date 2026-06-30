@@ -1,0 +1,70 @@
+name: Release
+
+# Build and publish the Windows binary. Tag a release (e.g. `git tag v0.1.0 && git
+# push --tags`) to build + attach the zip to a GitHub Release; or run manually
+# (workflow_dispatch) to produce a downloadable test artifact without publishing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Name for a manual test build (artifact only; not published)"
+        required: false
+        default: "dev"
+
+permissions:
+  contents: write # needed to create the release + upload assets
+
+jobs:
+  windows:
+    name: Windows x64 binary
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use stable Rust
+        run: rustup default stable
+
+      # The standard release profile (matches local builds: no debuginfo, LTO off).
+      # Runners aren't page-file constrained, but keeping the same profile avoids
+      # shipping an untested optimization config.
+      - name: Build release binary
+        run: cargo build --release --bin fractadyne
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -eq "main" -or [string]::IsNullOrWhiteSpace($tag)) {
+            $tag = "${{ github.event.inputs.tag }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "dev" }
+          $dir = "fractadyne-$tag-windows-x64"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item target/release/fractadyne.exe -Destination $dir/
+          Copy-Item README.md, LICENSE-APACHE, LICENSE-MIT -Destination $dir/
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
+          $hash = (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $dir.zip" | Out-File -FilePath "$dir.zip.sha256" -Encoding ascii
+          "ASSET=$dir.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: >
+          gh release create "${{ github.ref_name }}"
+          "$env:ASSET" "$env:ASSET.sha256"
+          --title "Fractadyne ${{ github.ref_name }}"
+          --generate-notes
+
+      - name: Upload artifact (manual/test runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: fractadyne-windows-x64
+          path: |
+            *.zip
+            *.zip.sha256
