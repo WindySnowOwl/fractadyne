@@ -422,6 +422,14 @@ perturbation + series approximation + glitch correction. The headline feature.
       locally: the build command, output path, and the packaging/zip/checksum steps.
       README gained a **Download** section. Possible later: Linux/macOS jobs (need GTK/X11
       runner deps for `rfd`), code signing, and a more-optimized `dist` profile (LTO).
+- [x] **Continuous integration** — `.github/workflows/ci.yml` gates every push to `main` and
+      every PR: a **core-tests** job (`cargo test -p fractadyne-core --release` on Linux — the
+      exact-math suite is pure Rust, no GPU/GUI/system deps) plus a **build** job
+      (`cargo build --workspace` on Windows) confirming the GPU/egui crates still compile on
+      the target. `concurrency` cancels superseded runs. The GPU `--selftest` needs a real
+      GPU (runners have none → flaky), so it stays a local/manual gate. Verified both commands
+      locally (29 core tests pass; workspace compiles). Possible later: a software-adapter
+      `--selftest` job, `clippy`/`fmt` checks.
 - [x] **File format versioning + minimum-version validation** — the reloadable view metadata
       (exports / `.fdn` / bookmarks) now has a single source-of-truth `VIEW_FORMAT_VERSION`
       (export.rs); the writer emits it and `load_view_metadata` returns a `ViewLoad`

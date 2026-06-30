@@ -336,6 +336,11 @@ Baseline for tracked versioning. Notable capabilities already present:
   artifact instead of publishing. Users can now download and run without the Rust toolchain
   (README gained a **Download** section).
 
+- **Continuous integration** — `.github/workflows/ci.yml` gates every push/PR with the
+  exact-math core test suite (`cargo test -p fractadyne-core`, Linux) and a full
+  `cargo build --workspace` (Windows) confirming the GPU/egui crates still compile. The GPU
+  `--selftest` stays a local/manual gate (runners have no GPU).
+
 ### Fixed (post-baseline, this session)
 
 - **Speckle/noise across the exterior at deep zoom on a large window** — a very high
