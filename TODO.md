@@ -191,10 +191,13 @@ perturbation + series approximation + glitch correction. The headline feature.
       stored exponent, and `fmt_zoom_log2` for the readout. Verified: bit-identical to 1e30×
       (selftest goldens), GPU renders correctly at **1e331×**, no regression. *(Follow-ups:
       goto-dialog + exported-image metadata still take f64 zoom — fine to ~1e308×.)*
-- [ ] **Deep goto / exported-metadata zoom past 1e308×** — the "Go to location" dialog and
-      the reloadable PNG/EXR view-metadata still encode zoom as `f64`, so reloading a view
-      deeper than ~1e308× loses the scale (the center is fine). Carry log2-magnitude (or a
-      mantissa+exponent pair) through both, like the session state already does.
+- [x] **Deep goto / exported-metadata zoom past 1e308×** — the "Go to location" dialog and
+      the reloadable PNG/EXR view-metadata encoded zoom as `f64`, so a view deeper than
+      ~1e308× lost its scale on reload (the center was fine). Goto now parses/formats via
+      `log2(magnification)` (`parse_zoom_to_log2` / `fmt_zoom_field` — accepts `1.5e400`,
+      clamped to a sane octave bound); the metadata blob carries an extended-range
+      `upp_log2` (reconstructed on load, with the f64 `upp` kept for back-compat), so
+      exported images and bookmarks restore deep views exactly. Round-trip unit-tested.
 - [ ] **Full glitch correction** (Pauldelbrot criterion + multi-reference recompute).
 - [x] **AA auto-drop during motion** — full AA only when the view settles (smooth
       deep zoom; sharp still image).

@@ -136,6 +136,15 @@ Baseline for tracked versioning. Notable capabilities already present:
   `--selftest` stays 29/29 + 4/4. (Follow-ups: the goto dialog and exported-image metadata
   still take `f64` zoom — fine to ~1e308×.)
 
+- **Deep zoom save/restore/goto past 1e308×** — completes the ceiling lift so the deepest
+  views are fully round-trippable. The "Go to location" dialog now parses and displays zoom
+  via `log2(magnification)` (`parse_zoom_to_log2` / `fmt_zoom_field`: accepts plain or
+  scientific input like `1.5e400`, grouping-tolerant, clamped to a sane octave bound — no
+  more `inf` readout or f64 truncation). The reloadable image metadata carries an
+  extended-range `upp_log2` (reconstructed on load; the f64 `upp` stays for back-compat and
+  readability), so **exported PNG/EXR images and bookmarks restore views deeper than 1e308×
+  exactly**. Round-trip unit-tested (shallow through 1e30000×).
+
 - **In-app Help & reference** — Help → "Help & reference…" (or F1 / ?) opens a multi-section
   window with a table of contents: Overview, Navigation, Coloring & options, Fractals
   (mathematically accurate per-family formulas + descriptions, Julia mode, deep-zoom

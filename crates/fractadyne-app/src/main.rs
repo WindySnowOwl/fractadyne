@@ -1364,6 +1364,38 @@ fn fmt_zoom_log2(log2mag: f64) -> String {
     }
 }
 
+/// Magnification as a plain scientific string (no grouping), parseable by
+/// [`parse_zoom_to_log2`] and valid past f64 range — used to pre-fill the go-to field.
+fn fmt_zoom_field(log2mag: f64) -> String {
+    if log2mag <= 1020.0 {
+        format!("{:e}", 2f64.powf(log2mag.max(0.0)))
+    } else {
+        let log10 = log2mag * std::f64::consts::LOG10_2;
+        let e = log10.floor();
+        let m = 10f64.powf(log10 - e);
+        format!("{m:.6}e{e:.0}")
+    }
+}
+
+/// Parse a magnification string (plain or scientific, e.g. `256`, `1.5e400`) into
+/// `log2(magnification)`, reading the base-10 exponent directly so values far past f64
+/// range still work. Grouping (`,` `_` spaces) is ignored. `None` on garbage / non-positive.
+fn parse_zoom_to_log2(s: &str) -> Option<f64> {
+    let t: String = s.chars().filter(|c| !matches!(c, ',' | '_' | ' ' | '\t')).collect();
+    if t.is_empty() {
+        return None;
+    }
+    let (mant, exp) = match t.split_once(['e', 'E']) {
+        Some((m, x)) => (m, x.parse::<f64>().ok()?),
+        None => (t.as_str(), 0.0),
+    };
+    let m: f64 = mant.parse().ok()?;
+    if !(m.is_finite() && m > 0.0) || !exp.is_finite() {
+        return None;
+    }
+    Some(m.log2() + exp * std::f64::consts::LOG2_10)
+}
+
 /// Coordinate with fractional digits grouped in 5s by spaces, e.g.
 /// `-0.64939 71837 00000`.
 fn fmt_coord(v: f64) -> String {
@@ -2886,7 +2918,7 @@ impl FractadyneApp {
         format!(
             "app=Fractadyne\nversion={}\nformat_version=1\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
-             center_x={}\ncenter_y={}\nupp={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
+             center_x={}\ncenter_y={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
              palette={}\ncycle={}\noffset={}\naa={}\n",
             version_string(),
             secs,
@@ -2899,6 +2931,9 @@ impl FractadyneApp {
             fractadyne_core::to_decimal_string(&self.viewport.center_x),
             fractadyne_core::to_decimal_string(&self.viewport.center_y),
             self.viewport.units_per_pixel.to_f64(),
+            // Extended-range scale (log2 of units_per_pixel) so deep (>1e308×) views reload
+            // exactly; `upp` above is the saturating f64 (back-compat + human-readable).
+            self.viewport.units_per_pixel.log2(),
             self.viewport.magnification(),
             self.max_iter,
             self.auto_iter as u32,
@@ -2935,7 +2970,11 @@ impl FractadyneApp {
         if let Some(cy) = get("center_y").and_then(|s| fractadyne_core::parse_bf(&s)) {
             self.viewport.center_y = cy;
         }
-        if let Some(upp) = get("upp").and_then(|s| s.parse::<f64>().ok()) {
+        // Prefer the extended-range `upp_log2` (exact past 1e308×); fall back to the f64
+        // `upp` for images saved before it existed.
+        if let Some(l) = get("upp_log2").and_then(|s| s.parse::<f64>().ok()).filter(|l| l.is_finite()) {
+            self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(l);
+        } else if let Some(upp) = get("upp").and_then(|s| s.parse::<f64>().ok()) {
             self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(upp);
         }
         if let Some(mi) = get("max_iter").and_then(|s| s.parse().ok()) {
@@ -2962,8 +3001,9 @@ impl FractadyneApp {
             self.export_notes = n;
         }
         // Match the viewport's working precision to the restored zoom; drop caches.
-        self.viewport.precision =
-            fractadyne_core::precision_for_magnification(self.viewport.magnification());
+        self.viewport.precision = fractadyne_core::precision_for_octaves(
+            self.viewport.log2_magnification().max(0.0).ceil() as u64,
+        );
         self.invalidate_refs();
         self.zoom_vel = 0.0;
         self.record_nav();
@@ -4894,7 +4934,7 @@ impl FractadyneApp {
     fn open_goto(&mut self) {
         self.goto_x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
         self.goto_y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
-        self.goto_zoom = format!("{:e}", self.viewport.magnification());
+        self.goto_zoom = fmt_zoom_field(self.viewport.log2_magnification());
         self.goto_msg = None;
         self.goto_open = true;
     }
@@ -4903,10 +4943,12 @@ impl FractadyneApp {
     fn apply_goto(&mut self) {
         let cx = fractadyne_core::parse_bf(self.goto_x.trim());
         let cy = fractadyne_core::parse_bf(self.goto_y.trim());
-        let mag = self.goto_zoom.trim().parse::<f64>().ok();
-        match (cx, cy, mag) {
-            (Some(cx), Some(cy), Some(mag)) if mag.is_finite() && mag > 0.0 => {
-                self.viewport.set_center_mag(cx, cy, mag);
+        let log2mag = parse_zoom_to_log2(&self.goto_zoom);
+        match (cx, cy, log2mag) {
+            (Some(cx), Some(cy), Some(l)) if l.is_finite() => {
+                // Clamp to a sane octave bound so a pasted absurd zoom can't request
+                // runaway precision; well beyond any practical depth.
+                self.viewport.set_center_log2mag(cx, cy, l.clamp(0.0, 1.0e6));
                 self.zoom_vel = 0.0;
                 self.invalidate_refs();
                 self.record_nav();
@@ -6773,7 +6815,7 @@ impl eframe::App for FractadyneApp {
                         if ui.button("Use current").clicked() {
                             self.goto_x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
                             self.goto_y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
-                            self.goto_zoom = format!("{:e}", self.viewport.magnification());
+                            self.goto_zoom = fmt_zoom_field(self.viewport.log2_magnification());
                             self.goto_msg = None;
                         }
                     });
@@ -7145,6 +7187,25 @@ impl eframe::App for FractadyneApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The go-to / metadata zoom string must round-trip through log2(magnification) at any
+    // depth — including past f64's 1e308× range, where a plain f64 zoom would be ∞.
+    #[test]
+    fn zoom_field_log2_roundtrip() {
+        for &log2mag in &[0.0_f64, 8.0, 49.83, 100.0, 1019.0, 1100.0, 5000.0, 1.0e5] {
+            let s = fmt_zoom_field(log2mag);
+            let back = parse_zoom_to_log2(&s).expect("parse failed");
+            assert!((back - log2mag).abs() < 1e-3, "{log2mag} → {s} → {back}");
+        }
+        // Plain and grouped human input parses too.
+        assert!((parse_zoom_to_log2("256").unwrap() - 8.0).abs() < 1e-9);
+        assert!((parse_zoom_to_log2("1,024").unwrap() - 10.0).abs() < 1e-9);
+        assert!(parse_zoom_to_log2("1e400").unwrap() > 1300.0); // past f64 range, no overflow
+        // Garbage rejected, no panic.
+        for g in ["", "abc", "-5", "0", "e", "1e", "nan", "inf"] {
+            assert!(parse_zoom_to_log2(g).is_none(), "accepted {g:?}");
+        }
+    }
 
     // Phase 5.1: fuzz the view-metadata parser chain (untrusted: loaded from PNG tEXt
     // chunks / pasted). `meta_get` + the downstream numeric parsers must never panic and
