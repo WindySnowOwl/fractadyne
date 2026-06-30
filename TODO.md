@@ -554,9 +554,19 @@ for fun, informative value, and ease of use.
       df32 via `fe_to_cdf`; the GPU seed is formula-agnostic. Validated: core tests of the
       series vs exact perturbation for d=2 and d=3 (rel err <1e-3); seed vs full iteration
       `maxΔ 0` at 1e30× (mode 2) and 1e20× (mode 0); Multibrot 3/4/5 SA engages + matches
-      SA-off. **Follow-up:** **BLA** (bilinear approximation, Fraktaler-3 style) which skips
-      iterations throughout the orbit, not just the start. (Tricorn/abs families have no such
-      δc expansion — anti-holomorphic / non-analytic.)
+      SA-off. (Tricorn/abs families have no such δc expansion — anti-holomorphic / non-analytic.)
+- [~] **BLA (bilinear approximation)** — skips iterations *throughout* the orbit (SA only skips
+      the start). A binary tree of merged linear maps `δz' ≈ A·δz + B·δc` (A=2Z, B=1 per
+      Mandelbrot step) with validity radii; a pixel skips 2^l steps when `|δz| ≤` the merged
+      radius (Zhuoran's BLA; KF2+/Fraktaler-3). **Phase 1 DONE (core, fractadyne-core):**
+      `CFloatExp` (complex extended-range), `BlaNode`, `bla_merge`, `build_bla_mandel`
+      (level tree, odd-tail carry); merged radius `min(r₁,(r₂−|B₁|·δc_max)/|A₁|)`. Validated:
+      `bla_reproduces_exact_perturbation` — a BLA traversal matches full-step perturbation
+      (rel err <1e-3) while skipping >¾ of iterations on a main-cardioid reference.
+      **Phase 2 (next): GPU** — upload the tree (df32 mantissa + i32 exp per node), shader
+      traversal (highest valid level → apply → skip span; fall back to a full step near the
+      reference), wire into the Mandelbrot mode-0/2 loops, handle escape at BLA boundaries
+      (re-step on overshoot), gate + `--selftest` (BLA == non-BLA). **Phase 3:** Multibrot.
 - [ ] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
       beyond the current single-reference Zhuoran rebasing.
 

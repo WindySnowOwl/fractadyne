@@ -310,6 +310,49 @@ impl FloatExp {
         FloatExp::norm(1.0 / self.m, -self.e)
     }
 
+    /// Sum, aligning to the larger exponent (the smaller is dropped past f64's ~53 bits).
+    pub fn add(self, o: FloatExp) -> FloatExp {
+        if self.m == 0.0 {
+            return o;
+        }
+        if o.m == 0.0 {
+            return self;
+        }
+        let (hi, lo) = if self.e >= o.e { (self, o) } else { (o, self) };
+        let de = hi.e - lo.e;
+        if de > 120 {
+            return hi;
+        }
+        FloatExp::norm(hi.m + lo.m * 2f64.powi(-de), hi.e)
+    }
+
+    pub fn sub(self, o: FloatExp) -> FloatExp {
+        self.add(FloatExp { m: -o.m, e: o.e })
+    }
+
+    /// Magnitude (drops the sign).
+    pub fn abs(self) -> FloatExp {
+        FloatExp { m: self.m.abs(), e: self.e }
+    }
+
+    /// Square root (`≥ 0` inputs; clamps negatives/zero to `0`).
+    pub fn sqrt(self) -> FloatExp {
+        if self.m <= 0.0 {
+            return FloatExp::ZERO;
+        }
+        if self.e & 1 == 0 {
+            FloatExp::norm(self.m.sqrt(), self.e / 2)
+        } else {
+            // odd exponent: pull one power of two under the root (works for e<0 too).
+            FloatExp::norm((self.m * 2.0).sqrt(), (self.e - 1) / 2)
+        }
+    }
+
+    /// Signed value comparison (`self < o`).
+    pub fn lt(self, o: FloatExp) -> bool {
+        self.sub(o).m < 0.0
+    }
+
     /// `log2` of the magnitude (finite for any representable value; `−∞` for `0`).
     pub fn log2(self) -> f64 {
         if self.m == 0.0 {
@@ -923,6 +966,98 @@ pub fn series_skip(
     }
 }
 
+// ---------------- BLA (bilinear approximation) -----------------------------------
+// Skips iterations *throughout* the orbit (series approximation only skips the start). While
+// |δz| is small the Mandelbrot step δz' = 2Zδz + δz² + δc is ≈ linear: δz' ≈ Aδz + Bδc with
+// A = 2Z, B = 1, dropping δz². Consecutive linear steps compose, so a binary tree of merged
+// steps lets a pixel skip 2^l iterations at once whenever |δz| ≤ the merged validity radius.
+// (Zhuoran's BLA, as used in Kalles Fraktaler 2+ / Fraktaler-3.)
+
+/// Complex value with `FloatExp` parts — BLA coefficients span far beyond f64's exponent
+/// range (a merged `A` is a long product of `2Zₙ`).
+#[derive(Clone, Copy)]
+pub struct CFloatExp {
+    pub re: FloatExp,
+    pub im: FloatExp,
+}
+
+impl CFloatExp {
+    pub fn mul(self, o: CFloatExp) -> CFloatExp {
+        CFloatExp {
+            re: self.re.mul(o.re).sub(self.im.mul(o.im)),
+            im: self.re.mul(o.im).add(self.im.mul(o.re)),
+        }
+    }
+    pub fn add(self, o: CFloatExp) -> CFloatExp {
+        CFloatExp { re: self.re.add(o.re), im: self.im.add(o.im) }
+    }
+    /// Magnitude `|a| = hypot(re, im)` in extended range.
+    pub fn abs(self) -> FloatExp {
+        self.re.mul(self.re).add(self.im.mul(self.im)).sqrt()
+    }
+}
+
+/// One BLA node: the linear map `δz' = A·δz + B·δc`, valid while `|δz| ≤ r`, covering `span`
+/// consecutive reference iterations starting at this node's (aligned) index.
+#[derive(Clone, Copy)]
+pub struct BlaNode {
+    pub a: CFloatExp,
+    pub b: CFloatExp,
+    pub r: FloatExp,
+    pub span: u32,
+}
+
+/// Merge two consecutive BLA nodes (`x` then `y`). Composition `A=A_y·A_x`, `B=A_y·B_x+B_y`;
+/// validity `|δz|≤r_x` **and** `|A_x δz + B_x δc|≤r_y` ⇒ `r = min(r_x, (r_y − |B_x|·δc_max)/|A_x|)`.
+fn bla_merge(x: BlaNode, y: BlaNode, dc_max: FloatExp) -> BlaNode {
+    let a = y.a.mul(x.a);
+    let b = y.a.mul(x.b).add(y.b);
+    let a1 = x.a.abs();
+    let b1 = x.b.abs();
+    let t = y.r.sub(b1.mul(dc_max));
+    let t = if t.m < 0.0 { FloatExp::ZERO } else { t };
+    let r2 = if a1.m == 0.0 { FloatExp::ZERO } else { t.mul(a1.recip()) };
+    let r = if x.r.lt(r2) { x.r } else { r2 };
+    BlaNode { a, b, r, span: x.span + y.span }
+}
+
+/// Build the BLA binary tree for a **Mandelbrot** reference `orbit` (df32 `[x_hi,y_hi,x_lo,
+/// y_lo]`). `dc_max` is the worst-case `|δc|` over the view; `eps` the per-step linear
+/// tolerance (smaller ⇒ more accurate but fewer skips). `levels[l][j]` covers the steps
+/// starting at `j·2^l`; level 0 has one node per step `n` (using `Zₙ`), higher levels merge
+/// pairs (an odd tail carries up with its smaller span).
+pub fn build_bla_mandel(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64) -> Vec<Vec<BlaNode>> {
+    let nstep = orbit.len().saturating_sub(1);
+    if nstep == 0 {
+        return Vec::new();
+    }
+    let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+    let mut lvl0 = Vec::with_capacity(nstep);
+    for z in orbit.iter().take(nstep) {
+        let zr = z[0] as f64 + z[2] as f64; // df32 → f64 (Z real)
+        let zi = z[1] as f64 + z[3] as f64; // Z imag
+        let a = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
+        let r = a.abs().mul_f64(eps); // |2Z|·eps : drops δz² with rel error ≤ eps
+        lvl0.push(BlaNode { a, b: one, r, span: 1 });
+    }
+    let mut levels = vec![lvl0];
+    while levels.last().unwrap().len() > 1 {
+        let prev = levels.last().unwrap();
+        let mut next = Vec::with_capacity((prev.len() + 1) / 2);
+        let mut j = 0;
+        while j < prev.len() {
+            if j + 1 < prev.len() {
+                next.push(bla_merge(prev[j], prev[j + 1], dc_max));
+            } else {
+                next.push(prev[j]); // odd tail carries up (smaller span, still aligned)
+            }
+            j += 2;
+        }
+        levels.push(next);
+    }
+    levels
+}
+
 /// Iterations before escape (or `max_iter`) in **arbitrary precision** — ranks
 /// candidate references at deep zoom, where `orbit_length`'s `f64` coordinates would
 /// all collapse to the same value and make the ranking meaningless.
@@ -1499,6 +1634,71 @@ mod tests {
         let err = ((series.0 - ex).powi(2) + (series.1 - ey).powi(2)).sqrt();
         let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
         assert!(err / mag < 1.0e-3, "z³ series vs exact rel err {:.2e} at skip {}", err / mag, s.skip);
+    }
+
+    // BLA: a tree traversal must reproduce the exact (full-step) perturbation while skipping
+    // most iterations. Interior reference (main cardioid) → bounded orbit, |δz| stays tiny.
+    #[test]
+    fn bla_reproduces_exact_perturbation() {
+        let p = 96;
+        let (cx, cy) = (bf(-0.5, p), bf(0.0, p)); // main-cardioid interior, never escapes
+        let target: u32 = 2000;
+        let (orbit, len) = reference_orbit(&bf(0.0, p), &bf(0.0, p), &cx, &cy, 0, target, p);
+        assert!(len >= target, "reference escaped early (len={len})");
+        let dc = (1.0e-9_f64, 0.0_f64); // worst-case corner δc
+        let dc_max = FloatExp::from_f64((dc.0 * dc.0 + dc.1 * dc.1).sqrt());
+        let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6);
+        assert!(!levels.is_empty());
+
+        // BLA traversal: skip with the highest valid level, else a full perturbation step.
+        let dc_c = CFloatExp { re: FloatExp::from_f64(dc.0), im: FloatExp::from_f64(dc.1) };
+        let mut dz = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
+        let (mut m, mut ops) = (0u32, 0u32);
+        while m < target {
+            ops += 1;
+            let dzmag = dz.abs();
+            let mut used = false;
+            for l in (0..levels.len()).rev() {
+                let step = 1u32 << l;
+                if (m & (step - 1)) != 0 {
+                    continue; // not aligned to 2^l
+                }
+                let j = (m >> l) as usize;
+                let Some(&node) = levels[l].get(j) else { continue };
+                if m + node.span > target || !dzmag.lt(node.r) {
+                    continue;
+                }
+                dz = node.a.mul(dz).add(node.b.mul(dc_c)); // δz = A·δz + B·δc
+                m += node.span;
+                used = true;
+                break;
+            }
+            if !used {
+                let zr = orbit[m as usize][0] as f64 + orbit[m as usize][2] as f64;
+                let zi = orbit[m as usize][1] as f64 + orbit[m as usize][3] as f64;
+                let z = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
+                dz = z.mul(dz).add(dz.mul(dz)).add(dc_c); // δz' = 2Zδz + δz² + δc
+                m += 1;
+            }
+        }
+        let (bx, by) = (dz.re.to_f64(), dz.im.to_f64());
+
+        // Exact perturbation (full steps, f64 — δz stays ~1e-9 for this interior reference).
+        let (mut ex, mut ey) = (0.0f64, 0.0f64);
+        for z in orbit.iter().take(target as usize) {
+            let (zr, zi) = (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64);
+            let (nzx, nzy) = (
+                2.0 * zr * ex - 2.0 * zi * ey + (ex * ex - ey * ey) + dc.0,
+                2.0 * zr * ey + 2.0 * zi * ex + 2.0 * ex * ey + dc.1,
+            );
+            ex = nzx;
+            ey = nzy;
+        }
+
+        let err = ((bx - ex).powi(2) + (by - ey).powi(2)).sqrt();
+        let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
+        assert!(err / mag < 1.0e-3, "BLA vs exact rel err {:.2e} (ops={ops})", err / mag);
+        assert!(ops < target / 4, "BLA didn't skip enough (ops={ops} of {target})");
     }
 
     #[test]
