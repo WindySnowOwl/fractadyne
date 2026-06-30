@@ -1,0 +1,35 @@
+# Example camera tour for `fractadyne --render-tour scripts/tour.example.toml`.
+# Renders a PNG frame sequence (frame_00000.png …) that you assemble into a video,
+# e.g.:  ffmpeg -framerate 30 -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p tour.mp4
+#
+# Run options:
+#   --render-tour FILE   the script (this file)
+#   --fps N              frames per second sampled along the timeline (default 30)
+#   --size W             frame width in px (default 1280; height = 16:9 unless --height)
+#   --height H           frame height in px (default width*9/16)
+#   --ss N               supersampling 1..8 (default 1)
+#   --out DIR            output directory (default "frames")
+#
+# The tour glides (eased) between keyframes. Each [[keyframe]] adds `secs` seconds of
+# travel from the previous one; a keyframe with no center inherits the previous center
+# (handy for a pure zoom-in). `mag` is the magnification; `cx`/`cy` are full-precision
+# decimal strings so deep targets are exact. `fractal`/`julia` are optional.
+#
+# This file also loads in the app via Tools → "Play script…".
+
+name = "Seahorse Valley dive"
+
+[[keyframe]]
+secs = 0          # start
+center_x = "-0.743643887037158704752191506114774"
+center_y = "0.131825904205311970493132056385139"
+mag = 1.0
+fractal = "Mandelbrot"
+
+[[keyframe]]
+secs = 6          # 6 s gliding to 1e6× (center inherited)
+mag = 1.0e6
+
+[[keyframe]]
+secs = 6          # 6 more seconds to 1e12×
+mag = 1.0e12

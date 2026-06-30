@@ -894,6 +894,13 @@ struct FractadyneApp {
     auto_render_done: bool,
     /// `--render-iter`: write the raw iteration texture as EXR instead of a colored image.
     render_iter_mode: bool,
+    /// CLI `--render-tour FILE`: render a keyframe tour to a PNG frame sequence, then quit.
+    render_tour: Option<std::path::PathBuf>,
+    render_tour_done: bool,
+    tour_fps: f64,
+    tour_size: (u32, u32),
+    tour_ss: u32,
+    tour_out: std::path::PathBuf,
     /// CLI `--selftest`: run the GPU validation suite, print a report, and exit.
     selftest: bool,
     selftest_done: bool,
@@ -1046,6 +1053,16 @@ impl FractadyneApp {
         let selftest = args.iter().any(|a| a == "--selftest");
         let profile = args.iter().any(|a| a == "--profile");
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+        // --render-tour FILE [--fps N] [--size W] [--height H] [--ss N] [--out DIR]
+        let render_tour = val("--render-tour").map(std::path::PathBuf::from);
+        let tour_fps = val("--fps").and_then(|s| s.parse::<f64>().ok()).filter(|f| *f > 0.0).unwrap_or(30.0);
+        let tour_w = val("--size").and_then(|s| s.parse::<u32>().ok()).unwrap_or(1280).clamp(16, 16384);
+        let tour_h = val("--height")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or((tour_w * 9 / 16).max(16))
+            .clamp(16, 16384);
+        let tour_ss = val("--ss").and_then(|s| s.parse::<u32>().ok()).unwrap_or(1).clamp(1, 8);
+        let tour_out = out_path.clone().unwrap_or_else(|| std::path::PathBuf::from("frames"));
         let profile_reps = val("--reps").and_then(|s| s.parse().ok()).unwrap_or(5u32);
         let profile_regions = val("--regions").cloned();
         let auto_benchmark_out = out_path.clone();
@@ -1109,6 +1126,12 @@ impl FractadyneApp {
             auto_render_out,
             auto_render_done: false,
             render_iter_mode,
+            render_tour,
+            render_tour_done: false,
+            tour_fps,
+            tour_size: (tour_w, tour_h),
+            tour_ss,
+            tour_out,
             selftest,
             selftest_done: false,
             profile,
@@ -2971,6 +2994,22 @@ impl eframe::App for FractadyneApp {
             }
         }
 
+        // CLI render-tour: render the keyframe script to a PNG frame sequence, then quit.
+        if let Some(script) = self.render_tour.clone() {
+            if !self.render_tour_done {
+                if let Some((dev, q)) = &gpu {
+                    self.render_tour_done = true;
+                    let (w, h) = self.tour_size;
+                    let (fps, ss, out) = (self.tour_fps, self.tour_ss, self.tour_out.clone());
+                    match self.render_tour_to_dir(dev, q, &script, fps, w, h, ss, &out) {
+                        Ok(m) => println!("{m}"),
+                        Err(e) => eprintln!("Tour render failed: {e}"),
+                    }
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+
         // Scripted camera tour / benchmark: drive the view before anything renders.
         if self.playback.is_some() && self.advance_playback(ctx) {
             self.schedule_repaint(ctx);
@@ -3026,7 +3065,7 @@ impl eframe::App for FractadyneApp {
         }
         self.perf.last_frame = Some(frame_start);
 
-        if !self.auto_benchmark && !self.auto_render && !self.selftest && !self.profile {
+        if !self.auto_benchmark && !self.auto_render && !self.selftest && !self.profile && self.render_tour.is_none() {
             self.autosave(ctx); // don't let a CLI run overwrite the saved session
         }
 

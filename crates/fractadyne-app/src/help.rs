@@ -336,7 +336,14 @@ pub(crate) fn help_command_line(ui: &mut egui::Ui) {
     );
     help_sub(ui, "Modes");
     help_kv(ui, "--render", "Render one image and exit.");
-    help_kv(ui, "--out PATH, -o PATH", "Output file (PNG or EXR by extension).");
+    help_kv(ui, "--out PATH, -o PATH", "Output file (PNG/EXR), or output dir for --render-tour.");
+    help_kv(
+        ui,
+        "--render-tour FILE",
+        "Render a keyframe tour (TOML) to a PNG frame sequence, then exit. Options: \
+         --fps N (default 30), --size W, --height H, --ss N, --out DIR (default \"frames\"). \
+         Assemble with ffmpeg. See scripts/tour.example.toml.",
+    );
     help_kv(ui, "--benchmark, --bench", "Run the benchmark tour and exit (use --out to save).");
     help_kv(ui, "--find-minibrot", "Print the nearby minibrot's period + center and exit.");
     help_sub(ui, "View");

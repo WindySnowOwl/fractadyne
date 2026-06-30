@@ -410,7 +410,8 @@ perturbation + series approximation + glitch correction. The headline feature.
       a `profile` module. *(Follow-ups: GPU timestamp queries to split iterate vs color
       precisely; opt-in per-frame logging of live interactive sessions; fold the series
       coefficients into the reference-orbit pass to cut the ~100 ms series-skip setup at depth.)*
-- [ ] **Record-to-video / frame export** from a script (offline, deterministic).
+- [x] **Record-to-video / frame export** from a script (offline, deterministic) — done via
+      `--render-tour` (see the Zoom-movie entry below).
 - [x] **Ship compiled binaries on GitHub (Releases)** — `.github/workflows/release.yml`
       builds the Windows `x86_64` binary on `windows-latest` and, on a `v*` tag push,
       packages `fractadyne.exe` + README + both licenses into a versioned zip with a SHA-256
@@ -521,7 +522,16 @@ for fun, informative value, and ease of use.
       reference refresh). Stops on a dead end (no boundary detail → flat interior/exterior)
       or the depth cap (~1e271×, the smooth regime). *(Follow-ups: minibrot-seeking /
       boundary-tracking steering modes; pairs with the planned zoom-movie export.)*
-- [ ] **Zoom-movie / frame→video export** — build on scripting + headless render.
+- [x] **Zoom-movie / frame→video export** — `--render-tour FILE [--fps N] [--size W]
+      [--height H] [--ss N] [--out DIR]` renders a keyframe-tour TOML to a numbered PNG
+      frame sequence (`frame_00000.png …`) for assembly into a video (prints an ffmpeg
+      one-liner). Reuses the scripting keyframe interpolation — factored into
+      `Playback::sample(t)` shared with live playback — and the offscreen export path; steps
+      the timeline at fixed `fps`, recomputing a fresh deep reference per frame. Deep-correct
+      (`set_center_log2mag`, octave-based precision) so dives past 1e308× sample exactly; this
+      also upgraded **live** playback to the log2 path (was `set_center_mag`, which saturated
+      at 1e308×). Example: `scripts/tour.example.toml`. Verified: a 9-frame 1→1e3× test dive
+      renders correctly. *Follow-up: in-app "Render tour…" UI + optional built-in encoder.*
 - [ ] **Layers + blend modes** (Ultra Fractal-style compositing).
 - [ ] **Formula DSL / custom formulas** (M6).
 - [~] **Series approximation** — order-3 polynomial (`δz ≈ A·δc + B·δc² + C·δc³`) seeds the

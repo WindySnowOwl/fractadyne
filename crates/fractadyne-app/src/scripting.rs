@@ -85,6 +85,43 @@ pub(crate) struct Playback {
     pub(crate) bench: Option<Bench>,
 }
 
+impl Playback {
+    /// Sample the eased camera state at time `e` (seconds, expected in `[0, total]`):
+    /// the segment-interpolated center, `ln(magnification)`, fractal, and Julia flag.
+    /// Shared by live playback and the headless tour renderer.
+    pub(crate) fn sample(&self, e: f64) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat, f64, FractalKind, bool) {
+        let n = self.kfs.len();
+        let mut i = n - 1;
+        for j in 0..n.saturating_sub(1) {
+            if e <= self.kfs[j + 1].at {
+                i = j;
+                break;
+            }
+        }
+        if i + 1 < n {
+            let a = &self.kfs[i];
+            let b = &self.kfs[i + 1];
+            let seg = (b.at - a.at).max(1.0e-9);
+            let u = ((e - a.at) / seg).clamp(0.0, 1.0);
+            let ease = u * u * (3.0 - 2.0 * u); // smoothstep
+            let lm = a.logmag + (b.logmag - a.logmag) * ease;
+            // Precision from octaves (log2 mag) so it stays valid past f64's 1e308× ceiling.
+            let octaves = (lm / std::f64::consts::LN_2).max(0.0).ceil() as u64;
+            let p = fractadyne_core::precision_for_octaves(octaves);
+            (
+                fractadyne_core::lerp_bf(&a.cx, &b.cx, ease, p),
+                fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
+                lm,
+                a.fractal,
+                a.julia,
+            )
+        } else {
+            let a = &self.kfs[i];
+            (a.cx.clone(), a.cy.clone(), a.logmag, a.fractal, a.julia)
+        }
+    }
+}
+
 /// Resolve a parsed script file into a playable tour (parses centers, accumulates
 /// keyframe times, fills inherited centers). Returns `None` if it has no keyframes.
 fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
@@ -183,6 +220,60 @@ impl FractadyneApp {
         }
     }
 
+    /// Render a keyframe-tour script (TOML) to a numbered PNG frame sequence — the headless
+    /// `--render-tour` mode for producing a deep-zoom dive video. Steps the timeline at a
+    /// fixed `fps`, rendering each frame at `width×height` (× `ss` supersampling) via the
+    /// offscreen export path. Blocking; assemble the frames afterward (e.g. with ffmpeg).
+    pub(crate) fn render_tour_to_dir(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        script_path: &std::path::Path,
+        fps: f64,
+        width: u32,
+        height: u32,
+        ss: u32,
+        out_dir: &std::path::Path,
+    ) -> Result<String, String> {
+        let text = std::fs::read_to_string(script_path)
+            .map_err(|e| format!("read {}: {e}", script_path.display()))?;
+        let sf: ScriptFile = toml::from_str(&text).map_err(|e| format!("parse script: {e}"))?;
+        let pb = resolve_script(sf, None).ok_or("script has no keyframes")?;
+        std::fs::create_dir_all(out_dir)
+            .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
+        // Single-view offscreen render at the requested frame size.
+        self.dual = false;
+        self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
+        self.export_width = width;
+        self.export_ss = ss.max(1);
+        let fps = fps.max(1.0);
+        let frames: u64 = if pb.total <= 0.0 { 1 } else { (pb.total * fps).round() as u64 + 1 };
+        println!(
+            "Rendering tour \"{}\": {frames} frames at {width}×{height} ss{}, {fps} fps ({:.1}s)…",
+            pb.name, self.export_ss, pb.total
+        );
+        for fi in 0..frames {
+            let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
+            let (cx, cy, logmag, fractal, julia) = pb.sample(t);
+            self.fractal = fractal;
+            self.julia_mode = julia && fractal.supports_julia();
+            self.viewport
+                .set_center_log2mag(cx, cy, logmag / std::f64::consts::LN_2);
+            let frame_path = out_dir.join(format!("frame_{fi:05}.png"));
+            self.render_to_file(device, queue, &frame_path)
+                .map_err(|e| format!("frame {fi}: {e}"))?;
+            if fi % 10 == 0 || fi + 1 == frames {
+                println!("  frame {}/{frames}", fi + 1);
+            }
+        }
+        Ok(format!(
+            "Rendered {frames} frame(s) → {}\nAssemble e.g.: ffmpeg -framerate {fps} -i \
+             {}/frame_%05d.png -c:v libx264 -pix_fmt yuv420p tour.mp4",
+            out_dir.display(),
+            out_dir.display()
+        ))
+    }
+
     /// Advance the active camera tour by one frame; drives the view and, for a
     /// benchmark, samples performance. Returns true while still playing.
     pub(crate) fn advance_playback(&mut self, ctx: &egui::Context) -> bool {
@@ -198,41 +289,14 @@ impl FractadyneApp {
         }
         let finished = !pb.loop_ && elapsed >= pb.total;
         let e = elapsed.clamp(0.0, pb.total);
-
-        // Locate the active segment and interpolate (eased) center + log-magnification.
-        let n = pb.kfs.len();
-        let mut i = n - 1;
-        for j in 0..n.saturating_sub(1) {
-            if e <= pb.kfs[j + 1].at {
-                i = j;
-                break;
-            }
-        }
-        let (cx, cy, logmag, fractal, julia) = if i + 1 < n {
-            let a = &pb.kfs[i];
-            let b = &pb.kfs[i + 1];
-            let seg = (b.at - a.at).max(1.0e-9);
-            let u = ((e - a.at) / seg).clamp(0.0, 1.0);
-            let ease = u * u * (3.0 - 2.0 * u);
-            let lm = a.logmag + (b.logmag - a.logmag) * ease;
-            let p = fractadyne_core::precision_for_magnification(lm.exp());
-            (
-                fractadyne_core::lerp_bf(&a.cx, &b.cx, ease, p),
-                fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
-                lm,
-                a.fractal,
-                a.julia,
-            )
-        } else {
-            let a = &pb.kfs[i];
-            (a.cx.clone(), a.cy.clone(), a.logmag, a.fractal, a.julia)
-        };
+        let (cx, cy, logmag, fractal, julia) = pb.sample(e);
         if fractal != self.fractal || julia != self.julia_mode {
             self.fractal = fractal;
             self.julia_mode = julia && fractal.supports_julia();
             self.invalidate_refs();
         }
-        self.viewport.set_center_mag(cx, cy, logmag.exp());
+        // log2 path so playback stays exact past f64's 1e308× ceiling.
+        self.viewport.set_center_log2mag(cx, cy, logmag / std::f64::consts::LN_2);
         self.settle_t = now; // glide → cheap (interacting) render path
 
         // Benchmark sampling (skip warm-up frames).

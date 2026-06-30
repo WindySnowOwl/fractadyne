@@ -319,6 +319,16 @@ Baseline for tracked versioning. Notable capabilities already present:
   (they used to look static while panning deep). The magnification's scientific-notation
   mantissa is space-grouped in 5s (`3.38050 02722 7e15`) to match the coordinate readout.
 
+- **Zoom-movie / frame-sequence export** — `--render-tour FILE [--fps N] [--size W]
+  [--height H] [--ss N] [--out DIR]` renders a keyframe-tour TOML to a numbered PNG frame
+  sequence (`frame_00000.png …`) for assembly into a deep-zoom dive video (prints an ffmpeg
+  one-liner; example in `scripts/tour.example.toml`, also loadable via Tools → Play script).
+  Reuses the scripting keyframe interpolation (factored into `Playback::sample`, shared with
+  live playback) and the offscreen export path; samples the timeline at a fixed fps and
+  recomputes a fresh deep reference per frame. Deep-correct (`set_center_log2mag`,
+  octave-based precision) so dives past 1e308× sample exactly — which also fixed live
+  playback (it used `set_center_mag`, saturating at 1e308×).
+
 - **Prebuilt binaries via GitHub Releases** — `.github/workflows/release.yml` builds the
   Windows x64 binary and, on a `v*` tag push, packages `fractadyne.exe` + README + licenses
   into a versioned zip with a SHA-256 sidecar and publishes a GitHub Release (auto-generated
