@@ -22,6 +22,9 @@
 # Log files
 *.log
 
+# Profiling run logs (--profile writes timestamped JSON here; keep the scripts, not the runs)
+/logs/
+
 # OS cruft
 .DS_Store
 Thumbs.db

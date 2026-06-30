@@ -1,0 +1,280 @@
+//! Development profiling harness (`--profile`).
+//!
+//! Renders a set of benchmark *regions* (named view specs spanning the depth/mode regimes),
+//! times the costly stages — bignum **reference orbit**, **series-approximation** setup, and
+//! the **GPU iterate / full render** passes — and writes a structured JSON log (with full run
+//! context) to `logs/` so bottlenecks are obvious and optimizations can be validated by
+//! diffing two runs. Disabled in normal use; opt-in via the CLI, so there's no overhead.
+//!
+//! The heavy logic lives here (not in `main.rs`) to keep the binary's glue readable.
+
+use crate::{FractadyneApp, FractalKind};
+use fractadyne_core::Viewport;
+use std::time::Instant;
+
+/// Per-render setup timings recorded (via a `Cell`) by `current_export_request_for`.
+#[derive(Clone, Copy, Default)]
+pub struct ProfSetup {
+    /// Reference-orbit compute (arbitrary precision, CPU), ms.
+    pub reference_ms: f64,
+    /// Series-approximation coefficient compute + skip selection (CPU), ms.
+    pub series_ms: f64,
+}
+
+/// One benchmark region: a view to render and time.
+#[derive(Clone)]
+pub struct ProfRegion {
+    pub name: String,
+    pub fractal: FractalKind,
+    pub cx: String,
+    pub cy: String,
+    pub zoom_log2: f64,
+    pub iter: u32,
+    pub size: u32,
+    pub ss: u32,
+    pub method: u32,
+}
+
+const LOG2_10: f64 = std::f64::consts::LOG2_10;
+
+/// Built-in regions spanning the render regimes: direct (home), df32 perturbation
+/// (1e4–1e20×), and floatexp + series-approximation (1e30×, with a stripe variant that
+/// disables SA) — so a single run exercises every hot path.
+pub fn default_regions() -> Vec<ProfRegion> {
+    // A known infinitely-deep "seahorse" point: structured across all these scales.
+    let (sx, sy) = (
+        "-0.7436438870371587047521915061147707",
+        "0.131825904205311970493132056385139",
+    );
+    let m = |name: &str, cx: &str, cy: &str, zoom10: f64, iter: u32, method: u32| ProfRegion {
+        name: name.into(),
+        fractal: FractalKind::Mandelbrot,
+        cx: cx.into(),
+        cy: cy.into(),
+        zoom_log2: zoom10 * LOG2_10,
+        iter,
+        size: 512,
+        ss: 1,
+        method,
+    };
+    vec![
+        m("home", "-0.5", "0.0", 0.0, 512, 0),
+        m("seahorse-1e4", sx, sy, 4.0, 1_500, 0),
+        m("seahorse-1e6", sx, sy, 6.0, 2_500, 0),
+        m("deep-1e12", sx, sy, 12.0, 6_000, 0),
+        m("deep-1e20", sx, sy, 20.0, 12_000, 0),
+        m("deep-1e30-sa", sx, sy, 30.0, 25_000, 0), // floatexp + series approximation
+        m("deep-1e30-stripe", sx, sy, 30.0, 25_000, 1), // floatexp, SA off (aux needs every iter)
+    ]
+}
+
+/// Optional regions file (`--regions PATH`, TOML): `[[region]]` tables override the built-ins.
+/// Bounded/clamped (dev input, but kept tidy). Returns `None` on any problem (caller falls
+/// back to the built-ins, reporting why).
+pub fn load_regions(path: &std::path::Path) -> Result<Vec<ProfRegion>, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if meta.len() > 1_000_000 {
+        return Err("regions file too large".into());
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+
+    #[derive(serde::Deserialize)]
+    struct File {
+        #[serde(default)]
+        region: Vec<Spec>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Spec {
+        name: String,
+        fractal: Option<String>,
+        cx: String,
+        cy: String,
+        zoom_log2: Option<f64>,
+        zoom: Option<f64>, // plain magnification alternative
+        iter: Option<u32>,
+        size: Option<u32>,
+        ss: Option<u32>,
+        method: Option<String>,
+    }
+    let f: File = toml::from_str(&text).map_err(|e| e.to_string())?;
+    if f.region.is_empty() {
+        return Err("no [[region]] entries".into());
+    }
+    let out = f
+        .region
+        .into_iter()
+        .take(256)
+        .map(|s| {
+            let zoom_log2 = s
+                .zoom_log2
+                .or_else(|| s.zoom.map(|z| z.max(1.0).log2()))
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0e6);
+            ProfRegion {
+                name: s.name.chars().take(48).collect(),
+                fractal: s
+                    .fractal
+                    .as_deref()
+                    .and_then(FractalKind::from_name)
+                    .unwrap_or(FractalKind::Mandelbrot),
+                cx: s.cx.chars().take(2048).collect(),
+                cy: s.cy.chars().take(2048).collect(),
+                zoom_log2,
+                iter: s.iter.unwrap_or(2_000).clamp(64, 200_000),
+                size: s.size.unwrap_or(512).clamp(16, 4_096),
+                ss: s.ss.unwrap_or(1).clamp(1, 8),
+                method: crate::method_from_str(s.method.as_deref().unwrap_or("smooth")),
+            }
+        })
+        .collect();
+    Ok(out)
+}
+
+/// min / median / mean / max of a sample (ms). Sorts in place.
+struct Stat {
+    min: f64,
+    median: f64,
+    mean: f64,
+    max: f64,
+}
+fn stat(v: &mut [f64]) -> Stat {
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = v.len().max(1);
+    Stat {
+        min: v.first().copied().unwrap_or(0.0),
+        median: v[v.len() / 2.min(v.len().saturating_sub(1))],
+        mean: v.iter().sum::<f64>() / n as f64,
+        max: v.last().copied().unwrap_or(0.0),
+    }
+}
+
+/// JSON string escape (values here are simple, but be safe with `"` and `\`).
+fn js(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+fn stat_json(s: &Stat) -> String {
+    format!(
+        "{{\"min\":{:.4},\"median\":{:.4},\"mean\":{:.4},\"max\":{:.4}}}",
+        s.min, s.median, s.mean, s.max
+    )
+}
+
+impl FractadyneApp {
+    /// Run the profiling pass over `regions` (`reps` measured renders each), write a JSON log
+    /// to `out`, print a human summary, and return the log path.
+    pub fn run_profile(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        regions: &[ProfRegion],
+        reps: u32,
+        out: &std::path::Path,
+    ) {
+        use std::sync::atomic::{AtomicBool, AtomicU32};
+        let progress = AtomicU32::new(0);
+        let cancel = AtomicBool::new(false);
+        let reps = reps.clamp(1, 100);
+
+        let mut json = String::new();
+        json.push_str("{\n");
+        json.push_str(&format!("  \"tool\": \"fractadyne --profile\",\n"));
+        json.push_str(&format!("  \"version\": {},\n", js(&crate::version_string())));
+        json.push_str(&format!("  \"utc\": {},\n", js(&crate::utc_string(now_unix()))));
+        let sys = crate::gather_system_info();
+        json.push_str(&format!("  \"gpu\": {},\n", js(&self.gpu_name)));
+        json.push_str(&format!("  \"cpu\": {},\n", js(&sys.cpu)));
+        json.push_str(&format!("  \"os\": {},\n", js(std::env::consts::OS)));
+        json.push_str(&format!("  \"series_approx\": {},\n", self.series_approx));
+        json.push_str(&format!("  \"reps\": {reps},\n"));
+        json.push_str("  \"regions\": [\n");
+
+        println!("Fractadyne profiling — {} regions × {reps} reps", regions.len());
+        println!(
+            "  {:<20} {:>5} {:>8} {:>9} {:>10} {:>10} {:>10}",
+            "region", "mode", "skip", "ref ms", "iter ms", "render ms", "total ms"
+        );
+
+        for (ri, r) in regions.iter().enumerate() {
+            // Configure state for this region.
+            self.set_fractal(r.fractal);
+            self.julia_mode = false;
+            self.dual = false;
+            self.color_method = r.method;
+            self.auto_iter = false;
+            self.max_iter = r.iter;
+            self.export_width = r.size;
+            self.export_ss = r.ss;
+            self.invalidate_refs();
+
+            let mut vp = Viewport::new(r.size as f64, r.size as f64);
+            let cx = fractadyne_core::parse_bf(&r.cx).unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(-0.5, 64));
+            let cy = fractadyne_core::parse_bf(&r.cy).unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, 64));
+            vp.set_center_log2mag(cx, cy, r.zoom_log2);
+
+            // Build the request once — this records reference/series timings in `self.prof`.
+            let req = self.current_export_request_for(&vp, false);
+            let setup = self.prof.get();
+
+            // Warm up (shader/pipeline compile, first upload), then measure GPU passes.
+            let _ = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
+            let (mut iter_ms, mut render_ms) = (Vec::new(), Vec::new());
+            for _ in 0..reps {
+                let t = Instant::now();
+                let _ = fractadyne_gpu::render_iter(device, queue, &req);
+                iter_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+                let t = Instant::now();
+                let _ = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
+                render_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+            let iter_s = stat(&mut iter_ms);
+            let render_s = stat(&mut render_ms);
+            let total = setup.reference_ms + setup.series_ms + render_s.median;
+
+            println!(
+                "  {:<20} {:>5} {:>8} {:>10.2} {:>10.2} {:>10.2} {:>10.2}",
+                r.name, req.mode, req.sa_skip, setup.reference_ms, iter_s.median, render_s.median, total
+            );
+
+            json.push_str("    {\n");
+            json.push_str(&format!("      \"name\": {},\n", js(&r.name)));
+            json.push_str(&format!("      \"fractal\": {},\n", js(r.fractal.name())));
+            json.push_str(&format!("      \"center_x\": {},\n", js(&r.cx)));
+            json.push_str(&format!("      \"center_y\": {},\n", js(&r.cy)));
+            json.push_str(&format!("      \"zoom_log2\": {:.4},\n", r.zoom_log2));
+            json.push_str(&format!("      \"zoom_log10\": {:.2},\n", r.zoom_log2 / LOG2_10));
+            json.push_str(&format!("      \"size\": [{}, {}],\n", req.width, req.height));
+            json.push_str(&format!("      \"ss\": {},\n", req.ss));
+            json.push_str(&format!("      \"method\": {},\n", req.color_method));
+            json.push_str(&format!("      \"mode\": {},\n", req.mode));
+            json.push_str(&format!("      \"eff_iter\": {},\n", req.max_iter));
+            json.push_str(&format!("      \"sa_skip\": {},\n", req.sa_skip));
+            json.push_str(&format!("      \"orbit_len\": {},\n", req.orbit_len));
+            json.push_str(&format!("      \"precision_bits\": {},\n", vp.precision));
+            json.push_str("      \"timings_ms\": {\n");
+            json.push_str(&format!("        \"reference\": {:.4},\n", setup.reference_ms));
+            json.push_str(&format!("        \"series_skip\": {:.4},\n", setup.series_ms));
+            json.push_str(&format!("        \"gpu_iterate\": {},\n", stat_json(&iter_s)));
+            json.push_str(&format!("        \"gpu_render\": {}\n", stat_json(&render_s)));
+            json.push_str("      }\n");
+            json.push_str("    }");
+            json.push_str(if ri + 1 < regions.len() { ",\n" } else { "\n" });
+        }
+        json.push_str("  ]\n}\n");
+
+        if let Some(dir) = out.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match std::fs::write(out, &json) {
+            Ok(()) => println!("\nprofile log → {}", out.display()),
+            Err(e) => eprintln!("\nprofile log write failed: {e}"),
+        }
+    }
+}
+
+/// Current Unix time (seconds); 0 if the clock is before the epoch.
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}

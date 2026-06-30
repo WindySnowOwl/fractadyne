@@ -59,6 +59,9 @@ fractadyne --crosscheck-f3 raw.exr --center X Y --zoom-f3 Z [--iter K] [--er R]
                                                     # iteration counts to our CPU bignum oracle
 fractadyne --validate-deep [--out report.md]        # extreme-depth precision self-consistency
                                                     # battery (1e1000 … 1e1000000×)
+fractadyne --profile [--reps N --regions f.toml --out logs/p.json]
+                                                    # dev: time render stages per benchmark
+                                                    # region → JSON log (see scripts/profile*.ps1)
 ```
 
 ## Validation

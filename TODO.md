@@ -387,6 +387,13 @@ perturbation + series approximation + glitch correction. The headline feature.
       --zoom M --size W --ss N --iter K --julia --julia-c RE IM --palette I]` renders one
       image (reusing the tiled export + perturbation pipeline) and quits. PNG/EXR by
       extension; full-precision center. For debugging / automated golden-image checks.
+- [x] **Development profiling harness** — `--profile` times the render stages (bignum
+      reference orbit, series-approximation setup, GPU iterate / full render) per benchmark
+      region and writes a JSON log to `logs/` with run context; `scripts/profile.ps1` runs it
+      and `scripts/profile-compare.ps1` diffs before/after to validate optimizations. Logic in
+      a `profile` module. *(Follow-ups: GPU timestamp queries to split iterate vs color
+      precisely; opt-in per-frame logging of live interactive sessions; fold the series
+      coefficients into the reference-orbit pass to cut the ~100 ms series-skip setup at depth.)*
 - [ ] **Record-to-video / frame export** from a script (offline, deterministic).
 - [ ] **Ship compiled binaries on GitHub (Releases)** — publish prebuilt executables so
       users don't need the Rust toolchain. Tag a release (`vMAJOR.MINOR.PATCH`) and attach a

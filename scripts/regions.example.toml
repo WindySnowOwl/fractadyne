@@ -1,0 +1,38 @@
+# Example profiling regions for `fractadyne --profile --regions scripts/regions.example.toml`.
+# Each [[region]] is a view to render and time. Omitted fields use sensible defaults
+# (fractal = Mandelbrot, size = 512, ss = 1, method = "smooth", iter = 2000).
+#
+# Specify depth with either `zoom_log2` (log2 of the magnification — reaches past 1e308×)
+# or `zoom` (plain magnification, ≤ ~1e308×). `cx`/`cy` are full-precision decimal strings.
+# method ∈ smooth | stripe | triangle | trap | distance | decomposition (stripe/triangle/
+# trap/decomposition accumulate per-orbit stats, which disables series approximation).
+
+[[region]]
+name = "home"
+cx = "-0.5"
+cy = "0.0"
+zoom = 1.0
+iter = 512
+
+[[region]]
+name = "seahorse-1e6"
+cx = "-0.7436438870371587047521915061147707"
+cy = "0.131825904205311970493132056385139"
+zoom = 1e6
+iter = 2500
+
+[[region]]
+name = "deep-1e30-smooth"      # floatexp + series approximation
+cx = "-0.7436438870371587047521915061147707"
+cy = "0.131825904205311970493132056385139"
+zoom_log2 = 99.66
+iter = 25000
+method = "smooth"
+
+[[region]]
+name = "deep-1e30-stripe"      # same depth, SA disabled (stripe needs every iterate)
+cx = "-0.7436438870371587047521915061147707"
+cy = "0.131825904205311970493132056385139"
+zoom_log2 = 99.66
+iter = 25000
+method = "stripe"

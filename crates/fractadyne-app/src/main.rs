@@ -7,6 +7,8 @@
 use eframe::egui;
 use fractadyne_core::Viewport;
 use fractadyne_gpu::{add_mandelbrot, install_renderer, MandelbrotParams};
+
+mod profile;
 use serde::Deserialize;
 use std::time::Instant;
 
@@ -903,6 +905,11 @@ fn help_command_line(ui: &mut egui::Ui) {
         ui,
         "--validate-deep",
         "Extreme-depth precision self-consistency battery (1e1000…1e1000000×).",
+    );
+    help_kv(
+        ui,
+        "--profile [--reps N] [--regions F] [--out P]",
+        "Dev profiling: time render stages per benchmark region → JSON log in logs/.",
     );
     help_kv(
         ui,
@@ -2243,6 +2250,15 @@ struct FractadyneApp {
     /// CLI `--selftest`: run the GPU validation suite, print a report, and exit.
     selftest: bool,
     selftest_done: bool,
+    /// CLI `--profile`: run the profiling harness (benchmark regions), log to `logs/`, exit.
+    profile: bool,
+    profile_done: bool,
+    profile_reps: u32,
+    profile_regions: Option<String>,
+    profile_out: Option<std::path::PathBuf>,
+    /// Per-render setup timings (reference / series-skip), recorded by
+    /// `current_export_request_for` via a `Cell` and read by the profiler.
+    prof: std::cell::Cell<profile::ProfSetup>,
     /// Frame-rate cap (FPS); `None` = uncapped.
     fps_cap: Option<f64>,
     /// Export dialog state.
@@ -2381,6 +2397,10 @@ impl FractadyneApp {
         let render_iter_mode = args.iter().any(|a| a == "--render-iter");
         let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode;
         let selftest = args.iter().any(|a| a == "--selftest");
+        let profile = args.iter().any(|a| a == "--profile");
+        let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+        let profile_reps = val("--reps").and_then(|s| s.parse().ok()).unwrap_or(5u32);
+        let profile_regions = val("--regions").cloned();
         let auto_benchmark_out = out_path.clone();
         let auto_render_out = out_path.clone();
 
@@ -2444,6 +2464,12 @@ impl FractadyneApp {
             render_iter_mode,
             selftest,
             selftest_done: false,
+            profile,
+            profile_done: false,
+            profile_reps,
+            profile_regions,
+            profile_out: out_path.clone(),
+            prof: std::cell::Cell::new(profile::ProfSetup::default()),
             fps_cap: s.fps_cap,
             export_open: false,
             export_width: s.export_width,
@@ -2852,8 +2878,10 @@ impl FractadyneApp {
         let mut sa = fractadyne_core::SeriesSkip::NONE;
         if mode != 1 {
             let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
+            let t_ref = std::time::Instant::now();
             let (orbit_arc, len, rp) =
                 self.compute_reference(&center_bf, vp.complex_span_fe(), eff_iter, precision, julia, None);
+            let reference_ms = t_ref.elapsed().as_secs_f64() * 1000.0;
             orbit = orbit_arc;
             orbit_len = len;
             let dx = fractadyne_core::ref_offset_mantissa(&vp.center_x, &rp[0], delta_exp, precision);
@@ -2861,7 +2889,9 @@ impl FractadyneApp {
             let dxh = dx as f32;
             let dyh = dy as f32;
             ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
+            let t_sa = std::time::Instant::now();
             sa = self.series_skip_for(&rp, scale.span_mantissa, dx, dy, delta_exp, mode, julia, eff_iter, len, precision);
+            self.prof.set(profile::ProfSetup { reference_ms, series_ms: t_sa.elapsed().as_secs_f64() * 1000.0 });
         }
 
         let cxh = cx as f32;
@@ -6253,6 +6283,33 @@ impl eframe::App for FractadyneApp {
             }
         }
 
+        // CLI profiling: render the benchmark regions, time the costly stages, log to `logs/`.
+        if self.profile && !self.profile_done {
+            if let Some((dev, q)) = &gpu {
+                self.profile_done = true;
+                let regions = match &self.profile_regions {
+                    Some(path) => match profile::load_regions(std::path::Path::new(path)) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            eprintln!("--regions {path}: {e}; using built-in regions");
+                            profile::default_regions()
+                        }
+                    },
+                    None => profile::default_regions(),
+                };
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let out = self.profile_out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from(format!("logs/profile-{}.json", Self::file_stamp(secs)))
+                });
+                let reps = self.profile_reps;
+                self.run_profile(dev, q, &regions, reps, &out);
+                std::process::exit(0);
+            }
+        }
+
         // CLI render-and-exit: render one image offscreen (or the raw iteration EXR), save
         // it, and quit.
         if self.auto_render && !self.auto_render_done {
@@ -6334,7 +6391,7 @@ impl eframe::App for FractadyneApp {
         }
         self.perf.last_frame = Some(frame_start);
 
-        if !self.auto_benchmark && !self.auto_render && !self.selftest {
+        if !self.auto_benchmark && !self.auto_render && !self.selftest && !self.profile {
             self.autosave(ctx); // don't let a CLI run overwrite the saved session
         }
 

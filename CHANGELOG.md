@@ -180,6 +180,19 @@ Baseline for tracked versioning. Notable capabilities already present:
   View → "Series approximation"); the perf panel shows the skip count. Mode-0 (1e4–1e28×) and
   other formulas are follow-ups (see TODO).
 
+- **Development profiling harness** — `--profile [--reps N] [--regions FILE] [--out PATH]`
+  renders a set of benchmark **regions** (built-in defaults spanning the regimes: direct,
+  df32 perturbation, floatexp + series approximation, plus a stripe variant that disables SA)
+  and times the costly stages separately — bignum **reference orbit**, **series-approximation**
+  setup, and the **GPU iterate / full render** passes — then writes a structured **JSON log**
+  to `logs/` with full run context (version, GPU, CPU, OS, settings) plus per-region
+  min/median/mean/max. Surfaces bottlenecks at a glance (e.g. at 1e30× the smooth render is
+  ~3× faster than the SA-disabled stripe one, while the series-skip setup is itself a
+  measurable cost). `scripts/profile.ps1` runs it; `scripts/profile-compare.ps1` diffs a
+  before/after pair (per-stage % change, flags regressions) to validate optimizations;
+  `scripts/regions.example.toml` is an editable region set. Logic lives in a new
+  `profile` module (keeping `main.rs` glue lean); opt-in, so zero overhead in normal use.
+
 - **In-app Help & reference** — Help → "Help & reference…" (or F1 / ?) opens a multi-section
   window with a table of contents: Overview, Navigation, Coloring & options, Fractals
   (mathematically accurate per-family formulas + descriptions, Julia mode, deep-zoom
