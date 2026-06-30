@@ -1,7 +1,8 @@
 # Fractadyne — Current State (resume log)
 
-_Last updated: 2026-06-27. Version **v0.1.0**, build counter ~16 (auto-increments per
-compile; shared across debug/release in `.build_seq` at repo root)._
+_Last updated: 2026-06-29. Version **v0.1.0** (auto-incrementing build counter in
+`.build_seq` at repo root). [CHANGELOG.md](CHANGELOG.md) is the authoritative running log;
+this file is a higher-level snapshot._
 
 Companion docs: [TODO.md](TODO.md) (backlog, what's done), [CHANGELOG.md](CHANGELOG.md)
 (per-version changes), [DESIGN.md](DESIGN.md) / [UI-DESIGN.md](UI-DESIGN.md) (specs).
@@ -156,22 +157,35 @@ This is low-risk (only `gen_stops`); implement when we resume.
 ## Other notable features (done)
 - Dual linked view (Mandelbrot ↔ Julia), per-view ref caches, Julia pin, painted
   two-rectangle Dual toolbar icon. Status bar shows both panels' zoom in dual.
-- Combined menu+toolbar (icons), docked perf panel (incl. julia c readout + `c/panel`),
-  animated zoom-home (🏠), Esc exits fullscreen / stops playback.
-- Export: tiled PNG/EXR + reloadable metadata, gallery browser, background render +
-  progress + cancel, dual layouts, quick-save (Ctrl+S).
+- Combined menu+toolbar — icons grouped **File I/O · Navigation/location · Appearance/display**;
+  docked perf panel (julia c readout + `c/panel`), animated zoom-home (🏠).
+- **Lifted the ~1e308× live-zoom ceiling**: viewport scale is an extended-range `FloatExp`
+  (`m·2^e`); `log2_magnification` + `precision_for_octaves`; GPU fed O(1) span mantissa +
+  shared `delta_exp` (shader unchanged). `--zoom-log2`, deep goto/`.fdn` persistence.
+- **Auto-zoom autopilot** (A / View menu): renders a small iteration field, steers toward
+  the boundary+gradient-richest region, eased pivot for a smooth dive; Esc/any input stops.
+- **Coloring**: preset/custom gradient editor (≤8 stops), Duotone + Binary two-color modes,
+  methods (smooth/stripe/TIA/orbit-trap/distance/decomposition), DE relief lighting + glow.
+- Minibrot finder (M, Newton nucleus + period), minimap overview, famous Locations tour +
+  random location, bookmarks, navigation undo/redo, Go-to-location dialog.
+- **Sharing**: `.fdn` location copy/paste/save/load (File → Share location…), hardened parser.
+- Export: tiled PNG/EXR + reloadable metadata (carries `upp_log2`), gallery browser,
+  background render + progress + cancel, dual layouts, quick-save (Ctrl+S).
 - Palette animation: Off/Forward/Reverse/Ping-pong/**Random gradients** (+Shuffle), speed.
 - Scripting (Tools → Play script…): TOML keyframe camera tours; built-in benchmark tour.
-- Benchmark report includes CPU (CPUID brand) / cores / L2-L3 cache / GPU / VRAM.
-- Zoom display: scientific (12-digit mantissa) above 1e12×; large integers drop `.00`.
+- In-app **Help** (F1): Overview / Navigation / Coloring / Fractals / How-it-works /
+  Command line / Shortcuts / About.
+- **Validation**: `--selftest` (GPU vs CPU-f64 + bignum oracle to 1e30×, goldens), core
+  exact-math tests, `--validate-deep` (precision self-consistency to 1e1000000×),
+  `--crosscheck-f3` (vs Fraktaler-3), `--compare`, `--render-iter`, `.kfr` import.
 
 ## Top open items (from TODO.md)
-- Confirm/finish the deep orbit responsiveness (above).
 - Burning Ship / Celtic / Buffalo perturbation (still direct ~1e6×); Newton/Phoenix deep.
 - Series approximation; full glitch correction (Pauldelbrot/multi-ref).
-- Gradient stop editor; bookmarks/presets; left Parameters panel; dual-view splitter.
-- Benchmark presets + CSV/JSON history; record-to-video from a script.
-- Full-precision persisted center; re-add `zoom_to_rect` unit test.
+- Left Parameters panel; dual-view splitter; tile cache + pan reprojection.
+- Autopilot steering modes (minibrot-seek/boundary-track); zoom-movie / record-to-video.
+- Histogram/equalized coloring; benchmark presets + CSV/JSON history; `.fdn` QR codes.
+- Deep goto/metadata past 1e308× ✓; full-precision persisted center ✓ (done).
 
 ## Key files
 - `crates/fractadyne-core/src/lib.rs` — Viewport (BigFloat center), `reference_orbit`,

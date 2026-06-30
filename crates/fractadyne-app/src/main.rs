@@ -598,12 +598,15 @@ fn help_overview(ui: &mut egui::Ui) {
     help_bullet(ui, "Recolor with preset or custom gradients and several coloring methods.");
     help_bullet(ui, "Add 3D relief lighting and glowing boundary contours.");
     help_bullet(ui, "Snap to minibrots, bookmark spots, and export high-resolution images.");
+    help_bullet(ui, "Let the auto-zoom autopilot dive toward detail on its own.");
+    help_bullet(ui, "Share any spot as a small \".fdn\" text snippet or file.");
     help_bullet(ui, "Run scripted tours and a hardware benchmark.");
     help_sub(ui, "First steps");
     help_p(
         ui,
         "Open the Locations menu and pick \"Seahorse Valley\", then roll the mouse wheel to \
-         zoom in. Drag to pan. Press F1 at any time to return to this help.",
+         zoom in. Drag to pan. Or just press A and let the autopilot dive for you. Press F1 \
+         at any time to return to this help.",
     );
 }
 
@@ -621,14 +624,27 @@ fn help_navigation(ui: &mut egui::Ui) {
         "The Zoom-home button animates a gentle fly-back to the full view. \"Zoom speed\" in the \
          right panel sets the continuous-zoom rate.",
     );
+    help_sub(ui, "Autopilot");
+    help_p(
+        ui,
+        "Press A (or View → \"Auto-zoom (autopilot)\") for a hands-free dive: every fraction of a \
+         second it finds the most detailed region in view and zooms smoothly toward it, re-steering \
+         as new structure appears. Any navigation input — or Esc — stops it.",
+    );
     help_sub(ui, "History & precise moves");
     help_kv(ui, "Backspace", "Undo the previous view.");
     help_kv(ui, "Shift+Backspace / Ctrl+Y", "Redo.");
     help_p(
         ui,
         "View → \"Go to location…\" lets you read, type, paste, or copy the exact center and zoom \
-         (full precision) — the easy way to share or revisit a spot. The Bookmarks menu saves and \
+         (full precision, any depth) — handy for revisiting a spot. The Bookmarks menu saves and \
          recalls locations.",
+    );
+    help_p(
+        ui,
+        "File → \"Share location…\" captures the whole view — fractal, full-precision center, zoom, \
+         and coloring — as a compact \".fdn\" snippet you can Copy, paste back and Apply, or \
+         Save/Load as a file, to reproduce a spot exactly (or send it to someone).",
     );
     help_sub(ui, "Finding detail");
     help_p(
@@ -794,7 +810,9 @@ fn help_methodology(ui: &mut egui::Ui) {
         ui,
         "Ordinary 64-bit numbers run out of digits near 10¹⁵× zoom. Fractadyne keeps the view center \
          in arbitrary precision, with the number of digits growing as you zoom, so the location never \
-         degrades — you can keep going essentially forever.",
+         degrades. The pixel scale is likewise held with an extended exponent, so it doesn't stall at \
+         64-bit's ~10³⁰⁸× limit either — depth is bounded only by patience, not by any fixed number \
+         range.",
     );
     help_sub(ui, "Perturbation");
     help_p(
@@ -903,7 +921,7 @@ fn help_shortcuts(ui: &mut egui::Ui) {
     help_kv(ui, "Shift+Backspace / Ctrl+Y", "Redo view");
     help_kv(ui, "M", "Find minibrot center");
     help_kv(ui, "A", "Auto-zoom autopilot (dive toward detail; any input stops)");
-    help_kv(ui, "Esc", "Exit fullscreen / stop a playing tour");
+    help_kv(ui, "Esc", "Stop autopilot / a playing tour, or exit fullscreen");
     help_kv(ui, "Ctrl+S", "Quick export to the last folder");
     help_kv(ui, "F1 / ?", "Open this help");
 }
@@ -6491,22 +6509,33 @@ impl eframe::App for FractadyneApp {
                     self.toggle_dual();
                 }
                 ui.separator();
-                if ui.button("💾").on_hover_text("Export image…").clicked() {
-                    self.export_open = true;
+                // ── File / I-O: open & browse, then save ──────────────────────────────
+                if ui.button("📂").on_hover_text("Open view…").clicked() {
+                    self.open_view();
                 }
                 if ui.button("🖼").on_hover_text("Gallery").clicked() {
                     self.gallery_open = true;
                     self.scan_gallery();
                 }
-                if ui.button("📂").on_hover_text("Open view…").clicked() {
-                    self.open_view();
+                if ui.button("💾").on_hover_text("Export image…").clicked() {
+                    self.export_open = true;
                 }
                 if ui
-                    .button("★")
-                    .on_hover_text("Bookmark this view")
+                    .button("📷")
+                    .on_hover_text("Snapshot — quick export to the last folder (Ctrl+S)")
                     .clicked()
                 {
-                    self.add_bookmark("");
+                    if let Some((dev, q)) = &gpu {
+                        self.quick_export(dev.clone(), q.clone());
+                    }
+                }
+                ui.separator();
+                // ── Navigation / location: zoom, reset/home, bookmark ─────────────────
+                if ui.button("🔍+").on_hover_text("Zoom in").clicked() {
+                    self.zoom_center(0.5);
+                }
+                if ui.button("🔍−").on_hover_text("Zoom out").clicked() {
+                    self.zoom_center(2.0);
                 }
                 if ui.button("🔄").on_hover_text("Reset view (instant)").clicked() {
                     self.reset_view();
@@ -6519,22 +6548,15 @@ impl eframe::App for FractadyneApp {
                     let now = ctx.input(|i| i.time);
                     self.zoom_home(now);
                 }
-                ui.separator();
                 if ui
-                    .button("📷")
-                    .on_hover_text("Snapshot — quick export to the last folder (Ctrl+S)")
+                    .button("★")
+                    .on_hover_text("Bookmark this view")
                     .clicked()
                 {
-                    if let Some((dev, q)) = &gpu {
-                        self.quick_export(dev.clone(), q.clone());
-                    }
+                    self.add_bookmark("");
                 }
-                if ui.button("🔍+").on_hover_text("Zoom in").clicked() {
-                    self.zoom_center(0.5);
-                }
-                if ui.button("🔍−").on_hover_text("Zoom out").clicked() {
-                    self.zoom_center(2.0);
-                }
+                ui.separator();
+                // ── Appearance / display ──────────────────────────────────────────────
                 if ui
                     .button("🎨")
                     .on_hover_text(format!(
@@ -6545,7 +6567,6 @@ impl eframe::App for FractadyneApp {
                 {
                     self.palette_idx = (self.palette_idx + 1) % fractadyne_color::PRESETS.len();
                 }
-                ui.separator();
                 if ui
                     .selectable_label(self.perf.enabled, "📊")
                     .on_hover_text("Performance panel")
