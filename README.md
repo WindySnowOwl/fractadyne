@@ -11,7 +11,9 @@ zoom** and performance.
   reference orbit, and a GPU perturbation pipeline that switches by depth:
   direct df32 → df32 perturbation → **floatexp** perturbation (df32 mantissa + i32
   exponent), so the deviation never runs out of `f32` exponent range. Zhuoran rebasing;
-  depth bounded only by coordinate precision and the iteration budget.
+  depth bounded only by coordinate precision and the iteration budget. **Series
+  approximation** (order-3) skips the early iterations of deep Mandelbrot renders by seeding
+  the perturbation from a polynomial — validated to reproduce full iteration exactly.
 - **Fractal variety** — Mandelbrot, Multibrot 3/4/5, Tricorn, Burning Ship, Celtic,
   Buffalo, Phoenix, Newton — each with an info panel; Julia mode for any family.
 - **Dual linked view** — Mandelbrot ↔ Julia, with click-to-pin Julia `c`.

@@ -32,6 +32,7 @@ struct Perf {
     last_eff_iter: u32,
     last_precision: usize,
     last_orbit_len: u32,
+    last_sa_skip: u32,
 }
 
 impl Default for Perf {
@@ -50,6 +51,7 @@ impl Default for Perf {
             last_eff_iter: 0,
             last_precision: 0,
             last_orbit_len: 0,
+            last_sa_skip: 0,
         }
     }
 }
@@ -836,6 +838,16 @@ fn help_methodology(ui: &mut egui::Ui) {
         "The reference is chosen (scored in high precision) so its orbit stays within the view as \
          long as possible. When the difference grows too large it is \"rebased\" back onto the \
          reference to stay accurate.",
+    );
+    help_sub(ui, "Series approximation");
+    help_p(
+        ui,
+        "At deep zoom the early iterations barely move δ from the reference, so they can be \
+         computed all at once: δz is approximated by a short polynomial in δc (order 3), whose \
+         coefficients are iterated along the reference. The renderer skips ahead to the last \
+         iteration where that polynomial is still accurate for the whole view, then iterates \
+         normally — saving the skipped steps with no change to the image (toggle in View). \
+         Mandelbrot, deepest range, non-stripe coloring for now.",
     );
     help_sub(ui, "Distance estimation & lighting");
     help_p(
@@ -1933,6 +1945,11 @@ struct RefCache {
     orbit_iter: u32,
     /// When the orbit was last recomputed (throttles refresh during interaction).
     last_recompute: Option<Instant>,
+    /// Cached series-approximation skip + coefficients for this reference, and the
+    /// `(orbit_id, eff_iter)` it was computed for (recompute only when that changes — the
+    /// bignum coefficient iteration is as costly as the reference orbit itself).
+    sa: fractadyne_core::SeriesSkip,
+    sa_key: (u64, u32),
 }
 
 impl Default for RefCache {
@@ -1945,6 +1962,8 @@ impl Default for RefCache {
             orbit_prec: 0,
             orbit_iter: 0,
             last_recompute: None,
+            sa: fractadyne_core::SeriesSkip::NONE,
+            sa_key: (u64::MAX, u32::MAX),
         }
     }
 }
@@ -2270,6 +2289,8 @@ struct FractadyneApp {
     help_section: usize,
     /// Whether the right-hand control panel is shown.
     right_panel_open: bool,
+    /// Series approximation (iteration-skipping) for deep Mandelbrot renders. Default on.
+    series_approx: bool,
     /// Minimap overview: enabled flag, cached home-view thumbnail, and the key
     /// (formula, palette, method) the thumbnail was rendered for (re-render on change).
     minimap: bool,
@@ -2500,6 +2521,7 @@ impl FractadyneApp {
             stripe_freq: s.stripe_freq,
             trap_type: trap_from_str(&s.trap_type),
             auto_iter: s.auto_iter,
+            series_approx: true,
             zoom_rate: s.zoom_rate,
             aa: s.aa,
             ref_cache: [RefCache::default(), RefCache::default()],
@@ -2757,6 +2779,40 @@ impl FractadyneApp {
         (std::sync::Arc::new(o), l, rp)
     }
 
+    /// Series-approximation skip for the current view, or `NONE` when not applicable. Only
+    /// deep **floatexp** (`mode 2`) **Mandelbrot** renders with a non-aux coloring method
+    /// benefit; everything else iterates from 0.
+    #[allow(clippy::too_many_arguments)]
+    fn series_skip_for(
+        &self,
+        ref_pt: &[fractadyne_core::BigFloat; 2],
+        span_mantissa: [f64; 2],
+        ref_dx: f64,
+        ref_dy: f64,
+        delta_exp: i32,
+        mode: u32,
+        julia: bool,
+        eff_iter: u32,
+        orbit_len: u32,
+        precision: usize,
+    ) -> fractadyne_core::SeriesSkip {
+        if !self.series_approx
+            || mode != 2
+            || julia
+            || self.fractal.formula_id() != 0
+            || fractadyne_gpu::method_needs_aux(self.color_method)
+        {
+            return fractadyne_core::SeriesSkip::NONE;
+        }
+        // Worst-case corner |δc| = |center − reference| + half the view diagonal, taken in
+        // log2 so it never underflows (both are mantissas sharing the 2^delta_exp scale).
+        let roff = (ref_dx * ref_dx + ref_dy * ref_dy).sqrt();
+        let half_diag =
+            0.5 * (span_mantissa[0] * span_mantissa[0] + span_mantissa[1] * span_mantissa[1]).sqrt();
+        let log2_max_dc = delta_exp as f64 + (roff + half_diag).max(1e-300).log2();
+        fractadyne_core::series_skip(&ref_pt[0], &ref_pt[1], log2_max_dc, eff_iter, orbit_len, precision)
+    }
+
     /// Build an export request for a given viewport + Julia flag at the export
     /// resolution. Recomputes a fresh reference orbit (deep) without touching the live
     /// cache. Height is derived from the viewport's aspect (square pixels).
@@ -2793,6 +2849,7 @@ impl FractadyneApp {
         let mut ref_offset = [0.0_f32; 4];
         let mut orbit = std::sync::Arc::new(Vec::new());
         let mut orbit_len = 0u32;
+        let mut sa = fractadyne_core::SeriesSkip::NONE;
         if mode != 1 {
             let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
             let (orbit_arc, len, rp) =
@@ -2804,6 +2861,7 @@ impl FractadyneApp {
             let dxh = dx as f32;
             let dyh = dy as f32;
             ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
+            sa = self.series_skip_for(&rp, scale.span_mantissa, dx, dy, delta_exp, mode, julia, eff_iter, len, precision);
         }
 
         let cxh = cx as f32;
@@ -2823,6 +2881,13 @@ impl FractadyneApp {
             center,
             ref_offset,
             delta_exp,
+            sa_skip: sa.skip,
+            sa_a: sa.a,
+            sa_a_exp: sa.a_exp,
+            sa_b: sa.b,
+            sa_b_exp: sa.b_exp,
+            sa_c: sa.c,
+            sa_c_exp: sa.c_exp,
             julia_c,
             orbit,
             orbit_len,
@@ -3471,6 +3536,44 @@ impl FractadyneApp {
                         threshold: "0 hard mismatches",
                         pass: false,
                     });
+                }
+            }
+
+            // (D3) Series approximation — at deep zoom (mode 2) the order-3 polynomial seed
+            // must (a) actually engage (skip > 0) and (b) reproduce the full-iteration render.
+            // Compare an SA-on render to the same view with the skip forced to 0.
+            {
+                let on = make(NX, NY, 1.0e30);
+                let mut off = on.clone();
+                off.sa_skip = 0;
+                let skip = on.sa_skip;
+                match (render(&on), render(&off)) {
+                    (Some(a), Some(b)) if skip > 0 => {
+                        // Smooth-region max |Δ| (skip boundary/interior sentinels).
+                        let mut maxd = 0.0f64;
+                        for i in 0..(a.len() / 4) {
+                            let (ra, rb) = (a[i * 4], b[i * 4]);
+                            if ra >= 0.0 && rb >= 0.0 {
+                                maxd = maxd.max((ra - rb).abs() as f64);
+                            }
+                        }
+                        checks.push(SelfCheck {
+                            category: "Series approximation",
+                            name: "SA seed vs full iteration @1e30×".into(),
+                            params: format!("Mandelbrot, 1e30×, skip {skip} of {} iter", on.max_iter),
+                            result: format!("max Δ {maxd:.4} smooth iter"),
+                            threshold: "skip>0 and max Δ < 0.05",
+                            pass: maxd < 0.05,
+                        });
+                    }
+                    _ => checks.push(SelfCheck {
+                        category: "Series approximation",
+                        name: "SA seed vs full iteration @1e30×".into(),
+                        params: "Mandelbrot, 1e30×".into(),
+                        result: if skip == 0 { "SA did not engage (skip=0)".into() } else { "render failed".into() },
+                        threshold: "skip>0 and max Δ < 0.05",
+                        pass: false,
+                    }),
                 }
             }
 
@@ -4363,6 +4466,7 @@ impl FractadyneApp {
         let vi = view_id as usize;
 
         let mut ref_offset = [0.0_f32; 4];
+        let mut sa = fractadyne_core::SeriesSkip::NONE;
         if mode != 1 {
             // Drift = |center − reference| / span, both as 2^-delta_exp mantissas so the
             // ratio is exact at any depth (raw f64 differences underflow past ~1e308×).
@@ -4426,6 +4530,24 @@ impl FractadyneApp {
             let dxh = dx as f32;
             let dyh = dy as f32;
             ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
+            // Series approximation (cached per reference): seed δz to skip early iterations.
+            if mode == 2
+                && !julia
+                && fractal.formula_id() == 0
+                && !fractadyne_gpu::method_needs_aux(self.color_method)
+                && self.series_approx
+            {
+                let oid = self.ref_cache[vi].orbit_id;
+                if self.ref_cache[vi].sa_key != (oid, eff_iter) {
+                    let rp2 = self.ref_cache[vi].ref_pt.clone().unwrap();
+                    let len = self.ref_cache[vi].orbit_len;
+                    let computed = self
+                        .series_skip_for(&rp2, span_mantissa, dx, dy, delta_exp, mode, julia, eff_iter, len, precision);
+                    self.ref_cache[vi].sa = computed;
+                    self.ref_cache[vi].sa_key = (oid, eff_iter);
+                }
+                sa = self.ref_cache[vi].sa;
+            }
         }
 
         let cxh = cx as f32;
@@ -4441,6 +4563,7 @@ impl FractadyneApp {
             self.perf.last_eff_iter = gpu_iter; // iterations actually rendered this frame
             self.perf.last_precision = precision;
             self.perf.last_orbit_len = self.ref_cache[vi].orbit_len;
+            self.perf.last_sa_skip = sa.skip;
         }
 
         MandelbrotParams {
@@ -4449,6 +4572,13 @@ impl FractadyneApp {
             orbit_len: self.ref_cache[vi].orbit_len,
             ref_offset,
             delta_exp,
+            sa_skip: sa.skip,
+            sa_a: sa.a,
+            sa_a_exp: sa.a_exp,
+            sa_b: sa.b,
+            sa_b_exp: sa.b_exp,
+            sa_c: sa.c,
+            sa_c_exp: sa.c_exp,
             center: center_df,
             julia_c,
             mode,
@@ -4896,6 +5026,9 @@ impl FractadyneApp {
         ui.monospace(format!("eff iter   {:>7}", p.last_eff_iter));
         ui.monospace(format!("precision  {:>5} bit", p.last_precision));
         ui.monospace(format!("orbit len  {:>7}", p.last_orbit_len));
+        if p.last_sa_skip > 0 {
+            ui.monospace(format!("SA skip    {:>7}", p.last_sa_skip));
+        }
         ui.monospace(format!("aa         {}x", self.aa));
         ui.monospace(format!("dual       {}", self.dual));
         ui.monospace(format!("zoom       {}×", fmt_zoom_log2(self.viewport.log2_magnification())));
@@ -6325,6 +6458,12 @@ impl eframe::App for FractadyneApp {
                             .on_hover_text(
                                 "Show a small home-view overview with a \"you are here\" \
                                  marker and the zoom depth. Click it to jump to a region.",
+                            );
+                        ui.checkbox(&mut self.series_approx, "Series approximation")
+                            .on_hover_text(
+                                "Speed up deep Mandelbrot renders (≥1e28×) by seeding the \
+                                 perturbation from a polynomial and skipping early iterations. \
+                                 Identical output; turn off to compare.",
                             );
                         if ui
                             .checkbox(&mut self.dual, "Dual view (Mandelbrot ↔ Julia)")

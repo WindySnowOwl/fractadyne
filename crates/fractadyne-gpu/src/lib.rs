@@ -35,7 +35,15 @@ struct IterUniforms {
     stripe_freq: f32,  // stripe-average angular frequency
     trap_type: u32,    // orbit-trap shape: 0 point, 1 cross, 2 circle
     aux_on: u32,       // 1 = accumulate orbit statistics into the aux target
-    _pad: [u32; 2],
+    sa_skip: u32,      // series-approximation skip (0 = none): seed δz at this iteration
+    _pad0: u32,        // pad sa_a to 16-byte alignment
+    sa_a: [f32; 4],    // order-3 series coeffs (complex df32 mantissa): δz ≈ A·δc + B·δc² + C·δc³
+    sa_b: [f32; 4],
+    sa_c: [f32; 4],
+    sa_a_exp: i32,     // per-coefficient base-2 exponents (floatexp)
+    sa_b_exp: i32,
+    sa_c_exp: i32,
+    _pad1: u32,
 }
 
 #[repr(C)]
@@ -76,6 +84,7 @@ struct IterKey {
     color_method: u32,
     stripe_freq: f32,
     trap_type: u32,
+    sa_skip: u32,
 }
 
 /// Per-view GPU resources (one set per on-screen panel, keyed by `view_id`). Each
@@ -376,6 +385,15 @@ pub struct MandelbrotParams {
     pub ref_offset: [f32; 4],
     /// Shared base-2 exponent of the δ mantissas (ref_offset and the per-texel step).
     pub delta_exp: i32,
+    /// Series-approximation skip (0 = none) + order-3 coefficients (complex df32 mantissa ×
+    /// 2^exp): the GPU seeds δz ≈ A·δc + B·δc² + C·δc³ and starts iterating at `sa_skip`.
+    pub sa_skip: u32,
+    pub sa_a: [f32; 4],
+    pub sa_a_exp: i32,
+    pub sa_b: [f32; 4],
+    pub sa_b_exp: i32,
+    pub sa_c: [f32; 4],
+    pub sa_c_exp: i32,
     /// View center df32 (re_hi, im_hi, re_lo, im_lo) — used by the direct path.
     pub center: [f32; 4],
     /// Julia parameter df32 (re_hi, im_hi, re_lo, im_lo).
@@ -420,7 +438,10 @@ pub struct MandelbrotParams {
 }
 
 /// Whether a coloring method needs the per-iteration orbit statistics (aux target).
-fn method_needs_aux(method: u32) -> bool {
+/// Coloring methods that accumulate per-orbit statistics into the aux target (stripe,
+/// triangle-inequality, orbit-trap, decomposition) — these need every iterate, so series
+/// approximation must be disabled for them.
+pub fn method_needs_aux(method: u32) -> bool {
     matches!(method, 1 | 2 | 3 | 5)
 }
 
@@ -514,6 +535,7 @@ impl CallbackTrait for MandelbrotParams {
             color_method: self.color_method,
             stripe_freq: self.stripe_freq,
             trap_type: self.trap_type,
+            sa_skip: self.sa_skip,
         };
         if view.last_iter_key != Some(key) {
             // Per-texel step *mantissa*: span_mantissa (= span · 2^-delta_exp, already O(1))
@@ -542,7 +564,15 @@ impl CallbackTrait for MandelbrotParams {
                 stripe_freq: self.stripe_freq,
                 trap_type: self.trap_type,
                 aux_on: method_needs_aux(self.color_method) as u32,
-                _pad: [0; 2],
+                sa_skip: self.sa_skip,
+                _pad0: 0,
+                sa_a: self.sa_a,
+                sa_b: self.sa_b,
+                sa_c: self.sa_c,
+                sa_a_exp: self.sa_a_exp,
+                sa_b_exp: self.sa_b_exp,
+                sa_c_exp: self.sa_c_exp,
+                _pad1: 0,
             };
             queue.write_buffer(&view.iter_uniform, 0, bytemuck::bytes_of(&iu));
             {
@@ -614,6 +644,14 @@ pub struct ExportRequest {
     pub center: [f32; 4],
     pub ref_offset: [f32; 4],
     pub delta_exp: i32,
+    /// Series-approximation skip (0 = none) + order-3 coeffs (complex df32 mantissa × 2^exp).
+    pub sa_skip: u32,
+    pub sa_a: [f32; 4],
+    pub sa_a_exp: i32,
+    pub sa_b: [f32; 4],
+    pub sa_b_exp: i32,
+    pub sa_c: [f32; 4],
+    pub sa_c_exp: i32,
     pub julia_c: [f32; 4],
     pub orbit: Arc<Vec<[f32; 4]>>,
     pub orbit_len: u32,
@@ -826,7 +864,15 @@ pub fn render_export(
                 stripe_freq: req.stripe_freq,
                 trap_type: req.trap_type,
                 aux_on: method_needs_aux(req.color_method) as u32,
-                _pad: [0; 2],
+                sa_skip: req.sa_skip,
+                _pad0: 0,
+                sa_a: req.sa_a,
+                sa_b: req.sa_b,
+                sa_c: req.sa_c,
+                sa_a_exp: req.sa_a_exp,
+                sa_b_exp: req.sa_b_exp,
+                sa_c_exp: req.sa_c_exp,
+                _pad1: 0,
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1036,7 +1082,15 @@ pub fn render_iter(
         stripe_freq: 1.0,
         trap_type: 0,
         aux_on: 0,
-        _pad: [0; 2],
+        sa_skip: req.sa_skip,
+        _pad0: 0,
+        sa_a: req.sa_a,
+        sa_b: req.sa_b,
+        sa_c: req.sa_c,
+        sa_a_exp: req.sa_a_exp,
+        sa_b_exp: req.sa_b_exp,
+        sa_c_exp: req.sa_c_exp,
+        _pad1: 0,
     };
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 

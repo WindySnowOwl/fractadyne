@@ -732,6 +732,142 @@ pub fn reference_orbit(
     (out, len)
 }
 
+/// Series-approximation skip: how many initial perturbation iterations can be replaced by a
+/// polynomial, plus the order-3 coefficients at that point (as floatexp components for the
+/// GPU). `δz_n ≈ A_n·δc + B_n·δc² + C_n·δc³`; the GPU seeds δz from this and starts iterating
+/// at `skip`. `skip == 0` ⇒ not worth it / not applicable.
+#[derive(Clone, Copy)]
+pub struct SeriesSkip {
+    pub skip: u32,
+    /// Each coefficient as a complex df32 mantissa `[re_hi, re_lo, im_hi, im_lo]` × `2^exp`.
+    pub a: [f32; 4],
+    pub a_exp: i32,
+    pub b: [f32; 4],
+    pub b_exp: i32,
+    pub c: [f32; 4],
+    pub c_exp: i32,
+}
+
+impl SeriesSkip {
+    pub const NONE: SeriesSkip = SeriesSkip {
+        skip: 0,
+        a: [0.0; 4],
+        a_exp: 0,
+        b: [0.0; 4],
+        b_exp: 0,
+        c: [0.0; 4],
+        c_exp: 0,
+    };
+}
+
+/// A complex bignum coefficient → shared-exponent floatexp `([re_hi,re_lo,im_hi,im_lo], exp)`.
+fn coeff_to_fe(re: &BigFloat, im: &BigFloat) -> ([f32; 4], i32) {
+    let e = match (re.exponent(), im.exponent()) {
+        (None, None) => return ([0.0; 4], 0),
+        (a, b) => a.unwrap_or(i32::MIN).max(b.unwrap_or(i32::MIN)),
+    };
+    let scaled = |v: &BigFloat| -> (f32, f32) {
+        match v.exponent() {
+            Some(ev) => {
+                let mut s = v.clone();
+                s.set_exponent(ev - e); // multiply by 2^-e → mantissa in [-2, 2)
+                split_df64(to_f64(&s))
+            }
+            None => (0.0, 0.0),
+        }
+    };
+    let (rh, rl) = scaled(re);
+    let (ih, il) = scaled(im);
+    ([rh, rl, ih, il], e)
+}
+
+/// `log2` of a complex bignum's magnitude (≈ max component exponent; `−∞` for zero).
+fn log2_cmag(re: &BigFloat, im: &BigFloat) -> f64 {
+    match (re.exponent(), im.exponent()) {
+        (None, None) => f64::NEG_INFINITY,
+        (a, b) => a.unwrap_or(i32::MIN).max(b.unwrap_or(i32::MIN)) as f64,
+    }
+}
+
+/// Compute the [`SeriesSkip`] for a **Mandelbrot** reference at `c = (cx, cy)`. Iterates the
+/// reference together with the order-3 series coefficients in arbitrary precision, and skips
+/// while the cubic term stays below `2^EPS_LOG2` of the linear term at the worst-case corner
+/// `|δc|` (given as `log2_max_dc`) — which guarantees validity, and that no pixel escapes,
+/// before `skip`. `orbit_len` bounds the skip below the reference length.
+pub fn series_skip(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    log2_max_dc: f64,
+    max_iter: u32,
+    orbit_len: u32,
+    p: usize,
+) -> SeriesSkip {
+    if !log2_max_dc.is_finite() {
+        return SeriesSkip::NONE;
+    }
+    const EPS_LOG2: f64 = -16.0; // cubic term ≤ 2⁻¹⁶ of linear ⇒ ample accuracy
+    const MIN_SKIP: u32 = 8; // below this the bookkeeping isn't worth it
+    let limit = max_iter.min(orbit_len.saturating_sub(2));
+    let two = bf(2.0, p);
+    let one = bf(1.0, p);
+    let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+    let (mut ax, mut ay) = (bf(0.0, p), bf(0.0, p));
+    let (mut bx, mut by) = (bf(0.0, p), bf(0.0, p));
+    let (mut cxx, mut cyy) = (bf(0.0, p), bf(0.0, p));
+    let mut best: Option<(u32, [BigFloat; 6])> = None;
+    for n in 1..=limit {
+        // Advance coefficients using Z_{n-1} (current z): A'=2ZA+1, B'=2ZB+A², C'=2ZC+2AB.
+        let (zax, zay) = cmul_bf(&zx, &zy, &ax, &ay, p);
+        let na_x = zax.mul(&two, p, RM).add(&one, p, RM);
+        let na_y = zay.mul(&two, p, RM);
+        let (zbx, zby) = cmul_bf(&zx, &zy, &bx, &by, p);
+        let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, p);
+        let nb_x = zbx.mul(&two, p, RM).add(&a2x, p, RM);
+        let nb_y = zby.mul(&two, p, RM).add(&a2y, p, RM);
+        let (zcx, zcy) = cmul_bf(&zx, &zy, &cxx, &cyy, p);
+        let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, p);
+        let nc_x = zcx.mul(&two, p, RM).add(&abx.mul(&two, p, RM), p, RM);
+        let nc_y = zcy.mul(&two, p, RM).add(&aby.mul(&two, p, RM), p, RM);
+        // Advance the reference: Z_n = Z_{n-1}² + c.
+        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, 0, p);
+        zx = nzx;
+        zy = nzy;
+        ax = na_x;
+        ay = na_y;
+        bx = nb_x;
+        by = nb_y;
+        cxx = nc_x;
+        cyy = nc_y;
+        // Validity (in log space → no overflow): cubic·|δc|³ ≤ 2^EPS · linear·|δc|.
+        let la = log2_cmag(&ax, &ay);
+        let lc = log2_cmag(&cxx, &cyy);
+        if !la.is_finite() {
+            continue;
+        }
+        let valid = lc + 2.0 * log2_max_dc < la + EPS_LOG2;
+        if n >= MIN_SKIP {
+            if valid {
+                best = Some((n, [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()]));
+            } else {
+                break; // coefficients only grow ⇒ once invalid, stays invalid
+            }
+        }
+        // Stop if the reference itself escaped.
+        if to_f64(&zx) * to_f64(&zx) + to_f64(&zy) * to_f64(&zy) > 1.0e12 {
+            break;
+        }
+    }
+    match best {
+        None => SeriesSkip::NONE,
+        Some((skip, k)) => {
+            let (a, a_exp) = coeff_to_fe(&k[0], &k[1]);
+            let (b, b_exp) = coeff_to_fe(&k[2], &k[3]);
+            let (c, c_exp) = coeff_to_fe(&k[4], &k[5]);
+            SeriesSkip { skip, a, a_exp, b, b_exp, c, c_exp }
+        }
+    }
+}
+
 /// Iterations before escape (or `max_iter`) in **arbitrary precision** — ranks
 /// candidate references at deep zoom, where `orbit_length`'s `f64` coordinates would
 /// all collapse to the same value and make the ranking meaningless.
@@ -1193,6 +1329,58 @@ mod tests {
     fn precision_grows_with_zoom() {
         assert_eq!(precision_for_magnification(1.0), 64);
         assert!(precision_for_magnification(1e30) > precision_for_magnification(1e3));
+    }
+
+    // Series approximation: the order-3 polynomial A·δc + B·δc² + C·δc³ at the chosen skip
+    // must reproduce the exact perturbation δz after that many iterations, for a worst-case
+    // corner δc — i.e. skipping those iterations introduces negligible error.
+    #[test]
+    fn series_skip_matches_exact_perturbation() {
+        let p = 160;
+        let (cx, cy) = (bf(-0.745, p), bf(0.113, p)); // seahorse boundary (slow orbit)
+        let max_dc = 1.0e-9_f64; // deep-ish δc, where SA actually applies
+        let log2_max_dc = max_dc.log2();
+        let max_iter = 5000;
+        let s = series_skip(&cx, &cy, log2_max_dc, max_iter, max_iter, p);
+        assert!(s.skip >= 8, "no usable skip found (skip={})", s.skip);
+
+        // Reconstruct the (f64) coefficients and evaluate the series at a worst-case δc.
+        let cof = |m: [f32; 4], e: i32| -> (f64, f64) {
+            let f = 2f64.powi(e);
+            ((m[0] as f64 + m[1] as f64) * f, (m[2] as f64 + m[3] as f64) * f)
+        };
+        let (ar, ai) = cof(s.a, s.a_exp);
+        let (br, bi) = cof(s.b, s.b_exp);
+        let (cr, ci) = cof(s.c, s.c_exp);
+        let cmul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
+        let dc = (max_dc, 0.0); // worst-case real corner
+        let dc2 = cmul(dc, dc);
+        let dc3 = cmul(dc2, dc);
+        let t1 = cmul((ar, ai), dc);
+        let t2 = cmul((br, bi), dc2);
+        let t3 = cmul((cr, ci), dc3);
+        let series = (t1.0 + t2.0 + t3.0, t1.1 + t2.1 + t3.1);
+
+        // Exact perturbation in bignum (same reference as series_skip): δz'=2Zδz+δz²+δc.
+        let (dcx, dcy) = (bf(max_dc, p), bf(0.0, p));
+        let two = bf(2.0, p);
+        let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+        let (mut dzx, mut dzy) = (bf(0.0, p), bf(0.0, p));
+        for _ in 0..s.skip {
+            let (tzx, tzy) = cmul_bf(&zx, &zy, &dzx, &dzy, p); // Z·δz
+            let (d2x, d2y) = cmul_bf(&dzx, &dzy, &dzx, &dzy, p);
+            let ndzx = tzx.mul(&two, p, RM).add(&d2x, p, RM).add(&dcx, p, RM);
+            let ndzy = tzy.mul(&two, p, RM).add(&d2y, p, RM).add(&dcy, p, RM);
+            let (nzx, nzy) = step_bf(&zx, &zy, &cx, &cy, 0, p);
+            zx = nzx;
+            zy = nzy;
+            dzx = ndzx;
+            dzy = ndzy;
+        }
+        let (ex, ey) = (to_f64(&dzx), to_f64(&dzy));
+        let err = ((series.0 - ex).powi(2) + (series.1 - ey).powi(2)).sqrt();
+        let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
+        assert!(err / mag < 1.0e-3, "series vs exact δz rel err {:.2e} at skip {}", err / mag, s.skip);
     }
 
     #[test]

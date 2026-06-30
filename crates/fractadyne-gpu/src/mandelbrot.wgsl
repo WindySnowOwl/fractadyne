@@ -279,7 +279,15 @@ struct IterU {
     stripe_freq: f32,      // stripe-average angular frequency
     trap_type: u32,        // 0 = point, 1 = cross, 2 = unit circle
     aux_on: u32,           // 1 = accumulate orbit statistics into the aux target
-    _pad: vec2<u32>,
+    sa_skip: u32,          // series-approximation skip (0 = none): seed δz at this iteration
+    _pad0: u32,            // pad sa_a to 16-byte alignment
+    sa_a: vec4<f32>,       // order-3 series coeffs (complex df32 mantissa): δz ≈ A·δc + B·δc² + C·δc³
+    sa_b: vec4<f32>,
+    sa_c: vec4<f32>,
+    sa_a_exp: i32,         // per-coefficient base-2 exponents (floatexp)
+    sa_b_exp: i32,
+    sa_c_exp: i32,
+    _pad1: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo).
@@ -532,6 +540,22 @@ fn fs_iterate(in: VsOut) -> FragOut {
         var aux = aux_init(vec2<f32>(r0i.x, r0i.y));
         var ref_n: u32 = 0u;
         var power_f = 2.0;
+        // Series approximation: seed δz (and the derivative D) from the order-3 polynomial
+        // δz ≈ A·δc + B·δc² + C·δc³ and start at iteration `sa_skip`, skipping that many
+        // perturbation steps. Mandelbrot only (the CPU gates this: formula 0, no Julia, no
+        // aux-accumulating coloring method).
+        if (iu.sa_skip > 0u && iu.julia == 0u) {
+            let A = fe_norm(cset(iu.sa_a.xy, iu.sa_a.zw), iu.sa_a_exp);
+            let B = fe_norm(cset(iu.sa_b.xy, iu.sa_b.zw), iu.sa_b_exp);
+            let C = fe_norm(cset(iu.sa_c.xy, iu.sa_c.zw), iu.sa_c_exp);
+            let dc2 = fe_sqr(dc);
+            let dc3 = fe_mul(dc2, dc);
+            dz = fe_add(fe_add(fe_mul(A, dc), fe_mul(B, dc2)), fe_mul(C, dc3));
+            // D = d(δz)/d(δc) = A + 2·B·δc + 3·C·δc²
+            D = fe_add(fe_add(A, fe_scale(fe_mul(B, dc), 2.0)), fe_scale(fe_mul(C, dc2), 3.0));
+            iter = iu.sa_skip;
+            ref_n = iu.sa_skip;
+        }
         loop {
             if (iter >= iu.max_iter) { break; }
             let r = reference[ref_n];

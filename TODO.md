@@ -497,7 +497,17 @@ for fun, informative value, and ease of use.
 - [ ] **Zoom-movie / frame→video export** — build on scripting + headless render.
 - [ ] **Layers + blend modes** (Ultra Fractal-style compositing).
 - [ ] **Formula DSL / custom formulas** (M6).
-- [ ] **Series approximation + multi-reference glitch correction** (faster/cleaner deep).
+- [~] **Series approximation** — order-3 polynomial (`δz ≈ A·δc + B·δc² + C·δc³`) seeds the
+      perturbation and skips the early iterations. **Done for deep Mandelbrot (mode 2,
+      ≥1e28×)**, non-Julia, non-aux coloring; coefficients iterated in bignum alongside the
+      reference, skip chosen from the worst-case corner `|δc|` (cubic ≤ 2⁻¹⁶ of linear, which
+      also guarantees no premature escape), cached per reference. Validated: seed vs full
+      iteration `maxΔ 0` and 0 mismatches vs the bignum oracle at 1e30×. **Follow-ups:**
+      extend to mode 0 (1e4–1e28×, the common range; needs a floatexp→df32 seed conversion)
+      and to Multibrot/other formulas; consider **BLA** (bilinear approximation, Fraktaler-3
+      style) which skips iterations throughout the orbit, not just the start.
+- [ ] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
+      beyond the current single-reference Zhuoran rebasing.
 
 ### Tier 3 — big bets (separate engines)
 - [ ] **3D fractals** (Mandelbulb / Mandelbox, ray-marched).

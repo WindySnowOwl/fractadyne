@@ -166,6 +166,20 @@ Baseline for tracked versioning. Notable capabilities already present:
   existing **hardened, fuzzed** `load_view_metadata`/`meta_get` chain (key=value allow-list,
   every field validated/clamped, unknown keys ignored, no paths or code execution).
 
+- **Series approximation (iteration-skipping)** — deep Mandelbrot renders (mode 2, ≥1e28×)
+  now skip the early perturbation iterations by seeding `δz` from an order-3 polynomial
+  `δz ≈ A·δc + B·δc² + C·δc³`. The coefficients are iterated in arbitrary precision alongside
+  the reference orbit (`A'=2ZA+1, B'=2ZB+A², C'=2ZC+2AB`); the skip is the largest count where
+  the cubic term stays `≤2⁻¹⁶` of the linear term for the worst-case corner `|δc|` (which also
+  guarantees no pixel escapes before the skip), cached per reference. The GPU evaluates the
+  polynomial in floatexp to seed `δz` and the derivative `D`, then iterates from `skip`.
+  Disabled for Julia, non-Mandelbrot formulas, and aux-accumulating coloring methods
+  (stripe/TIA/orbit-trap/decomposition need every iterate). **Validated:** the seeded render
+  matches full iteration (`maxΔ 0`) and the independent bignum oracle (0 mismatches) at 1e30×
+  — a new `--selftest` check confirms both engagement and equivalence. Default on (toggle in
+  View → "Series approximation"); the perf panel shows the skip count. Mode-0 (1e4–1e28×) and
+  other formulas are follow-ups (see TODO).
+
 - **In-app Help & reference** — Help → "Help & reference…" (or F1 / ?) opens a multi-section
   window with a table of contents: Overview, Navigation, Coloring & options, Fractals
   (mathematically accurate per-family formulas + descriptions, Julia mode, deep-zoom
