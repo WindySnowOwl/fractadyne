@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.0 (build 179)
-- **Generated:** 2026-06-30 12:23:19 UTC (unix 1782822199)
+- **Version:** 0.1.0 (build 182)
+- **Generated:** 2026-06-30 12:42:58 UTC (unix 1782823378)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -52,11 +52,13 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Catalog | main-cardioid interior (c = -0.5) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
 | Catalog | exterior point (c = 1) | interior expected false | oracle says interior=false | matches catalog | ✅ PASS |
 | Catalog | deep minibrot nucleus interior (full precision) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
-| View format | metadata round-trips a deep view | serialize → scramble → load | iter 1234 aa 3 upp_log2 -120.000 cx -0.743643887037151 | fractal/iter/aa/zoom/center preserved | ✅ PASS |
-| View format | newer format_version flagged | format_version=999 | flagged as newer | returns NewerFormat | ✅ PASS |
-| View format | hostile fields clamped | upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf | iter 10000000 aa 16 upp_log2 -3.40e7 cycle 0.27 offset 0.2512958 | all clamped to safe ranges & finite | ✅ PASS |
+| View format | metadata round-trips a deep view | serialize → scramble → load | iter 1234 aa 3 upp_log2 -120.000 cx -0.743643887037151 | clean load; fractal/iter/aa/zoom/center preserved | ✅ PASS |
+| View format | newer format_version flagged | format_version=999 | saved by a newer Fractadyne (format v999); some settings may not apply — consider updating | newer == Some(999) | ✅ PASS |
+| View format | hostile fields clamped + reported | upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf, bogus_field | iter 10000000 aa 16 upp_log2 -3.40e7; clamped [zoom depth, max_iter, cycle, offset, anti-aliasing]; unknown [bogus_field] | clamped & finite; report lists clamped + unknown | ✅ PASS |
+| Formatting | zoom mantissa grouped | 3.38050027227e15 | 3.38050 02722 7e15 | "3.38050 02722 7e15" | ✅ PASS |
+| Formatting | deep coordinate elides middle | 32-digit center @ ~1e30×; and -0.5 | -0.74364 38870 … 11477 40000  |  -0.5 | leading … frontier; short coord safe | ✅ PASS |
 
-**42/42 checks passed.**
+**44/44 checks passed.**
 
 ## Coverage & scope
 

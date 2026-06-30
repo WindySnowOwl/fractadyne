@@ -287,6 +287,38 @@ Baseline for tracked versioning. Notable capabilities already present:
   estimate). "Distance glow" toggle + Glow/Band-width sliders + "Animate glow" (flows
   the bands). `--de` CLI flag; persisted. Works at any depth (verified at 1e8×).
 
+- **Deep zoom for the abs families (Burning Ship / Celtic / Buffalo)** — the non-analytic
+  families now perturbation-deep-zoom like the analytic ones (previously direct only,
+  ~10⁶×). Because they take absolute values, the abs fold on a z² component is handled with
+  the Kalles-Fraktaler **`diffabs`** identity `|c+d|−|c|`, evaluated branch-wise against the
+  reference z² so it never suffers catastrophic cancellation: exactly `±d` when the
+  reference component and its perturbation share a sign, `±(2c+d)` across a sign flip. Both
+  render paths fold: `df_diffabs` in the df32 loop (mode 0, ~10⁴×…~10²⁸×) and a new
+  **scalar-floatexp** `Sf` type with `sf_diffabs`/`fe_from_sf` in the floatexp loop (mode 2,
+  past 10²⁸×) — needed because the complex `Fe` shares one exponent across re/im while the
+  fold is per-component. Core `step_bf` gained the bignum reference iterations. `--selftest`
+  verifies perturbation == direct at 1e5×, floatexp == df32 at 1e10×, and finiteness at
+  1e35×. Lighting/DE stay off (these maps are non-holomorphic). Residual fold speckle awaits
+  multi-reference glitch correction.
+
+- **View-file format versioning + hardened loader** — the reloadable view metadata (exports
+  / `.fdn` / bookmarks) gained a single source-of-truth `VIEW_FORMAT_VERSION`; loading now
+  returns a report and **surfaces anything noteworthy** instead of loading silently. Opening
+  a file from a *newer* Fractadyne warns "some settings may not apply — consider updating"
+  (best-effort load; the format is additive key=value so core fields still parse); the
+  loader also reports **clamped** out-of-range fields and **ignored unknown** keys. The
+  untrusted parser is hardened: `max_iter` ≤ 10⁷, anti-aliasing 1..16, zoom depth ≤ 3.4e7
+  octaves (a hostile `upp_log2` can't balloon bignum precision into a memory DoS), and
+  `cycle`/`offset` rejected when non-finite. A file with no `format_version` is treated as
+  v1 (legacy files still load). `--selftest` covers round-trip, newer-version detection, and
+  clamp/report.
+
+- **Depth-aware status-bar readouts** — the center coordinate now shows full arbitrary
+  precision with the changing **frontier** digits visible: at deep zoom the middle is elided
+  (`-0.74364 38870 … 06114 7740`) so the deepest digits no longer freeze at `f64`'s ~15
+  (they used to look static while panning deep). The magnification's scientific-notation
+  mantissa is space-grouped in 5s (`3.38050 02722 7e15`) to match the coordinate readout.
+
 ### Fixed (post-baseline, this session)
 
 - **Speckle/noise across the exterior at deep zoom on a large window** — a very high

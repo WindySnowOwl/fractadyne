@@ -25,14 +25,43 @@ const MAX_LOAD_OCTAVES: f64 = 3.4e7;
 /// make an export grind for hours / exhaust the iteration budget). Well above any real use.
 const MAX_LOAD_ITER: u32 = 10_000_000;
 
-/// Outcome of restoring view metadata, so untrusted callers can warn on an incompatible file.
-pub(crate) enum ViewLoad {
-    /// Restored; the file's `format_version` is within this build's range.
-    Ok,
-    /// Restored best-effort, but the file declares a newer `format_version` than this build
-    /// supports — newer fields/semantics may not have applied (carries the file's version).
-    NewerFormat(u32),
+/// Report from restoring view metadata, so callers can surface anything noteworthy
+/// (a newer file format, clamped values, unrecognized fields) instead of loading silently.
+#[derive(Default)]
+pub(crate) struct ViewLoad {
+    /// `Some(v)` if the file's `format_version` exceeds this build's (loaded best-effort).
+    pub(crate) newer: Option<u32>,
+    /// Human-readable names of fields whose value was out of range and clamped/rejected.
+    pub(crate) clamped: Vec<&'static str>,
+    /// Unrecognized keys present in the file (a typo, or a newer format's new fields).
+    pub(crate) unknown: Vec<String>,
 }
+
+impl ViewLoad {
+    /// A short summary of anything noteworthy, or `None` when the load was fully clean.
+    pub(crate) fn note(&self) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(v) = self.newer {
+            parts.push(format!(
+                "saved by a newer Fractadyne (format v{v}); some settings may not apply — consider updating"
+            ));
+        }
+        if !self.clamped.is_empty() {
+            parts.push(format!("clamped out-of-range {}", self.clamped.join(", ")));
+        }
+        if !self.unknown.is_empty() {
+            parts.push(format!("ignored unknown field(s): {}", self.unknown.join(", ")));
+        }
+        (!parts.is_empty()).then(|| parts.join("; "))
+    }
+}
+
+/// Keys the view-metadata reader understands; anything else in a file is reported as unknown.
+const KNOWN_VIEW_KEYS: &[&str] = &[
+    "app", "version", "format_version", "saved_unix", "saved", "notes", "fractal", "julia",
+    "julia_c_re", "julia_c_im", "center_x", "center_y", "upp", "upp_log2", "zoom", "max_iter",
+    "auto_iter", "palette", "cycle", "offset", "aa",
+];
 
 impl FractadyneApp {
     /// Reloadable view-state metadata embedded in exports. The center is stored as
@@ -97,6 +126,7 @@ impl FractadyneApp {
         let file_ver = get("format_version")
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(VIEW_FORMAT_VERSION);
+        let mut report = ViewLoad::default();
         if let Some(f) = get("fractal").and_then(|s| FractalKind::from_name(&s)) {
             self.fractal = f;
         }
@@ -117,21 +147,29 @@ impl FractadyneApp {
         // Prefer the extended-range `upp_log2` (exact past 1e308×); fall back to the f64
         // `upp` for images saved before it existed. Clamp the depth so a hostile value
         // can't blow up the bignum working precision (memory DoS).
-        if let Some(l) = get("upp_log2")
-            .and_then(|s| s.parse::<f64>().ok())
-            .filter(|l| l.is_finite())
-        {
-            let l = l.clamp(-MAX_LOAD_OCTAVES, MAX_LOAD_OCTAVES);
+        if let Some(raw) = get("upp_log2").and_then(|s| s.parse::<f64>().ok()) {
+            let l = raw.clamp(-MAX_LOAD_OCTAVES, MAX_LOAD_OCTAVES);
+            if !raw.is_finite() || l != raw {
+                report.clamped.push("zoom depth");
+            }
             self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(l);
-        } else if let Some(upp) = get("upp")
-            .and_then(|s| s.parse::<f64>().ok())
-            .filter(|u| u.is_finite() && *u > 0.0)
-        {
-            let l = upp.log2().clamp(-MAX_LOAD_OCTAVES, MAX_LOAD_OCTAVES);
-            self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(l);
+        } else if let Some(raw) = get("upp").and_then(|s| s.parse::<f64>().ok()) {
+            if raw.is_finite() && raw > 0.0 {
+                let l = raw.log2().clamp(-MAX_LOAD_OCTAVES, MAX_LOAD_OCTAVES);
+                if l != raw.log2() {
+                    report.clamped.push("zoom depth");
+                }
+                self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(l);
+            } else {
+                report.clamped.push("zoom depth");
+            }
         }
         if let Some(mi) = get("max_iter").and_then(|s| s.parse::<u32>().ok()) {
-            self.max_iter = mi.clamp(1, MAX_LOAD_ITER);
+            let c = mi.clamp(1, MAX_LOAD_ITER);
+            if c != mi {
+                report.clamped.push("max_iter");
+            }
+            self.max_iter = c;
         }
         if let Some(ai) = get("auto_iter") {
             self.auto_iter = ai == "1";
@@ -139,16 +177,38 @@ impl FractadyneApp {
         if let Some(p) = get("palette").and_then(|s| s.parse::<usize>().ok()) {
             if p < fractadyne_color::PRESETS.len() {
                 self.palette_idx = p;
+            } else {
+                report.clamped.push("palette");
             }
         }
-        if let Some(c) = get("cycle").and_then(|s| s.parse::<f32>().ok()).filter(|c| c.is_finite()) {
-            self.cycle = c.clamp(0.0, 1.0e6);
+        if let Some(c) = get("cycle").and_then(|s| s.parse::<f32>().ok()) {
+            if c.is_finite() {
+                let v = c.clamp(0.0, 1.0e6);
+                if v != c {
+                    report.clamped.push("cycle");
+                }
+                self.cycle = v;
+            } else {
+                report.clamped.push("cycle");
+            }
         }
-        if let Some(o) = get("offset").and_then(|s| s.parse::<f32>().ok()).filter(|o| o.is_finite()) {
-            self.offset = o.clamp(-1.0e6, 1.0e6);
+        if let Some(o) = get("offset").and_then(|s| s.parse::<f32>().ok()) {
+            if o.is_finite() {
+                let v = o.clamp(-1.0e6, 1.0e6);
+                if v != o {
+                    report.clamped.push("offset");
+                }
+                self.offset = v;
+            } else {
+                report.clamped.push("offset");
+            }
         }
         if let Some(a) = get("aa").and_then(|s| s.parse::<u32>().ok()) {
-            self.aa = a.clamp(1, 16);
+            let c = a.clamp(1, 16);
+            if c != a {
+                report.clamped.push("anti-aliasing");
+            }
+            self.aa = c;
         }
         if let Some(n) = get("notes") {
             self.export_notes = n;
@@ -160,11 +220,23 @@ impl FractadyneApp {
         self.invalidate_refs();
         self.zoom_vel = 0.0;
         self.record_nav();
-        if file_ver > VIEW_FORMAT_VERSION {
-            ViewLoad::NewerFormat(file_ver)
-        } else {
-            ViewLoad::Ok
+        // Report any keys we didn't recognize (cap the list so a junk file can't flood it).
+        for line in meta.lines() {
+            if let Some((k, _)) = line.split_once('=') {
+                let k = k.trim();
+                if !k.is_empty()
+                    && !KNOWN_VIEW_KEYS.contains(&k)
+                    && !report.unknown.iter().any(|u| u == k)
+                {
+                    report.unknown.push(k.to_string());
+                    if report.unknown.len() >= 8 {
+                        break;
+                    }
+                }
+            }
         }
+        report.newer = (file_ver > VIEW_FORMAT_VERSION).then_some(file_ver);
+        report
     }
 
     /// Open a previously-exported PNG/EXR and restore its view (via a native dialog).
@@ -185,13 +257,10 @@ impl FractadyneApp {
         };
         match meta {
             Some(m) => {
-                self.export_status = Some(match self.load_view_metadata(&m) {
-                    ViewLoad::Ok => format!("Loaded view from {}", path.display()),
-                    ViewLoad::NewerFormat(v) => format!(
-                        "Loaded view from {} — saved by a newer Fractadyne (format v{v}); \
-                         some settings may not have applied. Consider updating.",
-                        path.display()
-                    ),
+                let report = self.load_view_metadata(&m);
+                self.export_status = Some(match report.note() {
+                    None => format!("Loaded view from {}", path.display()),
+                    Some(n) => format!("Loaded view from {} — {n}", path.display()),
                 });
             }
             None => {

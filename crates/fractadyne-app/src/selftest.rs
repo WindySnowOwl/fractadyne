@@ -1089,7 +1089,7 @@ impl FractadyneApp {
             self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0);
             let rt = self.load_view_metadata(&blob);
             let cx = fractadyne_core::to_f64(&self.viewport.center_x);
-            let rt_ok = matches!(rt, crate::export::ViewLoad::Ok)
+            let rt_ok = rt.note().is_none()
                 && self.max_iter == 1234
                 && self.aa == 3
                 && (self.viewport.units_per_pixel.log2() + 120.0).abs() < 1.0e-6
@@ -1102,43 +1102,74 @@ impl FractadyneApp {
                     "iter {} aa {} upp_log2 {:.3} cx {:.15}",
                     self.max_iter, self.aa, self.viewport.units_per_pixel.log2(), cx
                 ),
-                threshold: "fractal/iter/aa/zoom/center preserved",
+                threshold: "clean load; fractal/iter/aa/zoom/center preserved",
                 pass: rt_ok,
             });
 
             // A newer format_version must be detected (not silently consumed).
             let newer = "app=Fractadyne\nformat_version=999\ncenter_x=-0.5\ncenter_y=0\nupp_log2=-3\n";
-            let detected = matches!(self.load_view_metadata(newer), crate::export::ViewLoad::NewerFormat(999));
+            let nr = self.load_view_metadata(newer);
             checks.push(SelfCheck {
                 category: "View format",
                 name: "newer format_version flagged".into(),
                 params: "format_version=999".into(),
-                result: if detected { "flagged as newer".into() } else { "NOT flagged".into() },
-                threshold: "returns NewerFormat",
-                pass: detected,
+                result: nr.note().unwrap_or_else(|| "NOT flagged".into()),
+                threshold: "newer == Some(999)",
+                pass: nr.newer == Some(999),
             });
 
-            // Hostile numeric fields must be clamped, not trusted (DoS / runaway work).
+            // Hostile numeric fields must be clamped (DoS / runaway work) AND reported.
             let hostile = "app=Fractadyne\nformat_version=1\ncenter_x=-0.5\ncenter_y=0\n\
-                           upp_log2=-1e30\nmax_iter=4000000000\naa=9999\ncycle=inf\noffset=NaN\n";
-            let _ = self.load_view_metadata(hostile);
+                           upp_log2=-1e30\nmax_iter=4000000000\naa=9999\ncycle=inf\noffset=NaN\n\
+                           bogus_field=42\n";
+            let hr = self.load_view_metadata(hostile);
             let clamped = (1..=10_000_000).contains(&self.max_iter)
                 && (1..=16).contains(&self.aa)
                 && self.viewport.units_per_pixel.log2().is_finite()
                 && self.viewport.units_per_pixel.log2() >= -3.4e7 - 1.0
                 && self.cycle.is_finite()
-                && self.offset.is_finite();
+                && self.offset.is_finite()
+                && hr.clamped.len() >= 4 // zoom depth, max_iter, aa, cycle, offset
+                && hr.unknown.iter().any(|u| u == "bogus_field");
             checks.push(SelfCheck {
                 category: "View format",
-                name: "hostile fields clamped".into(),
-                params: "upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf".into(),
+                name: "hostile fields clamped + reported".into(),
+                params: "upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf, bogus_field".into(),
                 result: format!(
-                    "iter {} aa {} upp_log2 {:.2e} cycle {} offset {}",
+                    "iter {} aa {} upp_log2 {:.2e}; clamped [{}]; unknown [{}]",
                     self.max_iter, self.aa, self.viewport.units_per_pixel.log2(),
-                    self.cycle, self.offset
+                    hr.clamped.join(", "), hr.unknown.join(", ")
                 ),
-                threshold: "all clamped to safe ranges & finite",
+                threshold: "clamped & finite; report lists clamped + unknown",
                 pass: clamped,
+            });
+        }
+
+        // ---- status-bar formatters (pure, depth-aware display) ----
+        {
+            // Zoom mantissa is space-grouped in 5s; exponent untouched.
+            let zg = crate::group_sci_mantissa("3.38050027227e15");
+            checks.push(SelfCheck {
+                category: "Formatting",
+                name: "zoom mantissa grouped".into(),
+                params: "3.38050027227e15".into(),
+                result: zg.clone(),
+                threshold: "\"3.38050 02722 7e15\"",
+                pass: zg == "3.38050 02722 7e15",
+            });
+            // Deep coordinate: elides the middle (leading … frontier) and a short coord
+            // (`-0.5`) must not panic the 15-digit floor clamp.
+            let deep = fractadyne_core::parse_bf("-0.743643887037158704752191506114774").unwrap();
+            let ds = crate::fmt_coord_deep(&deep, 100.0);
+            let short = crate::fmt_coord_deep(&fractadyne_core::parse_bf("-0.5").unwrap(), 1.0);
+            let ok = ds.contains('…') && ds.starts_with("-0.74364") && short == "-0.5";
+            checks.push(SelfCheck {
+                category: "Formatting",
+                name: "deep coordinate elides middle".into(),
+                params: "32-digit center @ ~1e30×; and -0.5".into(),
+                result: format!("{ds}  |  {short}"),
+                threshold: "leading … frontier; short coord safe",
+                pass: ok,
             });
         }
 

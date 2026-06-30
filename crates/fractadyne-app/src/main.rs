@@ -444,12 +444,39 @@ fn commas(s: &str) -> String {
     }
 }
 
+/// Space-group the fractional digits of a scientific-notation string's mantissa (in 5s),
+/// matching the coordinate readout: `3.38050027227e15` → `3.38050 02722 7e15`. The exponent
+/// is left intact. For display only — `parse_zoom_to_log2` strips spaces, so it round-trips.
+fn group_sci_mantissa(s: &str) -> String {
+    let (mant, exp) = match s.split_once(['e', 'E']) {
+        Some((m, e)) => (m, Some(e)),
+        None => (s, None),
+    };
+    let grouped = match mant.split_once('.') {
+        Some((int_part, frac)) => {
+            let mut g = String::with_capacity(frac.len() + frac.len() / 5);
+            for (i, c) in frac.chars().enumerate() {
+                if i > 0 && i % 5 == 0 {
+                    g.push(' ');
+                }
+                g.push(c);
+            }
+            format!("{int_part}.{g}")
+        }
+        None => mant.to_string(),
+    };
+    match exp {
+        Some(e) => format!("{grouped}e{e}"),
+        None => grouped,
+    }
+}
+
 /// Magnification with comma-grouped integer part + 2 decimals, e.g. `1,805,359.12`.
 fn fmt_zoom(mag: f64) -> String {
     if mag > 1.0e12 {
         // Deep zoom: scientific notation, 12 significant digits (a 30-digit integer is
-        // unreadable). `{:.11e}` → e.g. `3.38050027227e15`.
-        format!("{mag:.11e}")
+        // unreadable). `{:.11e}` → e.g. `3.38050027227e15`, with the mantissa space-grouped.
+        group_sci_mantissa(&format!("{mag:.11e}"))
     } else if mag >= 1000.0 {
         // Large integer magnification: comma-grouped, no decimals (the `.00` is clutter).
         commas(&format!("{mag:.0}"))
@@ -470,7 +497,7 @@ fn fmt_zoom_log2(log2mag: f64) -> String {
         let log10 = log2mag * std::f64::consts::LOG10_2;
         let e = log10.floor();
         let m = 10f64.powf(log10 - e);
-        format!("{m:.2}e{e:.0}")
+        group_sci_mantissa(&format!("{m:.2}e{e:.0}"))
     }
 }
 
@@ -523,6 +550,75 @@ fn fmt_coord(v: f64) -> String {
             format!("{sign}{int_part}.{g}")
         }
         None => format!("{sign}{s}"),
+    }
+}
+
+/// Decompose a decimal/scientific number string into positional parts (sign, integer
+/// digits, fractional digits) — `astro_float`'s `Display` is scientific (`7.43e-1`,
+/// `5.e-1`), so shift the point by the exponent to recover plain `0.743…` form.
+fn decimal_parts(s: &str) -> (&'static str, String, String) {
+    let (sign, body) = match s.strip_prefix('-') {
+        Some(r) => ("-", r),
+        None => ("+", s.trim_start_matches('+')),
+    };
+    let (mant, exp) = match body.split_once(['e', 'E']) {
+        Some((m, e)) => (m, e.trim().parse::<i32>().unwrap_or(0)),
+        None => (body, 0),
+    };
+    let (mant_int, mant_frac) = match mant.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (mant, ""),
+    };
+    let digits: String = format!("{mant_int}{mant_frac}");
+    // Digits to the left of the point: the mantissa's integer width, shifted by the exponent.
+    let point = mant_int.len() as i32 + exp;
+    let n = digits.len() as i32;
+    if point <= 0 {
+        (sign, "0".to_string(), format!("{}{digits}", "0".repeat((-point) as usize)))
+    } else if point >= n {
+        (sign, format!("{digits}{}", "0".repeat((point - n) as usize)), String::new())
+    } else {
+        let p = point as usize;
+        (sign, digits[..p].to_string(), digits[p..].to_string())
+    }
+}
+
+/// Format an arbitrary-precision coordinate for the status bar, showing enough significant
+/// fractional digits for the current zoom (an `f64` readout freezes at ~15 digits, so deep
+/// pans look static). Past a width threshold the middle is elided — `leading … frontier` —
+/// so the deepest, *changing* digits stay on screen, e.g. `-0.74364 38870 … 06114 7740`.
+fn fmt_coord_deep(v: &fractadyne_core::BigFloat, log2mag: f64) -> String {
+    // Group a digit run in 5s for readability.
+    let group = |digits: &str| -> String {
+        let mut g = String::with_capacity(digits.len() + digits.len() / 5);
+        for (i, c) in digits.chars().enumerate() {
+            if i > 0 && i % 5 == 0 {
+                g.push(' ');
+            }
+            g.push(c);
+        }
+        g
+    };
+    let (sign, int_part, frac) = decimal_parts(&fractadyne_core::to_decimal_string(v));
+    if frac.is_empty() {
+        return format!("{sign}{int_part}");
+    }
+    // Significant fractional digits worth showing ≈ decimal octaves of zoom + guard, capped
+    // by what's actually stored. Floor of 15 keeps shallow views looking like `fmt_coord`
+    // (but never asks for more digits than exist — avoids a min>max clamp on short coords).
+    let want = (log2mag * std::f64::consts::LOG10_2).max(0.0).ceil() as usize + 6;
+    let lo = 15.min(frac.len());
+    let d = want.clamp(lo, frac.len());
+    const HEAD: usize = 10; // leading digits kept
+    const TAIL: usize = 10; // frontier digits kept
+    if d <= HEAD + TAIL + 5 {
+        format!("{sign}{int_part}.{}", group(&frac[..d]))
+    } else {
+        format!(
+            "{sign}{int_part}.{} … {}",
+            group(&frac[..HEAD]),
+            group(&frac[d - TAIL..d])
+        )
     }
 }
 
@@ -2470,19 +2566,16 @@ impl FractadyneApp {
             return;
         }
         let t = t.to_string();
-        let load = self.load_view_metadata(&t); // performs the jump + records history
+        let report = self.load_view_metadata(&t); // performs the jump + records history
         let zoom = fmt_zoom_log2(self.viewport.log2_magnification());
-        match load {
-            crate::export::ViewLoad::Ok => {
+        match report.note() {
+            None => {
                 self.set_toast(format!("Loaded location @ {zoom}×"), ctx);
                 self.share_open = false;
             }
-            // Keep the dialog open and surface the warning rather than silently jumping.
-            crate::export::ViewLoad::NewerFormat(v) => {
-                self.share_msg = Some(format!(
-                    "Loaded @ {zoom}×, but this location is from a newer Fractadyne \
-                     (format v{v}); some settings may not apply. Consider updating."
-                ));
+            // Keep the dialog open and surface the report rather than silently jumping.
+            Some(n) => {
+                self.share_msg = Some(format!("Loaded @ {zoom}× — {n}."));
             }
         }
     }
@@ -3325,8 +3418,12 @@ impl eframe::App for FractadyneApp {
 
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let (cf_x, cf_y) = self.viewport.center_f64();
-                ui.monospace(format!("center {}, {}", fmt_coord(cf_x), fmt_coord(cf_y)));
+                let l2 = self.viewport.log2_magnification();
+                ui.monospace(format!(
+                    "center {}, {}",
+                    fmt_coord_deep(&self.viewport.center_x, l2),
+                    fmt_coord_deep(&self.viewport.center_y, l2),
+                ));
                 ui.separator();
                 match self.pointer_complex {
                     Some((mx, my)) => {
