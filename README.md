@@ -99,7 +99,7 @@ or internal cross-checks):
 ## Controls
 
 - **Pan** left-drag · **Zoom** wheel (cursor-centered) · **Box-zoom** right-drag
-- **Continuous zoom** hold Space (in) / Shift+Space (out)
+- **Continuous zoom** hold Space (in) / Shift+Space (out) · **Auto-zoom** A (autopilot dives toward detail)
 - **Ctrl+S** quick-save · **★** bookmark · **🏠** animated zoom-home · **Esc** exit fullscreen
 - Toolbar + menus for fractal, Julia/dual, coloring, export, bookmarks, tools.
 

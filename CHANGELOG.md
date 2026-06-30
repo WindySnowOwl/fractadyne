@@ -145,6 +145,15 @@ Baseline for tracked versioning. Notable capabilities already present:
   readability), so **exported PNG/EXR images and bookmarks restore views deeper than 1e308×
   exactly**. Round-trip unit-tested (shallow through 1e30000×).
 
+- **Auto-zoom autopilot** — hands-free continuous deep zoom that re-steers toward detail
+  (XaoS-style), via **View → "Auto-zoom (autopilot)"** or the **A** key; **Esc** or any
+  navigation input stops it. Every ~0.35 s it renders a small (56×56) iteration field of the
+  current view through the live perturbation pipeline (so it works at any depth) and scores
+  each cell by **boundary adjacency + escape-time gradient**, center-biased for a stable
+  dive; it eases the target and zooms toward it each frame (reusing `zoom_at` + the
+  continuous-zoom rate), treating the dive as interaction (AA off, throttled reference
+  refresh). Stops on a dead end (no boundary detail in view) or at a depth cap (~1e271×).
+
 - **In-app Help & reference** — Help → "Help & reference…" (or F1 / ?) opens a multi-section
   window with a table of contents: Overview, Navigation, Coloring & options, Fractals
   (mathematically accurate per-family formulas + descriptions, Julia mode, deep-zoom

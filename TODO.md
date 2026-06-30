@@ -465,23 +465,16 @@ for fun, informative value, and ease of use.
       key=value allow-list only, bounded lengths, validate/clamp every numeric field,
       reject unknown keys, no code/formula execution, no file paths, cap decoded size,
       and fuzz the decoder. (Reuse the hardened view-metadata parser; never `eval`.)
-- [ ] **Auto-zoom (autopilot) — follow interesting areas downward** — a hands-free
-      continuous deep zoom that re-targets toward detail each step, like XaoS's autopilot /
-      Kalles Fraktaler's "zoom sequence." Common steering methods to evaluate: (a) **DE /
-      gradient-magnitude saliency** — pick the sub-region with the strongest boundary
-      response (highest distance-estimate contrast / iteration-gradient / local variance),
-      keeping the target a margin off the set so it never bottoms out in solid interior or
-      escapes to flat exterior; (b) **edge/entropy detection** on the iteration field
-      (Sobel / Shannon entropy per candidate tile) to favor structurally rich regions; (c)
-      **minibrot-seeking** — reuse `find_nucleus` to lock onto a nearby minibrot and zoom
-      to its nucleus for an endlessly-detailed descent; (d) **boundary-tracking** —
-      bisect toward the set boundary (as `random_location` already does) and follow it.
-      Re-evaluate the target every K frames within the current view (cheap, from the
-      existing iteration texture), steer the center with a smoothed/eased lerp (reuse the
-      continuous-zoom + `home_lerp` machinery) to avoid jerks, and stop/zoom-out on
-      dead-ends (uniform region) or at a depth cap. Hook into the toolbar + a keybind;
-      respects the perturbation/AA-on-settle pipeline. Pairs naturally with the
-      zoom-movie / frame→video export below (deterministic autopilot path → render farm).
+- [x] **Auto-zoom (autopilot) — follow interesting areas downward** — hands-free continuous
+      deep zoom that re-steers toward detail (XaoS-style), via **View → "Auto-zoom"** or the
+      **A** key (Esc / any navigation input stops it). Every ~0.35 s it renders a small
+      (56×56) iteration field of the current view through the live perturbation pipeline and
+      scores each cell by **boundary adjacency + escape-time gradient**, center-biased for a
+      stable dive; it eases the target and zooms toward it each frame (reusing `zoom_at` +
+      the continuous-zoom rate), treating the dive as interaction (AA off, throttled
+      reference refresh). Stops on a dead end (no boundary detail → flat interior/exterior)
+      or the depth cap (~1e271×, the smooth regime). *(Follow-ups: minibrot-seeking /
+      boundary-tracking steering modes; pairs with the planned zoom-movie export.)*
 - [ ] **Zoom-movie / frame→video export** — build on scripting + headless render.
 - [ ] **Layers + blend modes** (Ultra Fractal-style compositing).
 - [ ] **Formula DSL / custom formulas** (M6).
