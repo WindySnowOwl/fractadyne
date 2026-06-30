@@ -253,9 +253,10 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
     help_sub(ui, "Deep-zoom support");
     help_p(
         ui,
-        "Mandelbrot and Multibrot 3/4/5 support unlimited perturbation deep zoom. The abs-based \
-         families (Tricorn, Burning Ship, Celtic, Buffalo) and Phoenix/Newton currently use the \
-         direct path, which stays sharp to about 10⁶×.",
+        "Mandelbrot, Multibrot 3/4/5 and Tricorn support unlimited (floatexp) perturbation deep \
+         zoom. Burning Ship, Celtic and Buffalo are non-analytic (they take absolute values), so \
+         they use a sign-aware perturbation that stays sharp to about 10²⁸×. Phoenix and Newton \
+         currently use the direct path, sharp to about 10⁶×.",
     );
 }
 

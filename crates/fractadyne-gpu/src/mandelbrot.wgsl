@@ -74,6 +74,21 @@ fn df_abs(a: vec2<f32>) -> vec2<f32> {
     if (a.x < 0.0) { return vec2<f32>(-a.x, -a.y); }
     return a;
 }
+// |c+d| − |c| computed without catastrophic cancellation (KF "diffabs"): the
+// abs-fold contribution for perturbing non-analytic families. `c` is the
+// high-precision reference component, `d` the small perturbation. When c and
+// c+d share a sign the result is exactly ±d (no cancellation); only a sign flip
+// (near the fold) uses ±(2c+d), where a wrong branch shows up as a glitch.
+fn df_diffabs(c: vec2<f32>, d: vec2<f32>) -> vec2<f32> {
+    let cd = df_add(c, d);
+    if (c.x >= 0.0) {
+        if (cd.x >= 0.0) { return d; }
+        let t = df_add(df_two(c), d);
+        return vec2<f32>(-t.x, -t.y);
+    }
+    if (cd.x > 0.0) { return df_add(df_two(c), d); }
+    return vec2<f32>(-d.x, -d.y);
+}
 // df32 division a/b (Newton needs it). Standard long-division refinement.
 fn df_div(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     let q1 = a.x / b.x;
@@ -718,6 +733,24 @@ fn fs_iterate(in: VsOut) -> FragOut {
             } else if (iu.formula == 4u) {
                 let cz = c_conj(z); let cd = c_conj(dz);
                 dz = c_add(c_add(c_two(c_mul(cz, cd)), c_sqr(cd)), dc);
+            } else if (iu.formula >= 5u && iu.formula <= 7u) {
+                // Abs families. δ(z²) = 2Z·δz + δz²; the abs fold on a component
+                // becomes diffabs(reference z² component, its δ). Reference z² = c_sqr(Z).
+                let W = c_sqr(z);
+                let dw = c_add(c_two(c_mul(z, dz)), c_sqr(dz));
+                if (iu.formula == 5u) {
+                    // Burning Ship: real = x²−y²+cx, imag = |2xy|+cy
+                    dz = cset(df_add(dw.re, dc.re),
+                              df_add(df_diffabs(W.im, dw.im), dc.im));
+                } else if (iu.formula == 6u) {
+                    // Celtic: real = |x²−y²|+cx, imag = 2xy+cy
+                    dz = cset(df_add(df_diffabs(W.re, dw.re), dc.re),
+                              df_add(dw.im, dc.im));
+                } else {
+                    // Buffalo: real = |x²−y²|+cx, imag = |2xy|+cy
+                    dz = cset(df_add(df_diffabs(W.re, dw.re), dc.re),
+                              df_add(df_diffabs(W.im, dw.im), dc.im));
+                }
             } else {
                 dz = c_add(c_add(c_two(c_mul(z, dz)), c_sqr(dz)), dc);
             }

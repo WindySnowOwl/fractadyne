@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.0 (build 169)
-- **Generated:** 2026-06-30 04:11:14 UTC (unix 1782792674)
+- **Version:** 0.1.0 (build 175)
+- **Generated:** 2026-06-30 04:40:17 UTC (unix 1782794417)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -28,6 +28,12 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Symmetry (render) | Multibrot-3 180° rotation | origin view, span 3, 44944 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |
 | Symmetry (render) | Tricorn real-axis reflection | origin view, span 3, 44846 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |
 | Symmetry (render) | Celtic real-axis reflection | origin view, span 3, 42414 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |
+| Abs-family deep zoom | Burning Ship perturbation vs direct | 1e5×, mode 0 vs 1, n=48400 | mean Δ=0.0000 iter, >2iter 0.000% | mode 0, mean<0.5, <2% differ, n>0 | ✅ PASS |
+| Abs-family deep zoom | Burning Ship deep finiteness @1e9× | 1e9×, mode 0 | finite dwell, 48400 escaped / 0 interior, spread 0.0 iter | mode 0, all finite | ✅ PASS |
+| Abs-family deep zoom | Celtic perturbation vs direct | 1e5×, mode 0 vs 1, n=31 | mean Δ=0.1837 iter, >2iter 0.000% | mode 0, mean<0.5, <2% differ, n>0 | ✅ PASS |
+| Abs-family deep zoom | Celtic deep finiteness @1e9× | 1e9×, mode 0 | finite dwell, 12881 escaped / 35519 interior, spread 1835.0 iter | mode 0, all finite | ✅ PASS |
+| Abs-family deep zoom | Buffalo perturbation vs direct | 1e5×, mode 0 vs 1, n=48400 | mean Δ=0.0001 iter, >2iter 0.000% | mode 0, mean<0.5, <2% differ, n>0 | ✅ PASS |
+| Abs-family deep zoom | Buffalo deep finiteness @1e9× | 1e9×, mode 0 | finite dwell, 48400 escaped / 0 interior, spread 0.0 iter | mode 0, all finite | ✅ PASS |
 | Consistency | resolution independence (N vs 3N) | seahorse, 1e6×, 25551 smooth px | 0 differ | 0 differ | ✅ PASS |
 | Consistency | max-iter monotonic stability | seahorse, 1e6×, 500→3000 iter, 15722 escaped px | 0 changed dwell | 0 changed | ✅ PASS |
 | Consistency | zoom-sequence across direct→df32 seam | seahorse, 4e3×↔1.2e4×, 1814 overlap px | 0 differ | <0.1% differ | ✅ PASS |
@@ -44,7 +50,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Catalog | exterior point (c = 1) | interior expected false | oracle says interior=false | matches catalog | ✅ PASS |
 | Catalog | deep minibrot nucleus interior (full precision) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
 
-**30/30 checks passed.**
+**36/36 checks passed.**
 
 ## Coverage & scope
 

@@ -618,6 +618,30 @@ fn step_bf(
             let txy = zx.mul(zy, p, RM).mul(&two, p, RM);
             (x2.sub(&y2, p, RM).add(cx, p, RM), cy.sub(&txy, p, RM))
         }
+        5 => {
+            // Burning Ship: real = x²−y²+cx, imag = |2xy|+cy
+            let two = bf(2.0, p);
+            let x2 = zx.mul(zx, p, RM);
+            let y2 = zy.mul(zy, p, RM);
+            let xy2 = zx.mul(zy, p, RM).mul(&two, p, RM);
+            (x2.sub(&y2, p, RM).add(cx, p, RM), xy2.abs().add(cy, p, RM))
+        }
+        6 => {
+            // Celtic: real = |x²−y²|+cx, imag = 2xy+cy
+            let two = bf(2.0, p);
+            let x2 = zx.mul(zx, p, RM);
+            let y2 = zy.mul(zy, p, RM);
+            let xy2 = zx.mul(zy, p, RM).mul(&two, p, RM);
+            (x2.sub(&y2, p, RM).abs().add(cx, p, RM), xy2.add(cy, p, RM))
+        }
+        7 => {
+            // Buffalo: real = |x²−y²|+cx, imag = |2xy|+cy
+            let two = bf(2.0, p);
+            let x2 = zx.mul(zx, p, RM);
+            let y2 = zy.mul(zy, p, RM);
+            let xy2 = zx.mul(zy, p, RM).mul(&two, p, RM);
+            (x2.sub(&y2, p, RM).abs().add(cx, p, RM), xy2.abs().add(cy, p, RM))
+        }
         _ => {
             // Mandelbrot: z² + c
             let two = bf(2.0, p);

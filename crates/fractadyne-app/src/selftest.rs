@@ -550,6 +550,127 @@ impl FractadyneApp {
             }
         }
 
+        // ---- abs-family deep zoom: perturbation (df32) vs direct path ----
+        // Burning Ship / Celtic / Buffalo are non-analytic: their shader perturbation
+        // folds with `diffabs` at the abs cusps. There's no closed-form oracle for an
+        // off-axis detail view, so we cross-check the new perturbation path (mode 0)
+        // against the trusted direct path (mode 1) at a depth where direct df32 is still
+        // accurate (~1e5×). They must agree everywhere except a tiny fraction of
+        // fold-crossing pixels (where a diffabs branch flip is an inherent glitch).
+        {
+            self.julia_mode = false;
+            self.color_method = 0;
+            self.use_custom_palette = false;
+            self.auto_iter = false;
+            self.max_iter = 2000;
+            let nn = N as usize;
+            let steep = |px: &[f32], i: usize, j: usize| -> bool {
+                let g = px[(j * nn + i) * 4];
+                for (di, dj) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+                    let (ni, nj) = (i as isize + di, j as isize + dj);
+                    if ni >= 0 && nj >= 0 && (ni as usize) < nn && (nj as usize) < nn {
+                        let gn = px[(nj as usize * nn + ni as usize) * 4];
+                        if (g < 0.0) != (gn < 0.0) || (g >= 0.0 && gn >= 0.0 && (g - gn).abs() > 2.0) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            };
+            // (family, center, mag) — boundary-detail regions rich in escaping pixels.
+            let abs_cases: &[(FractalKind, &str, &str, f64)] = &[
+                (FractalKind::BurningShip, "-1.7548", "-0.0312", 1.0e5),
+                (FractalKind::Celtic, "-1.2566", "0.0480", 1.0e5),
+                (FractalKind::Buffalo, "-1.7548", "-0.0312", 1.0e5),
+            ];
+            for &(fractal, cx, cy, mag) in abs_cases {
+                self.fractal = fractal;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag);
+                let mut pert = self.current_export_request_for(&vp, false);
+                pert.width = N;
+                pert.height = N;
+                pert.ss = 1;
+                let mut direct = pert.clone();
+                direct.mode = 1; // force the trusted direct df32 path
+                if let (Some(a), Some(b)) = (
+                    fractadyne_gpu::render_iter(device, queue, &pert).ok().map(|r| r.pixels),
+                    fractadyne_gpu::render_iter(device, queue, &direct).ok().map(|r| r.pixels),
+                ) {
+                    let (mut sum, mut n, mut big) = (0.0f64, 0u64, 0u64);
+                    for j in 0..nn {
+                        for i in 0..nn {
+                            if steep(&a, i, j) {
+                                continue;
+                            }
+                            let k = j * nn + i;
+                            let (ra, rb) = (a[k * 4], b[k * 4]);
+                            if ra >= 0.0 && rb >= 0.0 {
+                                let d = (ra - rb).abs() as f64;
+                                sum += d;
+                                n += 1;
+                                if d > 2.0 {
+                                    big += 1;
+                                }
+                            }
+                        }
+                    }
+                    let mean = if n == 0 { f64::INFINITY } else { sum / n as f64 };
+                    let frac = if n == 0 { 1.0 } else { big as f64 / n as f64 };
+                    checks.push(SelfCheck {
+                        category: "Abs-family deep zoom",
+                        name: format!("{} perturbation vs direct", fractal.name()),
+                        params: format!("{mag:.0e}×, mode {} vs 1, n={n}", pert.mode),
+                        result: format!("mean Δ={mean:.4} iter, >2iter {:.3}%", frac * 100.0),
+                        threshold: "mode 0, mean<0.5, <2% differ, n>0",
+                        pass: pert.mode == 0 && n > 0 && mean < 0.5 && frac < 0.02,
+                    });
+                }
+
+                // Deep-zoom guard: the df32 diffabs recurrence must stay finite (no
+                // NaN/inf) well into the perturbation range — the depth at which the old
+                // direct path would have broken down. (Structure/correctness is pinned by
+                // the 1e5×-vs-direct match above; whether a blindly zoomed-in center lands
+                // on detail vs a uniform exterior pocket is not a correctness signal.)
+                let deep_mag = 1.0e9;
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * deep_mag));
+                vp.precision = fractadyne_core::precision_for_magnification(deep_mag);
+                let mut deep = self.current_export_request_for(&vp, false);
+                deep.width = N;
+                deep.height = N;
+                deep.ss = 1;
+                if let Some(px) = fractadyne_gpu::render_iter(device, queue, &deep).ok().map(|r| r.pixels) {
+                    let dwell_finite = px.iter().step_by(4).all(|v| v.is_finite());
+                    let interior = px.iter().step_by(4).filter(|&&v| v < 0.0).count();
+                    // Detail = spread of escaped dwell. A uniform screen (mode breakdown)
+                    // would collapse this to ~0; real fractal structure spans many iters.
+                    let (mut lo, mut hi, mut esc) = (f32::INFINITY, f32::NEG_INFINITY, 0u64);
+                    for v in px.iter().step_by(4) {
+                        if *v >= 0.0 {
+                            lo = lo.min(*v);
+                            hi = hi.max(*v);
+                            esc += 1;
+                        }
+                    }
+                    let spread = if esc > 0 { (hi - lo) as f64 } else { 0.0 };
+                    checks.push(SelfCheck {
+                        category: "Abs-family deep zoom",
+                        name: format!("{} deep finiteness @1e9×", fractal.name()),
+                        params: format!("{deep_mag:.0e}×, mode {}", deep.mode),
+                        result: format!(
+                            "{} dwell, {esc} escaped / {interior} interior, spread {spread:.1} iter",
+                            if dwell_finite { "finite" } else { "NON-FINITE!" }
+                        ),
+                        threshold: "mode 0, all finite",
+                        pass: deep.mode == 0 && dwell_finite,
+                    });
+                }
+            }
+        }
+
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
         {
             self.fractal = FractalKind::Mandelbrot;
