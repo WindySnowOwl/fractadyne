@@ -140,9 +140,10 @@ struct Stat {
 fn stat(v: &mut [f64]) -> Stat {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let n = v.len().max(1);
+    let mid = (v.len() / 2).min(v.len().saturating_sub(1));
     Stat {
         min: v.first().copied().unwrap_or(0.0),
-        median: v[v.len() / 2.min(v.len().saturating_sub(1))],
+        median: v.get(mid).copied().unwrap_or(0.0),
         mean: v.iter().sum::<f64>() / n as f64,
         max: v.last().copied().unwrap_or(0.0),
     }
