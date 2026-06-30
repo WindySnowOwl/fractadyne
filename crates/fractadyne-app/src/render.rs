@@ -74,10 +74,13 @@ impl FractadyneApp {
         orbit_len: u32,
         precision: usize,
     ) -> fractadyne_core::SeriesSkip {
+        // SA applies to the holomorphic polynomial families: Mandelbrot (0) and
+        // Multibrot 3/4/5 (1/2/3). Tricorn (anti-holomorphic) and the abs families don't
+        // have this δc expansion.
         if !self.series_approx
             || mode == 1
             || julia
-            || self.fractal.formula_id() != 0
+            || self.fractal.formula_id() > 3
             || fractadyne_gpu::method_needs_aux(self.color_method)
         {
             return fractadyne_core::SeriesSkip::NONE;
@@ -88,7 +91,15 @@ impl FractadyneApp {
         let half_diag =
             0.5 * (span_mantissa[0] * span_mantissa[0] + span_mantissa[1] * span_mantissa[1]).sqrt();
         let log2_max_dc = delta_exp as f64 + (roff + half_diag).max(1e-300).log2();
-        fractadyne_core::series_skip(&ref_pt[0], &ref_pt[1], log2_max_dc, eff_iter, orbit_len, precision)
+        fractadyne_core::series_skip(
+            &ref_pt[0],
+            &ref_pt[1],
+            log2_max_dc,
+            eff_iter,
+            orbit_len,
+            self.fractal.formula_id(),
+            precision,
+        )
     }
 
     /// Build an export request for a given viewport + Julia flag at the export
@@ -356,7 +367,7 @@ impl FractadyneApp {
             // Both perturbation paths (mode 0 df32 and mode 2 floatexp) use it.
             if (mode == 0 || mode == 2)
                 && !julia
-                && fractal.formula_id() == 0
+                && fractal.formula_id() <= 3
                 && !fractadyne_gpu::method_needs_aux(self.color_method)
                 && self.series_approx
             {

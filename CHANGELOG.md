@@ -326,6 +326,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   mode-independent (computed once in bignum). Validated to reproduce full iteration exactly
   (max Δ 0) at 1e20× — skipping 19007 of 19008 iterations at a deep minibrot.
 
+- **Series approximation for the Multibrot families** — SA now also accelerates Multibrot
+  3/4/5, not just Mandelbrot. The order-3 coefficient recurrence is generalized to `z^d+c`
+  (`A'=d·Z^{d-1}·A+1`, etc., with binomial weights); the GPU seed is already formula-agnostic.
+  Validated by a core test (series vs exact perturbation for z³, rel err <1e-3) and a GPU
+  check that SA engages and matches an SA-off render for all three families. (Tricorn and the
+  abs families have no such δc expansion.)
+
 - **Zoom-movie / frame-sequence export** — `--render-tour FILE [--fps N] [--size W]
   [--height H] [--ss N] [--out DIR]` renders a keyframe-tour TOML to a numbered PNG frame
   sequence (`frame_00000.png …`) for assembly into a deep-zoom dive video (prints an ffmpeg

@@ -813,17 +813,20 @@ fn log2_cmag(re: &BigFloat, im: &BigFloat) -> f64 {
     }
 }
 
-/// Compute the [`SeriesSkip`] for a **Mandelbrot** reference at `c = (cx, cy)`. Iterates the
-/// reference together with the order-3 series coefficients in arbitrary precision, and skips
-/// while the cubic term stays below `2^EPS_LOG2` of the linear term at the worst-case corner
-/// `|δc|` (given as `log2_max_dc`) — which guarantees validity, and that no pixel escapes,
-/// before `skip`. `orbit_len` bounds the skip below the reference length.
+/// Compute the [`SeriesSkip`] for a reference at `c = (cx, cy)` of the polynomial family
+/// `formula` (Mandelbrot `z²+c` = 0, Multibrot `z³/z⁴/z⁵+c` = 1/2/3). Iterates the reference
+/// together with the order-3 series coefficients in arbitrary precision, and skips while the
+/// cubic term stays below `2^EPS_LOG2` of the linear term at the worst-case corner `|δc|`
+/// (given as `log2_max_dc`) — which guarantees validity, and that no pixel escapes, before
+/// `skip`. `orbit_len` bounds the skip below the reference length. Only the holomorphic
+/// polynomial families have this expansion; callers must not pass others.
 pub fn series_skip(
     cx: &BigFloat,
     cy: &BigFloat,
     log2_max_dc: f64,
     max_iter: u32,
     orbit_len: u32,
+    formula: u32,
     p: usize,
 ) -> SeriesSkip {
     if !log2_max_dc.is_finite() {
@@ -832,28 +835,56 @@ pub fn series_skip(
     const EPS_LOG2: f64 = -16.0; // cubic term ≤ 2⁻¹⁶ of linear ⇒ ample accuracy
     const MIN_SKIP: u32 = 8; // below this the bookkeeping isn't worth it
     let limit = max_iter.min(orbit_len.saturating_sub(2));
-    let two = bf(2.0, p);
+    // Degree d of z^d + c, and the binomial weights that appear in the order-3 recurrence.
+    let deg: u32 = match formula {
+        1 => 3,
+        2 => 4,
+        3 => 5,
+        _ => 2,
+    };
+    let df = deg as f64;
     let one = bf(1.0, p);
+    let d_bf = bf(df, p);
+    let c2_bf = bf(df * (df - 1.0) / 2.0, p); // C(d,2)
+    let two_c2_bf = bf(df * (df - 1.0), p); // 2·C(d,2)
+    let c3_bf = bf(df * (df - 1.0) * (df - 2.0) / 6.0, p); // C(d,3) (0 for d=2)
     let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
     let (mut ax, mut ay) = (bf(0.0, p), bf(0.0, p));
     let (mut bx, mut by) = (bf(0.0, p), bf(0.0, p));
     let (mut cxx, mut cyy) = (bf(0.0, p), bf(0.0, p));
     let mut best: Option<(u32, [BigFloat; 6])> = None;
     for n in 1..=limit {
-        // Advance coefficients using Z_{n-1} (current z): A'=2ZA+1, B'=2ZB+A², C'=2ZC+2AB.
-        let (zax, zay) = cmul_bf(&zx, &zy, &ax, &ay, p);
-        let na_x = zax.mul(&two, p, RM).add(&one, p, RM);
-        let na_y = zay.mul(&two, p, RM);
-        let (zbx, zby) = cmul_bf(&zx, &zy, &bx, &by, p);
-        let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, p);
-        let nb_x = zbx.mul(&two, p, RM).add(&a2x, p, RM);
-        let nb_y = zby.mul(&two, p, RM).add(&a2y, p, RM);
-        let (zcx, zcy) = cmul_bf(&zx, &zy, &cxx, &cyy, p);
-        let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, p);
-        let nc_x = zcx.mul(&two, p, RM).add(&abx.mul(&two, p, RM), p, RM);
-        let nc_y = zcy.mul(&two, p, RM).add(&aby.mul(&two, p, RM), p, RM);
-        // Advance the reference: Z_n = Z_{n-1}² + c.
-        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, 0, p);
+        // Advance the order-3 coefficients for z^d + c, using Z_{n-1} (current z):
+        //   A' = d·Z^{d-1}·A + 1
+        //   B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
+        //   C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
+        let (p1x, p1y) = cpow_bf(&zx, &zy, deg - 1, p); // Z^{d-1}
+        let (p2x, p2y) = cpow_bf(&zx, &zy, deg - 2, p); // Z^{d-2}
+        let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, p); // A²
+        let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, p); // A·B
+        // A'
+        let (t, u) = cmul_bf(&p1x, &p1y, &ax, &ay, p);
+        let na_x = t.mul(&d_bf, p, RM).add(&one, p, RM);
+        let na_y = u.mul(&d_bf, p, RM);
+        // B'
+        let (t, u) = cmul_bf(&p1x, &p1y, &bx, &by, p);
+        let (v, w) = cmul_bf(&p2x, &p2y, &a2x, &a2y, p);
+        let nb_x = t.mul(&d_bf, p, RM).add(&v.mul(&c2_bf, p, RM), p, RM);
+        let nb_y = u.mul(&d_bf, p, RM).add(&w.mul(&c2_bf, p, RM), p, RM);
+        // C'
+        let (t, u) = cmul_bf(&p1x, &p1y, &cxx, &cyy, p);
+        let (v, w) = cmul_bf(&p2x, &p2y, &abx, &aby, p);
+        let mut nc_x = t.mul(&d_bf, p, RM).add(&v.mul(&two_c2_bf, p, RM), p, RM);
+        let mut nc_y = u.mul(&d_bf, p, RM).add(&w.mul(&two_c2_bf, p, RM), p, RM);
+        if deg >= 3 {
+            let (p3x, p3y) = cpow_bf(&zx, &zy, deg - 3, p); // Z^{d-3}
+            let (a3x, a3y) = cmul_bf(&a2x, &a2y, &ax, &ay, p); // A³
+            let (x3, y3) = cmul_bf(&p3x, &p3y, &a3x, &a3y, p);
+            nc_x = nc_x.add(&x3.mul(&c3_bf, p, RM), p, RM);
+            nc_y = nc_y.add(&y3.mul(&c3_bf, p, RM), p, RM);
+        }
+        // Advance the reference: Z_n = Z_{n-1}^d + c.
+        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
         zx = nzx;
         zy = nzy;
         ax = na_x;
@@ -1059,8 +1090,11 @@ fn neg_bf(a: &BigFloat, p: usize) -> BigFloat {
     bf(0.0, p).sub(a, p, RM)
 }
 
-/// `z^e` for `e ≥ 1` by repeated multiplication (small exponents only).
+/// `z^e` by repeated multiplication (small exponents only); `z^0 = 1`.
 fn cpow_bf(zx: &BigFloat, zy: &BigFloat, e: u32, p: usize) -> (BigFloat, BigFloat) {
+    if e == 0 {
+        return (bf(1.0, p), bf(0.0, p));
+    }
     let mut rx = zx.clone();
     let mut ry = zy.clone();
     for _ in 1..e {
@@ -1365,7 +1399,7 @@ mod tests {
         let max_dc = 1.0e-9_f64; // deep-ish δc, where SA actually applies
         let log2_max_dc = max_dc.log2();
         let max_iter = 5000;
-        let s = series_skip(&cx, &cy, log2_max_dc, max_iter, max_iter, p);
+        let s = series_skip(&cx, &cy, log2_max_dc, max_iter, max_iter, 0, p);
         assert!(s.skip >= 8, "no usable skip found (skip={})", s.skip);
 
         // Reconstruct the (f64) coefficients and evaluate the series at a worst-case δc.
@@ -1405,6 +1439,66 @@ mod tests {
         let err = ((series.0 - ex).powi(2) + (series.1 - ey).powi(2)).sqrt();
         let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
         assert!(err / mag < 1.0e-3, "series vs exact δz rel err {:.2e} at skip {}", err / mag, s.skip);
+    }
+
+    // Same validation for the Multibrot-3 (z³+c) coefficient recurrence — confirms the
+    // generalized order-3 series (A'=3Z²A+1, B'=3Z²B+3ZA², C'=3Z²C+6ZAB+A³) reproduces the
+    // exact perturbation δz' = 3Z²δz + 3Zδz² + δz³ + δc.
+    #[test]
+    fn series_skip_matches_exact_multibrot3() {
+        let p = 160;
+        let (cx, cy) = (bf(0.2, p), bf(0.2, p)); // interior z³ point → long bounded orbit
+        let max_dc = 1.0e-9_f64;
+        let s = series_skip(&cx, &cy, max_dc.log2(), 5000, 5000, 1, p); // formula 1 = z³
+        assert!(s.skip >= 8, "no usable skip found (skip={})", s.skip);
+
+        let cof = |m: [f32; 4], e: i32| -> (f64, f64) {
+            let f = 2f64.powi(e);
+            ((m[0] as f64 + m[1] as f64) * f, (m[2] as f64 + m[3] as f64) * f)
+        };
+        let (ar, ai) = cof(s.a, s.a_exp);
+        let (br, bi) = cof(s.b, s.b_exp);
+        let (cr, ci) = cof(s.c, s.c_exp);
+        let cmul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
+        let dc = (max_dc, 0.0);
+        let dc2 = cmul(dc, dc);
+        let dc3 = cmul(dc2, dc);
+        let t1 = cmul((ar, ai), dc);
+        let t2 = cmul((br, bi), dc2);
+        let t3 = cmul((cr, ci), dc3);
+        let series = (t1.0 + t2.0 + t3.0, t1.1 + t2.1 + t3.1);
+
+        // Exact z³ perturbation in bignum, same reference: δz' = 3Z²δz + 3Zδz² + δz³ + δc.
+        let (dcx, dcy) = (bf(max_dc, p), bf(0.0, p));
+        let three = bf(3.0, p);
+        let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+        let (mut dzx, mut dzy) = (bf(0.0, p), bf(0.0, p));
+        for _ in 0..s.skip {
+            let (z2x, z2y) = cmul_bf(&zx, &zy, &zx, &zy, p); // Z²
+            let (zdx, zdy) = cmul_bf(&z2x, &z2y, &dzx, &dzy, p); // Z²δz
+            let (d2x, d2y) = cmul_bf(&dzx, &dzy, &dzx, &dzy, p); // δz²
+            let (zd2x, zd2y) = cmul_bf(&zx, &zy, &d2x, &d2y, p); // Zδz²
+            let (d3x, d3y) = cmul_bf(&d2x, &d2y, &dzx, &dzy, p); // δz³
+            let ndzx = zdx
+                .mul(&three, p, RM)
+                .add(&zd2x.mul(&three, p, RM), p, RM)
+                .add(&d3x, p, RM)
+                .add(&dcx, p, RM);
+            let ndzy = zdy
+                .mul(&three, p, RM)
+                .add(&zd2y.mul(&three, p, RM), p, RM)
+                .add(&d3y, p, RM)
+                .add(&dcy, p, RM);
+            dzx = ndzx;
+            dzy = ndzy;
+            let (nzx, nzy) = step_bf(&zx, &zy, &cx, &cy, 1, p); // Z³ + c
+            zx = nzx;
+            zy = nzy;
+        }
+        let (ex, ey) = (to_f64(&dzx), to_f64(&dzy));
+        let err = ((series.0 - ex).powi(2) + (series.1 - ey).powi(2)).sqrt();
+        let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
+        assert!(err / mag < 1.0e-3, "z³ series vs exact rel err {:.2e} at skip {}", err / mag, s.skip);
     }
 
     #[test]

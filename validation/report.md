@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.0 (build 187)
-- **Generated:** 2026-06-30 22:58:12 UTC (unix 1782860292)
+- **Version:** 0.1.0 (build 189)
+- **Generated:** 2026-06-30 23:14:13 UTC (unix 1782861253)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -38,12 +38,15 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Abs-family deep zoom | Buffalo perturbation vs direct | 1e5×, mode 0 vs 1, n=48400 | mean Δ=0.0001 iter, >2iter 0.000% | mode 0, mean<0.5, <2% differ, n>0 | ✅ PASS |
 | Abs-family deep zoom | Buffalo floatexp vs df32 | 1e10×, mode 2 vs 0, n=48400 | mean Δ=0.0000 iter, >2iter 0.000% | mean<0.5, <2% differ, n>0 | ✅ PASS |
 | Abs-family deep zoom | Buffalo deep finiteness @1e35× | 1e35×, mode 2 | finite dwell, 48400 escaped / 0 interior, spread 0.0 iter | mode 2, all finite | ✅ PASS |
-| Consistency | resolution independence (N vs 3N) | seahorse, 1e6×, 25545 smooth px | 0 differ | 0 differ | ✅ PASS |
-| Consistency | max-iter monotonic stability | seahorse, 1e6×, 500→3000 iter, 15715 escaped px | 0 changed dwell | 0 changed | ✅ PASS |
+| Series approximation | Multibrot 3 SA engages + matches SA-off @1e7× | mode 0, skip 3999 of 4000 iter, 0 escaped | 0 mismatch, finite | skip>0, mode 0, finite, 0 mismatch | ✅ PASS |
+| Series approximation | Multibrot 4 SA engages + matches SA-off @1e7× | mode 0, skip 3999 of 4000 iter, 0 escaped | 0 mismatch, finite | skip>0, mode 0, finite, 0 mismatch | ✅ PASS |
+| Series approximation | Multibrot 5 SA engages + matches SA-off @1e7× | mode 0, skip 3999 of 4000 iter, 0 escaped | 0 mismatch, finite | skip>0, mode 0, finite, 0 mismatch | ✅ PASS |
+| Consistency | resolution independence (N vs 3N) | seahorse, 1e6×, 25544 smooth px | 0 differ | 0 differ | ✅ PASS |
+| Consistency | max-iter monotonic stability | seahorse, 1e6×, 500→3000 iter, 15737 escaped px | 0 changed dwell | 0 changed | ✅ PASS |
 | Consistency | zoom-sequence across direct→df32 seam | seahorse, 4e3×↔1.2e4×, 1814 overlap px | 0 differ | <0.1% differ | ✅ PASS |
 | Consistency | pan consistency | seahorse, 1e6×, +55px, 23092 overlap px | 1 differ | <0.1% differ | ✅ PASS |
 | Consistency | render determinism (2 runs) | seahorse, 1e6× | bit-identical | bit-identical | ✅ PASS |
-| Derivative | distance-estimate self-consistency | seahorse, 1e6×, 1038 boundary px | 0 with DE>16px at boundary | <0.5% of boundary px | ✅ PASS |
+| Derivative | distance-estimate self-consistency | seahorse, 1e6×, 1037 boundary px | 0 with DE>16px at boundary | <0.5% of boundary px | ✅ PASS |
 | Derivative | DE lower bound (Koebe ¼) | seahorse, 1e6×, 12 sampled exterior px | 0 disks contain interior | 0 | ✅ PASS |
 | Catalog | period-2 disk center (c = -1) | zoom 5e1 | period 2 (want 2), nucleus Δ=1.6e-23 | period + nucleus | ✅ PASS |
 | Catalog | period-3 bulb nucleus | zoom 8e1 | period 3 (want 3), nucleus Δ=3.6e-16 | period + nucleus | ✅ PASS |
@@ -59,7 +62,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Formatting | zoom mantissa grouped | 3.38050027227e15 | 3.38050 02722 7e15 | "3.38050 02722 7e15" | ✅ PASS |
 | Formatting | deep coordinate elides middle | 32-digit center @ ~1e30×; and -0.5 | -0.74364 38870 … 11477 40000  |  -0.5 | leading … frontier; short coord safe | ✅ PASS |
 
-**45/45 checks passed.**
+**48/48 checks passed.**
 
 ## Coverage & scope
 

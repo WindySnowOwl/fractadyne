@@ -543,17 +543,20 @@ for fun, informative value, and ease of use.
 - [ ] **Layers + blend modes** (Ultra Fractal-style compositing).
 - [ ] **Formula DSL / custom formulas** (M6).
 - [~] **Series approximation** — order-3 polynomial (`δz ≈ A·δc + B·δc² + C·δc³`) seeds the
-      perturbation and skips the early iterations. **Done for Mandelbrot on both perturbation
-      paths — mode 2 (floatexp, ≥1e28×) and mode 0 (df32, 1e4–1e28×, the common range)**,
-      non-Julia, non-aux coloring. Coefficients iterated in bignum alongside the reference
-      (mode-independent), skip chosen from the worst-case corner `|δc|` (cubic ≤ 2⁻¹⁶ of
-      linear, which also guarantees no premature escape), cached per reference. The mode-0
-      seed is evaluated in floatexp (the coeffs overflow f32) then collapsed to the absolute
-      df32 δ via `fe_to_cdf`. Validated: seed vs full iteration `maxΔ 0` at 1e30× (mode 2,
-      skip 27511/27512) **and 1e20× (mode 0, skip 19007/19008)**, plus 0 mismatches vs the
-      bignum oracle. **Follow-ups:** extend to Multibrot/other formulas (the coeff recurrence
-      is Mandelbrot-specific); consider **BLA** (bilinear approximation, Fraktaler-3 style)
-      which skips iterations throughout the orbit, not just the start.
+      perturbation and skips the early iterations. **Done for the holomorphic polynomial
+      families — Mandelbrot + Multibrot 3/4/5 — on both perturbation paths: mode 2 (floatexp,
+      ≥1e28×) and mode 0 (df32, 1e4–1e28×, the common range)**, non-Julia, non-aux coloring.
+      Coefficients iterated in bignum alongside the reference (mode-independent), generalized
+      to `z^d+c`: `A'=d·Z^{d-1}·A+1`, `B'=d·Z^{d-1}·B+C(d,2)·Z^{d-2}·A²`,
+      `C'=d·Z^{d-1}·C+2C(d,2)·Z^{d-2}·AB+C(d,3)·Z^{d-3}·A³`. Skip chosen from the worst-case
+      corner `|δc|` (cubic ≤ 2⁻¹⁶ of linear ⇒ no premature escape), cached per reference. The
+      mode-0 seed is evaluated in floatexp (coeffs overflow f32) then collapsed to absolute
+      df32 via `fe_to_cdf`; the GPU seed is formula-agnostic. Validated: core tests of the
+      series vs exact perturbation for d=2 and d=3 (rel err <1e-3); seed vs full iteration
+      `maxΔ 0` at 1e30× (mode 2) and 1e20× (mode 0); Multibrot 3/4/5 SA engages + matches
+      SA-off. **Follow-up:** **BLA** (bilinear approximation, Fraktaler-3 style) which skips
+      iterations throughout the orbit, not just the start. (Tricorn/abs families have no such
+      δc expansion — anti-holomorphic / non-analytic.)
 - [ ] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
       beyond the current single-reference Zhuoran rebasing.
 

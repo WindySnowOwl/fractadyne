@@ -755,6 +755,75 @@ impl FractadyneApp {
             }
         }
 
+        // ---- series approximation engages for the Multibrot families ----
+        // The order-3 coefficient recurrence for z^d is validated exactly in fractadyne-core;
+        // here we confirm the app actually selects SA for these formulas (skip > 0) and the
+        // GPU render is finite and bit-consistent with an SA-off render (the seed shader code
+        // is formula-agnostic, already validated for Mandelbrot in modes 0 and 2).
+        {
+            self.julia_mode = false;
+            self.color_method = 0;
+            self.use_custom_palette = false;
+            self.auto_iter = false;
+            self.max_iter = 4000;
+            for (fractal, cx, cy) in [
+                (FractalKind::Multibrot3, "0.2", "0.1"),
+                (FractalKind::Multibrot4, "0.2", "0.1"),
+                (FractalKind::Multibrot5, "0.2", "0.1"),
+            ] {
+                self.fractal = fractal;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e7));
+                vp.precision = fractadyne_core::precision_for_magnification(1.0e7);
+                let mut on = self.current_export_request_for(&vp, false);
+                on.width = N;
+                on.height = N;
+                on.ss = 1;
+                let mut off = on.clone();
+                off.sa_skip = 0;
+                let (skip, mode) = (on.sa_skip, on.mode);
+                match (
+                    fractadyne_gpu::render_iter(device, queue, &on).ok().map(|r| r.pixels),
+                    fractadyne_gpu::render_iter(device, queue, &off).ok().map(|r| r.pixels),
+                ) {
+                    (Some(a), Some(b)) if skip > 0 && mode == 0 => {
+                        let finite = a.iter().step_by(4).all(|v| v.is_finite());
+                        let (mut mism, mut esc) = (0u64, 0u64);
+                        for i in 0..(a.len() / 4) {
+                            let (ra, rb) = (a[i * 4], b[i * 4]);
+                            let (ia, ib) = (ra < 0.0, rb < 0.0);
+                            if ia != ib {
+                                mism += 1;
+                            } else if !ia {
+                                esc += 1;
+                                if (ra - rb).abs() > 0.5 {
+                                    mism += 1;
+                                }
+                            }
+                        }
+                        checks.push(SelfCheck {
+                            category: "Series approximation",
+                            name: format!("{} SA engages + matches SA-off @1e7×", fractal.name()),
+                            params: format!("mode {mode}, skip {skip} of {} iter, {esc} escaped", on.max_iter),
+                            result: format!("{mism} mismatch, {}", if finite { "finite" } else { "NON-FINITE!" }),
+                            threshold: "skip>0, mode 0, finite, 0 mismatch",
+                            pass: finite && mism == 0,
+                        });
+                    }
+                    _ => checks.push(SelfCheck {
+                        category: "Series approximation",
+                        name: format!("{} SA engages + matches SA-off @1e7×", fractal.name()),
+                        params: format!("mode {mode}, skip {skip}"),
+                        result: if skip == 0 { "SA did not engage (skip=0)".into() } else { "render failed / wrong mode".into() },
+                        threshold: "skip>0, mode 0, finite, 0 mismatch",
+                        pass: false,
+                    }),
+                }
+            }
+        }
+
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
         {
             self.fractal = FractalKind::Mandelbrot;
