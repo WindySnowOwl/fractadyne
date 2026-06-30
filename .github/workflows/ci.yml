@@ -20,7 +20,7 @@ jobs:
     name: Core tests (Linux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup default stable
       # fractadyne-core is pure Rust (astro-float / twofloat) — no GUI/GPU/system deps,
       # so it tests cleanly on Linux. Release build keeps the bignum tests fast.
@@ -30,6 +30,6 @@ jobs:
     name: Build workspace (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup default stable
       - run: cargo build --workspace
