@@ -1,14 +1,44 @@
-//! Fractadyne — native fractal explorer.
+//! Fractadyne — native fractal explorer (the desktop binary).
 //!
-//! M0 shell: an egui window (menu bar + canvas + status bar) with the Mandelbrot
-//! drawn on the GPU. Pan with left-drag, zoom with the wheel (cursor-centered).
-//! Box-zoom and the full panel set arrive in later milestones (see TODO.md).
+//! # Where things live (crate layering)
+//!
+//! The workspace separates the logical layers into crates (so the numerics and GPU code are
+//! reusable and testable independently of the UI):
+//!
+//! - `fractadyne-core`  — numerics: arbitrary-precision [`Viewport`], reference orbits,
+//!   perturbation/`FloatExp` scale, series approximation, minibrot finder, parsers.
+//! - `fractadyne-gpu`   — wgpu pipelines + the WGSL shader (`mandelbrot.wgsl`); the live
+//!   paint callback and the offscreen `render_export` / `render_iter`.
+//! - `fractadyne-color` — palette presets / gradient sampling.
+//! - `fractadyne-state` — session persistence (TOML).
+//! - `fractadyne-export`— PNG / OpenEXR encode + decode.
+//! - `fractadyne-app`   — *this crate*: the window, input, egui UI, and the glue that
+//!   drives the above. The `fractadyne` binary.
+//!
+//! # This crate's modules
+//!
+//! - [`profile`] — the `--profile` development profiling harness (benchmark regions → logs).
+//! - `main.rs` (this file) — the app. It is large; the major sections, in order, are:
+//!     1. small shared types/helpers (`Perf`, `RandomPalette`, formatting, tunables);
+//!     2. branding/theme + the in-app **Help** content (`help_*`);
+//!     3. `fn main` — headless CLI dispatch (`--render`, `--selftest`, `--profile`, etc.);
+//!     4. the [`FractalKind`] domain enum;
+//!     5. [`FractadyneApp`] — all app state, then one big `impl` of its behavior
+//!        (navigation, the render request builders, panels/dialogs/toolbar, export,
+//!        bookmarks, autopilot, the validation self-test), and the `eframe::App` `update`.
+//!
+//! Modularization is ongoing: cohesive units are being lifted into their own modules
+//! (`profile` done; `FractalKind` next) to shrink `main.rs`. Moving items between modules in
+//! one crate has no runtime cost (no added indirection; inlining is unaffected), so this is
+//! purely an organization/readability change.
 
 use eframe::egui;
 use fractadyne_core::Viewport;
 use fractadyne_gpu::{add_mandelbrot, install_renderer, MandelbrotParams};
 
+mod fractal;
 mod profile;
+pub(crate) use fractal::FractalKind;
 use serde::Deserialize;
 use std::time::Instant;
 
@@ -2014,165 +2044,7 @@ struct GalleryEntry {
 }
 
 /// Formula reference shown in the info panel.
-struct FractalInfo {
-    formula: &'static str,
-    about: &'static str,
-    reference: &'static str,
-}
-
-/// Escape-time fractal families. `formula_id` must match the shader's `fs_iterate`.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum FractalKind {
-    Mandelbrot,
-    Multibrot3,
-    Multibrot4,
-    Multibrot5,
-    Tricorn,
-    BurningShip,
-    Celtic,
-    Buffalo,
-    Phoenix,
-    Newton,
-}
-
-impl FractalKind {
-    const ALL: [FractalKind; 10] = [
-        FractalKind::Mandelbrot,
-        FractalKind::Multibrot3,
-        FractalKind::Multibrot4,
-        FractalKind::Multibrot5,
-        FractalKind::Tricorn,
-        FractalKind::BurningShip,
-        FractalKind::Celtic,
-        FractalKind::Buffalo,
-        FractalKind::Phoenix,
-        FractalKind::Newton,
-    ];
-
-    fn name(self) -> &'static str {
-        match self {
-            FractalKind::Mandelbrot => "Mandelbrot",
-            FractalKind::Multibrot3 => "Multibrot 3",
-            FractalKind::Multibrot4 => "Multibrot 4",
-            FractalKind::Multibrot5 => "Multibrot 5",
-            FractalKind::Tricorn => "Tricorn",
-            FractalKind::BurningShip => "Burning Ship",
-            FractalKind::Celtic => "Celtic",
-            FractalKind::Buffalo => "Buffalo",
-            FractalKind::Phoenix => "Phoenix",
-            FractalKind::Newton => "Newton",
-        }
-    }
-
-    fn from_name(name: &str) -> Option<FractalKind> {
-        FractalKind::ALL.into_iter().find(|k| k.name() == name)
-    }
-
-    fn formula_id(self) -> u32 {
-        match self {
-            FractalKind::Mandelbrot => 0,
-            FractalKind::Multibrot3 => 1,
-            FractalKind::Multibrot4 => 2,
-            FractalKind::Multibrot5 => 3,
-            FractalKind::Tricorn => 4,
-            FractalKind::BurningShip => 5,
-            FractalKind::Celtic => 6,
-            FractalKind::Buffalo => 7,
-            FractalKind::Phoenix => 8,
-            FractalKind::Newton => 9,
-        }
-    }
-
-    /// Default view center (x, y) for this fractal.
-    fn default_center(self) -> (f64, f64) {
-        match self {
-            FractalKind::Mandelbrot | FractalKind::Celtic => (-0.5, 0.0),
-            FractalKind::BurningShip | FractalKind::Buffalo => (-0.5, -0.5),
-            _ => (0.0, 0.0),
-        }
-    }
-
-    /// Whether a Julia variant is meaningful (Newton has no parameter `c`).
-    fn supports_julia(self) -> bool {
-        !matches!(self, FractalKind::Newton)
-    }
-
-    /// Whether deep zoom (CPU reference + GPU perturbation) is implemented. The
-    /// analytic polynomial families qualify; abs-based and Newton stay on the direct
-    /// path (clean to ~1e6×).
-    fn supports_perturbation(self) -> bool {
-        matches!(
-            self,
-            FractalKind::Mandelbrot
-                | FractalKind::Multibrot3
-                | FractalKind::Multibrot4
-                | FractalKind::Multibrot5
-                | FractalKind::Tricorn
-        )
-    }
-
-    fn info(self) -> FractalInfo {
-        match self {
-            FractalKind::Mandelbrot => FractalInfo {
-                formula: "z -> z^2 + c    (z0 = 0)",
-                about: "The canonical escape-time fractal: the set of c for which the \
-                        orbit of 0 stays bounded. Its boundary is infinitely intricate.",
-                reference: "https://en.wikipedia.org/wiki/Mandelbrot_set",
-            },
-            FractalKind::Multibrot3 => FractalInfo {
-                formula: "z -> z^3 + c",
-                about: "A Multibrot set - the Mandelbrot construction at a higher power. \
-                        Power d gives (d-1)-fold rotational symmetry.",
-                reference: "https://en.wikipedia.org/wiki/Multibrot_set",
-            },
-            FractalKind::Multibrot4 => FractalInfo {
-                formula: "z -> z^4 + c",
-                about: "Multibrot at power 4: threefold symmetry, broad bulbs.",
-                reference: "https://en.wikipedia.org/wiki/Multibrot_set",
-            },
-            FractalKind::Multibrot5 => FractalInfo {
-                formula: "z -> z^5 + c",
-                about: "Multibrot at power 5: fourfold symmetry.",
-                reference: "https://en.wikipedia.org/wiki/Multibrot_set",
-            },
-            FractalKind::Tricorn => FractalInfo {
-                formula: "z -> conj(z)^2 + c",
-                about: "The Tricorn (Mandelbar): conjugates z each step. This \
-                        anti-holomorphic map yields a three-cornered shape.",
-                reference: "https://en.wikipedia.org/wiki/Tricorn_(mathematics)",
-            },
-            FractalKind::BurningShip => FractalInfo {
-                formula: "z -> (|Re z| + i|Im z|)^2 + c",
-                about: "Absolute values of z's parts are taken before squaring; the \
-                        result resembles a ship in flames.",
-                reference: "https://en.wikipedia.org/wiki/Burning_Ship_fractal",
-            },
-            FractalKind::Celtic => FractalInfo {
-                formula: "Re -> |Re(z^2)| + cx;  Im -> Im(z^2) + cy",
-                about: "A Burning-Ship relative that takes the absolute value of only \
-                        the real part of z^2, producing celtic-knot / heart motifs.",
-                reference: "https://paulbourke.net/fractals/burnship/",
-            },
-            FractalKind::Buffalo => FractalInfo {
-                formula: "Re -> |Re(z^2)| + cx;  Im -> |Im(z^2)| + cy",
-                about: "An abs-variant taking absolute values of both components of z^2.",
-                reference: "https://paulbourke.net/fractals/burnship/",
-            },
-            FractalKind::Phoenix => FractalInfo {
-                formula: "z' = z^2 + c + p*z_prev    (p = -0.5)",
-                about: "The Phoenix uses the previous iterate too, giving flame-like \
-                        filaments. Try its Julia form via Julia mode.",
-                reference: "https://paulbourke.net/fractals/phoenix/",
-            },
-            FractalKind::Newton => FractalInfo {
-                formula: "z -> z - (z^3 - 1)/(3 z^2)",
-                about: "Newton's root-finding iteration for z^3 = 1, colored by how fast \
-                        each point converges. A convergence (not escape) fractal.",
-                reference: "https://en.wikipedia.org/wiki/Newton_fractal",
-            },
-        }
-    }
-}
+// `FractalInfo` / `FractalKind` moved to `fractal.rs` (re-exported at the top of this file).
 
 struct FractadyneApp {
     viewport: Viewport,
