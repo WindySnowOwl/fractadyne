@@ -457,14 +457,14 @@ for fun, informative value, and ease of use.
       feature tips. Famous coordinates verified to render detail.
 
 ### Tier 2 — high value, larger effort
-- [ ] **Shareable settings file `.fdn` + paste-text + (optional) QR code** — save the
-      full view/fractal/coloring state to a `.fdn` file or a copyable text block; load
-      from file **or** a paste dialog so people can reproduce an exact location/look.
-      Optional QR-code generate/scan for the (compact) parameter string.
-      **SECURITY: treat all loaded `.fdn`/pasted/QR data as untrusted.** Strict parse:
-      key=value allow-list only, bounded lengths, validate/clamp every numeric field,
-      reject unknown keys, no code/formula execution, no file paths, cap decoded size,
-      and fuzz the decoder. (Reuse the hardened view-metadata parser; never `eval`.)
+- [x] **Shareable location `.fdn` + paste-text** — **File → "Share location…"** opens a
+      dialog with the current view as a self-contained `.fdn` text blob (fractal,
+      full-precision center, `upp_log2` so depths past 1e308× round-trip, zoom, coloring):
+      **Copy** to clipboard, **Apply** a pasted/edited one, **Save .fdn… / Load .fdn…**.
+      Untrusted input is handled safely — size-bounded (`SHARE_MAX`, plus a file-size check)
+      and parsed through the existing **hardened, fuzzed** `load_view_metadata`/`meta_get`
+      chain (key=value allow-list, every field validated/clamped, unknown keys ignored, no
+      paths/code). *(Optional follow-up: QR-code generate/scan for the compact string.)*
 - [x] **Auto-zoom (autopilot) — follow interesting areas downward** — hands-free continuous
       deep zoom that re-steers toward detail (XaoS-style), via **View → "Auto-zoom"** or the
       **A** key (Esc / any navigation input stops it). Every ~0.35 s it renders a small

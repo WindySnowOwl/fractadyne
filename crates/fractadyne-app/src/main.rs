@@ -224,6 +224,10 @@ const AUTOPILOT_LOG2_CAP: f64 = 900.0; // ≈ 1e271×
 /// is smoother but lags the detail more.
 const AUTOPILOT_TARGET_TAU: f64 = 0.5;
 
+/// Upper bound on a loaded/pasted `.fdn` location blob (untrusted input). A real one is
+/// well under 1 KB; this caps parse work without rejecting anything legitimate.
+const SHARE_MAX: usize = 256 * 1024;
+
 /// Max iterates drawn by the interactive orbit overlay (shallow f64 path).
 const ORBIT_MAX: usize = 512;
 /// Deep (bignum) orbit cap — large enough to run past where nearby points' orbits
@@ -2237,6 +2241,10 @@ struct FractadyneApp {
     goto_y: String,
     goto_zoom: String,
     goto_msg: Option<String>,
+    /// Share-location (`.fdn`) dialog: open flag, editable location text, and an error line.
+    share_open: bool,
+    share_text: String,
+    share_msg: Option<String>,
     /// Transient status toast (message, time set) — e.g. minibrot-finder result.
     toast: Option<(String, f64)>,
     /// Keyboard/help overlay window open, and the selected Help section index.
@@ -2431,6 +2439,9 @@ impl FractadyneApp {
             goto_y: String::new(),
             goto_zoom: String::new(),
             goto_msg: None,
+            share_open: false,
+            share_text: String::new(),
+            share_msg: None,
             toast: None,
             help_open: false,
             help_section: 0,
@@ -5433,6 +5444,71 @@ impl FractadyneApp {
         Ok(format!("Imported .kfr location @ {}×", fmt_zoom(zoom)))
     }
 
+    /// Open the Share-location dialog, pre-filled with the current view as `.fdn` text.
+    fn open_share(&mut self) {
+        self.share_text = self.view_metadata();
+        self.share_msg = None;
+        self.share_open = true;
+    }
+
+    /// Apply the Share dialog's text as a location (hardened: bounded, allow-list parse via
+    /// `load_view_metadata`, every field validated/clamped — no paths or code).
+    fn apply_share_text(&mut self, ctx: &egui::Context) {
+        let t = self.share_text.trim();
+        if t.is_empty() || t.len() > SHARE_MAX {
+            self.share_msg = Some("Nothing to load (or text too large).".into());
+            return;
+        }
+        // Must look like a Fractadyne location (has our app tag or a center field).
+        if meta_get(t, "app") != "Fractadyne" && meta_get(t, "center_x").is_empty() {
+            self.share_msg = Some("Not a Fractadyne location.".into());
+            return;
+        }
+        let t = t.to_string();
+        self.load_view_metadata(&t); // performs the jump + records history
+        self.set_toast(
+            format!("Loaded location @ {}×", fmt_zoom_log2(self.viewport.log2_magnification())),
+            ctx,
+        );
+        self.share_open = false;
+    }
+
+    /// Save the Share dialog's text to a `.fdn` file.
+    fn save_share_file(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Fractadyne location", &["fdn"])
+            .set_file_name("location.fdn")
+            .save_file()
+        {
+            match std::fs::write(&path, self.share_text.as_bytes()) {
+                Ok(()) => self.share_msg = Some("Saved.".into()),
+                Err(e) => self.share_msg = Some(format!("Save failed: {e}")),
+            }
+        }
+    }
+
+    /// Load a `.fdn` file into the Share dialog's text box (size-bounded; not auto-applied,
+    /// so the user can review before jumping).
+    fn load_share_file(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Fractadyne location", &["fdn"])
+            .pick_file()
+        else {
+            return;
+        };
+        match std::fs::metadata(&path) {
+            Ok(m) if (m.len() as usize) <= SHARE_MAX => match std::fs::read_to_string(&path) {
+                Ok(t) => {
+                    self.share_text = t;
+                    self.share_msg = Some("Loaded into the box — review, then Apply.".into());
+                }
+                Err(e) => self.share_msg = Some(format!("Read failed: {e}")),
+            },
+            Ok(_) => self.share_msg = Some("File too large (not a .fdn location?).".into()),
+            Err(e) => self.share_msg = Some(format!("Read failed: {e}")),
+        }
+    }
+
     /// File-dialog import of a Kalles Fraktaler `.kfr` location.
     fn import_kfr(&mut self, ctx: &egui::Context) {
         let Some(path) = rfd::FileDialog::new()
@@ -6131,6 +6207,17 @@ impl eframe::App for FractadyneApp {
                         }
                         if ui.button("💾  Export image…").clicked() {
                             self.export_open = true;
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button("🔗  Share location…")
+                            .on_hover_text(
+                                "Copy / paste / save / load a self-contained location \
+                                 (.fdn): fractal, full-precision center, zoom, coloring.",
+                            )
+                            .clicked()
+                        {
+                            self.open_share();
                             ui.close_menu();
                         }
                         ui.separator();
@@ -7017,6 +7104,63 @@ impl eframe::App for FractadyneApp {
             }
             // Closed if the user hit the window's ✕ (open=false) or Go succeeded.
             self.goto_open = open && self.goto_open;
+        }
+
+        // ---- share location (.fdn) ----
+        if self.share_open {
+            let mut open = self.share_open;
+            let (mut copy, mut apply, mut save, mut load) = (false, false, false, false);
+            egui::Window::new("Share location")
+                .open(&mut open)
+                .resizable(true)
+                .default_width(460.0)
+                .show(ctx, |ui| {
+                    ui.label(
+                        egui::RichText::new(
+                            "A self-contained location (fractal, full-precision center, zoom, \
+                             coloring). Copy it to share, or paste/load one and Apply.",
+                        )
+                        .weak()
+                        .small(),
+                    );
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.share_text)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(10)
+                                .code_editor(),
+                        );
+                    });
+                    if let Some(m) = &self.share_msg {
+                        ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA0, 0x30), m);
+                    }
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        apply = ui.button("Apply").on_hover_text("Jump to the location in the box").clicked();
+                        copy = ui.button("Copy").on_hover_text("Copy the text to the clipboard").clicked();
+                        if ui.button("Use current").clicked() {
+                            self.share_text = self.view_metadata();
+                            self.share_msg = None;
+                        }
+                        save = ui.button("Save .fdn…").clicked();
+                        load = ui.button("Load .fdn…").clicked();
+                    });
+                });
+            if copy {
+                ctx.copy_text(self.share_text.clone());
+                self.share_msg = Some("Copied to clipboard.".into());
+            }
+            if save {
+                self.save_share_file();
+            }
+            if load {
+                self.load_share_file();
+            }
+            if apply {
+                self.apply_share_text(ctx); // clears share_open on success
+            }
+            self.share_open = open && self.share_open;
         }
 
         // ---- bookmarks manager ----

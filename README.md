@@ -22,6 +22,8 @@ zoom** and performance.
 - **High-res export** — tiled PNG / OpenEXR with reloadable view metadata, a gallery
   browser, background rendering with progress + cancel.
 - **Bookmarks** — save and instantly return to favorite (deep) locations.
+- **Shareable locations** — copy/paste or save/load a self-contained `.fdn` location
+  (File → "Share location…") to reproduce an exact spot/look; hardened, fuzzed parser.
 - **Tooling** — keyframe camera scripts, a built-in benchmark (FPS / CPU / GPU / RAM +
   system info), and headless CLI modes.
 

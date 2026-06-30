@@ -157,6 +157,15 @@ Baseline for tracked versioning. Notable capabilities already present:
   reference refresh). Stops on a dead end (no boundary detail in view) or at a depth cap
   (~1e271×).
 
+- **Shareable `.fdn` locations** — **File → "Share location…"** opens a dialog showing the
+  current view as a self-contained text blob (fractal, full-precision center, the
+  extended-range `upp_log2` so depths past 1e308× round-trip, zoom, coloring): **Copy** it to
+  the clipboard, **Apply** a pasted/edited one, or **Save .fdn… / Load .fdn…**. So an exact
+  location/look is shareable as a short text snippet or a tiny file. Untrusted input is
+  handled safely — size-bounded (a 256 KB cap plus a file-size check) and parsed through the
+  existing **hardened, fuzzed** `load_view_metadata`/`meta_get` chain (key=value allow-list,
+  every field validated/clamped, unknown keys ignored, no paths or code execution).
+
 - **In-app Help & reference** — Help → "Help & reference…" (or F1 / ?) opens a multi-section
   window with a table of contents: Overview, Navigation, Coloring & options, Fractals
   (mathematically accurate per-family formulas + descriptions, Julia mode, deep-zoom
