@@ -87,10 +87,10 @@ impl FractalKind {
         !matches!(self, FractalKind::Newton)
     }
 
-    /// Whether deep zoom (CPU reference + GPU perturbation) is implemented. The
-    /// analytic families plus the abs-based ones (Burning Ship / Celtic / Buffalo,
-    /// via the shader's `diffabs` fold) qualify; Phoenix and Newton stay on the
-    /// direct path (clean to ~1e6×).
+    /// Whether deep zoom (CPU reference + GPU perturbation, both the df32 and the
+    /// extended-range floatexp paths) is implemented. The analytic families plus the
+    /// abs-based ones (Burning Ship / Celtic / Buffalo, via the shader's `diffabs`
+    /// fold) qualify; Phoenix and Newton stay on the direct path (clean to ~1e6×).
     pub(crate) fn supports_perturbation(self) -> bool {
         matches!(
             self,
@@ -103,14 +103,6 @@ impl FractalKind {
                 | FractalKind::Celtic
                 | FractalKind::Buffalo
         )
-    }
-
-    /// Whether the extended-range floatexp perturbation path (GPU mode 2, for
-    /// magnifications past ~1e28×) is implemented. The analytic/anti-analytic
-    /// families qualify; the abs-based families currently run df32 perturbation
-    /// (mode 0) only, so their clean range is ~1e4× … ~1e28×.
-    pub(crate) fn supports_floatexp(self) -> bool {
-        self.supports_perturbation() && self.formula_id() <= 4
     }
 
     pub(crate) fn info(self) -> FractalInfo {

@@ -230,8 +230,8 @@ perturbation + series approximation + glitch correction. The headline feature.
       from the formula), with complex-df32 helpers (mul/sqr/div, `Cdf` struct) for
       powers and Newton. **Julia mode** is a toggle (Fractal menu) for any family; the
       **dual view** shows each family's map ↔ its Julia. Mandelbrot/Multibrot/Tricorn
-      keep unlimited (floatexp) perturbation depth; Burning Ship/Celtic/Buffalo run df32
-      perturbation (~1e28×); Phoenix/Newton are direct df32 (clean to ~1e6×).
+      and the abs families (Burning Ship/Celtic/Buffalo) all deep-zoom at floatexp
+      range; Phoenix/Newton are direct df32 (clean to ~1e6×).
 - [x] **Per-fractal info panel** — collapsible section atop the side panel with the
       formula, a short background, and a reference hyperlink (Wikipedia / Paul Bourke),
       sourced from `FractalKind::info()`.
@@ -281,14 +281,18 @@ perturbation + series approximation + glitch correction. The headline feature.
       step `|c+d|−|c|` (KF/Zhuoran), evaluated branch-wise to avoid catastrophic
       cancellation: exactly `±d` when the reference and perturbed component share a sign,
       `±(2c+d)` across a sign flip (a wrong branch at a near-fold is the inherent glitch).
-      Core `step_bf` gained the bignum reference iterations (5/6/7); the shader's df32
-      perturbation loop (mode 0) does the per-component `df_diffabs` fold. Runs df32
-      perturbation only (no floatexp path yet), so the clean range is ~1e4× … ~1e28×
-      (vs the old ~1e6× direct). Validated in `--selftest`: perturbation == direct at
-      1e5× (exact for Burning Ship/Buffalo, mean Δ 0.18 iter Celtic, 0 pixels >2 iter)
-      and finite/structured at 1e9×. Lighting/DE stay off (non-holomorphic).
-      Remaining for these: floatexp (mode 2) abs path to lift the ~1e28× ceiling, and
-      multi-reference glitch correction at the folds.
+      Core `step_bf` gained the bignum reference iterations (5/6/7). The shader folds
+      each abs component with diffabs in BOTH render paths: `df_diffabs` in the df32
+      loop (mode 0, ~1e4×…~1e28×) and a scalar-floatexp `sf_diffabs` in the floatexp
+      loop (mode 2, past ~1e28× — the complex `Fe` shares one exponent across re/im, so
+      the per-component fold drops to a scalar `Sf` then recombines via `fe_from_sf`).
+      So they now deep-zoom at floatexp range like the analytic families (vs ~1e6×
+      direct before). Validated in `--selftest`: perturbation == direct at 1e5× (exact
+      Burning Ship/Buffalo, mean Δ 0.18 iter Celtic, 0 px >2 iter), floatexp == df32 at
+      1e10× (exact, all three), finite + structured at 1e35×. Lighting/DE stay off
+      (non-holomorphic). Remaining: multi-reference glitch correction for the residual
+      speckle at the abs folds (where a tiny df32 reference z² component flips the
+      diffabs branch — same root cause as Mandelbrot perturbation glitches).
 - [ ] **Newton / Phoenix deep zoom** — Newton is convergence-based; Phoenix needs the
       previous-iterate δz term + rebasing care. Both still direct.
 - [x] **Click-to-pin Julia `c`** — in dual view, click the Mandelbrot to freeze the

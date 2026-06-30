@@ -113,7 +113,7 @@ impl FractadyneApp {
         .min(zoom_iter_cap(log2mag).max(256));
         let mode: u32 = if !self.fractal.supports_perturbation() || mag < 1.0e4 {
             1
-        } else if mag >= PERT_FE_THRESHOLD && self.fractal.supports_floatexp() {
+        } else if mag >= PERT_FE_THRESHOLD {
             2
         } else {
             0
@@ -278,7 +278,7 @@ impl FractadyneApp {
         // ~1e30× exponent limit → unlimited depth, ~1.7× costlier so only when needed).
         let mode: u32 = if !fractal.supports_perturbation() || magnification < 1.0e4 {
             1
-        } else if magnification >= PERT_FE_THRESHOLD && fractal.supports_floatexp() {
+        } else if magnification >= PERT_FE_THRESHOLD {
             2
         } else {
             0

@@ -255,8 +255,9 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
         ui,
         "Mandelbrot, Multibrot 3/4/5 and Tricorn support unlimited (floatexp) perturbation deep \
          zoom. Burning Ship, Celtic and Buffalo are non-analytic (they take absolute values), so \
-         they use a sign-aware perturbation that stays sharp to about 10²⁸×. Phoenix and Newton \
-         currently use the direct path, sharp to about 10⁶×.",
+         they use a sign-aware perturbation; this now runs at floatexp range too, deep-zooming far \
+         past the old ~10²⁸× df32 limit (rare speckle near the abs folds awaits multi-reference \
+         glitch correction). Phoenix and Newton currently use the direct path, sharp to ~10⁶×.",
     );
 }
 

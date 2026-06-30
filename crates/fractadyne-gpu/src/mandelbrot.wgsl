@@ -216,6 +216,65 @@ fn fe_conj(a: Fe) -> Fe {
 fn fe_from_cdf(z: Cdf) -> Fe {
     return fe_norm(z, 0);
 }
+
+// ---------------- scalar floatexp (one df32 mantissa + i32 exponent) ---------------
+// value = m · 2^e. The complex `Fe` shares one exponent across its re+im parts, but
+// `diffabs` (the abs fold for non-analytic families) is inherently per-component, so
+// the abs families fold each z² component as a *scalar* floatexp — keeping it in
+// extended range — before recombining into an `Fe`.
+struct Sf {
+    m: vec2<f32>,
+    e: i32,
+};
+fn sf_make(m: vec2<f32>, e: i32) -> Sf {
+    var s: Sf;
+    s.m = m;
+    s.e = e;
+    return s;
+}
+fn sf_norm(m: vec2<f32>, e: i32) -> Sf {
+    let mag = abs(m.x);
+    if (mag == 0.0) { return sf_make(m, FE_ZERO_E); }
+    let shift = i32(floor(log2(mag)));
+    let s = exp2(f32(-shift));
+    return sf_make(vec2<f32>(m.x * s, m.y * s), e + shift);
+}
+fn sf_re(f: Fe) -> Sf { return sf_make(f.m.re, f.e); }
+fn sf_im(f: Fe) -> Sf { return sf_make(f.m.im, f.e); }
+fn sf_from_df(d: vec2<f32>) -> Sf { return sf_norm(d, 0); }
+fn sf_add(a: Sf, b: Sf) -> Sf {
+    var hi = a;
+    var lo = b;
+    if (b.e > a.e) { hi = b; lo = a; }
+    let de = hi.e - lo.e; // >= 0
+    if (de > 60) { return hi; } // lo below hi's df32 precision (~48 bits)
+    let s = exp2(f32(-de));
+    return sf_norm(df_add(hi.m, vec2<f32>(lo.m.x * s, lo.m.y * s)), hi.e);
+}
+fn sf_neg(a: Sf) -> Sf { return sf_make(vec2<f32>(-a.m.x, -a.m.y), a.e); }
+fn sf_two(a: Sf) -> Sf { return sf_make(a.m, a.e + 1); }
+// |c+d| − |c| in scalar floatexp (KF "diffabs"), branch-wise to avoid catastrophic
+// cancellation — the extended-range twin of `df_diffabs`.
+fn sf_diffabs(c: Sf, d: Sf) -> Sf {
+    let cd = sf_add(c, d);
+    if (c.m.x >= 0.0) {
+        if (cd.m.x >= 0.0) { return d; }
+        return sf_neg(sf_add(sf_two(c), d));
+    }
+    if (cd.m.x > 0.0) { return sf_add(sf_two(c), d); }
+    return sf_neg(d);
+}
+// Recombine two scalar-floatexp components into a complex `Fe` (shared exponent).
+fn fe_from_sf(re: Sf, im: Sf) -> Fe {
+    let e = max(re.e, im.e);
+    let sr = exp2(f32(clamp(re.e - e, -127, 0)));
+    let si = exp2(f32(clamp(im.e - e, -127, 0)));
+    let m = cset(
+        vec2<f32>(re.m.x * sr, re.m.y * sr),
+        vec2<f32>(im.m.x * si, im.m.y * si),
+    );
+    return fe_norm(m, e);
+}
 // Plain-f32 hi value of m·2^e (for bailout / full-orbit value); → 0 when e ≪ 0.
 fn fe_lo_f32(a: Fe) -> vec2<f32> {
     let s = exp2(clamp(f32(a.e), -127.0, 127.0));
@@ -628,6 +687,33 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 var t = fe_two(fe_mul_cdf(cd, cz));
                 t = fe_add(t, fe_sqr(cd));
                 dz = fe_add(t, dc);
+            } else if (iu.formula >= 5u && iu.formula <= 7u) {
+                // Abs families (floatexp). δ(z²) = 2Zδz + δz²; the abs fold on a z²
+                // component is a per-component scalar diffabs against the reference z²
+                // = c_sqr(Z). Recombine the folded components into the new δz.
+                let dw = fe_add(fe_two(fe_mul_cdf(dz, Z)), fe_sqr(dz));
+                let W = c_sqr(Z);
+                let Wre = sf_from_df(W.re);
+                let Wim = sf_from_df(W.im);
+                if (iu.formula == 5u) {
+                    // Burning Ship: real = Re(z²)+cx, imag = |Im(z²)|+cy
+                    dz = fe_from_sf(
+                        sf_add(sf_re(dw), sf_re(dc)),
+                        sf_add(sf_diffabs(Wim, sf_im(dw)), sf_im(dc)),
+                    );
+                } else if (iu.formula == 6u) {
+                    // Celtic: real = |Re(z²)|+cx, imag = Im(z²)+cy
+                    dz = fe_from_sf(
+                        sf_add(sf_diffabs(Wre, sf_re(dw)), sf_re(dc)),
+                        sf_add(sf_im(dw), sf_im(dc)),
+                    );
+                } else {
+                    // Buffalo: real = |Re(z²)|+cx, imag = |Im(z²)|+cy
+                    dz = fe_from_sf(
+                        sf_add(sf_diffabs(Wre, sf_re(dw)), sf_re(dc)),
+                        sf_add(sf_diffabs(Wim, sf_im(dw)), sf_im(dc)),
+                    );
+                }
             } else {
                 // Mandelbrot: δz' = 2Z·δz + δz² + δc
                 var t = fe_two(fe_mul_cdf(dz, Z));

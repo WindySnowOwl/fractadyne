@@ -630,12 +630,59 @@ impl FractadyneApp {
                     });
                 }
 
-                // Deep-zoom guard: the df32 diffabs recurrence must stay finite (no
-                // NaN/inf) well into the perturbation range — the depth at which the old
-                // direct path would have broken down. (Structure/correctness is pinned by
-                // the 1e5×-vs-direct match above; whether a blindly zoomed-in center lands
-                // on detail vs a uniform exterior pocket is not a correctness signal.)
-                let deep_mag = 1.0e9;
+                // floatexp (mode 2) vs df32 (mode 0) at a depth both paths handle —
+                // validates the new extended-range abs path against the validated df32
+                // one (the two carry δz in different representations and must agree).
+                let mid_mag = 1.0e10;
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mid_mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mid_mag);
+                let mut m0 = self.current_export_request_for(&vp, false);
+                m0.width = N;
+                m0.height = N;
+                m0.ss = 1;
+                m0.mode = 0;
+                let mut m2 = m0.clone();
+                m2.mode = 2;
+                if let (Some(a), Some(b)) = (
+                    fractadyne_gpu::render_iter(device, queue, &m0).ok().map(|r| r.pixels),
+                    fractadyne_gpu::render_iter(device, queue, &m2).ok().map(|r| r.pixels),
+                ) {
+                    let (mut sum, mut n, mut big) = (0.0f64, 0u64, 0u64);
+                    for j in 0..nn {
+                        for i in 0..nn {
+                            if steep(&a, i, j) {
+                                continue;
+                            }
+                            let k = j * nn + i;
+                            let (ra, rb) = (a[k * 4], b[k * 4]);
+                            if ra >= 0.0 && rb >= 0.0 {
+                                let d = (ra - rb).abs() as f64;
+                                sum += d;
+                                n += 1;
+                                if d > 2.0 {
+                                    big += 1;
+                                }
+                            }
+                        }
+                    }
+                    let mean = if n == 0 { f64::INFINITY } else { sum / n as f64 };
+                    let frac = if n == 0 { 1.0 } else { big as f64 / n as f64 };
+                    checks.push(SelfCheck {
+                        category: "Abs-family deep zoom",
+                        name: format!("{} floatexp vs df32", fractal.name()),
+                        params: format!("{mid_mag:.0e}×, mode 2 vs 0, n={n}"),
+                        result: format!("mean Δ={mean:.4} iter, >2iter {:.3}%", frac * 100.0),
+                        threshold: "mean<0.5, <2% differ, n>0",
+                        pass: n > 0 && mean < 0.5 && frac < 0.02,
+                    });
+                }
+
+                // Deep-zoom guard: past the df32 ceiling (~1e28×) the abs families switch
+                // to the floatexp (mode 2) diffabs path. It must stay finite (no NaN/inf)
+                // at extreme depth — where df32 perturbation would have underflowed to a
+                // uniform screen. (Correctness is pinned by the matches above; whether a
+                // blindly zoomed-in center lands on detail is not a correctness signal.)
+                let deep_mag = 1.0e35;
                 vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * deep_mag));
                 vp.precision = fractadyne_core::precision_for_magnification(deep_mag);
                 let mut deep = self.current_export_request_for(&vp, false);
@@ -658,14 +705,14 @@ impl FractadyneApp {
                     let spread = if esc > 0 { (hi - lo) as f64 } else { 0.0 };
                     checks.push(SelfCheck {
                         category: "Abs-family deep zoom",
-                        name: format!("{} deep finiteness @1e9×", fractal.name()),
+                        name: format!("{} deep finiteness @1e35×", fractal.name()),
                         params: format!("{deep_mag:.0e}×, mode {}", deep.mode),
                         result: format!(
                             "{} dwell, {esc} escaped / {interior} interior, spread {spread:.1} iter",
                             if dwell_finite { "finite" } else { "NON-FINITE!" }
                         ),
-                        threshold: "mode 0, all finite",
-                        pass: deep.mode == 0 && dwell_finite,
+                        threshold: "mode 2, all finite",
+                        pass: deep.mode == 2 && dwell_finite,
                     });
                 }
             }
