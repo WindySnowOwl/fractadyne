@@ -150,9 +150,12 @@ Baseline for tracked versioning. Notable capabilities already present:
   navigation input stops it. Every ~0.35 s it renders a small (56×56) iteration field of the
   current view through the live perturbation pipeline (so it works at any depth) and scores
   each cell by **boundary adjacency + escape-time gradient**, center-biased for a stable
-  dive; it eases the target and zooms toward it each frame (reusing `zoom_at` + the
-  continuous-zoom rate), treating the dive as interaction (AA off, throttled reference
-  refresh). Stops on a dead end (no boundary detail in view) or at a depth cap (~1e271×).
+  dive. The zoom pivot **eases toward the evaluated goal every frame** (time-constant
+  smoothing) rather than snapping at each re-evaluation, so the pan direction changes
+  smoothly instead of jerking; it zooms toward that gliding pivot each frame (reusing
+  `zoom_at` + the continuous-zoom rate), treating the dive as interaction (AA off, throttled
+  reference refresh). Stops on a dead end (no boundary detail in view) or at a depth cap
+  (~1e271×).
 
 - **In-app Help & reference** — Help → "Help & reference…" (or F1 / ?) opens a multi-section
   window with a table of contents: Overview, Navigation, Coloring & options, Fractals

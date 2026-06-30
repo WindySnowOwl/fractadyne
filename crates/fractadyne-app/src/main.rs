@@ -220,6 +220,9 @@ const WORK_BUDGET: u64 = 60_000_000_000;
 /// octaves ≈ log₂ magnification) at which it stops — kept in the smooth, fast regime.
 const AUTOPILOT_EVAL_INTERVAL: f64 = 0.35;
 const AUTOPILOT_LOG2_CAP: f64 = 900.0; // ≈ 1e271×
+/// Time constant (s) for easing the zoom pivot toward each newly-evaluated target — larger
+/// is smoother but lags the detail more.
+const AUTOPILOT_TARGET_TAU: f64 = 0.5;
 
 /// Max iterates drawn by the interactive orbit overlay (shallow f64 path).
 const ORBIT_MAX: usize = 512;
@@ -2148,8 +2151,12 @@ struct FractadyneApp {
     home_anim: Option<HomeAnim>,
     /// Auto-zoom autopilot: continuously dive toward the detail-richest region.
     autopilot: bool,
-    /// Screen-fraction (0..1, 0..1) the autopilot is diving toward (re-evaluated periodically).
+    /// Screen-fraction (0..1, 0..1) the autopilot is currently zooming about; eased toward
+    /// `autopilot_goal` every frame so the zoom pivot glides smoothly (no per-eval jumps).
     autopilot_target: (f64, f64),
+    /// Latest *evaluated* target (set every `AUTOPILOT_EVAL_INTERVAL`); the goal the
+    /// per-frame `autopilot_target` chases.
+    autopilot_goal: (f64, f64),
     /// App-time of the last autopilot target re-evaluation.
     autopilot_eval_t: f64,
     /// Draw the iteration orbit of the point under the cursor.
@@ -2363,6 +2370,7 @@ impl FractadyneApp {
             home_anim: None,
             autopilot: false,
             autopilot_target: (0.5, 0.5),
+            autopilot_goal: (0.5, 0.5),
             autopilot_eval_t: 0.0,
             show_orbits: false,
             orbit_normalize: false,
@@ -5528,6 +5536,7 @@ impl FractadyneApp {
         self.autopilot = !self.autopilot;
         if self.autopilot {
             self.autopilot_target = (0.5, 0.5);
+            self.autopilot_goal = (0.5, 0.5);
             self.autopilot_eval_t = 0.0; // force an evaluation next frame
             self.home_anim = None;
             self.playback = None;
@@ -5572,11 +5581,9 @@ impl FractadyneApp {
             self.autopilot_eval_t = now;
             if let Some((dev, q)) = gpu {
                 match self.autopilot_pick_target(dev, q) {
-                    // Ease toward the new target so the dive stays smooth.
-                    Some((tx, ty)) => {
-                        self.autopilot_target.0 += (tx - self.autopilot_target.0) * 0.6;
-                        self.autopilot_target.1 += (ty - self.autopilot_target.1) * 0.6;
-                    }
+                    // Just update the goal — the pivot eases toward it below, every frame,
+                    // so re-evaluation never jumps the zoom point.
+                    Some((tx, ty)) => self.autopilot_goal = (tx, ty),
                     None => {
                         self.autopilot = false;
                         self.zoom_vel = 0.0;
@@ -5587,7 +5594,13 @@ impl FractadyneApp {
             }
         }
 
-        // Continuously zoom in toward the target screen fraction.
+        // Glide the zoom pivot toward the goal continuously (time-constant smoothing), so the
+        // panning direction changes smoothly rather than snapping at each re-evaluation.
+        let follow = 1.0 - (-dt / AUTOPILOT_TARGET_TAU).exp();
+        self.autopilot_target.0 += (self.autopilot_goal.0 - self.autopilot_target.0) * follow;
+        self.autopilot_target.1 += (self.autopilot_goal.1 - self.autopilot_target.1) * follow;
+
+        // Continuously zoom in toward the (smoothly moving) target screen fraction.
         let rate = ZOOM_RATE * self.zoom_rate as f64;
         let factor = (-rate * dt).exp();
         let px = self.autopilot_target.0 * self.viewport.width_px;
