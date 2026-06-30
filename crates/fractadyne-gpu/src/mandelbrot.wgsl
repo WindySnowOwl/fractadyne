@@ -216,6 +216,16 @@ fn fe_conj(a: Fe) -> Fe {
 fn fe_from_cdf(z: Cdf) -> Fe {
     return fe_norm(z, 0);
 }
+// floatexp → absolute df32 (inverse of fe_from_cdf): value = m · 2^e collapsed into a Cdf.
+// Safe only when the value is within f32's exponent range (the df32 perturbation path uses
+// this for the series-approximation seed, valid until ~1e30× where mode 0 itself gives way).
+fn fe_to_cdf(a: Fe) -> Cdf {
+    let s = exp2(f32(clamp(a.e, -127, 127)));
+    return cset(
+        vec2<f32>(a.m.re.x * s, a.m.re.y * s),
+        vec2<f32>(a.m.im.x * s, a.m.im.y * s),
+    );
+}
 
 // ---------------- scalar floatexp (one df32 mantissa + i32 exponent) ---------------
 // value = m · 2^e. The complex `Fe` shares one exponent across its re+im parts, but
@@ -784,6 +794,23 @@ fn fs_iterate(in: VsOut) -> FragOut {
         var aux = aux_init(vec2<f32>(r0i.x, r0i.y));
         var ref_n: u32 = 0u;
         var power_f = 2.0;
+        // Series approximation: seed δz + derivative D from the order-3 polynomial and start
+        // at iteration `sa_skip`, skipping that many steps. Same coefficients as mode 2, but
+        // evaluated in floatexp (the coeffs overflow f32) then collapsed to the absolute df32
+        // δ this path carries. Mandelbrot only (the CPU gates formula 0 / no Julia / no aux).
+        if (iu.sa_skip > 0u && iu.julia == 0u) {
+            let A = fe_norm(cset(iu.sa_a.xy, iu.sa_a.zw), iu.sa_a_exp);
+            let B = fe_norm(cset(iu.sa_b.xy, iu.sa_b.zw), iu.sa_b_exp);
+            let C = fe_norm(cset(iu.sa_c.xy, iu.sa_c.zw), iu.sa_c_exp);
+            let dcf = fe_from_cdf(dc);
+            let dc2 = fe_sqr(dcf);
+            let dc3 = fe_mul(dc2, dcf);
+            dz = fe_to_cdf(fe_add(fe_add(fe_mul(A, dcf), fe_mul(B, dc2)), fe_mul(C, dc3)));
+            // D = d(δz)/d(δc) = A + 2·B·δc + 3·C·δc²
+            D = fe_add(fe_add(A, fe_scale(fe_mul(B, dcf), 2.0)), fe_scale(fe_mul(C, dc2), 3.0));
+            iter = iu.sa_skip;
+            ref_n = iu.sa_skip;
+        }
         loop {
             if (iter >= iu.max_iter) { break; }
             let r = reference[ref_n];

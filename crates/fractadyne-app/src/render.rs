@@ -56,9 +56,10 @@ impl FractadyneApp {
         (std::sync::Arc::new(o), l, rp)
     }
 
-    /// Series-approximation skip for the current view, or `NONE` when not applicable. Only
-    /// deep **floatexp** (`mode 2`) **Mandelbrot** renders with a non-aux coloring method
-    /// benefit; everything else iterates from 0.
+    /// Series-approximation skip for the current view, or `NONE` when not applicable. Both
+    /// perturbation paths benefit — df32 (`mode 0`) and floatexp (`mode 2`) — for
+    /// **Mandelbrot** with a non-aux coloring method; the direct path (`mode 1`) and Julia
+    /// iterate from 0. (The coefficients are mode-independent; only the GPU seed differs.)
     #[allow(clippy::too_many_arguments)]
     fn series_skip_for(
         &self,
@@ -74,7 +75,7 @@ impl FractadyneApp {
         precision: usize,
     ) -> fractadyne_core::SeriesSkip {
         if !self.series_approx
-            || mode != 2
+            || mode == 1
             || julia
             || self.fractal.formula_id() != 0
             || fractadyne_gpu::method_needs_aux(self.color_method)
@@ -352,7 +353,8 @@ impl FractadyneApp {
             let dyh = dy as f32;
             ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
             // Series approximation (cached per reference): seed δz to skip early iterations.
-            if mode == 2
+            // Both perturbation paths (mode 0 df32 and mode 2 floatexp) use it.
+            if (mode == 0 || mode == 2)
                 && !julia
                 && fractal.formula_id() == 0
                 && !fractadyne_gpu::method_needs_aux(self.color_method)

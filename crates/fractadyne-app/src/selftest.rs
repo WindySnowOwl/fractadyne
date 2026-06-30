@@ -355,6 +355,43 @@ impl FractadyneApp {
                 }
             }
 
+            // (D3b) Series approximation on the df32 path (mode 0) — same engage + fidelity
+            // check at a depth the depth-selector renders with mode 0 (< 1e28×). The seed is
+            // computed in floatexp then collapsed to the absolute df32 δ this path carries.
+            {
+                let on = make(NX, NY, 1.0e20);
+                let mut off = on.clone();
+                off.sa_skip = 0;
+                let (skip, mode) = (on.sa_skip, on.mode);
+                match (render(&on), render(&off)) {
+                    (Some(a), Some(b)) if skip > 0 && mode == 0 => {
+                        let mut maxd = 0.0f64;
+                        for i in 0..(a.len() / 4) {
+                            let (ra, rb) = (a[i * 4], b[i * 4]);
+                            if ra >= 0.0 && rb >= 0.0 {
+                                maxd = maxd.max((ra - rb).abs() as f64);
+                            }
+                        }
+                        checks.push(SelfCheck {
+                            category: "Series approximation",
+                            name: "SA seed vs full iteration @1e20× (mode 0)".into(),
+                            params: format!("Mandelbrot, 1e20×, mode {mode}, skip {skip} of {} iter", on.max_iter),
+                            result: format!("max Δ {maxd:.4} smooth iter"),
+                            threshold: "mode 0, skip>0, max Δ < 0.05",
+                            pass: maxd < 0.05,
+                        });
+                    }
+                    _ => checks.push(SelfCheck {
+                        category: "Series approximation",
+                        name: "SA seed vs full iteration @1e20× (mode 0)".into(),
+                        params: format!("Mandelbrot, 1e20×, mode {mode}"),
+                        result: if skip == 0 { "SA did not engage (skip=0)".into() } else { "render failed / wrong mode".into() },
+                        threshold: "mode 0, skip>0, max Δ < 0.05",
+                        pass: false,
+                    }),
+                }
+            }
+
             // (D2) Reference independence — a correct perturbation render is invariant to the
             // chosen valid reference. Render with 3 distinct in-view references (the auto
             // `best_reference` plus two offset points), take the per-pixel majority dwell as

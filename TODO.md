@@ -543,14 +543,17 @@ for fun, informative value, and ease of use.
 - [ ] **Layers + blend modes** (Ultra Fractal-style compositing).
 - [ ] **Formula DSL / custom formulas** (M6).
 - [~] **Series approximation** — order-3 polynomial (`δz ≈ A·δc + B·δc² + C·δc³`) seeds the
-      perturbation and skips the early iterations. **Done for deep Mandelbrot (mode 2,
-      ≥1e28×)**, non-Julia, non-aux coloring; coefficients iterated in bignum alongside the
-      reference, skip chosen from the worst-case corner `|δc|` (cubic ≤ 2⁻¹⁶ of linear, which
-      also guarantees no premature escape), cached per reference. Validated: seed vs full
-      iteration `maxΔ 0` and 0 mismatches vs the bignum oracle at 1e30×. **Follow-ups:**
-      extend to mode 0 (1e4–1e28×, the common range; needs a floatexp→df32 seed conversion)
-      and to Multibrot/other formulas; consider **BLA** (bilinear approximation, Fraktaler-3
-      style) which skips iterations throughout the orbit, not just the start.
+      perturbation and skips the early iterations. **Done for Mandelbrot on both perturbation
+      paths — mode 2 (floatexp, ≥1e28×) and mode 0 (df32, 1e4–1e28×, the common range)**,
+      non-Julia, non-aux coloring. Coefficients iterated in bignum alongside the reference
+      (mode-independent), skip chosen from the worst-case corner `|δc|` (cubic ≤ 2⁻¹⁶ of
+      linear, which also guarantees no premature escape), cached per reference. The mode-0
+      seed is evaluated in floatexp (the coeffs overflow f32) then collapsed to the absolute
+      df32 δ via `fe_to_cdf`. Validated: seed vs full iteration `maxΔ 0` at 1e30× (mode 2,
+      skip 27511/27512) **and 1e20× (mode 0, skip 19007/19008)**, plus 0 mismatches vs the
+      bignum oracle. **Follow-ups:** extend to Multibrot/other formulas (the coeff recurrence
+      is Mandelbrot-specific); consider **BLA** (bilinear approximation, Fraktaler-3 style)
+      which skips iterations throughout the orbit, not just the start.
 - [ ] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
       beyond the current single-reference Zhuoran rebasing.
 

@@ -319,6 +319,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   (they used to look static while panning deep). The magnification's scientific-notation
   mantissa is space-grouped in 5s (`3.38050 02722 7e15`) to match the coordinate readout.
 
+- **Series approximation on the df32 path (mode 0)** — the iteration-skipping seed, previously
+  floatexp-only (mode 2, ≥1e28×), now also accelerates the common df32 perturbation range
+  (1e4–1e28×). The order-3 polynomial seed is evaluated in floatexp (the coefficients overflow
+  f32) then collapsed to the absolute df32 δ that path carries (`fe_to_cdf`); coefficients are
+  mode-independent (computed once in bignum). Validated to reproduce full iteration exactly
+  (max Δ 0) at 1e20× — skipping 19007 of 19008 iterations at a deep minibrot.
+
 - **Zoom-movie / frame-sequence export** — `--render-tour FILE [--fps N] [--size W]
   [--height H] [--ss N] [--out DIR]` renders a keyframe-tour TOML to a numbered PNG frame
   sequence (`frame_00000.png …`) for assembly into a deep-zoom dive video (prints an ffmpeg
