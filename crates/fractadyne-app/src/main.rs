@@ -2470,12 +2470,21 @@ impl FractadyneApp {
             return;
         }
         let t = t.to_string();
-        self.load_view_metadata(&t); // performs the jump + records history
-        self.set_toast(
-            format!("Loaded location @ {}×", fmt_zoom_log2(self.viewport.log2_magnification())),
-            ctx,
-        );
-        self.share_open = false;
+        let load = self.load_view_metadata(&t); // performs the jump + records history
+        let zoom = fmt_zoom_log2(self.viewport.log2_magnification());
+        match load {
+            crate::export::ViewLoad::Ok => {
+                self.set_toast(format!("Loaded location @ {zoom}×"), ctx);
+                self.share_open = false;
+            }
+            // Keep the dialog open and surface the warning rather than silently jumping.
+            crate::export::ViewLoad::NewerFormat(v) => {
+                self.share_msg = Some(format!(
+                    "Loaded @ {zoom}×, but this location is from a newer Fractadyne \
+                     (format v{v}); some settings may not apply. Consider updating."
+                ));
+            }
+        }
     }
 
     /// Save the Share dialog's text to a `.fdn` file.

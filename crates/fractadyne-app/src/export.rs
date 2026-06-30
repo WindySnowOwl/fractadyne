@@ -7,6 +7,33 @@ use crate::{
     FractalKind,
 };
 
+/// Version of the reloadable view-metadata format (the `format_version=` field shared by
+/// exports, `.fdn` locations and bookmarks). Bump ONLY on a breaking change to an existing
+/// field's meaning or units — purely additive new keys don't need it (the allow-list reader
+/// ignores unknown keys and defaults missing ones, so old and new builds interoperate).
+/// A file whose `format_version` exceeds this is from a newer build: we still load the
+/// fields we recognise, but warn the user that newer settings/semantics may not apply.
+pub(crate) const VIEW_FORMAT_VERSION: u32 = 1;
+
+/// Largest zoom depth (octaves = log2 of magnification) accepted from an untrusted view
+/// file. Past this the bignum working precision (∝ octaves) would balloon into a memory
+/// DoS, so a hostile/garbage `upp_log2` is clamped here. ~10× the deepest validated zoom
+/// (`--validate-deep` reaches 1e1000000× ≈ 3.3e6 octaves), so no real location is affected.
+const MAX_LOAD_OCTAVES: f64 = 3.4e7;
+
+/// Upper bound on `max_iter` accepted from an untrusted view file (an absurd value would
+/// make an export grind for hours / exhaust the iteration budget). Well above any real use.
+const MAX_LOAD_ITER: u32 = 10_000_000;
+
+/// Outcome of restoring view metadata, so untrusted callers can warn on an incompatible file.
+pub(crate) enum ViewLoad {
+    /// Restored; the file's `format_version` is within this build's range.
+    Ok,
+    /// Restored best-effort, but the file declares a newer `format_version` than this build
+    /// supports — newer fields/semantics may not have applied (carries the file's version).
+    NewerFormat(u32),
+}
+
 impl FractadyneApp {
     /// Reloadable view-state metadata embedded in exports. The center is stored as
     /// full-precision decimal so deep-zoom positions round-trip exactly.
@@ -24,11 +51,12 @@ impl FractadyneApp {
             .take(120)
             .collect();
         format!(
-            "app=Fractadyne\nversion={}\nformat_version=1\nsaved_unix={}\nsaved={}\n\
+            "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
              center_x={}\ncenter_y={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
              palette={}\ncycle={}\noffset={}\naa={}\n",
             version_string(),
+            VIEW_FORMAT_VERSION,
             secs,
             Self::utc_date_string(secs),
             notes,
@@ -52,8 +80,12 @@ impl FractadyneApp {
         )
     }
 
-    /// Restore the view from metadata read out of an exported PNG.
-    pub(crate) fn load_view_metadata(&mut self, meta: &str) {
+    /// Restore the view from view-state metadata (exported image, `.fdn`, or bookmark).
+    /// Untrusted input: every field is allow-listed, parsed leniently, and clamped to a
+    /// safe range; unknown keys are ignored and missing keys keep their current value.
+    /// Returns whether the file's `format_version` is within this build's range so callers
+    /// can warn on a forward-incompatible (newer) file.
+    pub(crate) fn load_view_metadata(&mut self, meta: &str) -> ViewLoad {
         let get = |key: &str| -> Option<String> {
             meta.lines().find_map(|l| {
                 l.split_once('=')
@@ -61,6 +93,10 @@ impl FractadyneApp {
                     .map(|(_, v)| v.trim().to_string())
             })
         };
+        // A file with no `format_version` predates the field but is format-1 compatible.
+        let file_ver = get("format_version")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(VIEW_FORMAT_VERSION);
         if let Some(f) = get("fractal").and_then(|s| FractalKind::from_name(&s)) {
             self.fractal = f;
         }
@@ -79,14 +115,23 @@ impl FractadyneApp {
             self.viewport.center_y = cy;
         }
         // Prefer the extended-range `upp_log2` (exact past 1e308×); fall back to the f64
-        // `upp` for images saved before it existed.
-        if let Some(l) = get("upp_log2").and_then(|s| s.parse::<f64>().ok()).filter(|l| l.is_finite()) {
+        // `upp` for images saved before it existed. Clamp the depth so a hostile value
+        // can't blow up the bignum working precision (memory DoS).
+        if let Some(l) = get("upp_log2")
+            .and_then(|s| s.parse::<f64>().ok())
+            .filter(|l| l.is_finite())
+        {
+            let l = l.clamp(-MAX_LOAD_OCTAVES, MAX_LOAD_OCTAVES);
             self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(l);
-        } else if let Some(upp) = get("upp").and_then(|s| s.parse::<f64>().ok()) {
-            self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(upp);
+        } else if let Some(upp) = get("upp")
+            .and_then(|s| s.parse::<f64>().ok())
+            .filter(|u| u.is_finite() && *u > 0.0)
+        {
+            let l = upp.log2().clamp(-MAX_LOAD_OCTAVES, MAX_LOAD_OCTAVES);
+            self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(l);
         }
-        if let Some(mi) = get("max_iter").and_then(|s| s.parse().ok()) {
-            self.max_iter = mi;
+        if let Some(mi) = get("max_iter").and_then(|s| s.parse::<u32>().ok()) {
+            self.max_iter = mi.clamp(1, MAX_LOAD_ITER);
         }
         if let Some(ai) = get("auto_iter") {
             self.auto_iter = ai == "1";
@@ -96,14 +141,14 @@ impl FractadyneApp {
                 self.palette_idx = p;
             }
         }
-        if let Some(c) = get("cycle").and_then(|s| s.parse().ok()) {
-            self.cycle = c;
+        if let Some(c) = get("cycle").and_then(|s| s.parse::<f32>().ok()).filter(|c| c.is_finite()) {
+            self.cycle = c.clamp(0.0, 1.0e6);
         }
-        if let Some(o) = get("offset").and_then(|s| s.parse().ok()) {
-            self.offset = o;
+        if let Some(o) = get("offset").and_then(|s| s.parse::<f32>().ok()).filter(|o| o.is_finite()) {
+            self.offset = o.clamp(-1.0e6, 1.0e6);
         }
-        if let Some(a) = get("aa").and_then(|s| s.parse().ok()) {
-            self.aa = a;
+        if let Some(a) = get("aa").and_then(|s| s.parse::<u32>().ok()) {
+            self.aa = a.clamp(1, 16);
         }
         if let Some(n) = get("notes") {
             self.export_notes = n;
@@ -115,6 +160,11 @@ impl FractadyneApp {
         self.invalidate_refs();
         self.zoom_vel = 0.0;
         self.record_nav();
+        if file_ver > VIEW_FORMAT_VERSION {
+            ViewLoad::NewerFormat(file_ver)
+        } else {
+            ViewLoad::Ok
+        }
     }
 
     /// Open a previously-exported PNG/EXR and restore its view (via a native dialog).
@@ -135,8 +185,14 @@ impl FractadyneApp {
         };
         match meta {
             Some(m) => {
-                self.load_view_metadata(&m);
-                self.export_status = Some(format!("Loaded view from {}", path.display()));
+                self.export_status = Some(match self.load_view_metadata(&m) {
+                    ViewLoad::Ok => format!("Loaded view from {}", path.display()),
+                    ViewLoad::NewerFormat(v) => format!(
+                        "Loaded view from {} — saved by a newer Fractadyne (format v{v}); \
+                         some settings may not have applied. Consider updating.",
+                        path.display()
+                    ),
+                });
             }
             None => {
                 self.export_status =

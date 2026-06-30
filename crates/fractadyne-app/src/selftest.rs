@@ -1069,6 +1069,79 @@ impl FractadyneApp {
             }
         }
 
+        // ---- view-state format: versioning + untrusted-input hardening ----
+        // The reloadable metadata (exports / .fdn / bookmarks) must round-trip a deep view
+        // exactly, flag a newer format_version (so it can't be silently mis-read), and clamp
+        // hostile/garbage fields rather than ballooning precision or the iteration count.
+        {
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.viewport.center_x = fractadyne_core::parse_bf("-0.743643887037151").unwrap();
+            self.viewport.center_y = fractadyne_core::parse_bf("0.131825904205330").unwrap();
+            self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(-120.0);
+            self.max_iter = 1234;
+            self.auto_iter = false;
+            self.aa = 3;
+            let blob = self.view_metadata();
+            // Scramble live state, then restore from the blob.
+            self.max_iter = 7;
+            self.aa = 1;
+            self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0);
+            let rt = self.load_view_metadata(&blob);
+            let cx = fractadyne_core::to_f64(&self.viewport.center_x);
+            let rt_ok = matches!(rt, crate::export::ViewLoad::Ok)
+                && self.max_iter == 1234
+                && self.aa == 3
+                && (self.viewport.units_per_pixel.log2() + 120.0).abs() < 1.0e-6
+                && (cx + 0.743643887037151).abs() < 1.0e-12;
+            checks.push(SelfCheck {
+                category: "View format",
+                name: "metadata round-trips a deep view".into(),
+                params: "serialize → scramble → load".into(),
+                result: format!(
+                    "iter {} aa {} upp_log2 {:.3} cx {:.15}",
+                    self.max_iter, self.aa, self.viewport.units_per_pixel.log2(), cx
+                ),
+                threshold: "fractal/iter/aa/zoom/center preserved",
+                pass: rt_ok,
+            });
+
+            // A newer format_version must be detected (not silently consumed).
+            let newer = "app=Fractadyne\nformat_version=999\ncenter_x=-0.5\ncenter_y=0\nupp_log2=-3\n";
+            let detected = matches!(self.load_view_metadata(newer), crate::export::ViewLoad::NewerFormat(999));
+            checks.push(SelfCheck {
+                category: "View format",
+                name: "newer format_version flagged".into(),
+                params: "format_version=999".into(),
+                result: if detected { "flagged as newer".into() } else { "NOT flagged".into() },
+                threshold: "returns NewerFormat",
+                pass: detected,
+            });
+
+            // Hostile numeric fields must be clamped, not trusted (DoS / runaway work).
+            let hostile = "app=Fractadyne\nformat_version=1\ncenter_x=-0.5\ncenter_y=0\n\
+                           upp_log2=-1e30\nmax_iter=4000000000\naa=9999\ncycle=inf\noffset=NaN\n";
+            let _ = self.load_view_metadata(hostile);
+            let clamped = (1..=10_000_000).contains(&self.max_iter)
+                && (1..=16).contains(&self.aa)
+                && self.viewport.units_per_pixel.log2().is_finite()
+                && self.viewport.units_per_pixel.log2() >= -3.4e7 - 1.0
+                && self.cycle.is_finite()
+                && self.offset.is_finite();
+            checks.push(SelfCheck {
+                category: "View format",
+                name: "hostile fields clamped".into(),
+                params: "upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf".into(),
+                result: format!(
+                    "iter {} aa {} upp_log2 {:.2e} cycle {} offset {}",
+                    self.max_iter, self.aa, self.viewport.units_per_pixel.log2(),
+                    self.cycle, self.offset
+                ),
+                threshold: "all clamped to safe ranges & finite",
+                pass: clamped,
+            });
+        }
+
         // ---- golden-image regression (set deterministic coloring per spec) ----
         let bless = std::env::args().any(|a| a == "--bless");
         let report_path = std::env::args()

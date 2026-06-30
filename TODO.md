@@ -419,17 +419,19 @@ perturbation + series approximation + glitch correction. The headline feature.
       the local build constraints (`-j 1`, `debug=false`, no pipelining) are this machine's
       page-file workaround — CI runners likely don't need them, but the release profile must
       still link cleanly. Include the README build note + a short "Download" section.
-- [ ] **File format versioning + minimum-version validation** — exported PNG/EXR metadata
-      and `.fdn` location files already carry `version` (app version) and `format_version=1`.
-      On load, **validate the format** and gate on a declared minimum: bump `format_version`
-      whenever a breaking change to the key set/semantics lands, and have the loader record a
-      per-format **minimum-compatible app version** (or min `format_version` it understands).
-      If a file's `format_version` is newer than this build supports (or its embedded
-      `min_app_version` exceeds ours), refuse with a clear "saved by a newer Fractadyne;
-      please update" message instead of silently mis-loading; if older, migrate/best-effort.
-      Add a small `min_app_version` field to the metadata/`.fdn` writer for forward
-      signaling, and fuzz/test the version-gate path. Keeps shared `.fdn`/images safe across
-      breaking changes.
+- [x] **File format versioning + minimum-version validation** — the reloadable view metadata
+      (exports / `.fdn` / bookmarks) now has a single source-of-truth `VIEW_FORMAT_VERSION`
+      (export.rs); the writer emits it and `load_view_metadata` returns a `ViewLoad`
+      (`Ok` / `NewerFormat(v)`). A file whose `format_version` exceeds this build's loads
+      best-effort (the format is additive key=value, so core fields still parse) but the
+      untrusted callers — Open-view and Apply-location — surface a clear "saved by a newer
+      Fractadyne; some settings may not apply, consider updating" message instead of
+      silently mis-loading. Same pass **hardens the untrusted parser**: `max_iter` clamped
+      to ≤1e7, `aa` to 1..16, zoom depth to ≤3.4e7 octaves (prevents a hostile `upp_log2`
+      from ballooning bignum precision into a memory DoS), and `cycle`/`offset` rejected if
+      non-finite. `--selftest` covers round-trip, newer-version detection, and clamping.
+      (A file is missing `format_version` ⇒ treated as v1; legacy files still load.)
+      Possible later: an explicit `min_app_version` for forward signaling of hard breaks.
 
 ## Branding & UI (M7)
 
