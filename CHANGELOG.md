@@ -24,12 +24,15 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
-- **Higher iteration ceiling + deep-zoom detail warning** — the Iterations slider now goes to
-  500,000 (was 50,000), and auto-scale's appetite climbs past 50k with depth. The live preview
-  still caps at 50,000 for responsiveness (and to avoid the GPU watchdog), so a very deep view
-  can look smoother on screen than in an export. When a depth wants more iterations than the
-  preview shows, a note under the slider says so and reports the count exports will use. The
-  live reference orbit is built only to the capped count, so navigation stays fast.
+- **Progressive iteration refinement (sharpen on settle)** — deep views no longer look
+  permanently smooth. The Iterations slider now goes to 500,000 (was 50,000) and auto-scale's
+  appetite climbs past 50k with depth. While you're moving, the preview caps iterations at
+  50,000 with a tight work budget so motion stays responsive; the moment the view settles it
+  re-renders at the full zoom-appropriate count (up to ~200k+ deep) with a ~6× larger budget —
+  still well under the GPU watchdog — so the finest boundary filaments resolve on screen,
+  matching an export. The live reference orbit is built only to the count actually rendered, so
+  navigation speed is unchanged. A note appears only in the rare case a settled view is still
+  resolution-limited (huge window at extreme depth), pointing to export for full resolution.
 
 - **Recommended-hardware Help section** — GPU/CPU/memory guidance (what matters and why: the GPU
   drives per-pixel iteration + frame rate; the CPU's single-core speed drives the deep-zoom

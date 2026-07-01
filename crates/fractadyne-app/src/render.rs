@@ -291,20 +291,23 @@ impl FractadyneApp {
         // uniform-screen bug). Only when even that floor can't fit (extreme depth on a very
         // large window) do we fall back to reducing the iteration-texture resolution.
         let px = (resolution[0].max(1) as u64) * (resolution[1].max(1) as u64);
-        // Iterations appropriate for this zoom. A high manual base (e.g. 50,000) would
-        // over-resolve the boundary's sub-pixel "dust" into per-pixel noise *and* eat the
-        // whole budget (forcing low resolution + no anti-aliasing). Cap the live preview at
-        // a zoom-scaled count — generous enough that normal auto-iteration is never capped,
-        // but an inflated manual base is. Exports still use the full count. The cap stays
-        // well above what the zoom needs, so deep interiors remain resolved (no uniform
-        // screen).
-        let gpu_iter = eff_iter.min(50_000).min(zoom_iter_cap(log2mag).max(256));
-        // GPU-watchdog safety (TDR ≈ 2 s): if even the capped work won't fit, reduce the
-        // iteration-texture resolution (the color pass box-filters the upscale). Rare now
-        // that iterations are zoom-capped.
+        // Iteration cap + work budget are *interaction-aware*. While moving, cap hard (50k) with
+        // a tight budget so motion stays responsive. Once the view settles, a still frame can
+        // afford far more — the interactive budget is ~200× below the GPU watchdog (TDR ≈ 2 s) —
+        // so raise both the cap and the budget and let the view sharpen to the zoom-appropriate
+        // count (matching an export). `zoom_iter_cap` still bounds it, so it never over-resolves
+        // sub-pixel "dust" into per-pixel noise. A high manual base is honoured on settle too.
+        let (budget, iter_cap): (u64, u32) = if interacting {
+            (WORK_BUDGET, 50_000)
+        } else {
+            (WORK_BUDGET.saturating_mul(6), 500_000)
+        };
+        let gpu_iter = eff_iter.min(iter_cap).min(zoom_iter_cap(log2mag).max(256));
+        // GPU-watchdog safety: if even the capped work won't fit the budget, reduce the
+        // iteration-texture resolution (the color pass box-filters the upscale).
         let want = px.saturating_mul(gpu_iter.max(1) as u64);
-        let res_scale = if want > WORK_BUDGET {
-            (WORK_BUDGET as f64 / want as f64).sqrt()
+        let res_scale = if want > budget {
+            (budget as f64 / want as f64).sqrt()
         } else {
             1.0
         };
@@ -317,7 +320,7 @@ impl FractadyneApp {
             resolution
         };
         let spx = (resolution[0] as u64) * (resolution[1] as u64);
-        let max_ss = ((WORK_BUDGET / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
+        let max_ss = ((budget / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
             .sqrt()
             .max(1.0) as u32;
         let ss = if interacting { 1 } else { self.aa.min(max_ss) };
