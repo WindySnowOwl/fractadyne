@@ -1035,6 +1035,24 @@ fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
     return palette(pv * cu.cycle + cu.offset);
 }
 
+// Average color of the frozen frame, from a coarse grid over the iteration texture. Used to
+// fill the edge a pan reveals before it's rendered — a color-matched background reads far nicer
+// than black. Only the (thin) revealed strip runs this, so the per-fragment cost is negligible.
+fn view_average() -> vec3<f32> {
+    let dim = textureDimensions(iter_tex);
+    let maxc = vec2<i32>(dim) - vec2<i32>(1, 1);
+    let n: u32 = 6u;
+    var acc = vec3<f32>(0.0);
+    for (var j: u32 = 0u; j < n; j = j + 1u) {
+        for (var i: u32 = 0u; i < n; i = i + 1u) {
+            let g = (vec2<f32>(f32(i), f32(j)) + 0.5) / f32(n);
+            let texel = clamp(vec2<i32>(g * vec2<f32>(dim)), vec2<i32>(0, 0), maxc);
+            acc = acc + shade(textureLoad(iter_tex, texel, 0), textureLoad(aux_tex, texel, 0));
+        }
+    }
+    return acc / f32(n * n);
+}
+
 @fragment
 fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let tex_dim = textureDimensions(iter_tex); // = screen × ss
@@ -1042,12 +1060,13 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let screen_dim = tex_dim / ss;
     // Pan reprojection: sample the frozen texture shifted by the panned offset, so the detailed
     // image slides with the cursor. Anything the pan drags in from outside the frozen frame
-    // isn't rendered yet — leave it black until the view settles and re-iterates.
+    // isn't rendered yet — fill it with the frame's average color (nicer than black) until the
+    // view settles and re-iterates.
     var suv = in.uv;
     if (cu.reproject == 1u) {
         suv = in.uv - cu.uv_off;
         if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {
-            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+            return vec4<f32>(view_average(), 1.0);
         }
     }
     let uv = clamp(suv, vec2<f32>(0.0), vec2<f32>(1.0));
