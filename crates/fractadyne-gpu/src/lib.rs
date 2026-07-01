@@ -62,7 +62,8 @@ struct ColorUniforms {
     de_phase: f32,
     color_method: u32,
     aa_filter: u32,
-    _capad: [u32; 3],
+    reproject: u32,      // 1 = pan reprojection: translate the frozen iteration texture
+    uv_offset: [f32; 2], // uv translation applied when reproject == 1
     interior_col: [f32; 4],
     stops: [[f32; 4]; 8],
 }
@@ -101,6 +102,9 @@ struct ViewResources {
     tex_view: wgpu::TextureView,
     aux_view: wgpu::TextureView,
     size: [u32; 2],
+    /// Supersampling factor the current iteration texture was rendered at. Needed so a pan
+    /// reprojection colors the frozen texture with the ss it was built with (not the live ss).
+    last_ss: u32,
     last_orbit_id: u64,
     last_iter_key: Option<IterKey>,
 }
@@ -340,6 +344,7 @@ impl ViewResources {
             tex_view,
             aux_view,
             size,
+            last_ss: 1,
             last_orbit_id: u64::MAX,
             last_iter_key: None,
         }
@@ -438,6 +443,11 @@ pub struct MandelbrotParams {
     pub interior_col: [f32; 4],
     pub resolution: [u32; 2],
     pub ss: u32,
+    /// Pan reprojection: 1 = don't re-iterate, just translate the frozen iteration texture by
+    /// `uv_offset` (used while dragging so the detailed image slides with the cursor and only
+    /// the newly-exposed edge is blank until the view settles).
+    pub reproject: u32,
+    pub uv_offset: [f32; 2],
     /// Which on-screen panel this is (distinct GPU resources per id).
     pub view_id: u32,
 }
@@ -491,16 +501,21 @@ impl CallbackTrait for MandelbrotParams {
             ss -= 1;
         }
         let size = [(base[0] * ss).min(max_dim), (base[1] * ss).min(max_dim)];
-        if size != view.size {
+        // Pan reprojection: keep the frozen iteration texture (only valid once something has
+        // been rendered into it). Skip the resize so the texture isn't cleared, and color it
+        // with the ss it was built at.
+        let reproject = self.reproject == 1 && view.last_iter_key.is_some();
+        if !reproject && size != view.size {
             view.resize(device, color_bgl, size);
         }
+        let color_ss = if reproject { view.last_ss.max(1) } else { ss };
 
         // Coloring uniform is cheap — refresh every frame so recolor is instant.
         let cu = ColorUniforms {
             stop_count: self.stop_count,
             cycle: self.cycle,
             offset: self.offset,
-            ss,
+            ss: color_ss,
             light: self.light,
             light_angle: self.light_angle,
             light_height: self.light_height,
@@ -510,7 +525,8 @@ impl CallbackTrait for MandelbrotParams {
             de_phase: self.de_phase,
             color_method: self.color_method,
             aa_filter: self.aa_filter.max(1),
-            _capad: [0; 3],
+            reproject: reproject as u32,
+            uv_offset: self.uv_offset,
             interior_col: self.interior_col,
             stops: self.stops,
         };
@@ -549,7 +565,7 @@ impl CallbackTrait for MandelbrotParams {
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
         };
-        if view.last_iter_key != Some(key) {
+        if !reproject && view.last_iter_key != Some(key) {
             // Per-texel step *mantissa*: span_mantissa (= span · 2^-delta_exp, already O(1))
             // divided by the texture dim. The shared exponent carries the true scale, so no
             // tiny span / huge 2^-delta_exp ever appears here → no underflow/overflow at depth.
@@ -608,6 +624,7 @@ impl CallbackTrait for MandelbrotParams {
                 pass.draw(0..3, 0..1);
             }
             view.last_iter_key = Some(key);
+            view.last_ss = ss; // remember the ss this texture was built at (for reprojection)
         }
 
         Vec::new()
@@ -834,7 +851,8 @@ pub fn render_export(
         de_phase: req.de_phase,
         color_method: req.color_method,
         aa_filter: req.aa_filter.max(1),
-        _capad: [0; 3],
+        reproject: 0,
+        uv_offset: [0.0, 0.0],
         interior_col: req.interior_col,
         stops: req.stops,
     };

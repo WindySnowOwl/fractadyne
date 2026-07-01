@@ -24,6 +24,14 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Pan reprojection (retain detail while dragging)** — dragging to pan no longer drops to the
+  coarse moving preview (which shows no detail at deep zoom, so you couldn't see where you were
+  going). Instead the last detailed frame is frozen and translated with the cursor in the color
+  pass — no bignum recompute, no re-iterate — so the real image slides under the pointer. Only
+  the newly-exposed edge is blank until you stop, at which point the view settles and re-renders
+  at full detail. Applies to single and dual (left panel) views at deep zoom; the shallow direct
+  path is already detailed so it renders normally.
+
 - **Progressive iteration refinement (sharpen on settle)** — deep views no longer look
   permanently smooth. The Iterations slider now goes to 500,000 (was 50,000) and auto-scale's
   appetite climbs past 50k with depth. While you're moving, the preview caps iterations at

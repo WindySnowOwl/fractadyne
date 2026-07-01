@@ -987,9 +987,8 @@ struct ColorU {
     de_phase: f32,     // animated phase (cycles the glow bands)
     color_method: u32, // 0 smooth, 1 stripe, 2 triangle-ineq, 3 orbit-trap, 4 distance, 5 decomposition
     aa_filter: u32,    // color-pass box-filter taps per axis (≥1); >1 anti-aliases an upscaled iter texture
-    _capad0: u32,
-    _capad1: u32,
-    _capad2: u32,
+    reproject: u32,    // 1 = pan reprojection: translate the frozen iteration texture by uv_off
+    uv_off: vec2<f32>, // uv translation for the reprojection (fraction of the screen panned)
     interior_col: vec4<f32>, // color for in-set (non-escaping) pixels; rgb in xyz
     stops: array<vec4<f32>, 8>, // rgb + position
 };
@@ -1041,7 +1040,17 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let tex_dim = textureDimensions(iter_tex); // = screen × ss
     let ss = max(cu.ss, 1u);
     let screen_dim = tex_dim / ss;
-    let uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    // Pan reprojection: sample the frozen texture shifted by the panned offset, so the detailed
+    // image slides with the cursor. Anything the pan drags in from outside the frozen frame
+    // isn't rendered yet — leave it black until the view settles and re-iterates.
+    var suv = in.uv;
+    if (cu.reproject == 1u) {
+        suv = in.uv - cu.uv_off;
+        if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        }
+    }
+    let uv = clamp(suv, vec2<f32>(0.0), vec2<f32>(1.0));
     let pix = vec2<i32>(uv * vec2<f32>(screen_dim)); // screen pixel index
     let maxc = vec2<i32>(tex_dim) - vec2<i32>(1, 1);
 

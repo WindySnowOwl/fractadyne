@@ -1025,6 +1025,11 @@ struct FractadyneApp {
     max_iter: u32,
     /// Box-zoom (right-drag) start position in screen points; `None` when idle.
     box_start: Option<egui::Pos2>,
+    /// Pan reprojection: accumulated device-pixel drag offset since the current pan began, and
+    /// which view (0 = main/left, 1 = julia) is being panned. While a pan is pending the frozen
+    /// iteration texture is translated by `pan_px` instead of re-rendered; cleared on settle.
+    pan_px: egui::Vec2,
+    pan_view: Option<u32>,
     /// Eased continuous-zoom velocity (log-rate per second; + = in, - = out, 0 = idle).
     zoom_vel: f64,
     /// Last cursor position over the canvas, for cursor-anchored continuous zoom.
@@ -1244,6 +1249,8 @@ impl FractadyneApp {
             },
             max_iter: s.max_iter,
             box_start: None,
+            pan_px: egui::Vec2::ZERO,
+            pan_view: None,
             zoom_vel: 0.0,
             last_cursor: None,
             palette_idx: s.palette_idx,
@@ -1836,6 +1843,34 @@ impl FractadyneApp {
             (rect.height() as f64 * ppp) as u32,
         ];
         let view_id = if is_julia { 1 } else { 0 };
+        // Pan reprojection: while dragging, keep the last detailed frame and just translate it
+        // with the cursor; re-render (at settled quality) only once the drag stops and the view
+        // settles. Without this the coarse moving preview shows no detail at deep zoom, so you
+        // can't see what you're panning toward. `pan_px` accumulates the same device-pixel
+        // deltas fed to `pan_pixels`, so the slide matches the eventual settled render exactly.
+        if resp.drag_started_by(egui::PointerButton::Primary) && !zoom_boxing {
+            self.pan_px = egui::Vec2::ZERO;
+            self.pan_view = Some(view_id);
+        }
+        if self.pan_view == Some(view_id)
+            && !zoom_boxing
+            && resp.dragged_by(egui::PointerButton::Primary)
+        {
+            let d = resp.drag_delta();
+            self.pan_px += egui::vec2(d.x * ppp as f32, d.y * ppp as f32);
+        }
+        let reproject = if self.pan_view == Some(view_id) && interacting {
+            self.schedule_repaint(ctx); // keep rendering until the view settles
+            Some([
+                self.pan_px.x / res[0].max(1) as f32,
+                self.pan_px.y / res[1].max(1) as f32,
+            ])
+        } else {
+            if self.pan_view == Some(view_id) {
+                self.pan_view = None; // settled → next frame does a full re-iterate
+            }
+            None
+        };
         let params = self.build_params(
             center_bf,
             center,
@@ -1848,6 +1883,7 @@ impl FractadyneApp {
             interacting,
             res,
             view_id,
+            reproject,
         );
         add_mandelbrot(ui.painter(), rect, params);
         resp
@@ -4205,6 +4241,32 @@ impl eframe::App for FractadyneApp {
                     (rect.width() as f64 * ppp) as u32,
                     (rect.height() as f64 * ppp) as u32,
                 ];
+                // Pan reprojection: while dragging, translate the last detailed frame instead
+                // of re-rendering coarse (see `nav_and_draw` for the full rationale).
+                let panning = !zoom_boxing && self.box_start.is_none();
+                if response.drag_started_by(egui::PointerButton::Primary) && panning {
+                    self.pan_px = egui::Vec2::ZERO;
+                    self.pan_view = Some(0);
+                }
+                if self.pan_view == Some(0)
+                    && panning
+                    && response.dragged_by(egui::PointerButton::Primary)
+                {
+                    let d = response.drag_delta();
+                    self.pan_px += egui::vec2(d.x * ppp as f32, d.y * ppp as f32);
+                }
+                let reproject = if self.pan_view == Some(0) && interacting {
+                    self.schedule_repaint(ctx);
+                    Some([
+                        self.pan_px.x / resolution[0].max(1) as f32,
+                        self.pan_px.y / resolution[1].max(1) as f32,
+                    ])
+                } else {
+                    if self.pan_view == Some(0) {
+                        self.pan_view = None;
+                    }
+                    None
+                };
                 let params = self.build_params(
                     center_bf,
                     center,
@@ -4217,6 +4279,7 @@ impl eframe::App for FractadyneApp {
                     interacting,
                     resolution,
                     0,
+                    reproject,
                 );
                 add_mandelbrot(ui.painter(), rect, params);
 

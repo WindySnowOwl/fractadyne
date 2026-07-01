@@ -270,6 +270,10 @@ impl FractadyneApp {
         interacting: bool,
         resolution: [u32; 2],
         view_id: u32,
+        // Some(uv_offset) → pan reprojection: reuse the cached orbit + frozen iteration texture
+        // and translate it in the color pass (no bignum recompute, no re-iterate). Only honoured
+        // at deep zoom (mode ≠ 1) once a reference exists for this view.
+        reproject: Option<[f32; 2]>,
     ) -> MandelbrotParams {
         let (stops, stop_count) = self.active_stops();
         let (cx, cy) = center;
@@ -348,11 +352,16 @@ impl FractadyneApp {
         let precision = fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64);
         let vi = view_id as usize;
 
+        // Honour a pan reprojection only at deep zoom (the shallow direct path is cheap + already
+        // detailed) and only once a reference orbit exists to have produced the frozen texture.
+        let reproject = reproject
+            .filter(|_| mode != 1 && self.ref_cache[vi].ref_pt.is_some());
+
         let mut ref_offset = [0.0_f32; 4];
         let mut sa = fractadyne_core::SeriesSkip::NONE;
         let mut bla = std::sync::Arc::new(Vec::new());
         let mut bla_on = 0u32;
-        if mode != 1 {
+        if mode != 1 && reproject.is_none() {
             // Drift = |center − reference| / span, both as 2^-delta_exp mantissas so the
             // ratio is exact at any depth (raw f64 differences underflow past ~1e308×).
             let drift = self.ref_cache[vi].ref_pt.as_ref().map(|r| {
@@ -502,6 +511,8 @@ impl FractadyneApp {
             interior_col: self.interior_color(),
             resolution,
             ss,
+            reproject: reproject.is_some() as u32,
+            uv_offset: reproject.unwrap_or([0.0, 0.0]),
             view_id,
         }
     }
