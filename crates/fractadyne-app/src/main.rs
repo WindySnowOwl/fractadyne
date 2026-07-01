@@ -2715,7 +2715,12 @@ impl FractadyneApp {
                             .inner_margin(egui::Margin::symmetric(12, 8)),
                     )
                     .show_inside(ui, |ui| {
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .scroll_bar_visibility(
+                            egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                        )
+                        .show(ui, |ui| {
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                         match self.help_section {
                             0 => help_overview(ui),

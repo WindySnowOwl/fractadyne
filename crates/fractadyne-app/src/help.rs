@@ -35,6 +35,9 @@ fn help_kv(ui: &mut egui::Ui, k: &str, v: &str) {
             egui::vec2(180.0, 0.0),
             egui::Layout::left_to_right(egui::Align::TOP),
             |ui| {
+                // Reserve the full column width so descriptions line up (a plain sized label
+                // advances only by its content, leaving the descriptions ragged).
+                ui.set_min_width(180.0);
                 ui.add(egui::Label::new(egui::RichText::new(k).monospace()).wrap());
             },
         );
@@ -205,7 +208,7 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
     help_sub(ui, "Multibrot 3 / 4 / 5");
     help_p(
         ui,
-        "z → zᵈ + c for power d = 3, 4, 5. Higher powers add lobes: the set has (d−1)-fold \
+        "z → z^d + c for power d = 3, 4, 5. Higher powers add lobes: the set has (d−1)-fold \
          rotational symmetry (Multibrot 3 is 2-fold, 4 is 3-fold, 5 is 4-fold).",
     );
     help_sub(ui, "Tricorn (Mandelbar)");
@@ -236,7 +239,7 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
     help_sub(ui, "Phoenix");
     help_p(
         ui,
-        "z → z² + c + p·z₋₁, where z₋₁ is the previous iterate and p is a constant (here p = −0.5). \
+        "z → z² + c + p·z(n-1), where z(n-1) is the previous iterate and p is a constant (p = -0.5). \
          The memory term produces flame-like filaments.",
     );
     help_sub(ui, "Newton");
@@ -260,8 +263,8 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
         "Mandelbrot, Multibrot 3/4/5 and Tricorn support unlimited (floatexp) perturbation deep \
          zoom. Burning Ship, Celtic and Buffalo are non-analytic (they take absolute values), so \
          they use a sign-aware perturbation; this now runs at floatexp range too, deep-zooming far \
-         past the old ~10²⁸× df32 limit (rare speckle near the abs folds awaits multi-reference \
-         glitch correction). Phoenix and Newton currently use the direct path, sharp to ~10⁶×.",
+         past the old ~1e28× df32 limit (rare speckle near the abs folds awaits multi-reference \
+         glitch correction). Phoenix and Newton currently use the direct path, sharp to ~1e6×.",
     );
 }
 
@@ -277,10 +280,10 @@ pub(crate) fn help_methodology(ui: &mut egui::Ui) {
     help_sub(ui, "Arbitrary-precision position");
     help_p(
         ui,
-        "Ordinary 64-bit numbers run out of digits near 10¹⁵× zoom. Fractadyne keeps the view center \
+        "Ordinary 64-bit numbers run out of digits near 1e15× zoom. Fractadyne keeps the view center \
          in arbitrary precision, with the number of digits growing as you zoom, so the location never \
          degrades. The pixel scale is likewise held with an extended exponent, so it doesn't stall at \
-         64-bit's ~10³⁰⁸× limit either — depth is bounded only by patience, not by any fixed number \
+         64-bit's ~1e308× limit either — depth is bounded only by patience, not by any fixed number \
          range.",
     );
     help_sub(ui, "Perturbation");
@@ -294,7 +297,7 @@ pub(crate) fn help_methodology(ui: &mut egui::Ui) {
     help_sub(ui, "Unlimited depth (floatexp)");
     help_p(
         ui,
-        "Past about 10²⁸× even that tiny difference underflows 32-bit range, so it is stored as a \
+        "Past about 1e28× even that tiny difference underflows 32-bit range, so it is stored as a \
          mantissa plus a separate integer exponent (\"floatexp\"), removing the depth wall. The \
          engine switches automatically: direct math when shallow, perturbation when deep, and \
          floatexp when deepest.",
@@ -514,7 +517,7 @@ pub(crate) fn help_acknowledgments(ui: &mut egui::Ui) {
     help_cite(
         ui,
         "Glitch-detection criterion — Pauldelbrot",
-        "The |Z + z| ≪ |Z| test for when a pixel needs a different reference — the basis of \
+        "The |Z + z| << |Z| test for when a pixel needs a different reference — the basis of \
          glitch-free perturbation (fractalforums).",
         "Deep zoom theory & practice — mathr",
         "https://mathr.co.uk/blog/2021-05-14_deep_zoom_theory_and_practice.html",
