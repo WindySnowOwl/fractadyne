@@ -1591,7 +1591,9 @@ impl FractadyneApp {
         req.width = w;
         req.height = h;
         req.ss = 1;
-        req.max_iter = req.max_iter.clamp(200, 2000);
+        // Keep the zoom-appropriate iteration count (the reference orbit is already built at that
+        // depth). Clamping this low renders deep views as all-interior — a solid black thumbnail.
+        req.max_iter = req.max_iter.max(200);
         let progress = std::sync::atomic::AtomicU32::new(0);
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let Ok(res) = fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel) else {
