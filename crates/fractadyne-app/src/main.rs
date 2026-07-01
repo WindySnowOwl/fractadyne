@@ -999,6 +999,8 @@ struct FractadyneApp {
     /// BLA (bilinear approximation): skips iterations throughout the orbit for deep floatexp
     /// Mandelbrot renders. Off by default while it's validated; enable to accelerate.
     use_bla: bool,
+    /// UI scale (egui zoom factor): scales the interface fonts + widgets. 1.0 = default.
+    ui_scale: f32,
     /// Minimap overview: enabled flag, cached home-view thumbnail, and the key
     /// (formula, palette, method) the thumbnail was rendered for (re-render on change).
     minimap: bool,
@@ -1262,6 +1264,7 @@ impl FractadyneApp {
             auto_iter: s.auto_iter,
             series_approx: s.series_approx,
             use_bla: false,
+            ui_scale: s.ui_scale.clamp(0.6, 2.5),
             zoom_rate: s.zoom_rate,
             aa: s.aa,
             ref_cache: [RefCache::default(), RefCache::default()],
@@ -1429,6 +1432,7 @@ impl FractadyneApp {
             julia_c_im: self.julia_c.1,
             dual: self.dual,
             series_approx: self.series_approx,
+            ui_scale: self.ui_scale,
             show_orbits: self.show_orbits,
             orbit_normalize: self.orbit_normalize,
             orbit_anim: self.orbit_anim,
@@ -3092,6 +3096,10 @@ impl FractadyneApp {
 impl eframe::App for FractadyneApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_start = Instant::now();
+        // Apply the UI scale preference (egui zoom factor) when it changes.
+        if (ctx.zoom_factor() - self.ui_scale).abs() > 1.0e-4 {
+            ctx.set_zoom_factor(self.ui_scale);
+        }
         // GPU handles for offline export (cloned Arcs; cheap).
         let gpu = frame
             .wgpu_render_state()
@@ -3459,6 +3467,23 @@ impl eframe::App for FractadyneApp {
                         ] {
                             if ui.selectable_label(self.fps_cap == val, label).clicked() {
                                 self.fps_cap = val;
+                            }
+                        }
+                        ui.separator();
+                        ui.label("UI scale (font size)");
+                        for (label, val) in [
+                            ("80%", 0.8_f32),
+                            ("90%", 0.9),
+                            ("100%", 1.0),
+                            ("110%", 1.1),
+                            ("125%", 1.25),
+                            ("150%", 1.5),
+                        ] {
+                            if ui
+                                .selectable_label((self.ui_scale - val).abs() < 0.01, label)
+                                .clicked()
+                            {
+                                self.ui_scale = val;
                             }
                         }
                     });

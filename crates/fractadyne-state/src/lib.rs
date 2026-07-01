@@ -130,6 +130,9 @@ pub struct SessionState {
     /// Series approximation (iteration-skipping) preference. Default on.
     #[serde(default = "default_true")]
     pub series_approx: bool,
+    /// UI scale (egui zoom factor) — scales the interface fonts + widgets. 1.0 = default.
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: f32,
     /// Interactive orbit overlay: shown, normalized-to-view, animated (racing dot), and its
     /// animation speed.
     #[serde(default)]
@@ -180,6 +183,10 @@ fn default_julia_c_im() -> f64 {
 
 fn default_orbit_anim_speed() -> f32 {
     10.0
+}
+
+fn default_ui_scale() -> f32 {
+    1.0
 }
 
 fn default_export_width() -> u32 {
@@ -283,6 +290,7 @@ impl Default for SessionState {
             julia_c_im: default_julia_c_im(),
             dual: false,
             series_approx: true,
+            ui_scale: default_ui_scale(),
             show_orbits: false,
             orbit_normalize: false,
             orbit_anim: false,
@@ -352,6 +360,7 @@ mod tests {
             orbit_normalize: true,
             orbit_anim: true,
             orbit_anim_speed: 4.5,
+            ui_scale: 1.25,
             ..SessionState::default()
         };
         let r = roundtrip(&s);
@@ -361,6 +370,7 @@ mod tests {
         assert_eq!(r.julia_c_im, 0.01);
         assert!(r.show_orbits && r.orbit_normalize && r.orbit_anim);
         assert_eq!(r.orbit_anim_speed, 4.5);
+        assert_eq!(r.ui_scale, 1.25);
     }
 
     // A legacy file (only the original required fields) must still load, filling new fields
