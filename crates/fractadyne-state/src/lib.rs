@@ -130,6 +130,16 @@ pub struct SessionState {
     /// Series approximation (iteration-skipping) preference. Default on.
     #[serde(default = "default_true")]
     pub series_approx: bool,
+    /// Interactive orbit overlay: shown, normalized-to-view, animated (racing dot), and its
+    /// animation speed.
+    #[serde(default)]
+    pub show_orbits: bool,
+    #[serde(default)]
+    pub orbit_normalize: bool,
+    #[serde(default)]
+    pub orbit_anim: bool,
+    #[serde(default = "default_orbit_anim_speed")]
+    pub orbit_anim_speed: f32,
 }
 
 fn default_duotone_lo() -> [f32; 3] {
@@ -166,6 +176,10 @@ fn default_julia_c_re() -> f64 {
 
 fn default_julia_c_im() -> f64 {
     0.156
+}
+
+fn default_orbit_anim_speed() -> f32 {
+    10.0
 }
 
 fn default_export_width() -> u32 {
@@ -269,6 +283,10 @@ impl Default for SessionState {
             julia_c_im: default_julia_c_im(),
             dual: false,
             series_approx: true,
+            show_orbits: false,
+            orbit_normalize: false,
+            orbit_anim: false,
+            orbit_anim_speed: default_orbit_anim_speed(),
         }
     }
 }
@@ -330,6 +348,10 @@ mod tests {
             julia_c_im: 0.01,
             dual: true,
             series_approx: false,
+            show_orbits: true,
+            orbit_normalize: true,
+            orbit_anim: true,
+            orbit_anim_speed: 4.5,
             ..SessionState::default()
         };
         let r = roundtrip(&s);
@@ -337,6 +359,8 @@ mod tests {
         assert!(r.julia_mode && r.dual && !r.series_approx);
         assert_eq!(r.julia_c_re, 0.285);
         assert_eq!(r.julia_c_im, 0.01);
+        assert!(r.show_orbits && r.orbit_normalize && r.orbit_anim);
+        assert_eq!(r.orbit_anim_speed, 4.5);
     }
 
     // A legacy file (only the original required fields) must still load, filling new fields

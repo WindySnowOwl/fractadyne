@@ -1108,10 +1108,10 @@ impl FractadyneApp {
             autopilot_target: (0.5, 0.5),
             autopilot_goal: (0.5, 0.5),
             autopilot_eval_t: 0.0,
-            show_orbits: false,
-            orbit_normalize: false,
-            orbit_anim: false,
-            orbit_anim_speed: 10.0,
+            show_orbits: s.show_orbits,
+            orbit_normalize: s.orbit_normalize,
+            orbit_anim: s.orbit_anim,
+            orbit_anim_speed: s.orbit_anim_speed,
             orbit_phase: 0.0,
             orbit_hue: 0.0,
             palette_anim: PaletteAnim::from_key(&s.palette_anim),
@@ -1391,6 +1391,10 @@ impl FractadyneApp {
             julia_c_im: self.julia_c.1,
             dual: self.dual,
             series_approx: self.series_approx,
+            show_orbits: self.show_orbits,
+            orbit_normalize: self.orbit_normalize,
+            orbit_anim: self.orbit_anim,
+            orbit_anim_speed: self.orbit_anim_speed,
         };
         let now = ctx.input(|i| i.time);
         if cur != self.last_state {
