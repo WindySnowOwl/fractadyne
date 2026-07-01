@@ -130,6 +130,9 @@ pub struct SessionState {
     /// Series approximation (iteration-skipping) preference. Default on.
     #[serde(default = "default_true")]
     pub series_approx: bool,
+    /// Multi-reference glitch correction for exports (slower, glitch-free). Default off.
+    #[serde(default)]
+    pub glitch_correct: bool,
     /// UI scale (egui zoom factor) — scales the interface fonts + widgets. 1.0 = default.
     #[serde(default = "default_ui_scale")]
     pub ui_scale: f32,
@@ -290,6 +293,7 @@ impl Default for SessionState {
             julia_c_im: default_julia_c_im(),
             dual: false,
             series_approx: true,
+            glitch_correct: false,
             ui_scale: default_ui_scale(),
             show_orbits: false,
             orbit_normalize: false,

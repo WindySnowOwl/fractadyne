@@ -352,7 +352,17 @@ impl FractadyneApp {
         };
         match self.build_export_job() {
             ExportJob::Single(req) => {
-                let r = render(&req)?;
+                // Multi-reference glitch correction when enabled (falls back to a normal render
+                // for aux coloring methods or sizes past the single-texture limit).
+                let corrected = self.glitch_correct.then(|| {
+                    self.render_export_corrected(
+                        device, queue, &self.viewport, self.julia_mode, req.width, req.height,
+                    )
+                }).flatten();
+                let r = match corrected {
+                    Some(res) => res,
+                    None => render(&req)?,
+                };
                 write(path, r.width, r.height, &r.pixels)?;
                 Ok(format!("Saved {}×{} → {}", r.width, r.height, path.display()))
             }
@@ -411,6 +421,28 @@ impl FractadyneApp {
             self.export_last_dir = Some(parent.to_path_buf());
         }
         let job = self.build_export_job();
+        // Glitch-corrected single-view export runs synchronously — it re-renders per reference, so
+        // it doesn't fit the tiled worker's progress model. Opt-in; falls back to the threaded
+        // path for dual layouts, aux coloring methods, or sizes past the single-texture limit.
+        if self.glitch_correct {
+            if let ExportJob::Single(req) = &job {
+                if let Some(res) = self.render_export_corrected(
+                    &device, &queue, &self.viewport, self.julia_mode, req.width, req.height,
+                ) {
+                    let meta = self.view_metadata();
+                    let (w, h) = (res.width, res.height);
+                    let wr = match self.export_format {
+                        ExportFormat::Png => fractadyne_export::write_png(&path, w, h, &res.pixels, Some(&meta)),
+                        ExportFormat::Exr => fractadyne_export::write_exr(&path, w, h, &res.pixels, Some(&meta)),
+                    };
+                    self.export_status = Some(match wr {
+                        Ok(_) => format!("Saved {w}×{h} (glitch-corrected) → {}", path.display()),
+                        Err(e) => format!("Export failed: {e}"),
+                    });
+                    return;
+                }
+            }
+        }
         let meta = self.view_metadata();
         let format = self.export_format;
         use std::sync::atomic::Ordering::Relaxed;

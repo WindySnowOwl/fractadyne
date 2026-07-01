@@ -996,6 +996,8 @@ struct FractadyneApp {
     right_panel_open: bool,
     /// Series approximation (iteration-skipping) for deep Mandelbrot renders. Default on.
     series_approx: bool,
+    /// Multi-reference glitch correction for exports (multi-pass, glitch-free). Default off.
+    glitch_correct: bool,
     /// BLA (bilinear approximation): skips iterations throughout the orbit for deep floatexp
     /// Mandelbrot renders. Off by default while it's validated; enable to accelerate.
     use_bla: bool,
@@ -1270,6 +1272,7 @@ impl FractadyneApp {
             trap_type: trap_from_str(&s.trap_type),
             auto_iter: s.auto_iter,
             series_approx: s.series_approx,
+            glitch_correct: s.glitch_correct,
             use_bla: false,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             zoom_rate: s.zoom_rate,
@@ -1439,6 +1442,7 @@ impl FractadyneApp {
             julia_c_im: self.julia_c.1,
             dual: self.dual,
             series_approx: self.series_approx,
+            glitch_correct: self.glitch_correct,
             ui_scale: self.ui_scale,
             show_orbits: self.show_orbits,
             orbit_normalize: self.orbit_normalize,
@@ -3463,6 +3467,14 @@ impl eframe::App for FractadyneApp {
                                 "Speed up deep Mandelbrot renders (≥1e28×) by seeding the \
                                  perturbation from a polynomial and skipping early iterations. \
                                  Identical output; turn off to compare.",
+                            );
+                        ui.checkbox(&mut self.glitch_correct, "Glitch correction (export)")
+                            .on_hover_text(
+                                "Multi-reference glitch correction for exported images: detects \
+                                 perturbation glitches and re-renders those pixels against extra \
+                                 references until clean. Slower; applies to single-view exports up \
+                                 to the GPU texture limit (non-aux coloring). The live view is \
+                                 unaffected.",
                             );
                         if ui
                             .checkbox(&mut self.dual, "Dual view (Mandelbrot ↔ Julia)")

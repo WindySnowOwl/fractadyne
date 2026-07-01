@@ -604,8 +604,18 @@ for fun, informative value, and ease of use.
       px) + the core escape test. **Off by default (opt-in `use_bla`)** pending: GPU escape-path
       coverage (needs a deep *boundary* coordinate), then enable-by-default + UI toggle +
       combine with SA + live per-reference caching. **Phase 3:** mode-0 + Multibrot.
-- [~] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
-      beyond the current single-reference Zhuoran rebasing. **Phase 1 DONE (core algorithm,
+- [x] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
+      beyond the current single-reference Zhuoran rebasing. **Shipping for single-view exports**
+      via a "Glitch correction (export)" preference (View menu, persisted): detects perturbation
+      glitches and re-renders those pixels against extra references until clean. **Phase 2c DONE
+      (color + wire):** `fractadyne_gpu::color_iter_buffer` colors the merged glitch-free iteration
+      buffer (non-aux methods); `FractadyneApp::render_export_corrected` = correction → color →
+      `ExportResult`, wired into both the headless (`render_to_file`) and interactive
+      (`start_export_to`, run synchronously) export paths, gated by `glitch_correct`
+      (`SessionState`). Selftest "corrected buffer colors to a valid image" (52/52, goldens 4/4).
+      *(Follow-ups: tiling so it applies past the GPU max texture dim; aux coloring methods
+      (stripe/TIA/trap/decomp) — need per-orbit stats merged too; apply to the live settled view;
+      dual-view layouts.)* **Phase 1 DONE (core algorithm,
       fractadyne-core, Mandelbrot):** `Perturb` outcome, `reference_orbit_f64`,
       `perturb_pixel_mandel` (Zhuoran rebasing + Pauldelbrot detection, δz carried in **f32** to
       mirror the GPU's df64-reference/df32-δz precision gap — the gap that makes glitches real and

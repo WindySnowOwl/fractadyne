@@ -1239,3 +1239,204 @@ pub fn render_iter(
 
     Ok(ExportResult { width: w, height: h, ss: 1, pixels })
 }
+
+/// Color an already-computed iteration buffer (main target, `w*h*4` floats: smooth-iter, normal.x,
+/// normal.y, DE) into a linear-RGBA image. The multi-reference glitch corrector merges several
+/// `render_iter` passes into one glitch-free buffer, then hands it here to be colored. Supports the
+/// non-aux coloring methods (smooth / distance / relief / glow — everything that reads only the
+/// main target); aux methods (stripe/TIA/trap/decomposition) need per-orbit statistics the merged
+/// buffer doesn't carry, so the caller renders those uncorrected.
+pub fn color_iter_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    iter_pixels: &[f32],
+) -> Result<ExportResult, String> {
+    let w = req.width.max(1);
+    let h = req.height.max(1);
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fractadyne.color_iter_shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("mandelbrot.wgsl").into()),
+    });
+    let uniform_entry = wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+    let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    let color_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("coloriter.bgl"),
+        entries: &[uniform_entry, tex_entry(1), tex_entry(2)],
+    });
+    let color_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("coloriter.layout"),
+        bind_group_layouts: &[&color_bgl],
+        push_constant_ranges: &[],
+    });
+    let color_pipeline = fullscreen_pipeline(
+        device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "coloriter.pipeline",
+    );
+
+    let color_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("coloriter.uniform"),
+        size: std::mem::size_of::<ColorUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let cu = ColorUniforms {
+        stop_count: req.stop_count,
+        cycle: req.cycle,
+        offset: req.offset,
+        ss: 1,
+        light: req.light,
+        light_angle: req.light_angle,
+        light_height: req.light_height,
+        de_on: req.de_on,
+        de_strength: req.de_strength,
+        de_width: req.de_width,
+        de_phase: req.de_phase,
+        color_method: req.color_method,
+        aa_filter: 1,
+        reproject: 0,
+        uv_offset: [0.0, 0.0],
+        interior_col: req.interior_col,
+        stops: req.stops,
+    };
+    queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
+
+    // Upload the merged iteration buffer into a sampled texture; a zeroed aux (unused for the
+    // supported non-aux methods) satisfies the color bind group.
+    let make_input = |label| device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: ITER_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let write = |tex: &wgpu::Texture, data: &[f32]| {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(data),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 16),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+    };
+    let iter_tex = make_input("coloriter.iter");
+    write(&iter_tex, iter_pixels);
+    let aux_tex = make_input("coloriter.aux");
+    write(&aux_tex, &vec![0.0_f32; (w as usize) * (h as usize) * 4]);
+    let iter_view = iter_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let aux_view = aux_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let color_bg = make_color_bg(device, &color_bgl, &color_uniform, &iter_view, &aux_view);
+
+    let color_tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("coloriter.out"),
+        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: EXPORT_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let color_view = color_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let bpp = 16u32;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let unpadded_bpr = w * bpp;
+    let padded_bpr = unpadded_bpr.div_ceil(align) * align;
+    let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("coloriter.readback"),
+        size: (padded_bpr * h) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let mut enc =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("coloriter.enc") });
+    {
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("coloriter.pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &color_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&color_pipeline);
+        pass.set_bind_group(0, &color_bg, &[]);
+        pass.draw(0..3, 0..1);
+    }
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &color_tex,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &out_buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bpr),
+                rows_per_image: Some(h),
+            },
+        },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+    );
+    queue.submit(std::iter::once(enc.finish()));
+
+    let slice = out_buf.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    let _ = device.poll(wgpu::Maintain::Wait);
+    rx.recv().map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+
+    let data = slice.get_mapped_range();
+    let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
+    let row_floats = (w * 4) as usize;
+    for r in 0..h {
+        let src = (r * padded_bpr) as usize;
+        let src_row: &[f32] = bytemuck::cast_slice(&data[src..src + unpadded_bpr as usize]);
+        let dst = (r as usize) * row_floats;
+        pixels[dst..dst + row_floats].copy_from_slice(src_row);
+    }
+    drop(data);
+    out_buf.unmap();
+
+    Ok(ExportResult { width: w, height: h, ss: 1, pixels })
+}

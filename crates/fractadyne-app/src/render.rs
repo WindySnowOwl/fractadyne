@@ -346,6 +346,31 @@ impl FractadyneApp {
         Some((merged, refs_used, residual))
     }
 
+    /// Full glitch-corrected offscreen render → colored image. Runs multi-reference correction on
+    /// the iteration buffer, then colors it. Returns `None` (caller falls back to a normal export)
+    /// when the size exceeds the GPU's single-texture limit — tiling is future work — or the
+    /// coloring method needs per-orbit aux statistics the merged buffer can't carry.
+    pub(crate) fn render_export_corrected(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        vp: &Viewport,
+        julia: bool,
+        width: u32,
+        height: u32,
+    ) -> Option<fractadyne_gpu::ExportResult> {
+        let max_dim = device.limits().max_texture_dimension_2d;
+        if width > max_dim || height > max_dim || fractadyne_gpu::method_needs_aux(self.color_method) {
+            return None;
+        }
+        let (buf, _refs, _residual) =
+            self.render_corrected_iter(device, queue, vp, julia, width, height, 64)?;
+        let mut req = self.current_export_request_for(vp, julia);
+        req.width = width;
+        req.height = height;
+        fractadyne_gpu::color_iter_buffer(device, queue, &req, &buf).ok()
+    }
+
     /// Build the GPU params for one fractal view, computing the perturbation
     /// reference (deep Mandelbrot) or selecting the direct df32 path. Shared by the
     /// single view and both panels of the dual view.

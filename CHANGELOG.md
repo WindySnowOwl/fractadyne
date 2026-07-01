@@ -24,6 +24,14 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Multi-reference glitch correction — now shipping for exports (phase 2c)** — a new
+  **"Glitch correction (export)"** preference (View menu, persisted) makes single-view exports
+  glitch-free: perturbation glitches are detected and those pixels re-rendered against extra
+  references until clean. `color_iter_buffer` colors the merged buffer; `render_export_corrected`
+  wires it into both the headless (`--render`) and interactive export paths. Applies to single-view
+  exports up to the GPU texture limit with non-aux coloring; the live view is unaffected.
+  (Follow-ups: tiling for larger exports, aux coloring methods, dual layouts.)
+
 - **Multi-reference glitch correction — phase 2b (correction orchestration)** — `render_corrected_iter`
   renders the iteration buffer with detection on, then repeatedly places a fresh reference (bignum)
   at the largest glitched region and re-renders, adopting the newly-resolved pixels until nothing is

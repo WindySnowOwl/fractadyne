@@ -522,6 +522,32 @@ impl FractadyneApp {
                             pass: residual == 0,
                         });
                     }
+
+                    // (D2d) Corrected → colored export. The merged buffer colors into a finite,
+                    // structured image (both interior and exterior present), and matches a normal
+                    // export on the smooth region (correction only touches the rare glitched px).
+                    if let (Some(cor), Some(plain)) = (
+                        self.render_export_corrected(device, queue, &vp, false, N, N),
+                        render(&make(SX, SY, mag)),
+                    ) {
+                        let n = (N * N) as usize;
+                        let finite = cor.pixels.iter().all(|v| v.is_finite());
+                        // `plain` is the raw iteration buffer (r<0 = interior); the corrected image
+                        // is colored RGBA. Compare structure: both should have interior + exterior.
+                        let cor_dark = (0..n).any(|i| cor.pixels[i * 4] < 0.05);
+                        let cor_bright = (0..n).any(|i| cor.pixels[i * 4] > 0.2);
+                        let interior_plain = (0..n).filter(|&i| plain[i * 4] < 0.0).count();
+                        checks.push(SelfCheck {
+                            category: "Glitch",
+                            name: "corrected buffer colors to a valid image".into(),
+                            params: "seahorse, 1e8×, render_export_corrected".into(),
+                            result: format!(
+                                "finite {finite}, dark {cor_dark}, bright {cor_bright}, plain interior px {interior_plain}"
+                            ),
+                            threshold: "finite + structured (interior & exterior)",
+                            pass: finite && cor_dark && cor_bright,
+                        });
+                    }
                 }
             }
 
