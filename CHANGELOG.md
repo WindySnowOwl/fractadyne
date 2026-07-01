@@ -24,6 +24,16 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Bookmark thumbnails** — each saved bookmark now shows a small preview image in the
+  Bookmarks (Manage) dialog. The thumbnail is rendered from the exact view at save time
+  (small offscreen render) and stored as a PNG under `bookmark_thumbs/`; it's lazily loaded
+  for display and cleaned up when the bookmark is deleted. The dialog now lists each bookmark
+  as thumbnail + name + zoom + Go/Delete.
+
+- **Minimap shown in dual view** — the "you are here" overview was hidden in dual view; it's
+  now shown (it maps the left/Mandelbrot panel). Only a single Julia view still hides it,
+  where a Mandelbrot overview wouldn't correspond to the shown set.
+
 - **Zoom box (Shift+drag)** — hold Shift and drag a rectangle to zoom so it fills the view.
   The box is constrained to the panel's aspect ratio (fills exactly, no distortion), drawn as
   a live amber rubber-band overlay, and applied deep-zoom-correctly (recenter + scale via the

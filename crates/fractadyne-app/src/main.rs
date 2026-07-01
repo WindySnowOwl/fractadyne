@@ -786,6 +786,10 @@ impl Default for RefCache {
 struct Bookmark {
     name: String,
     meta: String,
+    /// Thumbnail id — a small PNG preview lives at `bookmark_thumbs/<thumb>.png`. Empty when
+    /// none (older bookmarks, or the render hasn't happened yet).
+    #[serde(default)]
+    thumb: String,
 }
 
 /// TOML wrapper for the bookmarks file (`[[bookmark]]` array).
@@ -964,6 +968,11 @@ struct FractadyneApp {
     bookmarks: Vec<Bookmark>,
     bookmarks_open: bool,
     bookmark_name: String,
+    /// A just-added bookmark whose thumbnail still needs rendering (deferred to `update`,
+    /// where the GPU is available and the current view still matches the bookmark).
+    pending_thumb: Option<usize>,
+    /// Decoded bookmark-thumbnail textures, keyed by thumb id (lazy-loaded for the dialog).
+    thumb_cache: std::collections::HashMap<String, egui::TextureHandle>,
     /// Navigation history (location undo/redo) + settle-edge tracking.
     nav_undo: Vec<ViewSnapshot>,
     nav_redo: Vec<ViewSnapshot>,
@@ -1197,6 +1206,8 @@ impl FractadyneApp {
             gallery_entries: Vec::new(),
             bookmarks: Self::load_bookmarks(),
             bookmarks_open: false,
+            pending_thumb: None,
+            thumb_cache: std::collections::HashMap::new(),
             bookmark_name: String::new(),
             nav_undo: Vec::new(),
             nav_redo: Vec::new(),
@@ -1541,8 +1552,79 @@ impl FractadyneApp {
         self.bookmarks.push(Bookmark {
             name,
             meta: self.view_metadata(),
+            thumb: String::new(),
         });
+        // Render the preview later this frame (GPU available in `update`, view unchanged).
+        self.pending_thumb = Some(self.bookmarks.len() - 1);
         self.save_bookmarks();
+    }
+
+    /// Directory holding bookmark thumbnail PNGs.
+    fn bookmark_thumbs_dir() -> Option<std::path::PathBuf> {
+        directories::ProjectDirs::from("com", "Fractadyne", "Fractadyne")
+            .map(|d| d.config_dir().join("bookmark_thumbs"))
+    }
+
+    fn bookmark_thumb_path(id: &str) -> Option<std::path::PathBuf> {
+        Self::bookmark_thumbs_dir().map(|d| d.join(format!("{id}.png")))
+    }
+
+    /// Render + save the pending bookmark's thumbnail (a small PNG of the current view). Called
+    /// from `update` where the GPU device/queue are available.
+    fn process_pending_thumb(&mut self, gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>) {
+        let Some(i) = self.pending_thumb else { return };
+        let Some((dev, q)) = gpu else { return };
+        self.pending_thumb = None;
+        if i >= self.bookmarks.len() {
+            return;
+        }
+        // Small render of the current view (matches the just-saved bookmark).
+        let w = 160u32;
+        let h = ((w as f64) * self.viewport.height_px / self.viewport.width_px.max(1.0))
+            .round()
+            .clamp(60.0, 160.0) as u32;
+        let mut req = self.current_export_request_for(&self.viewport, self.julia_mode);
+        req.width = w;
+        req.height = h;
+        req.ss = 1;
+        req.max_iter = req.max_iter.clamp(200, 2000);
+        let progress = std::sync::atomic::AtomicU32::new(0);
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let Ok(res) = fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel) else {
+            return;
+        };
+        // A stable id from the current time (nanos) + index; write the PNG.
+        let id = format!(
+            "{}-{i}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        let Some(path) = Self::bookmark_thumb_path(&id) else { return };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if fractadyne_export::write_png(&path, res.width, res.height, &res.pixels, None).is_ok() {
+            self.bookmarks[i].thumb = id;
+            self.save_bookmarks();
+        }
+    }
+
+    /// Fetch (lazily loading + caching) the texture for a bookmark thumbnail id.
+    fn bookmark_thumb_texture(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureHandle> {
+        if id.is_empty() {
+            return None;
+        }
+        if let Some(tex) = self.thumb_cache.get(id) {
+            return Some(tex.clone());
+        }
+        let path = Self::bookmark_thumb_path(id)?;
+        let (w, h, rgba) = fractadyne_export::read_png_rgba8(&path)?;
+        let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+        let tex = ctx.load_texture(format!("bmthumb.{id}"), img, egui::TextureOptions::LINEAR);
+        self.thumb_cache.insert(id.to_string(), tex.clone());
+        Some(tex)
     }
 
     /// UTC civil date/time `(year, month, day, hour, min, sec)` from a Unix timestamp
@@ -2295,7 +2377,10 @@ impl FractadyneApp {
         ctx: &egui::Context,
         gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
     ) {
-        if !self.minimap || self.dual || self.julia_mode {
+        // Shown for single Mandelbrot-family views and in dual view (the left panel is the
+        // Mandelbrot map); hidden only for a single Julia view, where a Mandelbrot overview
+        // wouldn't correspond to the shown set.
+        if !self.minimap || (self.julia_mode && !self.dual) {
             return;
         }
         // Key includes the palette identity (preset index or a sentinel) and a revision so
@@ -2330,7 +2415,7 @@ impl FractadyneApp {
     /// Draw the minimap overlay (thumbnail + "you are here" marker + zoom depth), and
     /// handle click-to-jump. Anchored bottom-left, above the status bar.
     fn draw_minimap(&mut self, ctx: &egui::Context) {
-        if !self.minimap || self.dual || self.julia_mode {
+        if !self.minimap || (self.julia_mode && !self.dual) {
             return;
         }
         let Some(tex) = self.minimap_tex.clone() else { return };
@@ -4211,9 +4296,14 @@ impl eframe::App for FractadyneApp {
             let mut jump: Option<usize> = None;
             let mut delete: Option<usize> = None;
             let mut changed = false;
+            // Pre-load thumbnail textures (mutable) before the immutable draw loop below.
+            let thumb_ids: Vec<String> = self.bookmarks.iter().map(|b| b.thumb.clone()).collect();
+            for id in &thumb_ids {
+                let _ = self.bookmark_thumb_texture(ctx, id);
+            }
             egui::Window::new("Bookmarks")
                 .open(&mut open)
-                .default_size([420.0, 460.0])
+                .default_size([440.0, 480.0])
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.add(
@@ -4234,18 +4324,42 @@ impl eframe::App for FractadyneApp {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         for (i, b) in self.bookmarks.iter().enumerate() {
                             ui.horizontal(|ui| {
-                                if ui.button("Go").clicked() {
-                                    jump = Some(i);
+                                // Thumbnail preview (fixed 80px wide, aspect-preserving).
+                                if let Some(tex) = self.thumb_cache.get(&b.thumb) {
+                                    let sz = tex.size_vec2();
+                                    let w = 80.0_f32;
+                                    ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                        tex.id(),
+                                        egui::vec2(w, w * sz.y / sz.x.max(1.0)),
+                                    )));
+                                } else {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(80.0, 56.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        egui::CornerRadius::same(2),
+                                        egui::Color32::from_black_alpha(80),
+                                    );
                                 }
-                                if ui.button("🗑").on_hover_text("Delete").clicked() {
-                                    delete = Some(i);
-                                }
-                                let zoom = meta_get(&b.meta, "zoom");
-                                ui.label(&b.name);
-                                if !zoom.is_empty() {
-                                    ui.label(egui::RichText::new(format!("{zoom}×")).weak().small());
-                                }
+                                ui.vertical(|ui| {
+                                    ui.label(&b.name);
+                                    let zoom = meta_get(&b.meta, "zoom");
+                                    if !zoom.is_empty() {
+                                        ui.label(egui::RichText::new(format!("{zoom}×")).weak().small());
+                                    }
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Go").clicked() {
+                                            jump = Some(i);
+                                        }
+                                        if ui.button("🗑").on_hover_text("Delete").clicked() {
+                                            delete = Some(i);
+                                        }
+                                    });
+                                });
                             });
+                            ui.separator();
                         }
                     });
                 });
@@ -4254,6 +4368,14 @@ impl eframe::App for FractadyneApp {
                 self.load_view_metadata(&meta);
             }
             if let Some(i) = delete {
+                // Remove the thumbnail file + cached texture, then the bookmark.
+                let id = self.bookmarks[i].thumb.clone();
+                if !id.is_empty() {
+                    if let Some(p) = Self::bookmark_thumb_path(&id) {
+                        let _ = std::fs::remove_file(p);
+                    }
+                    self.thumb_cache.remove(&id);
+                }
                 self.bookmarks.remove(i);
                 changed = true;
             }
@@ -4262,6 +4384,10 @@ impl eframe::App for FractadyneApp {
             }
             self.bookmarks_open = open;
         }
+
+        // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
+        // view still matches the bookmark, since adding it didn't move the view).
+        self.process_pending_thumb(&gpu);
 
         // ---- benchmark results ----
         if self.bench_open {
