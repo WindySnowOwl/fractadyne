@@ -646,6 +646,41 @@ for fun, informative value, and ease of use.
 - [ ] **3D fractals** (Mandelbulb / Mandelbox, ray-marched).
 - [ ] **Flame / IFS fractals; L-systems; cellular automata.**
 
+## Performance & throughput (M7)
+
+Prioritized after a multi-GPU assessment (2026-07-01). The deep-zoom bottleneck during motion is
+the **serial arbitrary-precision reference orbit** (bignum CPU, ~45–77 ms recompute) — *not* GPU
+work — so it can't be parallelized across GPUs (or even threads: a single orbit `z_{n+1}=z_n²+c`
+is a sequential dependency chain). The live GPU render is already frame-capped (~100 FPS via
+`WORK_BUDGET`). So these attack the real bottlenecks first; **multi-GPU is deferred** (see below).
+
+- [ ] **Parallelize independent reference orbits** — a single orbit is serial, but *distinct*
+  orbits are independent. Compute the **multiple references for glitch correction** concurrently
+  (CPU worker threads / rayon), and **speculatively precompute references for upcoming frames**
+  (or the settled high-detail reference) off the main thread. Directly cuts deep-zoom motion
+  latency and glitch-correction wall time. (First real win; also unblocks corrected exports being
+  threaded rather than blocking the UI.)
+- [ ] **Faster / adaptive bignum reference** — the reference orbit is the deep-zoom wall. Trim
+  precision to the minimum the depth needs (already scales, but audit guard bits), profile
+  `astro_float` hot paths, and evaluate a GPU-bignum or fixed-point reference-orbit pass to move it
+  off the single CPU core entirely.
+- [ ] **Pipeline the export** — overlap tile render → readback → encode so the GPU never idles
+  between tiles (async readback + a CPU encode thread). Cheaper than multi-GPU and helps every
+  machine; also smooths the synchronous glitch-corrected export.
+- [ ] **BLA on by default** — see the BLA entry; skipping iterations throughout the orbit cuts
+  per-pixel GPU cost across the board (the other half of the live-render budget).
+- [ ] **Better single-GPU utilization** — before adding GPUs, check the live dispatch actually
+  saturates the one GPU (occupancy, workgroup sizing, async compute for the iterate vs. color
+  passes). Often a cheaper 1.5–2× than a second device.
+- [ ] **Multi-GPU — offline/export only (deferred)** — a second GPU gives near-linear speedup for
+  **embarrassingly-parallel batch work** (high-res export tiles, movie/tour frame sequences), and
+  the export path already does CPU readback so there's no shared-texture problem. It does **not**
+  help the serial reference orbit or the frame-capped live view, and interactive multi-GPU is very
+  invasive (the `egui_wgpu` paint callback is single-device; wgpu has no cross-device sharing).
+  Low priority: most users are single-GPU, and the items above are higher-ROI. Revisit only if
+  batch-render throughput becomes the pain point — and only for the offline path. Measure the
+  GPU-vs-reference split with `--profile` / `--benchmark` before investing.
+
 ## Backlog (later milestones — DESIGN.md §15)
 
 - **M4** more fractal variety: L-systems, cellular automata
