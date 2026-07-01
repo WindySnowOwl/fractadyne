@@ -3727,11 +3727,16 @@ impl eframe::App for FractadyneApp {
                     ui.monospace(format!("zoom {}×", fmt_zoom_log2(self.viewport.log2_magnification())));
                 }
                 ui.separator();
-                let eff_iter = if self.auto_iter {
+                let want_iter = if self.auto_iter {
                     self.viewport.recommended_max_iter(self.max_iter)
                 } else {
                     self.max_iter
                 };
+                // Show the count actually rendered live (capped for responsiveness), not the
+                // deeper appetite — matches the Performance panel's "eff iter".
+                let eff_iter = want_iter
+                    .min(50_000)
+                    .min(zoom_iter_cap(self.viewport.log2_magnification()).max(256));
                 ui.monospace(format!("iter {}", commas(&eff_iter.to_string())));
                 if let Some(pb) = &self.playback {
                     let elapsed = pb.t0.map_or(0.0, |t0| ctx.input(|i| i.time) - t0);
@@ -3934,14 +3939,41 @@ impl eframe::App for FractadyneApp {
                 ui.checkbox(&mut self.auto_iter, "Auto-scale iterations with zoom");
                 let label = if self.auto_iter { "Iterations (base)" } else { "Iterations" };
                 ui.add(
-                    egui::Slider::new(&mut self.max_iter, 64..=50_000)
+                    egui::Slider::new(&mut self.max_iter, 64..=500_000)
                         .logarithmic(true)
                         .text(label),
                 )
                 .on_hover_text(
-                    "Base iteration count. With Auto-scale on, the effective count \
-                     climbs with zoom depth (up to ~50,000).",
+                    "Base iteration count. With Auto-scale on, the effective count climbs \
+                     with zoom depth. The live preview caps it at 50,000 for responsiveness; \
+                     exports use the full count, so a deep view can look smoother on screen \
+                     than in an export.",
                 );
+                // Deep-zoom detail warning: when this depth wants more iterations than the live
+                // preview shows, the finest boundary filaments smooth out on screen. Tell the
+                // user the edges are cap-limited (not a math error) and how to get full detail.
+                let log2mag = self.viewport.log2_magnification();
+                let want_iter = if self.auto_iter {
+                    self.viewport.recommended_max_iter(self.max_iter)
+                } else {
+                    self.max_iter
+                };
+                let export_iter = want_iter.min(zoom_iter_cap(log2mag).max(256));
+                let live_iter = export_iter.min(50_000);
+                if export_iter > live_iter {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "⚠ Detail limited: this depth wants ~{} iterations, but the live \
+                             preview is capped at {}. Edges look smooth on screen — exports \
+                             render up to {} for full detail.",
+                            commas(&want_iter.to_string()),
+                            commas(&live_iter.to_string()),
+                            commas(&export_iter.to_string()),
+                        ))
+                        .small()
+                        .color(theme::BRAND_ACCENT),
+                    );
+                }
                 ui.separator();
                 egui::ComboBox::from_label("Anti-alias")
                     .selected_text(match self.aa {

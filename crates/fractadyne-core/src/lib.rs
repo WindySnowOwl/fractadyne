@@ -588,7 +588,10 @@ impl Viewport {
 
     pub fn recommended_max_iter(&self, base: u32) -> u32 {
         let octaves = self.log2_magnification().max(0.0);
-        (base + (octaves * 220.0) as u32).min(50_000)
+        // The iteration count a given depth genuinely wants (~220 per octave). This is the
+        // *export* / full-quality appetite; the live preview caps it lower (see `build_params`)
+        // for responsiveness, so deep views can look smoother on screen than in an export.
+        (base + (octaves * 220.0) as u32).min(500_000)
     }
 
     /// Center as `f64` (for display / coarse use).

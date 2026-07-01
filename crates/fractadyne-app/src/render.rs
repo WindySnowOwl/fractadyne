@@ -373,7 +373,7 @@ impl FractadyneApp {
             // bignum ~8× faster.)
             let out_of_view = drift.map_or(true, |(dx, dy)| dx > 0.5 || dy > 0.5);
             let needs_quality = precision > self.ref_cache[vi].orbit_prec
-                || eff_iter > self.ref_cache[vi].orbit_iter;
+                || gpu_iter > self.ref_cache[vi].orbit_iter;
             let gone = drift.map_or(true, |(dx, dy)| dx > 1.5 || dy > 1.5);
             let recompute = if interacting {
                 // Adaptive throttle: keep recompute to ≲ ~30% of wall time by spacing
@@ -390,14 +390,17 @@ impl FractadyneApp {
             };
             if recompute {
                 let t = Instant::now();
+                // Build only to the live-capped count: the GPU never iterates past `gpu_iter`,
+                // so a longer bignum orbit would just slow navigation (exports build their own
+                // full-length orbit in `current_export_request_for`).
                 let (orbit, orbit_len, rp) =
-                    self.compute_reference(&center_bf, span, eff_iter, precision, julia, None);
+                    self.compute_reference(&center_bf, span, gpu_iter, precision, julia, None);
                 let vc = &mut self.ref_cache[vi];
                 vc.ref_pt = Some(rp);
                 vc.orbit = orbit;
                 vc.orbit_len = orbit_len;
                 vc.orbit_prec = precision;
-                vc.orbit_iter = eff_iter;
+                vc.orbit_iter = gpu_iter;
                 vc.orbit_id = vc.orbit_id.wrapping_add(1);
                 vc.last_recompute = Some(Instant::now());
                 self.perf.recompute_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -421,13 +424,13 @@ impl FractadyneApp {
                 && self.series_approx
             {
                 let oid = self.ref_cache[vi].orbit_id;
-                if self.ref_cache[vi].sa_key != (oid, eff_iter) {
+                if self.ref_cache[vi].sa_key != (oid, gpu_iter) {
                     let rp2 = self.ref_cache[vi].ref_pt.clone().unwrap();
                     let len = self.ref_cache[vi].orbit_len;
                     let computed = self
-                        .series_skip_for(&rp2, span_mantissa, dx, dy, delta_exp, mode, julia, eff_iter, len, precision);
+                        .series_skip_for(&rp2, span_mantissa, dx, dy, delta_exp, mode, julia, gpu_iter, len, precision);
                     self.ref_cache[vi].sa = computed;
-                    self.ref_cache[vi].sa_key = (oid, eff_iter);
+                    self.ref_cache[vi].sa_key = (oid, gpu_iter);
                 }
                 sa = self.ref_cache[vi].sa;
             }
