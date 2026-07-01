@@ -479,6 +479,27 @@ impl FractadyneApp {
                         pass: frac < 0.002,
                     });
                 }
+
+                // (D2b) GPU glitch DETECTION (Pauldelbrot, `glitch_on`). A far-offset reference
+                // makes pixels satisfy |z|² < tol²·|Z|² → flagged with the -2 sentinel; the auto
+                // reference flags far fewer. Detection responding to reference quality is the
+                // prerequisite for multi-reference correction (phase 2 GPU port).
+                let mut g_auto = base.clone();
+                g_auto.glitch_on = 1;
+                let mut g_bad = with_ref(0.45 * span, 0.35 * span);
+                g_bad.glitch_on = 1;
+                if let (Some(pa), Some(pb)) = (render(&g_auto), render(&g_bad)) {
+                    let flagged = |px: &[f32]| px.iter().step_by(4).filter(|&&r| r < -1.5).count();
+                    let (auto_gl, bad_gl) = (flagged(&pa), flagged(&pb));
+                    checks.push(SelfCheck {
+                        category: "Glitch",
+                        name: "glitch detection responds to reference quality".into(),
+                        params: "seahorse, 1e8×, auto vs far-offset reference".into(),
+                        result: format!("auto-ref flagged {auto_gl}, far-ref flagged {bad_gl}"),
+                        threshold: "detection fires (>0) and far-offset flags ≥ auto",
+                        pass: auto_gl > 0 && bad_gl >= auto_gl,
+                    });
+                }
             }
 
             // (E) Real-axis symmetry + interior/exterior presence + finiteness @home.

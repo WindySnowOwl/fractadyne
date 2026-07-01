@@ -36,7 +36,7 @@ struct IterUniforms {
     trap_type: u32,    // orbit-trap shape: 0 point, 1 cross, 2 circle
     aux_on: u32,       // 1 = accumulate orbit statistics into the aux target
     sa_skip: u32,      // series-approximation skip (0 = none): seed δz at this iteration
-    _pad0: u32,        // pad sa_a to 16-byte alignment
+    glitch_on: u32,    // 1 = flag Pauldelbrot-glitched pixels (multi-reference correction pass)
     sa_a: [f32; 4],    // order-3 series coeffs (complex df32 mantissa): δz ≈ A·δc + B·δc² + C·δc³
     sa_b: [f32; 4],
     sa_c: [f32; 4],
@@ -593,7 +593,7 @@ impl CallbackTrait for MandelbrotParams {
                 trap_type: self.trap_type,
                 aux_on: method_needs_aux(self.color_method) as u32,
                 sa_skip: self.sa_skip,
-                _pad0: 0,
+                glitch_on: 0, // live view never runs glitch detection (single-ref + rebasing)
                 sa_a: self.sa_a,
                 sa_b: self.sa_b,
                 sa_c: self.sa_c,
@@ -675,6 +675,9 @@ pub struct ExportRequest {
     pub delta_exp: i32,
     /// Series-approximation skip (0 = none) + order-3 coeffs (complex df32 mantissa × 2^exp).
     pub sa_skip: u32,
+    /// 1 = flag Pauldelbrot-glitched pixels with a `-2` sentinel in the iteration texture's `r`
+    /// channel (multi-reference correction passes read this back). 0 for normal rendering.
+    pub glitch_on: u32,
     pub sa_a: [f32; 4],
     pub sa_a_exp: i32,
     pub sa_b: [f32; 4],
@@ -902,7 +905,7 @@ pub fn render_export(
                 trap_type: req.trap_type,
                 aux_on: method_needs_aux(req.color_method) as u32,
                 sa_skip: req.sa_skip,
-                _pad0: 0,
+                glitch_on: req.glitch_on,
                 sa_a: req.sa_a,
                 sa_b: req.sa_b,
                 sa_c: req.sa_c,
@@ -1124,7 +1127,7 @@ pub fn render_iter(
         trap_type: 0,
         aux_on: 0,
         sa_skip: req.sa_skip,
-        _pad0: 0,
+        glitch_on: req.glitch_on,
         sa_a: req.sa_a,
         sa_b: req.sa_b,
         sa_c: req.sa_c,

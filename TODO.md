@@ -614,12 +614,16 @@ for fun, informative value, and ease of use.
       period-3 minibrot with an off-nucleus reference induces glitches, correction converges (≥2
       references, 0 unresolved), and the result matches a bignum per-pixel oracle exactly
       (`multi_reference_resolves_glitches`); plus a perturbation-vs-direct accuracy test. As with
-      BLA, the core algorithm is validated first. **Phase 2 (next):** GPU port — add a `glitch_on`
-      uniform + Pauldelbrot sentinel to the shader's perturbation loops, orchestrate multi-pass
-      detect→re-reference→merge in the app over `render_iter` (raw readback) for the offscreen/
-      export path (bignum for new references lives in the app), then color the merged buffer.
-      Cleanly demonstrating error *reduction* needs the GPU precision gap (df32 δz), so it lands
-      with the port.
+      BLA, the core algorithm is validated first. **Phase 2a DONE (GPU detection):** shader gains
+      a `glitch_on` uniform + Pauldelbrot check (`|z|² < GLITCH_TOL2·|Z|²`) in both perturbation
+      loops (mode 0 df32 + mode 2 floatexp), flagging glitched pixels with a `-2` sentinel in the
+      iteration texture's `r` channel (the color pass already treats `r<0` as interior, so it's
+      harmless when uncorrected). `ExportRequest.glitch_on` plumbs it through `render_iter`/
+      `render_export`; live rendering leaves it 0. Selftest "glitch detection responds to
+      reference quality" confirms detection fires and a far-offset reference flags ≥ the auto
+      reference (50/50, goldens 4/4). **Phase 2b (next):** app-side orchestration — multi-pass
+      detect→pick new reference (bignum)→re-render→merge over `render_iter`, then color the merged
+      buffer, for the offscreen/export path.
 
 ### Tier 3 — big bets (separate engines)
 - [ ] **3D fractals** (Mandelbulb / Mandelbox, ray-marched).

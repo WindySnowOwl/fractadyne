@@ -373,7 +373,7 @@ struct IterU {
     trap_type: u32,        // 0 = point, 1 = cross, 2 = unit circle
     aux_on: u32,           // 1 = accumulate orbit statistics into the aux target
     sa_skip: u32,          // series-approximation skip (0 = none): seed δz at this iteration
-    _pad0: u32,            // pad sa_a to 16-byte alignment
+    glitch_on: u32,        // 1 = flag Pauldelbrot-glitched pixels (multi-reference correction)
     sa_a: vec4<f32>,       // order-3 series coeffs (complex df32 mantissa): δz ≈ A·δc + B·δc² + C·δc³
     sa_b: vec4<f32>,
     sa_c: vec4<f32>,
@@ -453,6 +453,13 @@ fn aux_pack(a: Aux, frac: f32, zf: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(stripe, tia, a.trap, decomp);
 }
 const AUX_NONE: vec4<f32> = vec4<f32>(0.0, 0.0, 1.0e30, 0.0);
+
+// Pauldelbrot glitch: a perturbed pixel is unreliable when its full value dips far below the
+// reference (|z_n|² < GLITCH_TOL2·|Z_n|²) — the low-precision δz can't hold the cancellation.
+// Flagged (only when iu.glitch_on) with a distinct sentinel in main.r for multi-reference
+// correction: r = -1 interior, r ≥ 0 escaped, r = -2 glitched.
+const GLITCH_TOL2: f32 = 1.0e-4;
+const GLITCH_SENTINEL: vec4<f32> = vec4<f32>(-2.0, 0.0, 0.0, 1.0e30);
 
 @fragment
 fn fs_iterate(in: VsOut) -> FragOut {
@@ -808,6 +815,10 @@ fn fs_iterate(in: VsOut) -> FragOut {
             zf = vec2<f32>(rn.x + dzf.x, rn.y + dzf.y);
             if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
             let z2 = dot(zf, zf);
+            if (iu.glitch_on == 1u) {
+                let zr2 = rn.x * rn.x + rn.y * rn.y;
+                if (z2 < GLITCH_TOL2 * zr2) { return FragOut(GLITCH_SENTINEL, AUX_NONE); }
+            }
             if (z2 > bail2) { escaped = true; break; }
 
             let dzmag2 = fe_mag2(dz);
@@ -943,6 +954,10 @@ fn fs_iterate(in: VsOut) -> FragOut {
             zf = vec2<f32>(zr_full.x, zi_full.x);
             if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
             let z2 = dot(zf, zf);
+            if (iu.glitch_on == 1u) {
+                let zr2 = rn.x * rn.x + rn.y * rn.y;
+                if (z2 < GLITCH_TOL2 * zr2) { return FragOut(GLITCH_SENTINEL, AUX_NONE); }
+            }
             if (z2 > bail2) { escaped = true; break; }
             let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
             if (z2 < dzmag2 || ref_n + 1u >= iu.orbit_len) {

@@ -24,6 +24,13 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Multi-reference glitch correction — phase 2a (GPU detection)** — the shader now detects
+  Pauldelbrot glitches (`|z|² < tol·|Z|²`) in both perturbation paths (df32 + floatexp), flagging
+  glitched pixels with a `-2` sentinel in the iteration texture (harmless when uncorrected — the
+  color pass treats it as interior). Gated by a `glitch_on` uniform (off for live/normal render),
+  plumbed via `ExportRequest`. Validated by a selftest that confirms detection fires and responds
+  to reference quality. Next: the app-side multi-pass correction that consumes it.
+
 - **Multi-reference glitch correction — phase 1 (core algorithm)** — the last real deep-zoom
   correctness gap. `fractadyne-core` gains the validated CPU algorithm: single-reference
   perturbation with Zhuoran rebasing **and Pauldelbrot glitch detection** (`perturb_pixel_mandel`,

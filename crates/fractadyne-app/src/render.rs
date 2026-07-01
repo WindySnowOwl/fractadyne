@@ -220,6 +220,7 @@ impl FractadyneApp {
             ref_offset,
             delta_exp,
             sa_skip: sa.skip,
+            glitch_on: 0, // enabled per-pass by the multi-reference correction path
             sa_a: sa.a,
             sa_a_exp: sa.a_exp,
             sa_b: sa.b,
