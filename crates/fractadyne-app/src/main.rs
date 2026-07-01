@@ -2702,7 +2702,14 @@ impl FractadyneApp {
                             ui.selectable_value(&mut self.help_section, i, *name);
                         }
                     });
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                // Inset the content (keep the panel fill) so the ToC separator line doesn't
+                // clip the first character of each line.
+                egui::CentralPanel::default()
+                    .frame(
+                        egui::Frame::central_panel(ui.style())
+                            .inner_margin(egui::Margin::symmetric(12, 8)),
+                    )
+                    .show_inside(ui, |ui| {
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                         match self.help_section {
