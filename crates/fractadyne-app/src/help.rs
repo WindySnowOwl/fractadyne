@@ -27,12 +27,16 @@ fn help_bullet(ui: &mut egui::Ui, t: &str) {
         ui.add(egui::Label::new(t).wrap());
     });
 }
-/// A monospace key + wrapped description row (shortcuts / CLI flags).
+/// A monospace key + wrapped description row (shortcuts / CLI flags). The key is a
+/// fixed-width, LEFT-aligned column (a plain sized label centers it).
 fn help_kv(ui: &mut egui::Ui, k: &str, v: &str) {
     ui.horizontal_top(|ui| {
-        ui.add_sized(
-            [180.0, 0.0],
-            egui::Label::new(egui::RichText::new(k).monospace()).wrap(),
+        ui.allocate_ui_with_layout(
+            egui::vec2(180.0, 0.0),
+            egui::Layout::left_to_right(egui::Align::TOP),
+            |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(k).monospace()).wrap());
+            },
         );
         ui.add(egui::Label::new(v).wrap());
     });
@@ -419,6 +423,53 @@ fn help_cite(ui: &mut egui::Ui, title: &str, body: &str, link_label: &str, url: 
     ui.label(egui::RichText::new(title).strong().color(BRAND_TEXT));
     ui.add(egui::Label::new(body).wrap());
     ui.hyperlink_to(format!("{link_label} \u{2197}"), url);
+}
+
+pub(crate) fn help_hardware(ui: &mut egui::Ui) {
+    help_h(ui, "Recommended hardware");
+    help_p(
+        ui,
+        "Fractadyne splits its work between the GPU (per-pixel iteration + coloring) and the CPU \
+         (the arbitrary-precision reference orbit that deep zoom is built on). Both matter, but \
+         for different things.",
+    );
+
+    help_sub(ui, "GPU (most important)");
+    help_p(
+        ui,
+        "Every pixel is iterated and colored on the GPU, so GPU speed sets the frame rate and \
+         export time. A discrete GPU with strong 32-bit (single-precision) throughput gives the \
+         smoothest deep zooming. Integrated GPUs work fine — just slower, and they reach the \
+         per-frame work budget sooner (at which point the renderer trims resolution, not \
+         detail). Requires a modern graphics API: Vulkan, Direct3D 12, Metal, or OpenGL via \
+         wgpu.",
+    );
+    help_kv(ui, "Minimum", "Any GPU with Vulkan / DX12 / Metal / GL 3.3.");
+    help_kv(ui, "Recommended", "A discrete GPU (last ~5 years); >= 2 GB VRAM.");
+    help_kv(ui, "For big exports", ">= 4 GB VRAM (tiled, so it degrades gracefully).");
+
+    help_sub(ui, "CPU");
+    help_p(
+        ui,
+        "The high-precision reference orbit (and BLA tables) are computed on the CPU and are \
+         largely single-threaded, so fast per-core performance matters most — it drives how \
+         quickly a deep view resolves after you move. Extra cores mainly help background export \
+         encoding. A 64-bit CPU is required.",
+    );
+    help_kv(ui, "Recommended", "A modern 64-bit CPU with good single-core speed.");
+
+    help_sub(ui, "Memory");
+    help_p(
+        ui,
+        "Deep references grow with depth (many iterations at high precision); huge exports hold \
+         tiles in RAM. 8 GB is comfortable for everyday exploring; 16 GB+ suits extreme depth \
+         and very large exports.",
+    );
+
+    help_sub(ui, "Notes");
+    help_bullet(ui, "A capable GPU avoids the watchdog work-budget kicking in at extreme settings.");
+    help_bullet(ui, "The build is single-binary and self-contained — no runtime install needed.");
+    help_bullet(ui, "Run the built-in benchmark (Tools -> Benchmark) to gauge your machine.");
 }
 
 pub(crate) fn help_acknowledgments(ui: &mut egui::Ui) {

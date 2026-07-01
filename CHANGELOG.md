@@ -24,6 +24,10 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Recommended-hardware Help section** — GPU/CPU/memory guidance (what matters and why: the GPU
+  drives per-pixel iteration + frame rate; the CPU's single-core speed drives the deep-zoom
+  reference orbit) with minimum/recommended tiers.
+
 - **Acknowledgments & citations (Help)** — a new Help section crediting the prior art Fractadyne
   builds on, each verified against its source: perturbation & series approximation (K. I.
   Martin), BLA + rebasing (Zhuoran), glitch detection (Pauldelbrot), non-analytic/Burning-Ship
@@ -381,6 +385,12 @@ Baseline for tracked versioning. Notable capabilities already present:
   `--selftest` stays a local/manual gate (runners have no GPU).
 
 ### Fixed (post-baseline, this session)
+
+- **More Help polish** — the content now scrolls when it overflows (the window was growing to
+  fit and pushing content off-screen; its height is now capped so the scroll area engages);
+  the key column in shortcut/flag tables is left-aligned (was centered); and math glyphs that
+  the default font lacked (→, ≪, super/subscripts) now render via a bundled fallback font
+  instead of showing as tofu boxes.
 
 - **Help window layout was broken** — the table-of-contents + content were hand-split in a
   horizontal layout with manual width math that egui didn't honor, so the content ran off

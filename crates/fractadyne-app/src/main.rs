@@ -2673,7 +2673,7 @@ impl FractadyneApp {
         if !self.help_open {
             return;
         }
-        const SECTIONS: [&str; 9] = [
+        const SECTIONS: [&str; 10] = [
             "Overview",
             "Navigation",
             "Coloring & options",
@@ -2681,13 +2681,18 @@ impl FractadyneApp {
             "How it works",
             "Command line",
             "Shortcuts",
+            "Recommended hardware",
             "Acknowledgments",
             "About",
         ];
         let mut open = self.help_open;
+        // Cap the height to the screen so the content ScrollArea actually scrolls instead of
+        // the window growing to fit (which pushed content off the bottom).
+        let max_h = (ctx.screen_rect().height() - 80.0).max(360.0);
         egui::Window::new("Fractadyne Help")
             .open(&mut open)
             .default_size([800.0, 560.0])
+            .max_height(max_h)
             .resizable(true)
             .show(ctx, |ui| {
                 // A left table-of-contents panel + a scrollable content panel. Using
@@ -2720,7 +2725,8 @@ impl FractadyneApp {
                             4 => help_methodology(ui),
                             5 => help_command_line(ui),
                             6 => help_shortcuts(ui),
-                            7 => help_acknowledgments(ui),
+                            7 => help_hardware(ui),
+                            8 => help_acknowledgments(ui),
                             _ => help_about(ui),
                         }
                     });

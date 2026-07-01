@@ -63,6 +63,17 @@ pub(crate) fn apply_brand_theme(ctx: &egui::Context) {
     v.widgets.active.bg_stroke = egui::Stroke::new(1.0, BRAND_ACCENT);
     v.widgets.open.bg_fill = egui::Color32::from_rgb(0x2C, 0x2E, 0x33);
     ctx.set_visuals(v);
+
+    // The default proportional font (Ubuntu-Light) lacks some math glyphs (arrows like →,
+    // ≪, super/subscripts) that appear in the Help formulas — they render as tofu boxes.
+    // Append the bundled monospace "Hack" font as a fallback so those glyphs resolve.
+    let mut fonts = egui::FontDefinitions::default();
+    if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        if !prop.iter().any(|f| f == "Hack") {
+            prop.push("Hack".to_owned());
+        }
+    }
+    ctx.set_fonts(fonts);
 }
 
 /// The two-color "Fractadyne" logotype (Fracta + amber dyne), for the top bar.
