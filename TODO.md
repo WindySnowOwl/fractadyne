@@ -392,6 +392,27 @@ perturbation + series approximation + glitch correction. The headline feature.
       (`secs`, `center_x/y`, `mag`, `fractal`, `julia`; centers inherit if omitted) and
       glides center (BigFloat lerp) + log-magnification (eased) along the timeline.
       `core::set_center_mag` / `lerp_bf` drive it; Esc or Tools → Stop ends it.
+- [ ] **Guided-tour scripting (narrated, annotated tours)** — grow the keyframe format from a
+      bare camera path into an authored, self-documenting tour that teaches features and points
+      out interesting structure. Wants:
+      - **On-screen commentary / text** — per-keyframe (or timed) caption/title/body text
+        overlays (position, duration, fade in/out, optional pause-until-dismissed), so a tour can
+        narrate what you're looking at and why it matters.
+      - **Callouts** — labeled arrows/markers pointing to a specific complex coordinate or screen
+        region (e.g. "this is a period-3 minibrot"), anchored in fractal space so they track the
+        right spot as the view moves.
+      - **Vignettes / spotlights** — dim or mask everything outside a highlighted region (rect or
+        radius, in fractal or screen space) to draw the eye, with soft edges + eased on/off.
+      - **Eased transitions** — richer easing between keyframes (per-segment ease curves, hold
+        times, optional pauses) so pans/zooms feel cinematic, not linear. Builds on the existing
+        `Playback::sample` log2 interpolation.
+      - **Targeted version tracking** — each script declares the app/format version it was
+        authored for (and/or a min version); on load, validate compatibility and warn (like the
+        `.fdn` / export `VIEW_FORMAT_VERSION` + `NewerFormat` path) so tours degrade gracefully
+        instead of silently misbehaving as the schema evolves.
+      Pairs with the existing live playback + `--render-tour` movie export (annotations should
+      render in exported frames too). *(Design the schema additively — new keys, old scripts still
+      play — and reuse the hardened `meta_get`/version-check machinery for untrusted script files.)*
 - [x] **Benchmark** — Tools → "Run benchmark" plays a fixed deep-zoom tour and samples
       FPS (avg/min/max), CPU ms, GPU ms (frame−cpu), and RAM (working set + peak via
       `K32GetProcessMemoryInfo`), reporting aggregates + score in a copy/save-able window.
