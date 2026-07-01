@@ -821,6 +821,30 @@ struct GalleryEntry {
 /// Formula reference shown in the info panel.
 // `FractalInfo` / `FractalKind` moved to `fractal.rs` (re-exported at the top of this file).
 
+/// An in-progress **zoom box** (Shift+drag): rubber-band rectangle from `start` to `end`
+/// (egui points) that, on release, zooms so the box fills the panel. `is_julia` tags which
+/// panel it belongs to (dual view).
+struct ZoomBox {
+    start: egui::Pos2,
+    end: egui::Pos2,
+    is_julia: bool,
+}
+
+/// Constrain a free drag (`start`→`end`) to the panel's aspect ratio, anchored at `start` and
+/// clamped inside `rect`, so the resulting box zooms to fill without distortion.
+fn aspect_zoom_box(start: egui::Pos2, end: egui::Pos2, rect: egui::Rect) -> egui::Rect {
+    let aspect = (rect.width() / rect.height().max(1.0)).max(1e-3);
+    let (dx, dy) = ((end.x - start.x).abs(), (end.y - start.y).abs());
+    let sx = if end.x >= start.x { 1.0 } else { -1.0 };
+    let sy = if end.y >= start.y { 1.0 } else { -1.0 };
+    // Enclose the drag, then clamp to what fits inside `rect` from `start` (keeping aspect).
+    let maxw = if sx > 0.0 { rect.max.x - start.x } else { start.x - rect.min.x };
+    let maxh = if sy > 0.0 { rect.max.y - start.y } else { start.y - rect.min.y };
+    let w = dx.max(dy * aspect).min(maxw.max(0.0)).min(maxh.max(0.0) * aspect);
+    let corner = egui::pos2(start.x + sx * w, start.y + sy * (w / aspect));
+    egui::Rect::from_two_pos(start, corner)
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -834,6 +858,8 @@ struct FractadyneApp {
     julia_pin: Option<(f64, f64)>,
     /// Dual linked view: Mandelbrot (left) ↔ Julia (right).
     dual: bool,
+    /// In-progress Shift+drag zoom box (rubber-band → zoom to fill); `None` when not dragging.
+    zoom_box: Option<ZoomBox>,
     /// Borderless fullscreen state (toolbar toggle).
     fullscreen: bool,
     /// Viewport for the Julia panel in dual view.
@@ -1094,6 +1120,7 @@ impl FractadyneApp {
             julia_mode: s.julia_mode && fractal.supports_julia(),
             julia_pin: None,
             dual: s.dual,
+            zoom_box: None,
             fullscreen: false,
             julia_viewport: {
                 let mut v = Viewport::new(800.0, 800.0);
@@ -1621,13 +1648,67 @@ impl FractadyneApp {
         is_julia: bool,
     ) -> egui::Response {
         let resp = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+        let shift = ctx.input(|i| i.modifiers.shift);
+
+        // Zoom box (Shift+drag): rubber-band a rectangle; on release, zoom so it fills the
+        // panel. Handled before borrowing `vp` (uses the separate `self.zoom_box` field).
+        if resp.drag_started() && shift {
+            if let Some(p) = resp.interact_pointer_pos() {
+                self.zoom_box = Some(ZoomBox { start: p, end: p, is_julia });
+            }
+        }
+        let mut apply_zoom: Option<(f64, f64, f64)> = None; // (box_cx_px, box_cy_px, factor)
+        let mut zoom_boxing = false;
+        if self.zoom_box.as_ref().is_some_and(|z| z.is_julia == is_julia) {
+            zoom_boxing = true;
+            if let Some(cur) = resp.interact_pointer_pos() {
+                self.zoom_box.as_mut().unwrap().end = cur;
+            }
+            let zb = self.zoom_box.as_ref().unwrap();
+            let boxr = aspect_zoom_box(zb.start, zb.end, rect);
+            // Foreground layer so the box draws above the fractal paint callback.
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("fract_zoom_box"),
+            ));
+            painter.rect_filled(
+                boxr,
+                egui::CornerRadius::ZERO,
+                egui::Color32::from_rgba_unmultiplied(0xE0, 0xA0, 0x30, 32),
+            );
+            painter.rect_stroke(
+                boxr,
+                egui::CornerRadius::ZERO,
+                egui::Stroke::new(1.5, BRAND_ACCENT),
+                egui::StrokeKind::Inside,
+            );
+            if resp.drag_stopped() {
+                // Ignore a tiny box (an accidental Shift-click).
+                if boxr.width() > 6.0 && boxr.height() > 6.0 {
+                    apply_zoom = Some((
+                        (boxr.center().x - rect.min.x) as f64 * ppp,
+                        (boxr.center().y - rect.min.y) as f64 * ppp,
+                        (boxr.width() / rect.width()) as f64, // < 1 ⇒ zoom in
+                    ));
+                }
+                self.zoom_box = None;
+                zoom_boxing = false;
+            }
+        }
+
         let vp = if is_julia {
             &mut self.julia_viewport
         } else {
             &mut self.viewport
         };
         vp.set_size(rect.width() as f64 * ppp, rect.height() as f64 * ppp);
-        if resp.dragged_by(egui::PointerButton::Primary) {
+        if let Some((bcx, bcy, factor)) = apply_zoom {
+            let (w, h) = (vp.width_px, vp.height_px);
+            vp.pan_pixels(w * 0.5 - bcx, h * 0.5 - bcy); // box center → screen center
+            vp.zoom_at(w * 0.5, h * 0.5, factor); // then zoom the box to fill
+        }
+        // Plain drag pans (unless we're dragging a zoom box).
+        if !zoom_boxing && resp.dragged_by(egui::PointerButton::Primary) {
             let d = resp.drag_delta();
             vp.pan_pixels(d.x as f64 * ppp, d.y as f64 * ppp);
         }
@@ -1641,6 +1722,7 @@ impl FractadyneApp {
         }
         let now = ctx.input(|i| i.time);
         let active = resp.dragged()
+            || apply_zoom.is_some()
             || (scroll != 0.0 && hovering)
             || (self.zoom_vel.abs() > 1e-3 && hovering);
         if active {
@@ -3783,6 +3865,53 @@ impl eframe::App for FractadyneApp {
                 self.viewport
                     .set_size(rect.width() as f64 * ppp, rect.height() as f64 * ppp);
 
+                // Zoom box (Shift+drag): rubber-band a rectangle, then zoom so it fills the
+                // view. Deep-zoom-correct (recenter + scale via the bignum viewport methods).
+                let shift = ctx.input(|i| i.modifiers.shift);
+                if response.drag_started() && shift {
+                    if let Some(p) = response.interact_pointer_pos() {
+                        self.zoom_box = Some(ZoomBox { start: p, end: p, is_julia: false });
+                    }
+                }
+                let mut zoom_boxing = false;
+                if self.zoom_box.as_ref().is_some_and(|z| !z.is_julia) {
+                    zoom_boxing = true;
+                    if let Some(cur) = response.interact_pointer_pos() {
+                        self.zoom_box.as_mut().unwrap().end = cur;
+                    }
+                    let zb = self.zoom_box.as_ref().unwrap();
+                    let boxr = aspect_zoom_box(zb.start, zb.end, rect);
+                    // Foreground layer so the box draws above the fractal paint callback.
+                    let painter = ctx.layer_painter(egui::LayerId::new(
+                        egui::Order::Foreground,
+                        egui::Id::new("fract_zoom_box"),
+                    ));
+                    painter.rect_filled(
+                        boxr,
+                        egui::CornerRadius::ZERO,
+                        egui::Color32::from_rgba_unmultiplied(0xE0, 0xA0, 0x30, 32),
+                    );
+                    painter.rect_stroke(
+                        boxr,
+                        egui::CornerRadius::ZERO,
+                        egui::Stroke::new(1.5, BRAND_ACCENT),
+                        egui::StrokeKind::Inside,
+                    );
+                    if response.drag_stopped() {
+                        if boxr.width() > 6.0 && boxr.height() > 6.0 {
+                            let bcx = (boxr.center().x - rect.min.x) as f64 * ppp;
+                            let bcy = (boxr.center().y - rect.min.y) as f64 * ppp;
+                            let factor = (boxr.width() / rect.width()) as f64; // < 1 ⇒ zoom in
+                            let (w, h) = (self.viewport.width_px, self.viewport.height_px);
+                            self.viewport.pan_pixels(w * 0.5 - bcx, h * 0.5 - bcy);
+                            self.viewport.zoom_at(w * 0.5, h * 0.5, factor);
+                            self.settle_t = ctx.input(|i| i.time);
+                        }
+                        self.zoom_box = None;
+                        zoom_boxing = false;
+                    }
+                }
+
                 // Track the complex coordinate under the cursor (for the status bar).
                 self.pointer_complex = response.hover_pos().map(|p| {
                     let l = p - rect.min;
@@ -3790,8 +3919,8 @@ impl eframe::App for FractadyneApp {
                         .complex_at_pixel_f64(l.x as f64 * ppp, l.y as f64 * ppp)
                 });
 
-                // Pan with left-drag.
-                if response.dragged_by(egui::PointerButton::Primary) {
+                // Pan with left-drag (unless dragging a zoom box).
+                if !zoom_boxing && response.dragged_by(egui::PointerButton::Primary) {
                     let d = response.drag_delta();
                     self.viewport.pan_pixels(d.x as f64 * ppp, d.y as f64 * ppp);
                 }

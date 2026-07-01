@@ -24,6 +24,13 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Zoom box (Shift+drag)** — hold Shift and drag a rectangle to zoom so it fills the view.
+  The box is constrained to the panel's aspect ratio (fills exactly, no distortion), drawn as
+  a live amber rubber-band overlay, and applied deep-zoom-correctly (recenter + scale via the
+  arbitrary-precision viewport, so it's exact at any depth). Works in single and dual views; a
+  tiny drag is ignored (treated as a click). (Replaces a "Right-drag box zoom" that Help
+  documented but was never implemented.)
+
 - **Duotone & binary palette modes** — Coloring → Palette gains two two-color modes sharing
   a pair of color pickers: **Duotone** maps the coloring value to a smooth Shadow→Highlight
   ramp; **Binary (set)** is a flat two-color view (one solid color inside the set, another
