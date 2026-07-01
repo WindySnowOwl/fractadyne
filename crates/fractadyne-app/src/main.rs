@@ -2717,10 +2717,13 @@ impl FractadyneApp {
                             .inner_margin(egui::Margin::symmetric(12, 8)),
                     )
                     .show_inside(ui, |ui| {
+                    // Solid (not floating/hover-only) scrollbar that stays put when content
+                    // overflows, but is hidden when it doesn't (no stray bar on short pages).
+                    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .scroll_bar_visibility(
-                            egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                            egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                         )
                         .show(ui, |ui| {
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
