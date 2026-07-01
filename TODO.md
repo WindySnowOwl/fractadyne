@@ -74,8 +74,12 @@ cache, adaptive iterations, auto-save/restore, and the first side panels.
       (recompute only on view/iter/size change); recolor every frame from it.
 - [x] **Auto-save / restore** — session (location/zoom/coloring) persisted to TOML
       in the OS config dir, debounced + atomic on change/close (`fractadyne-state`).
-- [ ] **Tile cache + pan reprojection** — reuse computed tiles on pan/zoom (builds
-      on the split; cheap navigation at depth + export groundwork).
+- [~] **Tile cache + pan reprojection** — **pan reprojection DONE**: while dragging, the last
+      settled iteration texture is frozen and translated in the color pass by the accumulated
+      pixel offset (no bignum recompute, no re-iterate), so detail slides under the cursor; the
+      revealed edge fills with the frame's average color; on settle it re-renders at full detail.
+      Single + dual (left) at deep zoom. *(Remaining: a persistent tile cache for zoom reuse —
+      reprojection currently handles pan only, not scale.)*
 - [x] **Palette animation** — Coloring panel "Animate" (Off / Forward / Reverse /
       Ping-pong / **Random gradients**) + logarithmic Speed slider; modes shift the
       color offset, **Random** synthesizes & continuously morphs gradients (seamless
