@@ -357,6 +357,14 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Fixed (post-baseline, this session)
 
+- **Frame-rate cap "Uncapped" wasn't persisted** — the cap was stored as an `Option<f64>`,
+  and TOML omits `None`, so the *uncapped* choice was dropped and reloaded as the default 60
+  every restart. Now stored as a plain `f64` (`0` = uncapped) that round-trips. While auditing
+  persistence, also added the missing view/preference state to the saved session so restart
+  fully restores where you were: **fractal family, Julia mode + parameter `c`, dual view, and
+  the series-approximation toggle** (center/zoom/coloring/lighting/export settings already
+  persisted). Round-trip + legacy-file tests added in `fractadyne-state`.
+
 - **Speckle/noise across the exterior at deep zoom on a large window** — a very high
   iteration count (e.g. a base of 50,000) over-resolved the boundary's sub-pixel "dust"
   into per-pixel noise *and* consumed the entire GPU-watchdog budget (forcing low

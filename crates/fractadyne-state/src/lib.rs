@@ -38,9 +38,11 @@ pub struct SessionState {
     /// Supersampling / anti-alias factor (1 = off, 2/3/4/8 = N×N).
     #[serde(default = "default_aa")]
     pub aa: u32,
-    /// Frame-rate cap in FPS; `None` = uncapped. Defaults to 60.
+    /// Frame-rate cap in FPS; **`0` = uncapped**. Defaults to 60. Stored as a plain `f64`
+    /// (not `Option`) so the *uncapped* choice round-trips: TOML omits `None`, which would
+    /// otherwise reload as the default 60 instead of staying uncapped.
     #[serde(default = "default_fps_cap")]
-    pub fps_cap: Option<f64>,
+    pub fps_cap: f64,
     /// Last-used export settings (remembered across sessions).
     #[serde(default = "default_export_width")]
     pub export_width: u32,
@@ -111,6 +113,23 @@ pub struct SessionState {
     /// Whether the right-hand control panel is shown.
     #[serde(default = "default_true")]
     pub right_panel_open: bool,
+    /// Active fractal family (name, e.g. "Mandelbrot", "Burning Ship") — so the view you
+    /// left is fully restored (the center/zoom already are).
+    #[serde(default = "default_fractal")]
+    pub fractal: String,
+    /// Julia mode + parameter `c` (the view state that pairs with center/zoom).
+    #[serde(default)]
+    pub julia_mode: bool,
+    #[serde(default = "default_julia_c_re")]
+    pub julia_c_re: f64,
+    #[serde(default = "default_julia_c_im")]
+    pub julia_c_im: f64,
+    /// Dual (Mandelbrot ↔ Julia) view.
+    #[serde(default)]
+    pub dual: bool,
+    /// Series approximation (iteration-skipping) preference. Default on.
+    #[serde(default = "default_true")]
+    pub series_approx: bool,
 }
 
 fn default_duotone_lo() -> [f32; 3] {
@@ -133,8 +152,20 @@ fn default_aa() -> u32 {
     2
 }
 
-fn default_fps_cap() -> Option<f64> {
-    Some(60.0)
+fn default_fps_cap() -> f64 {
+    60.0
+}
+
+fn default_fractal() -> String {
+    "Mandelbrot".to_string()
+}
+
+fn default_julia_c_re() -> f64 {
+    -0.8
+}
+
+fn default_julia_c_im() -> f64 {
+    0.156
 }
 
 fn default_export_width() -> u32 {
@@ -205,7 +236,7 @@ impl Default for SessionState {
             offset: 0.1,
             zoom_rate: default_zoom_rate(),
             aa: default_aa(),
-            fps_cap: default_fps_cap(),
+            fps_cap: default_fps_cap(), // 60 (0 = uncapped)
             export_width: default_export_width(),
             export_ss: default_export_ss(),
             export_format: default_export_format(),
@@ -232,6 +263,12 @@ impl Default for SessionState {
             duotone_lo: default_duotone_lo(),
             duotone_hi: default_duotone_hi(),
             right_panel_open: true,
+            fractal: default_fractal(),
+            julia_mode: false,
+            julia_c_re: default_julia_c_re(),
+            julia_c_im: default_julia_c_im(),
+            dual: false,
+            series_approx: true,
         }
     }
 }
@@ -260,5 +297,57 @@ pub fn save(state: &SessionState) {
     let tmp = path.with_extension("toml.tmp");
     if std::fs::write(&tmp, text).is_ok() {
         let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn roundtrip(s: &SessionState) -> SessionState {
+        let text = toml::to_string_pretty(s).expect("serialize");
+        toml::from_str(&text).expect("deserialize")
+    }
+
+    // The reported bug: the *uncapped* frame-rate (once `None`) was dropped by TOML and
+    // reloaded as the default 60. Now stored as `0.0` (uncapped), it round-trips.
+    #[test]
+    fn fps_cap_roundtrips_including_uncapped() {
+        let mut s = SessionState::default();
+        s.fps_cap = 0.0; // uncapped
+        assert_eq!(roundtrip(&s).fps_cap, 0.0);
+        s.fps_cap = 120.0;
+        assert_eq!(roundtrip(&s).fps_cap, 120.0);
+    }
+
+    // The view state (fractal family, Julia, dual) and the SA preference now persist.
+    #[test]
+    fn view_and_preference_fields_roundtrip() {
+        let s = SessionState {
+            fractal: "Burning Ship".to_string(),
+            julia_mode: true,
+            julia_c_re: 0.285,
+            julia_c_im: 0.01,
+            dual: true,
+            series_approx: false,
+            ..SessionState::default()
+        };
+        let r = roundtrip(&s);
+        assert_eq!(r.fractal, "Burning Ship");
+        assert!(r.julia_mode && r.dual && !r.series_approx);
+        assert_eq!(r.julia_c_re, 0.285);
+        assert_eq!(r.julia_c_im, 0.01);
+    }
+
+    // A legacy file (only the original required fields) must still load, filling new fields
+    // from their defaults.
+    #[test]
+    fn legacy_file_loads_with_defaults() {
+        let legacy = "center_x = -0.5\ncenter_y = 0.0\nunits_per_pixel = 0.004\n\
+                      max_iter = 256\nauto_iter = true\npalette_idx = 0\ncycle = 0.27\noffset = 0.1\n";
+        let s: SessionState = toml::from_str(legacy).expect("legacy load");
+        assert_eq!(s.fps_cap, 60.0); // default cap
+        assert_eq!(s.fractal, "Mandelbrot");
+        assert!(s.series_approx);
     }
 }

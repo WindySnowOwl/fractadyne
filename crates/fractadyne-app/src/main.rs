@@ -1084,14 +1084,16 @@ impl FractadyneApp {
             fractadyne_core::FloatExp::new(s.units_per_pixel, s.units_per_pixel_e);
         viewport.precision =
             fractadyne_core::precision_for_octaves(viewport.log2_magnification().max(0.0).ceil() as u64);
+        // Restore the saved fractal family (so the view you left is fully recreated).
+        let fractal = FractalKind::from_name(&s.fractal).unwrap_or(FractalKind::Mandelbrot);
 
         let mut app = Self {
             viewport,
-            fractal: FractalKind::Mandelbrot,
-            julia_c: (-0.8, 0.156),
-            julia_mode: false,
+            fractal,
+            julia_c: (s.julia_c_re, s.julia_c_im),
+            julia_mode: s.julia_mode && fractal.supports_julia(),
             julia_pin: None,
-            dual: false,
+            dual: s.dual,
             fullscreen: false,
             julia_viewport: {
                 let mut v = Viewport::new(800.0, 800.0);
@@ -1143,7 +1145,7 @@ impl FractadyneApp {
             profile_regions,
             profile_out: out_path.clone(),
             prof: std::cell::Cell::new(profile::ProfSetup::default()),
-            fps_cap: s.fps_cap,
+            fps_cap: (s.fps_cap > 0.0).then_some(s.fps_cap), // 0 = uncapped
             export_open: false,
             export_width: s.export_width,
             export_ss: s.export_ss,
@@ -1220,7 +1222,7 @@ impl FractadyneApp {
             stripe_freq: s.stripe_freq,
             trap_type: trap_from_str(&s.trap_type),
             auto_iter: s.auto_iter,
-            series_approx: true,
+            series_approx: s.series_approx,
             use_bla: false,
             zoom_rate: s.zoom_rate,
             aa: s.aa,
@@ -1346,7 +1348,7 @@ impl FractadyneApp {
             offset: self.offset,
             zoom_rate: self.zoom_rate,
             aa: self.aa,
-            fps_cap: self.fps_cap,
+            fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
             export_width: self.export_width,
             export_ss: self.export_ss,
             export_format: match self.export_format {
@@ -1383,6 +1385,12 @@ impl FractadyneApp {
             duotone_lo: self.duotone_lo,
             duotone_hi: self.duotone_hi,
             right_panel_open: self.right_panel_open,
+            fractal: self.fractal.name().to_string(),
+            julia_mode: self.julia_mode,
+            julia_c_re: self.julia_c.0,
+            julia_c_im: self.julia_c.1,
+            dual: self.dual,
+            series_approx: self.series_approx,
         };
         let now = ctx.input(|i| i.time);
         if cur != self.last_state {
