@@ -2692,6 +2692,8 @@ impl FractadyneApp {
         egui::Window::new("Fractadyne Help")
             .open(&mut open)
             .default_size([800.0, 560.0])
+            .min_width(480.0) // keep room for the content beside the fixed-width contents list
+            .min_height(300.0)
             .max_height(max_h)
             .resizable(true)
             .show(ctx, |ui| {
