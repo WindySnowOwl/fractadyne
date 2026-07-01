@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.0 (build 189)
-- **Generated:** 2026-06-30 23:45:40 UTC (unix 1782863140)
+- **Version:** 0.1.0 (build 192)
+- **Generated:** 2026-07-01 00:37:44 UTC (unix 1782866264)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -41,6 +41,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Series approximation | Multibrot 3 SA engages + matches SA-off @1e7× | mode 0, skip 3999 of 4000 iter, 0 escaped | 0 mismatch, finite | skip>0, mode 0, finite, 0 mismatch | ✅ PASS |
 | Series approximation | Multibrot 4 SA engages + matches SA-off @1e7× | mode 0, skip 3999 of 4000 iter, 0 escaped | 0 mismatch, finite | skip>0, mode 0, finite, 0 mismatch | ✅ PASS |
 | Series approximation | Multibrot 5 SA engages + matches SA-off @1e7× | mode 0, skip 3999 of 4000 iter, 0 escaped | 0 mismatch, finite | skip>0, mode 0, finite, 0 mismatch | ✅ PASS |
+| BLA | BLA render == non-BLA @1e30× | Mandelbrot mode 2, bla_on 1, 0 escaped / 48400 interior | 0 mismatch | bla engaged, 0 mismatch | ✅ PASS |
 | Consistency | resolution independence (N vs 3N) | seahorse, 1e6×, 25544 smooth px | 0 differ | 0 differ | ✅ PASS |
 | Consistency | max-iter monotonic stability | seahorse, 1e6×, 500→3000 iter, 15737 escaped px | 0 changed dwell | 0 changed | ✅ PASS |
 | Consistency | zoom-sequence across direct→df32 seam | seahorse, 4e3×↔1.2e4×, 1814 overlap px | 0 differ | <0.1% differ | ✅ PASS |
@@ -62,7 +63,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Formatting | zoom mantissa grouped | 3.38050027227e15 | 3.38050 02722 7e15 | "3.38050 02722 7e15" | ✅ PASS |
 | Formatting | deep coordinate elides middle | 32-digit center @ ~1e30×; and -0.5 | -0.74364 38870 … 11477 40000  |  -0.5 | leading … frontier; short coord safe | ✅ PASS |
 
-**48/48 checks passed.**
+**49/49 checks passed.**
 
 ## Coverage & scope
 

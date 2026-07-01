@@ -824,6 +824,97 @@ impl FractadyneApp {
             }
         }
 
+        // ---- BLA (bilinear approximation): GPU render must match the non-BLA render ----
+        // Enable BLA on a deep floatexp (mode 2) Mandelbrot view and compare against the same
+        // request with BLA off (SA also off, to isolate BLA). The multi-level skip + escape
+        // revert must reproduce the full perturbation everywhere except rare boundary pixels.
+        {
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.color_method = 0;
+            self.use_custom_palette = false;
+            self.auto_iter = false;
+            self.max_iter = 5000;
+            self.series_approx = false; // isolate BLA
+            self.use_bla = true;
+            let nn = N as usize;
+            let steep = |px: &[f32], i: usize, j: usize| -> bool {
+                let g = px[(j * nn + i) * 4];
+                for (di, dj) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+                    let (ni, nj) = (i as isize + di, j as isize + dj);
+                    if ni >= 0 && nj >= 0 && (ni as usize) < nn && (nj as usize) < nn {
+                        let gn = px[(nj as usize * nn + ni as usize) * 4];
+                        if (g < 0.0) != (gn < 0.0) || (g >= 0.0 && gn >= 0.0 && (g - gn).abs() > 2.0) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            };
+            // Deep 38-digit minibrot nucleus (mode 2, BLA-eligible).
+            const NX: &str = "-0.74364388703715887077806454349323251348";
+            const NY: &str = "0.131825904205312292821097354874199108694";
+            let mut vp = Viewport::new(N as f64, N as f64);
+            vp.center_x = fractadyne_core::parse_bf(NX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(NY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
+            vp.precision = fractadyne_core::precision_for_magnification(1.0e30);
+            let mut on = self.current_export_request_for(&vp, false);
+            on.width = N;
+            on.height = N;
+            on.ss = 1;
+            let mut off = on.clone();
+            off.bla_on = 0;
+            let (bla_on, mode) = (on.bla_on, on.mode);
+            match (
+                fractadyne_gpu::render_iter(device, queue, &on).ok().map(|r| r.pixels),
+                fractadyne_gpu::render_iter(device, queue, &off).ok().map(|r| r.pixels),
+            ) {
+                (Some(a), Some(b)) if bla_on == 1 && mode == 2 => {
+                    // Compare all non-boundary pixels (b = non-BLA is the ground-truth mask):
+                    // interior↔interior and escaped-with-|Δ|<0.5 agree; anything else mismatches.
+                    let (mut mism, mut esc, mut interior) = (0u64, 0u64, 0u64);
+                    for j in 0..nn {
+                        for i in 0..nn {
+                            if steep(&b, i, j) {
+                                continue;
+                            }
+                            let k = j * nn + i;
+                            let (ra, rb) = (a[k * 4], b[k * 4]);
+                            match (ra < 0.0, rb < 0.0) {
+                                (true, true) => interior += 1,
+                                (false, false) => {
+                                    esc += 1;
+                                    if (ra - rb).abs() > 0.5 {
+                                        mism += 1;
+                                    }
+                                }
+                                _ => mism += 1,
+                            }
+                        }
+                    }
+                    checks.push(SelfCheck {
+                        category: "BLA",
+                        name: "BLA render == non-BLA @1e30×".into(),
+                        params: format!("Mandelbrot mode 2, bla_on {bla_on}, {esc} escaped / {interior} interior"),
+                        result: format!("{mism} mismatch"),
+                        threshold: "bla engaged, 0 mismatch",
+                        pass: mism == 0 && (esc + interior) > 0,
+                    });
+                }
+                _ => checks.push(SelfCheck {
+                    category: "BLA",
+                    name: "BLA render == non-BLA @1e30×".into(),
+                    params: format!("bla_on {bla_on}, mode {mode}"),
+                    result: if bla_on == 0 { "BLA did not engage".into() } else { "render failed / wrong mode".into() },
+                    threshold: "bla engaged, mean<0.5, <2% differ, n>0",
+                    pass: false,
+                }),
+            }
+            self.use_bla = false;
+            self.series_approx = true;
+        }
+
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
         {
             self.fractal = FractalKind::Mandelbrot;

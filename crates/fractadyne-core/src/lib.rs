@@ -353,6 +353,11 @@ impl FloatExp {
         self.sub(o).m < 0.0
     }
 
+    /// GPU upload form: `(mantissa f32, exponent)` — mantissa is normalized to `[1,2)` (or 0).
+    pub fn to_f32_exp(self) -> (f32, i32) {
+        (self.m as f32, self.e)
+    }
+
     /// `log2` of the magnitude (finite for any representable value; `−∞` for `0`).
     pub fn log2(self) -> f64 {
         if self.m == 0.0 {
@@ -995,6 +1000,26 @@ impl CFloatExp {
     pub fn abs(self) -> FloatExp {
         self.re.mul(self.re).add(self.im.mul(self.im)).sqrt()
     }
+
+    /// GPU upload form: a **shared-exponent** df32 mantissa `[re_hi, re_lo, im_hi, im_lo]`
+    /// (both parts scaled to one base-2 exponent) plus that exponent — matches the SA coeff
+    /// layout / the shader's `Fe` (df32 mantissa + i32 exponent).
+    pub fn to_mantissa_exp(self) -> ([f32; 4], i32) {
+        let e = match (self.re.m == 0.0, self.im.m == 0.0) {
+            (true, true) => return ([0.0; 4], 0),
+            (false, true) => self.re.e,
+            (true, false) => self.im.e,
+            (false, false) => self.re.e.max(self.im.e),
+        };
+        let split = |f: FloatExp| -> (f32, f32) {
+            let v = f.m * 2f64.powi(f.e - e); // value·2^−e, in (−2, 2]
+            let hi = v as f32;
+            (hi, (v - hi as f64) as f32)
+        };
+        let (rh, rl) = split(self.re);
+        let (ih, il) = split(self.im);
+        ([rh, rl, ih, il], e)
+    }
 }
 
 /// One BLA node: the linear map `δz' = A·δz + B·δc`, valid while `|δz| ≤ r`, covering `span`
@@ -1056,6 +1081,27 @@ pub fn build_bla_mandel(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64) -> Vec<V
         levels.push(next);
     }
     levels
+}
+
+/// Flatten a BLA tree to the GPU buffer layout: 4 `vec4<f32>` per node, levels concatenated
+/// (level 0 first). Per node: `[A mantissa]`, `[B mantissa]`, `[a_exp, b_exp, r_exp, r_mant]`,
+/// `[span, 0, 0, 0]` (exponents/span as exact f32; small enough). The shader reconstructs the
+/// per-level offsets from `orbit_len` (level 0 has `orbit_len−1` nodes, each level halves).
+pub fn bla_to_gpu(levels: &[Vec<BlaNode>]) -> Vec<[f32; 4]> {
+    let total: usize = levels.iter().map(|l| l.len()).sum();
+    let mut out = Vec::with_capacity(total * 4);
+    for level in levels {
+        for node in level {
+            let (am, ae) = node.a.to_mantissa_exp();
+            let (bm, be) = node.b.to_mantissa_exp();
+            let (rm, re) = node.r.to_f32_exp();
+            out.push(am);
+            out.push(bm);
+            out.push([ae as f32, be as f32, re as f32, rm]);
+            out.push([node.span as f32, 0.0, 0.0, 0.0]);
+        }
+    }
+    out
 }
 
 /// Full value `z = Zₘ + δz` (f64) for a df32 reference orbit — for bailout / escape tests.

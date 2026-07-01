@@ -294,6 +294,15 @@ fn fe_mag2(a: Fe) -> f32 {
     let s = exp2(clamp(f32(a.e) * 2.0, -250.0, 250.0));
     return (a.m.re.x * a.m.re.x + a.m.im.x * a.m.im.x) * s;
 }
+// |a| as a scalar floatexp (extended range) — for BLA radius comparison at any depth.
+fn fe_abs_sf(a: Fe) -> Sf {
+    let mag = sqrt(a.m.re.x * a.m.re.x + a.m.im.x * a.m.im.x);
+    return sf_norm(vec2<f32>(mag, 0.0), a.e);
+}
+// Scalar floatexp comparison a < b (via the sign of a−b; both used as magnitudes here).
+fn sf_lt(a: Sf, b: Sf) -> bool {
+    return sf_add(a, sf_neg(b)).m.x < 0.0;
+}
 
 // Slope normal for distance-estimate lighting: direction of u = z / (dz/dc).
 // Only the *direction* matters (the magnitude is normalized away), so any positive
@@ -371,10 +380,12 @@ struct IterU {
     sa_a_exp: i32,         // per-coefficient base-2 exponents (floatexp)
     sa_b_exp: i32,
     sa_c_exp: i32,
-    _pad1: u32,
+    bla_on: u32,           // 1 = use the BLA tree (appended after the orbit at index orbit_len)
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
-// Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo).
+// Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
+// the BLA tree is appended right after (starting at index orbit_len): 4 vec4 per node —
+// [A mantissa], [B mantissa], [a_exp, b_exp, r_exp, r_mant], [span, -, -, -].
 @group(0) @binding(1) var<storage, read> reference: array<vec4<f32>>;
 
 // Two render targets: `main` = (smooth iter, normal.x, normal.y, DE log2);
@@ -624,6 +635,23 @@ fn fs_iterate(in: VsOut) -> FragOut {
         var aux = aux_init(vec2<f32>(r0i.x, r0i.y));
         var ref_n: u32 = 0u;
         var power_f = 2.0;
+        // BLA level layout: offsets/lengths per level, reconstructed from the reference length
+        // (level 0 has one node per step; each higher level halves). Matches the CPU packing.
+        var bla_off: array<u32, 32>;
+        var bla_len: array<u32, 32>;
+        var bla_levels = 0u;
+        if (iu.bla_on == 1u && iu.formula == 0u && iu.orbit_len > 1u) {
+            var blen = iu.orbit_len - 1u;
+            var boff = 0u;
+            loop {
+                bla_off[bla_levels] = boff;
+                bla_len[bla_levels] = blen;
+                boff = boff + blen;
+                bla_levels = bla_levels + 1u;
+                if (blen <= 1u || bla_levels >= 32u) { break; }
+                blen = (blen + 1u) / 2u;
+            }
+        }
         // Series approximation: seed δz (and the derivative D) from the order-3 polynomial
         // δz ≈ A·δc + B·δc² + C·δc³ and start at iteration `sa_skip`, skipping that many
         // perturbation steps. Mandelbrot only (the CPU gates this: formula 0, no Julia, no
@@ -642,6 +670,46 @@ fn fs_iterate(in: VsOut) -> FragOut {
         }
         loop {
             if (iter >= iu.max_iter) { break; }
+            // BLA: skip 2^l reference steps at once while |δz| is within the merged validity
+            // radius; revert to a lower level (ultimately a full step) on escape overshoot.
+            // δz stays small in the BLA regime, so rebasing never triggers here.
+            if (bla_levels > 0u) {
+                let dzmag = fe_abs_sf(dz);
+                var applied = false;
+                var l = bla_levels;
+                loop {
+                    if (l == 0u) { break; }
+                    l = l - 1u;
+                    let stepn = 1u << l;
+                    if ((ref_n & (stepn - 1u)) != 0u) { continue; } // ref_n not aligned to 2^l
+                    let j = ref_n >> l;
+                    if (j >= bla_len[l]) { continue; }
+                    let node = iu.orbit_len + (bla_off[l] + j) * 4u;
+                    let v2 = reference[node + 2u];
+                    let span = u32(reference[node + 3u].x);
+                    if (ref_n + span >= iu.orbit_len) { continue; } // keep reference[nref] valid
+                    if (!sf_lt(dzmag, sf_norm(vec2<f32>(v2.w, 0.0), i32(v2.z)))) { continue; }
+                    let v0 = reference[node];
+                    let v1 = reference[node + 1u];
+                    let A = fe_norm(cset(v0.xy, v0.zw), i32(v2.x));
+                    let B = fe_norm(cset(v1.xy, v1.zw), i32(v2.y));
+                    let ndz = fe_add(fe_mul(A, dz), fe_mul(B, dc));
+                    let nref = ref_n + span;
+                    let rn = reference[nref];
+                    let ndzf = fe_lo_f32(ndz);
+                    let zx = rn.x + ndzf.x;
+                    let zy = rn.y + ndzf.y;
+                    if (zx * zx + zy * zy > bail2) { continue; } // overshoot → drop a level
+                    if (iu.formula <= 3u) { D = fe_add(fe_mul(A, D), B); }
+                    dz = ndz;
+                    ref_n = nref;
+                    iter = iter + span;
+                    zf = vec2<f32>(zx, zy);
+                    applied = true;
+                    break;
+                }
+                if (applied) { continue; }
+            }
             let r = reference[ref_n];
             let Z = cset(vec2<f32>(r.x, r.z), vec2<f32>(r.y, r.w)); // reference Z_n (df32)
 

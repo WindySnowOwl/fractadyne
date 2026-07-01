@@ -8,6 +8,10 @@ use fractadyne_core::Viewport;
 use fractadyne_gpu::MandelbrotParams;
 use std::time::Instant;
 
+/// BLA per-step linear tolerance (drops δz² with relative error ≤ this). Smaller ⇒ more
+/// accurate but fewer/smaller skips; 1e-6 keeps pixel error negligible while still merging.
+const BLA_EPS: f64 = 1.0e-6;
+
 impl FractadyneApp {
     /// Pick a reference point and compute its high-precision orbit for the current
     /// formula, arranging `Z₀`/`c` for Mandelbrot vs Julia mode. Returns the orbit,
@@ -102,6 +106,41 @@ impl FractadyneApp {
         )
     }
 
+    /// Build the BLA tree (GPU-flattened) for a Mandelbrot deep view, or `None` when BLA
+    /// doesn't apply (disabled, not floatexp/Mandelbrot/non-Julia, or an aux coloring method
+    /// that BLA would skip). `dx`/`dy` are the reference-offset mantissas and `span_mantissa`
+    /// the view span — both scaled by `2^delta_exp` — used for the worst-case `|δc|`.
+    fn build_bla(
+        &self,
+        mode: u32,
+        julia: bool,
+        orbit: &[[f32; 4]],
+        span_mantissa: [f64; 2],
+        dx: f64,
+        dy: f64,
+        delta_exp: i32,
+    ) -> Option<std::sync::Arc<Vec<[f32; 4]>>> {
+        if !self.use_bla
+            || mode != 2
+            || julia
+            || self.fractal.formula_id() != 0
+            || fractadyne_gpu::method_needs_aux(self.color_method)
+        {
+            return None;
+        }
+        // Worst-case |δc| over the view (absolute): (|center−ref| + ½·diagonal)·2^delta_exp.
+        let roff = (dx * dx + dy * dy).sqrt();
+        let half_diag =
+            0.5 * (span_mantissa[0] * span_mantissa[0] + span_mantissa[1] * span_mantissa[1]).sqrt();
+        let dc_max = fractadyne_core::FloatExp::from_f64((roff + half_diag).max(1e-300))
+            .mul_pow2(delta_exp as f64);
+        let levels = fractadyne_core::build_bla_mandel(orbit, dc_max, BLA_EPS);
+        if levels.is_empty() {
+            return None;
+        }
+        Some(std::sync::Arc::new(fractadyne_core::bla_to_gpu(&levels)))
+    }
+
     /// Build an export request for a given viewport + Julia flag at the export
     /// resolution. Recomputes a fresh reference orbit (deep) without touching the live
     /// cache. Height is derived from the viewport's aspect (square pixels).
@@ -139,6 +178,8 @@ impl FractadyneApp {
         let mut orbit = std::sync::Arc::new(Vec::new());
         let mut orbit_len = 0u32;
         let mut sa = fractadyne_core::SeriesSkip::NONE;
+        let mut bla = std::sync::Arc::new(Vec::new());
+        let mut bla_on = 0u32;
         if mode != 1 {
             let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
             let t_ref = std::time::Instant::now();
@@ -155,6 +196,10 @@ impl FractadyneApp {
             let t_sa = std::time::Instant::now();
             sa = self.series_skip_for(&rp, scale.span_mantissa, dx, dy, delta_exp, mode, julia, eff_iter, len, precision);
             self.prof.set(profile::ProfSetup { reference_ms, series_ms: t_sa.elapsed().as_secs_f64() * 1000.0 });
+            if let Some(data) = self.build_bla(mode, julia, &orbit, scale.span_mantissa, dx, dy, delta_exp) {
+                bla = data;
+                bla_on = 1;
+            }
         }
 
         let cxh = cx as f32;
@@ -184,6 +229,8 @@ impl FractadyneApp {
             julia_c,
             orbit,
             orbit_len,
+            bla,
+            bla_on,
             max_iter: eff_iter,
             mode,
             formula: self.fractal.formula_id(),
@@ -300,6 +347,8 @@ impl FractadyneApp {
 
         let mut ref_offset = [0.0_f32; 4];
         let mut sa = fractadyne_core::SeriesSkip::NONE;
+        let mut bla = std::sync::Arc::new(Vec::new());
+        let mut bla_on = 0u32;
         if mode != 1 {
             // Drift = |center − reference| / span, both as 2^-delta_exp mantissas so the
             // ratio is exact at any depth (raw f64 differences underflow past ~1e308×).
@@ -382,6 +431,13 @@ impl FractadyneApp {
                 }
                 sa = self.ref_cache[vi].sa;
             }
+            // BLA tree (rebuilt per frame when enabled — off by default, so normally free;
+            // caching per reference is a follow-up). Skips iterations throughout the orbit.
+            let orbit = self.ref_cache[vi].orbit.clone();
+            if let Some(data) = self.build_bla(mode, julia, &orbit, span_mantissa, dx, dy, delta_exp) {
+                bla = data;
+                bla_on = 1;
+            }
         }
 
         let cxh = cx as f32;
@@ -404,6 +460,8 @@ impl FractadyneApp {
             orbit: self.ref_cache[vi].orbit.clone(),
             orbit_id: self.ref_cache[vi].orbit_id,
             orbit_len: self.ref_cache[vi].orbit_len,
+            bla,
+            bla_on,
             ref_offset,
             delta_exp,
             sa_skip: sa.skip,

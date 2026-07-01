@@ -43,7 +43,7 @@ struct IterUniforms {
     sa_a_exp: i32,     // per-coefficient base-2 exponents (floatexp)
     sa_b_exp: i32,
     sa_c_exp: i32,
-    _pad1: u32,
+    bla_on: u32,       // 1 = use the BLA tree (appended after the orbit at index orbit_len)
 }
 
 #[repr(C)]
@@ -85,6 +85,7 @@ struct IterKey {
     stripe_freq: f32,
     trap_type: u32,
     sa_skip: u32,
+    bla_on: u32,
 }
 
 /// Per-view GPU resources (one set per on-screen panel, keyed by `view_id`). Each
@@ -381,6 +382,10 @@ pub struct MandelbrotParams {
     /// Changes whenever `orbit` changes — triggers a GPU re-upload.
     pub orbit_id: u64,
     pub orbit_len: u32,
+    /// BLA tree (flattened, 4 `[f32;4]` per node), uploaded right after the orbit. Empty when
+    /// BLA is off. `bla_on = 1` activates the shader's BLA traversal (Mandelbrot mode 2).
+    pub bla: Arc<Vec<[f32; 4]>>,
+    pub bla_on: u32,
     /// (view center − reference) *mantissa* (scaled by 2^-delta_exp), df32.
     pub ref_offset: [f32; 4],
     /// Shared base-2 exponent of the δ mantissas (ref_offset and the per-texel step).
@@ -511,10 +516,16 @@ impl CallbackTrait for MandelbrotParams {
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
 
-        // Upload the reference orbit only when it changed (app caches it).
+        // Upload the reference orbit only when it changed (app caches it). The BLA tree (if
+        // any) is appended right after it in the same buffer, starting at index `orbit_len`.
         if self.orbit_id != view.last_orbit_id && !self.orbit.is_empty() {
-            view.ensure_orbit_capacity(device, iter_bgl, self.orbit.len() as u32);
+            let total = self.orbit.len() + self.bla.len();
+            view.ensure_orbit_capacity(device, iter_bgl, total as u32);
             queue.write_buffer(&view.orbit_buf, 0, bytemuck::cast_slice(self.orbit.as_slice()));
+            if !self.bla.is_empty() {
+                let off = (self.orbit.len() * 16) as u64; // 16 B per [f32;4]
+                queue.write_buffer(&view.orbit_buf, off, bytemuck::cast_slice(self.bla.as_slice()));
+            }
             view.last_orbit_id = self.orbit_id;
             view.last_iter_key = None; // force re-iterate against the new orbit
         }
@@ -536,6 +547,7 @@ impl CallbackTrait for MandelbrotParams {
             stripe_freq: self.stripe_freq,
             trap_type: self.trap_type,
             sa_skip: self.sa_skip,
+            bla_on: self.bla_on,
         };
         if view.last_iter_key != Some(key) {
             // Per-texel step *mantissa*: span_mantissa (= span · 2^-delta_exp, already O(1))
@@ -572,7 +584,7 @@ impl CallbackTrait for MandelbrotParams {
                 sa_a_exp: self.sa_a_exp,
                 sa_b_exp: self.sa_b_exp,
                 sa_c_exp: self.sa_c_exp,
-                _pad1: 0,
+                bla_on: self.bla_on,
             };
             queue.write_buffer(&view.iter_uniform, 0, bytemuck::bytes_of(&iu));
             {
@@ -655,6 +667,9 @@ pub struct ExportRequest {
     pub julia_c: [f32; 4],
     pub orbit: Arc<Vec<[f32; 4]>>,
     pub orbit_len: u32,
+    /// BLA tree (flattened) appended after the orbit; `bla_on = 1` enables the traversal.
+    pub bla: Arc<Vec<[f32; 4]>>,
+    pub bla_on: u32,
     pub max_iter: u32,
     pub mode: u32,
     pub formula: u32,
@@ -793,10 +808,14 @@ pub fn render_export(
     let iter_uniform = uniform("export.iter_uniform", std::mem::size_of::<IterUniforms>() as u64);
     let color_uniform = uniform("export.color_uniform", std::mem::size_of::<ColorUniforms>() as u64);
 
-    let orbit_cap = req.orbit.len().max(1) as u32;
+    let orbit_cap = (req.orbit.len() + req.bla.len()).max(1) as u32;
     let orbit_buf = make_orbit_buffer(device, orbit_cap);
     if !req.orbit.is_empty() {
         queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
+    }
+    if !req.bla.is_empty() {
+        let off = (req.orbit.len() * 16) as u64;
+        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
     }
     let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf);
 
@@ -872,7 +891,7 @@ pub fn render_export(
                 sa_a_exp: req.sa_a_exp,
                 sa_b_exp: req.sa_b_exp,
                 sa_c_exp: req.sa_c_exp,
-                _pad1: 0,
+                bla_on: req.bla_on,
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1053,9 +1072,13 @@ pub fn render_iter(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let orbit_buf = make_orbit_buffer(device, req.orbit.len().max(1) as u32);
+    let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
     if !req.orbit.is_empty() {
         queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
+    }
+    if !req.bla.is_empty() {
+        let off = (req.orbit.len() * 16) as u64;
+        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
     }
     let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf);
 
@@ -1090,7 +1113,7 @@ pub fn render_iter(
         sa_a_exp: req.sa_a_exp,
         sa_b_exp: req.sa_b_exp,
         sa_c_exp: req.sa_c_exp,
-        _pad1: 0,
+        bla_on: req.bla_on,
     };
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 

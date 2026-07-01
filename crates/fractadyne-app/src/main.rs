@@ -961,6 +961,9 @@ struct FractadyneApp {
     right_panel_open: bool,
     /// Series approximation (iteration-skipping) for deep Mandelbrot renders. Default on.
     series_approx: bool,
+    /// BLA (bilinear approximation): skips iterations throughout the orbit for deep floatexp
+    /// Mandelbrot renders. Off by default while it's validated; enable to accelerate.
+    use_bla: bool,
     /// Minimap overview: enabled flag, cached home-view thumbnail, and the key
     /// (formula, palette, method) the thumbnail was rendered for (re-render on change).
     minimap: bool,
@@ -1218,6 +1221,7 @@ impl FractadyneApp {
             trap_type: trap_from_str(&s.trap_type),
             auto_iter: s.auto_iter,
             series_approx: true,
+            use_bla: false,
             zoom_rate: s.zoom_rate,
             aa: s.aa,
             ref_cache: [RefCache::default(), RefCache::default()],

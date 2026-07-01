@@ -568,10 +568,17 @@ for fun, informative value, and ease of use.
       full step on escape overshoot**, full step when `|δz|` exceeds even the level-0 radius.
       Validated by `bla_matches_naive_including_escapes` (BLA == naive perturbation on the
       escape iteration for both BLA-engaged tiny-δc pixels and large-δc fast escapers).
-      **Phase 2b (next): GPU port** — new storage buffer for the tree (df32 mantissa + i32 exp
-      per node) across the live/export/selftest bind groups, uniform level offsets, shader
-      port of `bla_iterate` into the Mandelbrot mode-2 (then mode-0) loop, integrate with
-      rebasing, gate + `--selftest` (BLA == non-BLA). **Phase 3:** Multibrot.
+      **Phase 2b DONE (GPU port, off by default):** the tree is appended after the reference
+      in the SAME storage buffer (no new binding) — 4 `vec4` per node (`[A],[B],[a_exp,b_exp,
+      r_exp,r_mant],[span]`); the shader reconstructs per-level offsets from `orbit_len` and
+      ports `bla_iterate` into the mode-2 loop (skip highest valid level → revert on escape
+      overshoot → full step), updating the derivative `D=A·D+B` on skips. Core packers
+      `CFloatExp::to_mantissa_exp`/`FloatExp::to_f32_exp`/`bla_to_gpu`; one uniform flag
+      `bla_on`; app gate `self.use_bla` (mode 2, Mandelbrot, non-Julia, non-aux). Validated:
+      `--selftest` "BLA render == non-BLA @1e30×" (0 mismatch, BLA engaged over 48400 interior
+      px) + the core escape test. **Off by default (opt-in `use_bla`)** pending: GPU escape-path
+      coverage (needs a deep *boundary* coordinate), then enable-by-default + UI toggle +
+      combine with SA + live per-reference caching. **Phase 3:** mode-0 + Multibrot.
 - [ ] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
       beyond the current single-reference Zhuoran rebasing.
 
