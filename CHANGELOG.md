@@ -24,6 +24,14 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Acknowledgments & citations (Help)** — a new Help section crediting the prior art Fractadyne
+  builds on, each verified against its source: perturbation & series approximation (K. I.
+  Martin), BLA + rebasing (Zhuoran), glitch detection (Pauldelbrot), non-analytic/Burning-Ship
+  perturbation (laser blaster), reference implementations & cross-checks (Fraktaler-3 / Kalles
+  Fraktaler 2+ by Claude Heiland-Allen, orig. Karl Runmo), smooth + stripe coloring (Jussi
+  Härkönen), triangle-inequality average (Kerry Mitchell), the Mandelbrot set (B. Mandelbrot),
+  and the libraries used. Includes a **dedication to the Stone Soup Group of Fractint**.
+
 - **Bookmark thumbnails** — each saved bookmark now shows a small preview image in the
   Bookmarks (Manage) dialog. The thumbnail is rendered from the exact view at save time
   (small offscreen render) and stored as a PNG under `bookmark_thumbs/`; it's lazily loaded
@@ -373,6 +381,12 @@ Baseline for tracked versioning. Notable capabilities already present:
   `--selftest` stays a local/manual gate (runners have no GPU).
 
 ### Fixed (post-baseline, this session)
+
+- **Help window layout was broken** — the table-of-contents + content were hand-split in a
+  horizontal layout with manual width math that egui didn't honor, so the content ran off
+  sideways and paragraphs wrapped to one character per line. Rebuilt with the standard
+  `SidePanel` + `CentralPanel` idiom so the content is width-bounded and wraps normally, with
+  a proper vertical scroll.
 
 - **Minimap "you are here" marker was invisible / missing** — the amber marker had almost no
   contrast against a warm-palette thumbnail (e.g. Ember), and it was only drawn when the view

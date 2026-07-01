@@ -2673,7 +2673,7 @@ impl FractadyneApp {
         if !self.help_open {
             return;
         }
-        const SECTIONS: [&str; 8] = [
+        const SECTIONS: [&str; 9] = [
             "Overview",
             "Navigation",
             "Coloring & options",
@@ -2681,34 +2681,29 @@ impl FractadyneApp {
             "How it works",
             "Command line",
             "Shortcuts",
+            "Acknowledgments",
             "About",
         ];
         let mut open = self.help_open;
         egui::Window::new("Fractadyne Help")
             .open(&mut open)
-            .default_size([660.0, 520.0])
+            .default_size([800.0, 560.0])
             .resizable(true)
             .show(ctx, |ui| {
-                let toc_w = 150.0;
-                // Bound the content width so paragraphs wrap (a horizontal layout would
-                // otherwise hand children unbounded width and the text wouldn't wrap).
-                let content_w = (ui.available_width() - toc_w - 14.0).max(280.0);
-                ui.horizontal_top(|ui| {
-                    // Table of contents.
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(toc_w, ui.available_height()),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_width(toc_w);
-                            for (i, name) in SECTIONS.iter().enumerate() {
-                                ui.selectable_value(&mut self.help_section, i, *name);
-                            }
-                        },
-                    );
-                    ui.separator();
-                    // Content (width-bounded → labels wrap).
+                // A left table-of-contents panel + a scrollable content panel. Using
+                // SidePanel/CentralPanel `show_inside` bounds the content width so paragraphs
+                // wrap normally (a manual horizontal split let the text run off sideways).
+                egui::SidePanel::left("help_toc")
+                    .resizable(false)
+                    .exact_width(170.0)
+                    .show_inside(ui, |ui| {
+                        ui.add_space(4.0);
+                        for (i, name) in SECTIONS.iter().enumerate() {
+                            ui.selectable_value(&mut self.help_section, i, *name);
+                        }
+                    });
+                egui::CentralPanel::default().show_inside(ui, |ui| {
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                        ui.set_width(content_w);
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                         match self.help_section {
                             0 => help_overview(ui),
@@ -2718,6 +2713,7 @@ impl FractadyneApp {
                             4 => help_methodology(ui),
                             5 => help_command_line(ui),
                             6 => help_shortcuts(ui),
+                            7 => help_acknowledgments(ui),
                             _ => help_about(ui),
                         }
                     });

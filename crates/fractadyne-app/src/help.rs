@@ -401,7 +401,7 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
     help_sub(ui, "Mouse");
     help_kv(ui, "Left-drag", "Pan");
     help_kv(ui, "Wheel", "Zoom at cursor");
-    help_kv(ui, "Right-drag", "Box zoom");
+    help_kv(ui, "Shift+drag", "Box zoom (drag a rectangle to zoom to it)");
     help_sub(ui, "Keyboard");
     help_kv(ui, "Space / Shift+Space", "Continuous zoom in / out");
     help_kv(ui, "Backspace", "Undo view");
@@ -411,6 +411,123 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
     help_kv(ui, "Esc", "Stop autopilot / a playing tour, or exit fullscreen");
     help_kv(ui, "Ctrl+S", "Quick export to the last folder");
     help_kv(ui, "F1 / ?", "Open this help");
+}
+
+/// A cited entry: bold title, a wrapped description, and a source link.
+fn help_cite(ui: &mut egui::Ui, title: &str, body: &str, link_label: &str, url: &str) {
+    ui.add_space(6.0);
+    ui.label(egui::RichText::new(title).strong().color(BRAND_TEXT));
+    ui.add(egui::Label::new(body).wrap());
+    ui.hyperlink_to(format!("{link_label} \u{2197}"), url);
+}
+
+pub(crate) fn help_acknowledgments(ui: &mut egui::Ui) {
+    help_h(ui, "Acknowledgments & citations");
+    // Dedication.
+    ui.label(
+        egui::RichText::new(
+            "Dedicated to the Stone Soup Group — the volunteers behind Fractint (from 1988).",
+        )
+        .italics()
+        .color(BRAND_ACCENT),
+    );
+    help_p(
+        ui,
+        "Their freely shared code and spirit of open, collaborative fractal exploration are the \
+         reason so many of us fell in love with this art. Fractadyne is built in that tradition.",
+    );
+    help_p(
+        ui,
+        "Fractadyne stands on decades of work by the fractal community. Techniques and prior art \
+         it builds on — verified against the sources below:",
+    );
+
+    help_sub(ui, "Deep-zoom algorithms");
+    help_cite(
+        ui,
+        "Perturbation & series approximation — K. I. Martin",
+        "The reference-orbit + low-precision-delta method (δz → 2Z·δz + δz² + δc) and the order-n \
+         series that skips early iterations, introduced in SuperFractalThing and its note \
+         “SuperFractalThing Maths” (sft_maths.pdf, 2013).",
+        "Perturbation theory — Fractal Wiki",
+        "https://fractalwiki.org/wiki/Perturbation_theory",
+    );
+    help_cite(
+        ui,
+        "Bivariate Linear Approximation (BLA) & rebasing — Zhuoran",
+        "Skipping runs of iterations via merged linear maps, and rebasing to a single reference to \
+         avoid glitches; developed on fractalforums.org (2021).",
+        "BLA explained — Phil Thompson",
+        "https://philthompson.me/2023/Faster-Mandelbrot-Set-Rendering-with-BLA-Bivariate-Linear-Approximation.html",
+    );
+    help_cite(
+        ui,
+        "Glitch-detection criterion — Pauldelbrot",
+        "The |Z + z| ≪ |Z| test for when a pixel needs a different reference — the basis of \
+         glitch-free perturbation (fractalforums).",
+        "Deep zoom theory & practice — mathr",
+        "https://mathr.co.uk/blog/2021-05-14_deep_zoom_theory_and_practice.html",
+    );
+    help_cite(
+        ui,
+        "Non-analytic (Burning Ship) perturbation — laser blaster",
+        "The absolute-value “diffabs” case analysis that makes perturbation work for the \
+         abs-based families (Burning Ship / Celtic / Buffalo), on fractalforums.",
+        "Deep zoom theory & practice — mathr",
+        "https://mathr.co.uk/blog/2021-05-14_deep_zoom_theory_and_practice.html",
+    );
+    help_cite(
+        ui,
+        "Reference implementations & cross-checks — Claude Heiland-Allen (mathr)",
+        "Fraktaler-3 and Kalles Fraktaler 2+ (originally by Karl Runmo) — whose write-ups guided \
+         this engine, and whose EXR output Fractadyne cross-checks its renderer against.",
+        "Fraktaler-3",
+        "https://fraktaler.mathr.co.uk/",
+    );
+
+    help_sub(ui, "Coloring");
+    help_cite(
+        ui,
+        "Smooth iteration count & Stripe Average — Jussi Härkönen",
+        "The continuous (normalized) escape-time coloring and the Stripe Average method, from \
+         “On Smooth Fractal Coloring Techniques” (M.Sc. thesis, 2007), which also analyzes the \
+         Triangle Inequality / branching-average colorings.",
+        "On Smooth Fractal Coloring Techniques (2007)",
+        "https://archive.org/details/j-harkonen-on-smooth-fractal-coloring-techniques-masters-thesis-2007-hi-res",
+    );
+    help_cite(
+        ui,
+        "Triangle Inequality Average — Kerry Mitchell",
+        "Averaging where each z² + c lands within the triangle-inequality bounds, for smooth \
+         flame-like exterior texture.",
+        "Kerry Mitchell — tutorials",
+        "http://www.kerrymitchellart.com/tutorials/formulas2/uf2-2.htm",
+    );
+    help_p(
+        ui,
+        "The distance-estimate coloring/lighting uses the classic dz/dc boundary-distance method \
+         (see Peitgen & Saupe, “The Science of Fractal Images”, 1988).",
+    );
+
+    help_sub(ui, "Foundations & tools");
+    help_cite(
+        ui,
+        "The Mandelbrot set — Benoit B. Mandelbrot",
+        "The object at the heart of it all.",
+        "Fractint — the Stone Soup Group",
+        "https://www.fractint.org/",
+    );
+    help_p(
+        ui,
+        "Built with Rust, egui/eframe (emilk) and wgpu (gfx-rs); arbitrary precision via \
+         astro-float, double-word floats via twofloat; PNG/OpenEXR, rfd, serde. Thanks to their \
+         authors and maintainers.",
+    );
+    help_p(
+        ui,
+        "Any errors in attribution are the author's; corrections are welcome on the project's \
+         issue tracker.",
+    );
 }
 
 pub(crate) fn help_about(ui: &mut egui::Ui) {
