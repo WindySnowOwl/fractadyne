@@ -364,6 +364,13 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Fixed (post-baseline, this session)
 
+- **Minimap "you are here" marker was invisible / missing** — the amber marker had almost no
+  contrast against a warm-palette thumbnail (e.g. Ember), and it was only drawn when the view
+  center fell inside the minimap's fixed region. Now it always shows (clamped to the thumbnail
+  edge if the view is outside the region) and is drawn with a dark halo behind the bright
+  marker so it reads on any palette — a view rectangle when shallow, a crosshair + centre dot
+  when deep.
+
 - **Frame-rate cap "Uncapped" wasn't persisted** — the cap was stored as an `Option<f64>`,
   and TOML omits `None`, so the *uncapped* choice was dropped and reloaded as the default 60
   every restart. Now stored as a plain `f64` (`0` = uncapped) that round-trips. While auditing

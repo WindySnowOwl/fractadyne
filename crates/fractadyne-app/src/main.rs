@@ -2355,33 +2355,35 @@ impl FractadyneApp {
                             egui::Color32::WHITE,
                         );
                         // "You are here": project the current center onto the thumbnail.
+                        // Clamp to the thumbnail so the marker is ALWAYS visible (at the edge
+                        // if the view sits outside the minimap's fixed region), and draw it
+                        // with a dark halo so it reads on any background.
                         let (cx, cy) = self.viewport.center_f64();
-                        let nx = ((cx - MINIMAP_CX) / (2.0 * MINIMAP_HX) + 0.5) as f32;
-                        let ny = (0.5 - (cy - MINIMAP_CY) / (2.0 * MINIMAP_HY)) as f32;
+                        let nx = ((cx - MINIMAP_CX) / (2.0 * MINIMAP_HX) + 0.5).clamp(0.0, 1.0) as f32;
+                        let ny = (0.5 - (cy - MINIMAP_CY) / (2.0 * MINIMAP_HY)).clamp(0.0, 1.0) as f32;
                         let mk = rect.min + egui::vec2(nx * rect.width(), ny * rect.height());
                         let (sx, _sy) = self.viewport.complex_span();
                         let rw = (sx / (2.0 * MINIMAP_HX)) as f32 * rect.width();
                         let amber = BRAND_ACCENT;
-                        if rect.contains(mk) {
-                            if rw >= 5.0 {
-                                // Shallow: draw the actual view rectangle.
-                                let rh = rw * rect.height() / rect.width();
-                                let vr = egui::Rect::from_center_size(mk, egui::vec2(rw, rh));
-                                p.rect_stroke(
-                                    vr,
-                                    0.0,
-                                    egui::Stroke::new(1.5, amber),
-                                    egui::StrokeKind::Middle,
-                                );
-                            } else {
-                                // Deep: a crosshair + dot (the view is sub-pixel here).
-                                p.circle_stroke(mk, 4.0, egui::Stroke::new(1.5, amber));
-                                let c = 7.0;
-                                p.line_segment([mk - egui::vec2(c, 0.0), mk + egui::vec2(c, 0.0)],
-                                    egui::Stroke::new(1.0, amber));
-                                p.line_segment([mk - egui::vec2(0.0, c), mk + egui::vec2(0.0, c)],
-                                    egui::Stroke::new(1.0, amber));
-                            }
+                        let halo = egui::Color32::from_black_alpha(190);
+                        if rw >= 6.0 {
+                            // Shallow: draw the actual view rectangle (auto-clipped to the map).
+                            let rh = rw * rect.height() / rect.width();
+                            let vr = egui::Rect::from_center_size(mk, egui::vec2(rw, rh));
+                            p.rect_stroke(vr, 0.0, egui::Stroke::new(3.0, halo), egui::StrokeKind::Middle);
+                            p.rect_stroke(vr, 0.0, egui::Stroke::new(1.5, amber), egui::StrokeKind::Middle);
+                        } else {
+                            // Deep: a bright crosshair + centre dot (the view is sub-pixel here).
+                            let c = 8.0;
+                            let cross = |w: f32, col: egui::Color32, p: &egui::Painter| {
+                                p.line_segment([mk - egui::vec2(c, 0.0), mk + egui::vec2(c, 0.0)], egui::Stroke::new(w, col));
+                                p.line_segment([mk - egui::vec2(0.0, c), mk + egui::vec2(0.0, c)], egui::Stroke::new(w, col));
+                            };
+                            cross(3.5, halo, &p);
+                            p.circle_stroke(mk, 5.0, egui::Stroke::new(3.5, halo));
+                            cross(1.5, amber, &p);
+                            p.circle_stroke(mk, 5.0, egui::Stroke::new(1.5, amber));
+                            p.circle_filled(mk, 2.0, amber);
                         }
                         // Zoom-depth label.
                         p.text(
