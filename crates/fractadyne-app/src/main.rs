@@ -1809,7 +1809,10 @@ impl FractadyneApp {
             }
         }
         let now = ctx.input(|i| i.time);
-        let active = resp.dragged()
+        // Drawing a zoom box drags the pointer but does NOT move the view, so it must not
+        // count as "active" (that would drop the render back to the coarse moving preview).
+        // Only the actual zoom application (apply_zoom) counts.
+        let active = (resp.dragged() && !zoom_boxing)
             || apply_zoom.is_some()
             || (scroll != 0.0 && hovering)
             || (self.zoom_vel.abs() > 1e-3 && hovering);
@@ -4181,9 +4184,12 @@ impl eframe::App for FractadyneApp {
                 // Quality-on-settle: skip AA while interacting (and for a short
                 // settle window after), then render full AA once the view is still.
                 let now = ctx.input(|i| i.time);
+                // Drawing a zoom box (Shift+left-drag → `zoom_boxing`, or right-drag →
+                // `box_start`) drags the pointer but does NOT move the view, so it must not
+                // count as "active" — otherwise the render drops to the coarse moving preview
+                // while you're framing the box. The zoom is applied on release.
                 let active = self.zoom_vel.abs() > 1e-3
-                    || response.dragged()
-                    || self.box_start.is_some()
+                    || (response.dragged() && !zoom_boxing && self.box_start.is_none())
                     || scroll_y != 0.0
                     || space;
                 if active {
