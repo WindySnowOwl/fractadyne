@@ -1058,6 +1058,78 @@ pub fn build_bla_mandel(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64) -> Vec<V
     levels
 }
 
+/// Full value `z = Zₘ + δz` (f64) for a df32 reference orbit — for bailout / escape tests.
+fn bla_full_z(orbit: &[[f32; 4]], m: u32, dz: &CFloatExp) -> (f64, f64) {
+    let z = orbit[m as usize];
+    (z[0] as f64 + z[2] as f64 + dz.re.to_f64(), z[1] as f64 + z[3] as f64 + dz.im.to_f64())
+}
+
+/// **Reference** BLA render of one pixel (the exact algorithm the GPU shader will mirror):
+/// iterate the perturbation `δz` from 0, skipping with the highest valid BLA level, reverting
+/// to a lower level (ultimately a full perturbation step) when a skip would overshoot the
+/// escape, and taking a full step whenever `|δz|` exceeds even the level-0 radius. Returns the
+/// smooth escape iteration, or `None` if bounded to `max_iter`. (Single reference — no
+/// rebasing; used to validate the BLA algorithm on views one reference covers.)
+pub fn bla_iterate(
+    orbit: &[[f32; 4]],
+    levels: &[Vec<BlaNode>],
+    dc: (f64, f64),
+    bailout2: f64,
+    max_iter: u32,
+) -> Option<f64> {
+    let dc_c = CFloatExp { re: FloatExp::from_f64(dc.0), im: FloatExp::from_f64(dc.1) };
+    let mut dz = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
+    let mut m: u32 = 0;
+    let nstep = orbit.len().saturating_sub(1) as u32;
+    loop {
+        if m >= max_iter || m >= nstep {
+            return None; // bounded (ran to the iteration cap / end of the reference)
+        }
+        // Skip with the highest valid BLA level that neither runs past the reference nor
+        // overshoots the escape; revert (try a lower level) on overshoot.
+        let dzmag = dz.abs();
+        let mut applied = false;
+        for l in (0..levels.len()).rev() {
+            let step = 1u32 << l;
+            if (m & (step - 1)) != 0 {
+                continue; // m not aligned to 2^l
+            }
+            let Some(&node) = levels[l].get((m >> l) as usize) else { continue };
+            if m + node.span > nstep || !dzmag.lt(node.r) {
+                continue;
+            }
+            let ndz = node.a.mul(dz).add(node.b.mul(dc_c)); // δz = A·δz + B·δc
+            let nm = m + node.span;
+            let (zx, zy) = bla_full_z(orbit, nm, &ndz);
+            if zx * zx + zy * zy > bailout2 {
+                continue; // overshoot — escaped within the span; drop to a lower level
+            }
+            dz = ndz;
+            m = nm;
+            applied = true;
+            break;
+        }
+        if applied {
+            continue;
+        }
+        // Full perturbation step at Zₘ: δz' = 2Zδz + δz² + δc (exact — used near the escape).
+        let z = orbit[m as usize];
+        let two_z = CFloatExp {
+            re: FloatExp::from_f64(2.0 * (z[0] as f64 + z[2] as f64)),
+            im: FloatExp::from_f64(2.0 * (z[1] as f64 + z[3] as f64)),
+        };
+        dz = two_z.mul(dz).add(dz.mul(dz)).add(dc_c);
+        m += 1;
+        let (zx, zy) = bla_full_z(orbit, m, &dz);
+        let mag2 = zx * zx + zy * zy;
+        if mag2 > bailout2 {
+            // Smooth escape count (power 2), matching the shader's formula.
+            let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+            return Some(m as f64 + 1.0 - nu);
+        }
+    }
+}
+
 /// Iterations before escape (or `max_iter`) in **arbitrary precision** — ranks
 /// candidate references at deep zoom, where `orbit_length`'s `f64` coordinates would
 /// all collapse to the same value and make the ranking meaningless.
@@ -1699,6 +1771,68 @@ mod tests {
         let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
         assert!(err / mag < 1.0e-3, "BLA vs exact rel err {:.2e} (ops={ops})", err / mag);
         assert!(ops < target / 4, "BLA didn't skip enough (ops={ops} of {target})");
+    }
+
+    // BLA end-to-end: the reference BLA render (with escape-overshoot handling) must agree
+    // with a naive full-step perturbation on the escape iteration — for BLA-engaged pixels
+    // (tiny δc, escape late after big skips) AND fast escapers (large δc). This validates the
+    // revert-on-overshoot logic the GPU shader will mirror.
+    #[test]
+    fn bla_matches_naive_including_escapes() {
+        let p = 96;
+        // Seahorse-ish boundary reference: a long orbit with a dwell gradient nearby.
+        let (cx, cy) = (
+            parse_bf("-0.743643887037158704752191506114774").unwrap(),
+            parse_bf("0.131825904205311970493132056385139").unwrap(),
+        );
+        let max_iter: u32 = 5000;
+        let (orbit, _len) = reference_orbit(&bf(0.0, p), &bf(0.0, p), &cx, &cy, 0, max_iter, p);
+        let bail2 = 65536.0_f64; // 256², matching the app's smooth bailout
+
+        // Naive full-step perturbation escape count (same smooth formula as bla_iterate).
+        let naive = |dc: (f64, f64)| -> Option<f64> {
+            let nstep = orbit.len() - 1;
+            let (mut ex, mut ey) = (0.0f64, 0.0f64);
+            for m in 0..(max_iter as usize).min(nstep) {
+                let z = orbit[m];
+                let (zr, zi) = (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64);
+                let (nex, ney) = (
+                    2.0 * zr * ex - 2.0 * zi * ey + (ex * ex - ey * ey) + dc.0,
+                    2.0 * zr * ey + 2.0 * zi * ex + 2.0 * ex * ey + dc.1,
+                );
+                ex = nex;
+                ey = ney;
+                let zn = orbit[m + 1];
+                let (zx, zy) = (zn[0] as f64 + zn[2] as f64 + ex, zn[1] as f64 + zn[3] as f64 + ey);
+                let mag2 = zx * zx + zy * zy;
+                if mag2 > bail2 {
+                    let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+                    return Some((m + 1) as f64 + 1.0 - nu);
+                }
+            }
+            None
+        };
+
+        let check = |dc_max: f64, dcs: &[(f64, f64)]| {
+            let levels = build_bla_mandel(&orbit, FloatExp::from_f64(dc_max), 1.0e-6);
+            for &dc in dcs {
+                let b = bla_iterate(&orbit, &levels, dc, bail2, max_iter);
+                let n = naive(dc);
+                match (b, n) {
+                    (None, None) => {}
+                    (Some(bv), Some(nv)) => assert!(
+                        (bv - nv).abs() < 0.5,
+                        "BLA {bv} vs naive {nv} at δc={dc:?} (dc_max={dc_max})"
+                    ),
+                    _ => panic!("BLA/naive disagree on escape at δc={dc:?}: bla={b:?} naive={n:?}"),
+                }
+            }
+        };
+
+        // BLA-engaged: tiny δc near the boundary (mix of late-escaping and bounded).
+        check(1.5e-3, &[(0.0, 0.0), (1.0e-3, 0.0), (-1.0e-3, 5.0e-4), (8.0e-4, -9.0e-4), (1.5e-3, 1.5e-3)]);
+        // Fast escapers: large δc leave the set quickly (BLA can't engage — full steps).
+        check(0.8, &[(0.2, 0.1), (0.4, -0.2), (0.5, 0.3), (-0.6, 0.0)]);
     }
 
     #[test]

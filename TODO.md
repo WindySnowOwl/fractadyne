@@ -563,10 +563,15 @@ for fun, informative value, and ease of use.
       (level tree, odd-tail carry); merged radius `min(r₁,(r₂−|B₁|·δc_max)/|A₁|)`. Validated:
       `bla_reproduces_exact_perturbation` — a BLA traversal matches full-step perturbation
       (rel err <1e-3) while skipping >¾ of iterations on a main-cardioid reference.
-      **Phase 2 (next): GPU** — upload the tree (df32 mantissa + i32 exp per node), shader
-      traversal (highest valid level → apply → skip span; fall back to a full step near the
-      reference), wire into the Mandelbrot mode-0/2 loops, handle escape at BLA boundaries
-      (re-step on overshoot), gate + `--selftest` (BLA == non-BLA). **Phase 3:** Multibrot.
+      **Phase 2a DONE (core reference algorithm):** `bla_iterate` — the exact per-pixel render
+      the shader will mirror: skip with the highest valid level, **revert to a lower level /
+      full step on escape overshoot**, full step when `|δz|` exceeds even the level-0 radius.
+      Validated by `bla_matches_naive_including_escapes` (BLA == naive perturbation on the
+      escape iteration for both BLA-engaged tiny-δc pixels and large-δc fast escapers).
+      **Phase 2b (next): GPU port** — new storage buffer for the tree (df32 mantissa + i32 exp
+      per node) across the live/export/selftest bind groups, uniform level offsets, shader
+      port of `bla_iterate` into the Mandelbrot mode-2 (then mode-0) loop, integrate with
+      rebasing, gate + `--selftest` (BLA == non-BLA). **Phase 3:** Multibrot.
 - [ ] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
       beyond the current single-reference Zhuoran rebasing.
 
