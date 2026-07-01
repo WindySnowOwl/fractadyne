@@ -24,6 +24,13 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Multi-reference glitch correction — phase 2b (correction orchestration)** — `render_corrected_iter`
+  renders the iteration buffer with detection on, then repeatedly places a fresh reference (bignum)
+  at the largest glitched region and re-renders, adopting the newly-resolved pixels until nothing is
+  glitched. Seeding at the exact pixel center guarantees convergence. A selftest resolves a
+  seahorse-1e8× view's flagged glitches to **0 residual** with a handful of references. Next: color
+  the corrected buffer and wire it into exports behind a preference.
+
 - **Multi-reference glitch correction — phase 2a (GPU detection)** — the shader now detects
   Pauldelbrot glitches (`|z|² < tol·|Z|²`) in both perturbation paths (df32 + floatexp), flagging
   glitched pixels with a `-2` sentinel in the iteration texture (harmless when uncorrected — the

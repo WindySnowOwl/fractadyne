@@ -500,6 +500,29 @@ impl FractadyneApp {
                         pass: auto_gl > 0 && bad_gl >= auto_gl,
                     });
                 }
+
+                // (D2c) End-to-end multi-reference CORRECTION. Starting from the auto reference
+                // (which flags a few glitches here), the corrector drops in extra references and
+                // must resolve every flagged pixel — residual glitches → 0.
+                {
+                    let mut vp = Viewport::new(N as f64, N as f64);
+                    vp.center_x = fractadyne_core::parse_bf(SX).unwrap();
+                    vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
+                    vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                    vp.precision = fractadyne_core::precision_for_magnification(mag);
+                    if let Some((_buf, refs_used, residual)) =
+                        self.render_corrected_iter(device, queue, &vp, false, N, N, 40)
+                    {
+                        checks.push(SelfCheck {
+                            category: "Glitch",
+                            name: "multi-reference correction resolves glitches".into(),
+                            params: "seahorse, 1e8×, auto seed + correction".into(),
+                            result: format!("{refs_used} references, {residual} residual glitches"),
+                            threshold: "0 residual glitches",
+                            pass: residual == 0,
+                        });
+                    }
+                }
             }
 
             // (E) Real-axis symmetry + interior/exterior presence + finiteness @home.

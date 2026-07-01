@@ -621,9 +621,16 @@ for fun, informative value, and ease of use.
       harmless when uncorrected). `ExportRequest.glitch_on` plumbs it through `render_iter`/
       `render_export`; live rendering leaves it 0. Selftest "glitch detection responds to
       reference quality" confirms detection fires and a far-offset reference flags ≥ the auto
-      reference (50/50, goldens 4/4). **Phase 2b (next):** app-side orchestration — multi-pass
-      detect→pick new reference (bignum)→re-render→merge over `render_iter`, then color the merged
-      buffer, for the offscreen/export path.
+      reference (50/50, goldens 4/4). **Phase 2b DONE (correction orchestration):**
+      `FractadyneApp::render_corrected_iter` renders the iteration buffer with `glitch_on`, then
+      repeatedly drops a fresh reference (bignum, via `compute_reference`) at the glitched region's
+      centroid, re-renders, and adopts the newly-resolved pixels — until nothing is glitched or
+      `max_refs`. Seeding at the exact pixel *center* (the +0.5 texel offset) makes δc = 0 there,
+      so each pass resolves at least its seed ⇒ guaranteed convergence. Selftest "multi-reference
+      correction resolves glitches" (seahorse 1e8×): 9 flagged → **0 residual** with 7 references
+      (51/51, goldens 4/4). **Phase 2c (next):** color the corrected buffer (GPU color-only pass
+      over an uploaded iteration texture) + wire into the export path behind a "Glitch correction"
+      preference + tiling for exports larger than the GPU max texture dim.
 
 ### Tier 3 — big bets (separate engines)
 - [ ] **3D fractals** (Mandelbulb / Mandelbox, ray-marched).

@@ -254,6 +254,98 @@ impl FractadyneApp {
             interior_col: self.interior_color(),
         }
     }
+
+    /// Render the iteration buffer with **multi-reference glitch correction** (offscreen). Renders
+    /// with the base reference (Pauldelbrot flagging on), then repeatedly drops a fresh reference
+    /// into the largest remaining glitched region, re-renders, and adopts the now-correct pixels —
+    /// until nothing is glitched or `max_refs` is hit. Returns the merged raw RGBA32F iteration
+    /// buffer (`w*h*4`) plus `(references_used, residual_glitches)`. Single-texture (bounded by the
+    /// GPU max dim); the caller colors the result. Perturbation modes only (direct has no glitches).
+    pub(crate) fn render_corrected_iter(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        vp: &Viewport,
+        julia: bool,
+        width: u32,
+        height: u32,
+        max_refs: usize,
+    ) -> Option<(Vec<f32>, usize, usize)> {
+        let mut req = self.current_export_request_for(vp, julia);
+        req.width = width;
+        req.height = height;
+        req.ss = 1;
+        req.glitch_on = 1;
+        let mut merged = fractadyne_gpu::render_iter(device, queue, &req).ok()?.pixels;
+        // Direct path (mode 1) never glitches; nothing to correct.
+        if req.mode == 1 {
+            return Some((merged, 1, 0));
+        }
+        let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
+        let span = vp.complex_span_fe();
+        let precision = vp.precision;
+        let eff_iter = req.max_iter;
+        let delta_exp = req.delta_exp;
+        let (w, h) = (width as usize, height as usize);
+        let mut refs_used = 1usize;
+
+        for _ in 1..max_refs {
+            // Glitched pixels carry the -2 sentinel (r < -1.5); interior is -1, escaped ≥ 0.
+            let glitch: Vec<usize> = (0..w * h).filter(|&i| merged[i * 4] < -1.5).collect();
+            if glitch.is_empty() {
+                break;
+            }
+            // New reference at the glitched pixel nearest the region's centroid.
+            let (mut sx, mut sy) = (0.0f64, 0.0f64);
+            for &i in &glitch {
+                sx += (i % w) as f64;
+                sy += (i / w) as f64;
+            }
+            let n = glitch.len() as f64;
+            let (cxp, cyp) = (sx / n, sy / n);
+            let seed = *glitch
+                .iter()
+                .min_by(|&&a, &&b| {
+                    let da = ((a % w) as f64 - cxp).powi(2) + ((a / w) as f64 - cyp).powi(2);
+                    let db = ((b % w) as f64 - cxp).powi(2) + ((b / w) as f64 - cyp).powi(2);
+                    da.partial_cmp(&db).unwrap()
+                })
+                .unwrap();
+            // Bignum coordinate of that export pixel's CENTER (the +0.5 matches the shader's texel
+            // center), mapped into the viewport's pixel space. Getting this exact makes δc = 0 at
+            // the seed pixel, so it renders exactly and can't glitch against its own reference —
+            // which guarantees each pass resolves at least the seed and the loop converges.
+            let vpx = ((seed % w) as f64 + 0.5) * (vp.width_px / w as f64);
+            let vpy = ((seed / w) as f64 + 0.5) * (vp.height_px / h as f64);
+            let (rx, ry) = vp.pixel_to_complex(vpx, vpy);
+            let (orbit, len, rp) =
+                self.compute_reference(&center_bf, span, eff_iter, precision, julia, Some([rx, ry]));
+            let dx = fractadyne_core::ref_offset_mantissa(&center_bf[0], &rp[0], delta_exp, precision);
+            let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &rp[1], delta_exp, precision);
+            let (dxh, dyh) = (dx as f32, dy as f32);
+
+            // Re-reference pass: fresh orbit, no SA/BLA (they were built for the base reference).
+            let mut r = req.clone();
+            r.orbit = orbit;
+            r.orbit_len = len;
+            r.ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
+            r.sa_skip = 0;
+            r.bla_on = 0;
+            r.bla = std::sync::Arc::new(Vec::new());
+            let pass = fractadyne_gpu::render_iter(device, queue, &r).ok()?.pixels;
+            refs_used += 1;
+            // Adopt pixels this reference resolved (no longer glitched).
+            for &i in &glitch {
+                if pass[i * 4] >= -1.5 {
+                    merged[i * 4..i * 4 + 4].copy_from_slice(&pass[i * 4..i * 4 + 4]);
+                }
+            }
+        }
+        // Residual glitches after the final pass (0 = fully corrected).
+        let residual = (0..w * h).filter(|&i| merged[i * 4] < -1.5).count();
+        Some((merged, refs_used, residual))
+    }
+
     /// Build the GPU params for one fractal view, computing the perturbation
     /// reference (deep Mandelbrot) or selecting the direct df32 path. Shared by the
     /// single view and both panels of the dual view.
