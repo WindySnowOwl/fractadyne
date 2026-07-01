@@ -599,11 +599,16 @@ for fun, informative value, and ease of use.
       ports `bla_iterate` into the mode-2 loop (skip highest valid level → revert on escape
       overshoot → full step), updating the derivative `D=A·D+B` on skips. Core packers
       `CFloatExp::to_mantissa_exp`/`FloatExp::to_f32_exp`/`bla_to_gpu`; one uniform flag
-      `bla_on`; app gate `self.use_bla` (mode 2, Mandelbrot, non-Julia, non-aux). Validated:
-      `--selftest` "BLA render == non-BLA @1e30×" (0 mismatch, BLA engaged over 48400 interior
-      px) + the core escape test. **Off by default (opt-in `use_bla`)** pending: GPU escape-path
-      coverage (needs a deep *boundary* coordinate), then enable-by-default + UI toggle +
-      combine with SA + live per-reference caching. **Phase 3:** mode-0 + Multibrot.
+      `bla_on`; app gate `self.use_bla` (mode 2, Mandelbrot, non-Julia, non-aux). **Phase 2c DONE
+      (user-facing + escape-path validated):** `use_bla` is now a persisted **View-menu toggle**
+      (`SessionState::use_bla`), and the GPU escape-overshoot revert is validated — a new selftest
+      "BLA escape path == non-BLA @1e30× (boundary)" renders a deep boundary view (**48400
+      escapers**, 0 mismatch) alongside the all-interior nucleus test (48400 interior, 0 mismatch),
+      so both BLA code paths are covered. **Still off by default** — the perf cost/benefit needs
+      interactive measurement (the tree is rebuilt per frame; see below). Remaining before
+      enable-by-default: **live per-reference BLA caching** (cache the tree in `RefCache` keyed by
+      `orbit_id`, rebuild only when the reference changes — currently `build_bla` runs every frame),
+      then measure, then combine with SA. **Phase 3:** mode-0 + Multibrot.
 - [x] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
       beyond the current single-reference Zhuoran rebasing. **Shipping for single-view exports**
       via a "Glitch correction (export)" preference (View menu, persisted): detects perturbation

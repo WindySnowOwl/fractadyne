@@ -133,6 +133,10 @@ pub struct SessionState {
     /// Multi-reference glitch correction for exports (slower, glitch-free). Default off.
     #[serde(default)]
     pub glitch_correct: bool,
+    /// BLA (bilinear approximation) acceleration for deep floatexp Mandelbrot. Default off
+    /// (opt-in: it skips iterations throughout the orbit but rebuilds a tree per frame).
+    #[serde(default)]
+    pub use_bla: bool,
     /// UI scale (egui zoom factor) — scales the interface fonts + widgets. 1.0 = default.
     #[serde(default = "default_ui_scale")]
     pub ui_scale: f32,
@@ -294,6 +298,7 @@ impl Default for SessionState {
             dual: false,
             series_approx: true,
             glitch_correct: false,
+            use_bla: false,
             ui_scale: default_ui_scale(),
             show_orbits: false,
             orbit_normalize: false,

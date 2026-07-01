@@ -24,6 +24,14 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **BLA acceleration: user toggle + escape-path validation** — bilinear approximation (skip
+  iterations throughout the orbit at extreme depth) is now a persisted **View-menu toggle**
+  ("BLA acceleration (deep zoom)") instead of a hidden dev flag. Its GPU escape-overshoot revert
+  is now validated: a new self-test renders a deep *boundary* view (48400 escaping pixels, 0
+  mismatch vs BLA off) to complement the existing all-interior test — both code paths covered.
+  Still off by default while the per-frame cost/benefit is measured (the acceleration tree is
+  rebuilt each frame; per-reference caching is the next step before enabling by default).
+
 - **Multi-reference glitch correction — now shipping for exports (phase 2c)** — a new
   **"Glitch correction (export)"** preference (View menu, persisted) makes single-view exports
   glitch-free: perturbation glitches are detected and those pixels re-rendered against extra

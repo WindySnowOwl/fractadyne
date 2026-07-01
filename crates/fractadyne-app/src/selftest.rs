@@ -981,6 +981,56 @@ impl FractadyneApp {
                     pass: false,
                 }),
             }
+            // Escape-path coverage: the nucleus view above is all-interior, so it never exercises
+            // BLA's escape-overshoot revert. A deep BOUNDARY view (many escapers) does — BLA on
+            // must still match BLA off on every escaped pixel.
+            {
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf(SX).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
+                vp.precision = fractadyne_core::precision_for_magnification(1.0e30);
+                let mut on = self.current_export_request_for(&vp, false);
+                on.width = N;
+                on.height = N;
+                on.ss = 1;
+                let mut off = on.clone();
+                off.bla_on = 0;
+                let (bon, mode) = (on.bla_on, on.mode);
+                if let (Some(a), Some(b)) = (
+                    fractadyne_gpu::render_iter(device, queue, &on).ok().map(|r| r.pixels),
+                    fractadyne_gpu::render_iter(device, queue, &off).ok().map(|r| r.pixels),
+                ) {
+                    let (mut mism, mut esc) = (0u64, 0u64);
+                    for j in 0..nn {
+                        for i in 0..nn {
+                            if steep(&b, i, j) {
+                                continue;
+                            }
+                            let k = j * nn + i;
+                            let (ra, rb) = (a[k * 4], b[k * 4]);
+                            match (ra < 0.0, rb < 0.0) {
+                                (false, false) => {
+                                    esc += 1;
+                                    if (ra - rb).abs() > 0.5 {
+                                        mism += 1;
+                                    }
+                                }
+                                (true, true) => {}
+                                _ => mism += 1,
+                            }
+                        }
+                    }
+                    checks.push(SelfCheck {
+                        category: "BLA",
+                        name: "BLA escape path == non-BLA @1e30× (boundary)".into(),
+                        params: format!("seahorse boundary, mode {mode}, bla_on {bon}, {esc} escaped"),
+                        result: format!("{mism} mismatch"),
+                        threshold: "bla engaged, escapers>100, 0 mismatch",
+                        pass: bon == 1 && mode == 2 && esc > 100 && mism == 0,
+                    });
+                }
+            }
             self.use_bla = false;
             self.series_approx = true;
         }

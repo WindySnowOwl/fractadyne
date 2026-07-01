@@ -1273,7 +1273,7 @@ impl FractadyneApp {
             auto_iter: s.auto_iter,
             series_approx: s.series_approx,
             glitch_correct: s.glitch_correct,
-            use_bla: false,
+            use_bla: s.use_bla,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             zoom_rate: s.zoom_rate,
             aa: s.aa,
@@ -1443,6 +1443,7 @@ impl FractadyneApp {
             dual: self.dual,
             series_approx: self.series_approx,
             glitch_correct: self.glitch_correct,
+            use_bla: self.use_bla,
             ui_scale: self.ui_scale,
             show_orbits: self.show_orbits,
             orbit_normalize: self.orbit_normalize,
@@ -3475,6 +3476,13 @@ impl eframe::App for FractadyneApp {
                                  references until clean. Slower; applies to single-view exports up \
                                  to the GPU texture limit (non-aux coloring). The live view is \
                                  unaffected.",
+                            );
+                        ui.checkbox(&mut self.use_bla, "BLA acceleration (deep zoom)")
+                            .on_hover_text(
+                                "Bilinear approximation: skip iterations throughout the orbit at \
+                                 extreme depth (floatexp Mandelbrot, ≥1e28×). Can speed up deep \
+                                 renders; opt-in while its cost/benefit is tuned. Identical output \
+                                 — verified by the self-test.",
                             );
                         if ui
                             .checkbox(&mut self.dual, "Dual view (Mandelbrot ↔ Julia)")
