@@ -2697,49 +2697,60 @@ impl FractadyneApp {
             .max_height(max_h)
             .resizable(true)
             .show(ctx, |ui| {
-                // A left table-of-contents panel + a scrollable content panel. Using
-                // SidePanel/CentralPanel `show_inside` bounds the content width so paragraphs
-                // wrap normally (a manual horizontal split let the text run off sideways).
-                egui::SidePanel::left("help_toc")
-                    .resizable(false)
-                    .exact_width(170.0)
-                    .show_inside(ui, |ui| {
-                        ui.add_space(4.0);
-                        for (i, name) in SECTIONS.iter().enumerate() {
-                            ui.selectable_value(&mut self.help_section, i, *name);
-                        }
-                    });
-                // Inset the content (keep the panel fill) so the ToC separator line doesn't
-                // clip the first character of each line.
-                egui::CentralPanel::default()
-                    .frame(
-                        egui::Frame::central_panel(ui.style())
-                            .inner_margin(egui::Margin::symmetric(12, 8)),
-                    )
-                    .show_inside(ui, |ui| {
-                    // Solid (not floating/hover-only) scrollbar that stays put when content
-                    // overflows, but is hidden when it doesn't (no stray bar on short pages).
-                    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .scroll_bar_visibility(
-                            egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
-                        )
-                        .show(ui, |ui| {
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                        match self.help_section {
-                            0 => help_overview(ui),
-                            1 => help_navigation(ui),
-                            2 => help_options(ui),
-                            3 => help_fractals(ui),
-                            4 => help_methodology(ui),
-                            5 => help_command_line(ui),
-                            6 => help_shortcuts(ui),
-                            7 => help_hardware(ui),
-                            8 => help_acknowledgments(ui),
-                            _ => help_about(ui),
-                        }
-                    });
+                // Manual two-column split (fixed contents list + scrollable content pane).
+                // Explicit widths make the content both wrap AND fill the window, so the
+                // window's resize grip stays at the true bottom-right — nested SidePanel/
+                // CentralPanel mis-reported the width and stranded the grip beside the list.
+                let toc_w = 165.0_f32;
+                let avail = ui.available_size();
+                ui.horizontal_top(|ui| {
+                    // Contents list (fixed width).
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(toc_w, avail.y),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_width(toc_w);
+                            ui.set_max_width(toc_w);
+                            ui.add_space(4.0);
+                            for (i, name) in SECTIONS.iter().enumerate() {
+                                ui.selectable_value(&mut self.help_section, i, *name);
+                            }
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(8.0); // left inset so the separator doesn't touch the text
+                    let content_w = ui.available_width().max(240.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(content_w, avail.y),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_width(content_w);
+                            ui.set_max_width(content_w);
+                            // Solid, only-when-needed scrollbar (not floating/hover-only).
+                            ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .scroll_bar_visibility(
+                                    egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                                )
+                                .show(ui, |ui| {
+                                    ui.set_max_width(content_w - 18.0); // leave room for the bar
+                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                                    match self.help_section {
+                                        0 => help_overview(ui),
+                                        1 => help_navigation(ui),
+                                        2 => help_options(ui),
+                                        3 => help_fractals(ui),
+                                        4 => help_methodology(ui),
+                                        5 => help_command_line(ui),
+                                        6 => help_shortcuts(ui),
+                                        7 => help_hardware(ui),
+                                        8 => help_acknowledgments(ui),
+                                        _ => help_about(ui),
+                                    }
+                                });
+                        },
+                    );
                 });
             });
         self.help_open = open;
