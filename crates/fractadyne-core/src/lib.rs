@@ -1481,6 +1481,223 @@ pub fn find_nucleus(
     Some(Nucleus { period, cx, cy })
 }
 
+// ============================================================================
+// Multi-reference glitch correction (phase 1: CPU reference algorithm, Mandelbrot).
+//
+// Single-reference perturbation loses precision where a pixel's orbit dips far below the
+// reference orbit (|z_n| ≪ |Z_n|) — the classic *Pauldelbrot glitch*: δz = z − Z suffers
+// catastrophic cancellation, so the low-order deviation carries no real information and every
+// later iterate is garbage (speckle / wrong bands). Zhuoran rebasing mitigates it but a single
+// reference still can't serve pixels that live in a genuinely different part of the orbit space.
+//
+// Multi-reference correction detects glitched pixels (Pauldelbrot criterion) and recomputes just
+// those against additional references placed *inside* each glitched region, repeating until every
+// pixel is served by a reference for which it is not glitched. This is the exact CPU algorithm the
+// GPU/app path will mirror — validated here first, as BLA was.
+// ============================================================================
+
+/// Result of perturbing one pixel against one reference.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Perturb {
+    /// Escaped, with this smooth (fractional) iteration count.
+    Escaped(f64),
+    /// Never escaped within `max_iter` (in-set / interior).
+    Interior,
+    /// The reference is unreliable here (Pauldelbrot criterion) — needs another reference.
+    Glitch,
+}
+
+/// Mandelbrot reference orbit as f64 `Z_n` (iterated in bignum, narrowed to f64). Stops at escape
+/// (`|Z|² > 1e12`) like [`reference_orbit`], so `len ≤ max_iter + 1`. `Z_0 = 0`.
+pub fn reference_orbit_f64(cx: &BigFloat, cy: &BigFloat, max_iter: u32, p: usize) -> Vec<(f64, f64)> {
+    let mut out = Vec::with_capacity(max_iter as usize + 1);
+    let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+    out.push((0.0, 0.0));
+    let mut n = 0;
+    while n < max_iter {
+        let (nx, ny) = step_bf(&zx, &zy, cx, cy, 0, p);
+        zx = nx;
+        zy = ny;
+        let (xv, yv) = (to_f64(&zx), to_f64(&zy));
+        out.push((xv, yv));
+        n += 1;
+        if xv * xv + yv * yv > 1.0e12 {
+            break;
+        }
+    }
+    out
+}
+
+/// Single-reference Mandelbrot perturbation for one pixel, with Zhuoran rebasing and Pauldelbrot
+/// glitch detection. `orbit` = reference `Z_n` (high precision, f64); `dc` = pixel_c − reference_c.
+///
+/// Crucially the deviation `δz`/`δc` is carried in **f32** — mirroring the GPU (df64 reference,
+/// df32 delta). That precision gap is what makes glitches real *and fixable*: where a pixel's
+/// orbit dips far below the reference (`|z_n|² < glitch_tol²·|Z_n|²`, Pauldelbrot), the f32 δz
+/// can't represent the cancellation in `z = Z + δz`, so the pixel is wrong — but a reference
+/// placed closer keeps `|δz|` small enough for f32 to hold, fixing it. Mirrors the shader loop:
+/// `δz' = 2Z·δz + δz² + δc`, `z = Z_{n+1} + δz`, rebase when `|z|² < |δz|²` or the reference ends.
+pub fn perturb_pixel_mandel(
+    orbit: &[(f64, f64)],
+    dc: (f64, f64),
+    max_iter: u32,
+    glitch_tol: f64,
+) -> Perturb {
+    let bail2 = 256.0 * 256.0;
+    let tol2 = glitch_tol * glitch_tol;
+    let n_ref = orbit.len();
+    if n_ref == 0 {
+        return Perturb::Interior;
+    }
+    let (dcx, dcy) = (dc.0 as f32, dc.1 as f32);
+    let (mut dzx, mut dzy) = (0.0f32, 0.0f32);
+    let mut ref_n = 0usize;
+    let mut iter = 0u32;
+    loop {
+        if iter >= max_iter {
+            return Perturb::Interior;
+        }
+        let (zrx, zry) = orbit[ref_n]; // reference kept in full f64 precision
+        // δz' = 2·Z_n·δz + δz² + δc, evaluated with the reference in f64 but δz stored back as f32.
+        let dxf = dzx as f64;
+        let dyf = dzy as f64;
+        let two_zdz = (2.0 * (zrx * dxf - zry * dyf), 2.0 * (zrx * dyf + zry * dxf));
+        let dz2 = (dxf * dxf - dyf * dyf, 2.0 * dxf * dyf);
+        dzx = (two_zdz.0 + dz2.0) as f32 + dcx;
+        dzy = (two_zdz.1 + dz2.1) as f32 + dcy;
+        ref_n += 1;
+        iter += 1;
+        // Full value z = Z_{n+1} + δz (the f32 δz limits how small a cancellation survives here).
+        let (zrnx, zrny) = orbit[ref_n.min(n_ref - 1)];
+        let zx = zrnx + dzx as f64;
+        let zy = zrny + dzy as f64;
+        let z2 = zx * zx + zy * zy;
+        // Pauldelbrot glitch: the pixel value is anomalously small vs the reference here.
+        let zr2 = zrnx * zrnx + zrny * zrny;
+        if z2 < tol2 * zr2 {
+            return Perturb::Glitch;
+        }
+        if z2 > bail2 {
+            let nu = (z2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+            return Perturb::Escaped(iter as f64 + 1.0 - nu);
+        }
+        // Rebase (Zhuoran): reference exhausted, or the perturbation now dominates the reference.
+        let dzmag2 = (dzx as f64) * (dzx as f64) + (dzy as f64) * (dzy as f64);
+        if z2 < dzmag2 || ref_n + 1 >= n_ref {
+            dzx = zx as f32;
+            dzy = zy as f32;
+            ref_n = 0;
+        }
+    }
+}
+
+/// Per-pixel smooth-iteration grid (NaN = interior) plus diagnostics, from a multi-reference render.
+pub struct MultiRefResult {
+    /// `w*h` row-major smooth iteration counts; `NaN` marks interior (non-escaping) pixels.
+    pub smooth: Vec<f64>,
+    /// Number of references the correction ended up using.
+    pub refs_used: usize,
+    /// Pixels the *first* reference flagged as glitched (before any correction) — how much work
+    /// multi-reference actually did.
+    pub glitched_pass0: usize,
+    /// Pixels still glitched after `max_refs` (0 = fully converged).
+    pub unresolved: usize,
+}
+
+/// Render a `w×h` Mandelbrot grid with multi-reference glitch correction. `upp` is the f64
+/// units-per-pixel (this phase targets depths where the per-pixel `δc` fits f64). The first
+/// reference sits at pixel `seed`; each remaining glitched region then gets its own reference
+/// (placed at the glitched pixel nearest that region's centroid), up to `max_refs`.
+#[allow(clippy::too_many_arguments)]
+pub fn render_multiref_mandel(
+    center_x: &BigFloat,
+    center_y: &BigFloat,
+    upp: f64,
+    w: usize,
+    h: usize,
+    max_iter: u32,
+    glitch_tol: f64,
+    seed: (usize, usize),
+    max_refs: usize,
+    p: usize,
+) -> MultiRefResult {
+    let (cx0, cy0) = (to_f64(center_x), to_f64(center_y));
+    // Complex coordinate (f64) of a pixel center; +y is up (screen y grows downward).
+    let pix_c = |px: usize, py: usize| -> (f64, f64) {
+        (
+            cx0 + (px as f64 - w as f64 * 0.5) * upp,
+            cy0 - (py as f64 - h as f64 * 0.5) * upp,
+        )
+    };
+    // Bignum coordinate of a pixel (the reference orbit needs the precision).
+    let pix_c_bf = |px: usize, py: usize| -> (BigFloat, BigFloat) {
+        let ox = bf((px as f64 - w as f64 * 0.5) * upp, p);
+        let oy = bf((py as f64 - h as f64 * 0.5) * upp, p);
+        (center_x.add(&ox, p, RM), center_y.sub(&oy, p, RM))
+    };
+
+    let mut smooth = vec![f64::NAN; w * h];
+    let mut done = vec![false; w * h];
+    let mut ref_px = seed;
+    let mut refs_used = 0usize;
+    let mut glitched_pass0 = 0usize;
+    let mut unresolved = 0usize;
+
+    for pass in 0..max_refs {
+        let (rcx, rcy) = pix_c_bf(ref_px.0, ref_px.1);
+        let orbit = reference_orbit_f64(&rcx, &rcy, max_iter, p);
+        let rc = pix_c(ref_px.0, ref_px.1);
+        refs_used += 1;
+        let mut glitch_pixels: Vec<(usize, usize)> = Vec::new();
+        for py in 0..h {
+            for px in 0..w {
+                let idx = py * w + px;
+                if done[idx] {
+                    continue;
+                }
+                let pc = pix_c(px, py);
+                let dc = (pc.0 - rc.0, pc.1 - rc.1);
+                match perturb_pixel_mandel(&orbit, dc, max_iter, glitch_tol) {
+                    Perturb::Escaped(s) => {
+                        smooth[idx] = s;
+                        done[idx] = true;
+                    }
+                    Perturb::Interior => {
+                        smooth[idx] = f64::NAN;
+                        done[idx] = true;
+                    }
+                    Perturb::Glitch => glitch_pixels.push((px, py)),
+                }
+            }
+        }
+        if pass == 0 {
+            glitched_pass0 = glitch_pixels.len();
+        }
+        unresolved = glitch_pixels.len(); // 0 once the region is fully served
+        if glitch_pixels.is_empty() {
+            break;
+        }
+        // Next reference: the glitched pixel nearest the centroid of the remaining glitch region
+        // (a coarse "largest blob" heuristic — good enough, and the region shrinks each pass).
+        let (mut sx, mut sy) = (0.0, 0.0);
+        for &(gx, gy) in &glitch_pixels {
+            sx += gx as f64;
+            sy += gy as f64;
+        }
+        let n = glitch_pixels.len() as f64;
+        let (cxp, cyp) = (sx / n, sy / n);
+        ref_px = *glitch_pixels
+            .iter()
+            .min_by(|a, b| {
+                let da = (a.0 as f64 - cxp).powi(2) + (a.1 as f64 - cyp).powi(2);
+                let db = (b.0 as f64 - cxp).powi(2) + (b.1 as f64 - cyp).powi(2);
+                da.partial_cmp(&db).unwrap()
+            })
+            .unwrap();
+    }
+    MultiRefResult { smooth, refs_used, glitched_pass0, unresolved }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1909,6 +2126,143 @@ mod tests {
             reference_orbit(&bf(0.0, 64), &bf(0.0, 64), &r[0], &r[1], 0, 500, 64).1,
             501
         );
+    }
+
+    // ---- multi-reference glitch correction ----
+
+    /// Exact f64 direct escape smooth-iter (ground truth at shallow zoom, where f64 is exact).
+    fn oracle_smooth_f64(cx: f64, cy: f64, max_iter: u32) -> f64 {
+        let (mut zx, mut zy) = (0.0f64, 0.0f64);
+        for n in 0..max_iter {
+            let (nx, ny) = (zx * zx - zy * zy + cx, 2.0 * zx * zy + cy);
+            zx = nx;
+            zy = ny;
+            let m2 = zx * zx + zy * zy;
+            if m2 > 256.0 * 256.0 {
+                let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+                return (n + 1) as f64 + 1.0 - nu;
+            }
+        }
+        f64::NAN
+    }
+
+    /// Exact bignum direct escape smooth-iter — ground truth at any depth.
+    fn oracle_smooth_bf(cx: &BigFloat, cy: &BigFloat, max_iter: u32, p: usize) -> f64 {
+        let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+        for n in 0..max_iter {
+            let (nx, ny) = step_bf(&zx, &zy, cx, cy, 0, p);
+            zx = nx;
+            zy = ny;
+            let (xv, yv) = (to_f64(&zx), to_f64(&zy));
+            let m2 = xv * xv + yv * yv;
+            if m2 > 256.0 * 256.0 {
+                let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+                return (n + 1) as f64 + 1.0 - nu;
+            }
+        }
+        f64::NAN
+    }
+
+    /// Two smooth values agree, tolerating the interior-vs-late-escape ambiguity right at the
+    /// boundary (a pixel that escapes at ~max_iter and one flagged interior are indistinguishable).
+    fn smooth_agrees(a: f64, b: f64, max_iter: u32) -> bool {
+        let near_max = |v: f64| v.is_nan() || v > max_iter as f64 - 5.0;
+        if a.is_nan() && b.is_nan() {
+            return true;
+        }
+        if near_max(a) && near_max(b) {
+            return true;
+        }
+        (a - b).abs() < 1.0
+    }
+
+    // A genuine glitch: a small view around a real minibrot. The nucleus's critical orbit dips
+    // to ~0 every `period` iterations; an off-nucleus reference does NOT dip as low, so near-
+    // nucleus pixels satisfy the Pauldelbrot criterion (|z| ≪ |Z| while δz stays small — a glitch
+    // rebasing cannot pre-empt). Multi-reference must detect them, add a reference inside the
+    // glitched region, converge, and HEAL the image back to what an accurate reference produces.
+    // Compared against a nucleus-seeded render (not a bignum oracle) so it's exact per pixel: both
+    // use identical f64 math, and the small δc keeps every pixel a genuine, accurate perturbation.
+    #[test]
+    fn multi_reference_resolves_glitches() {
+        // The large period-3 island on the real axis: low period ⇒ few iterations, so the f32-δz
+        // *cancellation* glitch (fixable by a closer reference) dominates over mere accumulation.
+        let nuc = find_nucleus(&[bf(-1.7548, 96), bf(0.0, 96)], 1.0e3, 0, 100)
+            .expect("expected the period-3 minibrot");
+        let p = 96;
+        let (cx, cy) = (nuc.cx.clone(), nuc.cy.clone());
+        let (w, h) = (24usize, 24usize);
+        let upp = 0.010 / w as f64; // a view spanning the island + its glitch halo
+        let max_iter = (nuc.period * 120).clamp(360, 4000);
+        let tol = 1.0e-3;
+
+        // Ground truth: per-pixel bignum direct iteration.
+        let (cx0, cy0) = (to_f64(&cx), to_f64(&cy));
+        let oracle: Vec<f64> = (0..w * h)
+            .map(|i| {
+                let (px, py) = (i % w, i / w);
+                let pcx = bf(cx0 + (px as f64 - w as f64 * 0.5) * upp, p);
+                let pcy = bf(cy0 - (py as f64 - h as f64 * 0.5) * upp, p);
+                oracle_smooth_bf(&pcx, &pcy, max_iter, p)
+            })
+            .collect();
+
+        // Off-nucleus corner reference, WITHOUT correction (single reference only, max_refs=1).
+        let single = render_multiref_mandel(&cx, &cy, upp, w, h, max_iter, tol, (0, 0), 1, p);
+        // Same corner seed, WITH multi-reference correction.
+        let multi = render_multiref_mandel(&cx, &cy, upp, w, h, max_iter, tol, (0, 0), 60, p);
+
+        let count_bad = |v: &[f64]| -> usize {
+            (0..w * h).filter(|&i| !smooth_agrees(v[i], oracle[i], max_iter)).count()
+        };
+        let (s_bad, m_bad) = (count_bad(&single.smooth), count_bad(&multi.smooth));
+        eprintln!(
+            "period {} max_iter {max_iter} | single-ref wrong {s_bad}, multi-ref wrong {m_bad}, refs {}, glitch0 {}",
+            nuc.period, multi.refs_used, multi.glitched_pass0
+        );
+        // The off-nucleus reference flags glitches; the correction adds references and converges.
+        assert!(multi.glitched_pass0 > 0, "off-nucleus seed should induce glitches");
+        assert!(multi.refs_used >= 2, "expected ≥2 references, used {}", multi.refs_used);
+        assert_eq!(multi.unresolved, 0, "{} glitches unresolved", multi.unresolved);
+        // The corrected image matches the bignum ground truth for every pixel, and never worse
+        // than single-reference. (The precision gap that makes correction *necessary* — df64
+        // reference vs df32 δz — lives on the GPU; this validates the algorithm is correct.)
+        assert_eq!(m_bad, 0, "corrected result must match the oracle (wrong: {m_bad})");
+        assert!(m_bad <= s_bad, "correction must not increase error (single {s_bad}, multi {m_bad})");
+    }
+
+    // Sanity on the perturbation math itself: a good central reference reproduces ground truth
+    // (and multi-reference cleans up any far pixels it can't serve directly).
+    #[test]
+    fn perturbation_matches_direct() {
+        let p = 64;
+        let (cx, cy) = (bf(-0.5, p), bf(0.0, p));
+        let (w, h) = (16usize, 16usize);
+        let upp = 2.0 / w as f64;
+        let max_iter = 800u32;
+        let (cx0, cy0) = (to_f64(&cx), to_f64(&cy));
+        let res = render_multiref_mandel(&cx, &cy, upp, w, h, max_iter, 1.0e-3, (w / 2, h / 2), 24, p);
+        assert_eq!(res.unresolved, 0);
+        let mut bad = 0;
+        let mut worst = 0.0f64;
+        for py in 0..h {
+            for px in 0..w {
+                let o = oracle_smooth_f64(
+                    cx0 + (px as f64 - w as f64 * 0.5) * upp,
+                    cy0 - (py as f64 - h as f64 * 0.5) * upp,
+                    max_iter,
+                );
+                let g = res.smooth[py * w + px];
+                if !smooth_agrees(g, o, max_iter) {
+                    bad += 1;
+                    if g.is_finite() && o.is_finite() {
+                        worst = worst.max((g - o).abs());
+                    }
+                    eprintln!("mismatch ({px},{py}): got {g} oracle {o}");
+                }
+            }
+        }
+        assert_eq!(bad, 0, "{bad} pixels disagree with ground truth (worst Δ {worst})");
     }
 
     // The period-2 disk's nucleus is exactly c = -1. Starting near it, the finder must

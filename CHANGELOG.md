@@ -24,6 +24,16 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Multi-reference glitch correction — phase 1 (core algorithm)** — the last real deep-zoom
+  correctness gap. `fractadyne-core` gains the validated CPU algorithm: single-reference
+  perturbation with Zhuoran rebasing **and Pauldelbrot glitch detection** (`perturb_pixel_mandel`,
+  δz in f32 to mirror the GPU's high-precision-reference / low-precision-δz gap), plus
+  `render_multiref_mandel`, which detects glitched pixels, places a new reference inside each
+  glitched region, re-renders and merges, and repeats to convergence. Validated against a bignum
+  per-pixel oracle at a real period-3 minibrot (induces glitches, converges with multiple
+  references, matches ground truth). Follows the BLA playbook (correct core first); the GPU/export
+  port is the next phase.
+
 - **Pan reprojection (retain detail while dragging)** — dragging to pan no longer drops to the
   coarse moving preview (which shows no detail at deep zoom, so you couldn't see where you were
   going). Instead the last detailed frame is frozen and translated with the cursor in the color

@@ -604,8 +604,22 @@ for fun, informative value, and ease of use.
       px) + the core escape test. **Off by default (opt-in `use_bla`)** pending: GPU escape-path
       coverage (needs a deep *boundary* coordinate), then enable-by-default + UI toggle +
       combine with SA + live per-reference caching. **Phase 3:** mode-0 + Multibrot.
-- [ ] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
-      beyond the current single-reference Zhuoran rebasing.
+- [~] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
+      beyond the current single-reference Zhuoran rebasing. **Phase 1 DONE (core algorithm,
+      fractadyne-core, Mandelbrot):** `Perturb` outcome, `reference_orbit_f64`,
+      `perturb_pixel_mandel` (Zhuoran rebasing + Pauldelbrot detection, δz carried in **f32** to
+      mirror the GPU's df64-reference/df32-δz precision gap — the gap that makes glitches real and
+      fixable), and `render_multiref_mandel` (detect glitched pixels → place a new reference at the
+      glitch region's centroid → re-render + merge → repeat to convergence). Validated: a real
+      period-3 minibrot with an off-nucleus reference induces glitches, correction converges (≥2
+      references, 0 unresolved), and the result matches a bignum per-pixel oracle exactly
+      (`multi_reference_resolves_glitches`); plus a perturbation-vs-direct accuracy test. As with
+      BLA, the core algorithm is validated first. **Phase 2 (next):** GPU port — add a `glitch_on`
+      uniform + Pauldelbrot sentinel to the shader's perturbation loops, orchestrate multi-pass
+      detect→re-reference→merge in the app over `render_iter` (raw readback) for the offscreen/
+      export path (bignum for new references lives in the app), then color the merged buffer.
+      Cleanly demonstrating error *reduction* needs the GPU precision gap (df32 δz), so it lands
+      with the port.
 
 ### Tier 3 — big bets (separate engines)
 - [ ] **3D fractals** (Mandelbulb / Mandelbox, ray-marched).
