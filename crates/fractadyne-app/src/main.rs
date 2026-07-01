@@ -2686,15 +2686,19 @@ impl FractadyneApp {
             "About",
         ];
         let mut open = self.help_open;
-        // Cap the height to the screen so the content ScrollArea actually scrolls instead of
-        // the window growing to fit (which pushed content off the bottom).
+        // Cap the size to the screen so the content ScrollArea scrolls (rather than the window
+        // growing to fit) and the window can't be resized past the screen edge (which pushed
+        // the title-bar close button off-screen).
         let max_h = (ctx.screen_rect().height() - 80.0).max(360.0);
+        let max_w = (ctx.screen_rect().width() - 40.0).max(480.0);
         egui::Window::new("Fractadyne Help")
             .open(&mut open)
             .default_size([800.0, 560.0])
             .min_width(480.0) // keep room for the content beside the fixed-width contents list
             .min_height(300.0)
+            .max_width(max_w)
             .max_height(max_h)
+            .constrain(true) // keep the whole window on-screen
             .resizable(true)
             .show(ctx, |ui| {
                 // Manual two-column split (fixed contents list + scrollable content pane).
