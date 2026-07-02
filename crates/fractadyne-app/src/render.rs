@@ -702,17 +702,25 @@ impl FractadyneApp {
                         .bla_eligible(mode, julia)
                         .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
                 };
+                // Anti-churn: space successive spawns ≥ 50 ms apart. Without this, when a recompute
+                // finishes fast (shallow/moderate depth) and the reference is still drifting, we'd
+                // respawn every frame — each install re-uploads the orbit and forces a full GPU
+                // re-iterate, and the resulting upload/re-iterate storm can back up the GPU queue and
+                // freeze the UI. Deep (slow) recomputes already exceed 50 ms, so they're unaffected.
+                let spawn_ok = self.ref_cache[vi]
+                    .last_recompute
+                    .map_or(true, |t| t.elapsed().as_millis() >= 50);
                 if self.ref_cache[vi].ref_pt.is_none() {
                     let res = recompute_worker(inputs); // cold start: nothing to draw with yet
                     self.install_recompute(vi, res);
-                } else if self.recompute_rx[vi].is_none() {
+                } else if self.recompute_rx[vi].is_none() && spawn_ok {
                     let (tx, rx) = std::sync::mpsc::channel();
                     std::thread::spawn(move || {
                         let _ = tx.send(recompute_worker(inputs));
                     });
                     self.recompute_rx[vi] = Some(rx);
                 }
-                // else: a recompute is already in flight — keep using the cached reference.
+                // else: a recompute is already in flight (or throttled) — use the cached reference.
             }
             // At extreme depth the recompute can take long enough that a fast/continuous dive
             // drifts the cached reference too far off-centre before a fresh one lands — rendering
