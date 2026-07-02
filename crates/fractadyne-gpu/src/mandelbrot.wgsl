@@ -1005,7 +1005,7 @@ struct ColorU {
     reproject: u32,    // 1 = reprojection: sample the frozen texture scaled+translated (no re-iterate)
     uv_off: vec2<f32>, // uv translation for the reprojection (fraction of the screen panned)
     uv_scale: f32,     // uv scale about centre (1 = pan only; <1 = zoomed in since the frozen frame)
-    _pad_uv: f32,
+    watermark: u32,    // 1 = draw the discreet "Fd" brand mark in the lower-right corner
     _pad_uv2: f32,
     _pad_uv3: f32,
     interior_col: vec4<f32>, // color for in-set (non-escaping) pixels; rgb in xyz
@@ -1070,6 +1070,26 @@ fn view_average() -> vec3<f32> {
         }
     }
     return acc / f32(n * n);
+}
+
+// Signed distance to an axis-aligned box (centre `c`, half-extents `h`).
+fn sd_box(p: vec2<f32>, c: vec2<f32>, h: vec2<f32>) -> f32 {
+    let d = abs(p - c) - h;
+    return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0);
+}
+
+// Signed distance to a geometric "Fd" wordmark drawn in a local em box: x∈[0,~1], y∈[0,1] (y up).
+// Uppercase F + lowercase d (bowl ring + full-height ascender). Negative = inside the glyphs.
+fn sd_fd(p: vec2<f32>) -> f32 {
+    // F: stem, top arm, mid arm.
+    var d = sd_box(p, vec2<f32>(0.085, 0.50), vec2<f32>(0.052, 0.50));
+    d = min(d, sd_box(p, vec2<f32>(0.26, 0.93), vec2<f32>(0.18, 0.068)));
+    d = min(d, sd_box(p, vec2<f32>(0.23, 0.52), vec2<f32>(0.145, 0.058)));
+    // d: full-height ascender stem (right) + bowl (ring) on the lower-left, joined.
+    d = min(d, sd_box(p, vec2<f32>(0.90, 0.50), vec2<f32>(0.052, 0.50)));
+    let bowl = abs(length(p - vec2<f32>(0.74, 0.285)) - 0.205) - 0.052;
+    d = min(d, bowl);
+    return d;
 }
 
 @fragment
@@ -1141,6 +1161,25 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             let band = pow(0.5 + 0.5 * cos(phase * 6.2831853), 3.0);
             col = mix(col, vec3<f32>(1.0), clamp(band * cu.de_strength, 0.0, 1.0));
         }
+    }
+    // Discreet "Fd" brand mark, lower-right, in screen space (fixed while reprojecting). A soft
+    // dark halo gives contrast on bright backgrounds; a faint light rim reads as a subtle glow on
+    // dark ones; the glyph itself is a translucent near-white — visible but unobtrusive.
+    if (cu.watermark == 1u) {
+        let sd = vec2<f32>(f32(screen_dim.x), f32(screen_dim.y));
+        let wm_h = clamp(0.05 * sd.y, 14.0, 90.0);   // mark height in px, bounded
+        let wm_w = wm_h * 1.02;                       // "Fd" is ~square-ish
+        let margin = 0.7 * wm_h;
+        let box_min = vec2<f32>(sd.x - margin - wm_w, sd.y - margin - wm_h);
+        let lp = (in.uv * sd - box_min) / wm_h;       // local coords, y still down
+        let local = vec2<f32>(lp.x, 1.0 - lp.y);      // flip to glyph space (y up)
+        let dpx = sd_fd(local) * wm_h;                // signed distance in px
+        let core = 1.0 - smoothstep(0.0, 1.4, dpx);           // antialiased fill
+        let halo = 1.0 - smoothstep(0.0, 0.09 * wm_h, dpx);   // soft outer halo
+        let rim  = 1.0 - smoothstep(0.0, 0.03 * wm_h, dpx);   // tighter glow rim
+        col = mix(col, vec3<f32>(0.0), halo * 0.30);          // dark contrast halo
+        col = col + vec3<f32>(0.35) * clamp(rim - core, 0.0, 1.0); // subtle light glow
+        col = mix(col, vec3<f32>(0.92), core * 0.62);         // translucent glyph
     }
     return vec4<f32>(col, 1.0);
 }

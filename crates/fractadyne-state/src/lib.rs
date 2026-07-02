@@ -141,6 +141,9 @@ pub struct SessionState {
     /// tree is cached per reference, so its build cost is one-time like the reference orbit.
     #[serde(default = "default_true")]
     pub use_bla: bool,
+    /// Draw the discreet "Fd" brand mark in the lower-right of the live view and exports.
+    #[serde(default = "default_true")]
+    pub watermark: bool,
     /// UI scale (egui zoom factor) — scales the interface fonts + widgets. 1.0 = default.
     #[serde(default = "default_ui_scale")]
     pub ui_scale: f32,
@@ -308,6 +311,7 @@ impl Default for SessionState {
             series_approx: true,
             glitch_correct: false,
             use_bla: true,
+            watermark: true,
             ui_scale: default_ui_scale(),
             show_orbits: false,
             orbit_normalize: false,

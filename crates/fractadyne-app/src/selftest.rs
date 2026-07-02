@@ -132,6 +132,7 @@ impl FractadyneApp {
             req.width = N;
             req.height = N;
             req.ss = 1;
+            req.watermark = 0; // goldens validate the fractal math, not the brand mark
             req
         };
         // Mean |Δ| of the smooth-iteration channel over pixels that escaped in both, plus
@@ -1541,9 +1542,11 @@ impl FractadyneApp {
             req.width = gw;
             req.height = gh;
             req.ss = 1;
+            req.watermark = 0; // goldens validate the fractal math, not the brand mark
             let reproduce = format!(
                 "fractadyne --render --out {name}.png --fractal Mandelbrot --center {cx} {cy} \
-                 --zoom {zoom} --size {gw} --iter {iter} --ss 1 --method {} --palette {palette}",
+                 --zoom {zoom} --size {gw} --iter {iter} --ss 1 --method {} --palette {palette} \
+                 --no-watermark",
                 method_to_str(method)
             );
             let progress = std::sync::atomic::AtomicU32::new(0);

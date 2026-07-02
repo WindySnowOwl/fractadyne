@@ -24,6 +24,17 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Zoom-reprojection (smooth deep dives)** — during the brief reference rebuild at extreme depth
+  the held frame now scales + pans to follow the ongoing zoom instead of freezing, so the view keeps
+  moving smoothly until the fresh reference snaps in. Generalizes the pan reprojection with a scale
+  factor (a shader `uv_scale`); pure pan is unchanged.
+
+- **Discreet "Fd" watermark** — a small brand mark in the lower-right of the live view and exported
+  images, rendered in the color shader (so live and export match). A soft dark halo plus a faint
+  light rim keep it legible on both bright and dark backgrounds while staying unobtrusive. On by
+  default; toggle in the control panel ("Fd watermark") or via `--no-watermark` / `--watermark`.
+  Persisted in the session state; excluded from the self-test goldens (which validate math only).
+
 - **Off-thread reference recompute (no more deep-zoom stalls)** — the slow arbitrary-precision
   recompute (reference orbit + series approximation + BLA tree) now runs on a worker thread; the
   live view keeps drawing with the cached reference and swaps in the fresh one when it's ready

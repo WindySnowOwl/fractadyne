@@ -1025,6 +1025,9 @@ struct FractadyneApp {
     /// BLA (bilinear approximation): skips iterations throughout the orbit for deep floatexp
     /// Mandelbrot renders. Off by default while it's validated; enable to accelerate.
     use_bla: bool,
+    /// Draw the discreet "Fd" brand mark in the lower-right of the live view and exports. On by
+    /// default; toggleable.
+    watermark: bool,
     /// UI scale (egui zoom factor): scales the interface fonts + widgets. 1.0 = default.
     ui_scale: f32,
     /// Minimap overview: enabled flag, cached home-view thumbnail, and the key
@@ -1311,6 +1314,7 @@ impl FractadyneApp {
             series_approx: s.series_approx,
             glitch_correct: s.glitch_correct,
             use_bla: s.use_bla,
+            watermark: s.watermark,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             zoom_rate: s.zoom_rate,
             aa: s.aa,
@@ -1328,6 +1332,12 @@ impl FractadyneApp {
         }
         if args.iter().any(|a| a == "--no-bla") {
             app.use_bla = false;
+        }
+        if args.iter().any(|a| a == "--no-watermark") {
+            app.watermark = false;
+        }
+        if args.iter().any(|a| a == "--watermark") {
+            app.watermark = true;
         }
         if app.auto_benchmark {
             app.start_benchmark();
@@ -1502,6 +1512,7 @@ impl FractadyneApp {
             series_approx: self.series_approx,
             glitch_correct: self.glitch_correct,
             use_bla: self.use_bla,
+            watermark: self.watermark,
             ui_scale: self.ui_scale,
             show_orbits: self.show_orbits,
             orbit_normalize: self.orbit_normalize,
@@ -3590,6 +3601,11 @@ impl eframe::App for FractadyneApp {
                                  extreme depth (floatexp Mandelbrot, ≥1e28×) — ~5× faster GPU \
                                  render, identical output (verified by the self-test). On by \
                                  default; turn off to compare or if you hit an artifact.",
+                            );
+                        ui.checkbox(&mut self.watermark, "Fd watermark")
+                            .on_hover_text(
+                                "Draw a discreet \"Fd\" brand mark in the lower-right corner of the \
+                                 live view and exported images. On by default.",
                             );
                         if ui
                             .checkbox(&mut self.dual, "Dual view (Mandelbrot ↔ Julia)")
