@@ -4499,9 +4499,10 @@ impl eframe::App for FractadyneApp {
             self.draw_watermark(ctx, central.response.rect);
         }
 
-        // ---- guided-tour captions (narration overlay during playback) ----
+        // ---- guided-tour annotations (captions + coordinate-anchored callouts) ----
         if self.playback.is_some() {
             self.draw_captions(ctx, central.response.rect);
+            self.draw_callouts(ctx, central.response.rect);
         }
 
         // ---- minimap overview ----

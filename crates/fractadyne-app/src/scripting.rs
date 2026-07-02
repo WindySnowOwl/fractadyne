@@ -27,6 +27,24 @@ struct ScriptFile {
     keyframe: Vec<KeyframeFile>,
     #[serde(default)]
     caption: Vec<CaptionFile>,
+    #[serde(default)]
+    callout: Vec<CalloutFile>,
+}
+
+/// A labeled marker anchored to a complex coordinate (tracks the point as the view moves).
+#[derive(Deserialize, Clone)]
+struct CalloutFile {
+    text: String,
+    center_x: String,
+    center_y: String,
+    #[serde(default)]
+    at: f64,
+    #[serde(default)]
+    secs: f64,
+    #[serde(default)]
+    fade: Option<f64>,
+    #[serde(default)]
+    size: Option<f64>,
 }
 
 /// A timed on-screen caption (narration overlay). Additive to the camera path.
@@ -69,16 +87,38 @@ pub(crate) struct Caption {
     pub(crate) size: f32,
 }
 
+/// Eased fade opacity (0..1) for a timed annotation window `[start, end]` at tour time `t`.
+fn fade_alpha(t: f64, start: f64, end: f64, fade: f64) -> f32 {
+    if t < start || t > end {
+        return 0.0;
+    }
+    let f = fade.max(1.0e-3);
+    let a = ((t - start) / f).min(1.0);
+    let b = ((end - t) / f).min(1.0);
+    (a.min(b).clamp(0.0, 1.0)) as f32
+}
+
 impl Caption {
     /// Opacity (0..1) of this caption at tour time `t`, with eased fade in/out; 0 = not shown.
     pub(crate) fn alpha_at(&self, t: f64) -> f32 {
-        if t < self.start || t > self.end {
-            return 0.0;
-        }
-        let f = self.fade.max(1.0e-3);
-        let a = ((t - self.start) / f).min(1.0);
-        let b = ((self.end - t) / f).min(1.0);
-        (a.min(b).clamp(0.0, 1.0)) as f32
+        fade_alpha(t, self.start, self.end, self.fade)
+    }
+}
+
+/// A labeled marker anchored to a fractal coordinate — tracks the point as the view pans/zooms.
+pub(crate) struct Callout {
+    pub(crate) text: String,
+    pub(crate) cx: fractadyne_core::BigFloat,
+    pub(crate) cy: fractadyne_core::BigFloat,
+    pub(crate) start: f64,
+    pub(crate) end: f64,
+    pub(crate) fade: f64,
+    pub(crate) size: f32,
+}
+
+impl Callout {
+    pub(crate) fn alpha_at(&self, t: f64) -> f32 {
+        fade_alpha(t, self.start, self.end, self.fade)
     }
 }
 
@@ -150,6 +190,8 @@ pub(crate) struct Playback {
     pub(crate) bench: Option<Bench>,
     /// Timed narration overlays (drawn by the app over the fractal + into exported frames).
     pub(crate) captions: Vec<Caption>,
+    /// Coordinate-anchored labeled markers (drawn over the fractal + into exported frames).
+    pub(crate) callouts: Vec<Callout>,
     /// Current tour time (seconds), updated each frame — so the caption overlay knows what to show.
     pub(crate) cur_t: f64,
 }
@@ -191,71 +233,149 @@ impl Playback {
     }
 }
 
+/// Blit a laid-out galley's glyph coverage as `color` (× `alpha`, straight over) onto a
+/// **linear-RGBA** buffer, top-left at `(bx, by)` in frame pixels. `ppp` maps galley points to
+/// atlas texels. Caller passes the atlas (one clone) so repeated calls don't re-clone it.
+fn blit_galley(
+    atlas: &egui::epaint::FontImage, px: &mut [f32], w: u32, h: u32, galley: &egui::Galley,
+    bx: f32, by: f32, ppp: f32, color: [f32; 3], alpha: f32,
+) {
+    let aw = atlas.size[0];
+    for row in &galley.rows {
+        for g in &row.glyphs {
+            let uv = g.uv_rect;
+            if uv.max[0] <= uv.min[0] || uv.max[1] <= uv.min[1] {
+                continue;
+            }
+            let ox = (bx + (g.pos.x + uv.offset.x) * ppp).round() as i32;
+            let oy = (by + (g.pos.y + uv.offset.y) * ppp).round() as i32;
+            for ty in uv.min[1]..uv.max[1] {
+                for tx in uv.min[0]..uv.max[0] {
+                    let cov = atlas.pixels[ty as usize * aw + tx as usize] * alpha;
+                    if cov <= 0.0 {
+                        continue;
+                    }
+                    let dx = ox + (tx - uv.min[0]) as i32;
+                    let dy = oy + (ty - uv.min[1]) as i32;
+                    if dx < 0 || dy < 0 || dx >= w as i32 || dy >= h as i32 {
+                        continue;
+                    }
+                    let i = (dy as usize * w as usize + dx as usize) * 4;
+                    px[i] = color[0] * cov + px[i] * (1.0 - cov);
+                    px[i + 1] = color[1] * cov + px[i + 1] * (1.0 - cov);
+                    px[i + 2] = color[2] * cov + px[i + 2] * (1.0 - cov);
+                }
+            }
+        }
+    }
+}
+
+/// Multiply a rectangular region toward black (the soft backing behind annotation text).
+fn fill_dark(px: &mut [f32], w: u32, h: u32, x0: f32, y0: f32, x1: f32, y1: f32, amount: f32) {
+    let (rx0, ry0) = (x0.max(0.0) as u32, y0.max(0.0) as u32);
+    let (rx1, ry1) = ((x1.min(w as f32)) as u32, (y1.min(h as f32)) as u32);
+    for y in ry0..ry1 {
+        for x in rx0..rx1 {
+            let i = (y as usize * w as usize + x as usize) * 4;
+            px[i] *= 1.0 - amount;
+            px[i + 1] *= 1.0 - amount;
+            px[i + 2] *= 1.0 - amount;
+        }
+    }
+}
+
+fn blend_px(px: &mut [f32], w: u32, h: u32, x: i32, y: i32, color: [f32; 3], a: f32) {
+    if a <= 0.0 || x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+        return;
+    }
+    let i = (y as usize * w as usize + x as usize) * 4;
+    px[i] = color[0] * a + px[i] * (1.0 - a);
+    px[i + 1] = color[1] * a + px[i + 1] * (1.0 - a);
+    px[i + 2] = color[2] * a + px[i + 2] * (1.0 - a);
+}
+
+/// Anti-aliased ring outline (marker) of radius `r`, line width `thick`.
+fn draw_ring(px: &mut [f32], w: u32, h: u32, cx: f32, cy: f32, r: f32, thick: f32, color: [f32; 3], alpha: f32) {
+    let lo = (cx - r - thick).floor() as i32;
+    let hi = (cx + r + thick).ceil() as i32;
+    let lo_y = (cy - r - thick).floor() as i32;
+    let hi_y = (cy + r + thick).ceil() as i32;
+    for y in lo_y..=hi_y {
+        for x in lo..=hi {
+            let d = (((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt() - r).abs();
+            let a = (1.0 - (d - thick * 0.5).max(0.0)).clamp(0.0, 1.0);
+            blend_px(px, w, h, x, y, color, a * alpha);
+        }
+    }
+}
+
+/// A short 2-px-ish leader line from `(x0,y0)` to `(x1,y1)`.
+fn draw_line(px: &mut [f32], w: u32, h: u32, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 3], alpha: f32) {
+    let steps = ((x1 - x0).abs().max((y1 - y0).abs())).ceil().max(1.0) as i32;
+    for s in 0..=steps {
+        let t = s as f32 / steps as f32;
+        let x = (x0 + (x1 - x0) * t).round() as i32;
+        let y = (y0 + (y1 - y0) * t).round() as i32;
+        for ( dx, dy) in [(0, 0), (1, 0), (0, 1)] {
+            blend_px(px, w, h, x + dx, y + dy, color, alpha);
+        }
+    }
+}
+
 /// Burn a caption into a **linear-RGBA** export frame — the offscreen equivalent of
 /// `draw_captions`: a soft dark backing rect + white text (× `alpha`), wrapped and centred on the
-/// caption's screen anchor. Rasterized from the egui font atlas (same glyphs as the live overlay).
+/// caption's screen anchor. `atlas` is the (pre-cloned) egui font atlas.
 fn stamp_caption(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, cap: &Caption, alpha: f32) {
     if alpha <= 0.0 || w == 0 || h == 0 {
         return;
     }
     let ppp = ctx.pixels_per_point();
-    let size_px = cap.size * (h as f32 / 1080.0); // scale caption to the frame height
-    let pts = (size_px / ppp).max(1.0);
+    let pts = (cap.size * (h as f32 / 1080.0) / ppp).max(1.0);
     let galley = ctx.fonts(|f| {
         f.layout(cap.text.clone(), egui::FontId::proportional(pts), egui::Color32::WHITE, w as f32 * 0.8 / ppp)
     });
-    let (gw, gh) = (galley.size().x * ppp, galley.size().y * ppp); // in frame pixels
+    let (gw, gh) = (galley.size().x * ppp, galley.size().y * ppp);
     let bx = w as f32 * 0.5 - gw * 0.5;
     let by = match cap.pos {
         CaptionPos::Top => h as f32 * 0.07,
         CaptionPos::Center => h as f32 * 0.5 - gh * 0.5,
         CaptionPos::Bottom => h as f32 * 0.91 - gh,
     };
-    // Soft dark backing (multiply the covered region toward black) for legibility.
     let pad = 12.0 * (h as f32 / 1080.0);
-    let bg = (alpha * 0.5).min(1.0);
-    let (rx0, ry0) = ((bx - pad).max(0.0) as u32, (by - pad).max(0.0) as u32);
-    let (rx1, ry1) = (((bx + gw + pad).min(w as f32)) as u32, ((by + gh + pad).min(h as f32)) as u32);
-    for y in ry0..ry1 {
-        for x in rx0..rx1 {
-            let i = (y as usize * w as usize + x as usize) * 4;
-            px[i] *= 1.0 - bg;
-            px[i + 1] *= 1.0 - bg;
-            px[i + 2] *= 1.0 - bg;
-        }
+    fill_dark(px, w, h, bx - pad, by - pad, bx + gw + pad, by + gh + pad, (alpha * 0.5).min(1.0));
+    // Clone the atlas AFTER layout so it contains this text's glyphs (egui fills it lazily).
+    ctx.fonts(|f| blit_galley(&f.image(), px, w, h, &galley, bx, by, ppp, [1.0, 1.0, 1.0], alpha));
+}
+
+/// Burn a callout (marker ring + leader line + label) at the target's frame pixel `(vpx, vpy)`.
+fn stamp_callout(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, co: &Callout, vpx: f32, vpy: f32, alpha: f32) {
+    if alpha <= 0.0 {
+        return;
     }
-    // White glyphs over the backing.
-    ctx.fonts(|f| {
-        let atlas = f.image();
-        let aw = atlas.size[0];
-        for row in &galley.rows {
-            for g in &row.glyphs {
-                let uv = g.uv_rect;
-                if uv.max[0] <= uv.min[0] || uv.max[1] <= uv.min[1] {
-                    continue;
-                }
-                let ox = (bx + (g.pos.x + uv.offset.x) * ppp).round() as i32;
-                let oy = (by + (g.pos.y + uv.offset.y) * ppp).round() as i32;
-                for ty in uv.min[1]..uv.max[1] {
-                    for tx in uv.min[0]..uv.max[0] {
-                        let cov = atlas.pixels[ty as usize * aw + tx as usize] * alpha;
-                        if cov <= 0.0 {
-                            continue;
-                        }
-                        let dx = ox + (tx - uv.min[0]) as i32;
-                        let dy = oy + (ty - uv.min[1]) as i32;
-                        if dx < 0 || dy < 0 || dx >= w as i32 || dy >= h as i32 {
-                            continue;
-                        }
-                        let i = (dy as usize * w as usize + dx as usize) * 4;
-                        px[i] = cov + px[i] * (1.0 - cov);
-                        px[i + 1] = cov + px[i + 1] * (1.0 - cov);
-                        px[i + 2] = cov + px[i + 2] * (1.0 - cov);
-                    }
-                }
-            }
-        }
-    });
+    let ppp = ctx.pixels_per_point();
+    let s = (h as f32 / 1080.0).max(0.4); // scale annotation geometry to the frame
+    let accent = {
+        let c = egui::Rgba::from(crate::theme::BRAND_ACCENT);
+        [c.r(), c.g(), c.b()]
+    };
+    draw_ring(px, w, h, vpx, vpy, 7.0 * s, 2.0 * s, accent, alpha);
+    let pts = (co.size * s / ppp).max(1.0);
+    let galley = ctx.fonts(|f| f.layout_no_wrap(co.text.clone(), egui::FontId::proportional(pts), egui::Color32::WHITE));
+    let (gw, gh) = (galley.size().x * ppp, galley.size().y * ppp);
+    let off = 16.0 * s;
+    // Label up-right of the marker; flip to the left / below if it would leave the frame.
+    let mut bx = vpx + off;
+    let mut by = vpy - off - gh;
+    if bx + gw + 8.0 * s > w as f32 {
+        bx = vpx - off - gw;
+    }
+    if by < 4.0 * s {
+        by = vpy + off;
+    }
+    draw_line(px, w, h, vpx, vpy, bx + gw * 0.5, by + gh * 0.5, accent, alpha * 0.9);
+    let pad = 6.0 * s;
+    fill_dark(px, w, h, bx - pad, by - pad, bx + gw + pad, by + gh + pad, (alpha * 0.55).min(1.0));
+    ctx.fonts(|f| blit_galley(&f.image(), px, w, h, &galley, bx, by, ppp, [1.0, 1.0, 1.0], alpha));
 }
 
 /// Resolve a parsed script file into a playable tour (parses centers, accumulates
@@ -314,6 +434,26 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
             }
         })
         .collect();
+    let callouts = sf
+        .callout
+        .iter()
+        .filter(|c| !c.text.is_empty())
+        .filter_map(|c| {
+            let cx = fractadyne_core::parse_bf(&c.center_x)?;
+            let cy = fractadyne_core::parse_bf(&c.center_y)?;
+            let start = c.at.max(0.0);
+            let end = if c.secs > 0.0 { start + c.secs } else { total.max(start) };
+            Some(Callout {
+                text: c.text.clone(),
+                cx,
+                cy,
+                start,
+                end,
+                fade: c.fade.unwrap_or(0.4).max(0.0),
+                size: c.size.unwrap_or(18.0).clamp(8.0, 96.0) as f32,
+            })
+        })
+        .collect();
     Some(Playback {
         name: if sf.name.is_empty() {
             "Script".to_string()
@@ -326,6 +466,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
         loop_: sf.loop_,
         bench,
         captions,
+        callouts,
         cur_t: 0.0,
     })
 }
@@ -427,6 +568,54 @@ impl FractadyneApp {
         }
     }
 
+    /// Draw the active tour callouts (live playback): a marker ring at each anchored fractal
+    /// coordinate — tracking the point as the view moves — plus a labeled leader. Off-screen
+    /// anchors are skipped. Exported frames get the same via `stamp_callout`.
+    pub(crate) fn draw_callouts(&self, ctx: &egui::Context, rect: egui::Rect) {
+        let Some(pb) = &self.playback else { return };
+        if pb.callouts.is_empty() {
+            return;
+        }
+        let ppp = ctx.pixels_per_point() as f64;
+        let painter =
+            ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("tour_callouts")));
+        let with_a = |c: egui::Color32, a: f32| {
+            egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a * 255.0) as u8)
+        };
+        for co in &pb.callouts {
+            let a = co.alpha_at(pb.cur_t);
+            if a <= 0.0 {
+                continue;
+            }
+            // The viewport tracks device pixels; convert to egui points, offset by the panel origin.
+            let (vpx, vpy) = self.viewport.complex_to_pixel(&co.cx, &co.cy);
+            let sp = egui::pos2(rect.min.x + (vpx / ppp) as f32, rect.min.y + (vpy / ppp) as f32);
+            if !rect.contains(sp) {
+                continue;
+            }
+            let accent = with_a(crate::theme::BRAND_ACCENT, a);
+            painter.circle_stroke(sp, 7.0, egui::Stroke::new(2.0, accent));
+            painter.circle_filled(sp, 1.8, accent);
+            let galley = ctx.fonts(|f| {
+                f.layout_no_wrap(co.text.clone(), egui::FontId::proportional(co.size), with_a(egui::Color32::WHITE, a))
+            });
+            let gs = galley.size();
+            let off = 16.0;
+            let mut lp = egui::pos2(sp.x + off, sp.y - off - gs.y);
+            if lp.x + gs.x + 8.0 > rect.right() {
+                lp.x = sp.x - off - gs.x;
+            }
+            if lp.y < rect.top() + 4.0 {
+                lp.y = sp.y + off;
+            }
+            painter.line_segment([sp, lp + gs * 0.5], egui::Stroke::new(1.5, accent));
+            let pad = egui::vec2(6.0, 4.0);
+            let bg = egui::Rect::from_min_size(lp - pad, gs + pad * 2.0);
+            painter.rect_filled(bg, 4.0, egui::Color32::from_black_alpha((a * 150.0) as u8));
+            painter.galley(lp, galley, with_a(egui::Color32::WHITE, a));
+        }
+    }
+
     /// Render a keyframe-tour script (TOML) to a numbered PNG frame sequence — the headless
     /// `--render-tour` mode for producing a deep-zoom dive video. Steps the timeline at a
     /// fixed `fps`, rendering each frame at `width×height` (× `ss` supersampling) via the
@@ -486,11 +675,22 @@ impl FractadyneApp {
             let res = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
                 .map_err(|e| format!("frame {fi}: {e}"))?;
             let mut px = res.pixels;
-            self.apply_watermark(&mut px, res.width, res.height);
+            let (rw, rh) = (res.width, res.height);
+            self.apply_watermark(&mut px, rw, rh);
             for cap in &pb.captions {
                 let a = cap.alpha_at(t);
                 if a > 0.0 {
-                    stamp_caption(ctx, &mut px, res.width, res.height, cap, a);
+                    stamp_caption(ctx, &mut px, rw, rh, cap, a);
+                }
+            }
+            for co in &pb.callouts {
+                let a = co.alpha_at(t);
+                if a <= 0.0 {
+                    continue;
+                }
+                let (vpx, vpy) = self.viewport.complex_to_pixel(&co.cx, &co.cy);
+                if vpx >= 0.0 && vpy >= 0.0 && vpx < rw as f64 && vpy < rh as f64 {
+                    stamp_callout(ctx, &mut px, rw, rh, co, vpx as f32, vpy as f32, a);
                 }
             }
             let frame_path = out_dir.join(format!("frame_{fi:05}.png"));

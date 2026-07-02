@@ -500,6 +500,18 @@ impl Viewport {
         (self.center_x.add(&ox, p, RM), self.center_y.sub(&oy, p, RM))
     }
 
+    /// Screen pixel a complex coordinate maps to (inverse of `pixel_to_complex`; origin top-left,
+    /// +y down). Stays exact at any depth: the offset from centre is formed as a mantissa scaled by
+    /// the `units_per_pixel` exponent (so tiny deep-zoom deltas don't underflow f64). Used to anchor
+    /// tour callouts to a fractal coordinate so they track the point as the view pans/zooms.
+    pub fn complex_to_pixel(&self, cx: &BigFloat, cy: &BigFloat) -> (f64, f64) {
+        let (m, e) = (self.units_per_pixel.m, self.units_per_pixel.e);
+        // ref_offset_mantissa(a, b, e) = (a − b)·2^−e; dividing by the mantissa `m` gives (a−b)/upp.
+        let dx = ref_offset_mantissa(cx, &self.center_x, e, self.precision) / m;
+        let dy = ref_offset_mantissa(cy, &self.center_y, e, self.precision) / m;
+        (self.width_px * 0.5 + dx, self.height_px * 0.5 - dy)
+    }
+
     pub fn pan_pixels(&mut self, dx: f64, dy: f64) {
         let p = self.precision;
         let ox = self.pixel_offset(dx);

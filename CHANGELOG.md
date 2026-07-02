@@ -29,8 +29,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   timing (independent of keyframes), `pos` (top/center/bottom), `fade`, and `size`. Captions ease
   in/out, wrap, and sit centred on a soft dark backing; they render live over the fractal **and**
   burn into exported tour frames. Scripts also declare a `format_version`; loading a newer script
-  warns (schema is additive, so old scripts keep playing). First increment of the guided-tour
-  feature — callouts, vignettes, and richer per-segment easing to follow.
+  warns (schema is additive, so old scripts keep playing).
+
+- **Guided-tour callouts** — `[[callout]]` entries point a labeled amber marker (ring + leader
+  line) at a fractal coordinate (`center_x`/`center_y`), **anchored in fractal space** so it tracks
+  the spot as the view pans/zooms (new exact-at-any-depth `Viewport::complex_to_pixel`). Timed like
+  captions (`at`/`secs`/`fade`), rendered live and burned into exported tour frames; off-screen
+  anchors are skipped. Next for the guided-tour feature: vignettes/spotlights and richer easing.
 
 - **Zoom-reprojection (smooth deep dives)** — during the brief reference rebuild at extreme depth
   the held frame now scales + pans to follow the ongoing zoom instead of freezing, so the view keeps

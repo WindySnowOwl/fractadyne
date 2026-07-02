@@ -401,9 +401,11 @@ perturbation + series approximation + glitch correction. The headline feature.
         `size`. Eased fade in/out; wrapped + centred on a soft dark backing. Renders live
         (`draw_captions`, egui painter) **and** burned into exported tour frames (`stamp_caption`,
         rasterized from the font atlas). *(Remaining: optional pause-until-dismissed.)*
-      - **Callouts** — labeled arrows/markers pointing to a specific complex coordinate or screen
-        region (e.g. "this is a period-3 minibrot"), anchored in fractal space so they track the
-        right spot as the view moves.
+      - [x] **Callouts** — DONE: `[[callout]]` entries with a target `center_x`/`center_y` (fractal
+        coordinate), `text`, `at`/`secs`, `fade`, `size`. Drawn as an amber marker ring + leader
+        line + label, **anchored in fractal space** (new `Viewport::complex_to_pixel`, exact at any
+        depth) so they track the point as the view pans/zooms; off-screen anchors are skipped. Live
+        (`draw_callouts`) + exported frames (`stamp_callout`). *(Remaining: off-screen edge arrows.)*
       - **Vignettes / spotlights** — dim or mask everything outside a highlighted region (rect or
         radius, in fractal or screen space) to draw the eye, with soft edges + eased on/off.
       - **Eased transitions** — richer easing between keyframes (per-segment ease curves, hold
