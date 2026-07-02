@@ -483,6 +483,16 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Fixed (post-baseline, this session)
 
+- **Black moving frame past ~1e420×** — while zooming (e.g. holding space) very deep, the view
+  went solid black until it settled. The interacting path hard-capped iterations at 50k for
+  responsiveness, but past ~1e420× the fractal needs far more (~369k at 1e431×) to escape, so every
+  pixel read as interior → black. Now motion keeps the same zoom-appropriate iteration count as the
+  settled view and lets the smaller work budget reduce the iteration-texture *resolution* instead —
+  blurry-but-correct while moving, sharpening on settle (full-iteration deep frames are cheap at
+  reduced resolution: ~1 ms). Also part of this fix: the deep-zoom reference recompute is off-thread
+  with a last-good-frame freeze when the reference drifts fully out of view, so a slow/continuous
+  deep dive holds the previous frame instead of flashing.
+
 - **More Help polish** — the content now scrolls when it overflows (the window was growing to
   fit and pushing content off-screen; its height is now capped so the scroll area engages);
   the key column in shortcut/flag tables is left-aligned (was centered); and math glyphs that

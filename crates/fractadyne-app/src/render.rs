@@ -542,14 +542,16 @@ impl FractadyneApp {
         // uniform-screen bug). Only when even that floor can't fit (extreme depth on a very
         // large window) do we fall back to reducing the iteration-texture resolution.
         let px = (resolution[0].max(1) as u64) * (resolution[1].max(1) as u64);
-        // Iteration cap + work budget are *interaction-aware*. While moving, cap hard (50k) with
-        // a tight budget so motion stays responsive. Once the view settles, a still frame can
-        // afford far more — the interactive budget is ~200× below the GPU watchdog (TDR ≈ 2 s) —
-        // so raise both the cap and the budget and let the view sharpen to the zoom-appropriate
-        // count (matching an export). `zoom_iter_cap` still bounds it, so it never over-resolves
-        // sub-pixel "dust" into per-pixel noise. A high manual base is honoured on settle too.
+        // Work budget is *interaction-aware*, the iteration count is NOT. While moving we spend a
+        // tight budget (settle spends ~6×); the smaller budget shrinks the iteration-texture
+        // resolution (blurrier motion, sharp on settle) via `res_scale` below. Crucially the
+        // iteration COUNT stays the zoom-appropriate one in both states: a hard motion cap (was
+        // 50k) starves deep views of the iterations needed to escape — past ~1e420× everything
+        // reads as interior and the moving frame goes solid black. `zoom_iter_cap` already bounds
+        // the count so it never over-resolves sub-pixel "dust"; let resolution, not iterations,
+        // absorb the motion budget. (Full-iter deep frames are cheap — reduced res keeps them fast.)
         let (budget, iter_cap): (u64, u32) = if interacting {
-            (WORK_BUDGET, 50_000)
+            (WORK_BUDGET, 500_000)
         } else {
             (WORK_BUDGET.saturating_mul(6), 500_000)
         };
@@ -646,11 +648,12 @@ impl FractadyneApp {
             // without tanking the frame-rate. (Affordable since the release build made
             // bignum ~8× faster.)
             let out_of_view = drift.map_or(true, |(dx, dy)| dx > 0.5 || dy > 0.5);
-            // Past ~1 span off-centre the perturbation δc gets large enough to render dark/glitchy
-            // (best_reference normally sits ≤ ~0.9 span away). On a fast/deep dive the async
-            // recompute can lag this far behind — freeze the last clean frame rather than paint the
-            // degraded one (see the reprojection freeze below). Tighter than `gone` on purpose.
-            let too_stale = drift.map_or(false, |(dx, dy)| dx > 0.8 || dy > 0.8);
+            // Once the reference is well outside the view (≫ the ~0.9 span best_reference normally
+            // sits at), the perturbation δc is large enough to render wrong/glitchy. On a fast/deep
+            // dive the async recompute can lag this far — freeze the last clean frame rather than
+            // paint the bad one (see the reprojection freeze below). Kept conservative so normal
+            // deep motion (reference merely drifting, still usable) isn't needlessly held.
+            let too_stale = drift.map_or(false, |(dx, dy)| dx > 1.5 || dy > 1.5);
             let needs_quality = precision > self.ref_cache[vi].orbit_prec
                 || gpu_iter > self.ref_cache[vi].orbit_iter;
             // Refresh whenever the reference has left the view or the depth/iters outgrew it. The
