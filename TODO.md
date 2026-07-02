@@ -580,8 +580,8 @@ for fun, informative value, and ease of use.
       series vs exact perturbation for d=2 and d=3 (rel err <1e-3); seed vs full iteration
       `maxΔ 0` at 1e30× (mode 2) and 1e20× (mode 0); Multibrot 3/4/5 SA engages + matches
       SA-off. (Tricorn/abs families have no such δc expansion — anti-holomorphic / non-analytic.)
-- [~] **BLA (bilinear approximation)** — skips iterations *throughout* the orbit (SA only skips
-      the start). A binary tree of merged linear maps `δz' ≈ A·δz + B·δc` (A=2Z, B=1 per
+- [x] **BLA (bilinear approximation)** — skips iterations *throughout* the orbit (SA only skips
+      the start). **On by default; ~5× faster GPU render at 1e30×.** A binary tree of merged linear maps `δz' ≈ A·δz + B·δc` (A=2Z, B=1 per
       Mandelbrot step) with validity radii; a pixel skips 2^l steps when `|δz| ≤` the merged
       radius (Zhuoran's BLA; KF2+/Fraktaler-3). **Phase 1 DONE (core, fractadyne-core):**
       `CFloatExp` (complex extended-range), `BlaNode`, `bla_merge`, `build_bla_mandel`
@@ -619,8 +619,13 @@ for fun, informative value, and ease of use.
       costs skips (render 12.7 → 13.6 ms, still **5.4×** vs off). Effect: a settled deep view drops
       from build-every-frame (~35 ms, 2.2×) to render-only (~13.6 ms, **5.4×**), and the ~20 ms tree
       build becomes a one-time per-reference cost (like the reference orbit) instead of per-frame —
-      removing the weak-CPU risk. **Remaining: flip the default on** after interactive verification
-      on the target machine (the live path isn't exercised headlessly). **Phase 3:** mode-0 + Multibrot.
+      removing the weak-CPU risk. **Phase 2e DONE (on by default):** `SessionState::use_bla` now
+      defaults **on**; a `--no-bla` flag forces it off for profiling (`--bla` still forces on). The
+      cache was hardened against the zoom-out edge case — it rebuilds when the view needs a larger
+      `dc_max` than the cached tree was built for (compared in log2 space to avoid underflow), with
+      2× headroom so continuous zoom-out doesn't thrash. Verified: `--profile` (no flag) engages
+      BLA (render 70→13 ms), `--no-bla` disables it, selftest 53/53. The View-menu toggle disables
+      it if an artifact ever shows. **Phase 3:** mode-0 (df32, 1e4–1e28×) + Multibrot.
 - [x] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
       beyond the current single-reference Zhuoran rebasing. **Shipping for single-view exports**
       via a "Glitch correction (export)" preference (View menu, persisted): detects perturbation

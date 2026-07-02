@@ -24,6 +24,12 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **BLA acceleration on by default** — deep floatexp Mandelbrot renders (≥1e28×) now use BLA out
+  of the box: **~5× faster GPU render** (70→13 ms at 1e30×) with identical output. The tree is
+  cached per reference (one-time build like the reference orbit), the cache is hardened against
+  zoom-out, and it's validated at interior + boundary. Toggle it off in the View menu (or `--no-bla`
+  headless) to compare or if an artifact ever appears.
+
 - **BLA per-reference caching** — the acceleration tree is now cached per reference (rebuilt only
   when the reference orbit changes) instead of every frame, using a conservative view-diagonal
   `dc_max` that stays valid across pans. A settled deep view drops from ~35 ms/frame (build + render)

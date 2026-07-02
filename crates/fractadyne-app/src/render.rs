@@ -574,18 +574,27 @@ impl FractadyneApp {
                 }
                 sa = self.ref_cache[vi].sa;
             }
-            // BLA tree, cached per reference: built once when the orbit changes (the conservative
-            // `dc_max` keeps it valid across pans within a reference), then reused every frame —
-            // removing the ~20 ms/frame rebuild. Skips iterations throughout the orbit.
+            // BLA tree, cached per reference: reused across frames (and pans — the conservative
+            // `dc_max` is offset-independent) and rebuilt only when the orbit changes or the view
+            // zooms out enough to need a larger `dc_max`. Removes the ~20 ms/frame rebuild while
+            // never reusing a tree whose validity radii are too optimistic for the current view.
             if self.bla_eligible(mode, julia) {
                 let oid = self.ref_cache[vi].orbit_id;
-                if self.ref_cache[vi].bla_id != oid {
+                let dc_max = Self::bla_dc_max(span_mantissa, delta_exp);
+                let need_log2 = dc_max.log2();
+                let vc = &self.ref_cache[vi];
+                // Rebuild if the orbit changed or the current view needs a bigger dc_max than the
+                // cached tree was built for (tiny epsilon guards float noise).
+                if vc.bla_id != oid || need_log2 > vc.bla_dc_max_log2 + 1.0e-6 {
                     let orbit = self.ref_cache[vi].orbit.clone();
-                    let dc_max = Self::bla_dc_max(span_mantissa, delta_exp);
-                    let built = self.build_bla(&orbit, dc_max);
+                    // Build with 2× headroom (dc_max·2 ⇒ +1 in log2) so continuous zoom-out doesn't
+                    // rebuild every frame; still valid (a larger dc_max only shrinks skip radii).
+                    let build_dc = dc_max.mul_pow2(1.0);
+                    let built = self.build_bla(&orbit, build_dc);
                     let vc = &mut self.ref_cache[vi];
                     vc.bla = built.unwrap_or_else(|| std::sync::Arc::new(Vec::new()));
                     vc.bla_id = oid;
+                    vc.bla_dc_max_log2 = build_dc.log2();
                 }
                 let vc = &self.ref_cache[vi];
                 if !vc.bla.is_empty() {

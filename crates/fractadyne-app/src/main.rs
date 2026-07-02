@@ -762,11 +762,13 @@ struct RefCache {
     /// bignum coefficient iteration is as costly as the reference orbit itself).
     sa: fractadyne_core::SeriesSkip,
     sa_key: (u64, u32),
-    /// Cached BLA tree (GPU-packed) for this reference + the `orbit_id` it was built for. Rebuilt
-    /// only when the orbit changes (the tree's conservative `dc_max` stays valid across pans), so
-    /// BLA doesn't pay a per-frame tree rebuild. Empty = none/not built.
+    /// Cached BLA tree (GPU-packed) for this reference, the `orbit_id` it was built for, and the
+    /// `log2` of the worst-case `|δc|` (`dc_max`) it was built with. Rebuilt only when the orbit
+    /// changes or the view zooms out enough that a larger `dc_max` is needed — so BLA doesn't pay a
+    /// per-frame tree rebuild (panning within a reference reuses it). Empty = none/not built.
     bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla_id: u64,
+    bla_dc_max_log2: f64,
 }
 
 impl Default for RefCache {
@@ -783,6 +785,7 @@ impl Default for RefCache {
             sa_key: (u64::MAX, u32::MAX),
             bla: std::sync::Arc::new(Vec::new()),
             bla_id: u64::MAX,
+            bla_dc_max_log2: f64::NEG_INFINITY,
         }
     }
 }
@@ -1288,11 +1291,15 @@ impl FractadyneApp {
             last_state: s,
             dirty_since: None,
         };
-        // `--bla` forces BLA on for any headless mode (profiling / benchmark / render), so BLA
-        // on-vs-off can be compared without a session file. Applied unconditionally (not just the
-        // `--render` path) since `--profile`/`--benchmark` don't call `apply_cli_render`.
+        // `--bla` / `--no-bla` force BLA on/off for any headless mode (profiling / benchmark /
+        // render), so it can be compared without a session file. Applied unconditionally (not just
+        // the `--render` path) since `--profile`/`--benchmark` don't call `apply_cli_render`;
+        // `--no-bla` wins if both are given.
         if args.iter().any(|a| a == "--bla") {
             app.use_bla = true;
+        }
+        if args.iter().any(|a| a == "--no-bla") {
+            app.use_bla = false;
         }
         if app.auto_benchmark {
             app.start_benchmark();
@@ -3493,9 +3500,9 @@ impl eframe::App for FractadyneApp {
                         ui.checkbox(&mut self.use_bla, "BLA acceleration (deep zoom)")
                             .on_hover_text(
                                 "Bilinear approximation: skip iterations throughout the orbit at \
-                                 extreme depth (floatexp Mandelbrot, ≥1e28×). Can speed up deep \
-                                 renders; opt-in while its cost/benefit is tuned. Identical output \
-                                 — verified by the self-test.",
+                                 extreme depth (floatexp Mandelbrot, ≥1e28×) — ~5× faster GPU \
+                                 render, identical output (verified by the self-test). On by \
+                                 default; turn off to compare or if you hit an artifact.",
                             );
                         if ui
                             .checkbox(&mut self.dual, "Dual view (Mandelbrot ↔ Julia)")

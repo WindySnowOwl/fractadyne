@@ -33,7 +33,7 @@ $exe = "target\release\fractadyne.exe"
 
 New-Item -ItemType Directory -Force logs | Out-Null
 Write-Host "`n=== profiling BLA OFF ===" -ForegroundColor Cyan
-& $exe --profile --reps $Reps --out logs/bla_off.json | Out-Host
+& $exe --profile --no-bla --reps $Reps --out logs/bla_off.json | Out-Host
 Write-Host "`n=== profiling BLA ON  ===" -ForegroundColor Cyan
 & $exe --profile --bla --reps $Reps --out logs/bla_on.json | Out-Host
 
