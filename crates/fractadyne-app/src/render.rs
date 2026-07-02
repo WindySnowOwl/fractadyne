@@ -601,7 +601,10 @@ impl FractadyneApp {
 
         // Honour a pan reprojection only at deep zoom (the shallow direct path is cheap + already
         // detailed) and only once a reference orbit exists to have produced the frozen texture.
-        let reproject = reproject
+        // Mutable: also set below to freeze the last good frame while an off-thread recompute is in
+        // flight and the cached reference has drifted fully out of view (extreme depth), so the
+        // view holds instead of flashing blank.
+        let mut reproject = reproject
             .filter(|_| mode != 1 && self.ref_cache[vi].ref_pt.is_some());
 
         let mut ref_offset = [0.0_f32; 4];
@@ -697,6 +700,14 @@ impl FractadyneApp {
                     self.recompute_rx[vi] = Some(rx);
                 }
                 // else: a recompute is already in flight — keep using the cached reference.
+            }
+            // At extreme depth the recompute can take long enough that a fast dive drifts the
+            // cached reference fully out of view before the fresh one lands. Rendering with a
+            // "gone" reference is garbage (blank), so instead freeze the last good frame (via the
+            // reprojection path) until the recompute completes and the view snaps to the new
+            // reference. Only when there IS a prior reference (not the cold start).
+            if gone && self.ref_cache[vi].ref_pt.is_some() && self.recompute_rx[vi].is_some() {
+                reproject = Some([0.0, 0.0]);
             }
             let rp = self.ref_cache[vi].ref_pt.as_ref().unwrap();
             // δ = center − reference, carried as a mantissa scaled by 2^-delta_exp
