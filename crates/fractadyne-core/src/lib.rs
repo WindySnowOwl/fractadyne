@@ -232,6 +232,32 @@ fn double_bf(x: &BigFloat) -> BigFloat {
     d
 }
 
+/// Multiply a bignum by a small non-negative integer via shift-and-add (doublings + adds) — much
+/// cheaper than a full-precision multiply by a constant `BigFloat`. Used in the hot series-
+/// approximation recurrence, whose factors (`d`, `C(d,2)`, `2·C(d,2)`, `C(d,3)`) are all small ints.
+fn mul_u32_bf(x: &BigFloat, n: u32, p: usize) -> BigFloat {
+    if n == 0 {
+        return bf(0.0, p);
+    }
+    let mut acc: Option<BigFloat> = None;
+    let mut base = x.clone(); // x · 2^k
+    let mut k = n;
+    loop {
+        if k & 1 == 1 {
+            acc = Some(match acc {
+                Some(a) => a.add(&base, p, RM),
+                None => base.clone(),
+            });
+        }
+        k >>= 1;
+        if k == 0 {
+            break;
+        }
+        base = double_bf(&base);
+    }
+    acc.unwrap()
+}
+
 /// Linear interpolation between two `BigFloat`s at precision `p`: `a + (b − a)·t`.
 pub fn lerp_bf(a: &BigFloat, b: &BigFloat, t: f64, p: usize) -> BigFloat {
     let f = bf(t, p);
@@ -897,12 +923,12 @@ pub fn series_skip(
         3 => 5,
         _ => 2,
     };
-    let df = deg as f64;
     let one = bf(1.0, p);
-    let d_bf = bf(df, p);
-    let c2_bf = bf(df * (df - 1.0) / 2.0, p); // C(d,2)
-    let two_c2_bf = bf(df * (df - 1.0), p); // 2·C(d,2)
-    let c3_bf = bf(df * (df - 1.0) * (df - 2.0) / 6.0, p); // C(d,3) (0 for d=2)
+    // Recurrence factors — all small exact integers, applied via `mul_u32_bf` (shift-and-add).
+    let d_u = deg;
+    let c2_u = deg * (deg - 1) / 2; // C(d,2)
+    let two_c2_u = deg * (deg - 1); // 2·C(d,2)
+    let c3_u = deg * (deg - 1) * (deg - 2) / 6; // C(d,3) (0 for d=2)
     let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
     let (mut ax, mut ay) = (bf(0.0, p), bf(0.0, p));
     let (mut bx, mut by) = (bf(0.0, p), bf(0.0, p));
@@ -914,29 +940,39 @@ pub fn series_skip(
         //   B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
         //   C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
         let (p1x, p1y) = cpow_bf(&zx, &zy, deg - 1, p); // Z^{d-1}
-        let (p2x, p2y) = cpow_bf(&zx, &zy, deg - 2, p); // Z^{d-2}
         let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, p); // A²
         let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, p); // A·B
-        // A'
+        // Z^{d-2} is the identity (= 1) for d = 2 → `None` skips that whole complex multiply.
+        let p2 = (deg >= 3).then(|| cpow_bf(&zx, &zy, deg - 2, p));
+        let zp2 = |wx: &BigFloat, wy: &BigFloat| match &p2 {
+            Some((p2x, p2y)) => cmul_bf(p2x, p2y, wx, wy, p),
+            None => (wx.clone(), wy.clone()),
+        };
+        // A' = d·Z^{d-1}·A + 1
         let (t, u) = cmul_bf(&p1x, &p1y, &ax, &ay, p);
-        let na_x = t.mul(&d_bf, p, RM).add(&one, p, RM);
-        let na_y = u.mul(&d_bf, p, RM);
-        // B'
+        let na_x = mul_u32_bf(&t, d_u, p).add(&one, p, RM);
+        let na_y = mul_u32_bf(&u, d_u, p);
+        // B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
         let (t, u) = cmul_bf(&p1x, &p1y, &bx, &by, p);
-        let (v, w) = cmul_bf(&p2x, &p2y, &a2x, &a2y, p);
-        let nb_x = t.mul(&d_bf, p, RM).add(&v.mul(&c2_bf, p, RM), p, RM);
-        let nb_y = u.mul(&d_bf, p, RM).add(&w.mul(&c2_bf, p, RM), p, RM);
-        // C'
+        let (v, w) = zp2(&a2x, &a2y);
+        let nb_x = mul_u32_bf(&t, d_u, p).add(&mul_u32_bf(&v, c2_u, p), p, RM);
+        let nb_y = mul_u32_bf(&u, d_u, p).add(&mul_u32_bf(&w, c2_u, p), p, RM);
+        // C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
         let (t, u) = cmul_bf(&p1x, &p1y, &cxx, &cyy, p);
-        let (v, w) = cmul_bf(&p2x, &p2y, &abx, &aby, p);
-        let mut nc_x = t.mul(&d_bf, p, RM).add(&v.mul(&two_c2_bf, p, RM), p, RM);
-        let mut nc_y = u.mul(&d_bf, p, RM).add(&w.mul(&two_c2_bf, p, RM), p, RM);
+        let (v, w) = zp2(&abx, &aby);
+        let mut nc_x = mul_u32_bf(&t, d_u, p).add(&mul_u32_bf(&v, two_c2_u, p), p, RM);
+        let mut nc_y = mul_u32_bf(&u, d_u, p).add(&mul_u32_bf(&w, two_c2_u, p), p, RM);
         if deg >= 3 {
-            let (p3x, p3y) = cpow_bf(&zx, &zy, deg - 3, p); // Z^{d-3}
             let (a3x, a3y) = cmul_bf(&a2x, &a2y, &ax, &ay, p); // A³
-            let (x3, y3) = cmul_bf(&p3x, &p3y, &a3x, &a3y, p);
-            nc_x = nc_x.add(&x3.mul(&c3_bf, p, RM), p, RM);
-            nc_y = nc_y.add(&y3.mul(&c3_bf, p, RM), p, RM);
+            // Z^{d-3} is the identity for d = 3.
+            let (x3, y3) = if deg >= 4 {
+                let (p3x, p3y) = cpow_bf(&zx, &zy, deg - 3, p);
+                cmul_bf(&p3x, &p3y, &a3x, &a3y, p)
+            } else {
+                (a3x, a3y)
+            };
+            nc_x = nc_x.add(&mul_u32_bf(&x3, c3_u, p), p, RM);
+            nc_y = nc_y.add(&mul_u32_bf(&y3, c3_u, p), p, RM);
         }
         // Advance the reference: Z_n = Z_{n-1}^d + c.
         let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
