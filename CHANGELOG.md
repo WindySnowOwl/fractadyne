@@ -493,6 +493,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   with a last-good-frame freeze when the reference drifts fully out of view, so a slow/continuous
   deep dive holds the previous frame instead of flashing.
 
+- **Smoother deep dives (less "zoom, pause, zoom")** — the bignum reference was rebuilt every single
+  octave (both precision and the iteration cap grow each octave), and at extreme depth the rebuild
+  can't keep up with a continuous zoom → periodic stalls. Now one reference serves ~32 octaves while
+  moving: its precision is allowed to lag within the 64 guard bits, and the orbit is built with
+  ~32 octaves of iteration headroom — so rebuilds happen ~32× less often during a dive. The view
+  still rebuilds at full precision the moment it settles, so the still frame is maximally sharp.
+
 - **More Help polish** — the content now scrolls when it overflows (the window was growing to
   fit and pushing content off-screen; its height is now capped so the scroll area engages);
   the key column in shortcut/flag tables is left-aligned (was centered); and math glyphs that

@@ -556,6 +556,11 @@ impl FractadyneApp {
             (WORK_BUDGET.saturating_mul(6), 500_000)
         };
         let gpu_iter = eff_iter.min(iter_cap).min(zoom_iter_cap(log2mag).max(256));
+        // Build the reference orbit a bit longer than the pixels need (`zoom_iter_cap` grows 256
+        // iters/octave). The spare length lets one reference serve ~32 more octaves of zoom before
+        // its orbit is too short — so a continuous dive doesn't rebuild the (slow, bignum) orbit
+        // every single octave. Pixels still only iterate to `gpu_iter`; the tail is pure headroom.
+        let ref_build_iter = gpu_iter.saturating_add(32 * 256).min(iter_cap);
         // GPU-watchdog safety: if even the capped work won't fit the budget, reduce the
         // iteration-texture resolution (the color pass box-filters the upscale).
         let want = px.saturating_mul(gpu_iter.max(1) as u64);
@@ -654,7 +659,13 @@ impl FractadyneApp {
             // paint the bad one (see the reprojection freeze below). Kept conservative so normal
             // deep motion (reference merely drifting, still usable) isn't needlessly held.
             let too_stale = drift.map_or(false, |(dx, dy)| dx > 1.5 || dy > 1.5);
-            let needs_quality = precision > self.ref_cache[vi].orbit_prec
+            // While moving, tolerate the reference lagging in precision (it has 64 guard bits, good
+            // for ~40 more octaves) so we don't rebuild the slow bignum orbit every octave — that
+            // was the "zoom, pause, zoom" stepping on a deep dive. On settle we rebuild at the first
+            // bit of lag so the still frame is at full precision. The orbit's iteration headroom
+            // (`ref_build_iter`) covers the matching depth range, so iters rarely force a rebuild.
+            let prec_headroom = if interacting { 32 } else { 0 };
+            let needs_quality = precision > self.ref_cache[vi].orbit_prec + prec_headroom
                 || gpu_iter > self.ref_cache[vi].orbit_iter;
             // Refresh whenever the reference has left the view or the depth/iters outgrew it. The
             // old motion throttle is gone: the recompute is now off-thread and gated to one job per
@@ -671,14 +682,14 @@ impl FractadyneApp {
                 // The recompute (reference orbit + SA + BLA, all bignum) is the deep-zoom stall.
                 // Run it OFF the render thread: keep drawing with the cached reference and install
                 // the result when it lands (polled above). Only the very first reference (nothing
-                // cached to draw with) is computed synchronously. Build only to the live-capped
-                // `gpu_iter` — the GPU never iterates past it (exports build their own full orbit).
+                // cached to draw with) is computed synchronously. Build to `ref_build_iter` (a bit
+                // past what the pixels need) so the orbit serves a range of depths without rebuild.
                 let inputs = RecomputeInputs {
                     center_bf: center_bf.clone(),
                     span,
                     span_mantissa,
                     delta_exp,
-                    gpu_iter,
+                    gpu_iter: ref_build_iter,
                     precision,
                     julia,
                     formula: self.fractal.formula_id(),
