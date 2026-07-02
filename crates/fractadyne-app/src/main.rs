@@ -3841,7 +3841,8 @@ impl eframe::App for FractadyneApp {
             .show(ctx, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if ui.small_button("\u{23F4}").on_hover_text("Hide control panel").clicked() {
+                    // ▶ points toward the right edge the panel collapses to (it's docked right).
+                    if ui.small_button("\u{23F5}").on_hover_text("Hide control panel").clicked() {
                         self.right_panel_open = false;
                     }
                     ui.label(egui::RichText::new("Controls").strong());

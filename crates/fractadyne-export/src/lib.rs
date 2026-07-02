@@ -112,7 +112,17 @@ pub fn list_exr_channels(path: &Path) -> Option<Vec<String>> {
 /// Decode a PNG at full resolution to `(width, height, rgba8)` (for golden-image diffs).
 pub fn read_png_rgba8(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
     let file = std::fs::File::open(path).ok()?;
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decode_png_rgba8(std::io::BufReader::new(file))
+}
+
+/// Decode a PNG from an in-memory byte slice (e.g. an `include_bytes!` asset) to
+/// `(width, height, rgba8)`.
+pub fn read_png_rgba8_bytes(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    decode_png_rgba8(std::io::Cursor::new(bytes))
+}
+
+fn decode_png_rgba8<R: std::io::Read>(r: R) -> Option<(u32, u32, Vec<u8>)> {
+    let mut decoder = png::Decoder::new(r);
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0u8; reader.output_buffer_size()];

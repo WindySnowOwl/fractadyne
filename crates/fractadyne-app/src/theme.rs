@@ -94,8 +94,61 @@ pub(crate) fn brand_wordmark(ui: &mut egui::Ui) {
     ui.label(job);
 }
 
-/// Procedural window icon: concentric amber rings on a dark disc (transparent corners).
+/// Window icon: a Fractadyne render (bundled asset). The source is trimmed of its border,
+/// center-cropped to a square, and box-downsampled to 256×256. Falls back to the procedural
+/// mark if the embedded PNG can't be decoded.
 pub(crate) fn brand_icon() -> egui::IconData {
+    const RAW: &[u8] = include_bytes!("../assets/icon.png");
+    if let Some((w, h, rgba)) = fractadyne_export::read_png_rgba8_bytes(RAW) {
+        if w > 0 && h > 0 {
+            return icon_from_render(w as usize, h as usize, &rgba);
+        }
+    }
+    procedural_icon()
+}
+
+/// Trim a small border margin, center-crop to a square, and box-downsample to `OUT×OUT` RGBA.
+fn icon_from_render(w: usize, h: usize, rgba: &[u8]) -> egui::IconData {
+    const OUT: usize = 256;
+    // Trim ~3% off each edge to drop any capture border, then take the largest centered square.
+    let mx = (w * 3 / 100).max(2);
+    let my = (h * 3 / 100).max(2);
+    let (ix0, iy0) = (mx, my);
+    let (iw, ih) = (w - 2 * mx, h - 2 * my);
+    let side = iw.min(ih);
+    let cx0 = ix0 + (iw - side) / 2;
+    let cy0 = iy0 + (ih - side) / 2;
+    let mut out = vec![0u8; OUT * OUT * 4];
+    for oy in 0..OUT {
+        for ox in 0..OUT {
+            // Box-average the source block mapping to this output texel.
+            let sx0 = cx0 + ox * side / OUT;
+            let sx1 = (cx0 + (ox + 1) * side / OUT).max(sx0 + 1).min(w);
+            let sy0 = cy0 + oy * side / OUT;
+            let sy1 = (cy0 + (oy + 1) * side / OUT).max(sy0 + 1).min(h);
+            let (mut r, mut g, mut b, mut n) = (0u32, 0u32, 0u32, 0u32);
+            for sy in sy0..sy1 {
+                for sx in sx0..sx1 {
+                    let i = (sy * w + sx) * 4;
+                    r += rgba[i] as u32;
+                    g += rgba[i + 1] as u32;
+                    b += rgba[i + 2] as u32;
+                    n += 1;
+                }
+            }
+            let n = n.max(1);
+            let o = (oy * OUT + ox) * 4;
+            out[o] = (r / n) as u8;
+            out[o + 1] = (g / n) as u8;
+            out[o + 2] = (b / n) as u8;
+            out[o + 3] = 255;
+        }
+    }
+    egui::IconData { rgba: out, width: OUT as u32, height: OUT as u32 }
+}
+
+/// Procedural window icon: concentric amber rings on a dark disc (transparent corners).
+fn procedural_icon() -> egui::IconData {
     let n: u32 = 64;
     let mut rgba = vec![0u8; (n * n * 4) as usize];
     let center = (n as f32 - 1.0) * 0.5;
