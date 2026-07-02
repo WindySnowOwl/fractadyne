@@ -6,6 +6,7 @@
 #   Render movie: fractadyne --render-tour tours/deep-minibrot-dive.toml #                   --fps 30 --size 1920x1080 --ss 2 --out frames
 name = "Deep dive to a minibrot"
 format_version = 1
+palette = "Ember"
 
 # --- overview (hold on the whole set) ---
 [[keyframe]]

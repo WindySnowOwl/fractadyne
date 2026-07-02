@@ -21,6 +21,11 @@ struct ScriptFile {
     /// Schema version the script was authored for (see `SCRIPT_FORMAT_VERSION`).
     #[serde(default)]
     format_version: Option<u32>,
+    /// Coloring palette for the tour: a preset name (e.g. "Ember") or index. Applied on load so a
+    /// tour looks the same regardless of the session palette (e.g. a binary palette would render
+    /// deep exterior-only views as one flat color). Omit to keep the current palette.
+    #[serde(default)]
+    palette: Option<String>,
     #[serde(default, rename = "loop")]
     loop_: bool,
     #[serde(default)]
@@ -195,6 +200,10 @@ struct KeyframeFile {
     center_y: Option<String>,
     #[serde(default = "one_f64")]
     mag: f64,
+    /// Magnification as log10 (so deep zooms past f64's ~1e308 ceiling are expressible, e.g.
+    /// `mag_log10 = 420` for 1e420×). Takes precedence over `mag` when present.
+    #[serde(default)]
+    mag_log10: Option<f64>,
     #[serde(default)]
     fractal: Option<String>,
     #[serde(default)]
@@ -513,13 +522,18 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
             .as_deref()
             .and_then(FractalKind::from_name)
             .unwrap_or(FractalKind::Mandelbrot);
+        // log-magnification: `mag_log10` (for deep zooms past f64 range) wins over `mag`.
+        let logmag = match k.mag_log10 {
+            Some(l10) => (l10.max(0.0)) * std::f64::consts::LN_10,
+            None => k.mag.max(1.0).ln(),
+        };
         kfs.push(Kf {
             at: reach,
             hold,
             ease: EaseKind::parse(k.ease.as_deref()),
             cx,
             cy,
-            logmag: k.mag.max(1.0).ln(),
+            logmag,
             fractal,
             julia: k.julia.unwrap_or(false),
         });
@@ -618,6 +632,7 @@ fn benchmark_playback() -> Playback {
             center_x: Some(cx.to_string()),
             center_y: Some(cy.to_string()),
             mag: m,
+            mag_log10: None,
             fractal: Some("Mandelbrot".to_string()),
             julia: Some(false),
             ease: None,
@@ -640,6 +655,23 @@ impl FractadyneApp {
         self.playback = Some(benchmark_playback());
     }
 
+    /// Apply a script's `palette` (preset name, case-insensitive, or index). A preset clears any
+    /// binary/duotone/custom palette so the tour colours consistently (deep exterior-only views
+    /// render as a gradient rather than one flat binary color).
+    fn apply_script_palette(&mut self, spec: &str) {
+        let s = spec.trim();
+        let idx = s
+            .parse::<usize>()
+            .ok()
+            .or_else(|| fractadyne_color::PRESETS.iter().position(|p| p.name.eq_ignore_ascii_case(s)));
+        if let Some(i) = idx {
+            self.palette_idx = i.min(fractadyne_color::PRESETS.len() - 1);
+            self.use_binary = false;
+            self.use_duotone = false;
+            self.use_custom_palette = false;
+        }
+    }
+
     /// Load a camera-tour script (TOML) via a file dialog and start playing it.
     pub(crate) fn load_script(&mut self) {
         let Some(path) = rfd::FileDialog::new()
@@ -652,8 +684,12 @@ impl FractadyneApp {
             .ok()
             .and_then(|t| toml::from_str::<ScriptFile>(&t).ok());
         let script_ver = parsed.as_ref().and_then(|sf| sf.format_version).unwrap_or(0);
+        let palette = parsed.as_ref().and_then(|sf| sf.palette.clone());
         match parsed.and_then(|sf| resolve_script(sf, None)) {
             Some(pb) => {
+                if let Some(p) = &palette {
+                    self.apply_script_palette(p);
+                }
                 if script_ver > SCRIPT_FORMAT_VERSION {
                     self.bench_report = Some(format!(
                         "Note: \"{}\" was authored for a newer script format (v{script_ver} > \
@@ -778,11 +814,19 @@ impl FractadyneApp {
                 sf.format_version.unwrap_or(0)
             );
         }
+        let palette = sf.palette.clone();
         let pb = resolve_script(sf, None).ok_or("script has no keyframes")?;
+        if let Some(p) = &palette {
+            self.apply_script_palette(p);
+        }
         std::fs::create_dir_all(out_dir)
             .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
         // Single-view offscreen render at the requested frame size.
         self.dual = false;
+        // Auto-scale iterations with depth so deep tour frames resolve (a fixed low cap would
+        // render the deep structure as under-iterated blobs). Keep a high base for detail.
+        self.auto_iter = true;
+        self.max_iter = self.max_iter.max(500_000);
         self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
         self.export_width = width;
         self.export_ss = ss.max(1);

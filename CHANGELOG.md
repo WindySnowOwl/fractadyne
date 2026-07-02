@@ -48,6 +48,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   phase. This completes the guided-tour feature (captions, callouts, spotlights, easing/holds, and
   version tracking — all rendered live and into `--render-tour` movie frames).
 
+- **Deep-zoom tours** — tour keyframes can now express zooms past f64's ~1e308 ceiling via
+  `mag_log10` (e.g. `mag_log10 = 420` for 1e420×), and a script `palette` field sets a preset so a
+  tour colours consistently regardless of the session palette (a binary palette rendered deep
+  exterior-only views as one flat color). `--render-tour` also forces zoom-appropriate iteration
+  counts so deep frames resolve. Ships two example tours in `tours/`: a dive to a real minibrot
+  (~1e30×) and a dive to an endless spiral (~1e420×).
+
 - **Zoom-reprojection (smooth deep dives)** — during the brief reference rebuild at extreme depth
   the held frame now scales + pans to follow the ongoing zoom instead of freezing, so the view keeps
   moving smoothly until the fresh reference snaps in. Generalizes the pan reprojection with a scale
