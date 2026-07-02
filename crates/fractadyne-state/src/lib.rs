@@ -127,6 +127,9 @@ pub struct SessionState {
     /// Dual (Mandelbrot ↔ Julia) view.
     #[serde(default)]
     pub dual: bool,
+    /// Dual-view split position as a fraction of the width (draggable separator). Default 0.5.
+    #[serde(default = "default_dual_split")]
+    pub dual_split: f32,
     /// Series approximation (iteration-skipping) preference. Default on.
     #[serde(default = "default_true")]
     pub series_approx: bool,
@@ -163,6 +166,10 @@ fn default_duotone_hi() -> [f32; 3] {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_dual_split() -> f32 {
+    0.5
 }
 
 fn default_zoom_rate() -> f32 {
@@ -297,6 +304,7 @@ impl Default for SessionState {
             julia_c_re: default_julia_c_re(),
             julia_c_im: default_julia_c_im(),
             dual: false,
+            dual_split: default_dual_split(),
             series_approx: true,
             glitch_correct: false,
             use_bla: true,

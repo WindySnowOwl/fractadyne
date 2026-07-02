@@ -24,6 +24,10 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Draggable dual-view splitter** — the Mandelbrot↔Julia divider is now draggable (grab the
+  separator between panels; clamped 15–85%) and the position persists (`dual_split`), instead of a
+  fixed 50/50 split.
+
 - **BLA acceleration on by default** — deep floatexp Mandelbrot renders (≥1e28×) now use BLA out
   of the box: **~5× faster GPU render** (70→13 ms at 1e30×) with identical output. The tree is
   cached per reference (one-time build like the reference orbit), the cache is hardened against

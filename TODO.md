@@ -333,7 +333,8 @@ perturbation + series approximation + glitch correction. The headline feature.
       iterate red, connecting polyline; works in single and dual (hovered panel).
 - [x] **Higher max iterations** — base slider raised 4000 → **50,000** (logarithmic)
       to match the auto-scale cap; useful for deep minibrots / thin filaments.
-- [ ] **Dual-view polish** — draggable splitter.
+- [x] **Dual-view polish** — draggable splitter (persisted `dual_split` fraction; drag the
+      separator between panels, clamped 15–85%).
 - [x] **Release build** — `[profile.release]` (debug=false, lto=false, codegen-units=16
       to bound compile memory) builds clean here. Measured via `--benchmark`: bignum
       **reference recompute 374 ms → 45 ms (~8×)**, avg CPU 2.5 ms → 0.33 ms (~7.6×),

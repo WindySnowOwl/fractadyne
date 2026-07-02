@@ -872,6 +872,8 @@ struct FractadyneApp {
     julia_pin: Option<(f64, f64)>,
     /// Dual linked view: Mandelbrot (left) ↔ Julia (right).
     dual: bool,
+    /// Dual-view split position (fraction of width) — the draggable separator between panels.
+    dual_split: f32,
     /// In-progress Shift+drag zoom box (rubber-band → zoom to fill); `None` when not dragging.
     zoom_box: Option<ZoomBox>,
     /// Borderless fullscreen state (toolbar toggle).
@@ -1148,6 +1150,7 @@ impl FractadyneApp {
             julia_mode: s.julia_mode && fractal.supports_julia(),
             julia_pin: None,
             dual: s.dual,
+            dual_split: s.dual_split.clamp(0.15, 0.85),
             zoom_box: None,
             fullscreen: false,
             julia_viewport: {
@@ -1470,6 +1473,7 @@ impl FractadyneApp {
             julia_c_re: self.julia_c.0,
             julia_c_im: self.julia_c.1,
             dual: self.dual,
+            dual_split: self.dual_split,
             series_approx: self.series_approx,
             glitch_correct: self.glitch_correct,
             use_bla: self.use_bla,
@@ -1928,9 +1932,12 @@ impl FractadyneApp {
     fn draw_dual(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let ppp = ctx.pixels_per_point() as f64;
         let full = ui.max_rect();
-        let mid = (full.min.x + full.max.x) * 0.5;
-        let left = egui::Rect::from_min_max(full.min, egui::pos2(mid - 1.0, full.max.y));
-        let right = egui::Rect::from_min_max(egui::pos2(mid + 1.0, full.min.y), full.max);
+        // Split position from the persisted fraction; a small gap between the panels holds the
+        // draggable separator (handled at the end of this fn, so it draws on top).
+        const HANDLE_W: f32 = 6.0;
+        let mid = full.min.x + full.width() * self.dual_split.clamp(0.15, 0.85);
+        let left = egui::Rect::from_min_max(full.min, egui::pos2(mid - HANDLE_W * 0.5, full.max.y));
+        let right = egui::Rect::from_min_max(egui::pos2(mid + HANDLE_W * 0.5, full.min.y), full.max);
         let scroll = ctx.input(|i| i.smooth_scroll_delta.y) as f64;
 
         // Continuous zoom (hold Space / Shift+Space) toward the cursor, on the panel
@@ -2049,6 +2056,34 @@ impl FractadyneApp {
                 self.draw_orbit(&painter, r, vp, cpx, is_julia, ppp);
             }
         }
+
+        // Draggable panel separator (fills the reserved gap at `mid`; drawn on top).
+        let handle = egui::Rect::from_min_max(
+            egui::pos2(mid - HANDLE_W * 0.5, full.min.y),
+            egui::pos2(mid + HANDLE_W * 0.5, full.max.y),
+        );
+        let sep = ui.interact(handle, ui.id().with("dual_split"), egui::Sense::drag());
+        if sep.dragged() {
+            if let Some(p) = sep.interact_pointer_pos() {
+                self.dual_split = ((p.x - full.min.x) / full.width().max(1.0)).clamp(0.15, 0.85);
+            }
+        }
+        if sep.hovered() || sep.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        let sep_col = if sep.hovered() || sep.dragged() {
+            BRAND_ACCENT
+        } else {
+            egui::Color32::from_gray(50)
+        };
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(mid - 0.5, full.min.y),
+                egui::pos2(mid + 0.5, full.max.y),
+            ),
+            egui::CornerRadius::ZERO,
+            sep_col,
+        );
 
         self.pointer_complex = pc;
     }
