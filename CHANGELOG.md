@@ -24,10 +24,11 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
-- **Faster reference orbit (deep-zoom recompute)** — the arbitrary-precision reference orbit formed
-  `2xy` with a full bignum multiply-by-two every iteration; replaced with an exact base-2 exponent
-  shift. Measured ~13–17% faster reference compute at 1e6–1e20× (the deep-zoom recompute latency),
-  bit-identical output.
+- **Faster deep-zoom recompute** — two exact (bit-identical) bignum optimizations on the deep-zoom
+  settle/motion recompute: the reference orbit formed `2xy` with a full multiply-by-two → exact
+  base-2 exponent shift (**−13–17%** reference compute at 1e6–1e20×); and the series-approximation
+  coefficient loop multiplied by small-integer factors via shift-and-add and skips identity `Z^0`
+  multiplies (**−7%** series setup at 1e30×).
 
 - **Draggable dual-view splitter** — the Mandelbrot↔Julia divider is now draggable (grab the
   separator between panels; clamped 15–85%) and the position persists (`dual_split`), instead of a
