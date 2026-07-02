@@ -350,6 +350,7 @@ impl FractadyneApp {
             delta_exp,
             sa_skip: sa.skip,
             glitch_on: 0, // enabled per-pass by the multi-reference correction path
+            vignette: Default::default(), // set per-frame by the tour renderer; off for normal exports
             sa_a: sa.a,
             sa_a_exp: sa.a_exp,
             sa_b: sa.b,
@@ -865,6 +866,15 @@ impl FractadyneApp {
             reproject: reproject.is_some() as u32,
             uv_offset: reproject.unwrap_or([0.0, 0.0]),
             uv_scale: reproject_scale,
+            // Guided-tour spotlight (main view only), anchored to its fractal coordinate.
+            vignette: if view_id == 0 {
+                self.playback
+                    .as_ref()
+                    .map(|pb| crate::scripting::vignette_for(&pb.spotlights, &self.viewport, pb.cur_t))
+                    .unwrap_or_default()
+            } else {
+                Default::default()
+            },
             view_id,
         }
     }

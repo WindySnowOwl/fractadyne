@@ -29,6 +29,30 @@ struct ScriptFile {
     caption: Vec<CaptionFile>,
     #[serde(default)]
     callout: Vec<CalloutFile>,
+    #[serde(default)]
+    spotlight: Vec<SpotlightFile>,
+}
+
+/// A spotlight vignette: dim everything outside a soft circle centred on a fractal coordinate.
+#[derive(Deserialize, Clone)]
+struct SpotlightFile {
+    center_x: String,
+    center_y: String,
+    /// Circle radius as a fraction of the frame height (default 0.25).
+    #[serde(default)]
+    radius: Option<f64>,
+    #[serde(default)]
+    at: f64,
+    #[serde(default)]
+    secs: f64,
+    #[serde(default)]
+    fade: Option<f64>,
+    /// How dark outside the circle, 0..1 (default 0.7).
+    #[serde(default)]
+    dim: Option<f64>,
+    /// Soft-edge width as a fraction of the frame height (default 0.08).
+    #[serde(default)]
+    softness: Option<f64>,
 }
 
 /// A labeled marker anchored to a complex coordinate (tracks the point as the view moves).
@@ -122,6 +146,44 @@ impl Callout {
     }
 }
 
+/// A spotlight vignette anchored to a fractal coordinate (dims everything outside a soft circle).
+pub(crate) struct Spotlight {
+    pub(crate) cx: fractadyne_core::BigFloat,
+    pub(crate) cy: fractadyne_core::BigFloat,
+    pub(crate) radius: f32,
+    pub(crate) soft: f32,
+    pub(crate) dim: f32,
+    pub(crate) start: f64,
+    pub(crate) end: f64,
+    pub(crate) fade: f64,
+}
+
+impl Spotlight {
+    pub(crate) fn alpha_at(&self, t: f64) -> f32 {
+        fade_alpha(t, self.start, self.end, self.fade)
+    }
+}
+
+/// The GPU vignette for the first spotlight active at tour time `t`, anchored via `vp` (so it
+/// tracks its point + stays a constant on-screen size). Off (`on == 0`) when none is active.
+pub(crate) fn vignette_for(spots: &[Spotlight], vp: &fractadyne_core::Viewport, t: f64) -> fractadyne_gpu::Vignette {
+    for sp in spots {
+        let a = sp.alpha_at(t);
+        if a <= 0.0 {
+            continue;
+        }
+        let (vpx, vpy) = vp.complex_to_pixel(&sp.cx, &sp.cy);
+        return fractadyne_gpu::Vignette {
+            on: 1,
+            dim: sp.dim * a, // fade the dimming in/out with the window
+            soft: sp.soft,
+            center: [(vpx / vp.width_px) as f32, (vpy / vp.height_px) as f32],
+            radius: sp.radius,
+        };
+    }
+    fractadyne_gpu::Vignette::default()
+}
+
 #[derive(Deserialize, Clone)]
 struct KeyframeFile {
     /// Seconds to glide here from the previous keyframe.
@@ -192,6 +254,8 @@ pub(crate) struct Playback {
     pub(crate) captions: Vec<Caption>,
     /// Coordinate-anchored labeled markers (drawn over the fractal + into exported frames).
     pub(crate) callouts: Vec<Callout>,
+    /// Spotlight vignettes (dim outside a soft circle; applied in the color shader).
+    pub(crate) spotlights: Vec<Spotlight>,
     /// Current tour time (seconds), updated each frame — so the caption overlay knows what to show.
     pub(crate) cur_t: f64,
 }
@@ -454,6 +518,26 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
             })
         })
         .collect();
+    let spotlights = sf
+        .spotlight
+        .iter()
+        .filter_map(|s| {
+            let cx = fractadyne_core::parse_bf(&s.center_x)?;
+            let cy = fractadyne_core::parse_bf(&s.center_y)?;
+            let start = s.at.max(0.0);
+            let end = if s.secs > 0.0 { start + s.secs } else { total.max(start) };
+            Some(Spotlight {
+                cx,
+                cy,
+                radius: s.radius.unwrap_or(0.25).clamp(0.02, 2.0) as f32,
+                soft: s.softness.unwrap_or(0.08).clamp(0.0, 1.0) as f32,
+                dim: s.dim.unwrap_or(0.7).clamp(0.0, 1.0) as f32,
+                start,
+                end,
+                fade: s.fade.unwrap_or(0.4).max(0.0),
+            })
+        })
+        .collect();
     Some(Playback {
         name: if sf.name.is_empty() {
             "Script".to_string()
@@ -467,6 +551,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
         bench,
         captions,
         callouts,
+        spotlights,
         cur_t: 0.0,
     })
 }
@@ -670,6 +755,7 @@ impl FractadyneApp {
             req.height = height;
             req.ss = self.export_ss;
             req.max_iter = req.max_iter.max(200);
+            req.vignette = vignette_for(&pb.spotlights, &self.viewport, t); // spotlight for this frame
             let progress = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);
             let res = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)

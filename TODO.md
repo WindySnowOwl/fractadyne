@@ -406,8 +406,12 @@ perturbation + series approximation + glitch correction. The headline feature.
         line + label, **anchored in fractal space** (new `Viewport::complex_to_pixel`, exact at any
         depth) so they track the point as the view pans/zooms; off-screen anchors are skipped. Live
         (`draw_callouts`) + exported frames (`stamp_callout`). *(Remaining: off-screen edge arrows.)*
-      - **Vignettes / spotlights** — dim or mask everything outside a highlighted region (rect or
-        radius, in fractal or screen space) to draw the eye, with soft edges + eased on/off.
+      - [x] **Vignettes / spotlights** — DONE: `[[spotlight]]` entries dim everything outside a soft
+        circle centred on a fractal coordinate (`center_x`/`center_y`), with `radius`/`softness`
+        (frame-height fractions), `dim`, and `at`/`secs`/`fade`. Applied in the color shader
+        (aspect-corrected round circle) so live + export are identical; anchored via
+        `complex_to_pixel` so it tracks the point; the dim eases with the fade window.
+        *(Remaining: rectangular regions.)*
       - **Eased transitions** — richer easing between keyframes (per-segment ease curves, hold
         times, optional pauses) so pans/zooms feel cinematic, not linear. Builds on the existing
         `Playback::sample` log2 interpolation.

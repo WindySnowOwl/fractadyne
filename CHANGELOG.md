@@ -35,7 +35,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   line) at a fractal coordinate (`center_x`/`center_y`), **anchored in fractal space** so it tracks
   the spot as the view pans/zooms (new exact-at-any-depth `Viewport::complex_to_pixel`). Timed like
   captions (`at`/`secs`/`fade`), rendered live and burned into exported tour frames; off-screen
-  anchors are skipped. Next for the guided-tour feature: vignettes/spotlights and richer easing.
+  anchors are skipped.
+
+- **Guided-tour spotlights** — `[[spotlight]]` entries dim everything outside a soft circle centred
+  on a fractal coordinate to draw the eye, with `radius`/`softness`/`dim` and `at`/`secs`/`fade`.
+  Applied in the color shader (aspect-corrected, so the circle is round; live and export identical)
+  and anchored via `complex_to_pixel` so it tracks its point; the dimming eases with the window.
+  Next for the guided-tour feature: richer per-segment easing (currently one global smoothstep).
 
 - **Zoom-reprojection (smooth deep dives)** — during the brief reference rebuild at extreme depth
   the held frame now scales + pans to follow the ongoing zoom instead of freezing, so the view keeps

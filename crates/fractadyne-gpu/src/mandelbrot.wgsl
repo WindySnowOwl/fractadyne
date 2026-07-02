@@ -1005,9 +1005,12 @@ struct ColorU {
     reproject: u32,    // 1 = reprojection: sample the frozen texture scaled+translated (no re-iterate)
     uv_off: vec2<f32>, // uv translation for the reprojection (fraction of the screen panned)
     uv_scale: f32,     // uv scale about centre (1 = pan only; <1 = zoomed in since the frozen frame)
-    _pad_uv: f32,
-    _pad_uv2: f32,
-    _pad_uv3: f32,
+    vig_on: u32,       // 1 = spotlight vignette: dim everything outside a soft circle
+    vig_dim: f32,      // how dark outside the spotlight (0..1)
+    vig_soft: f32,     // soft-edge width (uv height fraction)
+    vig_center: vec2<f32>, // spotlight centre in screen uv (0..1)
+    vig_radius: f32,   // spotlight radius (uv height fraction)
+    _pad_vig: f32,
     interior_col: vec4<f32>, // color for in-set (non-escaping) pixels; rgb in xyz
     stops: array<vec4<f32>, 8>, // rgb + position
 };
@@ -1141,6 +1144,14 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             let band = pow(0.5 + 0.5 * cos(phase * 6.2831853), 3.0);
             col = mix(col, vec3<f32>(1.0), clamp(band * cu.de_strength, 0.0, 1.0));
         }
+    }
+    // Spotlight vignette: darken outside a soft circle (anchored in screen uv; aspect-corrected so
+    // it stays round). Used by guided tours to draw the eye to a region.
+    if (cu.vig_on == 1u) {
+        let aspect = f32(screen_dim.x) / f32(max(screen_dim.y, 1u));
+        let d = length((in.uv - cu.vig_center) * vec2<f32>(aspect, 1.0));
+        let e = smoothstep(cu.vig_radius, cu.vig_radius + max(cu.vig_soft, 1.0e-4), d);
+        col = col * (1.0 - e * cu.vig_dim);
     }
     return vec4<f32>(col, 1.0);
 }
