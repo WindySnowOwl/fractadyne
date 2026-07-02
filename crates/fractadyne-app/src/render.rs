@@ -551,8 +551,16 @@ impl FractadyneApp {
         // reads as interior and the moving frame goes solid black. `zoom_iter_cap` already bounds
         // the count so it never over-resolves sub-pixel "dust"; let resolution, not iterations,
         // absorb the motion budget. (Full-iter deep frames are cheap — reduced res keeps them fast.)
+        // floatexp (mode 2, >= PERT_FE_THRESHOLD) costs several× more per iteration than df32, and
+        // right at the df32→floatexp crossover the BLA table is still being built off-thread, so the
+        // first floatexp frames run the *full* iteration count. At native resolution that single frame
+        // can exceed the GPU watchdog (TDR) and freeze the whole app mid-dive — exactly the hang seen
+        // when a fast live dive crosses ~1e28×. Shrink the interacting budget for mode 2 so resolution
+        // (not the watchdog) absorbs the cost. Settle frames keep the full budget: by then the
+        // reference + BLA have landed and the frame is cheap even in floatexp.
+        let is_fe = fractal.supports_perturbation() && magnification >= PERT_FE_THRESHOLD;
         let (budget, iter_cap): (u64, u32) = if interacting {
-            (WORK_BUDGET, 500_000)
+            (if is_fe { WORK_BUDGET / 6 } else { WORK_BUDGET }, 500_000)
         } else {
             (WORK_BUDGET.saturating_mul(6), 500_000)
         };

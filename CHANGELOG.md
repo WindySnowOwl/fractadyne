@@ -66,6 +66,12 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 - **End-of-script message** — when a tour finishes playing, a toast reports "Script finished — …".
 
+- **No freeze at the df32→floatexp crossover** — a fast live dive crossing ~1e28× could hang the
+  app: the first floatexp frames run the full iteration count (BLA is still building off-thread),
+  and at native resolution that single frame could trip the GPU watchdog. The interacting work
+  budget is now shrunk for the costlier floatexp path, so resolution drops during motion instead
+  of the frame stalling; settle frames (reference + BLA landed) keep full quality.
+
 - **Zoom-reprojection (smooth deep dives)** — during the brief reference rebuild at extreme depth
   the held frame now scales + pans to follow the ongoing zoom instead of freezing, so the view keeps
   moving smoothly until the fresh reference snaps in. Generalizes the pan reprojection with a scale
