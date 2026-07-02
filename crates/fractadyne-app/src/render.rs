@@ -655,7 +655,12 @@ impl FractadyneApp {
             // so the bignum cost doesn't stall every frame — keeping deep zoom sharp
             // without tanking the frame-rate. (Affordable since the release build made
             // bignum ~8× faster.)
-            let out_of_view = drift.map_or(true, |(dx, dy)| dx > 0.5 || dy > 0.5);
+            // Refresh when the reference drifts past ~0.7 span off-centre. best_reference sits at
+            // ≤ ~0.4, and the perturbation stays clean out to ~1 span, so 0.7 leaves margin while
+            // recomputing far less often than the old 0.5 — a tiny margin there meant a refresh
+            // after almost any motion, which at shallow depth (recompute ≈ instant) churned the
+            // reference every few frames and made crisp palettes (Binary) visibly stutter.
+            let out_of_view = drift.map_or(true, |(dx, dy)| dx > 0.7 || dy > 0.7);
             // Once the reference is well outside the view (≫ the ~0.9 span best_reference normally
             // sits at), the perturbation δc is large enough to render wrong/glitchy. On a fast/deep
             // dive the async recompute can lag this far — freeze the last clean frame rather than
@@ -702,14 +707,13 @@ impl FractadyneApp {
                         .bla_eligible(mode, julia)
                         .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
                 };
-                // Anti-churn: space successive spawns ≥ 50 ms apart. Without this, when a recompute
-                // finishes fast (shallow/moderate depth) and the reference is still drifting, we'd
-                // respawn every frame — each install re-uploads the orbit and forces a full GPU
-                // re-iterate, and the resulting upload/re-iterate storm can back up the GPU queue and
-                // freeze the UI. Deep (slow) recomputes already exceed 50 ms, so they're unaffected.
+                // Anti-churn backstop: never respawn more than ~60×/s (spaced ≥ 16 ms). The wider
+                // `out_of_view` above already keeps refreshes infrequent; this just guards against a
+                // pathological every-frame respawn storm (which backs up GPU orbit uploads and can
+                // freeze the UI) without throttling legitimate refreshes enough to be visible.
                 let spawn_ok = self.ref_cache[vi]
                     .last_recompute
-                    .map_or(true, |t| t.elapsed().as_millis() >= 50);
+                    .map_or(true, |t| t.elapsed().as_millis() >= 16);
                 if self.ref_cache[vi].ref_pt.is_none() {
                     let res = recompute_worker(inputs); // cold start: nothing to draw with yet
                     self.install_recompute(vi, res);
