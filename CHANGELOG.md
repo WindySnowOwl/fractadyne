@@ -24,6 +24,13 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **BLA per-reference caching** — the acceleration tree is now cached per reference (rebuilt only
+  when the reference orbit changes) instead of every frame, using a conservative view-diagonal
+  `dc_max` that stays valid across pans. A settled deep view drops from ~35 ms/frame (build + render)
+  to ~13.6 ms (render only) — the full ~5.4× — and the one-time tree build is now amortized like the
+  reference orbit, removing the weak-CPU concern. Still opt-in (View menu) pending on-target
+  verification before it's enabled by default.
+
 - **BLA profiling tooling + measured verdict** — a `--bla` CLI flag forces BLA on for headless
   runs, the profiler now times the BLA tree build (`bla_build`) and labels runs with `use_bla`, and
   `scripts/profile-bla.ps1` runs BLA off-vs-on and breaks down the tradeoff (export / live /

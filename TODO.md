@@ -610,9 +610,17 @@ for fun, informative value, and ease of use.
       Net: **2.2× faster even uncached** (build-every-frame + render, 73.4 → 33.1 ms) and **5.8×
       with a per-reference cache** (build amortized). Zero cost where it doesn't apply (mode 0/1,
       aux, Julia — `build_bla` returns early). **Conclusion: enabling by default is justified.**
-      Remaining: **live per-reference BLA caching** (cache the tree in `RefCache` keyed by
-      `orbit_id` — removes the ~20 ms/frame build, reaches the 5.8× ceiling, and de-risks weak-CPU
-      machines), then flip the default on. **Phase 3:** mode-0 + Multibrot.
+      **Phase 2d DONE (per-reference caching):** `build_bla` split into `bla_eligible` + a
+      **conservative, offset-independent `bla_dc_max`** (2.5× the view diagonal — covers the whole
+      region a reference stays valid over, up to the ~1.5-span "gone" recompute threshold, with
+      margin) + the tree build; the live path (`build_params`) now caches the tree in
+      `RefCache.{bla, bla_id}` and rebuilds only when `orbit_id` changes. Validated: selftest still
+      0 mismatch (interior + boundary) with the conservative bound, and the profile shows it barely
+      costs skips (render 12.7 → 13.6 ms, still **5.4×** vs off). Effect: a settled deep view drops
+      from build-every-frame (~35 ms, 2.2×) to render-only (~13.6 ms, **5.4×**), and the ~20 ms tree
+      build becomes a one-time per-reference cost (like the reference orbit) instead of per-frame —
+      removing the weak-CPU risk. **Remaining: flip the default on** after interactive verification
+      on the target machine (the live path isn't exercised headlessly). **Phase 3:** mode-0 + Multibrot.
 - [x] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
       beyond the current single-reference Zhuoran rebasing. **Shipping for single-view exports**
       via a "Glitch correction (export)" preference (View menu, persisted): detects perturbation

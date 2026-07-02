@@ -762,6 +762,11 @@ struct RefCache {
     /// bignum coefficient iteration is as costly as the reference orbit itself).
     sa: fractadyne_core::SeriesSkip,
     sa_key: (u64, u32),
+    /// Cached BLA tree (GPU-packed) for this reference + the `orbit_id` it was built for. Rebuilt
+    /// only when the orbit changes (the tree's conservative `dc_max` stays valid across pans), so
+    /// BLA doesn't pay a per-frame tree rebuild. Empty = none/not built.
+    bla: std::sync::Arc<Vec<[f32; 4]>>,
+    bla_id: u64,
 }
 
 impl Default for RefCache {
@@ -776,6 +781,8 @@ impl Default for RefCache {
             last_recompute: None,
             sa: fractadyne_core::SeriesSkip::NONE,
             sa_key: (u64::MAX, u32::MAX),
+            bla: std::sync::Arc::new(Vec::new()),
+            bla_id: u64::MAX,
         }
     }
 }
