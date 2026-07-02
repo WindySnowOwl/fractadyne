@@ -348,8 +348,15 @@ pub(crate) fn help_command_line(ui: &mut egui::Ui) {
         ui,
         "--render-tour FILE",
         "Render a keyframe tour (TOML) to a PNG frame sequence, then exit. Options: \
-         --fps N (default 30), --size W, --height H, --ss N, --out DIR (default \"frames\"). \
-         Assemble with ffmpeg. See scripts/tour.example.toml.",
+         --fps N (default 30), --size W, --height H, --ss N, --out DIR (default \"frames\"), \
+         --mp4 [PATH]. Progress (frames done, elapsed, ETA) is printed as it renders. \
+         See scripts/tour.example.toml.",
+    );
+    help_kv(
+        ui,
+        "--mp4 [PATH]",
+        "With --render-tour: after the frames are written, assemble them into an H.264 mp4 via \
+         ffmpeg (must be on PATH). PATH defaults to <out-dir>/tour.mp4. Frames are kept.",
     );
     help_kv(ui, "--benchmark, --bench", "Run the benchmark tour and exit (use --out to save).");
     help_kv(ui, "--find-minibrot", "Print the nearby minibrot's period + center and exit.");

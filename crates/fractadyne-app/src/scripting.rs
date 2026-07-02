@@ -117,6 +117,21 @@ pub(crate) struct Caption {
 }
 
 /// Eased fade opacity (0..1) for a timed annotation window `[start, end]` at tour time `t`.
+/// Format a duration in seconds as a compact `1h02m03s` / `2m03s` / `4.2s` string for progress logs.
+fn fmt_hms(secs: f64) -> String {
+    let s = secs.max(0.0);
+    if s < 60.0 {
+        return format!("{s:.1}s");
+    }
+    let total = s.round() as u64;
+    let (h, m, sec) = (total / 3600, (total % 3600) / 60, total % 60);
+    if h > 0 {
+        format!("{h}h{m:02}m{sec:02}s")
+    } else {
+        format!("{m}m{sec:02}s")
+    }
+}
+
 fn fade_alpha(t: f64, start: f64, end: f64, fade: f64) -> f32 {
     if t < start || t > end {
         return 0.0;
@@ -930,6 +945,9 @@ impl FractadyneApp {
         height: u32,
         ss: u32,
         out_dir: &std::path::Path,
+        // Some(path) → after the PNG sequence is written, invoke `ffmpeg` to assemble it into an
+        // H.264 mp4 at `path` (frames are kept). None → leave just the PNG sequence.
+        mp4: Option<&std::path::Path>,
     ) -> Result<String, String> {
         let text = std::fs::read_to_string(script_path)
             .map_err(|e| format!("read {}: {e}", script_path.display()))?;
@@ -964,6 +982,7 @@ impl FractadyneApp {
             pb.name, self.export_ss, pb.total
         );
         let meta = self.view_metadata();
+        let started = std::time::Instant::now();
         for fi in 0..frames {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
             let s = pb.sample(t);
@@ -1033,14 +1052,72 @@ impl FractadyneApp {
             fractadyne_export::write_png(&frame_path, rw, rh, &px, Some(&meta))
                 .map_err(|e| format!("frame {fi}: {e}"))?;
             if fi % 10 == 0 || fi + 1 == frames {
-                println!("  frame {}/{frames}", fi + 1);
+                let done = fi + 1;
+                let elapsed = started.elapsed().as_secs_f64();
+                let rate = if elapsed > 0.0 { done as f64 / elapsed } else { 0.0 };
+                let eta = if rate > 0.0 { (frames - done) as f64 / rate } else { 0.0 };
+                println!(
+                    "  frame {done}/{frames}  ({} elapsed, {} left, {rate:.2} fps)",
+                    fmt_hms(elapsed),
+                    fmt_hms(eta)
+                );
+            }
+        }
+        let render_secs = started.elapsed().as_secs_f64();
+        println!(
+            "Rendered {frames} frame(s) in {} → {}",
+            fmt_hms(render_secs),
+            out_dir.display()
+        );
+
+        // Optionally assemble the PNG sequence into an mp4 via ffmpeg (kept separate from the
+        // frames so a failed/absent ffmpeg never loses the render).
+        let pattern = out_dir.join("frame_%05d.png");
+        if let Some(mp4_path) = mp4 {
+            println!("Encoding → {} (ffmpeg)…", mp4_path.display());
+            let enc = std::time::Instant::now();
+            // `-vf pad…` rounds the frame up to even dimensions (yuv420p/H.264 requires it) without
+            // resampling; `-crf 18` is visually near-lossless.
+            let status = std::process::Command::new("ffmpeg")
+                .arg("-y")
+                .arg("-hide_banner")
+                .args(["-framerate", &format!("{fps}")])
+                .arg("-i")
+                .arg(&pattern)
+                .args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"])
+                .args(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18"])
+                .arg(mp4_path)
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    return Ok(format!(
+                        "Encoded {} in {}.",
+                        mp4_path.display(),
+                        fmt_hms(enc.elapsed().as_secs_f64())
+                    ));
+                }
+                Ok(s) => {
+                    return Ok(format!(
+                        "ffmpeg exited with {s}; frames are intact. Assemble manually:\n  \
+                         ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt yuv420p {}",
+                        pattern.display(),
+                        mp4_path.display()
+                    ));
+                }
+                Err(e) => {
+                    return Ok(format!(
+                        "Could not run ffmpeg ({e}); is it on your PATH? Frames are intact. Assemble:\n  \
+                         ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt yuv420p {}",
+                        pattern.display(),
+                        mp4_path.display()
+                    ));
+                }
             }
         }
         Ok(format!(
-            "Rendered {frames} frame(s) → {}\nAssemble e.g.: ffmpeg -framerate {fps} -i \
-             {}/frame_%05d.png -c:v libx264 -pix_fmt yuv420p tour.mp4",
-            out_dir.display(),
-            out_dir.display()
+            "Assemble into a video:\n  ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt yuv420p \
+             tour.mp4\n(or re-run with --mp4 to do this automatically)",
+            pattern.display()
         ))
     }
 

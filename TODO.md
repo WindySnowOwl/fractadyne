@@ -577,7 +577,9 @@ for fun, informative value, and ease of use.
       (`set_center_log2mag`, octave-based precision) so dives past 1e308× sample exactly; this
       also upgraded **live** playback to the log2 path (was `set_center_mag`, which saturated
       at 1e308×). Example: `scripts/tour.example.toml`. Verified: a 9-frame 1→1e3× test dive
-      renders correctly. *Follow-up: in-app "Render tour…" UI + optional built-in encoder.*
+      renders correctly. Now prints live progress (frames done / elapsed / ETA / fps) and, with
+      `--mp4 [PATH]`, assembles the frames into an H.264 mp4 via ffmpeg (frames kept; falls back to
+      printing the assemble command if ffmpeg is absent). *Follow-up: in-app "Render tour…" UI.*
 - [ ] **Layers + blend modes** (Ultra Fractal-style compositing).
 - [ ] **Formula DSL / custom formulas** (M6).
 - [~] **Series approximation** — order-3 polynomial (`δz ≈ A·δc + B·δc² + C·δc³`) seeds the

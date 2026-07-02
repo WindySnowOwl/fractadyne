@@ -64,6 +64,12 @@ Baseline for tracked versioning. Notable capabilities already present:
   orbit point) interpolate smoothly between keyframes, so the Julia set *morphs* continuously as
   `c` glides along its path rather than jumping.
 
+- **Tour → mp4 in one step** — `--render-tour … --mp4 [PATH]` assembles the rendered PNG sequence
+  into an H.264 mp4 via ffmpeg (kept alongside the frames; PATH defaults to `<out-dir>/tour.mp4`).
+  Rendering now prints live progress — frames done, elapsed time, ETA, and frames/sec — and reports
+  total render + encode time when finished. Without ffmpeg on PATH the frames are still written and
+  the exact assemble command is printed.
+
 - **End-of-script message** — when a tour finishes playing, a toast reports "Script finished — …".
 
 - **No freeze at the df32→floatexp crossover** — a fast live dive crossing ~1e28× could hang the
