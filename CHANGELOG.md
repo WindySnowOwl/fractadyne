@@ -24,6 +24,11 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Faster reference orbit (deep-zoom recompute)** — the arbitrary-precision reference orbit formed
+  `2xy` with a full bignum multiply-by-two every iteration; replaced with an exact base-2 exponent
+  shift. Measured ~13–17% faster reference compute at 1e6–1e20× (the deep-zoom recompute latency),
+  bit-identical output.
+
 - **Draggable dual-view splitter** — the Mandelbrot↔Julia divider is now draggable (grab the
   separator between panels; clamped 15–85%) and the position persists (`dual_split`), instead of a
   fixed 50/50 split.

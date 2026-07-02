@@ -683,10 +683,13 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
   (or the settled high-detail reference) off the main thread. Directly cuts deep-zoom motion
   latency and glitch-correction wall time. (First real win; also unblocks corrected exports being
   threaded rather than blocking the UI.)
-- [ ] **Faster / adaptive bignum reference** — the reference orbit is the deep-zoom wall. Trim
-  precision to the minimum the depth needs (already scales, but audit guard bits), profile
-  `astro_float` hot paths, and evaluate a GPU-bignum or fixed-point reference-orbit pass to move it
-  off the single CPU core entirely.
+- [~] **Faster / adaptive bignum reference** — the reference orbit is the deep-zoom wall.
+  **Done so far:** the per-iteration `2xy` was formed with a *full bignum multiply by 2*; replaced
+  with `double_bf` (exact base-2 exponent bump) in `step_bf` + `iter_zsq_c`. Measured via
+  `--profile`: reference-orbit compute **−13–17% at 1e6–1e20×** (deep-1e20 14.5→12.6 ms), −6% at
+  1e30×; goldens bit-identical (exact change). **Remaining:** audit the +64 guard bits (trim where
+  safe), find a dedicated bignum square (x²/y² are still general muls), profile `astro_float` hot
+  paths, and evaluate a GPU-bignum / fixed-point reference pass to move it off the single CPU core.
 - [ ] **Pipeline the export** — overlap tile render → readback → encode so the GPU never idles
   between tiles (async readback + a CPU encode thread). Cheaper than multi-GPU and helps every
   machine; also smooths the synchronous glitch-corrected export.

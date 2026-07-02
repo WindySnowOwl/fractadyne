@@ -178,13 +178,12 @@ fn deep_test_point(p: usize) -> (BigFloat, BigFloat) {
 }
 
 fn iter_zsq_c(cx: &BigFloat, cy: &BigFloat, k: u32, p: usize) -> (BigFloat, BigFloat) {
-    let two = BigFloat::from_f64(2.0, p);
     let mut zx = BigFloat::from_f64(0.0, p);
     let mut zy = BigFloat::from_f64(0.0, p);
     for _ in 0..k {
         let x2 = zx.mul(&zx, p, RM);
         let y2 = zy.mul(&zy, p, RM);
-        let nzy = zx.mul(&zy, p, RM).mul(&two, p, RM).add(cy, p, RM);
+        let nzy = double_bf(&zx.mul(&zy, p, RM)).add(cy, p, RM);
         zx = x2.sub(&y2, p, RM).add(cx, p, RM);
         zy = nzy;
     }
@@ -221,6 +220,16 @@ pub fn deep_roundtrip_bits(p: usize) -> i64 {
 
 fn bf(v: f64, p: usize) -> BigFloat {
     BigFloat::from_f64(v, p)
+}
+
+/// Exact multiply-by-two via a base-2 exponent bump — far cheaper than the full bignum multiply
+/// that was forming `2xy` every reference-orbit iteration. Exact (no rounding); zero stays zero.
+fn double_bf(x: &BigFloat) -> BigFloat {
+    let mut d = x.clone();
+    if let Some(e) = d.exponent() {
+        d.set_exponent(e + 1);
+    }
+    d
 }
 
 /// Linear interpolation between two `BigFloat`s at precision `p`: `a + (b − a)·t`.
@@ -663,44 +672,39 @@ fn step_bf(
         }
         4 => {
             // Tricorn: conj(z)² + c = (x²−y²+cx, −2xy+cy)
-            let two = bf(2.0, p);
             let x2 = zx.mul(zx, p, RM);
             let y2 = zy.mul(zy, p, RM);
-            let txy = zx.mul(zy, p, RM).mul(&two, p, RM);
+            let txy = double_bf(&zx.mul(zy, p, RM));
             (x2.sub(&y2, p, RM).add(cx, p, RM), cy.sub(&txy, p, RM))
         }
         5 => {
             // Burning Ship: real = x²−y²+cx, imag = |2xy|+cy
-            let two = bf(2.0, p);
             let x2 = zx.mul(zx, p, RM);
             let y2 = zy.mul(zy, p, RM);
-            let xy2 = zx.mul(zy, p, RM).mul(&two, p, RM);
+            let xy2 = double_bf(&zx.mul(zy, p, RM));
             (x2.sub(&y2, p, RM).add(cx, p, RM), xy2.abs().add(cy, p, RM))
         }
         6 => {
             // Celtic: real = |x²−y²|+cx, imag = 2xy+cy
-            let two = bf(2.0, p);
             let x2 = zx.mul(zx, p, RM);
             let y2 = zy.mul(zy, p, RM);
-            let xy2 = zx.mul(zy, p, RM).mul(&two, p, RM);
+            let xy2 = double_bf(&zx.mul(zy, p, RM));
             (x2.sub(&y2, p, RM).abs().add(cx, p, RM), xy2.add(cy, p, RM))
         }
         7 => {
             // Buffalo: real = |x²−y²|+cx, imag = |2xy|+cy
-            let two = bf(2.0, p);
             let x2 = zx.mul(zx, p, RM);
             let y2 = zy.mul(zy, p, RM);
-            let xy2 = zx.mul(zy, p, RM).mul(&two, p, RM);
+            let xy2 = double_bf(&zx.mul(zy, p, RM));
             (x2.sub(&y2, p, RM).abs().add(cx, p, RM), xy2.abs().add(cy, p, RM))
         }
         _ => {
             // Mandelbrot: z² + c
-            let two = bf(2.0, p);
             let x2 = zx.mul(zx, p, RM);
             let y2 = zy.mul(zy, p, RM);
             (
                 x2.sub(&y2, p, RM).add(cx, p, RM),
-                zx.mul(zy, p, RM).mul(&two, p, RM).add(cy, p, RM),
+                double_bf(&zx.mul(zy, p, RM)).add(cy, p, RM),
             )
         }
     }
