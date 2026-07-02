@@ -1374,6 +1374,15 @@ impl FractadyneApp {
         }
         if let Some(p) = val("--palette").and_then(|s| s.parse::<usize>().ok()) {
             self.palette_idx = p.min(fractadyne_color::PRESETS.len() - 1);
+            // A preset overrides any persisted binary/duotone/custom palette.
+            self.use_binary = false;
+            self.use_duotone = false;
+            self.use_custom_palette = false;
+        }
+        if args.iter().any(|a| a == "--binary") {
+            self.use_binary = true;
+            self.use_duotone = false;
+            self.use_custom_palette = false;
         }
         if args.iter().any(|a| a == "--light") {
             self.light = true;
