@@ -1,0 +1,115 @@
+# Fractadyne guided tour: overview of the Mandelbrot set, a look at its landmark
+# features, then a smooth ~10^30x dive into Seahorse Valley ending on a real
+# minibrot (a period-16014 island, verified with --find-minibrot).
+#
+#   Play in-app:  Tools -> Play script...
+#   Render movie: fractadyne --render-tour tours/deep-minibrot-dive.toml #                   --fps 30 --size 1920x1080 --ss 2 --out frames
+name = "Deep dive to a minibrot"
+format_version = 1
+
+# --- overview (hold on the whole set) ---
+[[keyframe]]
+secs = 0
+center_x = "-0.5"
+center_y = "0.0"
+mag = 1
+hold = 3.5
+
+# --- glide into Seahorse Valley, pause to look ---
+[[keyframe]]
+secs = 3.5
+center_x = "-7.436438870371587047521915061147723443299582954590750709038e-1"
+center_y = "1.318259042053119704931320563851357020465533657480713907209e-1"
+mag = 55
+ease = "smooth"
+hold = 3
+
+# --- the dive: accelerate in, cruise at constant zoom rate, decelerate onto the minibrot ---
+[[keyframe]]
+secs = 3
+mag = 50000
+ease = "in"
+[[keyframe]]
+secs = 4
+mag = 1e10
+ease = "linear"
+[[keyframe]]
+secs = 4
+mag = 1e17
+ease = "linear"
+[[keyframe]]
+secs = 4
+mag = 1e24
+ease = "linear"
+[[keyframe]]
+secs = 4
+mag = 6e29
+ease = "out"
+hold = 5
+
+# --- narration ---
+[[caption]]
+text = "The Mandelbrot Set"
+at = 0.2
+secs = 3.2
+pos = "center"
+size = 34
+[[caption]]
+text = "Endless detail hides at every scale"
+at = 0.6
+secs = 2.9
+pos = "bottom"
+[[caption]]
+text = "Seahorse Valley"
+at = 7.0
+secs = 2.9
+pos = "top"
+size = 28
+[[caption]]
+text = "Diving deeper — past one million million million times"
+at = 11.5
+secs = 6.0
+pos = "bottom"
+[[caption]]
+text = "10^30x — a minibrot: a tiny copy of the whole set"
+at = 29.4
+secs = 4.5
+pos = "bottom"
+size = 26
+
+# --- overview callouts (point out landmarks while we hold on the set) ---
+[[callout]]
+text = "period-2 bulb"
+center_x = "-1.0"
+center_y = "0.0"
+at = 1.0
+secs = 2.6
+[[callout]]
+text = "Seahorse Valley"
+center_x = "-0.75"
+center_y = "0.11"
+at = 1.0
+secs = 2.6
+[[callout]]
+text = "Elephant Valley"
+center_x = "0.30"
+center_y = "0.0"
+at = 1.0
+secs = 2.6
+[[callout]]
+text = "a minibrot in the antenna"
+center_x = "-1.75"
+center_y = "0.0"
+at = 1.0
+secs = 2.6
+
+# --- spotlight the minibrot at the finale ---
+[[spotlight]]
+center_x = "-7.436438870371587047521915061147723443299582954590750709038e-1"
+center_y = "1.318259042053119704931320563851357020465533657480713907209e-1"
+radius = 0.28
+softness = 0.1
+dim = 0.7
+at = 30.0
+secs = 4.0
+fade = 0.8
