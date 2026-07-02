@@ -41,7 +41,12 @@ Baseline for tracked versioning. Notable capabilities already present:
   on a fractal coordinate to draw the eye, with `radius`/`softness`/`dim` and `at`/`secs`/`fade`.
   Applied in the color shader (aspect-corrected, so the circle is round; live and export identical)
   and anchored via `complex_to_pixel` so it tracks its point; the dimming eases with the window.
-  Next for the guided-tour feature: richer per-segment easing (currently one global smoothstep).
+
+- **Guided-tour easing + holds** — keyframes take a per-segment `ease` (`smooth` default, `linear`,
+  `smoother`, `in`, `out`) for the glide arriving at them, plus `hold` seconds to pause at a
+  keyframe before the next glide. `Playback::sample` splits each segment into a hold + an eased move
+  phase. This completes the guided-tour feature (captions, callouts, spotlights, easing/holds, and
+  version tracking — all rendered live and into `--render-tour` movie frames).
 
 - **Zoom-reprojection (smooth deep dives)** — during the brief reference rebuild at extreme depth
   the held frame now scales + pans to follow the ongoing zoom instead of freezing, so the view keeps

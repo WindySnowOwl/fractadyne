@@ -199,15 +199,57 @@ struct KeyframeFile {
     fractal: Option<String>,
     #[serde(default)]
     julia: Option<bool>,
+    /// Easing for the glide arriving at this keyframe: `smooth` (default), `linear`, `smoother`,
+    /// `in` (accelerate), or `out` (decelerate).
+    #[serde(default)]
+    ease: Option<String>,
+    /// Seconds to hold (pause) at this keyframe before gliding to the next.
+    #[serde(default)]
+    hold: f64,
+}
+
+/// Easing curve for a keyframe glide segment.
+#[derive(Clone, Copy)]
+enum EaseKind {
+    Linear,
+    Smooth,
+    Smoother,
+    In,
+    Out,
+}
+
+impl EaseKind {
+    fn parse(s: Option<&str>) -> EaseKind {
+        match s.map(|s| s.to_ascii_lowercase()).as_deref() {
+            Some("linear" | "line") => EaseKind::Linear,
+            Some("smoother" | "smootherstep") => EaseKind::Smoother,
+            Some("in" | "ease-in" | "accelerate") => EaseKind::In,
+            Some("out" | "ease-out" | "decelerate") => EaseKind::Out,
+            _ => EaseKind::Smooth, // smoothstep — the previous global default
+        }
+    }
+    fn apply(self, u: f64) -> f64 {
+        let u = u.clamp(0.0, 1.0);
+        match self {
+            EaseKind::Linear => u,
+            EaseKind::Smooth => u * u * (3.0 - 2.0 * u),
+            EaseKind::Smoother => u * u * u * (u * (u * 6.0 - 15.0) + 10.0),
+            EaseKind::In => u * u,
+            EaseKind::Out => 1.0 - (1.0 - u) * (1.0 - u),
+        }
+    }
 }
 
 fn one_f64() -> f64 {
     1.0
 }
 
-/// A resolved keyframe (parsed center + cumulative time on the timeline).
+/// A resolved keyframe: parsed center, the time the glide *reaches* it, how long it holds there,
+/// and the easing of the glide arriving at it.
 struct Kf {
     at: f64,
+    hold: f64,
+    ease: EaseKind,
     cx: fractadyne_core::BigFloat,
     cy: fractadyne_core::BigFloat,
     logmag: f64,
@@ -266,34 +308,36 @@ impl Playback {
     /// Shared by live playback and the headless tour renderer.
     pub(crate) fn sample(&self, e: f64) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat, f64, FractalKind, bool) {
         let n = self.kfs.len();
-        let mut i = n - 1;
-        for j in 0..n.saturating_sub(1) {
-            if e <= self.kfs[j + 1].at {
+        // Current segment start = last keyframe whose reach-time is ≤ e.
+        let mut i = 0;
+        for j in 0..n {
+            if self.kfs[j].at <= e {
                 i = j;
+            } else {
                 break;
             }
         }
-        if i + 1 < n {
-            let a = &self.kfs[i];
-            let b = &self.kfs[i + 1];
-            let seg = (b.at - a.at).max(1.0e-9);
-            let u = ((e - a.at) / seg).clamp(0.0, 1.0);
-            let ease = u * u * (3.0 - 2.0 * u); // smoothstep
-            let lm = a.logmag + (b.logmag - a.logmag) * ease;
-            // Precision from octaves (log2 mag) so it stays valid past f64's 1e308× ceiling.
-            let octaves = (lm / std::f64::consts::LN_2).max(0.0).ceil() as u64;
-            let p = fractadyne_core::precision_for_octaves(octaves);
-            (
-                fractadyne_core::lerp_bf(&a.cx, &b.cx, ease, p),
-                fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
-                lm,
-                a.fractal,
-                a.julia,
-            )
-        } else {
-            let a = &self.kfs[i];
-            (a.cx.clone(), a.cy.clone(), a.logmag, a.fractal, a.julia)
+        let a = &self.kfs[i];
+        // Holding at `a` (or past the final keyframe): return its state unchanged.
+        if e <= a.at + a.hold || i + 1 >= n {
+            return (a.cx.clone(), a.cy.clone(), a.logmag, a.fractal, a.julia);
         }
+        // Gliding a → b over its move window, with b's easing.
+        let b = &self.kfs[i + 1];
+        let move_start = a.at + a.hold;
+        let seg = (b.at - move_start).max(1.0e-9);
+        let ease = b.ease.apply((e - move_start) / seg);
+        let lm = a.logmag + (b.logmag - a.logmag) * ease;
+        // Precision from octaves (log2 mag) so it stays valid past f64's 1e308× ceiling.
+        let octaves = (lm / std::f64::consts::LN_2).max(0.0).ceil() as u64;
+        let p = fractadyne_core::precision_for_octaves(octaves);
+        (
+            fractadyne_core::lerp_bf(&a.cx, &b.cx, ease, p),
+            fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
+            lm,
+            a.fractal,
+            a.julia,
+        )
     }
 }
 
@@ -452,7 +496,10 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
     let mut at = 0.0;
     let mut last = ("-0.5".to_string(), "0.0".to_string());
     for k in &sf.keyframe {
-        at += k.secs.max(0.0);
+        at += k.secs.max(0.0); // glide time from the previous keyframe's hold-end to here
+        let reach = at;
+        let hold = k.hold.max(0.0);
+        at += hold; // then hold here before the next glide begins
         if let Some(x) = &k.center_x {
             last.0 = x.clone();
         }
@@ -467,7 +514,9 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
             .and_then(FractalKind::from_name)
             .unwrap_or(FractalKind::Mandelbrot);
         kfs.push(Kf {
-            at,
+            at: reach,
+            hold,
+            ease: EaseKind::parse(k.ease.as_deref()),
             cx,
             cy,
             logmag: k.mag.max(1.0).ln(),
@@ -475,7 +524,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
             julia: k.julia.unwrap_or(false),
         });
     }
-    let total = kfs.last().map(|k| k.at).unwrap_or(0.0);
+    let total = kfs.last().map(|k| k.at + k.hold).unwrap_or(0.0);
     let captions = sf
         .caption
         .iter()
@@ -571,6 +620,8 @@ fn benchmark_playback() -> Playback {
             mag: m,
             fractal: Some("Mandelbrot".to_string()),
             julia: Some(false),
+            ease: None,
+            hold: 0.0,
         });
     }
     let sf = ScriptFile {

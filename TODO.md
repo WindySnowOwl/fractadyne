@@ -393,9 +393,11 @@ perturbation + series approximation + glitch correction. The headline feature.
       (`secs`, `center_x/y`, `mag`, `fractal`, `julia`; centers inherit if omitted) and
       glides center (BigFloat lerp) + log-magnification (eased) along the timeline.
       `core::set_center_mag` / `lerp_bf` drive it; Esc or Tools → Stop ends it.
-- [~] **Guided-tour scripting (narrated, annotated tours)** — grow the keyframe format from a
-      bare camera path into an authored, self-documenting tour that teaches features and points
-      out interesting structure. Wants:
+- [x] **Guided-tour scripting (narrated, annotated tours)** — DONE (all five sub-items below):
+      grew the keyframe format into an authored, self-documenting tour — captions, coordinate-
+      anchored callouts, spotlight vignettes, per-segment easing + holds, and schema version
+      tracking — rendered live and burned into `--render-tour` movie frames. Optional extras noted
+      per sub-item (pause-until-dismissed captions, off-screen callout arrows, rect spotlights):
       - [x] **On-screen commentary / text** — DONE: `[[caption]]` entries (timed independently of
         keyframes) with `text` (multi-line), `at`/`secs`, `pos` (top/center/bottom), `fade`, and
         `size`. Eased fade in/out; wrapped + centred on a soft dark backing. Renders live
@@ -412,9 +414,11 @@ perturbation + series approximation + glitch correction. The headline feature.
         (aspect-corrected round circle) so live + export are identical; anchored via
         `complex_to_pixel` so it tracks the point; the dim eases with the fade window.
         *(Remaining: rectangular regions.)*
-      - **Eased transitions** — richer easing between keyframes (per-segment ease curves, hold
-        times, optional pauses) so pans/zooms feel cinematic, not linear. Builds on the existing
-        `Playback::sample` log2 interpolation.
+      - [x] **Eased transitions** — DONE: per-keyframe `ease` (`smooth` default, `linear`,
+        `smoother`, `in`, `out`) for the glide arriving at it, plus `hold` seconds to pause at a
+        keyframe before the next glide. `Playback::sample` now splits each segment into a hold phase
+        + an eased move phase (log2-mag + BigFloat-lerp as before). Verified: hold-window frames are
+        identical, the hold extends the timeline.
       - [x] **Targeted version tracking** — DONE: scripts declare `format_version`; loading (live +
         `--render-tour`) warns when it exceeds this build's `SCRIPT_FORMAT_VERSION` (like the `.fdn`
         / export `NewerFormat` path). Schema is additive (unknown keys ignored, missing default), so
