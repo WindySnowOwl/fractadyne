@@ -105,6 +105,11 @@ struct ViewResources {
     /// Supersampling factor the current iteration texture was rendered at. Needed so a pan
     /// reprojection colors the frozen texture with the ss it was built with (not the live ss).
     last_ss: u32,
+    /// The iteration texture holds a real render (set after the first iterate, cleared on resize).
+    /// Reprojection needs this rather than `last_iter_key.is_some()`: the key is cleared whenever a
+    /// new orbit is uploaded, but the texture still holds the last good frame — so a freeze can
+    /// keep showing it instead of falling through and re-iterating a stale reference (black frame).
+    rendered: bool,
     last_orbit_id: u64,
     last_iter_key: Option<IterKey>,
 }
@@ -345,6 +350,7 @@ impl ViewResources {
             aux_view,
             size,
             last_ss: 1,
+            rendered: false,
             last_orbit_id: u64::MAX,
             last_iter_key: None,
         }
@@ -363,6 +369,7 @@ impl ViewResources {
         );
         self.size = size;
         self.last_iter_key = None;
+        self.rendered = false; // the new texture is blank until re-iterated
     }
 
     fn ensure_orbit_capacity(
@@ -504,7 +511,7 @@ impl CallbackTrait for MandelbrotParams {
         // Pan reprojection: keep the frozen iteration texture (only valid once something has
         // been rendered into it). Skip the resize so the texture isn't cleared, and color it
         // with the ss it was built at.
-        let reproject = self.reproject == 1 && view.last_iter_key.is_some();
+        let reproject = self.reproject == 1 && view.rendered;
         if !reproject && size != view.size {
             view.resize(device, color_bgl, size);
         }
@@ -625,6 +632,7 @@ impl CallbackTrait for MandelbrotParams {
             }
             view.last_iter_key = Some(key);
             view.last_ss = ss; // remember the ss this texture was built at (for reprojection)
+            view.rendered = true; // the texture now holds a real frame (survives orbit swaps)
         }
 
         Vec::new()
