@@ -304,7 +304,6 @@ fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractadyne_gpu::Ex
         delta_exp: p.delta_exp,
         sa_skip: p.sa_skip,
         glitch_on: 0,
-        watermark: p.watermark,
         sa_a: p.sa_a,
         sa_a_exp: p.sa_a_exp,
         sa_b: p.sa_b,

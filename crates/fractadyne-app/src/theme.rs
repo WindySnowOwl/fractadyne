@@ -76,6 +76,17 @@ pub(crate) fn apply_brand_theme(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+/// The "Fd" brand mark as a two-color layout job (F in `f_col`, d in `d_col`) at `px` size,
+/// using the same proportional font as the header wordmark. Shared by the live-view watermark
+/// (drawn with the painter) and the export watermark (rasterized from the font atlas).
+pub(crate) fn brand_mark_job(px: f32, f_col: egui::Color32, d_col: egui::Color32) -> egui::text::LayoutJob {
+    let font = egui::FontId::proportional(px);
+    let mut job = egui::text::LayoutJob::default();
+    job.append("F", 0.0, egui::TextFormat { font_id: font.clone(), color: f_col, ..Default::default() });
+    job.append("d", 0.0, egui::TextFormat { font_id: font, color: d_col, ..Default::default() });
+    job
+}
+
 /// The two-color "Fractadyne" logotype (Fracta + amber dyne), for the top bar.
 pub(crate) fn brand_wordmark(ui: &mut egui::Ui) {
     let font = egui::FontId::proportional(15.0);

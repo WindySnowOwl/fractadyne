@@ -30,10 +30,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   factor (a shader `uv_scale`); pure pan is unchanged.
 
 - **Discreet "Fd" watermark** — a small brand mark in the lower-right of the live view and exported
-  images, rendered in the color shader (so live and export match). A soft dark halo plus a faint
-  light rim keep it legible on both bright and dark backgrounds while staying unobtrusive. On by
-  default; toggle in the control panel ("Fd watermark") or via `--no-watermark` / `--watermark`.
-  Persisted in the session state; excluded from the self-test goldens (which validate math only).
+  images, using the header wordmark's font: **F** in the light brand text color, **d** in the amber
+  accent (matching "Fractadyne"). Sized ~2.6% of the frame (≈20–30 px on screen) with a soft dark
+  halo so it stays legible on any background. Drawn with the egui painter live, and rasterized from
+  the same font atlas + alpha-blended into exports (built once on the main thread; the export worker
+  has no egui context). On by default; toggle in the control panel ("Fd watermark") or via
+  `--no-watermark` / `--watermark`. Persisted; excluded from the self-test goldens (math only) and
+  from the raw `--render-iter` data EXR.
 
 - **Off-thread reference recompute (no more deep-zoom stalls)** — the slow arbitrary-precision
   recompute (reference orbit + series approximation + BLA tree) now runs on a worker thread; the

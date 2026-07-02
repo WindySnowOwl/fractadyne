@@ -65,8 +65,7 @@ struct ColorUniforms {
     reproject: u32,      // 1 = reprojection: sample the frozen iteration texture scaled+translated
     uv_offset: [f32; 2], // uv translation applied when reproject == 1
     uv_scale: f32,       // uv scale about centre (1 = pan only; <1 = zoomed since the frozen frame)
-    watermark: u32,      // 1 = draw the "Fd" brand mark in the lower-right
-    _pad_uv: [f32; 2],
+    _pad_uv: [f32; 3],
     interior_col: [f32; 4],
     stops: [[f32; 4]; 8],
 }
@@ -461,8 +460,6 @@ pub struct MandelbrotParams {
     /// Reprojection scale about the view centre: 1.0 = pan only; <1.0 = the view has zoomed in
     /// since the frozen frame, so the held detail is magnified to follow the zoom.
     pub uv_scale: f32,
-    /// 1 = draw the discreet "Fd" brand mark in the lower-right corner.
-    pub watermark: u32,
     /// Which on-screen panel this is (distinct GPU resources per id).
     pub view_id: u32,
 }
@@ -543,8 +540,7 @@ impl CallbackTrait for MandelbrotParams {
             reproject: reproject as u32,
             uv_offset: self.uv_offset,
             uv_scale: if self.uv_scale > 0.0 { self.uv_scale } else { 1.0 },
-            watermark: self.watermark,
-            _pad_uv: [0.0; 2],
+            _pad_uv: [0.0; 3],
             interior_col: self.interior_col,
             stops: self.stops,
         };
@@ -697,8 +693,6 @@ pub struct ExportRequest {
     /// 1 = flag Pauldelbrot-glitched pixels with a `-2` sentinel in the iteration texture's `r`
     /// channel (multi-reference correction passes read this back). 0 for normal rendering.
     pub glitch_on: u32,
-    /// 1 = burn the discreet "Fd" brand mark into the lower-right of the export.
-    pub watermark: u32,
     pub sa_a: [f32; 4],
     pub sa_a_exp: i32,
     pub sa_b: [f32; 4],
@@ -878,8 +872,7 @@ pub fn render_export(
         reproject: 0,
         uv_offset: [0.0, 0.0],
         uv_scale: 1.0,
-        watermark: req.watermark,
-        _pad_uv: [0.0; 2],
+        _pad_uv: [0.0; 3],
         interior_col: req.interior_col,
         stops: req.stops,
     };
@@ -1338,8 +1331,7 @@ pub fn color_iter_buffer(
         reproject: 0,
         uv_offset: [0.0, 0.0],
         uv_scale: 1.0,
-        watermark: req.watermark,
-        _pad_uv: [0.0; 2],
+        _pad_uv: [0.0; 3],
         interior_col: req.interior_col,
         stops: req.stops,
     };

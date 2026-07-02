@@ -1028,6 +1028,9 @@ struct FractadyneApp {
     /// Draw the discreet "Fd" brand mark in the lower-right of the live view and exports. On by
     /// default; toggleable.
     watermark: bool,
+    /// Pre-rasterized "Fd" mark for stamping into exports (built lazily from the font atlas on the
+    /// main thread; the export worker has no egui context). `None` until first built.
+    watermark_overlay: Option<export::WmOverlay>,
     /// UI scale (egui zoom factor): scales the interface fonts + widgets. 1.0 = default.
     ui_scale: f32,
     /// Minimap overview: enabled flag, cached home-view thumbnail, and the key
@@ -1315,6 +1318,7 @@ impl FractadyneApp {
             glitch_correct: s.glitch_correct,
             use_bla: s.use_bla,
             watermark: s.watermark,
+            watermark_overlay: None,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             zoom_rate: s.zoom_rate,
             aa: s.aa,
@@ -2567,6 +2571,32 @@ impl FractadyneApp {
 
     /// Draw the minimap overlay (thumbnail + "you are here" marker + zoom depth), and
     /// handle click-to-jump. Anchored bottom-left, above the status bar.
+    /// Draw the discreet "Fd" brand mark in the lower-right of the fractal area (live view). Uses
+    /// the header font — F in the light brand text color, d in the amber accent — over a soft dark
+    /// halo so it stays legible on any background. Exports rasterize the same mark (`render.rs`).
+    fn draw_watermark(&self, ctx: &egui::Context, rect: egui::Rect) {
+        let px = (rect.height() * 0.026).clamp(18.0, 34.0); // small (~20–30 px), discreet
+        let mark = ctx.fonts(|f| {
+            f.layout_job(theme::brand_mark_job(px, theme::BRAND_TEXT, theme::BRAND_ACCENT))
+        });
+        let halo = ctx.fonts(|f| {
+            let c = egui::Color32::from_black_alpha(120);
+            f.layout_job(theme::brand_mark_job(px, c, c))
+        });
+        let sz = mark.size();
+        let pos = egui::pos2(rect.right() - sz.x - 12.0, rect.bottom() - sz.y - 10.0);
+        let painter =
+            ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("fd_watermark")));
+        // Soft glow: the dark mark stamped at a ring of small offsets, then the colored mark on top.
+        for off in [
+            egui::vec2(1.2, 0.0), egui::vec2(-1.2, 0.0), egui::vec2(0.0, 1.2), egui::vec2(0.0, -1.2),
+            egui::vec2(1.0, 1.0), egui::vec2(-1.0, 1.0), egui::vec2(1.0, -1.0), egui::vec2(-1.0, -1.0),
+        ] {
+            painter.galley(pos + off, halo.clone(), egui::Color32::PLACEHOLDER);
+        }
+        painter.galley(pos, mark, egui::Color32::PLACEHOLDER);
+    }
+
     fn draw_minimap(&mut self, ctx: &egui::Context) {
         if !self.minimap || (self.julia_mode && !self.dual) {
             return;
@@ -3245,6 +3275,11 @@ impl FractadyneApp {
 impl eframe::App for FractadyneApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_start = Instant::now();
+        // Rasterize the export watermark once from the font atlas (main thread — the export worker
+        // has no egui context). Lazy so it uses the loaded fonts + final DPI.
+        if self.watermark && self.watermark_overlay.is_none() {
+            self.watermark_overlay = export::build_watermark_overlay(ctx);
+        }
         // Apply the UI scale preference (egui zoom factor) when it changes.
         if (ctx.zoom_factor() - self.ui_scale).abs() > 1.0e-4 {
             ctx.set_zoom_factor(self.ui_scale);
@@ -4218,7 +4253,7 @@ impl eframe::App for FractadyneApp {
                 });
         }
 
-        egui::CentralPanel::default()
+        let central = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
                 if self.dual {
@@ -4458,6 +4493,11 @@ impl eframe::App for FractadyneApp {
                     }
                 }
             });
+
+        // ---- brand watermark (lower-right of the fractal area) ----
+        if self.watermark {
+            self.draw_watermark(ctx, central.response.rect);
+        }
 
         // ---- minimap overview ----
         self.draw_minimap(ctx);

@@ -7,6 +7,158 @@ use crate::{
     FractalKind,
 };
 
+/// Pre-rasterized "Fd" brand mark for stamping into exports: premultiplied **linear** RGBA at a
+/// high resolution (downscaled per export). Built once on the main thread from the egui font atlas
+/// (same glyphs as the live-view watermark), then blended by the export worker — which has no egui
+/// context — via [`stamp_watermark`].
+#[derive(Clone)]
+pub(crate) struct WmOverlay {
+    pub w: usize,
+    pub h: usize,
+    pub px: Vec<[f32; 4]>, // premultiplied, linear
+}
+
+/// Rasterize the "Fd" mark (F in brand text, d in amber) from the egui font atlas into a
+/// premultiplied-linear overlay with a soft dark halo (so it stays legible on any background).
+pub(crate) fn build_watermark_overlay(ctx: &egui::Context) -> Option<WmOverlay> {
+    let ppp = ctx.pixels_per_point();
+    let pts = 40.0_f32; // layout size in points; rasterized at pts*ppp texels, downscaled per export
+    let galley =
+        ctx.fonts(|f| f.layout_job(crate::theme::brand_mark_job(pts, crate::theme::BRAND_TEXT, crate::theme::BRAND_ACCENT)));
+    let pad = (pts * ppp * 0.20).ceil() as i32;
+    let gw = (galley.size().x * ppp).ceil() as i32;
+    let gh = (galley.size().y * ppp).ceil() as i32;
+    let w = (gw + 2 * pad).max(1) as usize;
+    let h = (gh + 2 * pad).max(1) as usize;
+    // Straight-alpha linear glyph layer: rgb = linear color, a = coverage.
+    let mut glyph = vec![[0.0f32; 4]; w * h];
+    ctx.fonts(|f| {
+        let atlas = f.image();
+        let aw = atlas.size[0];
+        for row in &galley.rows {
+            for g in &row.glyphs {
+                let uv = g.uv_rect;
+                if uv.max[0] <= uv.min[0] || uv.max[1] <= uv.min[1] {
+                    continue;
+                }
+                let lin = egui::Rgba::from(
+                    galley.job.sections.get(g.section_index as usize)
+                        .map(|s| s.format.color).unwrap_or(egui::Color32::WHITE),
+                );
+                let ox = ((g.pos.x + uv.offset.x) * ppp).round() as i32 + pad;
+                let oy = ((g.pos.y + uv.offset.y) * ppp).round() as i32 + pad;
+                for ty in uv.min[1]..uv.max[1] {
+                    for tx in uv.min[0]..uv.max[0] {
+                        let cov = atlas.pixels[ty as usize * aw + tx as usize];
+                        if cov <= 0.0 {
+                            continue;
+                        }
+                        let dx = ox + (tx - uv.min[0]) as i32;
+                        let dy = oy + (ty - uv.min[1]) as i32;
+                        if dx < 0 || dy < 0 || dx >= w as i32 || dy >= h as i32 {
+                            continue;
+                        }
+                        let p = &mut glyph[dy as usize * w + dx as usize];
+                        if cov > p[3] {
+                            *p = [lin.r(), lin.g(), lin.b(), cov];
+                        }
+                    }
+                }
+            }
+        }
+    });
+    // Soft halo = box-blurred glyph coverage; composite the glyph over a translucent black halo.
+    let radius = (pts * ppp * 0.09).round().max(1.0) as i32;
+    let halo = blur_coverage(&glyph, w, h, radius);
+    let mut px = vec![[0.0f32; 4]; w * h];
+    for i in 0..w * h {
+        let ga = glyph[i][3];
+        let ha = (halo[i] * 0.60).min(1.0); // dark halo strength
+        // glyph (premult) over black halo (premult rgb = 0): rgb = glyph.rgb*ga; a = ga + ha(1-ga)
+        px[i] = [glyph[i][0] * ga, glyph[i][1] * ga, glyph[i][2] * ga, ga + ha * (1.0 - ga)];
+    }
+    Some(WmOverlay { w, h, px })
+}
+
+/// Separable box blur of the coverage (alpha) channel — the halo footprint.
+fn blur_coverage(src: &[[f32; 4]], w: usize, h: usize, r: i32) -> Vec<f32> {
+    let mut a: Vec<f32> = src.iter().map(|p| p[3]).collect();
+    let mut tmp = vec![0.0f32; w * h];
+    let norm = 1.0 / (2 * r + 1) as f32;
+    for y in 0..h {
+        for x in 0..w {
+            let mut s = 0.0;
+            for k in -r..=r {
+                let xx = (x as i32 + k).clamp(0, w as i32 - 1) as usize;
+                s += a[y * w + xx];
+            }
+            tmp[y * w + x] = s * norm;
+        }
+    }
+    for y in 0..h {
+        for x in 0..w {
+            let mut s = 0.0;
+            for k in -r..=r {
+                let yy = (y as i32 + k).clamp(0, h as i32 - 1) as usize;
+                s += tmp[yy * w + x];
+            }
+            a[y * w + x] = s * norm;
+        }
+    }
+    a
+}
+
+/// Alpha-blend the pre-rasterized mark into the lower-right of a **linear** RGBA export buffer.
+/// Height scales to ~2.6% of the image (matching the live view); area-averaged downscale.
+pub(crate) fn stamp_watermark(pixels: &mut [f32], w: u32, h: u32, ov: &WmOverlay) {
+    if ov.w == 0 || ov.h == 0 || w == 0 || h == 0 {
+        return;
+    }
+    let th = (h as f32 * 0.026).clamp(16.0, (h as f32) * 0.2);
+    let scale = th / ov.h as f32; // < 1 (downscale)
+    let tw = (ov.w as f32 * scale).round() as i32;
+    let th = th.round() as i32;
+    if tw <= 0 || th <= 0 {
+        return;
+    }
+    let margin_x = (w as f32 * 0.012).round() as i32;
+    let margin_y = (h as f32 * 0.012).round() as i32;
+    let x0 = w as i32 - tw - margin_x;
+    let y0 = h as i32 - th - margin_y;
+    let inv = ov.w as f32 / tw as f32; // source texels per dest pixel
+    for dy in 0..th {
+        for dx in 0..tw {
+            // Area-average the source footprint for this dest pixel.
+            let sx0 = (dx as f32 * inv) as i32;
+            let sx1 = (((dx + 1) as f32 * inv) as i32).max(sx0 + 1).min(ov.w as i32);
+            let sy0 = (dy as f32 * inv) as i32;
+            let sy1 = (((dy + 1) as f32 * inv) as i32).max(sy0 + 1).min(ov.h as i32);
+            let (mut acc, mut n) = ([0.0f32; 4], 0.0f32);
+            for sy in sy0..sy1 {
+                for sx in sx0..sx1 {
+                    let s = ov.px[sy as usize * ov.w + sx as usize];
+                    acc[0] += s[0]; acc[1] += s[1]; acc[2] += s[2]; acc[3] += s[3];
+                    n += 1.0;
+                }
+            }
+            if n == 0.0 {
+                continue;
+            }
+            let src = [acc[0] / n, acc[1] / n, acc[2] / n, acc[3] / n]; // premultiplied linear
+            let (px_, py) = (x0 + dx, y0 + dy);
+            if px_ < 0 || py < 0 || px_ >= w as i32 || py >= h as i32 {
+                continue;
+            }
+            let idx = (py as usize * w as usize + px_ as usize) * 4;
+            let ia = 1.0 - src[3];
+            pixels[idx] = src[0] + pixels[idx] * ia;
+            pixels[idx + 1] = src[1] + pixels[idx + 1] * ia;
+            pixels[idx + 2] = src[2] + pixels[idx + 2] * ia;
+            // leave alpha channel (export is opaque)
+        }
+    }
+}
+
 /// Version of the reloadable view-metadata format (the `format_version=` field shared by
 /// exports, `.fdn` locations and bookmarks). Bump ONLY on a breaking change to an existing
 /// field's meaning or units — purely additive new keys don't need it (the allow-list reader
@@ -329,6 +481,15 @@ impl FractadyneApp {
         self.start_export_to(device, queue, path);
     }
 
+    /// Stamp the "Fd" mark into a linear RGBA image buffer if the watermark is enabled and built.
+    pub(crate) fn apply_watermark(&self, pixels: &mut [f32], w: u32, h: u32) {
+        if self.watermark {
+            if let Some(ov) = &self.watermark_overlay {
+                stamp_watermark(pixels, w, h, ov);
+            }
+        }
+    }
+
     /// Synchronously render the current view and write it to `path` (used by the
     /// headless `--render` CLI mode). Blocks until done; returns a status message.
     pub(crate) fn render_to_file(
@@ -343,9 +504,12 @@ impl FractadyneApp {
         let cancel = AtomicBool::new(false);
         let meta = self.view_metadata();
         let fmt = self.export_format;
-        let write = |p: &std::path::Path, w: u32, h: u32, px: &[f32]| match fmt {
-            ExportFormat::Png => fractadyne_export::write_png(p, w, h, px, Some(&meta)),
-            ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, px, Some(&meta)),
+        let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| {
+            self.apply_watermark(&mut px, w, h);
+            match fmt {
+                ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
+                ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
+            }
         };
         let render = |req: &fractadyne_gpu::ExportRequest| {
             fractadyne_gpu::render_export(device, queue, req, &progress, &cancel)
@@ -363,21 +527,21 @@ impl FractadyneApp {
                     Some(res) => res,
                     None => render(&req)?,
                 };
-                write(path, r.width, r.height, &r.pixels)?;
+                write(path, r.width, r.height, r.pixels)?;
                 Ok(format!("Saved {}×{} → {}", r.width, r.height, path.display()))
             }
             ExportJob::SideBySide(a, b) => {
                 let (ra, rb) = (render(&a)?, render(&b)?);
                 let (w, h, px) = stitch_side_by_side(&ra, &rb);
-                write(path, w, h, &px)?;
+                write(path, w, h, px)?;
                 Ok(format!("Saved {w}×{h} → {}", path.display()))
             }
             ExportJob::Separate(a, b) => {
                 let (pmap, pjul) = separate_paths(path);
                 let ra = render(&a)?;
-                write(&pmap, ra.width, ra.height, &ra.pixels)?;
+                write(&pmap, ra.width, ra.height, ra.pixels)?;
                 let rb = render(&b)?;
-                write(&pjul, rb.width, rb.height, &rb.pixels)?;
+                write(&pjul, rb.width, rb.height, rb.pixels)?;
                 Ok(format!("Saved 2 files → {}", pmap.display()))
             }
         }
@@ -426,11 +590,12 @@ impl FractadyneApp {
         // path for dual layouts, aux coloring methods, or sizes past the single-texture limit.
         if self.glitch_correct {
             if let ExportJob::Single(req) = &job {
-                if let Some(res) = self.render_export_corrected(
+                if let Some(mut res) = self.render_export_corrected(
                     &device, &queue, &self.viewport, self.julia_mode, req.width, req.height,
                 ) {
                     let meta = self.view_metadata();
                     let (w, h) = (res.width, res.height);
+                    self.apply_watermark(&mut res.pixels, w, h);
                     let wr = match self.export_format {
                         ExportFormat::Png => fractadyne_export::write_png(&path, w, h, &res.pixels, Some(&meta)),
                         ExportFormat::Exr => fractadyne_export::write_exr(&path, w, h, &res.pixels, Some(&meta)),
@@ -450,6 +615,8 @@ impl FractadyneApp {
         self.export_cancel.store(false, Relaxed);
         let progress = self.export_progress.clone();
         let cancel = self.export_cancel.clone();
+        // Clone the pre-rasterized mark into the worker (it has no egui context to build one).
+        let wm = self.watermark.then(|| self.watermark_overlay.clone()).flatten();
         let (tx, rx) = std::sync::mpsc::channel();
         self.export_task = Some(rx);
         self.export_status = Some("Rendering…".to_string());
@@ -457,33 +624,39 @@ impl FractadyneApp {
             let render = |req: &fractadyne_gpu::ExportRequest| {
                 fractadyne_gpu::render_export(&device, &queue, req, &progress, &cancel)
             };
-            let write = |p: &std::path::Path, w: u32, h: u32, px: &[f32]| match format {
-                ExportFormat::Png => fractadyne_export::write_png(p, w, h, px, Some(&meta)),
-                ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, px, Some(&meta)),
+            let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| {
+                if let Some(ov) = &wm {
+                    stamp_watermark(&mut px, w, h, ov);
+                }
+                match format {
+                    ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
+                    ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
+                }
             };
             let msg = (|| -> Result<String, String> {
                 match job {
                     ExportJob::Single(req) => {
                         let r = render(&req)?;
                         progress.store(2000, Relaxed);
-                        write(&path, r.width, r.height, &r.pixels)?;
-                        Ok(format!("Saved {}×{} → {}", r.width, r.height, path.display()))
+                        let (rw, rh) = (r.width, r.height);
+                        write(&path, rw, rh, r.pixels)?;
+                        Ok(format!("Saved {}×{} → {}", rw, rh, path.display()))
                     }
                     ExportJob::SideBySide(a, b) => {
                         let ra = render(&a)?;
                         let rb = render(&b)?;
                         progress.store(2000, Relaxed);
                         let (w, h, px) = stitch_side_by_side(&ra, &rb);
-                        write(&path, w, h, &px)?;
+                        write(&path, w, h, px)?;
                         Ok(format!("Saved {w}×{h} → {}", path.display()))
                     }
                     ExportJob::Separate(a, b) => {
                         let (pmap, pjul) = separate_paths(&path);
                         let ra = render(&a)?;
-                        write(&pmap, ra.width, ra.height, &ra.pixels)?;
+                        write(&pmap, ra.width, ra.height, ra.pixels)?;
                         let rb = render(&b)?;
                         progress.store(2000, Relaxed);
-                        write(&pjul, rb.width, rb.height, &rb.pixels)?;
+                        write(&pjul, rb.width, rb.height, rb.pixels)?;
                         Ok(format!("Saved 2 files → {}", pmap.display()))
                     }
                 }

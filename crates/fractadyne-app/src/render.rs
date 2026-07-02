@@ -350,7 +350,6 @@ impl FractadyneApp {
             delta_exp,
             sa_skip: sa.skip,
             glitch_on: 0, // enabled per-pass by the multi-reference correction path
-            watermark: self.watermark as u32,
             sa_a: sa.a,
             sa_a_exp: sa.a_exp,
             sa_b: sa.b,
@@ -854,7 +853,6 @@ impl FractadyneApp {
             reproject: reproject.is_some() as u32,
             uv_offset: reproject.unwrap_or([0.0, 0.0]),
             uv_scale: reproject_scale,
-            watermark: self.watermark as u32,
             view_id,
         }
     }
