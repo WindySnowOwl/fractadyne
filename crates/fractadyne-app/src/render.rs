@@ -646,22 +646,18 @@ impl FractadyneApp {
             // without tanking the frame-rate. (Affordable since the release build made
             // bignum ~8× faster.)
             let out_of_view = drift.map_or(true, |(dx, dy)| dx > 0.5 || dy > 0.5);
+            // Past ~1 span off-centre the perturbation δc gets large enough to render dark/glitchy
+            // (best_reference normally sits ≤ ~0.9 span away). On a fast/deep dive the async
+            // recompute can lag this far behind — freeze the last clean frame rather than paint the
+            // degraded one (see the reprojection freeze below). Tighter than `gone` on purpose.
+            let too_stale = drift.map_or(false, |(dx, dy)| dx > 0.8 || dy > 0.8);
             let needs_quality = precision > self.ref_cache[vi].orbit_prec
                 || gpu_iter > self.ref_cache[vi].orbit_iter;
-            let gone = drift.map_or(true, |(dx, dy)| dx > 1.5 || dy > 1.5);
-            let recompute = if interacting {
-                // Adaptive throttle: keep recompute to ≲ ~30% of wall time by spacing
-                // refreshes at ~2.5× the last recompute's duration (so a slow debug
-                // bignum doesn't stall motion, while a fast release build refreshes
-                // often). Min 90 ms.
-                let spacing = (self.perf.recompute_ms / 1000.0 * 2.5).max(0.09);
-                let throttle_ok = self.ref_cache[vi]
-                    .last_recompute
-                    .map_or(true, |t| t.elapsed().as_secs_f64() > spacing);
-                gone || ((out_of_view || needs_quality) && throttle_ok)
-            } else {
-                out_of_view || needs_quality
-            };
+            // Refresh whenever the reference has left the view or the depth/iters outgrew it. The
+            // old motion throttle is gone: the recompute is now off-thread and gated to one job per
+            // view (`recompute_rx`), so spawns are naturally paced by the compute itself — no need
+            // to space them artificially (which only made deep references refresh more slowly).
+            let recompute = out_of_view || needs_quality;
             // Whether the series approximation applies to this view (bundled into the recompute).
             let do_sa = (mode == 0 || mode == 2)
                 && !julia
@@ -701,12 +697,15 @@ impl FractadyneApp {
                 }
                 // else: a recompute is already in flight — keep using the cached reference.
             }
-            // At extreme depth the recompute can take long enough that a fast dive drifts the
-            // cached reference fully out of view before the fresh one lands. Rendering with a
-            // "gone" reference is garbage (blank), so instead freeze the last good frame (via the
-            // reprojection path) until the recompute completes and the view snaps to the new
-            // reference. Only when there IS a prior reference (not the cold start).
-            if gone && self.ref_cache[vi].ref_pt.is_some() && self.recompute_rx[vi].is_some() {
+            // At extreme depth the recompute can take long enough that a fast/continuous dive
+            // drifts the cached reference too far off-centre before a fresh one lands — rendering
+            // with it is dark/glitchy (the "screen goes black" while zooming). Instead freeze the
+            // last clean frame (via the reprojection path: prepare skips the re-iterate and holds
+            // the frozen texture) until a fresh reference installs and the view snaps to it. NOT
+            // gated on a job being in flight — the recompute throttle can leave gaps where nothing
+            // is pending yet the reference is already too stale to paint. Only when a prior
+            // reference exists (the cold start renders synchronously instead).
+            if too_stale && self.ref_cache[vi].ref_pt.is_some() {
                 reproject = Some([0.0, 0.0]);
             }
             let rp = self.ref_cache[vi].ref_pt.as_ref().unwrap();
