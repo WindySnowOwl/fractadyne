@@ -604,11 +604,15 @@ for fun, informative value, and ease of use.
       (`SessionState::use_bla`), and the GPU escape-overshoot revert is validated — a new selftest
       "BLA escape path == non-BLA @1e30× (boundary)" renders a deep boundary view (**48400
       escapers**, 0 mismatch) alongside the all-interior nucleus test (48400 interior, 0 mismatch),
-      so both BLA code paths are covered. **Still off by default** — the perf cost/benefit needs
-      interactive measurement (the tree is rebuilt per frame; see below). Remaining before
-      enable-by-default: **live per-reference BLA caching** (cache the tree in `RefCache` keyed by
-      `orbit_id`, rebuild only when the reference changes — currently `build_bla` runs every frame),
-      then measure, then combine with SA. **Phase 3:** mode-0 + Multibrot.
+      so both BLA code paths are covered. **Measured (2026-07-01, RTX 3080 / Ryzen 3950X, via the
+      new `scripts/profile-bla.ps1` + `--bla` flag):** at 1e30× (mode 2, SA on) BLA cuts the GPU
+      render **73.4 → 12.7 ms (5.8×)**; the tree build costs **~20 ms** (CPU, currently per frame).
+      Net: **2.2× faster even uncached** (build-every-frame + render, 73.4 → 33.1 ms) and **5.8×
+      with a per-reference cache** (build amortized). Zero cost where it doesn't apply (mode 0/1,
+      aux, Julia — `build_bla` returns early). **Conclusion: enabling by default is justified.**
+      Remaining: **live per-reference BLA caching** (cache the tree in `RefCache` keyed by
+      `orbit_id` — removes the ~20 ms/frame build, reaches the 5.8× ceiling, and de-risks weak-CPU
+      machines), then flip the default on. **Phase 3:** mode-0 + Multibrot.
 - [x] **Multi-reference glitch correction** (Pauldelbrot criterion + per-glitch recompute) —
       beyond the current single-reference Zhuoran rebasing. **Shipping for single-view exports**
       via a "Glitch correction (export)" preference (View menu, persisted): detects perturbation

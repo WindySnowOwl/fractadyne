@@ -195,11 +195,14 @@ impl FractadyneApp {
             ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
             let t_sa = std::time::Instant::now();
             sa = self.series_skip_for(&rp, scale.span_mantissa, dx, dy, delta_exp, mode, julia, eff_iter, len, precision);
-            self.prof.set(profile::ProfSetup { reference_ms, series_ms: t_sa.elapsed().as_secs_f64() * 1000.0 });
+            let series_ms = t_sa.elapsed().as_secs_f64() * 1000.0;
+            let t_bla = std::time::Instant::now();
             if let Some(data) = self.build_bla(mode, julia, &orbit, scale.span_mantissa, dx, dy, delta_exp) {
                 bla = data;
                 bla_on = 1;
             }
+            let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
+            self.prof.set(profile::ProfSetup { reference_ms, series_ms, bla_ms });
         }
 
         let cxh = cx as f32;

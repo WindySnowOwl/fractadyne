@@ -1281,6 +1281,12 @@ impl FractadyneApp {
             last_state: s,
             dirty_since: None,
         };
+        // `--bla` forces BLA on for any headless mode (profiling / benchmark / render), so BLA
+        // on-vs-off can be compared without a session file. Applied unconditionally (not just the
+        // `--render` path) since `--profile`/`--benchmark` don't call `apply_cli_render`.
+        if args.iter().any(|a| a == "--bla") {
+            app.use_bla = true;
+        }
         if app.auto_benchmark {
             app.start_benchmark();
         }

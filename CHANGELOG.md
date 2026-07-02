@@ -24,6 +24,14 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **BLA profiling tooling + measured verdict** — a `--bla` CLI flag forces BLA on for headless
+  runs, the profiler now times the BLA tree build (`bla_build`) and labels runs with `use_bla`, and
+  `scripts/profile-bla.ps1` runs BLA off-vs-on and breaks down the tradeoff (export / live /
+  cached). Measured on an RTX 3080 / Ryzen 3950X: at 1e30× BLA cuts the GPU render **5.8×** (73→13
+  ms) for a **~20 ms** tree build — **2.2× net even rebuilt every frame, 5.8× with caching**, and
+  no cost where it doesn't apply. Verdict: enabling BLA by default is justified (per-reference
+  caching is the remaining step).
+
 - **BLA acceleration: user toggle + escape-path validation** — bilinear approximation (skip
   iterations throughout the orbit at extreme depth) is now a persisted **View-menu toggle**
   ("BLA acceleration (deep zoom)") instead of a hidden dev flag. Its GPU escape-overshoot revert

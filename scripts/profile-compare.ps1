@@ -18,8 +18,8 @@ $ErrorActionPreference = "Stop"
 $a = Get-Content $Before -Raw | ConvertFrom-Json
 $b = Get-Content $After -Raw | ConvertFrom-Json
 
-Write-Host "Before: $($a.utc)  $($a.gpu) / $($a.cpu)  SA=$($a.series_approx)"
-Write-Host "After:  $($b.utc)  $($b.gpu) / $($b.cpu)  SA=$($b.series_approx)"
+Write-Host "Before: $($a.utc)  $($a.gpu) / $($a.cpu)  SA=$($a.series_approx) BLA=$($a.use_bla)"
+Write-Host "After:  $($b.utc)  $($b.gpu) / $($b.cpu)  SA=$($b.series_approx) BLA=$($b.use_bla)"
 if ($a.gpu -ne $b.gpu -or $a.cpu -ne $b.cpu) {
     Write-Host "WARNING: hardware differs between runs — timings are not directly comparable." -ForegroundColor Yellow
 }
@@ -28,7 +28,9 @@ Write-Host ""
 $bmap = @{}
 foreach ($r in $b.regions) { $bmap[$r.name] = $r }
 
-function Total($r) { $r.timings_ms.reference + $r.timings_ms.series_skip + $r.timings_ms.gpu_render.median }
+# Coalesce a possibly-missing field (older logs predate bla_build) to 0.
+function V($x) { if ($null -eq $x) { 0.0 } else { [double]$x } }
+function Total($r) { (V $r.timings_ms.reference) + (V $r.timings_ms.series_skip) + (V $r.timings_ms.bla_build) + (V $r.timings_ms.gpu_render.median) }
 
 "{0,-20} {1,10} {2,10} {3,9}" -f "region / metric", "before", "after", "change" | Write-Host
 "-" * 54 | Write-Host
@@ -36,11 +38,12 @@ foreach ($r in $a.regions) {
     $o = $bmap[$r.name]
     if (-not $o) { Write-Host ("{0,-20}  (missing in 'after')" -f $r.name); continue }
     $rows = @(
-        @{ k = "reference";  bv = $r.timings_ms.reference;          av = $o.timings_ms.reference }
-        @{ k = "series";     bv = $r.timings_ms.series_skip;        av = $o.timings_ms.series_skip }
-        @{ k = "gpu_iterate";bv = $r.timings_ms.gpu_iterate.median; av = $o.timings_ms.gpu_iterate.median }
-        @{ k = "gpu_render"; bv = $r.timings_ms.gpu_render.median;  av = $o.timings_ms.gpu_render.median }
-        @{ k = "TOTAL";      bv = (Total $r);                       av = (Total $o) }
+        @{ k = "reference";  bv = (V $r.timings_ms.reference);          av = (V $o.timings_ms.reference) }
+        @{ k = "series";     bv = (V $r.timings_ms.series_skip);        av = (V $o.timings_ms.series_skip) }
+        @{ k = "bla_build";  bv = (V $r.timings_ms.bla_build);          av = (V $o.timings_ms.bla_build) }
+        @{ k = "gpu_iterate";bv = (V $r.timings_ms.gpu_iterate.median); av = (V $o.timings_ms.gpu_iterate.median) }
+        @{ k = "gpu_render"; bv = (V $r.timings_ms.gpu_render.median);  av = (V $o.timings_ms.gpu_render.median) }
+        @{ k = "TOTAL";      bv = (Total $r);                           av = (Total $o) }
     )
     Write-Host ("{0}  (mode {1}, skip {2}->{3})" -f $r.name, $r.mode, $r.sa_skip, $o.sa_skip)
     foreach ($row in $rows) {

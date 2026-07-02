@@ -19,6 +19,9 @@ pub struct ProfSetup {
     pub reference_ms: f64,
     /// Series-approximation coefficient compute + skip selection (CPU), ms.
     pub series_ms: f64,
+    /// BLA tree build (`build_bla`, CPU), ms — 0 when BLA is off. This is a *per-frame* cost in
+    /// the live view (the tree isn't cached yet), so it matters for the on-by-default decision.
+    pub bla_ms: f64,
 }
 
 /// One benchmark region: a view to render and time.
@@ -186,13 +189,19 @@ impl FractadyneApp {
         json.push_str(&format!("  \"cpu\": {},\n", js(&sys.cpu)));
         json.push_str(&format!("  \"os\": {},\n", js(std::env::consts::OS)));
         json.push_str(&format!("  \"series_approx\": {},\n", self.series_approx));
+        json.push_str(&format!("  \"use_bla\": {},\n", self.use_bla));
         json.push_str(&format!("  \"reps\": {reps},\n"));
         json.push_str("  \"regions\": [\n");
 
-        println!("Fractadyne profiling — {} regions × {reps} reps", regions.len());
         println!(
-            "  {:<20} {:>5} {:>8} {:>9} {:>10} {:>10} {:>10}",
-            "region", "mode", "skip", "ref ms", "iter ms", "render ms", "total ms"
+            "Fractadyne profiling — {} regions × {reps} reps (SA {}, BLA {})",
+            regions.len(),
+            if self.series_approx { "on" } else { "off" },
+            if self.use_bla { "on" } else { "off" },
+        );
+        println!(
+            "  {:<20} {:>5} {:>8} {:>9} {:>8} {:>9} {:>10} {:>10}",
+            "region", "mode", "skip", "ref ms", "bla ms", "iter ms", "render ms", "total ms"
         );
 
         for (ri, r) in regions.iter().enumerate() {
@@ -229,11 +238,11 @@ impl FractadyneApp {
             }
             let iter_s = stat(&mut iter_ms);
             let render_s = stat(&mut render_ms);
-            let total = setup.reference_ms + setup.series_ms + render_s.median;
+            let total = setup.reference_ms + setup.series_ms + setup.bla_ms + render_s.median;
 
             println!(
-                "  {:<20} {:>5} {:>8} {:>10.2} {:>10.2} {:>10.2} {:>10.2}",
-                r.name, req.mode, req.sa_skip, setup.reference_ms, iter_s.median, render_s.median, total
+                "  {:<20} {:>5} {:>8} {:>9.2} {:>8.2} {:>9.2} {:>10.2} {:>10.2}",
+                r.name, req.mode, req.sa_skip, setup.reference_ms, setup.bla_ms, iter_s.median, render_s.median, total
             );
 
             json.push_str("    {\n");
@@ -254,6 +263,7 @@ impl FractadyneApp {
             json.push_str("      \"timings_ms\": {\n");
             json.push_str(&format!("        \"reference\": {:.4},\n", setup.reference_ms));
             json.push_str(&format!("        \"series_skip\": {:.4},\n", setup.series_ms));
+            json.push_str(&format!("        \"bla_build\": {:.4},\n", setup.bla_ms));
             json.push_str(&format!("        \"gpu_iterate\": {},\n", stat_json(&iter_s)));
             json.push_str(&format!("        \"gpu_render\": {}\n", stat_json(&render_s)));
             json.push_str("      }\n");
