@@ -215,6 +215,24 @@ struct KeyframeFile {
     /// Seconds to hold (pause) at this keyframe before gliding to the next.
     #[serde(default)]
     hold: f64,
+    // --- discrete state (inherited forward until changed, like the center) ---
+    /// Show the linked dual view (Mandelbrot + its Julia set side by side).
+    #[serde(default)]
+    dual: Option<bool>,
+    /// Pin the Julia set's parameter `c` (the Mandelbrot point whose Julia set to show). Both
+    /// components must be given to take effect.
+    #[serde(default)]
+    julia_re: Option<f64>,
+    #[serde(default)]
+    julia_im: Option<f64>,
+    /// Overlay the escape-time orbit (the path of z under iteration).
+    #[serde(default)]
+    orbits: Option<bool>,
+    /// The point whose orbit to draw (when `orbits` is on). Both components required.
+    #[serde(default)]
+    orbit_re: Option<f64>,
+    #[serde(default)]
+    orbit_im: Option<f64>,
 }
 
 /// Easing curve for a keyframe glide segment.
@@ -264,6 +282,25 @@ struct Kf {
     logmag: f64,
     fractal: FractalKind,
     julia: bool,
+    // Discrete (non-interpolated) state, inherited forward.
+    dual: bool,
+    julia_c: Option<(f64, f64)>,
+    orbits: bool,
+    orbit: Option<(f64, f64)>,
+}
+
+/// The fully-resolved tour state at a moment in time: interpolated camera + the active keyframe's
+/// discrete overlays (dual view, Julia pin, orbits).
+pub(crate) struct Sampled {
+    pub(crate) cx: fractadyne_core::BigFloat,
+    pub(crate) cy: fractadyne_core::BigFloat,
+    pub(crate) logmag: f64,
+    pub(crate) fractal: FractalKind,
+    pub(crate) julia: bool,
+    pub(crate) dual: bool,
+    pub(crate) julia_c: Option<(f64, f64)>,
+    pub(crate) orbits: bool,
+    pub(crate) orbit: Option<(f64, f64)>,
 }
 
 /// Aggregates sampled while a benchmark tour plays.
@@ -315,7 +352,7 @@ impl Playback {
     /// Sample the eased camera state at time `e` (seconds, expected in `[0, total]`):
     /// the segment-interpolated center, `ln(magnification)`, fractal, and Julia flag.
     /// Shared by live playback and the headless tour renderer.
-    pub(crate) fn sample(&self, e: f64) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat, f64, FractalKind, bool) {
+    pub(crate) fn sample(&self, e: f64) -> Sampled {
         let n = self.kfs.len();
         // Current segment start = last keyframe whose reach-time is ≤ e.
         let mut i = 0;
@@ -327,9 +364,21 @@ impl Playback {
             }
         }
         let a = &self.kfs[i];
+        // Discrete overlays come from the current keyframe (not interpolated).
+        let discrete = |cx: fractadyne_core::BigFloat, cy: fractadyne_core::BigFloat, lm: f64| Sampled {
+            cx,
+            cy,
+            logmag: lm,
+            fractal: a.fractal,
+            julia: a.julia,
+            dual: a.dual,
+            julia_c: a.julia_c,
+            orbits: a.orbits,
+            orbit: a.orbit,
+        };
         // Holding at `a` (or past the final keyframe): return its state unchanged.
         if e <= a.at + a.hold || i + 1 >= n {
-            return (a.cx.clone(), a.cy.clone(), a.logmag, a.fractal, a.julia);
+            return discrete(a.cx.clone(), a.cy.clone(), a.logmag);
         }
         // Gliding a → b over its move window, with b's easing.
         let b = &self.kfs[i + 1];
@@ -340,12 +389,10 @@ impl Playback {
         // Precision from octaves (log2 mag) so it stays valid past f64's 1e308× ceiling.
         let octaves = (lm / std::f64::consts::LN_2).max(0.0).ceil() as u64;
         let p = fractadyne_core::precision_for_octaves(octaves);
-        (
+        discrete(
             fractadyne_core::lerp_bf(&a.cx, &b.cx, ease, p),
             fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
             lm,
-            a.fractal,
-            a.julia,
         )
     }
 }
@@ -495,6 +542,49 @@ fn stamp_callout(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, co: &Callo
     ctx.fonts(|f| blit_galley(&f.image(), px, w, h, &galley, bx, by, ppp, [1.0, 1.0, 1.0], alpha));
 }
 
+/// Rasterize the escape-time orbit of `point` (z → z²+c from 0 for Mandelbrot, or from `point`
+/// with c = `julia_c` for Julia) onto an export frame — the offscreen twin of `draw_orbit`.
+fn stamp_orbit(px: &mut [f32], w: u32, h: u32, vp: &fractadyne_core::Viewport, point: (f64, f64), julia: bool, julia_c: (f64, f64)) {
+    let (mut zx, mut zy, cx, cy) = if julia {
+        (point.0, point.1, julia_c.0, julia_c.1)
+    } else {
+        (0.0, 0.0, point.0, point.1)
+    };
+    let mut zs = vec![(zx, zy)];
+    for _ in 0..96 {
+        let (nx, ny) = (zx * zx - zy * zy + cx, 2.0 * zx * zy + cy);
+        zx = nx;
+        zy = ny;
+        zs.push((zx, zy));
+        if zx * zx + zy * zy > 16.0 {
+            break; // escaped
+        }
+    }
+    let p = vp.precision;
+    let pts: Vec<(f32, f32)> = zs
+        .iter()
+        .map(|&(x, y)| {
+            let (a, b) = vp.complex_to_pixel(
+                &fractadyne_core::BigFloat::from_f64(x, p),
+                &fractadyne_core::BigFloat::from_f64(y, p),
+            );
+            (a as f32, b as f32)
+        })
+        .collect();
+    let line = [0.95, 0.75, 0.30]; // amber path
+    for seg in pts.windows(2) {
+        draw_line(px, w, h, seg[0].0, seg[0].1, seg[1].0, seg[1].1, line, 0.85);
+    }
+    for &(mx, my) in &pts {
+        // small white dot per orbit point
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                blend_px(px, w, h, mx.round() as i32 + dx, my.round() as i32 + dy, [1.0, 1.0, 1.0], 0.9);
+            }
+        }
+    }
+}
+
 /// Resolve a parsed script file into a playable tour (parses centers, accumulates
 /// keyframe times, fills inherited centers). Returns `None` if it has no keyframes.
 fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
@@ -504,6 +594,8 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
     let mut kfs = Vec::with_capacity(sf.keyframe.len());
     let mut at = 0.0;
     let mut last = ("-0.5".to_string(), "0.0".to_string());
+    // Discrete overlay state, inherited forward until a keyframe changes it.
+    let (mut dual, mut julia_c, mut orbits, mut orbit) = (false, None, false, None);
     for k in &sf.keyframe {
         at += k.secs.max(0.0); // glide time from the previous keyframe's hold-end to here
         let reach = at;
@@ -527,6 +619,19 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
             Some(l10) => (l10.max(0.0)) * std::f64::consts::LN_10,
             None => k.mag.max(1.0).ln(),
         };
+        // Discrete overlays: update only when the keyframe specifies them; otherwise inherit.
+        if let Some(d) = k.dual {
+            dual = d;
+        }
+        if let (Some(r), Some(i)) = (k.julia_re, k.julia_im) {
+            julia_c = Some((r, i));
+        }
+        if let Some(o) = k.orbits {
+            orbits = o;
+        }
+        if let (Some(r), Some(i)) = (k.orbit_re, k.orbit_im) {
+            orbit = Some((r, i));
+        }
         kfs.push(Kf {
             at: reach,
             hold,
@@ -536,6 +641,10 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
             logmag,
             fractal,
             julia: k.julia.unwrap_or(false),
+            dual,
+            julia_c,
+            orbits,
+            orbit,
         });
     }
     let total = kfs.last().map(|k| k.at + k.hold).unwrap_or(0.0);
@@ -637,6 +746,12 @@ fn benchmark_playback() -> Playback {
             julia: Some(false),
             ease: None,
             hold: 0.0,
+            dual: None,
+            julia_re: None,
+            julia_im: None,
+            orbits: None,
+            orbit_re: None,
+            orbit_im: None,
         });
     }
     let sf = ScriptFile {
@@ -839,24 +954,46 @@ impl FractadyneApp {
         let meta = self.view_metadata();
         for fi in 0..frames {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
-            let (cx, cy, logmag, fractal, julia) = pb.sample(t);
-            self.fractal = fractal;
-            self.julia_mode = julia && fractal.supports_julia();
-            self.viewport
-                .set_center_log2mag(cx, cy, logmag / std::f64::consts::LN_2);
-            // Render the frame to pixels, then burn in the watermark + any active captions.
-            let mut req = self.current_export_request_for(&self.viewport, self.julia_mode);
-            req.width = width;
-            req.height = height;
-            req.ss = self.export_ss;
-            req.max_iter = req.max_iter.max(200);
-            req.vignette = vignette_for(&pb.spotlights, &self.viewport, t); // spotlight for this frame
+            let s = pb.sample(t);
+            self.fractal = s.fractal;
+            self.julia_mode = s.julia && s.fractal.supports_julia();
+            self.dual = s.dual;
+            if let Some(c) = s.julia_c {
+                self.julia_c = c;
+            }
             let progress = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);
-            let res = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
-                .map_err(|e| format!("frame {fi}: {e}"))?;
-            let mut px = res.pixels;
-            let (rw, rh) = (res.width, res.height);
+            let render = |app: &Self, vp: &fractadyne_core::Viewport, julia: bool, w: u32, vg| -> Result<fractadyne_gpu::ExportResult, String> {
+                let mut req = app.current_export_request_for(vp, julia);
+                req.width = w;
+                req.height = height;
+                req.ss = app.export_ss;
+                req.max_iter = req.max_iter.max(200);
+                req.vignette = vg;
+                fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
+                    .map_err(|e| format!("frame {fi}: {e}"))
+            };
+            let (mut px, rw, rh) = if s.dual {
+                // Side-by-side: Mandelbrot (left) | its Julia set (right), each a half-width panel.
+                let half = (width / 2).max(1);
+                self.viewport = fractadyne_core::Viewport::new(half as f64, height as f64);
+                self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
+                let mut jvp = fractadyne_core::Viewport::new(half as f64, height as f64);
+                jvp.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
+                jvp.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
+                jvp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.2 / height as f64);
+                jvp.precision = 64;
+                let mr = render(self, &self.viewport, false, half, fractadyne_gpu::Vignette::default())?;
+                let jr = render(self, &jvp, true, half, fractadyne_gpu::Vignette::default())?;
+                let (w, h, p) = crate::stitch_side_by_side(&mr, &jr);
+                (p, w, h)
+            } else {
+                self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
+                self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
+                let vg = vignette_for(&pb.spotlights, &self.viewport, t);
+                let r = render(self, &self.viewport, self.julia_mode, width, vg)?;
+                (r.pixels, r.width, r.height)
+            };
             self.apply_watermark(&mut px, rw, rh);
             for cap in &pb.captions {
                 let a = cap.alpha_at(t);
@@ -874,8 +1011,14 @@ impl FractadyneApp {
                     stamp_callout(ctx, &mut px, rw, rh, co, vpx as f32, vpy as f32, a);
                 }
             }
+            // Orbit overlay (single view only; the dual path already split the frame).
+            if s.orbits && !s.dual {
+                if let Some(pt) = s.orbit {
+                    stamp_orbit(&mut px, rw, rh, &self.viewport, pt, self.julia_mode, self.julia_c);
+                }
+            }
             let frame_path = out_dir.join(format!("frame_{fi:05}.png"));
-            fractadyne_export::write_png(&frame_path, res.width, res.height, &px, Some(&meta))
+            fractadyne_export::write_png(&frame_path, rw, rh, &px, Some(&meta))
                 .map_err(|e| format!("frame {fi}: {e}"))?;
             if fi % 10 == 0 || fi + 1 == frames {
                 println!("  frame {}/{frames}", fi + 1);
@@ -905,14 +1048,28 @@ impl FractadyneApp {
         let finished = !pb.loop_ && elapsed >= pb.total;
         let e = elapsed.clamp(0.0, pb.total);
         pb.cur_t = e; // for the caption overlay
-        let (cx, cy, logmag, fractal, julia) = pb.sample(e);
-        if fractal != self.fractal || julia != self.julia_mode {
-            self.fractal = fractal;
-            self.julia_mode = julia && fractal.supports_julia();
+        let s = pb.sample(e);
+        if s.fractal != self.fractal || s.julia != self.julia_mode {
+            self.fractal = s.fractal;
+            self.julia_mode = s.julia && s.fractal.supports_julia();
             self.invalidate_refs();
         }
+        // Discrete overlays (dual view, Julia pin, orbits).
+        if self.dual != s.dual {
+            self.dual = s.dual;
+            self.invalidate_refs();
+        }
+        if let Some(c) = s.julia_c {
+            if self.julia_c != c {
+                self.julia_c = c;
+                self.ref_cache[1].ref_pt = None; // Julia parameter changed
+            }
+            self.julia_pin = Some(c); // hold it (don't let cursor hover override)
+        }
+        self.show_orbits = s.orbits;
+        self.tour_orbit = s.orbit;
         // log2 path so playback stays exact past f64's 1e308× ceiling.
-        self.viewport.set_center_log2mag(cx, cy, logmag / std::f64::consts::LN_2);
+        self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
         self.settle_t = now; // glide → cheap (interacting) render path
 
         // Benchmark sampling (skip warm-up frames).

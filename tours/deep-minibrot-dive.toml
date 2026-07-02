@@ -27,23 +27,23 @@ hold = 3
 
 # --- the dive: accelerate in, cruise at constant zoom rate, decelerate onto the minibrot ---
 [[keyframe]]
-secs = 3
+secs = 5
 mag = 50000
 ease = "in"
 [[keyframe]]
-secs = 4
+secs = 6
 mag = 1e10
 ease = "linear"
 [[keyframe]]
-secs = 4
+secs = 6
 mag = 1e17
 ease = "linear"
 [[keyframe]]
-secs = 4
+secs = 6
 mag = 1e24
 ease = "linear"
 [[keyframe]]
-secs = 4
+secs = 6
 mag = 6e29
 ease = "out"
 hold = 5

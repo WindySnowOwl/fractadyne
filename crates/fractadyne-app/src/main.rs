@@ -905,6 +905,9 @@ struct FractadyneApp {
     autopilot_eval_t: f64,
     /// Draw the iteration orbit of the point under the cursor.
     show_orbits: bool,
+    /// A tour-scripted orbit point (complex) to draw when there's no cursor (during playback);
+    /// `None` = use the cursor. Set each frame by `advance_playback`.
+    tour_orbit: Option<(f64, f64)>,
     /// Fit the orbit into a fixed inset (good view at any zoom) instead of overlaying
     /// it on the fractal through the viewport.
     orbit_normalize: bool,
@@ -1193,6 +1196,7 @@ impl FractadyneApp {
             autopilot_goal: (0.5, 0.5),
             autopilot_eval_t: 0.0,
             show_orbits: s.show_orbits,
+            tour_orbit: None,
             orbit_normalize: s.orbit_normalize,
             orbit_anim: s.orbit_anim,
             orbit_anim_speed: s.orbit_anim_speed,
@@ -2085,7 +2089,7 @@ impl FractadyneApp {
             }
         }
 
-        // Orbit overlay on the hovered panel.
+        // Orbit overlay on the hovered panel — or, during a tour, a scripted point on the Mandelbrot.
         if self.show_orbits {
             if let Some((p, r, is_julia)) = panel {
                 let l = p - r.min;
@@ -2097,6 +2101,14 @@ impl FractadyneApp {
                 let cpx = (l.x as f64 * ppp, l.y as f64 * ppp);
                 let painter = ui.painter_at(r);
                 self.draw_orbit(&painter, r, vp, cpx, is_julia, ppp);
+            } else if let Some((ox, oy)) = self.tour_orbit {
+                let pr = self.viewport.precision;
+                let cpx = self.viewport.complex_to_pixel(
+                    &fractadyne_core::BigFloat::from_f64(ox, pr),
+                    &fractadyne_core::BigFloat::from_f64(oy, pr),
+                );
+                let painter = ui.painter_at(left);
+                self.draw_orbit(&painter, left, &self.viewport, cpx, false, ppp);
             }
         }
 
@@ -4462,11 +4474,24 @@ impl eframe::App for FractadyneApp {
                 );
                 add_mandelbrot(ui.painter(), rect, params);
 
-                // Orbit overlay for the point under the cursor.
+                // Orbit overlay for the point under the cursor — or, during a tour, a scripted point.
                 if self.show_orbits {
-                    if let Some(hp) = response.hover_pos() {
-                        let l = hp - rect.min;
-                        let cpx = (l.x as f64 * ppp, l.y as f64 * ppp);
+                    let cpx = response
+                        .hover_pos()
+                        .map(|hp| {
+                            let l = hp - rect.min;
+                            (l.x as f64 * ppp, l.y as f64 * ppp)
+                        })
+                        .or_else(|| {
+                            self.tour_orbit.map(|(ox, oy)| {
+                                let p = self.viewport.precision;
+                                self.viewport.complex_to_pixel(
+                                    &fractadyne_core::BigFloat::from_f64(ox, p),
+                                    &fractadyne_core::BigFloat::from_f64(oy, p),
+                                )
+                            })
+                        });
+                    if let Some(cpx) = cpx {
                         let painter = ui.painter_at(rect);
                         self.draw_orbit(&painter, rect, &self.viewport, cpx, self.julia_mode, ppp);
                     }

@@ -24,23 +24,23 @@ ease = "smooth"
 hold = 2.5
 
 [[keyframe]]      # the dive: accelerate in...
-secs = 3
+secs = 5
 mag = 1e6
 ease = "in"
 [[keyframe]]      # ...cruise at a constant zoom rate (mag_log10 for depths past f64 range)...
-secs = 9
+secs = 14
 mag_log10 = 100
 ease = "linear"
 [[keyframe]]
-secs = 9
+secs = 14
 mag_log10 = 200
 ease = "linear"
 [[keyframe]]
-secs = 9
+secs = 14
 mag_log10 = 300
 ease = "linear"
 [[keyframe]]      # ...decelerate onto the spiral
-secs = 11
+secs = 16
 mag_log10 = 420
 ease = "out"
 hold = 5

@@ -52,8 +52,15 @@ Baseline for tracked versioning. Notable capabilities already present:
   `mag_log10` (e.g. `mag_log10 = 420` for 1e420×), and a script `palette` field sets a preset so a
   tour colours consistently regardless of the session palette (a binary palette rendered deep
   exterior-only views as one flat color). `--render-tour` also forces zoom-appropriate iteration
-  counts so deep frames resolve. Ships two example tours in `tours/`: a dive to a real minibrot
+  counts so deep frames resolve. Ships example tours in `tours/`: a dive to a real minibrot
   (~1e30×) and a dive to an endless spiral (~1e420×).
+
+- **Tour dual view / Julia sets / orbits** — keyframes gained `dual` (linked Mandelbrot + Julia
+  side-by-side), `julia_re`/`julia_im` (pin the Julia parameter c), and `orbits` + `orbit_re`/
+  `orbit_im` (overlay the escape-time orbit at a point). Applied live (with the c-marker on the
+  Mandelbrot) and rendered into `--render-tour` frames (dual stitched side-by-side; orbit path
+  rasterized). New example tour `tours/julia-and-mandelbrot.toml` teaches the Julia↔Mandelbrot
+  relationship (connected vs. dust) and what the orbit means.
 
 - **Zoom-reprojection (smooth deep dives)** — during the brief reference rebuild at extreme depth
   the held frame now scales + pans to follow the ongoing zoom instead of freezing, so the view keeps
