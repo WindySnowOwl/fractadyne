@@ -1084,6 +1084,10 @@ struct FractadyneApp {
     /// Per-view perturbation reference cache (index 0 = main/left, 1 = dual Julia).
     /// Separate caches let both dual panels use perturbation without thrashing.
     ref_cache: [RefCache; 2],
+    /// In-flight off-thread reference recompute per view (`None` = idle). Keeps the deep-zoom
+    /// bignum recompute off the render thread: the frame keeps using the cached reference until the
+    /// worker's result arrives (see `build_params`).
+    recompute_rx: [Option<std::sync::mpsc::Receiver<crate::render::RecomputeResult>>; 2],
     /// Last snapshot used for change detection (debounced auto-save).
     last_state: fractadyne_state::SessionState,
     /// App-time (s) of the last change while unsaved; `None` when clean.
@@ -1304,6 +1308,7 @@ impl FractadyneApp {
             zoom_rate: s.zoom_rate,
             aa: s.aa,
             ref_cache: [RefCache::default(), RefCache::default()],
+            recompute_rx: [None, None],
             last_state: s,
             dirty_since: None,
         };
@@ -1536,6 +1541,9 @@ impl FractadyneApp {
     fn invalidate_refs(&mut self) {
         self.ref_cache[0].ref_pt = None;
         self.ref_cache[1].ref_pt = None;
+        // Drop any in-flight recompute — its result is for the old fractal/mode and must not
+        // install (would render the wrong formula until the next recompute).
+        self.recompute_rx = [None, None];
     }
 
     /// Request the next animation frame. Frame pacing (the cap) is enforced at the end
@@ -4931,6 +4939,11 @@ impl eframe::App for FractadyneApp {
         }
         if self.perf.enabled {
             self.schedule_repaint(ctx); // keep metrics live while the panel is shown
+        }
+        // Keep repainting while an off-thread reference recompute is in flight, so its result is
+        // polled and installed (and the view sharpens) as soon as it lands.
+        if self.recompute_rx.iter().any(|r| r.is_some()) {
+            ctx.request_repaint();
         }
         self.perf.cpu_ms = ema(self.perf.cpu_ms, frame_start.elapsed().as_secs_f64() * 1000.0);
 

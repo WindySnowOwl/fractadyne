@@ -677,12 +677,15 @@ work — so it can't be parallelized across GPUs (or even threads: a single orbi
 is a sequential dependency chain). The live GPU render is already frame-capped (~100 FPS via
 `WORK_BUDGET`). So these attack the real bottlenecks first; **multi-GPU is deferred** (see below).
 
-- [ ] **Parallelize independent reference orbits** — a single orbit is serial, but *distinct*
-  orbits are independent. Compute the **multiple references for glitch correction** concurrently
-  (CPU worker threads / rayon), and **speculatively precompute references for upcoming frames**
-  (or the settled high-detail reference) off the main thread. Directly cuts deep-zoom motion
-  latency and glitch-correction wall time. (First real win; also unblocks corrected exports being
-  threaded rather than blocking the UI.)
+- [~] **Off-thread reference recompute** — **DONE for the live view:** the deep-zoom recompute
+  (reference orbit + series approximation + BLA tree — all bignum) now runs on a worker thread
+  (`recompute_worker`); `build_params` keeps drawing with the cached reference and installs the
+  result when it lands (only the very first, cold-start reference is synchronous). Validated with
+  the new `--frametest` harness (dive → 1e30×): **recompute stalls 27 → 1**, build-time p95
+  **91.8 → 0.1 ms**, max **196 → 30 ms** (the lone remaining stall is the cold start). Selftest
+  53/53, goldens 4/4 (sync export path unchanged). **Remaining:** compute the **multiple glitch-
+  correction references concurrently** (rayon) and **speculative** next-frame references; thread
+  the glitch-corrected export so it doesn't block the UI.
 - [~] **Faster / adaptive bignum reference** — the reference orbit is the deep-zoom wall.
   **Done so far:** the per-iteration `2xy` was formed with a *full bignum multiply by 2*; replaced
   with `double_bf` (exact base-2 exponent bump) in `step_bf` + `iter_zsq_c`. Measured via

@@ -24,6 +24,14 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Off-thread reference recompute (no more deep-zoom stalls)** — the slow arbitrary-precision
+  recompute (reference orbit + series approximation + BLA tree) now runs on a worker thread; the
+  live view keeps drawing with the cached reference and swaps in the fresh one when it's ready
+  (only the first, cold-start reference is synchronous). Deep-zoom settle/motion no longer hitches:
+  measured via the new `--frametest` harness on a 1e30× dive, per-frame recompute stalls dropped
+  **27 → 1** and build-time p95 **91.8 → 0.1 ms**. New `scripts/frametest.ps1` automates the
+  before/after comparison.
+
 - **Faster deep-zoom recompute** — two exact (bit-identical) bignum optimizations on the deep-zoom
   settle/motion recompute: the reference orbit formed `2xy` with a full multiply-by-two → exact
   base-2 exponent shift (**−13–17%** reference compute at 1e6–1e20×); and the series-approximation

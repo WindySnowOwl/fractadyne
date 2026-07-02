@@ -12,7 +12,126 @@ use std::time::Instant;
 /// accurate but fewer/smaller skips; 1e-6 keeps pixel error negligible while still merging.
 const BLA_EPS: f64 = 1.0e-6;
 
+/// A completed reference recompute (orbit + series-approximation + BLA), ready to install into a
+/// view's reference cache. Produced by [`recompute_worker`], off the render thread, so the slow
+/// deep-zoom bignum work never blocks a frame.
+pub(crate) struct RecomputeResult {
+    orbit: std::sync::Arc<Vec<[f32; 4]>>,
+    orbit_len: u32,
+    rp: [fractadyne_core::BigFloat; 2],
+    sa: fractadyne_core::SeriesSkip,
+    bla: std::sync::Arc<Vec<[f32; 4]>>,
+    bla_dc_max_log2: f64,
+    prec: usize,
+    iter: u32,
+    ref_ms: f64,
+}
+
+/// Owned, `Send` inputs for an off-thread reference recompute.
+struct RecomputeInputs {
+    center_bf: [fractadyne_core::BigFloat; 2],
+    span: (fractadyne_core::FloatExp, fractadyne_core::FloatExp),
+    span_mantissa: [f64; 2],
+    delta_exp: i32,
+    gpu_iter: u32,
+    precision: usize,
+    julia: bool,
+    formula: u32,
+    julia_c: (f64, f64),
+    do_sa: bool,
+    bla_dc_max: Option<fractadyne_core::FloatExp>,
+}
+
+/// Pick a reference, iterate its orbit, and compute the series-approximation skip + BLA tree — the
+/// slow arbitrary-precision work. Pure and `Send`, so it runs on a worker thread; mirrors the
+/// synchronous `compute_reference` + `series_skip_for` + `build_bla`.
+fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
+    use fractadyne_core as fc;
+    let t = Instant::now();
+    let rp = fc::best_reference(
+        &inp.center_bf,
+        [inp.span.0, inp.span.1],
+        inp.formula,
+        inp.julia,
+        [inp.julia_c.0, inp.julia_c.1],
+        inp.gpu_iter,
+        inp.precision,
+    );
+    let zero = fc::BigFloat::from_f64(0.0, inp.precision);
+    let (z0x, z0y, cx0, cy0) = if inp.julia {
+        (
+            rp[0].clone(),
+            rp[1].clone(),
+            fc::BigFloat::from_f64(inp.julia_c.0, inp.precision),
+            fc::BigFloat::from_f64(inp.julia_c.1, inp.precision),
+        )
+    } else {
+        (zero.clone(), zero, rp[0].clone(), rp[1].clone())
+    };
+    let (o, len) = fc::reference_orbit(&z0x, &z0y, &cx0, &cy0, inp.formula, inp.gpu_iter, inp.precision);
+    let orbit = std::sync::Arc::new(o);
+    let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
+    // Series approximation for the chosen reference.
+    let sa = if inp.do_sa {
+        let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &rp[0], inp.delta_exp, inp.precision);
+        let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &rp[1], inp.delta_exp, inp.precision);
+        let roff = (dx * dx + dy * dy).sqrt();
+        let half_diag = 0.5
+            * (inp.span_mantissa[0] * inp.span_mantissa[0] + inp.span_mantissa[1] * inp.span_mantissa[1]).sqrt();
+        let log2_max_dc = inp.delta_exp as f64 + (roff + half_diag).max(1e-300).log2();
+        fc::series_skip(&rp[0], &rp[1], log2_max_dc, inp.gpu_iter, len, inp.formula, inp.precision)
+    } else {
+        fc::SeriesSkip::NONE
+    };
+    // BLA tree (Mandelbrot deep only; `None` otherwise). Built with the same conservative dc_max
+    // the live path uses so the main thread reuses it across pans.
+    let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
+        Some(dc_max) => {
+            let levels = fc::build_bla_mandel(&orbit, dc_max, BLA_EPS);
+            let arc = if levels.is_empty() {
+                std::sync::Arc::new(Vec::new())
+            } else {
+                std::sync::Arc::new(fc::bla_to_gpu(&levels))
+            };
+            (arc, dc_max.log2())
+        }
+        None => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
+    };
+    RecomputeResult {
+        orbit,
+        orbit_len: len,
+        rp,
+        sa,
+        bla,
+        bla_dc_max_log2,
+        prec: inp.precision,
+        iter: inp.gpu_iter,
+        ref_ms,
+    }
+}
+
 impl FractadyneApp {
+    /// Install a finished recompute into view `vi`'s reference cache (bumps `orbit_id`, refreshes
+    /// SA + BLA), and record the recompute cost. Called on the main thread for both the sync
+    /// (cold-start) path and completed async jobs.
+    fn install_recompute(&mut self, vi: usize, res: RecomputeResult) {
+        let vc = &mut self.ref_cache[vi];
+        vc.ref_pt = Some(res.rp);
+        vc.orbit = res.orbit;
+        vc.orbit_len = res.orbit_len;
+        vc.orbit_prec = res.prec;
+        vc.orbit_iter = res.iter;
+        vc.orbit_id = vc.orbit_id.wrapping_add(1);
+        vc.last_recompute = Some(Instant::now());
+        vc.sa = res.sa;
+        vc.sa_key = (vc.orbit_id, res.iter);
+        vc.bla = res.bla;
+        vc.bla_id = vc.orbit_id;
+        vc.bla_dc_max_log2 = res.bla_dc_max_log2;
+        self.perf.recompute_ms = res.ref_ms;
+        self.perf.recompute_total += 1;
+        self.perf.rate_count += 1;
+    }
     /// Pick a reference point and compute its high-precision orbit for the current
     /// formula, arranging `Z₀`/`c` for Mandelbrot vs Julia mode. Returns the orbit,
     /// its length, and the chosen reference point (for the δ-offset).
@@ -490,6 +609,18 @@ impl FractadyneApp {
         let mut bla = std::sync::Arc::new(Vec::new());
         let mut bla_on = 0u32;
         if mode != 1 && reproject.is_none() {
+            // Install a finished off-thread recompute (if any) before deciding whether another is
+            // needed, so the staleness/quality checks below see the fresh reference.
+            if let Some(rx) = self.recompute_rx[vi].as_ref() {
+                match rx.try_recv() {
+                    Ok(res) => {
+                        self.install_recompute(vi, res);
+                        self.recompute_rx[vi] = None;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => self.recompute_rx[vi] = None,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                }
+            }
             // Drift = |center − reference| / span, both as 2^-delta_exp mantissas so the
             // ratio is exact at any depth (raw f64 differences underflow past ~1e308×).
             let drift = self.ref_cache[vi].ref_pt.as_ref().map(|r| {
@@ -528,24 +659,44 @@ impl FractadyneApp {
             } else {
                 out_of_view || needs_quality
             };
+            // Whether the series approximation applies to this view (bundled into the recompute).
+            let do_sa = (mode == 0 || mode == 2)
+                && !julia
+                && fractal.formula_id() <= 3
+                && !fractadyne_gpu::method_needs_aux(self.color_method)
+                && self.series_approx;
             if recompute {
-                let t = Instant::now();
-                // Build only to the live-capped count: the GPU never iterates past `gpu_iter`,
-                // so a longer bignum orbit would just slow navigation (exports build their own
-                // full-length orbit in `current_export_request_for`).
-                let (orbit, orbit_len, rp) =
-                    self.compute_reference(&center_bf, span, gpu_iter, precision, julia, None);
-                let vc = &mut self.ref_cache[vi];
-                vc.ref_pt = Some(rp);
-                vc.orbit = orbit;
-                vc.orbit_len = orbit_len;
-                vc.orbit_prec = precision;
-                vc.orbit_iter = gpu_iter;
-                vc.orbit_id = vc.orbit_id.wrapping_add(1);
-                vc.last_recompute = Some(Instant::now());
-                self.perf.recompute_ms = t.elapsed().as_secs_f64() * 1000.0;
-                self.perf.recompute_total += 1;
-                self.perf.rate_count += 1;
+                // The recompute (reference orbit + SA + BLA, all bignum) is the deep-zoom stall.
+                // Run it OFF the render thread: keep drawing with the cached reference and install
+                // the result when it lands (polled above). Only the very first reference (nothing
+                // cached to draw with) is computed synchronously. Build only to the live-capped
+                // `gpu_iter` — the GPU never iterates past it (exports build their own full orbit).
+                let inputs = RecomputeInputs {
+                    center_bf: center_bf.clone(),
+                    span,
+                    span_mantissa,
+                    delta_exp,
+                    gpu_iter,
+                    precision,
+                    julia,
+                    formula: self.fractal.formula_id(),
+                    julia_c: self.julia_c,
+                    do_sa,
+                    bla_dc_max: self
+                        .bla_eligible(mode, julia)
+                        .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
+                };
+                if self.ref_cache[vi].ref_pt.is_none() {
+                    let res = recompute_worker(inputs); // cold start: nothing to draw with yet
+                    self.install_recompute(vi, res);
+                } else if self.recompute_rx[vi].is_none() {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(recompute_worker(inputs));
+                    });
+                    self.recompute_rx[vi] = Some(rx);
+                }
+                // else: a recompute is already in flight — keep using the cached reference.
             }
             let rp = self.ref_cache[vi].ref_pt.as_ref().unwrap();
             // δ = center − reference, carried as a mantissa scaled by 2^-delta_exp
@@ -555,23 +706,8 @@ impl FractadyneApp {
             let dxh = dx as f32;
             let dyh = dy as f32;
             ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
-            // Series approximation (cached per reference): seed δz to skip early iterations.
-            // Both perturbation paths (mode 0 df32 and mode 2 floatexp) use it.
-            if (mode == 0 || mode == 2)
-                && !julia
-                && fractal.formula_id() <= 3
-                && !fractadyne_gpu::method_needs_aux(self.color_method)
-                && self.series_approx
-            {
-                let oid = self.ref_cache[vi].orbit_id;
-                if self.ref_cache[vi].sa_key != (oid, gpu_iter) {
-                    let rp2 = self.ref_cache[vi].ref_pt.clone().unwrap();
-                    let len = self.ref_cache[vi].orbit_len;
-                    let computed = self
-                        .series_skip_for(&rp2, span_mantissa, dx, dy, delta_exp, mode, julia, gpu_iter, len, precision);
-                    self.ref_cache[vi].sa = computed;
-                    self.ref_cache[vi].sa_key = (oid, gpu_iter);
-                }
+            // Series approximation travels with the reference (computed off-thread); read it back.
+            if do_sa {
                 sa = self.ref_cache[vi].sa;
             }
             // BLA tree, cached per reference: reused across frames (and pans — the conservative
