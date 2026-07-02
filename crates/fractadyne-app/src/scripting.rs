@@ -364,21 +364,20 @@ impl Playback {
             }
         }
         let a = &self.kfs[i];
-        // Discrete overlays come from the current keyframe (not interpolated).
-        let discrete = |cx: fractadyne_core::BigFloat, cy: fractadyne_core::BigFloat, lm: f64| Sampled {
+        let mk = |cx, cy, lm, julia_c, orbit| Sampled {
             cx,
             cy,
             logmag: lm,
             fractal: a.fractal,
             julia: a.julia,
             dual: a.dual,
-            julia_c: a.julia_c,
+            julia_c,
             orbits: a.orbits,
-            orbit: a.orbit,
+            orbit,
         };
         // Holding at `a` (or past the final keyframe): return its state unchanged.
         if e <= a.at + a.hold || i + 1 >= n {
-            return discrete(a.cx.clone(), a.cy.clone(), a.logmag);
+            return mk(a.cx.clone(), a.cy.clone(), a.logmag, a.julia_c, a.orbit);
         }
         // Gliding a → b over its move window, with b's easing.
         let b = &self.kfs[i + 1];
@@ -389,10 +388,23 @@ impl Playback {
         // Precision from octaves (log2 mag) so it stays valid past f64's 1e308× ceiling.
         let octaves = (lm / std::f64::consts::LN_2).max(0.0).ceil() as u64;
         let p = fractadyne_core::precision_for_octaves(octaves);
-        discrete(
+        // Interpolate the Julia parameter c and the orbit point too, so the Julia set morphs (and
+        // the orbit glides) smoothly between keyframes rather than jumping.
+        let lerp2 = |x: (f64, f64), y: (f64, f64)| (x.0 + (y.0 - x.0) * ease, x.1 + (y.1 - x.1) * ease);
+        let julia_c = match (a.julia_c, b.julia_c) {
+            (Some(ja), Some(jb)) => Some(lerp2(ja, jb)),
+            (x, _) => x,
+        };
+        let orbit = match (a.orbit, b.orbit) {
+            (Some(oa), Some(ob)) => Some(lerp2(oa, ob)),
+            (x, _) => x,
+        };
+        mk(
             fractadyne_core::lerp_bf(&a.cx, &b.cx, ease, p),
             fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
             lm,
+            julia_c,
+            orbit,
         )
     }
 }
@@ -1093,6 +1105,8 @@ impl FractadyneApp {
             if let Some(b) = pb.bench.take() {
                 self.bench_report = Some(self.format_bench(&pb, &b));
                 self.bench_open = true;
+            } else {
+                self.set_toast(format!("Script finished — \"{}\"", pb.name), ctx);
             }
             return false; // pb dropped → playback stops at the final keyframe
         }

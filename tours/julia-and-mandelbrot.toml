@@ -1,5 +1,7 @@
-# Fractadyne guided tour: how the Julia sets relate to the Mandelbrot set, using
-# the linked dual view, then a look at the escape-time orbit that defines both.
+# Fractadyne guided tour: how the Julia sets relate to the Mandelbrot set. The
+# dual view shows the Mandelbrot (with a marker at c) beside its Julia set while
+# c glides smoothly along a path, morphing the Julia set — then a look at the
+# escape-time orbit that decides membership.
 #
 #   Best played live:  Tools -> Play script...
 #   (also renders: fractadyne --render-tour tours/julia-and-mandelbrot.toml --fps 30 --size 1920x1080 --ss 2 --out frames)
@@ -13,41 +15,41 @@ secs = 0
 center_x = "-0.5"
 center_y = "0.0"
 mag = 1
-hold = 4
+hold = 3
 
-# --- dual view: every point c has a Julia set (marker shows c on the left) ---
-[[keyframe]]
+# --- dual view: c glides along a path; the Julia set morphs continuously ---
+[[keyframe]]        # a plump connected Julia in a bulb
 secs = 2.5
 dual = true
 julia_re = -0.4
 julia_im = 0.6
-hold = 5
+hold = 1.5
 
-[[keyframe]]        # deep in a bulb — a connected, tiled Julia set
-secs = 3
+[[keyframe]]        # deeper in a bulb — tiled, still one connected piece
+secs = 4
 julia_re = -0.123
 julia_im = 0.745
-hold = 5
+hold = 1.5
 
-[[keyframe]]        # Seahorse Valley c — a delicate dendrite
-secs = 3
+[[keyframe]]        # Seahorse-Valley c — a delicate dendrite
+secs = 4
 julia_re = -0.75
 julia_im = 0.11
-hold = 5
+hold = 1.5
 
 [[keyframe]]        # a spiral Julia
-secs = 3
+secs = 4
 julia_re = -0.8
 julia_im = 0.156
-hold = 5
+hold = 1.5
 
-[[keyframe]]        # c OUTSIDE the set — the Julia set shatters into dust
-secs = 3
+[[keyframe]]        # glide c OUTSIDE the set — watch the Julia set shatter into dust
+secs = 5
 julia_re = 0.35
 julia_im = 0.4
-hold = 5
+hold = 2
 
-# --- back to a single view: the orbit that decides membership ---
+# --- single view: the orbit that decides membership ---
 [[keyframe]]
 secs = 2.5
 dual = false
@@ -57,48 +59,48 @@ mag = 1
 orbits = true
 orbit_re = -0.5
 orbit_im = 0.0
-hold = 5
+hold = 4
 
-[[keyframe]]        # move the orbit point outside — it escapes to infinity
-secs = 1
+[[keyframe]]        # glide the orbit point outside — it escapes to infinity
+secs = 2.5
 orbit_re = 0.35
 orbit_im = 0.42
-hold = 5
+hold = 4
 
 # --- narration ---
 [[caption]]
 text = "The Mandelbrot Set"
 at = 0.2
-secs = 3.5
+secs = 2.6
 pos = "center"
 size = 32
 [[caption]]
 text = "Every point c has its own Julia set — shown on the right"
-at = 6.5
+at = 3.4
 secs = 4.5
 pos = "bottom"
 [[caption]]
 text = "Inside the Mandelbrot set, the Julia set is one connected piece"
-at = 14.0
-secs = 5.5
+at = 8.5
+secs = 5.0
 pos = "bottom"
 [[caption]]
-text = "Near the boundary: dendrites and spirals — infinitely intricate"
-at = 25.0
+text = "Near the boundary: dendrites and spirals, infinitely intricate"
+at = 14.0
 secs = 8.0
 pos = "bottom"
 [[caption]]
 text = "Cross outside the set, and the Julia set shatters into dust"
-at = 37.0
-secs = 5.5
+at = 24.0
+secs = 5.0
 pos = "bottom"
 [[caption]]
 text = "Why? Iterate z -> z*z + c from 0. This orbit stays bounded..."
-at = 45.5
-secs = 6.0
+at = 30.5
+secs = 5.5
 pos = "top"
 [[caption]]
-text = "...so c is in the set. Move c out, and the orbit escapes to infinity."
-at = 54.0
-secs = 6.0
+text = "...so c is in the set. Glide c out, and the orbit escapes to infinity."
+at = 37.0
+secs = 6.5
 pos = "top"
