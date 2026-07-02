@@ -289,3 +289,194 @@ fn now_unix() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
+
+/// Convert a live `MandelbrotParams` into an `ExportRequest` that renders the SAME view reusing
+/// its already-computed reference orbit (no recompute) — lets the frame-timing harness render each
+/// frame exactly as the live view would, without paying the reference cost twice.
+fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractadyne_gpu::ExportRequest {
+    fractadyne_gpu::ExportRequest {
+        width: p.resolution[0].max(1),
+        height: p.resolution[1].max(1),
+        ss: p.ss.max(1),
+        span_mantissa: p.span_mantissa,
+        center: p.center,
+        ref_offset: p.ref_offset,
+        delta_exp: p.delta_exp,
+        sa_skip: p.sa_skip,
+        glitch_on: 0,
+        sa_a: p.sa_a,
+        sa_a_exp: p.sa_a_exp,
+        sa_b: p.sa_b,
+        sa_b_exp: p.sa_b_exp,
+        sa_c: p.sa_c,
+        sa_c_exp: p.sa_c_exp,
+        julia_c: p.julia_c,
+        orbit: p.orbit.clone(),
+        orbit_len: p.orbit_len,
+        bla: p.bla.clone(),
+        bla_on: p.bla_on,
+        max_iter: p.max_iter,
+        mode: p.mode,
+        formula: p.formula,
+        julia: p.julia,
+        cycle: p.cycle,
+        offset: p.offset,
+        stop_count: p.stop_count,
+        stops: p.stops,
+        light: p.light,
+        light_angle: p.light_angle,
+        light_height: p.light_height,
+        de_on: p.de_on,
+        de_strength: p.de_strength,
+        de_width: p.de_width,
+        de_phase: p.de_phase,
+        color_method: p.color_method,
+        stripe_freq: p.stripe_freq,
+        trap_type: p.trap_type,
+        aa_filter: p.aa_filter,
+        interior_col: p.interior_col,
+    }
+}
+
+/// One recorded frame of a `--frametest` dive.
+struct FrameRec {
+    log10: f64,
+    build_ms: f64, // CPU: reference-cache management (recompute when needed) — the stutter source
+    gpu_ms: f64,   // GPU: render the frame reusing the cached reference
+    settle: bool,  // true = a just-changed view (interacting=false → recompute may fire)
+}
+
+impl FractadyneApp {
+    /// Frame-timing / stutter harness (`--frametest`). Simulates a stepped deep-zoom dive on the
+    /// **live** path — `build_params` (which owns the reference cache + recompute) then a GPU render
+    /// of each frame — and records per-frame CPU/GPU time. Each "step" deepens the zoom and holds
+    /// for a few frames: the first frame of a step is where the reference recompute (the stall)
+    /// lands, the rest run from cache. Reports interframe stats + a stutter count, so an
+    /// optimization (e.g. async recompute) can be validated automatically. Writes a JSON log.
+    pub fn run_frametest(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        steps: u32,
+        hold: u32,
+        target_log10: f64,
+        size: u32,
+        out: &std::path::Path,
+    ) {
+        // A point with structure all the way down (seahorse valley).
+        let cx = fractadyne_core::parse_bf("-0.7436438870371587047521915061147707")
+            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(-0.5, 64));
+        let cy = fractadyne_core::parse_bf("0.131825904205311970493132056385139")
+            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, 64));
+        self.set_fractal(FractalKind::Mandelbrot);
+        self.julia_mode = false;
+        self.dual = false;
+        self.color_method = 0;
+        self.auto_iter = true;
+        self.invalidate_refs();
+        let size = size.clamp(64, 4096);
+
+        let steps = steps.clamp(1, 2000);
+        let hold = hold.clamp(1, 60);
+        let mut recs: Vec<FrameRec> = Vec::with_capacity((steps * hold) as usize);
+
+        println!(
+            "Fractadyne frame test — {steps} steps × {hold} hold, {size}px, dive → 1e{target_log10:.0}× (BLA {})",
+            if self.use_bla { "on" } else { "off" }
+        );
+
+        for step in 0..steps {
+            let log2mag = (target_log10 * (step + 1) as f64 / steps as f64) * LOG2_10;
+            for h in 0..hold {
+                // A step's first frame is a just-settled view (recompute may fire); the rest reuse
+                // the cache — mirroring "zoom a bit, then pause".
+                let settle = h == 0;
+                self.viewport
+                    .set_center_log2mag(cx.clone(), cy.clone(), log2mag);
+                let center_bf = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+                let center = self.viewport.center_f64();
+                let span = self.viewport.complex_span_fe();
+                let mag = self.viewport.magnification();
+                let l2 = self.viewport.log2_magnification();
+                let eff_iter = self.viewport.recommended_max_iter(self.max_iter);
+                let t = Instant::now();
+                let params = self.build_params(
+                    center_bf, center, span, mag, l2, self.fractal, false, eff_iter, false,
+                    [size, size], 0, None,
+                );
+                let build_ms = t.elapsed().as_secs_f64() * 1000.0;
+                let req = params_to_request(&params);
+                let t = Instant::now();
+                let _ = fractadyne_gpu::render_iter(device, queue, &req);
+                let gpu_ms = t.elapsed().as_secs_f64() * 1000.0;
+                recs.push(FrameRec { log10: l2 / LOG2_10, build_ms, gpu_ms, settle });
+            }
+        }
+
+        // The reference recompute (build_ms) is the interframe stall the async work targets — it
+        // blocks the frame on the main thread. Count a "recompute stall" as build_ms > 16 ms (a
+        // hitch that alone drops a frame below 60 fps). The GPU render is a separate, steady cost
+        // (unchanged by async), reported for context.
+        const STALL_MS: f64 = 16.0;
+        let mut totals: Vec<f64> = recs.iter().map(|r| r.build_ms + r.gpu_ms).collect();
+        let mut builds: Vec<f64> = recs.iter().map(|r| r.build_ms).collect();
+        let mut gpus: Vec<f64> = recs.iter().map(|r| r.gpu_ms).collect();
+        let ts = stat(&mut totals);
+        let bs = stat(&mut builds);
+        let gs = stat(&mut gpus);
+        let p = |v: &mut [f64], q: f64| {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            v[((v.len() as f64 * q) as usize).min(v.len().saturating_sub(1))]
+        };
+        let b95 = p(&mut builds, 0.95);
+        let stalls = recs.iter().filter(|r| r.build_ms > STALL_MS).count();
+        let worst = bs.max;
+
+        println!(
+            "  frames {}  build ms (CPU recompute — the stall): median {:.1} p95 {:.1} max {:.1}",
+            recs.len(), bs.median, b95, bs.max
+        );
+        println!(
+            "  recompute stalls (build >{STALL_MS:.0}ms): {stalls}   |   gpu render median {:.1} ms (context, steady)",
+            gs.median
+        );
+        let _ = ts;
+
+        // JSON.
+        let mut json = String::new();
+        json.push_str("{\n");
+        json.push_str(&format!("  \"tool\": \"fractadyne --frametest\",\n"));
+        json.push_str(&format!("  \"version\": {},\n", js(&crate::version_string())));
+        json.push_str(&format!("  \"utc\": {},\n", js(&crate::utc_string(now_unix()))));
+        json.push_str(&format!("  \"gpu\": {},\n", js(&self.gpu_name)));
+        json.push_str(&format!("  \"use_bla\": {},\n", self.use_bla));
+        json.push_str(&format!("  \"steps\": {steps}, \"hold\": {hold}, \"size\": {size},\n"));
+        json.push_str(&format!("  \"stall_ms\": {STALL_MS},\n"));
+        json.push_str(&format!("  \"recompute_stalls\": {stalls},\n"));
+        json.push_str(&format!(
+            "  \"build_ms\": {{\"median\":{:.3},\"p95\":{:.3},\"max\":{:.3}}},\n",
+            bs.median, b95, bs.max
+        ));
+        json.push_str(&format!(
+            "  \"gpu_ms\": {{\"median\":{:.3},\"max\":{:.3}}},\n",
+            gs.median, gs.max
+        ));
+        json.push_str(&format!("  \"worst_build_ms\": {worst:.3},\n"));
+        json.push_str("  \"frames\": [\n");
+        for (i, r) in recs.iter().enumerate() {
+            json.push_str(&format!(
+                "    {{\"log10\":{:.2},\"settle\":{},\"build_ms\":{:.3},\"gpu_ms\":{:.3}}}",
+                r.log10, r.settle, r.build_ms, r.gpu_ms
+            ));
+            json.push_str(if i + 1 < recs.len() { ",\n" } else { "\n" });
+        }
+        json.push_str("  ]\n}\n");
+        if let Some(dir) = out.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match std::fs::write(out, &json) {
+            Ok(()) => println!("frametest log → {}", out.display()),
+            Err(e) => eprintln!("frametest log write failed: {e}"),
+        }
+    }
+}

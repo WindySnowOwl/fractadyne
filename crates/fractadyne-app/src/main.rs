@@ -952,6 +952,11 @@ struct FractadyneApp {
     profile_reps: u32,
     profile_regions: Option<String>,
     profile_out: Option<std::path::PathBuf>,
+    /// CLI `--frametest`: run the frame-timing / stutter harness (deep-zoom dive), log, exit.
+    frametest: bool,
+    frametest_steps: u32,
+    frametest_hold: u32,
+    frametest_dive: f64,
     /// Per-render setup timings (reference / series-skip), recorded by
     /// `current_export_request_for` via a `Cell` and read by the profiler.
     prof: std::cell::Cell<profile::ProfSetup>,
@@ -1111,6 +1116,7 @@ impl FractadyneApp {
         let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode;
         let selftest = args.iter().any(|a| a == "--selftest");
         let profile = args.iter().any(|a| a == "--profile");
+        let frametest = args.iter().any(|a| a == "--frametest");
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
         // --render-tour FILE [--fps N] [--size W] [--height H] [--ss N] [--out DIR]
         let render_tour = val("--render-tour").map(std::path::PathBuf::from);
@@ -1124,6 +1130,9 @@ impl FractadyneApp {
         let tour_out = out_path.clone().unwrap_or_else(|| std::path::PathBuf::from("frames"));
         let profile_reps = val("--reps").and_then(|s| s.parse().ok()).unwrap_or(5u32);
         let profile_regions = val("--regions").cloned();
+        let frametest_steps = val("--steps").and_then(|s| s.parse().ok()).unwrap_or(40u32);
+        let frametest_hold = val("--hold").and_then(|s| s.parse().ok()).unwrap_or(4u32);
+        let frametest_dive = val("--dive").and_then(|s| s.parse::<f64>().ok()).unwrap_or(30.0);
         let auto_benchmark_out = out_path.clone();
         let auto_render_out = out_path.clone();
 
@@ -1202,6 +1211,10 @@ impl FractadyneApp {
             profile_reps,
             profile_regions,
             profile_out: out_path.clone(),
+            frametest,
+            frametest_steps,
+            frametest_hold,
+            frametest_dive,
             prof: std::cell::Cell::new(profile::ProfSetup::default()),
             fps_cap: (s.fps_cap > 0.0).then_some(s.fps_cap), // 0 = uncapped
             export_open: false,
@@ -3301,6 +3314,21 @@ impl eframe::App for FractadyneApp {
                 });
                 let reps = self.profile_reps;
                 self.run_profile(dev, q, &regions, reps, &out);
+                std::process::exit(0);
+            }
+        }
+
+        if self.frametest {
+            if let Some((dev, q)) = &gpu {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let out = self.profile_out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from(format!("logs/frametest-{}.json", Self::file_stamp(secs)))
+                });
+                let (steps, hold, dive) = (self.frametest_steps, self.frametest_hold, self.frametest_dive);
+                self.run_frametest(dev, q, steps, hold, dive, 512, &out);
                 std::process::exit(0);
             }
         }
