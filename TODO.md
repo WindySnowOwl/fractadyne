@@ -671,6 +671,21 @@ for fun, informative value, and ease of use.
 
 ## Performance & throughput (M7)
 
+**Update (2026-07-02): the bottleneck moved.** The off-thread reference recompute (below) took the
+bignum orbit off the render thread — `--benchmark` now shows **avg CPU 0.38 ms, avg GPU 20.3 ms**,
+so the live cost is now the **GPU iterate pass**, not the reference. `--profile` breakdown (render ms
+= GPU): home/1e4 ≈ 10 ms · 1e6 17 · 1e12 16 · 1e20 19 · 1e30 (mode 2, BLA) 12 · **1e30 stripe
+(aux, no BLA) 214**. Findings:
+- **BLA is the GPU lever, but only past ~1e28×.** Measured: forcing the floatexp+BLA path down to
+  1e12/1e20 (lowering `PERT_FE_THRESHOLD`) made it **2.5–4× slower** (iter 40/73 ms vs df32 15/18 ms)
+  — floatexp's per-op cost dwarfs the BLA skip until the skip becomes huge (~1e28×). The 1e28
+  crossover is well-chosen; don't lower it. Getting BLA into the df32 range would need BLA applied in
+  the df32 loop (coefficients overflow f32 → need an fe hybrid) — uncertain payoff, high risk.
+- **Aux coloring (stripe / distance / orbit-trap) can't use BLA** (it needs every iteration's z), so
+  it's ~10–17× slower at depth (214 ms at 1e30). Inherent; the fix is a cheaper aux accumulation, not
+  BLA.
+- The original premise below (reference is the bottleneck) is now **historical** — kept for context.
+
 Prioritized after a multi-GPU assessment (2026-07-01). The deep-zoom bottleneck during motion is
 the **serial arbitrary-precision reference orbit** (bignum CPU, ~45–77 ms recompute) — *not* GPU
 work — so it can't be parallelized across GPUs (or even threads: a single orbit `z_{n+1}=z_n²+c`
@@ -696,8 +711,9 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
 - [ ] **Pipeline the export** — overlap tile render → readback → encode so the GPU never idles
   between tiles (async readback + a CPU encode thread). Cheaper than multi-GPU and helps every
   machine; also smooths the synchronous glitch-corrected export.
-- [ ] **BLA on by default** — see the BLA entry; skipping iterations throughout the orbit cuts
-  per-pixel GPU cost across the board (the other half of the live-render budget).
+- [x] **BLA on by default** — shipped (`SessionState.use_bla` defaults true). Confirmed by
+  `--profile` as the key GPU lever at ≥1e28× (1e30 iter 10 ms with BLA vs 174 ms without). Note it
+  only helps past the floatexp crossover (see the update note above) and not for aux coloring.
 - [ ] **Better single-GPU utilization** — before adding GPUs, check the live dispatch actually
   saturates the one GPU (occupancy, workgroup sizing, async compute for the iterate vs. color
   passes). Often a cheaper 1.5–2× than a second device.
