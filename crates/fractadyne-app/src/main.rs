@@ -3427,7 +3427,7 @@ impl eframe::App for FractadyneApp {
                     self.render_tour_done = true;
                     let (w, h) = self.tour_size;
                     let (fps, ss, out) = (self.tour_fps, self.tour_ss, self.tour_out.clone());
-                    match self.render_tour_to_dir(dev, q, &script, fps, w, h, ss, &out) {
+                    match self.render_tour_to_dir(ctx, dev, q, &script, fps, w, h, ss, &out) {
                         Ok(m) => println!("{m}"),
                         Err(e) => eprintln!("Tour render failed: {e}"),
                     }
@@ -4497,6 +4497,11 @@ impl eframe::App for FractadyneApp {
         // ---- brand watermark (lower-right of the fractal area) ----
         if self.watermark {
             self.draw_watermark(ctx, central.response.rect);
+        }
+
+        // ---- guided-tour captions (narration overlay during playback) ----
+        if self.playback.is_some() {
+            self.draw_captions(ctx, central.response.rect);
         }
 
         // ---- minimap overview ----

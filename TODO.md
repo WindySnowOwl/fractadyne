@@ -393,12 +393,14 @@ perturbation + series approximation + glitch correction. The headline feature.
       (`secs`, `center_x/y`, `mag`, `fractal`, `julia`; centers inherit if omitted) and
       glides center (BigFloat lerp) + log-magnification (eased) along the timeline.
       `core::set_center_mag` / `lerp_bf` drive it; Esc or Tools → Stop ends it.
-- [ ] **Guided-tour scripting (narrated, annotated tours)** — grow the keyframe format from a
+- [~] **Guided-tour scripting (narrated, annotated tours)** — grow the keyframe format from a
       bare camera path into an authored, self-documenting tour that teaches features and points
       out interesting structure. Wants:
-      - **On-screen commentary / text** — per-keyframe (or timed) caption/title/body text
-        overlays (position, duration, fade in/out, optional pause-until-dismissed), so a tour can
-        narrate what you're looking at and why it matters.
+      - [x] **On-screen commentary / text** — DONE: `[[caption]]` entries (timed independently of
+        keyframes) with `text` (multi-line), `at`/`secs`, `pos` (top/center/bottom), `fade`, and
+        `size`. Eased fade in/out; wrapped + centred on a soft dark backing. Renders live
+        (`draw_captions`, egui painter) **and** burned into exported tour frames (`stamp_caption`,
+        rasterized from the font atlas). *(Remaining: optional pause-until-dismissed.)*
       - **Callouts** — labeled arrows/markers pointing to a specific complex coordinate or screen
         region (e.g. "this is a period-3 minibrot"), anchored in fractal space so they track the
         right spot as the view moves.
@@ -407,10 +409,10 @@ perturbation + series approximation + glitch correction. The headline feature.
       - **Eased transitions** — richer easing between keyframes (per-segment ease curves, hold
         times, optional pauses) so pans/zooms feel cinematic, not linear. Builds on the existing
         `Playback::sample` log2 interpolation.
-      - **Targeted version tracking** — each script declares the app/format version it was
-        authored for (and/or a min version); on load, validate compatibility and warn (like the
-        `.fdn` / export `VIEW_FORMAT_VERSION` + `NewerFormat` path) so tours degrade gracefully
-        instead of silently misbehaving as the schema evolves.
+      - [x] **Targeted version tracking** — DONE: scripts declare `format_version`; loading (live +
+        `--render-tour`) warns when it exceeds this build's `SCRIPT_FORMAT_VERSION` (like the `.fdn`
+        / export `NewerFormat` path). Schema is additive (unknown keys ignored, missing default), so
+        old scripts still play.
       Pairs with the existing live playback + `--render-tour` movie export (annotations should
       render in exported frames too). *(Design the schema additively — new keys, old scripts still
       play — and reuse the hardened `meta_get`/version-check machinery for untrusted script files.)*

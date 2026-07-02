@@ -5,16 +5,81 @@
 use crate::{process_memory, version_string, FractadyneApp, FractalKind};
 use serde::Deserialize;
 
+/// Script schema version. Bump on a breaking change to an existing key's meaning; purely
+/// additive new keys don't need it (unknown keys are ignored, missing ones default — so old
+/// and new builds interoperate). A script whose `format_version` exceeds this is from a newer
+/// build: we still play the parts we understand but warn that newer features may not apply.
+pub(crate) const SCRIPT_FORMAT_VERSION: u32 = 1;
+
 /// On-disk script format (TOML). A keyframe with no `center_x`/`center_y` inherits
-/// the previous keyframe's center (handy for pure zoom-in tours).
+/// the previous keyframe's center (handy for pure zoom-in tours). Captions are timed
+/// independently of keyframes (so narration can span or overlap camera moves).
 #[derive(Deserialize, Default)]
 struct ScriptFile {
     #[serde(default)]
     name: String,
+    /// Schema version the script was authored for (see `SCRIPT_FORMAT_VERSION`).
+    #[serde(default)]
+    format_version: Option<u32>,
     #[serde(default, rename = "loop")]
     loop_: bool,
     #[serde(default)]
     keyframe: Vec<KeyframeFile>,
+    #[serde(default)]
+    caption: Vec<CaptionFile>,
+}
+
+/// A timed on-screen caption (narration overlay). Additive to the camera path.
+#[derive(Deserialize, Clone)]
+struct CaptionFile {
+    /// The text to show (supports `\n` for multiple lines).
+    text: String,
+    /// When it appears on the timeline (seconds from the start).
+    #[serde(default)]
+    at: f64,
+    /// How long it stays (seconds). 0 or omitted ⇒ until the tour ends.
+    #[serde(default)]
+    secs: f64,
+    /// Screen anchor: `top`, `center`, or `bottom` (default).
+    #[serde(default)]
+    pos: Option<String>,
+    /// Fade in/out time (seconds) at each end. Default 0.4.
+    #[serde(default)]
+    fade: Option<f64>,
+    /// Font size in points. Default 22.
+    #[serde(default)]
+    size: Option<f64>,
+}
+
+/// Where a caption sits on screen.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum CaptionPos {
+    Top,
+    Center,
+    Bottom,
+}
+
+/// A resolved caption ready to draw.
+pub(crate) struct Caption {
+    pub(crate) text: String,
+    pub(crate) start: f64,
+    pub(crate) end: f64,
+    pub(crate) fade: f64,
+    pub(crate) pos: CaptionPos,
+    pub(crate) size: f32,
+}
+
+impl Caption {
+    /// Opacity (0..1) of this caption at tour time `t`, with eased fade in/out; 0 = not shown.
+    pub(crate) fn alpha_at(&self, t: f64) -> f32 {
+        if t < self.start || t > self.end {
+            return 0.0;
+        }
+        let f = self.fade.max(1.0e-3);
+        let a = ((t - self.start) / f).min(1.0);
+        let b = ((self.end - t) / f).min(1.0);
+        (a.min(b).clamp(0.0, 1.0)) as f32
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -83,6 +148,10 @@ pub(crate) struct Playback {
     pub(crate) t0: Option<f64>,
     loop_: bool,
     pub(crate) bench: Option<Bench>,
+    /// Timed narration overlays (drawn by the app over the fractal + into exported frames).
+    pub(crate) captions: Vec<Caption>,
+    /// Current tour time (seconds), updated each frame — so the caption overlay knows what to show.
+    pub(crate) cur_t: f64,
 }
 
 impl Playback {
@@ -122,6 +191,73 @@ impl Playback {
     }
 }
 
+/// Burn a caption into a **linear-RGBA** export frame — the offscreen equivalent of
+/// `draw_captions`: a soft dark backing rect + white text (× `alpha`), wrapped and centred on the
+/// caption's screen anchor. Rasterized from the egui font atlas (same glyphs as the live overlay).
+fn stamp_caption(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, cap: &Caption, alpha: f32) {
+    if alpha <= 0.0 || w == 0 || h == 0 {
+        return;
+    }
+    let ppp = ctx.pixels_per_point();
+    let size_px = cap.size * (h as f32 / 1080.0); // scale caption to the frame height
+    let pts = (size_px / ppp).max(1.0);
+    let galley = ctx.fonts(|f| {
+        f.layout(cap.text.clone(), egui::FontId::proportional(pts), egui::Color32::WHITE, w as f32 * 0.8 / ppp)
+    });
+    let (gw, gh) = (galley.size().x * ppp, galley.size().y * ppp); // in frame pixels
+    let bx = w as f32 * 0.5 - gw * 0.5;
+    let by = match cap.pos {
+        CaptionPos::Top => h as f32 * 0.07,
+        CaptionPos::Center => h as f32 * 0.5 - gh * 0.5,
+        CaptionPos::Bottom => h as f32 * 0.91 - gh,
+    };
+    // Soft dark backing (multiply the covered region toward black) for legibility.
+    let pad = 12.0 * (h as f32 / 1080.0);
+    let bg = (alpha * 0.5).min(1.0);
+    let (rx0, ry0) = ((bx - pad).max(0.0) as u32, (by - pad).max(0.0) as u32);
+    let (rx1, ry1) = (((bx + gw + pad).min(w as f32)) as u32, ((by + gh + pad).min(h as f32)) as u32);
+    for y in ry0..ry1 {
+        for x in rx0..rx1 {
+            let i = (y as usize * w as usize + x as usize) * 4;
+            px[i] *= 1.0 - bg;
+            px[i + 1] *= 1.0 - bg;
+            px[i + 2] *= 1.0 - bg;
+        }
+    }
+    // White glyphs over the backing.
+    ctx.fonts(|f| {
+        let atlas = f.image();
+        let aw = atlas.size[0];
+        for row in &galley.rows {
+            for g in &row.glyphs {
+                let uv = g.uv_rect;
+                if uv.max[0] <= uv.min[0] || uv.max[1] <= uv.min[1] {
+                    continue;
+                }
+                let ox = (bx + (g.pos.x + uv.offset.x) * ppp).round() as i32;
+                let oy = (by + (g.pos.y + uv.offset.y) * ppp).round() as i32;
+                for ty in uv.min[1]..uv.max[1] {
+                    for tx in uv.min[0]..uv.max[0] {
+                        let cov = atlas.pixels[ty as usize * aw + tx as usize] * alpha;
+                        if cov <= 0.0 {
+                            continue;
+                        }
+                        let dx = ox + (tx - uv.min[0]) as i32;
+                        let dy = oy + (ty - uv.min[1]) as i32;
+                        if dx < 0 || dy < 0 || dx >= w as i32 || dy >= h as i32 {
+                            continue;
+                        }
+                        let i = (dy as usize * w as usize + dx as usize) * 4;
+                        px[i] = cov + px[i] * (1.0 - cov);
+                        px[i + 1] = cov + px[i + 1] * (1.0 - cov);
+                        px[i + 2] = cov + px[i + 2] * (1.0 - cov);
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// Resolve a parsed script file into a playable tour (parses centers, accumulates
 /// keyframe times, fills inherited centers). Returns `None` if it has no keyframes.
 fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
@@ -156,6 +292,28 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
         });
     }
     let total = kfs.last().map(|k| k.at).unwrap_or(0.0);
+    let captions = sf
+        .caption
+        .iter()
+        .filter(|c| !c.text.is_empty())
+        .map(|c| {
+            let start = c.at.max(0.0);
+            let end = if c.secs > 0.0 { start + c.secs } else { total.max(start) };
+            let pos = match c.pos.as_deref().map(|s| s.to_ascii_lowercase()).as_deref() {
+                Some("top") => CaptionPos::Top,
+                Some("center") | Some("centre") | Some("middle") => CaptionPos::Center,
+                _ => CaptionPos::Bottom,
+            };
+            Caption {
+                text: c.text.clone(),
+                start,
+                end,
+                fade: c.fade.unwrap_or(0.4).max(0.0),
+                pos,
+                size: c.size.unwrap_or(22.0).clamp(8.0, 96.0) as f32,
+            }
+        })
+        .collect();
     Some(Playback {
         name: if sf.name.is_empty() {
             "Script".to_string()
@@ -167,6 +325,8 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
         t0: None,
         loop_: sf.loop_,
         bench,
+        captions,
+        cur_t: 0.0,
     })
 }
 
@@ -191,6 +351,7 @@ fn benchmark_playback() -> Playback {
         name: "Built-in benchmark".to_string(),
         loop_: false,
         keyframe,
+        ..Default::default()
     };
     resolve_script(sf, Some(Bench::new())).expect("valid benchmark script")
 }
@@ -210,13 +371,59 @@ impl FractadyneApp {
         else {
             return;
         };
-        match std::fs::read_to_string(&path)
+        let parsed = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|t| toml::from_str::<ScriptFile>(&t).ok())
-            .and_then(|sf| resolve_script(sf, None))
-        {
-            Some(pb) => self.playback = Some(pb),
+            .and_then(|t| toml::from_str::<ScriptFile>(&t).ok());
+        let script_ver = parsed.as_ref().and_then(|sf| sf.format_version).unwrap_or(0);
+        match parsed.and_then(|sf| resolve_script(sf, None)) {
+            Some(pb) => {
+                if script_ver > SCRIPT_FORMAT_VERSION {
+                    self.bench_report = Some(format!(
+                        "Note: \"{}\" was authored for a newer script format (v{script_ver} > \
+                         v{SCRIPT_FORMAT_VERSION}). Playing what this build understands; newer \
+                         annotations may not appear.",
+                        pb.name
+                    ));
+                    self.bench_open = true;
+                }
+                self.playback = Some(pb);
+            }
             None => self.bench_report = Some(format!("Could not load script:\n{}", path.display())),
+        }
+    }
+
+    /// Draw the active tour captions over the fractal (live playback). Each caption fades in/out
+    /// per its timeline window; text is wrapped and centered on its screen anchor over a soft dark
+    /// backing so it stays legible on any fractal. (Exported tour frames get the same via a
+    /// rasterized overlay — see `render_tour_to_dir`.)
+    pub(crate) fn draw_captions(&self, ctx: &egui::Context, rect: egui::Rect) {
+        let Some(pb) = &self.playback else { return };
+        if pb.captions.is_empty() {
+            return;
+        }
+        let painter =
+            ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("tour_captions")));
+        for cap in &pb.captions {
+            let a = cap.alpha_at(pb.cur_t);
+            if a <= 0.0 {
+                continue;
+            }
+            let color = egui::Color32::from_white_alpha((a * 240.0) as u8);
+            let galley = ctx.fonts(|f| {
+                f.layout(cap.text.clone(), egui::FontId::proportional(cap.size), color, rect.width() * 0.8)
+            });
+            let sz = galley.size();
+            let x = rect.center().x - sz.x * 0.5;
+            let y = match cap.pos {
+                CaptionPos::Top => rect.top() + rect.height() * 0.07,
+                CaptionPos::Center => rect.center().y - sz.y * 0.5,
+                CaptionPos::Bottom => rect.bottom() - rect.height() * 0.09 - sz.y,
+            };
+            let pos = egui::pos2(x, y);
+            let pad = egui::vec2(12.0, 7.0);
+            let bg = egui::Rect::from_min_size(pos - pad, sz + pad * 2.0);
+            painter.rect_filled(bg, 5.0, egui::Color32::from_black_alpha((a * 130.0) as u8));
+            painter.galley(pos, galley, color);
         }
     }
 
@@ -226,6 +433,7 @@ impl FractadyneApp {
     /// offscreen export path. Blocking; assemble the frames afterward (e.g. with ffmpeg).
     pub(crate) fn render_tour_to_dir(
         &mut self,
+        ctx: &egui::Context,
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
         script_path: &std::path::Path,
@@ -238,6 +446,13 @@ impl FractadyneApp {
         let text = std::fs::read_to_string(script_path)
             .map_err(|e| format!("read {}: {e}", script_path.display()))?;
         let sf: ScriptFile = toml::from_str(&text).map_err(|e| format!("parse script: {e}"))?;
+        if sf.format_version.unwrap_or(0) > SCRIPT_FORMAT_VERSION {
+            eprintln!(
+                "Warning: script format v{} is newer than this build (v{SCRIPT_FORMAT_VERSION}); \
+                 newer annotations may not render.",
+                sf.format_version.unwrap_or(0)
+            );
+        }
         let pb = resolve_script(sf, None).ok_or("script has no keyframes")?;
         std::fs::create_dir_all(out_dir)
             .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
@@ -252,6 +467,7 @@ impl FractadyneApp {
             "Rendering tour \"{}\": {frames} frames at {width}×{height} ss{}, {fps} fps ({:.1}s)…",
             pb.name, self.export_ss, pb.total
         );
+        let meta = self.view_metadata();
         for fi in 0..frames {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
             let (cx, cy, logmag, fractal, julia) = pb.sample(t);
@@ -259,8 +475,26 @@ impl FractadyneApp {
             self.julia_mode = julia && fractal.supports_julia();
             self.viewport
                 .set_center_log2mag(cx, cy, logmag / std::f64::consts::LN_2);
+            // Render the frame to pixels, then burn in the watermark + any active captions.
+            let mut req = self.current_export_request_for(&self.viewport, self.julia_mode);
+            req.width = width;
+            req.height = height;
+            req.ss = self.export_ss;
+            req.max_iter = req.max_iter.max(200);
+            let progress = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let res = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
+                .map_err(|e| format!("frame {fi}: {e}"))?;
+            let mut px = res.pixels;
+            self.apply_watermark(&mut px, res.width, res.height);
+            for cap in &pb.captions {
+                let a = cap.alpha_at(t);
+                if a > 0.0 {
+                    stamp_caption(ctx, &mut px, res.width, res.height, cap, a);
+                }
+            }
             let frame_path = out_dir.join(format!("frame_{fi:05}.png"));
-            self.render_to_file(device, queue, &frame_path)
+            fractadyne_export::write_png(&frame_path, res.width, res.height, &px, Some(&meta))
                 .map_err(|e| format!("frame {fi}: {e}"))?;
             if fi % 10 == 0 || fi + 1 == frames {
                 println!("  frame {}/{frames}", fi + 1);
@@ -289,6 +523,7 @@ impl FractadyneApp {
         }
         let finished = !pb.loop_ && elapsed >= pb.total;
         let e = elapsed.clamp(0.0, pb.total);
+        pb.cur_t = e; // for the caption overlay
         let (cx, cy, logmag, fractal, julia) = pb.sample(e);
         if fractal != self.fractal || julia != self.julia_mode {
             self.fractal = fractal;

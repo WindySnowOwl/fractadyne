@@ -24,6 +24,14 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 ### Added (post-baseline, this session)
 
+- **Guided-tour captions + version tracking** — camera-tour scripts (`Tools → Play script…`,
+  `--render-tour`) can now narrate: `[[caption]]` entries with `text` (multi-line), `at`/`secs`
+  timing (independent of keyframes), `pos` (top/center/bottom), `fade`, and `size`. Captions ease
+  in/out, wrap, and sit centred on a soft dark backing; they render live over the fractal **and**
+  burn into exported tour frames. Scripts also declare a `format_version`; loading a newer script
+  warns (schema is additive, so old scripts keep playing). First increment of the guided-tour
+  feature — callouts, vignettes, and richer per-segment easing to follow.
+
 - **Zoom-reprojection (smooth deep dives)** — during the brief reference rebuild at extreme depth
   the held frame now scales + pans to follow the ongoing zoom instead of freezing, so the view keeps
   moving smoothly until the fresh reference snaps in. Generalizes the pan reprojection with a scale
