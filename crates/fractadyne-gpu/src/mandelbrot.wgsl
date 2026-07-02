@@ -1002,8 +1002,12 @@ struct ColorU {
     de_phase: f32,     // animated phase (cycles the glow bands)
     color_method: u32, // 0 smooth, 1 stripe, 2 triangle-ineq, 3 orbit-trap, 4 distance, 5 decomposition
     aa_filter: u32,    // color-pass box-filter taps per axis (≥1); >1 anti-aliases an upscaled iter texture
-    reproject: u32,    // 1 = pan reprojection: translate the frozen iteration texture by uv_off
+    reproject: u32,    // 1 = reprojection: sample the frozen texture scaled+translated (no re-iterate)
     uv_off: vec2<f32>, // uv translation for the reprojection (fraction of the screen panned)
+    uv_scale: f32,     // uv scale about centre (1 = pan only; <1 = zoomed in since the frozen frame)
+    _pad_uv: f32,
+    _pad_uv2: f32,
+    _pad_uv3: f32,
     interior_col: vec4<f32>, // color for in-set (non-escaping) pixels; rgb in xyz
     stops: array<vec4<f32>, 8>, // rgb + position
 };
@@ -1079,7 +1083,9 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     // view settles and re-iterates.
     var suv = in.uv;
     if (cu.reproject == 1u) {
-        suv = in.uv - cu.uv_off;
+        // Scale about the centre then translate: follows both the zoom and pan since the frozen
+        // frame was rendered (uv_scale == 1 → pure pan, the original behaviour).
+        suv = (in.uv - vec2<f32>(0.5)) * cu.uv_scale + vec2<f32>(0.5) - cu.uv_off;
         if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {
             return vec4<f32>(view_average(), 1.0);
         }

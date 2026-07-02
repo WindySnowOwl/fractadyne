@@ -769,6 +769,11 @@ struct RefCache {
     bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla_id: u64,
     bla_dc_max_log2: f64,
+    /// View (center + log2 magnification) the current iteration texture was rendered at. A freeze
+    /// uses this to zoom-reproject the frozen frame — scaling/panning it to follow the dive until a
+    /// fresh reference lands (see `build_params`). `None` until the first real render.
+    frozen_center: Option<[fractadyne_core::BigFloat; 2]>,
+    frozen_l2: f64,
 }
 
 impl Default for RefCache {
@@ -786,6 +791,8 @@ impl Default for RefCache {
             bla: std::sync::Arc::new(Vec::new()),
             bla_id: u64::MAX,
             bla_dc_max_log2: f64::NEG_INFINITY,
+            frozen_center: None,
+            frozen_l2: 0.0,
         }
     }
 }

@@ -62,8 +62,10 @@ struct ColorUniforms {
     de_phase: f32,
     color_method: u32,
     aa_filter: u32,
-    reproject: u32,      // 1 = pan reprojection: translate the frozen iteration texture
+    reproject: u32,      // 1 = reprojection: sample the frozen iteration texture scaled+translated
     uv_offset: [f32; 2], // uv translation applied when reproject == 1
+    uv_scale: f32,       // uv scale about centre (1 = pan only; <1 = zoomed since the frozen frame)
+    _pad_uv: [f32; 3],
     interior_col: [f32; 4],
     stops: [[f32; 4]; 8],
 }
@@ -455,6 +457,9 @@ pub struct MandelbrotParams {
     /// the newly-exposed edge is blank until the view settles).
     pub reproject: u32,
     pub uv_offset: [f32; 2],
+    /// Reprojection scale about the view centre: 1.0 = pan only; <1.0 = the view has zoomed in
+    /// since the frozen frame, so the held detail is magnified to follow the zoom.
+    pub uv_scale: f32,
     /// Which on-screen panel this is (distinct GPU resources per id).
     pub view_id: u32,
 }
@@ -534,6 +539,8 @@ impl CallbackTrait for MandelbrotParams {
             aa_filter: self.aa_filter.max(1),
             reproject: reproject as u32,
             uv_offset: self.uv_offset,
+            uv_scale: if self.uv_scale > 0.0 { self.uv_scale } else { 1.0 },
+            _pad_uv: [0.0; 3],
             interior_col: self.interior_col,
             stops: self.stops,
         };
@@ -864,6 +871,8 @@ pub fn render_export(
         aa_filter: req.aa_filter.max(1),
         reproject: 0,
         uv_offset: [0.0, 0.0],
+        uv_scale: 1.0,
+        _pad_uv: [0.0; 3],
         interior_col: req.interior_col,
         stops: req.stops,
     };
@@ -1321,6 +1330,8 @@ pub fn color_iter_buffer(
         aa_filter: 1,
         reproject: 0,
         uv_offset: [0.0, 0.0],
+        uv_scale: 1.0,
+        _pad_uv: [0.0; 3],
         interior_col: req.interior_col,
         stops: req.stops,
     };

@@ -613,6 +613,9 @@ impl FractadyneApp {
         // view holds instead of flashing blank.
         let mut reproject = reproject
             .filter(|_| mode != 1 && self.ref_cache[vi].ref_pt.is_some());
+        // Reprojection scale about the view centre: 1.0 for a pan (drag) reprojection; set <1.0 by
+        // the freeze below to zoom the held frame as the view keeps diving (zoom-reprojection).
+        let mut reproject_scale = 1.0_f32;
 
         let mut ref_offset = [0.0_f32; 4];
         let mut sa = fractadyne_core::SeriesSkip::NONE;
@@ -719,8 +722,35 @@ impl FractadyneApp {
             // gated on a job being in flight — the recompute throttle can leave gaps where nothing
             // is pending yet the reference is already too stale to paint. Only when a prior
             // reference exists (the cold start renders synchronously instead).
+            //
+            // Zoom-reprojection: rather than holding the frozen frame static, scale + pan it to
+            // follow the zoom/motion since it was rendered, so the held detail keeps zooming
+            // smoothly until the fresh reference lands and the view snaps to it. The transform maps
+            // the current view back into the frozen texture (see the color shader):
+            //   uv_scale = span_now/span_frozen = 2^(l2_frozen − l2_now)   (≤ 1 as we dive in)
+            //   uv_off   = −pan_current · uv_scale,  pan_current = (center_now − center_frozen)/span
+            // (y flips: complex-y is up, screen-uv-y is down.)
             if too_stale && self.ref_cache[vi].ref_pt.is_some() {
-                reproject = Some([0.0, 0.0]);
+                match self.ref_cache[vi].frozen_center.clone() {
+                    Some(fc) => {
+                        let scale = ((self.ref_cache[vi].frozen_l2 - log2mag) as f32)
+                            .exp2()
+                            .clamp(1.0e-4, 1.0);
+                        let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &fc[0], delta_exp, precision)
+                            / span_mantissa[0];
+                        let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &fc[1], delta_exp, precision)
+                            / span_mantissa[1];
+                        reproject_scale = scale;
+                        reproject = Some([(-px as f32) * scale, (py as f32) * scale]);
+                    }
+                    None => reproject = Some([0.0, 0.0]), // nothing rendered yet → static hold
+                }
+            }
+            // When this frame will actually re-iterate (not a freeze/pan reprojection), remember the
+            // view it renders — the next freeze reprojects the resulting texture relative to it.
+            if reproject.is_none() {
+                self.ref_cache[vi].frozen_center = Some(center_bf.clone());
+                self.ref_cache[vi].frozen_l2 = log2mag;
             }
             let rp = self.ref_cache[vi].ref_pt.as_ref().unwrap();
             // δ = center − reference, carried as a mantissa scaled by 2^-delta_exp
@@ -822,6 +852,7 @@ impl FractadyneApp {
             ss,
             reproject: reproject.is_some() as u32,
             uv_offset: reproject.unwrap_or([0.0, 0.0]),
+            uv_scale: reproject_scale,
             view_id,
         }
     }
