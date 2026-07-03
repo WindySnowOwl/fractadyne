@@ -69,9 +69,10 @@ fractadyne --render --out img.png [--fractal Mandelbrot --center X Y --zoom M \
            --show-location]
            # --zoom-log2 L sets magnification 2^L for depths past f64 range (≥ ~1e308×)
 fractadyne --render-tour tour.toml --out frames [--fps N --size WxH --height H --ss N \
-           --mp4 [out.mp4] --show-location]
+           --prefix NAME --overwrite --mp4 [out.mp4] --show-location]
            # render a keyframe-tour TOML to a PNG frame sequence (+ optional mp4 via ffmpeg);
-           # prints live progress (frames done / elapsed / ETA). Example tours in tours/.
+           # frames are <prefix>_00000.png (prefix defaults to the script name); prompts before
+           # overwriting existing frames unless --overwrite/-y. Prints live progress. Tours in tours/.
 fractadyne --find-minibrot --center X Y --zoom M   # print nearby minibrot period + nucleus
 fractadyne --selftest [--bless] [--out report.md]  # validation suite; exit 0 = all passed
 fractadyne --render-iter --out img.exr [view opts] # export raw iteration data (EXR) for review

@@ -965,6 +965,11 @@ struct FractadyneApp {
     tour_size: (u32, u32),
     tour_ss: u32,
     tour_out: std::path::PathBuf,
+    /// CLI `--prefix NAME`: frame-name prefix (frames `<prefix>_00000.png`). Defaults to the tour
+    /// script's file stem, or "frame".
+    tour_prefix: String,
+    /// CLI `--overwrite` / `-y`: replace existing frames without prompting.
+    tour_overwrite: bool,
     /// CLI `--mp4 [PATH]`: after rendering the tour, assemble the frames into an mp4 via ffmpeg.
     tour_mp4: Option<std::path::PathBuf>,
     /// CLI `--selftest`: run the GPU validation suite, print a report, and exit.
@@ -1170,13 +1175,24 @@ impl FractadyneApp {
             .clamp(16, 16384);
         let tour_ss = val("--ss").and_then(|s| s.parse::<u32>().ok()).unwrap_or(1).clamp(1, 8);
         let tour_out = out_path.clone().unwrap_or_else(|| std::path::PathBuf::from("frames"));
+        // Frame-name prefix: --prefix NAME, else the tour script's file stem, else "frame".
+        // Frames are written `<prefix>_00000.png`; the mp4 default becomes `<prefix>.mp4`.
+        let tour_prefix = val("--prefix").cloned().unwrap_or_else(|| {
+            render_tour
+                .as_ref()
+                .and_then(|p| p.file_stem())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "frame".to_string())
+        });
+        // --overwrite / -y: replace existing frames without prompting.
+        let tour_overwrite = args.iter().any(|a| a == "--overwrite" || a == "-y");
         // --mp4 [PATH]: presence enables ffmpeg encoding after render. A following non-flag token is
-        // the output path; otherwise default to `<out-dir>/tour.mp4`.
+        // the output path; otherwise default to `<out-dir>/<prefix>.mp4`.
         let tour_mp4 = args.iter().position(|a| a == "--mp4").map(|i| {
             args.get(i + 1)
                 .filter(|s| !s.starts_with('-'))
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| tour_out.join("tour.mp4"))
+                .unwrap_or_else(|| tour_out.join(format!("{tour_prefix}.mp4")))
         });
         let profile_reps = val("--reps").and_then(|s| s.parse().ok()).unwrap_or(5u32);
         let profile_regions = val("--regions").cloned();
@@ -1255,6 +1271,8 @@ impl FractadyneApp {
             tour_size: (tour_w, tour_h),
             tour_ss,
             tour_out,
+            tour_prefix,
+            tour_overwrite,
             tour_mp4,
             selftest,
             selftest_done: false,
@@ -3490,7 +3508,8 @@ impl eframe::App for FractadyneApp {
                     let (w, h) = self.tour_size;
                     let (fps, ss, out) = (self.tour_fps, self.tour_ss, self.tour_out.clone());
                     let mp4 = self.tour_mp4.clone();
-                    match self.render_tour_to_dir(ctx, dev, q, &script, fps, w, h, ss, &out, mp4.as_deref()) {
+                    let (prefix, overwrite) = (self.tour_prefix.clone(), self.tour_overwrite);
+                    match self.render_tour_to_dir(ctx, dev, q, &script, fps, w, h, ss, &out, &prefix, overwrite, mp4.as_deref()) {
                         Ok(m) => println!("{m}"),
                         Err(e) => eprintln!("Tour render failed: {e}"),
                     }

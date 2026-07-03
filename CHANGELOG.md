@@ -82,6 +82,13 @@ Baseline for tracked versioning. Notable capabilities already present:
   Works with `--render` and `--render-tour`; a tour can also set `show_location = true`. Uses the
   same deep-precision coordinate formatting as the live status bar.
 
+- **Tour frame naming + overwrite guard** — `--render-tour` frames are now named
+  `<prefix>_00000.png`, where `--prefix NAME` overrides the default (the tour script's file name;
+  `frame` if none). The mp4 default follows suit (`<prefix>.mp4`). Before clobbering an existing
+  frame it prompts on the terminal — **[y]es / [a]ll / [n]o / [q]uit** — with `--overwrite` (`-y`)
+  to skip the prompt. When stdin isn't a terminal (automation) it errors with that hint instead of
+  hanging.
+
 - **Pipelined tour references** — `--render-tour` now computes frame N+1's arbitrary-precision
   reference (orbit + series approximation + BLA) on a worker thread while frame N renders on the
   GPU, so the deep-zoom bignum stall overlaps the render. The export reference path was unified onto

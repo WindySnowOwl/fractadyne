@@ -130,6 +130,46 @@ struct EncodeJob {
     fi: u64,
 }
 
+/// The user's answer to an overwrite prompt.
+enum OverwriteChoice {
+    /// Overwrite this file.
+    Yes,
+    /// Overwrite this file and all later collisions without asking again.
+    YesAll,
+    /// Keep the existing file (skip this frame).
+    No,
+    /// Abort the render.
+    Quit,
+}
+
+/// Ask on the terminal whether to overwrite `path`: `[y]es / [a]ll / [n]o / [q]uit` (loops on
+/// invalid input). If stdin isn't a terminal (piped / no console), returns an error pointing at
+/// `--overwrite` instead of blocking — so an automated run never hangs waiting for a keypress.
+fn prompt_overwrite(path: &std::path::Path) -> Result<OverwriteChoice, String> {
+    use std::io::{BufRead, IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return Err(format!(
+            "{} already exists; pass --overwrite (or -y) to replace, or use an empty --out directory",
+            path.display()
+        ));
+    }
+    loop {
+        print!("Overwrite {}? [y]es / [a]ll / [n]o / [q]uit: ", path.display());
+        let _ = std::io::stdout().flush();
+        let mut line = String::new();
+        if std::io::stdin().lock().read_line(&mut line).unwrap_or(0) == 0 {
+            return Ok(OverwriteChoice::Quit); // EOF → treat as quit
+        }
+        match line.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => return Ok(OverwriteChoice::Yes),
+            "a" | "all" | "ya" => return Ok(OverwriteChoice::YesAll),
+            "n" | "no" => return Ok(OverwriteChoice::No),
+            "q" | "quit" => return Ok(OverwriteChoice::Quit),
+            _ => println!("  please enter y (yes), a (yes to all), n (no), or q (quit)"),
+        }
+    }
+}
+
 /// Format a duration in seconds as a compact `1h02m03s` / `2m03s` / `4.2s` string for progress logs.
 fn fmt_hms(secs: f64) -> String {
     let s = secs.max(0.0);
@@ -1000,6 +1040,10 @@ impl FractadyneApp {
         height: u32,
         ss: u32,
         out_dir: &std::path::Path,
+        // Frame-name prefix: frames are written `<prefix>_00000.png`.
+        prefix: &str,
+        // Replace existing frames without prompting (CLI `--overwrite` / `-y`).
+        overwrite: bool,
         // Some(path) → after the PNG sequence is written, invoke `ffmpeg` to assemble it into an
         // H.264 mp4 at `path` (frames are kept). None → leave just the PNG sequence.
         mp4: Option<&std::path::Path>,
@@ -1073,6 +1117,9 @@ impl FractadyneApp {
         // Reference pipeline: frame N+1's bignum reference (orbit + SA + BLA) is computed on a worker
         // while frame N renders on the GPU, so the deep-zoom reference stall overlaps the render.
         let mut pending_ref: Option<(u64, std::sync::mpsc::Receiver<crate::render::RecomputeResult>)> = None;
+        // Overwrite policy: `overwrite_all` skips the per-frame prompt; `canceled` breaks the render.
+        let mut overwrite_all = overwrite;
+        let mut canceled = false;
         let started = std::time::Instant::now();
         for fi in 0..frames {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
@@ -1082,6 +1129,19 @@ impl FractadyneApp {
             self.dual = s.dual;
             if let Some(c) = s.julia_c {
                 self.julia_c = c;
+            }
+            // Output path for this frame; ask before clobbering an existing one (unless overwriting).
+            let frame_path = out_dir.join(format!("{prefix}_{fi:05}.png"));
+            if !overwrite_all && frame_path.exists() {
+                match prompt_overwrite(&frame_path)? {
+                    OverwriteChoice::Yes => {}
+                    OverwriteChoice::YesAll => overwrite_all = true,
+                    OverwriteChoice::No => continue,
+                    OverwriteChoice::Quit => {
+                        canceled = true;
+                        break;
+                    }
+                }
             }
             // Claim frame `fi`'s precomputed reference if the previous iteration started one for it.
             let this_ref = match pending_ref.take() {
@@ -1175,7 +1235,6 @@ impl FractadyneApp {
             if let Some(e) = enc_err.lock().unwrap().as_ref() {
                 return Err(e.clone());
             }
-            let frame_path = out_dir.join(format!("frame_{fi:05}.png"));
             // Hand the finished frame to the encoder pool; blocks if the queue is full (backpressure).
             enc_tx
                 .send(EncodeJob { path: frame_path, w: rw, h: rh, px, fi })
@@ -1201,6 +1260,13 @@ impl FractadyneApp {
             return Err(e);
         }
         let render_secs = started.elapsed().as_secs_f64();
+        if canceled {
+            return Ok(format!(
+                "Canceled after {} → {} (existing frames left in place).",
+                fmt_hms(render_secs),
+                out_dir.display()
+            ));
+        }
         println!(
             "Rendered {frames} frame(s) in {} → {}",
             fmt_hms(render_secs),
@@ -1209,7 +1275,7 @@ impl FractadyneApp {
 
         // Optionally assemble the PNG sequence into an mp4 via ffmpeg (kept separate from the
         // frames so a failed/absent ffmpeg never loses the render).
-        let pattern = out_dir.join("frame_%05d.png");
+        let pattern = out_dir.join(format!("{prefix}_%05d.png"));
         if let Some(mp4_path) = mp4 {
             println!("Encoding → {} (ffmpeg)…", mp4_path.display());
             let enc = std::time::Instant::now();
