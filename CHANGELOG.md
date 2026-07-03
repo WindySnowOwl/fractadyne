@@ -8,6 +8,16 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.6
+
+- **Progressive settle anti-aliasing** — when the view settles it no longer jumps straight to full AA
+  in one (potentially long) frame. Instead the AA ramps **1×→2×→4×→… up to your chosen level over
+  consecutive frames**, each scheduling the next. So a heavy view (deep / high-iteration / dual /
+  high AA) shows an instant coarse frame the moment you stop and refines to full quality, keeping
+  interaction fluid instead of freezing on every stop. Per view (`settle_frame[2]`), reset while
+  moving. *(The final full-AA frame on a very heavy view is still one expensive frame — its inherent
+  cost — but you see near-final quality several fast frames earlier, and can move on before it.)*
+
 ## 0.1.5
 
 - **Dual view: per-view settle** — driving the Julia `c` by moving the cursor over the Mandelbrot

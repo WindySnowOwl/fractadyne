@@ -402,7 +402,7 @@ impl FractadyneApp {
                 let eff_iter = self.viewport.recommended_max_iter(self.max_iter);
                 let t = Instant::now();
                 let params = self.build_params(
-                    center_bf, center, span, mag, l2, self.fractal, false, eff_iter, false,
+                    center_bf, center, span, mag, l2, self.fractal, false, eff_iter, false, self.aa,
                     [size, size], 0, None,
                 );
                 let build_ms = t.elapsed().as_secs_f64() * 1000.0;

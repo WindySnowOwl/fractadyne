@@ -614,6 +614,9 @@ impl FractadyneApp {
         julia: bool,
         eff_iter: u32,
         interacting: bool,
+        // Anti-alias supersampling target for this frame (1 while moving; ramps up on settle via the
+        // caller's progressive-settle stages). Clamped to the GPU texture limit below.
+        aa_target: u32,
         resolution: [u32; 2],
         view_id: u32,
         // Some(uv_offset) → pan reprojection: reuse the cached orbit + frozen iteration texture
@@ -688,7 +691,9 @@ impl FractadyneApp {
         let max_ss = ((budget / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
             .sqrt()
             .max(1.0) as u32;
-        let ss = if interacting { 1 } else { self.aa.min(max_ss) };
+        // `aa_target` is 1 while moving and ramps up over settled frames (progressive settle); clamp
+        // to what the per-frame budget affords (`max_ss`) so a stage can't trip the GPU watchdog.
+        let ss = aa_target.min(max_ss).max(1);
         // Color-pass anti-aliasing when true supersampling wasn't affordable: widen the box
         // to match an upscaled (resolution-reduced) texture, or apply a gentle 2× box when
         // the budget forced ss=1 on a settled view the user wanted anti-aliased.

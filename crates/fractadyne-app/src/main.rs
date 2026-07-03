@@ -326,6 +326,13 @@ const EASE_TAU: f64 = 0.15; // ease-in/out time constant (seconds)
 /// Keep anti-aliasing off for this long after the last interaction, so rapid zoom
 /// steps don't each trigger a full-AA render (which felt laggy).
 const SETTLE_DELAY: f64 = 0.18;
+
+/// Anti-alias supersampling for progressive-settle stage `frame`, ramping 1→2→4→… up to `target`.
+/// A settled view refines from an instant coarse frame to full AA over a few frames, rather than
+/// blocking on one expensive full-AA frame. `frame` is capped so the shift can't overflow.
+fn aa_ramp(frame: u32, target: u32) -> u32 {
+    (1u32 << frame.min(5)).min(target.max(1))
+}
 /// Max GPU work per render (texels × iterations) before the OS GPU watchdog (TDR)
 /// risks a device-lost crash. Supersampling auto-reduces to stay under this.
 pub(crate) const WORK_BUDGET: u64 = 60_000_000_000;
@@ -992,6 +999,11 @@ struct FractadyneApp {
     /// per-view so that, in the dual view, driving the Julia `c` with the cursor doesn't force the
     /// unchanged Mandelbrot panel to re-render at low resolution.
     settle_t: [f64; 2],
+    /// Progressive-AA settle stage, per view. On settle the anti-aliasing ramps 1×→2×→4×→… up to the
+    /// chosen level over consecutive frames (each schedules the next), so a heavy view shows an
+    /// instant coarse frame and refines to full AA rather than blocking on one expensive frame. Reset
+    /// to 0 whenever the view is interacting.
+    settle_frame: [u32; 2],
     /// Active smooth "zoom out to home" animation (Home button); `None` when idle.
     home_anim: Option<HomeAnim>,
     /// Auto-zoom autopilot: continuously dive toward the detail-richest region.
@@ -1325,6 +1337,7 @@ impl FractadyneApp {
             },
             pointer_complex: None,
             settle_t: [0.0; 2],
+            settle_frame: [0; 2],
             home_anim: None,
             autopilot: false,
             autopilot_target: (0.5, 0.5),
@@ -2081,6 +2094,20 @@ impl FractadyneApp {
         let span = vp.complex_span_fe();
         let mag = vp.magnification();
         let log2mag = vp.log2_magnification();
+        // Progressive settle AA (after the `vp` borrow ends): coarse (1×) while moving, then refine
+        // 1×→2×→4×→… up to the chosen level over consecutive frames, so a heavy view never blocks on
+        // one full-AA frame.
+        let aa_target = if interacting {
+            self.settle_frame[view] = 0;
+            1
+        } else {
+            let ss = aa_ramp(self.settle_frame[view], self.aa);
+            if ss < self.aa {
+                self.settle_frame[view] += 1;
+                self.schedule_repaint(ctx); // render the next, sharper AA stage
+            }
+            ss
+        };
         let res = [
             (rect.width() as f64 * ppp) as u32,
             (rect.height() as f64 * ppp) as u32,
@@ -2124,6 +2151,7 @@ impl FractadyneApp {
             is_julia,
             eff_iter,
             interacting,
+            aa_target,
             res,
             view_id,
             reproject,
@@ -4589,6 +4617,18 @@ impl eframe::App for FractadyneApp {
                     self.settle_t[0] = now;
                 }
                 let interacting = now - self.settle_t[0] < SETTLE_DELAY;
+                // Progressive settle AA (see `nav_and_draw`): refine 1×→2×→4×→… over settled frames.
+                let aa_target = if interacting {
+                    self.settle_frame[0] = 0;
+                    1
+                } else {
+                    let ss = aa_ramp(self.settle_frame[0], self.aa);
+                    if ss < self.aa {
+                        self.settle_frame[0] += 1;
+                        self.schedule_repaint(ctx);
+                    }
+                    ss
+                };
 
                 let center_bf = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
                 let center = self.viewport.center_f64();
@@ -4634,6 +4674,7 @@ impl eframe::App for FractadyneApp {
                     self.julia_mode,
                     eff_iter,
                     interacting,
+                    aa_target,
                     resolution,
                     0,
                     reproject,
