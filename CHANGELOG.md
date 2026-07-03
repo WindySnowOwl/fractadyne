@@ -8,6 +8,16 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.3
+
+- **Dual-view glitch correction** — glitch correction now applies to **dual exports** too (both the
+  side-by-side and separate-files layouts, and the CLI `--render` + in-app export paths), correcting
+  each panel through the same validated multi-reference loop. Refactored the export paths onto a
+  shared `render_export_view` / `export_corrected_sync` helper. Verified: a dual Mandelbrot panel is
+  byte-identical to the single-view corrected render; side-by-side stitches correctly; selftest
+  55/55, goldens 4/4. Completes the "full glitch correction" export coverage (live-view correction
+  remains, deferred as it would touch the fragile live pipeline).
+
 ## 0.1.2
 
 - **Phoenix deep zoom** — the Phoenix family (`z' = z² + c − 0.5·z_{n-1}`) now perturbation-deep-zooms

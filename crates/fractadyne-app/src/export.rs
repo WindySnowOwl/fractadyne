@@ -490,6 +490,29 @@ impl FractadyneApp {
         }
     }
 
+    /// Render one export view — glitch-corrected when enabled and applicable, else the plain path.
+    /// `vp` + `julia` identify the view (correction maps glitched pixels back to coordinates to seed
+    /// fresh references). Correction is synchronous (multi-pass GPU + readback), so this must run on
+    /// the thread owning the device; it falls back to the plain render for aux coloring / oversized
+    /// views / when nothing is glitched.
+    fn render_export_view(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        vp: &fractadyne_core::Viewport,
+        julia: bool,
+        req: &fractadyne_gpu::ExportRequest,
+        progress: &std::sync::atomic::AtomicU32,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<fractadyne_gpu::ExportResult, String> {
+        if self.glitch_correct {
+            if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height) {
+                return Ok(res);
+            }
+        }
+        fractadyne_gpu::render_export(device, queue, req, progress, cancel)
+    }
+
     /// Synchronously render the current view and write it to `path` (used by the
     /// headless `--render` CLI mode). Blocks until done; returns a status message.
     pub(crate) fn render_to_file(
@@ -512,22 +535,13 @@ impl FractadyneApp {
                 ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
             }
         };
-        let render = |req: &fractadyne_gpu::ExportRequest| {
-            fractadyne_gpu::render_export(device, queue, req, &progress, &cancel)
+        // Each view is glitch-corrected when enabled + applicable (single and both dual panels).
+        let view = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
+            self.render_export_view(device, queue, vp, julia, req, &progress, &cancel)
         };
         match self.build_export_job() {
             ExportJob::Single(req) => {
-                // Multi-reference glitch correction when enabled (falls back to a normal render
-                // for aux coloring methods or sizes past the single-texture limit).
-                let corrected = self.glitch_correct.then(|| {
-                    self.render_export_corrected(
-                        device, queue, &self.viewport, self.julia_mode, req.width, req.height,
-                    )
-                }).flatten();
-                let mut r = match corrected {
-                    Some(res) => res,
-                    None => render(&req)?,
-                };
+                let mut r = view(&self.viewport, self.julia_mode, &req)?;
                 if self.show_location {
                     crate::scripting::stamp_location(ctx, &mut r.pixels, r.width, r.height, &self.viewport);
                 }
@@ -535,16 +549,17 @@ impl FractadyneApp {
                 Ok(format!("Saved {}×{} → {}", r.width, r.height, path.display()))
             }
             ExportJob::SideBySide(a, b) => {
-                let (ra, rb) = (render(&a)?, render(&b)?);
+                let ra = view(&self.viewport, false, &a)?;
+                let rb = view(&self.julia_viewport, true, &b)?;
                 let (w, h, px) = stitch_side_by_side(&ra, &rb);
                 write(path, w, h, px)?;
                 Ok(format!("Saved {w}×{h} → {}", path.display()))
             }
             ExportJob::Separate(a, b) => {
                 let (pmap, pjul) = separate_paths(path);
-                let ra = render(&a)?;
+                let ra = view(&self.viewport, false, &a)?;
                 write(&pmap, ra.width, ra.height, ra.pixels)?;
-                let rb = render(&b)?;
+                let rb = view(&self.julia_viewport, true, &b)?;
                 write(&pjul, rb.width, rb.height, rb.pixels)?;
                 Ok(format!("Saved 2 files → {}", pmap.display()))
             }
@@ -574,6 +589,55 @@ impl FractadyneApp {
     }
 
 
+    /// Fully render + write a glitch-corrected export synchronously (main thread), for every job
+    /// layout. `Some(status)` = handled (success message, or a write-error message); `None` = a view
+    /// can't be corrected (aux coloring / oversized), so the caller falls back to the plain threaded
+    /// path. Correction re-renders per reference, so it can't use the tiled worker's progress model.
+    fn export_corrected_sync(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        path: &std::path::Path,
+        job: &ExportJob,
+    ) -> Option<String> {
+        let meta = self.view_metadata();
+        let correct = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
+            self.render_export_corrected(device, queue, vp, julia, req.width, req.height)
+        };
+        let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| -> Result<(), String> {
+            self.apply_watermark(&mut px, w, h);
+            match self.export_format {
+                ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
+                ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
+            }
+        };
+        let status = |res: Result<(), String>, ok: String| match res {
+            Ok(_) => ok,
+            Err(e) => format!("Export failed: {e}"),
+        };
+        match job {
+            ExportJob::Single(req) => {
+                let r = correct(&self.viewport, self.julia_mode, req)?;
+                let (w, h) = (r.width, r.height);
+                Some(status(write(path, w, h, r.pixels), format!("Saved {w}×{h} (glitch-corrected) → {}", path.display())))
+            }
+            ExportJob::SideBySide(a, b) => {
+                let ra = correct(&self.viewport, false, a)?;
+                let rb = correct(&self.julia_viewport, true, b)?;
+                let (w, h, px) = stitch_side_by_side(&ra, &rb);
+                Some(status(write(path, w, h, px), format!("Saved {w}×{h} (glitch-corrected) → {}", path.display())))
+            }
+            ExportJob::Separate(a, b) => {
+                let ra = correct(&self.viewport, false, a)?;
+                let rb = correct(&self.julia_viewport, true, b)?;
+                let (pmap, pjul) = separate_paths(path);
+                let w1 = write(&pmap, ra.width, ra.height, ra.pixels);
+                let w2 = write(&pjul, rb.width, rb.height, rb.pixels);
+                Some(status(w1.and(w2), format!("Saved 2 files (glitch-corrected) → {}", pmap.display())))
+            }
+        }
+    }
+
     /// Render the current job on a worker thread and write to `path` (or, for dual
     /// "separate", to `path` + a sibling). The UI stays responsive; result via channel.
     pub(crate) fn start_export_to(
@@ -589,27 +653,13 @@ impl FractadyneApp {
             self.export_last_dir = Some(parent.to_path_buf());
         }
         let job = self.build_export_job();
-        // Glitch-corrected single-view export runs synchronously — it re-renders per reference, so
-        // it doesn't fit the tiled worker's progress model. Opt-in; falls back to the threaded
-        // path for dual layouts, aux coloring methods, or sizes past the single-texture limit.
+        // Glitch correction re-renders per reference (synchronous, main thread), so it runs here
+        // rather than on the tiled worker. Handles single + dual layouts; falls back to the threaded
+        // path for aux coloring methods or views past the ~32 MP / single-texture correction limit.
         if self.glitch_correct {
-            if let ExportJob::Single(req) = &job {
-                if let Some(mut res) = self.render_export_corrected(
-                    &device, &queue, &self.viewport, self.julia_mode, req.width, req.height,
-                ) {
-                    let meta = self.view_metadata();
-                    let (w, h) = (res.width, res.height);
-                    self.apply_watermark(&mut res.pixels, w, h);
-                    let wr = match self.export_format {
-                        ExportFormat::Png => fractadyne_export::write_png(&path, w, h, &res.pixels, Some(&meta)),
-                        ExportFormat::Exr => fractadyne_export::write_exr(&path, w, h, &res.pixels, Some(&meta)),
-                    };
-                    self.export_status = Some(match wr {
-                        Ok(_) => format!("Saved {w}×{h} (glitch-corrected) → {}", path.display()),
-                        Err(e) => format!("Export failed: {e}"),
-                    });
-                    return;
-                }
+            if let Some(msg) = self.export_corrected_sync(&device, &queue, &path, &job) {
+                self.export_status = Some(msg);
+                return;
             }
         }
         let meta = self.view_metadata();
