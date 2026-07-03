@@ -64,6 +64,11 @@ Baseline for tracked versioning. Notable capabilities already present:
   orbit point) interpolate smoothly between keyframes, so the Julia set *morphs* continuously as
   `c` glides along its path rather than jumping.
 
+- **`--size` accepts `WIDTHxHEIGHT`** — previously `--size 5120x2160` silently fell back to the
+  1280×720 default (only a bare width parsed); now both `--size 1920` and `--size 5120x2160` work,
+  for `--render` and `--render-tour`. Explicit `--height` still overrides. Each dimension is clamped
+  to 16–16384 px.
+
 - **Tour → mp4 in one step** — `--render-tour … --mp4 [PATH]` assembles the rendered PNG sequence
   into an H.264 mp4 via ffmpeg (kept alongside the frames; PATH defaults to `<out-dir>/tour.mp4`).
   Rendering now prints live progress — frames done, elapsed time, ETA, and frames/sec — and reports

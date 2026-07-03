@@ -118,6 +118,18 @@ fn ema(prev: f64, sample: f64) -> f64 {
     }
 }
 
+/// Parse a `--size` value as either a bare width (`1920`) or `WIDTHxHEIGHT` (`5120x2160`,
+/// case-insensitive `x`/`X`/`×`). Returns `(width, height)` where each is `Some` when present and
+/// parseable. This lets callers accept both forms; a bare width leaves the height to `--height` or
+/// an aspect-ratio default.
+fn parse_size(s: &str) -> (Option<u32>, Option<u32>) {
+    let sep = |c: char| c == 'x' || c == 'X' || c == '×';
+    match s.split_once(sep) {
+        Some((w, h)) => (w.trim().parse().ok(), h.trim().parse().ok()),
+        None => (s.trim().parse().ok(), None),
+    }
+}
+
 /// HSV (all 0..1) → RGB (0..1). For synthesizing vivid random palette stops.
 fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
     let h6 = (h.fract() * 6.0).clamp(0.0, 6.0);
@@ -1143,9 +1155,13 @@ impl FractadyneApp {
         // --render-tour FILE [--fps N] [--size W] [--height H] [--ss N] [--out DIR] [--mp4 [PATH]]
         let render_tour = val("--render-tour").map(std::path::PathBuf::from);
         let tour_fps = val("--fps").and_then(|s| s.parse::<f64>().ok()).filter(|f| *f > 0.0).unwrap_or(30.0);
-        let tour_w = val("--size").and_then(|s| s.parse::<u32>().ok()).unwrap_or(1280).clamp(16, 16384);
+        // --size accepts a bare width (`1920`) or `WIDTHxHEIGHT` (`5120x2160`). Explicit --height
+        // overrides the height from --size; otherwise fall back to a 16:9 default.
+        let (size_w, size_h) = val("--size").map(|s| parse_size(s)).unwrap_or((None, None));
+        let tour_w = size_w.unwrap_or(1280).clamp(16, 16384);
         let tour_h = val("--height")
             .and_then(|s| s.parse::<u32>().ok())
+            .or(size_h)
             .unwrap_or((tour_w * 9 / 16).max(16))
             .clamp(16, 16384);
         let tour_ss = val("--ss").and_then(|s| s.parse::<u32>().ok()).unwrap_or(1).clamp(1, 8);
@@ -1400,6 +1416,21 @@ impl FractadyneApp {
                 self.julia_c = (r, i);
             }
         }
+        // --size: a bare width (`1920`) or `WIDTHxHEIGHT` (`5120x2160`). Set the viewport dimensions
+        // *before* the center/zoom below — magnification is defined relative to the viewport height —
+        // and drive the export width. A bare width keeps the current aspect.
+        let (size_w, size_h) = val("--size").map(|s| parse_size(s)).unwrap_or((None, None));
+        if let Some(w) = size_w {
+            let w = w.clamp(16, 16384);
+            self.export_width = w;
+            let h = size_h.map(|h| h.clamp(16, 16384)).unwrap_or_else(|| {
+                ((w as f64) * self.viewport.height_px / self.viewport.width_px.max(1.0))
+                    .round()
+                    .clamp(16.0, 16384.0) as u32
+            });
+            self.viewport.width_px = w as f64;
+            self.viewport.height_px = h as f64;
+        }
         // Center: explicit (full precision) or the fractal's default.
         let center = two("--center").and_then(|(xs, ys)| {
             Some((fractadyne_core::parse_bf(xs)?, fractadyne_core::parse_bf(ys)?))
@@ -1418,9 +1449,6 @@ impl FractadyneApp {
         } else {
             let zoom = val("--zoom").and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
             self.viewport.set_center_mag(cx, cy, zoom.max(1.0e-300));
-        }
-        if let Some(w) = val("--size").and_then(|s| s.parse::<u32>().ok()) {
-            self.export_width = w.clamp(16, 16384);
         }
         if let Some(ss) = val("--ss").and_then(|s| s.parse::<u32>().ok()) {
             self.export_ss = ss.clamp(1, 8);

@@ -348,9 +348,9 @@ pub(crate) fn help_command_line(ui: &mut egui::Ui) {
         ui,
         "--render-tour FILE",
         "Render a keyframe tour (TOML) to a PNG frame sequence, then exit. Options: \
-         --fps N (default 30), --size W, --height H, --ss N, --out DIR (default \"frames\"), \
-         --mp4 [PATH]. Progress (frames done, elapsed, ETA) is printed as it renders. \
-         See scripts/tour.example.toml.",
+         --fps N (default 30), --size W or WxH (e.g. 5120x2160), --height H, --ss N, \
+         --out DIR (default \"frames\"), --mp4 [PATH]. Progress (frames done, elapsed, ETA) is \
+         printed as it renders. See scripts/tour.example.toml.",
     );
     help_kv(
         ui,
@@ -368,7 +368,7 @@ pub(crate) fn help_command_line(ui: &mut egui::Ui) {
     help_kv(ui, "--julia", "Julia mode.");
     help_kv(ui, "--julia-c RE IM", "Julia parameter c.");
     help_sub(ui, "Image & color");
-    help_kv(ui, "--size W", "Image width in pixels (height from aspect).");
+    help_kv(ui, "--size W | WxH", "Image size: bare width (height from aspect) or WIDTHxHEIGHT, e.g. 5120x2160.");
     help_kv(ui, "--ss N", "Supersampling 1–8.");
     help_kv(ui, "--iter N", "Maximum iterations.");
     help_kv(ui, "--palette N", "Preset palette index.");
