@@ -74,6 +74,14 @@ Baseline for tracked versioning. Notable capabilities already present:
   Works with `--render` and `--render-tour`; a tour can also set `show_location = true`. Uses the
   same deep-precision coordinate formatting as the live status bar.
 
+- **Pipelined tour references** — `--render-tour` now computes frame N+1's arbitrary-precision
+  reference (orbit + series approximation + BLA) on a worker thread while frame N renders on the
+  GPU, so the deep-zoom bignum stall overlaps the render. The export reference path was unified onto
+  the same `recompute_worker` the live view uses (one implementation, no divergence). Byte-identical
+  output (verified); ~1.2× on a shallow mode-0 dive, more on deep large frames where the reference
+  is a larger share of per-frame cost. Gated to single-view frames; falls back to synchronous
+  (always correct) for dual/Julia-changing frames.
+
 - **Pipelined tour encoding** — `--render-tour` now compresses PNGs on a small background thread
   pool while the next frame renders, instead of blocking on each `write_png`. Frame output is
   byte-identical (verified); the win grows with resolution (PNG deflate of a 4K/5K frame is tens to

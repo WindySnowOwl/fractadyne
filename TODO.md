@@ -729,10 +729,13 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
   - [ ] **Tile-level export pipeline** — overlap tile N+1 iterate with tile N async readback +
     encode inside `render_export` (still `poll(Wait)`-serial per tile). Smooths the synchronous
     glitch-corrected export too.
-  - [ ] **Reference precompute overlap (tours)** — compute frame N+1's bignum reference on a worker
-    while frame N renders on the GPU. Helps large *deep* frames (5K ss2) where reference (~hundreds
-    of ms) is comparable to the GPU render; marginal at small sizes. Reuse `recompute_worker` in the
-    export path and inject the precomputed orbit/SA/BLA — verify frame-identical output.
+  - [x] **Reference precompute overlap (tours)** — DONE: the export path now routes through
+    `recompute_worker` (unified with the live path), and `--render-tour` computes frame N+1's
+    reference on a worker while frame N renders on the GPU, feeding it to
+    `current_export_request_with_ref`. Gated to single-view successors with matching fractal/Julia
+    state (falls back to synchronous otherwise — always correct). Verified byte-identical output
+    (0/37 frames differ); measured ~1.2× on a 1e12 mode-0 dive at 1000px, more on deep mode-2
+    large frames where the bignum reference is a larger share of the per-frame cost.
 - [x] **BLA on by default** — shipped (`SessionState.use_bla` defaults true). Confirmed by
   `--profile` as the key GPU lever at ≥1e28× (1e30 iter 10 ms with BLA vs 174 ms without). Note it
   only helps past the floatexp crossover (see the update note above) and not for aux coloring.

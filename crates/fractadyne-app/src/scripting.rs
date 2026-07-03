@@ -1070,6 +1070,9 @@ impl FractadyneApp {
                 })
             })
             .collect();
+        // Reference pipeline: frame N+1's bignum reference (orbit + SA + BLA) is computed on a worker
+        // while frame N renders on the GPU, so the deep-zoom reference stall overlaps the render.
+        let mut pending_ref: Option<(u64, std::sync::mpsc::Receiver<crate::render::RecomputeResult>)> = None;
         let started = std::time::Instant::now();
         for fi in 0..frames {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
@@ -1079,6 +1082,26 @@ impl FractadyneApp {
             self.dual = s.dual;
             if let Some(c) = s.julia_c {
                 self.julia_c = c;
+            }
+            // Claim frame `fi`'s precomputed reference if the previous iteration started one for it.
+            let this_ref = match pending_ref.take() {
+                Some((idx, rx)) if idx == fi => rx.recv().ok(),
+                _ => None,
+            };
+            // Kick off frame `fi+1`'s reference now (overlaps this frame's render + encode). Only when
+            // both this frame and its successor are single-view with the same fractal/Julia state, so
+            // `self`'s current fractal/julia_c (set above) validly describe the successor's reference.
+            pending_ref = None;
+            if !s.dual && fi + 1 < frames {
+                let t2 = if pb.total <= 0.0 { 0.0 } else { ((fi + 1) as f64 / fps).min(pb.total) };
+                let s2 = pb.sample(t2);
+                if !s2.dual && s2.fractal == s.fractal && s2.julia == s.julia && s2.julia_c == s.julia_c {
+                    let mut vp2 = fractadyne_core::Viewport::new(width as f64, height as f64);
+                    vp2.set_center_log2mag(s2.cx, s2.cy, s2.logmag / std::f64::consts::LN_2);
+                    if let Some(rx) = self.spawn_export_reference(&vp2, self.julia_mode) {
+                        pending_ref = Some((fi + 1, rx));
+                    }
+                }
             }
             let progress = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);
@@ -1110,7 +1133,15 @@ impl FractadyneApp {
                 self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
                 self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
                 let vg = vignette_for(&pb.spotlights, &self.viewport, t);
-                let r = render(self, &self.viewport, self.julia_mode, width, vg)?;
+                // Single view: use the pipelined precomputed reference (falls back to sync internally).
+                let mut req = self.current_export_request_with_ref(&self.viewport, self.julia_mode, this_ref);
+                req.width = width;
+                req.height = height;
+                req.ss = self.export_ss;
+                req.max_iter = req.max_iter.max(200);
+                req.vignette = vg;
+                let r = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
+                    .map_err(|e| format!("frame {fi}: {e}"))?;
                 (r.pixels, r.width, r.height)
             };
             self.apply_watermark(&mut px, rw, rh);

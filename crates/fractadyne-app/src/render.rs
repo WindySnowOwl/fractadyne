@@ -308,6 +308,49 @@ impl FractadyneApp {
         Some(std::sync::Arc::new(fractadyne_core::bla_to_gpu(&levels)))
     }
 
+    /// The reference-recompute inputs for an export view, or `None` for the direct path (`mode == 1`,
+    /// no reference). Computes `mode` / `eff_iter` / `precision` / scale exactly as
+    /// [`current_export_request_with_ref`], so a result built from these inputs matches that frame's
+    /// synchronous reference. Used by the tour pipeline to precompute the next frame's reference.
+    fn export_reference_inputs_for(&self, vp: &Viewport, julia: bool) -> Option<RecomputeInputs> {
+        let log2mag = vp.log2_magnification();
+        let mag = vp.magnification();
+        let mode: u32 = if !self.fractal.supports_perturbation() || mag < 1.0e4 {
+            1
+        } else if mag >= PERT_FE_THRESHOLD {
+            2
+        } else {
+            0
+        };
+        if mode == 1 {
+            return None;
+        }
+        let eff_iter = if self.auto_iter {
+            vp.recommended_max_iter(self.max_iter)
+        } else {
+            self.max_iter
+        }
+        .min(zoom_iter_cap(log2mag).max(256));
+        let scale = vp.gpu_scale();
+        Some(self.export_reference_inputs(vp, julia, mode, eff_iter, vp.precision, scale.span_mantissa, scale.delta_exp))
+    }
+
+    /// Kick off an export reference recompute on a worker thread, returning a channel to await it.
+    /// The tour renderer spawns frame N+1's reference here while frame N renders on the GPU, then
+    /// feeds the result to [`current_export_request_with_ref`]. `None` for the direct path.
+    pub(crate) fn spawn_export_reference(
+        &self,
+        vp: &Viewport,
+        julia: bool,
+    ) -> Option<std::sync::mpsc::Receiver<RecomputeResult>> {
+        let inputs = self.export_reference_inputs_for(vp, julia)?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(recompute_worker(inputs));
+        });
+        Some(rx)
+    }
+
     /// Build an export request for a given viewport + Julia flag at the export
     /// resolution. Recomputes a fresh reference orbit (deep) without touching the live
     /// cache. Height is derived from the viewport's aspect (square pixels).
@@ -315,6 +358,19 @@ impl FractadyneApp {
         &self,
         vp: &Viewport,
         julia: bool,
+    ) -> fractadyne_gpu::ExportRequest {
+        self.current_export_request_with_ref(vp, julia, None)
+    }
+
+    /// As [`current_export_request_for`], but reuse a `precomputed` reference recompute when it was
+    /// built for this exact frame (matching iteration count + precision) — the tour pipeline
+    /// computes frame N+1's reference on a worker while frame N renders. A stale/absent precompute
+    /// falls back to a synchronous `recompute_worker`, which is always correct.
+    pub(crate) fn current_export_request_with_ref(
+        &self,
+        vp: &Viewport,
+        julia: bool,
+        precomputed: Option<RecomputeResult>,
     ) -> fractadyne_gpu::ExportRequest {
         let log2mag = vp.log2_magnification();
         let width = self.export_width.max(1);
@@ -345,8 +401,15 @@ impl FractadyneApp {
         // shared `recompute_worker` (same code the live view + the pipelined tour path use, so all
         // three produce byte-identical references). Split timings recorded for `--profile`.
         let RefFields { ref_offset, orbit, orbit_len, sa, bla, bla_on } = if mode != 1 {
-            let inputs = self.export_reference_inputs(vp, julia, mode, eff_iter, precision, scale.span_mantissa, delta_exp);
-            let res = recompute_worker(inputs);
+            // Reuse the precomputed reference only if it was built for this exact frame's iteration
+            // count + precision; otherwise (stale, or none) compute it now. Fallback is always safe.
+            let res = match precomputed {
+                Some(r) if r.iter == eff_iter && r.prec == precision => r,
+                _ => {
+                    let inputs = self.export_reference_inputs(vp, julia, mode, eff_iter, precision, scale.span_mantissa, delta_exp);
+                    recompute_worker(inputs)
+                }
+            };
             self.prof.set(profile::ProfSetup {
                 reference_ms: res.ref_ms,
                 series_ms: res.series_ms,
