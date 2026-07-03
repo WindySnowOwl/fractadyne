@@ -86,7 +86,30 @@ fractadyne --validate-deep [--out report.md]        # extreme-depth precision se
 fractadyne --profile [--reps N --regions f.toml --out logs/p.json]
                                                     # dev: time render stages per benchmark
                                                     # region → JSON log (see scripts/profile*.ps1)
+fractadyne @render.args                             # read the whole command line from a response file
 ```
+
+## File types
+
+Fractadyne uses **standard extensions** (for editor/tooling interop) except for its own
+self-contained *location* format, `.fdn`. App-generated outputs are named predictably — images
+carry a `fractadyne_` brand prefix + timestamp; a tour's frames/movie take the tour script's name.
+
+| Purpose | Ext | Produced / consumed | Notes |
+|---|---|---|---|
+| Exported image | `.png` `.exr` | Export, `--render` | **Reloadable** — embeds view metadata; reopen to return to the spot. In-app default `fractadyne_<Fractal>_<stamp>.ext` |
+| Raw iteration data | `.exr` | `--render-iter` | Four float channels, for review / diffing (no coloring) |
+| Shareable location | `.fdn` | File → Share location | Compact self-contained text snippet of the exact view + look |
+| Session state | `.toml` | auto (config dir) | `session.toml` — persisted preferences, bookmarks |
+| Keyframe tour | `.toml` | `--render-tour`, Play script | Guided-tour script (see `tours/`) |
+| Profiling regions | `.toml` | `--profile --regions` | Benchmark region list |
+| Response file | *any text* (`.args` by convention) | `@FILE`, `--args-file` | Command-line arguments in a file |
+| Tour frames | `.png` | `--render-tour` | `<prefix>_00000.png` (prefix defaults to the tour name) |
+| Tour movie | `.mp4` | `--render-tour --mp4` | `<prefix>.mp4` via ffmpeg |
+| Benchmark report | `.txt` | `--benchmark --out` | FPS/CPU/GPU/RAM + system info |
+| Validation report | `.md` | `--selftest` | `validation/report.md` |
+| Profile log | `.json` | `--profile` | Per-stage timings under `logs/` |
+| Kalles Fraktaler loc. | `.kfr` | `--import-kfr` | External location import |
 
 ## Validation
 
