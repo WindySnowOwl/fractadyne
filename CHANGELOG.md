@@ -82,6 +82,10 @@ Baseline for tracked versioning. Notable capabilities already present:
   Works with `--render` and `--render-tour`; a tour can also set `show_location = true`. Uses the
   same deep-precision coordinate formatting as the live status bar.
 
+- **Response files (`@FILE` / `--args-file FILE`)** — read command-line arguments from a text file,
+  spliced in place. Whitespace-separated tokens, `#` comments, and `"quotes"` for values with spaces;
+  nestable (bounded). Keep a whole render/tour invocation in a file and run `fractadyne @render.args`.
+
 - **Tour frame naming + overwrite guard** — `--render-tour` frames are now named
   `<prefix>_00000.png`, where `--prefix NAME` overrides the default (the tour script's file name;
   `frame` if none). The mp4 default follows suit (`<prefix>.mp4`). Before clobbering an existing

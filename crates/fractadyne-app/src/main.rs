@@ -130,6 +130,84 @@ fn parse_size(s: &str) -> (Option<u32>, Option<u32>) {
     }
 }
 
+/// Tokenize an args (response) file: whitespace-separated tokens, honoring `"…"` / `'…'` quoting so
+/// values with spaces survive, with `#` starting a comment to end of line (outside quotes). One
+/// token per argument — the same as typing them on the command line.
+fn tokenize_args_file(text: &str) -> Vec<String> {
+    let mut toks = Vec::new();
+    for line in text.lines() {
+        let mut cur = String::new();
+        let mut in_tok = false;
+        let mut quote: Option<char> = None;
+        for c in line.chars() {
+            match quote {
+                Some(q) => {
+                    if c == q {
+                        quote = None;
+                    } else {
+                        cur.push(c);
+                    }
+                }
+                None if c == '"' || c == '\'' => {
+                    quote = Some(c);
+                    in_tok = true;
+                }
+                None if c == '#' => break, // comment to end of line
+                None if c.is_whitespace() => {
+                    if in_tok {
+                        toks.push(std::mem::take(&mut cur));
+                        in_tok = false;
+                    }
+                }
+                None => {
+                    cur.push(c);
+                    in_tok = true;
+                }
+            }
+        }
+        if in_tok {
+            toks.push(cur);
+        }
+    }
+    toks
+}
+
+/// Expand `@FILE` response-file arguments and `--args-file FILE` in `raw`, recursively (bounded), so
+/// an entire command line can be kept in a text file. Each referenced file's tokens are spliced in
+/// place; every other argument passes through untouched. `#` comments and quoting are supported.
+/// A missing/unreadable file is a hard error (the `@`/`--args-file` sigil is an explicit request).
+fn expand_arg_files(raw: &[String]) -> Result<Vec<String>, String> {
+    fn go(args: &[String], out: &mut Vec<String>, depth: u32) -> Result<(), String> {
+        if depth > 16 {
+            return Err("--args-file nesting too deep (cycle?)".to_string());
+        }
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            let path = if let Some(p) = a.strip_prefix('@') {
+                Some(p.to_string())
+            } else if a == "--args-file" || a == "--args" {
+                i += 1;
+                Some(args.get(i).ok_or("--args-file needs a file path")?.clone())
+            } else {
+                None
+            };
+            match path {
+                Some(p) => {
+                    let text = std::fs::read_to_string(&p).map_err(|e| format!("args file '{p}': {e}"))?;
+                    go(&tokenize_args_file(&text), out, depth + 1)?;
+                }
+                None => out.push(a.clone()),
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    go(raw, &mut out, 0)?;
+    Ok(out)
+}
+
 /// HSV (all 0..1) → RGB (0..1). For synthesizing vivid random palette stops.
 fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
     let h6 = (h.fract() * 6.0).clamp(0.0, 6.0);
@@ -415,7 +493,15 @@ struct HomeAnim {
 
 fn main() -> eframe::Result<()> {
     env_logger::init();
-    let args: Vec<String> = std::env::args().collect();
+    // Expand `@response-file` args and `--args-file FILE` so the whole command line can live in a
+    // text file (see `expand_arg_files`). Do it once, up front, so every consumer sees the result.
+    let args = match expand_arg_files(&std::env::args().collect::<Vec<_>>()) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("fractadyne: {e}");
+            std::process::exit(2);
+        }
+    };
     if cli::run_headless(&args) {
         return Ok(());
     }
@@ -433,7 +519,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Fractadyne",
         native_options,
-        Box::new(|cc| Ok(Box::new(FractadyneApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(FractadyneApp::new(cc, &args)))),
     )
 }
 
@@ -1134,7 +1220,7 @@ struct FractadyneApp {
 }
 
 impl FractadyneApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, args: &[String]) -> Self {
         let render_state = cc
             .wgpu_render_state
             .as_ref()
@@ -1148,7 +1234,7 @@ impl FractadyneApp {
         //   --render --out IMG [view options]           render one image, save, quit
         // Render view options: --fractal NAME, --center X Y, --zoom MAG, --size W,
         //   --ss N, --iter N, --julia, --julia-c RE IM, --palette IDX.
-        let args: Vec<String> = std::env::args().collect();
+        // `args` already has any `@response-file` / `--args-file` expanded (see `main`).
         let out_path = args
             .iter()
             .position(|a| a == "--out" || a == "-o")

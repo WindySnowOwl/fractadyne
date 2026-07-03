@@ -364,6 +364,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--find-minibrot", "Print the nearby minibrot's period + center and exit (--center X Y --zoom M)."),
         Flag("--selftest [--bless]", "Run the GPU validation suite; exit 0 = all passed. --bless records the goldens."),
         Flag("--help, -h", "Print this command-line reference and exit."),
+        Flag("@FILE, --args-file FILE", "Read arguments from a text file (whitespace-separated; # comments; \"quotes\" for spaces), spliced in place. Nestable — keep a whole command line in a file."),
         Section("Output"),
         Flag("--out PATH, -o PATH", "Output file (PNG/EXR), or the output directory for --render-tour."),
         Flag("--mp4 [PATH]", "With --render-tour: assemble the frames into an H.264 mp4 via ffmpeg (must be on PATH). Defaults to <out-dir>/tour.mp4; the PNG frames are kept."),
@@ -407,6 +408,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Section("Examples"),
         Example("fractadyne --render -o out.png --fractal Mandelbrot --center -0.743644 0.131826 --zoom 2e7 --iter 6000 --method stripe --ss 3"),
         Example("fractadyne --render-tour tours/deep-spiral-dive.toml --size 1920x1080 --fps 30 --ss 2 --out frames --mp4 --show-location"),
+        Example("fractadyne @render.args        # read the whole command line from render.args"),
     ]
 };
 
