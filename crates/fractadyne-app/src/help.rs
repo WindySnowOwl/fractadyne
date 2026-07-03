@@ -356,7 +356,14 @@ pub(crate) fn help_command_line(ui: &mut egui::Ui) {
         ui,
         "--mp4 [PATH]",
         "With --render-tour: after the frames are written, assemble them into an H.264 mp4 via \
-         ffmpeg (must be on PATH). PATH defaults to <out-dir>/tour.mp4. Frames are kept.",
+         ffmpeg (must be on PATH). PATH defaults to <out-dir>/tour.mp4. Frames are kept. \
+         (PNG encoding runs on background threads, overlapping the next frame's render.)",
+    );
+    help_kv(
+        ui,
+        "--show-location, --hud",
+        "Burn a small HUD (zoom level + center coordinates) into the top-left of each rendered \
+         frame. Works with --render and --render-tour; a tour can also set show_location = true.",
     );
     help_kv(ui, "--benchmark, --bench", "Run the benchmark tour and exit (use --out to save).");
     help_kv(ui, "--find-minibrot", "Print the nearby minibrot's period + center and exit.");

@@ -502,7 +502,7 @@ fn fmt_zoom(mag: f64) -> String {
 
 /// Format magnification from `log2(magnification)` — stays correct past `f64`'s 1e308×
 /// (where `magnification()` saturates to `∞`), formatting `2^log2mag` via base-10.
-fn fmt_zoom_log2(log2mag: f64) -> String {
+pub(crate) fn fmt_zoom_log2(log2mag: f64) -> String {
     if log2mag <= 1020.0 {
         fmt_zoom(2f64.powf(log2mag.max(0.0)))
     } else {
@@ -599,7 +599,7 @@ fn decimal_parts(s: &str) -> (&'static str, String, String) {
 /// fractional digits for the current zoom (an `f64` readout freezes at ~15 digits, so deep
 /// pans look static). Past a width threshold the middle is elided — `leading … frontier` —
 /// so the deepest, *changing* digits stay on screen, e.g. `-0.74364 38870 … 06114 7740`.
-fn fmt_coord_deep(v: &fractadyne_core::BigFloat, log2mag: f64) -> String {
+pub(crate) fn fmt_coord_deep(v: &fractadyne_core::BigFloat, log2mag: f64) -> String {
     // Group a digit run in 5s for readability.
     let group = |digits: &str| -> String {
         let mut g = String::with_capacity(digits.len() + digits.len() / 5);
@@ -1045,6 +1045,10 @@ struct FractadyneApp {
     /// Draw the discreet "Fd" brand mark in the lower-right of the live view and exports. On by
     /// default; toggleable.
     watermark: bool,
+    /// Burn a zoom/coordinate HUD (top-left) into rendered frames. CLI `--show-location`, or a tour
+    /// script's `show_location`. Off by default; only applied on the ctx-bearing render paths
+    /// (`--render`, `--render-tour`).
+    show_location: bool,
     /// Pre-rasterized "Fd" mark for stamping into exports (built lazily from the font atlas on the
     /// main thread; the export worker has no egui context). `None` until first built.
     watermark_overlay: Option<export::WmOverlay>,
@@ -1349,6 +1353,7 @@ impl FractadyneApp {
             glitch_correct: s.glitch_correct,
             use_bla: s.use_bla,
             watermark: s.watermark,
+            show_location: args.iter().any(|a| a == "--show-location" || a == "--hud"),
             watermark_overlay: None,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             zoom_rate: s.zoom_rate,
@@ -3464,7 +3469,7 @@ impl eframe::App for FractadyneApp {
                         .auto_render_out
                         .clone()
                         .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_render.png"));
-                    self.render_to_file(dev, q, &out)
+                    self.render_to_file(ctx, dev, q, &out)
                 };
                 match result {
                     Ok(m) => println!("{m}"),

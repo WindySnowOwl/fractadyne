@@ -722,9 +722,17 @@ is a sequential dependency chain). The live GPU render is already frame-capped (
   1e30×; goldens bit-identical (exact change). **Remaining:** audit the +64 guard bits (trim where
   safe), find a dedicated bignum square (x²/y² are still general muls), profile `astro_float` hot
   paths, and evaluate a GPU-bignum / fixed-point reference pass to move it off the single CPU core.
-- [ ] **Pipeline the export** — overlap tile render → readback → encode so the GPU never idles
-  between tiles (async readback + a CPU encode thread). Cheaper than multi-GPU and helps every
-  machine; also smooths the synchronous glitch-corrected export.
+- [~] **Pipeline the export** — overlap render → encode so the CPU/GPU never idle waiting on I/O.
+  - [x] **Tour frame encode** — `--render-tour` now hands finished frames to a background PNG
+    encoder pool (bounded ~1 GB in-flight for backpressure), so deflate overlaps the next frame's
+    render. Byte-identical output; win scales with resolution.
+  - [ ] **Tile-level export pipeline** — overlap tile N+1 iterate with tile N async readback +
+    encode inside `render_export` (still `poll(Wait)`-serial per tile). Smooths the synchronous
+    glitch-corrected export too.
+  - [ ] **Reference precompute overlap (tours)** — compute frame N+1's bignum reference on a worker
+    while frame N renders on the GPU. Helps large *deep* frames (5K ss2) where reference (~hundreds
+    of ms) is comparable to the GPU render; marginal at small sizes. Reuse `recompute_worker` in the
+    export path and inject the precomputed orbit/SA/BLA — verify frame-identical output.
 - [x] **BLA on by default** — shipped (`SessionState.use_bla` defaults true). Confirmed by
   `--profile` as the key GPU lever at ≥1e28× (1e30 iter 10 ms with BLA vs 174 ms without). Note it
   only helps past the floatexp crossover (see the update note above) and not for aux coloring.

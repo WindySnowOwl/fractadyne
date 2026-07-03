@@ -69,6 +69,16 @@ Baseline for tracked versioning. Notable capabilities already present:
   for `--render` and `--render-tour`. Explicit `--height` still overrides. Each dimension is clamped
   to 16–16384 px.
 
+- **Location HUD on renders** — `--show-location` (alias `--hud`) burns a small overlay into the
+  top-left of each rendered frame: zoom level (amber) + full-precision center coordinates (`re`/`im`).
+  Works with `--render` and `--render-tour`; a tour can also set `show_location = true`. Uses the
+  same deep-precision coordinate formatting as the live status bar.
+
+- **Pipelined tour encoding** — `--render-tour` now compresses PNGs on a small background thread
+  pool while the next frame renders, instead of blocking on each `write_png`. Frame output is
+  byte-identical (verified); the win grows with resolution (PNG deflate of a 4K/5K frame is tens to
+  hundreds of ms that now overlap the render). A ~1 GB in-flight budget bounds memory (backpressure).
+
 - **Tour → mp4 in one step** — `--render-tour … --mp4 [PATH]` assembles the rendered PNG sequence
   into an H.264 mp4 via ffmpeg (kept alongside the frames; PATH defaults to `<out-dir>/tour.mp4`).
   Rendering now prints live progress — frames done, elapsed time, ETA, and frames/sec — and reports

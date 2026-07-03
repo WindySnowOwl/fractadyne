@@ -28,6 +28,10 @@ struct ScriptFile {
     palette: Option<String>,
     #[serde(default, rename = "loop")]
     loop_: bool,
+    /// Burn a small zoom/coordinate HUD into the top-left of every frame. Overridden on by the
+    /// `--show-location` CLI flag. Omit / false to leave frames clean.
+    #[serde(default)]
+    show_location: Option<bool>,
     #[serde(default)]
     keyframe: Vec<KeyframeFile>,
     #[serde(default)]
@@ -117,6 +121,15 @@ pub(crate) struct Caption {
 }
 
 /// Eased fade opacity (0..1) for a timed annotation window `[start, end]` at tour time `t`.
+/// A finished tour frame handed to the background encoder pool for PNG compression.
+struct EncodeJob {
+    path: std::path::PathBuf,
+    w: u32,
+    h: u32,
+    px: Vec<f32>,
+    fi: u64,
+}
+
 /// Format a duration in seconds as a compact `1h02m03s` / `2m03s` / `4.2s` string for progress logs.
 fn fmt_hms(secs: f64) -> String {
     let s = secs.max(0.0);
@@ -536,6 +549,48 @@ fn stamp_caption(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, cap: &Capt
     fill_dark(px, w, h, bx - pad, by - pad, bx + gw + pad, by + gh + pad, (alpha * 0.5).min(1.0));
     // Clone the atlas AFTER layout so it contains this text's glyphs (egui fills it lazily).
     ctx.fonts(|f| blit_galley(&f.image(), px, w, h, &galley, bx, by, ppp, [1.0, 1.0, 1.0], alpha));
+}
+
+/// Burn a small location HUD — zoom level + center coordinates — into the top-left of an export
+/// frame, over a soft dark backing. The zoom line is amber (brand accent); the coordinate lines are
+/// light grey monospace. `vp` supplies the arbitrary-precision center + zoom for the current frame.
+pub(crate) fn stamp_location(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, vp: &fractadyne_core::Viewport) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    let log2mag = vp.log2_magnification();
+    let lines = [
+        format!("zoom {}\u{00d7}", crate::fmt_zoom_log2(log2mag)),
+        format!("re {}", crate::fmt_coord_deep(&vp.center_x, log2mag)),
+        format!("im {}", crate::fmt_coord_deep(&vp.center_y, log2mag)),
+    ];
+    let scale = h as f32 / 1080.0;
+    let ppp = ctx.pixels_per_point();
+    let pts = (15.0 * scale / ppp).max(1.0);
+    let font = egui::FontId::monospace(pts);
+    let galleys: Vec<_> = lines
+        .iter()
+        .map(|t| ctx.fonts(|f| f.layout_no_wrap(t.clone(), font.clone(), egui::Color32::WHITE)))
+        .collect();
+    let line_h = galleys.iter().map(|g| g.size().y).fold(0.0f32, f32::max) * ppp;
+    let maxw = galleys.iter().map(|g| g.size().x).fold(0.0f32, f32::max) * ppp;
+    let margin = 16.0 * scale;
+    let pad = 8.0 * scale;
+    let (x0, y0) = (margin, margin);
+    let block_h = line_h * galleys.len() as f32;
+    fill_dark(px, w, h, x0 - pad, y0 - pad, x0 + maxw + pad, y0 + block_h + pad, 0.5);
+    let amber = {
+        let c = egui::Rgba::from(crate::theme::BRAND_ACCENT);
+        [c.r(), c.g(), c.b()]
+    };
+    // Clone the atlas after layout so it holds these glyphs (egui fills it lazily).
+    ctx.fonts(|f| {
+        let atlas = f.image();
+        for (i, g) in galleys.iter().enumerate() {
+            let col = if i == 0 { amber } else { [0.85, 0.86, 0.88] };
+            blit_galley(&atlas, px, w, h, g, x0, y0 + i as f32 * line_h, ppp, col, 1.0);
+        }
+    });
 }
 
 /// Burn a callout (marker ring + leader line + label) at the target's frame pixel `(vpx, vpy)`.
@@ -960,6 +1015,7 @@ impl FractadyneApp {
             );
         }
         let palette = sf.palette.clone();
+        let show_location = self.show_location || sf.show_location.unwrap_or(false);
         let pb = resolve_script(sf, None).ok_or("script has no keyframes")?;
         if let Some(p) = &palette {
             self.apply_script_palette(p);
@@ -981,7 +1037,39 @@ impl FractadyneApp {
             "Rendering tour \"{}\": {frames} frames at {width}×{height} ss{}, {fps} fps ({:.1}s)…",
             pb.name, self.export_ss, pb.total
         );
-        let meta = self.view_metadata();
+        let meta = std::sync::Arc::new(self.view_metadata());
+        // Encode PNGs on a small worker pool so compression overlaps the next frame's GPU render
+        // (rendering a frame is CPU-bignum + GPU; PNG deflate is pure CPU — they run concurrently).
+        // A bounded channel caps how many big frame buffers sit in RAM at once (~1 GB budget), so the
+        // main thread blocks (backpressure) rather than the process ballooning on a large deep tour.
+        let frame_bytes = (width as u64) * (height as u64) * 16;
+        let inflight = (1_000_000_000u64 / frame_bytes.max(1)).clamp(2, 8) as usize;
+        let workers = inflight.min(3).max(1);
+        let (enc_tx, enc_rx) = std::sync::mpsc::sync_channel::<EncodeJob>(inflight.saturating_sub(workers).max(1));
+        let enc_rx = std::sync::Arc::new(std::sync::Mutex::new(enc_rx));
+        let enc_err: std::sync::Arc<std::sync::Mutex<Option<String>>> = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let encoders: Vec<_> = (0..workers)
+            .map(|_| {
+                let rx = enc_rx.clone();
+                let meta = meta.clone();
+                let err = enc_err.clone();
+                std::thread::spawn(move || loop {
+                    // Hold the lock only across recv() (fast dequeue); encode without it so workers
+                    // compress in parallel.
+                    let job = { rx.lock().unwrap().recv() };
+                    let job = match job {
+                        Ok(j) => j,
+                        Err(_) => break, // channel closed → all frames handed off
+                    };
+                    if let Err(e) = fractadyne_export::write_png(&job.path, job.w, job.h, &job.px, Some(&meta)) {
+                        let mut slot = err.lock().unwrap();
+                        if slot.is_none() {
+                            *slot = Some(format!("frame {}: {e}", job.fi));
+                        }
+                    }
+                })
+            })
+            .collect();
         let started = std::time::Instant::now();
         for fi in 0..frames {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
@@ -1048,9 +1136,19 @@ impl FractadyneApp {
                     stamp_orbit(&mut px, rw, rh, &self.viewport, pt, self.julia_mode, self.julia_c);
                 }
             }
+            // Location HUD (single view only — meaningless on the split dual frame).
+            if show_location && !s.dual {
+                stamp_location(ctx, &mut px, rw, rh, &self.viewport);
+            }
+            // Surface any earlier encode failure before enqueuing more work.
+            if let Some(e) = enc_err.lock().unwrap().as_ref() {
+                return Err(e.clone());
+            }
             let frame_path = out_dir.join(format!("frame_{fi:05}.png"));
-            fractadyne_export::write_png(&frame_path, rw, rh, &px, Some(&meta))
-                .map_err(|e| format!("frame {fi}: {e}"))?;
+            // Hand the finished frame to the encoder pool; blocks if the queue is full (backpressure).
+            enc_tx
+                .send(EncodeJob { path: frame_path, w: rw, h: rh, px, fi })
+                .map_err(|_| format!("frame {fi}: encoder thread stopped"))?;
             if fi % 10 == 0 || fi + 1 == frames {
                 let done = fi + 1;
                 let elapsed = started.elapsed().as_secs_f64();
@@ -1062,6 +1160,14 @@ impl FractadyneApp {
                     fmt_hms(eta)
                 );
             }
+        }
+        // Close the queue and wait for the encoder pool to drain the remaining frames.
+        drop(enc_tx);
+        for h in encoders {
+            let _ = h.join();
+        }
+        if let Some(e) = enc_err.lock().unwrap().take() {
+            return Err(e);
         }
         let render_secs = started.elapsed().as_secs_f64();
         println!(

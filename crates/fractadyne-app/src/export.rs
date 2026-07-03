@@ -494,6 +494,7 @@ impl FractadyneApp {
     /// headless `--render` CLI mode). Blocks until done; returns a status message.
     pub(crate) fn render_to_file(
         &self,
+        ctx: &egui::Context,
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
         path: &std::path::Path,
@@ -523,10 +524,13 @@ impl FractadyneApp {
                         device, queue, &self.viewport, self.julia_mode, req.width, req.height,
                     )
                 }).flatten();
-                let r = match corrected {
+                let mut r = match corrected {
                     Some(res) => res,
                     None => render(&req)?,
                 };
+                if self.show_location {
+                    crate::scripting::stamp_location(ctx, &mut r.pixels, r.width, r.height, &self.viewport);
+                }
                 write(path, r.width, r.height, r.pixels)?;
                 Ok(format!("Saved {}×{} → {}", r.width, r.height, path.display()))
             }
