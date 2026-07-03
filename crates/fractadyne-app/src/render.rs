@@ -25,6 +25,9 @@ pub(crate) struct RecomputeResult {
     prec: usize,
     iter: u32,
     ref_ms: f64,
+    /// Per-stage timings (for the export `--profile` breakdown; the live path uses only `ref_ms`).
+    series_ms: f64,
+    bla_ms: f64,
 }
 
 /// Owned, `Send` inputs for an off-thread reference recompute.
@@ -72,6 +75,7 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     let orbit = std::sync::Arc::new(o);
     let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
     // Series approximation for the chosen reference.
+    let t_sa = Instant::now();
     let sa = if inp.do_sa {
         let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &rp[0], inp.delta_exp, inp.precision);
         let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &rp[1], inp.delta_exp, inp.precision);
@@ -83,8 +87,10 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     } else {
         fc::SeriesSkip::NONE
     };
+    let series_ms = t_sa.elapsed().as_secs_f64() * 1000.0;
     // BLA tree (Mandelbrot deep only; `None` otherwise). Built with the same conservative dc_max
     // the live path uses so the main thread reuses it across pans.
+    let t_bla = Instant::now();
     let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
         Some(dc_max) => {
             let levels = fc::build_bla_mandel(&orbit, dc_max, BLA_EPS);
@@ -97,6 +103,7 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
         }
         None => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
     };
+    let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
     RecomputeResult {
         orbit,
         orbit_len: len,
@@ -107,6 +114,51 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
         prec: inp.precision,
         iter: inp.gpu_iter,
         ref_ms,
+        series_ms,
+        bla_ms,
+    }
+}
+
+/// The reference-dependent fields of an `ExportRequest`, assembled from a `RecomputeResult`.
+/// Shared by the synchronous export path and the pipelined (precomputed) tour path so both derive
+/// these fields identically.
+struct RefFields {
+    ref_offset: [f32; 4],
+    orbit: std::sync::Arc<Vec<[f32; 4]>>,
+    orbit_len: u32,
+    sa: fractadyne_core::SeriesSkip,
+    bla: std::sync::Arc<Vec<[f32; 4]>>,
+    bla_on: u32,
+}
+
+impl Default for RefFields {
+    fn default() -> Self {
+        Self {
+            ref_offset: [0.0; 4],
+            orbit: std::sync::Arc::new(Vec::new()),
+            orbit_len: 0,
+            sa: fractadyne_core::SeriesSkip::NONE,
+            bla: std::sync::Arc::new(Vec::new()),
+            bla_on: 0,
+        }
+    }
+}
+
+/// Turn a completed reference recompute into the GPU request's reference fields: the δ-offset of the
+/// view center from the reference, the orbit, the series-approximation skip, and the BLA table.
+fn assemble_ref_fields(vp: &Viewport, precision: usize, delta_exp: i32, res: RecomputeResult) -> RefFields {
+    let dx = fractadyne_core::ref_offset_mantissa(&vp.center_x, &res.rp[0], delta_exp, precision);
+    let dy = fractadyne_core::ref_offset_mantissa(&vp.center_y, &res.rp[1], delta_exp, precision);
+    let dxh = dx as f32;
+    let dyh = dy as f32;
+    let bla_on = if res.bla.is_empty() { 0 } else { 1 };
+    RefFields {
+        ref_offset: [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32],
+        orbit: res.orbit,
+        orbit_len: res.orbit_len,
+        sa: res.sa,
+        bla: res.bla,
+        bla_on,
     }
 }
 
@@ -179,50 +231,42 @@ impl FractadyneApp {
         (std::sync::Arc::new(o), l, rp)
     }
 
-    /// Series-approximation skip for the current view, or `NONE` when not applicable. Both
-    /// perturbation paths benefit — df32 (`mode 0`) and floatexp (`mode 2`) — for
-    /// **Mandelbrot** with a non-aux coloring method; the direct path (`mode 1`) and Julia
-    /// iterate from 0. (The coefficients are mode-independent; only the GPU seed differs.)
-    #[allow(clippy::too_many_arguments)]
-    fn series_skip_for(
+    /// Owned, `Send` inputs for the reference recompute of an **export** view (single view or one
+    /// panel of the dual). Mirrors the live path's `RecomputeInputs`, but with export-appropriate
+    /// choices: the orbit is built to exactly `eff_iter` (no live-style spare headroom), and the BLA
+    /// `dc_max` is the per-frame-tight bound (no `×2` pan-reuse margin). `None` for the direct path
+    /// (`mode == 1`), which iterates from 0 with no reference. Series approximation applies to the
+    /// holomorphic polynomial families (Mandelbrot / Multibrot 3-5) with a non-aux coloring method.
+    fn export_reference_inputs(
         &self,
-        ref_pt: &[fractadyne_core::BigFloat; 2],
-        span_mantissa: [f64; 2],
-        ref_dx: f64,
-        ref_dy: f64,
-        delta_exp: i32,
-        mode: u32,
+        vp: &Viewport,
         julia: bool,
+        mode: u32,
         eff_iter: u32,
-        orbit_len: u32,
         precision: usize,
-    ) -> fractadyne_core::SeriesSkip {
-        // SA applies to the holomorphic polynomial families: Mandelbrot (0) and
-        // Multibrot 3/4/5 (1/2/3). Tricorn (anti-holomorphic) and the abs families don't
-        // have this δc expansion.
-        if !self.series_approx
-            || mode == 1
-            || julia
-            || self.fractal.formula_id() > 3
-            || fractadyne_gpu::method_needs_aux(self.color_method)
-        {
-            return fractadyne_core::SeriesSkip::NONE;
-        }
-        // Worst-case corner |δc| = |center − reference| + half the view diagonal, taken in
-        // log2 so it never underflows (both are mantissas sharing the 2^delta_exp scale).
-        let roff = (ref_dx * ref_dx + ref_dy * ref_dy).sqrt();
-        let half_diag =
-            0.5 * (span_mantissa[0] * span_mantissa[0] + span_mantissa[1] * span_mantissa[1]).sqrt();
-        let log2_max_dc = delta_exp as f64 + (roff + half_diag).max(1e-300).log2();
-        fractadyne_core::series_skip(
-            &ref_pt[0],
-            &ref_pt[1],
-            log2_max_dc,
-            eff_iter,
-            orbit_len,
-            self.fractal.formula_id(),
+        span_mantissa: [f64; 2],
+        delta_exp: i32,
+    ) -> RecomputeInputs {
+        let do_sa = (mode == 0 || mode == 2)
+            && !julia
+            && self.fractal.formula_id() <= 3
+            && !fractadyne_gpu::method_needs_aux(self.color_method)
+            && self.series_approx;
+        RecomputeInputs {
+            center_bf: [vp.center_x.clone(), vp.center_y.clone()],
+            span: vp.complex_span_fe(),
+            span_mantissa,
+            delta_exp,
+            gpu_iter: eff_iter,
             precision,
-        )
+            julia,
+            formula: self.fractal.formula_id(),
+            julia_c: self.julia_c,
+            do_sa,
+            bla_dc_max: self
+                .bla_eligible(mode, julia)
+                .then(|| Self::bla_dc_max(span_mantissa, delta_exp)),
+        }
     }
 
     /// Build the BLA tree (GPU-flattened) for a Mandelbrot deep view, or `None` when BLA
@@ -297,39 +341,21 @@ impl FractadyneApp {
         let scale = vp.gpu_scale();
         let delta_exp = scale.delta_exp;
 
-        let mut ref_offset = [0.0_f32; 4];
-        let mut orbit = std::sync::Arc::new(Vec::new());
-        let mut orbit_len = 0u32;
-        let mut sa = fractadyne_core::SeriesSkip::NONE;
-        let mut bla = std::sync::Arc::new(Vec::new());
-        let mut bla_on = 0u32;
-        if mode != 1 {
-            let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
-            let t_ref = std::time::Instant::now();
-            let (orbit_arc, len, rp) =
-                self.compute_reference(&center_bf, vp.complex_span_fe(), eff_iter, precision, julia, None);
-            let reference_ms = t_ref.elapsed().as_secs_f64() * 1000.0;
-            orbit = orbit_arc;
-            orbit_len = len;
-            let dx = fractadyne_core::ref_offset_mantissa(&vp.center_x, &rp[0], delta_exp, precision);
-            let dy = fractadyne_core::ref_offset_mantissa(&vp.center_y, &rp[1], delta_exp, precision);
-            let dxh = dx as f32;
-            let dyh = dy as f32;
-            ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
-            let t_sa = std::time::Instant::now();
-            sa = self.series_skip_for(&rp, scale.span_mantissa, dx, dy, delta_exp, mode, julia, eff_iter, len, precision);
-            let series_ms = t_sa.elapsed().as_secs_f64() * 1000.0;
-            let t_bla = std::time::Instant::now();
-            if self.bla_eligible(mode, julia) {
-                let dc_max = Self::bla_dc_max(scale.span_mantissa, delta_exp);
-                if let Some(data) = self.build_bla(&orbit, dc_max) {
-                    bla = data;
-                    bla_on = 1;
-                }
-            }
-            let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
-            self.prof.set(profile::ProfSetup { reference_ms, series_ms, bla_ms });
-        }
+        // Reference orbit + series-approximation + BLA — the slow bignum bundle, computed via the
+        // shared `recompute_worker` (same code the live view + the pipelined tour path use, so all
+        // three produce byte-identical references). Split timings recorded for `--profile`.
+        let RefFields { ref_offset, orbit, orbit_len, sa, bla, bla_on } = if mode != 1 {
+            let inputs = self.export_reference_inputs(vp, julia, mode, eff_iter, precision, scale.span_mantissa, delta_exp);
+            let res = recompute_worker(inputs);
+            self.prof.set(profile::ProfSetup {
+                reference_ms: res.ref_ms,
+                series_ms: res.series_ms,
+                bla_ms: res.bla_ms,
+            });
+            assemble_ref_fields(vp, precision, delta_exp, res)
+        } else {
+            RefFields::default()
+        };
 
         let cxh = cx as f32;
         let cyh = cy as f32;
