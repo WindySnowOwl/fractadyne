@@ -705,6 +705,21 @@ for fun, informative value, and ease of use.
 
 ## Performance & throughput (M7)
 
+- [ ] **Multi-reference LIVE rendering — deep floatexp is ~1–5 s/frame (committed 2026-07-03).**
+  Full design + profiling + plan in [design/multiref-live.md](design/multiref-live.md). Root cause
+  (profiled): deep mode-2 frames rebase against a single, short (escaping) reference, after which
+  BLA can't skip and every step is a full floatexp iteration — ~15 s for the Elephant-Valley spiral
+  at 1e40× (cost jumps nonlinearly at the ~6136-iter reference orbit length, then flat). This forced
+  the v0.1.10 "reproject during mode-2 motion" hang fix (responsive but **blank** during deep dives).
+  Confirmed non-fixes (don't retry): resolution/WORK_BUDGET reduction, aggressive BLA rebuild on
+  zoom-in, longer/predictive reference selection (`REF_SCORE_SCAN` 4096→65536 made it *slower*).
+  The fix = place K references across the view and rebase onto the *nearest* one (KF/Fraktaler-3
+  style) so BLA keeps skipping. Multi-session GPU feature; the CPU multi-ref (`render_multiref_mandel`,
+  glitch correction) is reusable for *placement* but not the GPU model. **Recommended first step: a
+  headless validation prototype** (does nearest-ref rebase actually make the spiral frame fast? — the
+  Misiurewicz filament field may still be a worst case since nearby refs also escape ~6136) before the
+  full GPU wiring. Export (`--render-tour`) is unaffected — it already renders full detail per frame.
+
 - [x] **FIXED (v0.1.10): fast live dive hung ("Not Responding") crossing into floatexp (~1e28×+).**
   Reproduced 2026-07-03 by auto-playing `tours/deep-spiral-dive.toml` with per-frame stderr timing.
   **Root cause:** the mode-2 (floatexp) iterate shader spins **~5 s/frame** when its reference/BLA are
