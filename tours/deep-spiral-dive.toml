@@ -17,13 +17,21 @@ center_y = "0.0"
 mag = 1
 hold = 4.5
 
-[[keyframe]]      # drift gently into Elephant Valley, pause to look around
+[[keyframe]]      # PAN across at full-set zoom to the Elephant Valley target. Panning at mag 1
+                  # (whole set in frame) keeps the composition on the boundary the whole way; a
+                  # simultaneous pan+zoom here would zoom straight into the cardioid's black interior.
 secs = 5
 center_x = "2.885512010930598712740713038001514000533769513687257970810405509495021451608499122663562241185019664641358466313797950583886093859647064866479965826438794789255759522189907513701762584846084850831333674870979068214408305118699092870865977857898269285618262748504453300006816440357598569009864764753563408685347991328315462157640560133572332274474676533799614826970428582291043765605947336833301168417621262911498166263080123030611561519012988678222537236009555043e-1"
 center_y = "1.228376362744554490959061293353650689979045640926570926827116093296574752485041172302985941947228933144505826860871755092226946524755930076434504212561691908006100769574396935835716727178540285169248946080546265177713954242140001849772385509948740715488778958664934984843949609254056920740417071875034543158178713398623281888007870088205566803667890060844107331625307067402412762722267460771073767269540279436791860892947248564823720129833278161846852772498791652e-2"
-mag = 40
+mag = 1
 ease = "smoother"
-hold = 3.5
+hold = 1.0
+
+[[keyframe]]      # now that we're framed on the boundary, zoom down into Elephant Valley
+secs = 5
+mag = 40
+ease = "in"
+hold = 3.0
 
 [[keyframe]]      # ease into the dive...
 secs = 8
@@ -60,28 +68,28 @@ secs = 3.2
 pos = "bottom"
 [[caption]]
 text = "Elephant Valley"
-at = 9.5
+at = 12.0
 secs = 3.5
 pos = "top"
 size = 28
 [[caption]]
 text = "Diving in — a hundred, a thousand, a million-fold and beyond..."
-at = 14.0
+at = 18.5
 secs = 9.0
 pos = "bottom"
 [[caption]]
 text = "...far past the scale of an atom, and still self-similar"
-at = 46.0
+at = 52.0
 secs = 12.0
 pos = "bottom"
 [[caption]]
 text = "The same forms return, scale after scale"
-at = 84.0
+at = 90.0
 secs = 11.0
 pos = "bottom"
 [[caption]]
 text = "10^420x deep — an endless spiral"
-at = 119.5
+at = 124.5
 secs = 6.5
 pos = "bottom"
 size = 26
@@ -117,6 +125,6 @@ center_y = "1.228376362744554490959061293353650689979045640926570926827116093296
 radius = 0.3
 softness = 0.12
 dim = 0.6
-at = 119.5
+at = 124.5
 secs = 6.5
 fade = 1.5
