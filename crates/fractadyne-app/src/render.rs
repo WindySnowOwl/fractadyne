@@ -778,7 +778,21 @@ impl FractadyneApp {
             // dive the async recompute can lag this far — freeze the last clean frame rather than
             // paint the bad one (see the reprojection freeze below). Kept conservative so normal
             // deep motion (reference merely drifting, still usable) isn't needlessly held.
-            let too_stale = drift.map_or(false, |(dx, dy)| dx > 1.5 || dy > 1.5);
+            let mut too_stale = drift.map_or(false, |(dx, dy)| dx > 1.5 || dy > 1.5);
+            // Octaves the view has zoomed *in* since the cached reference/BLA were built (BLA dc_max
+            // scales with the view span, so its log2 drop = octaves of zoom-in). In floatexp (mode 2)
+            // the iterate shader spins ~5 s/frame on a reference this depth-stale — measured spin
+            // onset ≈ 3 octaves of lag (18 ms at lag 3.1, then 5167 ms the next frame). Since a
+            // *centered* dive keeps `drift ≈ 0`, the positional `too_stale` above never fires, so this
+            // is the signal that catches a fast zoom-in.
+            let depth_lag = {
+                let vc = &self.ref_cache[vi];
+                if mode == 2 && !vc.bla.is_empty() && vc.bla_dc_max_log2.is_finite() {
+                    vc.bla_dc_max_log2 - Self::bla_dc_max(span_mantissa, delta_exp).log2()
+                } else {
+                    0.0
+                }
+            };
             // While moving, tolerate the reference lagging in precision (it has 64 guard bits, good
             // for ~40 more octaves) so we don't rebuild the slow bignum orbit every octave — that
             // was the "zoom, pause, zoom" stepping on a deep dive. On settle we rebuild at the first
@@ -791,7 +805,11 @@ impl FractadyneApp {
             // old motion throttle is gone: the recompute is now off-thread and gated to one job per
             // view (`recompute_rx`), so spawns are naturally paced by the compute itself — no need
             // to space them artificially (which only made deep references refresh more slowly).
-            let recompute = out_of_view || needs_quality;
+            // In mode 2, refresh the reference/BLA as soon as it lags (off-thread, cheap) so fresh
+            // references keep coming; freeze (below) just above that while each refresh lands. A
+            // fresh install sits at depth_lag ≈ 1 (the BLA is built with 1 octave of dc_max headroom),
+            // so `> 1.1` refreshes ~0.1 octave into the dive.
+            let recompute = out_of_view || needs_quality || depth_lag > 1.1;
             // Whether the series approximation applies to this view (bundled into the recompute).
             let do_sa = (mode == 0 || mode == 2)
                 && !julia
@@ -838,6 +856,19 @@ impl FractadyneApp {
                 }
                 // else: a recompute is already in flight (or throttled) — use the cached reference.
             }
+            // Freeze (reproject, which skips the expensive floatexp iterate) rather than paint with a
+            // depth-stale reference, which makes the mode-2 shader spin ~5 s/frame → the "Not
+            // Responding" hang on a fast dive crossing ~1e28×. Two triggers:
+            //  • `mode == 2 && interacting`: never run a real floatexp iterate *while moving*. On a
+            //    dive faster than the (off-thread, ~0.1–1 s) reference recompute, every reference is
+            //    already stale by the time it lands, and the spin onset is data-dependent (as low as
+            //    ~0.5 octave of lag), so no threshold reliably lets a real frame through without
+            //    risking the spin. Reprojecting the last good frame is smooth + always cheap; the
+            //    positional `drift` trigger never caught this because a centered dive keeps drift ≈ 0.
+            //  • `depth_lag > 1.2`: once motion stops, keep holding until the freshly-recomputed
+            //    reference (matched to this depth) lands, then render real detail — so a settle snaps
+            //    to full sharpness instead of spinning on the stale reference for its first frame.
+            too_stale = too_stale || (mode == 2 && interacting) || depth_lag > 1.2;
             // At extreme depth the recompute can take long enough that a fast/continuous dive
             // drifts the cached reference too far off-centre before a fresh one lands — rendering
             // with it is dark/glitchy (the "screen goes black" while zooming). Instead freeze the
