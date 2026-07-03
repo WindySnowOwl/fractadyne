@@ -490,6 +490,17 @@ perturbation + series approximation + glitch correction. The headline feature.
       non-finite. `--selftest` covers round-trip, newer-version detection, and clamping.
       (A file is missing `format_version` ⇒ treated as v1; legacy files still load.)
       Possible later: an explicit `min_app_version` for forward signaling of hard breaks.
+- [ ] **In-app editor for the authorable files** — a text/TOML editor (probably a Tools →
+      "Edit file…" panel) for the file types the app reads: tour scripts (`.toml`),
+      profiling region files (`.toml`), `.fdn` locations, and response/`@args` files.
+      Ultimately it should offer **schema validation** (flag unknown keys, out-of-range
+      values, malformed sections before the file is used), **autocomplete** (key names,
+      enum values, section templates), and **pasteable sample snippets** (a palette of
+      ready-made keyframes / sections / whole example files to insert). The existing
+      `TOUR_SCHEMA` in scripting.rs (which already generates TOURS.md) is the natural
+      source of truth for the tour-script validation/autocomplete/samples; the untrusted
+      parsers elsewhere give the range clamps to surface as validation errors. Could start
+      as a validate-on-load "problems" list and grow toward live editing.
 
 ## Branding & UI (M7)
 
