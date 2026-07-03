@@ -3450,6 +3450,9 @@ impl eframe::App for FractadyneApp {
         if self.auto_render && !self.auto_render_done {
             if let Some((dev, q)) = &gpu {
                 self.auto_render_done = true;
+                if !self.watermark && !self.render_iter_mode {
+                    println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
+                }
                 let result = if self.render_iter_mode {
                     let out = self
                         .auto_render_out
@@ -3476,6 +3479,9 @@ impl eframe::App for FractadyneApp {
             if !self.render_tour_done {
                 if let Some((dev, q)) = &gpu {
                     self.render_tour_done = true;
+                    if !self.watermark {
+                        println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
+                    }
                     let (w, h) = self.tour_size;
                     let (fps, ss, out) = (self.tour_fps, self.tour_ss, self.tour_out.clone());
                     let mp4 = self.tour_mp4.clone();
