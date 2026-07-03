@@ -31,6 +31,15 @@ pub(crate) fn utc_string(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02} UTC")
 }
 
+/// Current wall-clock time as "YYYY-MM-DD HH:MM:SS UTC" (for report/run timestamps).
+pub(crate) fn now_utc_string() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    utc_string(secs)
+}
+
 /// Current + peak process working-set bytes (for the benchmark RAM metric).
 #[cfg(windows)]
 pub(crate) fn process_memory() -> (u64, u64) {

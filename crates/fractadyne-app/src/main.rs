@@ -58,7 +58,7 @@ mod selftest;
 mod sysinfo;
 mod theme;
 pub(crate) use fractal::FractalKind;
-pub(crate) use scripting::{BenchRes, Playback, StdBench};
+pub(crate) use scripting::{BenchDepth, BenchRes, Playback, StdBench};
 pub(crate) use sysinfo::*;
 pub(crate) use theme::*;
 use help::*;
@@ -1049,6 +1049,7 @@ struct FractadyneApp {
     bench_dialog_open: bool,
     bench_dlg_standard: bool,
     bench_dlg_res: BenchRes,
+    bench_dlg_depth: BenchDepth,
     bench_dlg_burnin: bool,
     bench_dlg_passes: u32,
     /// In-flight standardized benchmark, advanced one pass per frame from `update()`.
@@ -1058,6 +1059,7 @@ struct FractadyneApp {
     auto_stdbench_done: bool,
     std_res: BenchRes,
     std_passes: u32,
+    std_depth: BenchDepth,
     /// GPU adapter name (for benchmark reports).
     gpu_name: String,
     /// Host system facts (CPU / cores / cache / VRAM) for benchmark reports.
@@ -1286,9 +1288,16 @@ impl FractadyneApp {
         } else {
             1
         };
+        // Dive depth: --depth <standard|ultra> (or the shorthand --ultra). Also implies a
+        // standardized run.
+        let ultra_flag = args.iter().any(|a| a == "--ultra");
+        let std_depth = val("--depth")
+            .and_then(|s| BenchDepth::from_token(s))
+            .unwrap_or(if ultra_flag { BenchDepth::Ultra } else { BenchDepth::Standard });
         let auto_stdbench = args.iter().any(|a| a == "--benchmark-std" || a == "--std-benchmark")
             || burnin_flag
-            || args.iter().any(|a| a == "--res");
+            || ultra_flag
+            || args.iter().any(|a| a == "--res" || a == "--depth");
         // --render-tour FILE [--fps N] [--size W] [--height H] [--ss N] [--out DIR] [--mp4 [PATH]]
         let render_tour = val("--render-tour").map(std::path::PathBuf::from);
         let tour_fps = val("--fps").and_then(|s| s.parse::<f64>().ok()).filter(|f| *f > 0.0).unwrap_or(30.0);
@@ -1388,6 +1397,7 @@ impl FractadyneApp {
             bench_dialog_open: false,
             bench_dlg_standard: true,
             bench_dlg_res: BenchRes::P1080,
+            bench_dlg_depth: BenchDepth::Standard,
             bench_dlg_burnin: false,
             bench_dlg_passes: 10,
             std_bench: None,
@@ -1395,6 +1405,7 @@ impl FractadyneApp {
             auto_stdbench_done: false,
             std_res,
             std_passes,
+            std_depth,
             gpu_name,
             sysinfo: gather_system_info(),
             auto_benchmark,
@@ -3634,32 +3645,37 @@ impl eframe::App for FractadyneApp {
             }
         }
 
-        // CLI standardized benchmark (`--benchmark-std [--res] [--burnin]`): run all passes
-        // synchronously, print + save the report, and quit.
+        // CLI standardized benchmark (`--benchmark-std [--res] [--burnin] [--depth]`): run all
+        // passes synchronously, print + save the report, and quit.
         if self.auto_stdbench && !self.auto_stdbench_done {
             if let Some((dev, q)) = &gpu {
                 self.auto_stdbench_done = true;
-                let (res, passes) = (self.std_res, self.std_passes);
+                let (res, passes, depth) = (self.std_res, self.std_passes, self.std_depth);
                 println!(
-                    "Fractadyne standardized benchmark — {} × {passes} pass{}",
+                    "Fractadyne standardized benchmark — {} · {} × {passes} pass{}",
                     res.label(),
+                    depth.label(),
                     if passes == 1 { "" } else { "es" }
                 );
-                let mut run = self.begin_standard_bench(res, passes);
-                while !self.step_std_bench(&mut run, dev, q) {
-                    println!(
-                        "  pass {}/{}  {:.1} fps",
-                        run.passes_done,
-                        run.passes_total,
-                        run.pass_fps.last().copied().unwrap_or(0.0)
-                    );
+                let mut run = self.begin_standard_bench(res, passes, depth);
+                // step_std_bench now advances one dive-frame per call; print only when a pass
+                // finishes (passes_done ticks up), not on every frame.
+                let mut reported = 0u32;
+                loop {
+                    let done = self.step_std_bench(&mut run, dev, q);
+                    if run.passes_done > reported {
+                        reported = run.passes_done;
+                        println!(
+                            "  pass {}/{}  {:.1} fps",
+                            run.passes_done,
+                            run.passes_total,
+                            run.pass_fps.last().copied().unwrap_or(0.0)
+                        );
+                    }
+                    if done {
+                        break;
+                    }
                 }
-                println!(
-                    "  pass {}/{}  {:.1} fps",
-                    run.passes_done,
-                    run.passes_total,
-                    run.pass_fps.last().copied().unwrap_or(0.0)
-                );
                 let report = self.format_std_bench(&run);
                 println!("\n{report}");
                 let out = self.auto_benchmark_out.clone().unwrap_or_else(|| {
@@ -4839,8 +4855,8 @@ impl eframe::App for FractadyneApp {
 
         // ---- guided-tour annotations (captions + coordinate-anchored callouts) ----
         if self.playback.is_some() {
-            self.draw_captions(ctx, central.response.rect);
-            self.draw_callouts(ctx, central.response.rect);
+            let caption_rects = self.draw_captions(ctx, central.response.rect);
+            self.draw_callouts(ctx, central.response.rect, &caption_rects);
         }
 
         // ---- minimap overview ----
@@ -5109,6 +5125,17 @@ impl eframe::App for FractadyneApp {
                                 }
                             });
                         ui.add_space(4.0);
+                        ui.label("Depth");
+                        egui::ComboBox::from_id_salt("bench_depth")
+                            .selected_text(self.bench_dlg_depth.label())
+                            .show_ui(ui, |ui| {
+                                for d in BenchDepth::ALL {
+                                    ui.selectable_value(&mut self.bench_dlg_depth, d, d.label());
+                                }
+                            })
+                            .response
+                            .on_hover_text("Ultra dives past f64's limit (1e28×), stressing the perturbation / series-approx / BLA deep-zoom path much harder.");
+                        ui.add_space(4.0);
                         ui.checkbox(&mut self.bench_dlg_burnin, "Burn-in (repeat)")
                             .on_hover_text("Run the benchmark repeatedly to reveal stability and thermal throttling.");
                         ui.add_enabled_ui(self.bench_dlg_burnin, |ui| {
@@ -5128,8 +5155,9 @@ impl eframe::App for FractadyneApp {
                         let (w, h) = self.bench_dlg_res.dims();
                         ui.add_space(2.0);
                         ui.weak(format!(
-                            "Renders offscreen at {w}×{h}, {}× SS, Mandelbrot/smooth, 60-frame dive to 1e12×.",
-                            scripting::STD_AA
+                            "Renders offscreen at {w}×{h}, {}× SS, Mandelbrot/smooth, 60-frame dive to 1e{:.0}×.",
+                            scripting::STD_AA,
+                            self.bench_dlg_depth.zoom_log10(),
                         ));
                     }
                 });
@@ -5138,7 +5166,7 @@ impl eframe::App for FractadyneApp {
                 self.bench_dialog_open = false;
                 if self.bench_dlg_standard {
                     let passes = if self.bench_dlg_burnin { self.bench_dlg_passes } else { 1 };
-                    let run = self.begin_standard_bench(self.bench_dlg_res, passes);
+                    let run = self.begin_standard_bench(self.bench_dlg_res, passes, self.bench_dlg_depth);
                     self.std_bench = Some(run);
                     ctx.request_repaint();
                 } else {
@@ -5147,23 +5175,31 @@ impl eframe::App for FractadyneApp {
             }
         }
 
-        // ---- standardized benchmark progress (advances one pass per frame) ----
-        if let Some((label, done, total, last_fps)) = self
-            .std_bench
-            .as_ref()
-            .map(|r| (r.res.label(), r.passes_done, r.passes_total, r.pass_fps.last().copied()))
+        // ---- standardized benchmark progress (advances one dive-frame per event-loop tick) ----
+        if let Some((label, done, total, last_fps, (fdone, ftotal))) =
+            self.std_bench.as_ref().map(|r| {
+                (r.res.label(), r.passes_done, r.passes_total, r.pass_fps.last().copied(), r.frame_progress())
+            })
         {
             let mut cancel = false;
             egui::Window::new("Running benchmark…")
                 .resizable(false)
                 .collapsible(false)
                 .show(ctx, |ui| {
-                    ui.label(format!("Standardized · {label}"));
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(format!("Standardized · {label}"));
+                    });
                     if total > 1 {
                         ui.label(format!("Burn-in pass {}/{}", (done + 1).min(total), total));
                     } else {
                         ui.label("Rendering the fixed dive…");
                     }
+                    // Per-pass frame progress so it's visibly advancing (not hung) even mid-pass.
+                    ui.add(
+                        egui::ProgressBar::new(fdone as f32 / ftotal.max(1) as f32)
+                            .text(format!("frame {fdone}/{ftotal}")),
+                    );
                     if let Some(f) = last_fps {
                         ui.label(format!("last pass: {f:.1} fps"));
                     }
@@ -5188,6 +5224,7 @@ impl eframe::App for FractadyneApp {
         // ---- benchmark results ----
         if self.bench_open {
             let mut open = self.bench_open;
+            let mut run_again = false;
             egui::Window::new("Benchmark results")
                 .open(&mut open)
                 .resizable(false)
@@ -5208,12 +5245,20 @@ impl eframe::App for FractadyneApp {
                                     let _ = std::fs::write(path, &r);
                                 }
                             }
+                            if ui.button("Run again…").clicked() {
+                                run_again = true;
+                            }
                         });
                     } else {
                         ui.label("No benchmark has been run yet.");
                     }
                 });
             self.bench_open = open;
+            // Close the results and reopen the benchmark tool to configure another run.
+            if run_again {
+                self.bench_open = false;
+                self.bench_dialog_open = true;
+            }
         }
 
         // ---- gallery browser ----

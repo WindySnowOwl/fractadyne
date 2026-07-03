@@ -705,6 +705,26 @@ for fun, informative value, and ease of use.
 
 ## Performance & throughput (M7)
 
+- [ ] **BUG: fast live dive hangs ("Not Responding") crossing into floatexp (~1e28×+).** Reproduced
+  2026-07-03 by auto-playing `tours/deep-spiral-dive.toml` with per-frame stderr timing. Symptom:
+  frame time jumps from ~20 ms (mode 0 / df32) to a sustained **~1000 ms/frame** a few octaves past
+  the df32→floatexp crossover; the ~1 s frame present blocks the UI thread → Windows "Not Responding",
+  and because `update()` can't run during the block, the off-thread reference recompute can't install,
+  so the lag never recovers (feedback loop pinning the dive at ~1 fps). **Root-caused to a full-
+  resolution GPU cost that is NOT the iterate pass:** proven by shrinking the iterate texture from
+  710×543 down to **24×18 with zero change** in frame time (GPU pixels run in parallel, so the frame
+  time is the *slowest single pixel's* shader duration — a mode-2 pixel spinning ~1 s on a depth-stale
+  reference). **Dead ends (don't repeat):** (1) shrinking the interacting `WORK_BUDGET` for mode 2
+  (even /4000) does nothing — the cost isn't total iterate work; (2) freeze-on-depth-staleness via the
+  reprojection path does NOT help — reproject only skips the *iterate* pass, but the 1 s is elsewhere
+  (`too_stale=true` frames still took ~1007 ms). A `bla_dc_max`-based `depth_lag` metric works as a
+  staleness signal (grows ~1 octave/frame on the fast dive; spin onset ≈ 3 octaves of lag) but is
+  useless without a cheaper frame to fall back to. **Next:** add per-pass GPU **timestamp queries**
+  (iterate vs color vs present) to identify the actual full-res 1 s pass — suspect the mode-2 color/
+  lighting pass or a shader inner-loop (BLA-revert/rebasing) that spins per-pixel with a depth-stale
+  reference. Likely real fix = bound the mode-2 shader's worst-pixel work, or keep the floatexp
+  reference fresh enough (refresh every ~1–2 octaves in mode 2) that no pixel ever spins.
+
 **Update (2026-07-02): the bottleneck moved.** The off-thread reference recompute (below) took the
 bignum orbit off the render thread — `--benchmark` now shows **avg CPU 0.38 ms, avg GPU 20.3 ms**,
 so the live cost is now the **GPU iterate pass**, not the reference. `--profile` breakdown (render ms

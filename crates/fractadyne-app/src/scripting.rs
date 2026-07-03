@@ -2,7 +2,7 @@
 //! built-in benchmark tour, plus the playback engine that glides center+zoom along the
 //! timeline and samples FPS/CPU/RAM. `Playback`/`Bench` are pub(crate) (held as app state).
 
-use crate::{process_memory, version_string, FractadyneApp, FractalKind};
+use crate::{now_utc_string, process_memory, version_string, FractadyneApp, FractalKind};
 use serde::Deserialize;
 
 /// Script schema version. Bump on a breaking change to an existing key's meaning; purely
@@ -762,9 +762,10 @@ fn draw_line(px: &mut [f32], w: u32, h: u32, x0: f32, y0: f32, x1: f32, y1: f32,
 /// Burn a caption into a **linear-RGBA** export frame — the offscreen equivalent of
 /// `draw_captions`: a soft dark backing rect + white text (× `alpha`), wrapped and centred on the
 /// caption's screen anchor. `atlas` is the (pre-cloned) egui font atlas.
-fn stamp_caption(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, cap: &Caption, alpha: f32) {
+/// Returns the caption's backing rect (device pixels) so callouts can avoid it, or `None` if not drawn.
+fn stamp_caption(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, cap: &Caption, alpha: f32) -> Option<egui::Rect> {
     if alpha <= 0.0 || w == 0 || h == 0 {
-        return;
+        return None;
     }
     let ppp = ctx.pixels_per_point();
     let pts = (cap.size * (h as f32 / 1080.0) / ppp).max(1.0);
@@ -782,6 +783,7 @@ fn stamp_caption(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, cap: &Capt
     fill_dark(px, w, h, bx - pad, by - pad, bx + gw + pad, by + gh + pad, (alpha * 0.5).min(1.0));
     // Clone the atlas AFTER layout so it contains this text's glyphs (egui fills it lazily).
     ctx.fonts(|f| blit_galley(&f.image(), px, w, h, &galley, bx, by, ppp, [1.0, 1.0, 1.0], alpha));
+    Some(egui::Rect::from_min_max(egui::pos2(bx - pad, by - pad), egui::pos2(bx + gw + pad, by + gh + pad)))
 }
 
 /// Burn a small location HUD — zoom level + center coordinates — into the top-left of an export
@@ -827,7 +829,67 @@ pub(crate) fn stamp_location(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32
 }
 
 /// Burn a callout (marker ring + leader line + label) at the target's frame pixel `(vpx, vpy)`.
-fn stamp_callout(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, co: &Callout, vpx: f32, vpy: f32, alpha: f32) {
+/// Pick a top-left for a callout label near `anchor` that stays inside `bounds` and doesn't
+/// overlap any label already placed this frame (`placed`). Tries the four diagonal positions
+/// around the marker (up-right preferred), then nudges vertically as a fallback so several
+/// callouts firing at once don't stack on top of each other. The chosen rect is pushed onto
+/// `placed`. All coordinates share one space (egui points for the live view, device pixels for
+/// export); the caller supplies the matching `off`/`pad`.
+fn place_callout_label(
+    anchor: egui::Pos2,
+    sz: egui::Vec2,
+    bounds: egui::Rect,
+    off: f32,
+    pad: egui::Vec2,
+    placed: &mut Vec<egui::Rect>,
+) -> egui::Pos2 {
+    let candidates = [
+        egui::pos2(anchor.x + off, anchor.y - off - sz.y), // up-right (preferred)
+        egui::pos2(anchor.x - off - sz.x, anchor.y - off - sz.y), // up-left
+        egui::pos2(anchor.x + off, anchor.y + off),        // down-right
+        egui::pos2(anchor.x - off - sz.x, anchor.y + off), // down-left
+    ];
+    let rect_at = |lp: egui::Pos2| egui::Rect::from_min_size(lp - pad, sz + pad * 2.0);
+    let inside = |r: egui::Rect| {
+        r.min.x >= bounds.min.x && r.min.y >= bounds.min.y && r.max.x <= bounds.max.x && r.max.y <= bounds.max.y
+    };
+    for &lp in &candidates {
+        let r = rect_at(lp);
+        if inside(r) && !placed.iter().any(|p| p.intersects(r)) {
+            placed.push(r);
+            return lp;
+        }
+    }
+    // Fallback: from the preferred spot (clamped into bounds), step down until clear — bounded so
+    // it always terminates; wraps back to the top if it runs off the bottom.
+    let mut lp = candidates[0];
+    lp.x = lp.x.clamp(bounds.min.x + pad.x + 2.0, (bounds.max.x - sz.x - pad.x - 2.0).max(bounds.min.x));
+    lp.y = lp.y.max(bounds.min.y + pad.y + 2.0);
+    let step = sz.y + pad.y * 2.0 + 4.0;
+    for _ in 0..24 {
+        if !placed.iter().any(|p| p.intersects(rect_at(lp))) {
+            break;
+        }
+        lp.y += step;
+        if rect_at(lp).max.y > bounds.max.y {
+            lp.y = bounds.min.y + pad.y + 2.0;
+        }
+    }
+    placed.push(rect_at(lp));
+    lp
+}
+
+fn stamp_callout(
+    ctx: &egui::Context,
+    px: &mut [f32],
+    w: u32,
+    h: u32,
+    co: &Callout,
+    vpx: f32,
+    vpy: f32,
+    alpha: f32,
+    placed: &mut Vec<egui::Rect>,
+) {
     if alpha <= 0.0 {
         return;
     }
@@ -842,17 +904,18 @@ fn stamp_callout(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, co: &Callo
     let galley = ctx.fonts(|f| f.layout_no_wrap(co.text.clone(), egui::FontId::proportional(pts), egui::Color32::WHITE));
     let (gw, gh) = (galley.size().x * ppp, galley.size().y * ppp);
     let off = 16.0 * s;
-    // Label up-right of the marker; flip to the left / below if it would leave the frame.
-    let mut bx = vpx + off;
-    let mut by = vpy - off - gh;
-    if bx + gw + 8.0 * s > w as f32 {
-        bx = vpx - off - gw;
-    }
-    if by < 4.0 * s {
-        by = vpy + off;
-    }
-    draw_line(px, w, h, vpx, vpy, bx + gw * 0.5, by + gh * 0.5, accent, alpha * 0.9);
     let pad = 6.0 * s;
+    // Place the label so concurrent callouts don't overlap (up-right preferred; nudged otherwise).
+    let lp = place_callout_label(
+        egui::pos2(vpx, vpy),
+        egui::vec2(gw, gh),
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(w as f32, h as f32)),
+        off,
+        egui::vec2(pad, pad),
+        placed,
+    );
+    let (bx, by) = (lp.x, lp.y);
+    draw_line(px, w, h, vpx, vpy, bx + gw * 0.5, by + gh * 0.5, accent, alpha * 0.9);
     fill_dark(px, w, h, bx - pad, by - pad, bx + gw + pad, by + gh + pad, (alpha * 0.55).min(1.0));
     ctx.fonts(|f| blit_galley(&f.image(), px, w, h, &galley, bx, by, ppp, [1.0, 1.0, 1.0], alpha));
 }
@@ -1139,13 +1202,15 @@ impl FractadyneApp {
     /// per its timeline window; text is wrapped and centered on its screen anchor over a soft dark
     /// backing so it stays legible on any fractal. (Exported tour frames get the same via a
     /// rasterized overlay — see `render_tour_to_dir`.)
-    pub(crate) fn draw_captions(&self, ctx: &egui::Context, rect: egui::Rect) {
-        let Some(pb) = &self.playback else { return };
+    /// Returns the backing rects of the captions drawn this frame, so callouts can avoid them.
+    pub(crate) fn draw_captions(&self, ctx: &egui::Context, rect: egui::Rect) -> Vec<egui::Rect> {
+        let Some(pb) = &self.playback else { return Vec::new() };
         if pb.captions.is_empty() {
-            return;
+            return Vec::new();
         }
         let painter =
             ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("tour_captions")));
+        let mut rects = Vec::new();
         for cap in &pb.captions {
             let a = cap.alpha_at(pb.cur_t);
             if a <= 0.0 {
@@ -1167,13 +1232,15 @@ impl FractadyneApp {
             let bg = egui::Rect::from_min_size(pos - pad, sz + pad * 2.0);
             painter.rect_filled(bg, 5.0, egui::Color32::from_black_alpha((a * 130.0) as u8));
             painter.galley(pos, galley, color);
+            rects.push(bg);
         }
+        rects
     }
 
     /// Draw the active tour callouts (live playback): a marker ring at each anchored fractal
     /// coordinate — tracking the point as the view moves — plus a labeled leader. Off-screen
     /// anchors are skipped. Exported frames get the same via `stamp_callout`.
-    pub(crate) fn draw_callouts(&self, ctx: &egui::Context, rect: egui::Rect) {
+    pub(crate) fn draw_callouts(&self, ctx: &egui::Context, rect: egui::Rect, caption_rects: &[egui::Rect]) {
         let Some(pb) = &self.playback else { return };
         if pb.callouts.is_empty() {
             return;
@@ -1184,6 +1251,11 @@ impl FractadyneApp {
         let with_a = |c: egui::Color32, a: f32| {
             egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a * 255.0) as u8)
         };
+        let pad = egui::vec2(6.0, 4.0);
+        // Labels placed so far this frame — new ones avoid overlapping them (several callouts can be
+        // on-screen at once, e.g. the intro landmark labels). Seed with the caption rects so labels
+        // don't collide with the title/subtitle text either.
+        let mut placed: Vec<egui::Rect> = caption_rects.to_vec();
         for co in &pb.callouts {
             let a = co.alpha_at(pb.cur_t);
             if a <= 0.0 {
@@ -1202,16 +1274,8 @@ impl FractadyneApp {
                 f.layout_no_wrap(co.text.clone(), egui::FontId::proportional(co.size), with_a(egui::Color32::WHITE, a))
             });
             let gs = galley.size();
-            let off = 16.0;
-            let mut lp = egui::pos2(sp.x + off, sp.y - off - gs.y);
-            if lp.x + gs.x + 8.0 > rect.right() {
-                lp.x = sp.x - off - gs.x;
-            }
-            if lp.y < rect.top() + 4.0 {
-                lp.y = sp.y + off;
-            }
+            let lp = place_callout_label(sp, gs, rect, 16.0, pad, &mut placed);
             painter.line_segment([sp, lp + gs * 0.5], egui::Stroke::new(1.5, accent));
-            let pad = egui::vec2(6.0, 4.0);
             let bg = egui::Rect::from_min_size(lp - pad, gs + pad * 2.0);
             painter.rect_filled(bg, 4.0, egui::Color32::from_black_alpha((a * 150.0) as u8));
             painter.galley(lp, galley, with_a(egui::Color32::WHITE, a));
@@ -1398,10 +1462,13 @@ impl FractadyneApp {
                 (r.pixels, r.width, r.height)
             };
             self.apply_watermark(&mut px, rw, rh);
+            let mut placed_labels: Vec<egui::Rect> = Vec::new();
             for cap in &pb.captions {
                 let a = cap.alpha_at(t);
                 if a > 0.0 {
-                    stamp_caption(ctx, &mut px, rw, rh, cap, a);
+                    if let Some(r) = stamp_caption(ctx, &mut px, rw, rh, cap, a) {
+                        placed_labels.push(r); // callouts avoid caption text too
+                    }
                 }
             }
             for co in &pb.callouts {
@@ -1411,7 +1478,7 @@ impl FractadyneApp {
                 }
                 let (vpx, vpy) = self.viewport.complex_to_pixel(&co.cx, &co.cy);
                 if vpx >= 0.0 && vpy >= 0.0 && vpx < rw as f64 && vpy < rh as f64 {
-                    stamp_callout(ctx, &mut px, rw, rh, co, vpx as f32, vpy as f32, a);
+                    stamp_callout(ctx, &mut px, rw, rh, co, vpx as f32, vpy as f32, a, &mut placed_labels);
                 }
             }
             // Orbit overlay (single view only; the dual path already split the frame).
@@ -1612,6 +1679,7 @@ impl FractadyneApp {
         format!(
             "Fractadyne benchmark — {tour}\n\
              version    v{ver}\n\
+             date       {date}\n\
              cpu        {cpu}\n\
              cores      {phys} physical / {logi} logical\n\
              cache      {cache}\n\
@@ -1631,6 +1699,7 @@ impl FractadyneApp {
              score      {score:8.0}   (avg FPS × 100)",
             tour = pb.name,
             ver = version_string(),
+            date = now_utc_string(),
             cpu = if si.cpu.is_empty() { "—" } else { &si.cpu },
             phys = si.physical,
             logi = si.logical,
@@ -1705,10 +1774,51 @@ impl BenchRes {
 /// every machine). Recorded verbatim in the report.
 pub(crate) const STD_AA: u32 = 2; // 2×2 supersampling
 pub(crate) const STD_FRAMES: u32 = 60; // frames rendered along the fixed dive
-pub(crate) const STD_ZOOM_LOG10: f64 = 12.0; // dive depth: 1 → 1e12×
+pub(crate) const STD_ZOOM_LOG10: f64 = 12.0; // standard dive depth: 1 → 1e12×
+/// Ultra-deep dive: 1 → 1e28×. Well past f64's ~1e15 magnification limit, so it hammers the
+/// perturbation / series-approx / BLA machinery (iteration counts climb steeply with depth).
+/// Kept ≤ the ~33-significant-digit `STD_CX`/`STD_CY` precision (sub-pixel to ~1e30×), so the
+/// dive lands on a fixed, reproducible high-detail location rather than precision noise.
+pub(crate) const STD_ZOOM_LOG10_ULTRA: f64 = 28.0;
 /// Seahorse-Valley point with structure at every scale (same as the built-in tour).
 const STD_CX: &str = "-0.743643887037158704752191506114774";
 const STD_CY: &str = "0.131825904205311970493132056385139";
+
+/// Dive depth for the standardized benchmark. Deeper endpoints exercise the deep-zoom path
+/// (perturbation reference, series skip, BLA) far harder than the shallow default.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BenchDepth {
+    Standard,
+    Ultra,
+}
+
+impl BenchDepth {
+    pub(crate) const ALL: [BenchDepth; 2] = [BenchDepth::Standard, BenchDepth::Ultra];
+
+    /// log10 of the final magnification the fixed 60-frame dive reaches.
+    pub(crate) fn zoom_log10(self) -> f64 {
+        match self {
+            BenchDepth::Standard => STD_ZOOM_LOG10,
+            BenchDepth::Ultra => STD_ZOOM_LOG10_ULTRA,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            BenchDepth::Standard => "Standard (1e12×)",
+            BenchDepth::Ultra => "Ultra deep (1e28×)",
+        }
+    }
+
+    /// Parse a CLI token (`standard` / `ultra` / `deep` …, case-insensitive).
+    pub(crate) fn from_token(s: &str) -> Option<BenchDepth> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "standard" | "std" | "shallow" | "12" | "1e12" => Some(BenchDepth::Standard),
+            "ultra" | "deep" | "ultradeep" | "ultra-deep" | "28" | "1e28" => Some(BenchDepth::Ultra),
+            _ => None,
+        }
+    }
+}
 
 /// The subset of app render settings the standardized benchmark overrides, saved so the
 /// live view is restored untouched afterward.
@@ -1728,8 +1838,9 @@ pub(crate) struct BenchSnapshot {
     use_custom_palette: bool,
 }
 
-/// A running standardized benchmark (one or more passes; >1 = burn-in). Driven a pass at a
-/// time from `update()` so the window stays responsive (and cancellable) between passes.
+/// A running standardized benchmark (one or more passes; >1 = burn-in). Driven one dive-frame at
+/// a time from `update()` so the window stays responsive (spinner animates, cancellable) rather
+/// than blocking the whole event loop for a multi-second pass.
 pub(crate) struct StdBench {
     pub(crate) res: BenchRes,
     pub(crate) passes_total: u32,
@@ -1739,6 +1850,15 @@ pub(crate) struct StdBench {
     /// Per-frame stats of the most recent completed pass (for the detailed report).
     last: Option<Bench>,
     snapshot: BenchSnapshot,
+    /// Fixed dive center (parsed once).
+    cx: fractadyne_core::BigFloat,
+    cy: fractadyne_core::BigFloat,
+    /// Frame cursor within the current pass: `-1` = warm-up (uncounted), `0..STD_FRAMES` = dive.
+    frame_in_pass: i32,
+    /// Accumulator for the in-progress pass (`None` between passes → next step starts a fresh one).
+    cur: Option<Bench>,
+    /// log10 of the dive's final magnification (depth preset — 1e12× standard, 1e28× ultra).
+    zoom_log10: f64,
 }
 
 impl StdBench {
@@ -1746,12 +1866,22 @@ impl StdBench {
     pub(crate) fn take_snapshot(self) -> BenchSnapshot {
         self.snapshot
     }
+
+    /// Progress within the current pass as `(dive_frames_done, total)` for the UI (warm-up → 0).
+    pub(crate) fn frame_progress(&self) -> (u32, u32) {
+        (self.frame_in_pass.max(0) as u32, STD_FRAMES.max(2))
+    }
 }
 
 impl FractadyneApp {
     /// Begin a standardized benchmark (`passes` ≥ 2 ⇒ burn-in). Snapshots the live settings,
     /// pins the canonical ones, and returns the run state to drive pass-by-pass.
-    pub(crate) fn begin_standard_bench(&mut self, res: BenchRes, passes: u32) -> StdBench {
+    pub(crate) fn begin_standard_bench(
+        &mut self,
+        res: BenchRes,
+        passes: u32,
+        depth: BenchDepth,
+    ) -> StdBench {
         let snapshot = BenchSnapshot {
             fractal: self.fractal,
             julia_mode: self.julia_mode,
@@ -1782,6 +1912,10 @@ impl FractadyneApp {
         self.use_duotone = false;
         self.use_custom_palette = false;
         self.invalidate_refs();
+        let cx = fractadyne_core::parse_bf(STD_CX)
+            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(-0.5, 64));
+        let cy = fractadyne_core::parse_bf(STD_CY)
+            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, 64));
         StdBench {
             res,
             passes_total: passes.clamp(1, 500),
@@ -1789,6 +1923,11 @@ impl FractadyneApp {
             pass_fps: Vec::new(),
             last: None,
             snapshot,
+            cx,
+            cy,
+            frame_in_pass: -1,
+            cur: None,
+            zoom_log10: depth.zoom_log10(),
         }
     }
 
@@ -1810,59 +1949,83 @@ impl FractadyneApp {
         self.invalidate_refs();
     }
 
-    /// Run one full pass of the standardized dive at `dims`, sampling per-frame CPU (reference
-    /// build) + GPU (full offscreen render) time. Blocks for the pass (like a single export).
-    fn run_std_bench_pass(
+    /// Render one offscreen frame of the standardized dive at `dims`/`log2mag`, returning the
+    /// sampled CPU (reference build) + GPU (full offscreen render) time in ms. Blocks only for the
+    /// single frame (like one export), so callers can advance the dive a frame per event loop tick.
+    fn render_std_frame(
         &mut self,
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
         dims: (u32, u32),
-    ) -> Bench {
+        cx: &fractadyne_core::BigFloat,
+        cy: &fractadyne_core::BigFloat,
+        log2mag: f64,
+    ) -> (f64, f64) {
         use std::sync::atomic::{AtomicBool, AtomicU32};
         use std::time::Instant;
-        const LOG2_10: f64 = std::f64::consts::LOG2_10;
         let (w, h) = dims;
         let progress = AtomicU32::new(0);
         let cancel = AtomicBool::new(false);
-        let cx = fractadyne_core::parse_bf(STD_CX)
-            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(-0.5, 64));
-        let cy = fractadyne_core::parse_bf(STD_CY)
-            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, 64));
         let mut vp = fractadyne_core::Viewport::new(w as f64, h as f64);
-        self.invalidate_refs(); // start each pass from a cold reference cache
-        let mut b = Bench::new();
-        b.warmup_left = 0; // explicit warm-up below instead
+        vp.set_center_log2mag(cx.clone(), cy.clone(), log2mag);
+        let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
+        let center = vp.center_f64();
+        let span = vp.complex_span_fe();
+        let mag = vp.magnification();
+        let l2 = vp.log2_magnification();
+        let eff_iter = vp.recommended_max_iter(self.max_iter);
+        let t = Instant::now();
+        let params = self.build_params(
+            center_bf, center, span, mag, l2, self.fractal, false, eff_iter, false, STD_AA,
+            [w, h], 0, None,
+        );
+        let build_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let req = crate::profile::params_to_request(&params);
+        let t = Instant::now();
+        let _ = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
+        let gpu_ms = t.elapsed().as_secs_f64() * 1000.0;
+        (build_ms, gpu_ms)
+    }
 
-        let frames = STD_FRAMES.max(2);
-        let render = |app: &mut Self, vp: &fractadyne_core::Viewport| -> (f64, f64) {
-            let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
-            let center = vp.center_f64();
-            let span = vp.complex_span_fe();
-            let mag = vp.magnification();
-            let l2 = vp.log2_magnification();
-            let eff_iter = vp.recommended_max_iter(app.max_iter);
-            let t = Instant::now();
-            let params = app.build_params(
-                center_bf, center, span, mag, l2, app.fractal, false, eff_iter, false, STD_AA,
-                [w, h], 0, None,
-            );
-            let build_ms = t.elapsed().as_secs_f64() * 1000.0;
-            let req = crate::profile::params_to_request(&params);
-            let t = Instant::now();
-            let _ = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
-            let gpu_ms = t.elapsed().as_secs_f64() * 1000.0;
-            (build_ms, gpu_ms)
-        };
+    /// Advance an in-flight standardized benchmark by exactly one dive-frame (or the uncounted
+    /// warm-up frame at a pass boundary). Returns `true` only once every pass is complete (so the
+    /// caller can build the report and restore state); `false` means more frames remain.
+    pub(crate) fn step_std_bench(
+        &mut self,
+        run: &mut StdBench,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+    ) -> bool {
+        const LOG2_10: f64 = std::f64::consts::LOG2_10;
+        let dims = run.res.dims();
+        let frames = STD_FRAMES.max(2) as i32;
 
-        // Warm-up frame (shader/pipeline compile, first upload) — not counted.
-        vp.set_center_log2mag(cx.clone(), cy.clone(), 0.0);
-        let _ = render(self, &vp);
+        // Start a fresh pass from a cold reference cache when none is in flight.
+        if run.cur.is_none() {
+            self.invalidate_refs();
+            let mut b = Bench::new();
+            b.warmup_left = 0; // explicit warm-up frame below instead
+            run.cur = Some(b);
+            run.frame_in_pass = -1;
+        }
 
-        for i in 0..frames {
-            let frac = i as f64 / (frames - 1) as f64;
-            let log2mag = frac * STD_ZOOM_LOG10 * LOG2_10;
-            vp.set_center_log2mag(cx.clone(), cy.clone(), log2mag);
-            let (build_ms, gpu_ms) = render(self, &vp);
+        if run.frame_in_pass < 0 {
+            // Warm-up frame (shader/pipeline compile, first upload) — not counted.
+            let (cx, cy) = (run.cx.clone(), run.cy.clone());
+            let _ = self.render_std_frame(device, queue, dims, &cx, &cy, 0.0);
+            run.frame_in_pass = 0;
+            return false;
+        }
+
+        // One counted dive frame.
+        let i = run.frame_in_pass;
+        let frac = i as f64 / (frames - 1) as f64;
+        let log2mag = frac * run.zoom_log10 * LOG2_10;
+        let (cx, cy) = (run.cx.clone(), run.cy.clone());
+        let (build_ms, gpu_ms) = self.render_std_frame(device, queue, dims, &cx, &cy, log2mag);
+        let (ws, peak) = process_memory();
+        {
+            let b = run.cur.as_mut().unwrap();
             let frame_ms = build_ms + gpu_ms;
             b.frames += 1;
             b.sum_frame_ms += frame_ms;
@@ -1872,22 +2035,16 @@ impl FractadyneApp {
                 b.min_fps = b.min_fps.min(fps);
                 b.max_fps = b.max_fps.max(fps);
             }
-            let (ws, peak) = process_memory();
             b.peak_ram = b.peak_ram.max(peak).max(ws);
             b.sum_ram += ws;
         }
-        b
-    }
+        run.frame_in_pass += 1;
+        if run.frame_in_pass < frames {
+            return false; // pass still in progress
+        }
 
-    /// Advance an in-flight standardized benchmark by one pass. Returns the finished run (so the
-    /// caller can build the report and restore state) once all passes are done, else `None`.
-    pub(crate) fn step_std_bench(
-        &mut self,
-        run: &mut StdBench,
-        device: &eframe::wgpu::Device,
-        queue: &eframe::wgpu::Queue,
-    ) -> bool {
-        let b = self.run_std_bench_pass(device, queue, run.res.dims());
+        // Pass complete — record its average FPS and roll to the next pass (if any).
+        let b = run.cur.take().unwrap();
         let f = b.frames.max(1) as f64;
         let avg_fps = if b.sum_frame_ms > 0.0 { 1000.0 / (b.sum_frame_ms / f) } else { 0.0 };
         run.pass_fps.push(avg_fps);
@@ -1933,6 +2090,7 @@ impl FractadyneApp {
         let mut s = String::new();
         s.push_str("Fractadyne standardized benchmark\n");
         s.push_str(&format!("version    v{}\n", version_string()));
+        s.push_str(&format!("date       {}\n", now_utc_string()));
         s.push_str(&format!("cpu        {}\n", if si.cpu.is_empty() { "—" } else { &si.cpu }));
         s.push_str(&format!("cores      {} physical / {} logical\n", si.physical, si.logical));
         s.push_str(&format!("cache      {cache}\n"));
@@ -1946,7 +2104,7 @@ impl FractadyneApp {
         s.push_str("deep zoom  series-approx on · BLA on · glitch off\n");
         s.push_str(&format!(
             "dive       {} frames, 1 → 1e{:.0}× (seahorse valley)\n",
-            STD_FRAMES, STD_ZOOM_LOG10
+            STD_FRAMES, run.zoom_log10
         ));
         s.push_str("----------------------------------------\n");
         if run.passes_total > 1 {
