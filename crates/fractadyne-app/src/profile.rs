@@ -293,7 +293,7 @@ fn now_unix() -> u64 {
 /// Convert a live `MandelbrotParams` into an `ExportRequest` that renders the SAME view reusing
 /// its already-computed reference orbit (no recompute) — lets the frame-timing harness render each
 /// frame exactly as the live view would, without paying the reference cost twice.
-fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractadyne_gpu::ExportRequest {
+pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractadyne_gpu::ExportRequest {
     fractadyne_gpu::ExportRequest {
         width: p.resolution[0].max(1),
         height: p.resolution[1].max(1),

@@ -58,7 +58,7 @@ mod selftest;
 mod sysinfo;
 mod theme;
 pub(crate) use fractal::FractalKind;
-pub(crate) use scripting::Playback;
+pub(crate) use scripting::{BenchRes, Playback, StdBench};
 pub(crate) use sysinfo::*;
 pub(crate) use theme::*;
 use help::*;
@@ -1045,6 +1045,19 @@ struct FractadyneApp {
     /// Last benchmark report text + whether its window is open.
     bench_report: Option<String>,
     bench_open: bool,
+    /// The "Benchmark…" configuration dialog (mode / resolution / burn-in).
+    bench_dialog_open: bool,
+    bench_dlg_standard: bool,
+    bench_dlg_res: BenchRes,
+    bench_dlg_burnin: bool,
+    bench_dlg_passes: u32,
+    /// In-flight standardized benchmark, advanced one pass per frame from `update()`.
+    std_bench: Option<StdBench>,
+    /// CLI `--benchmark-std [--res RES] [--burnin N]`: run headless, save, quit.
+    auto_stdbench: bool,
+    auto_stdbench_done: bool,
+    std_res: BenchRes,
+    std_passes: u32,
     /// GPU adapter name (for benchmark reports).
     gpu_name: String,
     /// Host system facts (CPU / cores / cache / VRAM) for benchmark reports.
@@ -1256,12 +1269,26 @@ impl FractadyneApp {
             .and_then(|i| args.get(i + 1))
             .map(std::path::PathBuf::from);
         let auto_benchmark = args.iter().any(|a| a == "--benchmark" || a == "--bench");
+        // Standardized (pinned-settings) benchmark: --benchmark-std [--res RES] [--burnin N].
+        // --burnin/--res on their own also imply it.
         let render_iter_mode = args.iter().any(|a| a == "--render-iter");
         let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode;
         let selftest = args.iter().any(|a| a == "--selftest");
         let profile = args.iter().any(|a| a == "--profile");
         let frametest = args.iter().any(|a| a == "--frametest");
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+        // Standardized benchmark: --benchmark-std, or implied by --res / --burnin.
+        let std_res = val("--res").and_then(|s| BenchRes::from_token(s)).unwrap_or(BenchRes::P1080);
+        // --burnin may carry a pass count (`--burnin 20`) or stand alone (defaults to 10).
+        let burnin_flag = args.iter().any(|a| a == "--burnin");
+        let std_passes = if burnin_flag {
+            val("--burnin").and_then(|s| s.parse::<u32>().ok()).unwrap_or(10).clamp(1, 500)
+        } else {
+            1
+        };
+        let auto_stdbench = args.iter().any(|a| a == "--benchmark-std" || a == "--std-benchmark")
+            || burnin_flag
+            || args.iter().any(|a| a == "--res");
         // --render-tour FILE [--fps N] [--size W] [--height H] [--ss N] [--out DIR] [--mp4 [PATH]]
         let render_tour = val("--render-tour").map(std::path::PathBuf::from);
         let tour_fps = val("--fps").and_then(|s| s.parse::<f64>().ok()).filter(|f| *f > 0.0).unwrap_or(30.0);
@@ -1358,6 +1385,16 @@ impl FractadyneApp {
             playback: None,
             bench_report: None,
             bench_open: false,
+            bench_dialog_open: false,
+            bench_dlg_standard: true,
+            bench_dlg_res: BenchRes::P1080,
+            bench_dlg_burnin: false,
+            bench_dlg_passes: 10,
+            std_bench: None,
+            auto_stdbench,
+            auto_stdbench_done: false,
+            std_res,
+            std_passes,
             gpu_name,
             sysinfo: gather_system_info(),
             auto_benchmark,
@@ -3597,6 +3634,64 @@ impl eframe::App for FractadyneApp {
             }
         }
 
+        // CLI standardized benchmark (`--benchmark-std [--res] [--burnin]`): run all passes
+        // synchronously, print + save the report, and quit.
+        if self.auto_stdbench && !self.auto_stdbench_done {
+            if let Some((dev, q)) = &gpu {
+                self.auto_stdbench_done = true;
+                let (res, passes) = (self.std_res, self.std_passes);
+                println!(
+                    "Fractadyne standardized benchmark — {} × {passes} pass{}",
+                    res.label(),
+                    if passes == 1 { "" } else { "es" }
+                );
+                let mut run = self.begin_standard_bench(res, passes);
+                while !self.step_std_bench(&mut run, dev, q) {
+                    println!(
+                        "  pass {}/{}  {:.1} fps",
+                        run.passes_done,
+                        run.passes_total,
+                        run.pass_fps.last().copied().unwrap_or(0.0)
+                    );
+                }
+                println!(
+                    "  pass {}/{}  {:.1} fps",
+                    run.passes_done,
+                    run.passes_total,
+                    run.pass_fps.last().copied().unwrap_or(0.0)
+                );
+                let report = self.format_std_bench(&run);
+                println!("\n{report}");
+                let out = self.auto_benchmark_out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from("fractadyne_benchmark.txt")
+                });
+                match std::fs::write(&out, &report) {
+                    Ok(()) => println!("\nSaved benchmark → {}", out.display()),
+                    Err(e) => eprintln!("Failed to save benchmark to {}: {e}", out.display()),
+                }
+                std::process::exit(0);
+            }
+        }
+
+        // GUI standardized benchmark: advance one pass per frame so the window stays responsive
+        // (and cancellable) between passes.
+        if let Some(mut run) = self.std_bench.take() {
+            if let Some((dev, q)) = &gpu {
+                let done = self.step_std_bench(&mut run, dev, q);
+                if done {
+                    self.bench_report = Some(self.format_std_bench(&run));
+                    self.bench_open = true;
+                    let snap = run.take_snapshot();
+                    self.restore_from_bench(snap);
+                } else {
+                    self.std_bench = Some(run);
+                    ctx.request_repaint();
+                }
+            } else {
+                self.std_bench = Some(run); // wait for the GPU handles
+            }
+        }
+
         // CLI render-and-exit: render one image offscreen (or the raw iteration EXR), save
         // it, and quit.
         if self.auto_render && !self.auto_render_done {
@@ -3702,8 +3797,8 @@ impl eframe::App for FractadyneApp {
         }
         self.perf.last_frame = Some(frame_start);
 
-        if !self.auto_benchmark && !self.auto_render && !self.selftest && !self.profile && self.render_tour.is_none() {
-            self.autosave(ctx); // don't let a CLI run overwrite the saved session
+        if !self.auto_benchmark && !self.auto_stdbench && !self.auto_render && !self.selftest && !self.profile && self.render_tour.is_none() && self.std_bench.is_none() {
+            self.autosave(ctx); // don't let a CLI run (or a transient benchmark override) overwrite the saved session
         }
 
         // Combined menu bar + action toolbar. `horizontal_wrapped` keeps them on one
@@ -3919,13 +4014,15 @@ impl eframe::App for FractadyneApp {
                     });
                     ui.menu_button("Tools", |ui| {
                         if ui
-                            .button("Run benchmark")
+                            .button("Benchmark…")
                             .on_hover_text(
-                                "Play a fixed deep-zoom tour and report FPS / CPU / GPU / RAM.",
+                                "Measure rendering speed — current settings, or a standardized \
+                                 run (fixed resolution + settings) comparable across machines. \
+                                 Burn-in repeats it to check stability / thermal throttling.",
                             )
                             .clicked()
                         {
-                            self.start_benchmark();
+                            self.bench_dialog_open = true;
                             ui.close_menu();
                         }
                         if ui.button("Play script…").clicked() {
@@ -4986,6 +5083,107 @@ impl eframe::App for FractadyneApp {
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
         // view still matches the bookmark, since adding it didn't move the view).
         self.process_pending_thumb(&gpu);
+
+        // ---- benchmark configuration dialog ----
+        if self.bench_dialog_open {
+            let mut open = self.bench_dialog_open;
+            let mut run_now = false;
+            egui::Window::new("Benchmark")
+                .open(&mut open)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label("Mode");
+                    ui.radio_value(&mut self.bench_dlg_standard, false, "Current settings")
+                        .on_hover_text("Play the fixed deep-zoom tour into the live view using your current resolution and settings.");
+                    ui.radio_value(&mut self.bench_dlg_standard, true, "Standardized")
+                        .on_hover_text("Pin resolution + all render settings so the score is comparable across machines.");
+                    ui.add_enabled_ui(self.bench_dlg_standard, |ui| {
+                        ui.separator();
+                        ui.label("Resolution");
+                        egui::ComboBox::from_id_salt("bench_res")
+                            .selected_text(self.bench_dlg_res.label())
+                            .show_ui(ui, |ui| {
+                                for r in BenchRes::ALL {
+                                    ui.selectable_value(&mut self.bench_dlg_res, r, r.label());
+                                }
+                            });
+                        ui.add_space(4.0);
+                        ui.checkbox(&mut self.bench_dlg_burnin, "Burn-in (repeat)")
+                            .on_hover_text("Run the benchmark repeatedly to reveal stability and thermal throttling.");
+                        ui.add_enabled_ui(self.bench_dlg_burnin, |ui| {
+                            ui.add(egui::Slider::new(&mut self.bench_dlg_passes, 2..=200).text("passes"));
+                        });
+                    });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Run").clicked() {
+                            run_now = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.bench_dialog_open = false;
+                        }
+                    });
+                    if self.bench_dlg_standard {
+                        let (w, h) = self.bench_dlg_res.dims();
+                        ui.add_space(2.0);
+                        ui.weak(format!(
+                            "Renders offscreen at {w}×{h}, {}× SS, Mandelbrot/smooth, 60-frame dive to 1e12×.",
+                            scripting::STD_AA
+                        ));
+                    }
+                });
+            self.bench_dialog_open = open;
+            if run_now {
+                self.bench_dialog_open = false;
+                if self.bench_dlg_standard {
+                    let passes = if self.bench_dlg_burnin { self.bench_dlg_passes } else { 1 };
+                    let run = self.begin_standard_bench(self.bench_dlg_res, passes);
+                    self.std_bench = Some(run);
+                    ctx.request_repaint();
+                } else {
+                    self.start_benchmark();
+                }
+            }
+        }
+
+        // ---- standardized benchmark progress (advances one pass per frame) ----
+        if let Some((label, done, total, last_fps)) = self
+            .std_bench
+            .as_ref()
+            .map(|r| (r.res.label(), r.passes_done, r.passes_total, r.pass_fps.last().copied()))
+        {
+            let mut cancel = false;
+            egui::Window::new("Running benchmark…")
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label(format!("Standardized · {label}"));
+                    if total > 1 {
+                        ui.label(format!("Burn-in pass {}/{}", (done + 1).min(total), total));
+                    } else {
+                        ui.label("Rendering the fixed dive…");
+                    }
+                    if let Some(f) = last_fps {
+                        ui.label(format!("last pass: {f:.1} fps"));
+                    }
+                    ui.add_space(4.0);
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            if cancel {
+                if let Some(run) = self.std_bench.take() {
+                    let report = (!run.pass_fps.is_empty()).then(|| self.format_std_bench(&run));
+                    let snap = run.take_snapshot();
+                    self.restore_from_bench(snap);
+                    if let Some(r) = report {
+                        self.bench_report = Some(r);
+                        self.bench_open = true;
+                    }
+                }
+            }
+        }
 
         // ---- benchmark results ----
         if self.bench_open {

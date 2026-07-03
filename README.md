@@ -33,8 +33,9 @@ zoom** and performance.
   PNG encode across frames for throughput.
 - **Watermark & location HUD** — a subtle "Fd" watermark (on by default, toggleable) and an
   optional burned-in zoom/coordinate HUD (`--show-location`) on live view and renders.
-- **Tooling** — a built-in benchmark (FPS / CPU / GPU / RAM + system info) and headless CLI
-  modes (`fractadyne --help` for the full reference).
+- **Tooling** — a built-in benchmark (FPS / CPU / GPU / RAM + system info), with a **standardized**
+  mode (pinned resolution + settings, comparable across machines) and a **burn-in** loop for
+  stability/thermal checks, plus headless CLI modes (`fractadyne --help` for the full reference).
 
 ## Download
 
@@ -63,7 +64,10 @@ the in-app **Help → Command line** window). The common modes:
 
 ```sh
 fractadyne --help                            # print the full command-line reference and quit
-fractadyne --benchmark [--out report.txt]   # run a fixed deep-zoom tour; report perf + system info; quit
+fractadyne --benchmark [--out report.txt]   # benchmark with current settings; report perf + system info; quit
+fractadyne --benchmark-std [--res 720p|1080p|4k|5k] [--burnin N] [--out report.txt]
+                                             # standardized benchmark: pinned resolution + settings,
+                                             # comparable across machines; --burnin N repeats it (stability/throttle)
 fractadyne --render --out img.png [--fractal Mandelbrot --center X Y --zoom M \
            --zoom-log2 L --size W|WxH --ss N --iter K --julia --julia-c RE IM --palette I \
            --method stripe --stripe-freq N --trap point|cross|circle --light --de \
@@ -107,7 +111,7 @@ carry a `fractadyne_` brand prefix + timestamp; a tour's frames/movie take the t
 | Response file | *any text* (`.args` by convention) | `@FILE`, `--args-file` | Command-line arguments in a file |
 | Tour frames | `.png` | `--render-tour` | `<prefix>_00000.png` (prefix defaults to the tour name) |
 | Tour movie | `.mp4` | `--render-tour --mp4` | `<prefix>.mp4` via ffmpeg |
-| Benchmark report | `.txt` | `--benchmark --out` | FPS/CPU/GPU/RAM + system info |
+| Benchmark report | `.txt` | `--benchmark[-std] --out` | FPS/CPU/GPU/RAM + system info (+ pinned settings for standardized) |
 | Validation report | `.md` | `--selftest` | `validation/report.md` |
 | Profile log | `.json` | `--profile` | Per-stage timings under `logs/` |
 | Kalles Fraktaler loc. | `.kfr` | `--import-kfr` | External location import |

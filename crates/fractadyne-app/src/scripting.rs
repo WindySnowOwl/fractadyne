@@ -1652,6 +1652,341 @@ impl FractadyneApp {
     }
 }
 
+// ============================================================================
+// Standardized benchmark — pins every render setting so a score is comparable
+// across machines, regardless of window size or the user's current settings.
+// ============================================================================
+
+/// Fixed output resolutions offered for the standardized benchmark. These render
+/// **offscreen** (via the export/tiling path), so 4K/5K work even on a smaller monitor.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BenchRes {
+    P720,
+    P1080,
+    P4K,
+    W5K2K,
+}
+
+impl BenchRes {
+    pub(crate) const ALL: [BenchRes; 4] =
+        [BenchRes::P720, BenchRes::P1080, BenchRes::P4K, BenchRes::W5K2K];
+
+    pub(crate) fn dims(self) -> (u32, u32) {
+        match self {
+            BenchRes::P720 => (1280, 720),
+            BenchRes::P1080 => (1920, 1080),
+            BenchRes::P4K => (3840, 2160),
+            BenchRes::W5K2K => (5120, 2160),
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            BenchRes::P720 => "720p (1280×720)",
+            BenchRes::P1080 => "1080p (1920×1080)",
+            BenchRes::P4K => "4K (3840×2160)",
+            BenchRes::W5K2K => "5K×2K (5120×2160)",
+        }
+    }
+
+    /// Parse a CLI token (`720p` / `1080p` / `4k` / `5k` …, case-insensitive).
+    pub(crate) fn from_token(s: &str) -> Option<BenchRes> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "720" | "720p" | "hd" => Some(BenchRes::P720),
+            "1080" | "1080p" | "fhd" => Some(BenchRes::P1080),
+            "4k" | "2160" | "2160p" | "uhd" => Some(BenchRes::P4K),
+            "5k" | "5kx2k" | "5k2k" => Some(BenchRes::W5K2K),
+            _ => None,
+        }
+    }
+}
+
+/// Canonical settings the standardized benchmark pins (so the score means the same on
+/// every machine). Recorded verbatim in the report.
+pub(crate) const STD_AA: u32 = 2; // 2×2 supersampling
+pub(crate) const STD_FRAMES: u32 = 60; // frames rendered along the fixed dive
+pub(crate) const STD_ZOOM_LOG10: f64 = 12.0; // dive depth: 1 → 1e12×
+/// Seahorse-Valley point with structure at every scale (same as the built-in tour).
+const STD_CX: &str = "-0.743643887037158704752191506114774";
+const STD_CY: &str = "0.131825904205311970493132056385139";
+
+/// The subset of app render settings the standardized benchmark overrides, saved so the
+/// live view is restored untouched afterward.
+pub(crate) struct BenchSnapshot {
+    fractal: FractalKind,
+    julia_mode: bool,
+    dual: bool,
+    color_method: u32,
+    auto_iter: bool,
+    aa: u32,
+    series_approx: bool,
+    use_bla: bool,
+    glitch_correct: bool,
+    palette_idx: usize,
+    use_binary: bool,
+    use_duotone: bool,
+    use_custom_palette: bool,
+}
+
+/// A running standardized benchmark (one or more passes; >1 = burn-in). Driven a pass at a
+/// time from `update()` so the window stays responsive (and cancellable) between passes.
+pub(crate) struct StdBench {
+    pub(crate) res: BenchRes,
+    pub(crate) passes_total: u32,
+    pub(crate) passes_done: u32,
+    /// Average FPS of each completed pass (burn-in stability / thermal trend).
+    pub(crate) pass_fps: Vec<f64>,
+    /// Per-frame stats of the most recent completed pass (for the detailed report).
+    last: Option<Bench>,
+    snapshot: BenchSnapshot,
+}
+
+impl StdBench {
+    /// Consume the run, yielding the saved settings so the caller can restore the live view.
+    pub(crate) fn take_snapshot(self) -> BenchSnapshot {
+        self.snapshot
+    }
+}
+
+impl FractadyneApp {
+    /// Begin a standardized benchmark (`passes` ≥ 2 ⇒ burn-in). Snapshots the live settings,
+    /// pins the canonical ones, and returns the run state to drive pass-by-pass.
+    pub(crate) fn begin_standard_bench(&mut self, res: BenchRes, passes: u32) -> StdBench {
+        let snapshot = BenchSnapshot {
+            fractal: self.fractal,
+            julia_mode: self.julia_mode,
+            dual: self.dual,
+            color_method: self.color_method,
+            auto_iter: self.auto_iter,
+            aa: self.aa,
+            series_approx: self.series_approx,
+            use_bla: self.use_bla,
+            glitch_correct: self.glitch_correct,
+            palette_idx: self.palette_idx,
+            use_binary: self.use_binary,
+            use_duotone: self.use_duotone,
+            use_custom_palette: self.use_custom_palette,
+        };
+        // Pin the canonical configuration.
+        self.set_fractal(FractalKind::Mandelbrot);
+        self.julia_mode = false;
+        self.dual = false;
+        self.color_method = 0; // smooth
+        self.auto_iter = true; // depth-appropriate, deterministic per depth
+        self.aa = STD_AA;
+        self.series_approx = true;
+        self.use_bla = true;
+        self.glitch_correct = false; // data-dependent cost → off for a deterministic timing
+        self.palette_idx = 0; // Ember
+        self.use_binary = false;
+        self.use_duotone = false;
+        self.use_custom_palette = false;
+        self.invalidate_refs();
+        StdBench {
+            res,
+            passes_total: passes.clamp(1, 500),
+            passes_done: 0,
+            pass_fps: Vec::new(),
+            last: None,
+            snapshot,
+        }
+    }
+
+    /// Restore the live settings a standardized benchmark overrode.
+    pub(crate) fn restore_from_bench(&mut self, s: BenchSnapshot) {
+        self.set_fractal(s.fractal);
+        self.julia_mode = s.julia_mode;
+        self.dual = s.dual;
+        self.color_method = s.color_method;
+        self.auto_iter = s.auto_iter;
+        self.aa = s.aa;
+        self.series_approx = s.series_approx;
+        self.use_bla = s.use_bla;
+        self.glitch_correct = s.glitch_correct;
+        self.palette_idx = s.palette_idx;
+        self.use_binary = s.use_binary;
+        self.use_duotone = s.use_duotone;
+        self.use_custom_palette = s.use_custom_palette;
+        self.invalidate_refs();
+    }
+
+    /// Run one full pass of the standardized dive at `dims`, sampling per-frame CPU (reference
+    /// build) + GPU (full offscreen render) time. Blocks for the pass (like a single export).
+    fn run_std_bench_pass(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        dims: (u32, u32),
+    ) -> Bench {
+        use std::sync::atomic::{AtomicBool, AtomicU32};
+        use std::time::Instant;
+        const LOG2_10: f64 = std::f64::consts::LOG2_10;
+        let (w, h) = dims;
+        let progress = AtomicU32::new(0);
+        let cancel = AtomicBool::new(false);
+        let cx = fractadyne_core::parse_bf(STD_CX)
+            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(-0.5, 64));
+        let cy = fractadyne_core::parse_bf(STD_CY)
+            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, 64));
+        let mut vp = fractadyne_core::Viewport::new(w as f64, h as f64);
+        self.invalidate_refs(); // start each pass from a cold reference cache
+        let mut b = Bench::new();
+        b.warmup_left = 0; // explicit warm-up below instead
+
+        let frames = STD_FRAMES.max(2);
+        let render = |app: &mut Self, vp: &fractadyne_core::Viewport| -> (f64, f64) {
+            let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
+            let center = vp.center_f64();
+            let span = vp.complex_span_fe();
+            let mag = vp.magnification();
+            let l2 = vp.log2_magnification();
+            let eff_iter = vp.recommended_max_iter(app.max_iter);
+            let t = Instant::now();
+            let params = app.build_params(
+                center_bf, center, span, mag, l2, app.fractal, false, eff_iter, false, STD_AA,
+                [w, h], 0, None,
+            );
+            let build_ms = t.elapsed().as_secs_f64() * 1000.0;
+            let req = crate::profile::params_to_request(&params);
+            let t = Instant::now();
+            let _ = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
+            let gpu_ms = t.elapsed().as_secs_f64() * 1000.0;
+            (build_ms, gpu_ms)
+        };
+
+        // Warm-up frame (shader/pipeline compile, first upload) — not counted.
+        vp.set_center_log2mag(cx.clone(), cy.clone(), 0.0);
+        let _ = render(self, &vp);
+
+        for i in 0..frames {
+            let frac = i as f64 / (frames - 1) as f64;
+            let log2mag = frac * STD_ZOOM_LOG10 * LOG2_10;
+            vp.set_center_log2mag(cx.clone(), cy.clone(), log2mag);
+            let (build_ms, gpu_ms) = render(self, &vp);
+            let frame_ms = build_ms + gpu_ms;
+            b.frames += 1;
+            b.sum_frame_ms += frame_ms;
+            b.sum_cpu_ms += build_ms;
+            if frame_ms > 0.0 {
+                let fps = 1000.0 / frame_ms;
+                b.min_fps = b.min_fps.min(fps);
+                b.max_fps = b.max_fps.max(fps);
+            }
+            let (ws, peak) = process_memory();
+            b.peak_ram = b.peak_ram.max(peak).max(ws);
+            b.sum_ram += ws;
+        }
+        b
+    }
+
+    /// Advance an in-flight standardized benchmark by one pass. Returns the finished run (so the
+    /// caller can build the report and restore state) once all passes are done, else `None`.
+    pub(crate) fn step_std_bench(
+        &mut self,
+        run: &mut StdBench,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+    ) -> bool {
+        let b = self.run_std_bench_pass(device, queue, run.res.dims());
+        let f = b.frames.max(1) as f64;
+        let avg_fps = if b.sum_frame_ms > 0.0 { 1000.0 / (b.sum_frame_ms / f) } else { 0.0 };
+        run.pass_fps.push(avg_fps);
+        run.last = Some(b);
+        run.passes_done += 1;
+        run.passes_done >= run.passes_total
+    }
+
+    /// Build the human-readable standardized-benchmark report (settings block + results, plus a
+    /// per-pass table when it was a burn-in run).
+    pub(crate) fn format_std_bench(&self, run: &StdBench) -> String {
+        let (w, h) = run.res.dims();
+        let si = &self.sysinfo;
+        let cache = if si.l3_kb > 0 {
+            format!("L2 {} KB · L3 {} MB", si.l2_kb, si.l3_kb / 1024)
+        } else if si.l2_kb > 0 {
+            format!("L2 {} KB", si.l2_kb)
+        } else {
+            "—".to_string()
+        };
+        let vram = if si.vram_mb > 0 { format!("{} MB", si.vram_mb) } else { "—".to_string() };
+
+        // Aggregate across passes.
+        let fps = &run.pass_fps;
+        let n = fps.len().max(1) as f64;
+        let mean = fps.iter().sum::<f64>() / n;
+        let pmin = fps.iter().cloned().fold(f64::INFINITY, f64::min);
+        let pmax = fps.iter().cloned().fold(0.0_f64, f64::max);
+        let var = fps.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
+        let sd = var.sqrt();
+
+        let b = run.last.as_ref();
+        let (aframe, acpu, agpu, aram, pram) = if let Some(b) = b {
+            let bf = b.frames.max(1) as f64;
+            let af = b.sum_frame_ms / bf;
+            let ac = b.sum_cpu_ms / bf;
+            (af, ac, (b.sum_frame_ms - b.sum_cpu_ms).max(0.0) / bf, b.sum_ram as f64 / bf, b.peak_ram as f64)
+        } else {
+            (0.0, 0.0, 0.0, 0.0, 0.0)
+        };
+        let mb = |bytes: f64| bytes / (1024.0 * 1024.0);
+
+        let mut s = String::new();
+        s.push_str("Fractadyne standardized benchmark\n");
+        s.push_str(&format!("version    v{}\n", version_string()));
+        s.push_str(&format!("cpu        {}\n", if si.cpu.is_empty() { "—" } else { &si.cpu }));
+        s.push_str(&format!("cores      {} physical / {} logical\n", si.physical, si.logical));
+        s.push_str(&format!("cache      {cache}\n"));
+        s.push_str(&format!("gpu        {}\n", self.gpu_name));
+        s.push_str(&format!("vram       {vram}\n"));
+        s.push_str("---- fixed settings (comparable across machines) ----\n");
+        s.push_str(&format!("resolution {}  ({w}×{h})\n", run.res.label()));
+        s.push_str(&format!("aa (ss)    {STD_AA}x  ({}× samples/px)\n", STD_AA * STD_AA));
+        s.push_str("fractal    Mandelbrot   coloring  Smooth (Ember)\n");
+        s.push_str("max-iter   auto (depth-adaptive)\n");
+        s.push_str("deep zoom  series-approx on · BLA on · glitch off\n");
+        s.push_str(&format!(
+            "dive       {} frames, 1 → 1e{:.0}× (seahorse valley)\n",
+            STD_FRAMES, STD_ZOOM_LOG10
+        ));
+        s.push_str("----------------------------------------\n");
+        if run.passes_total > 1 {
+            s.push_str(&format!("burn-in    {} passes\n", run.passes_done));
+            s.push_str(&format!("avg FPS    {mean:8.1}   (mean of passes)\n"));
+            s.push_str(&format!("min FPS    {pmin:8.1}   (worst pass)\n"));
+            s.push_str(&format!("max FPS    {pmax:8.1}   (best pass)\n"));
+            s.push_str(&format!("std dev    {sd:8.2}   ({:.1}% — stability)\n", if mean > 0.0 { 100.0 * sd / mean } else { 0.0 }));
+            if run.pass_fps.len() >= 2 {
+                let first = run.pass_fps[0];
+                let last = *run.pass_fps.last().unwrap();
+                let drop = if first > 0.0 { 100.0 * (last - first) / first } else { 0.0 };
+                s.push_str(&format!("throttle   {drop:+8.1}%  (last vs first pass)\n"));
+            }
+            s.push_str("----------------------------------------\n");
+            s.push_str("pass   FPS\n");
+            for (i, f) in run.pass_fps.iter().enumerate() {
+                s.push_str(&format!("{:>4}  {:>6.1}\n", i + 1, f));
+            }
+            s.push_str("----------------------------------------\n");
+        } else {
+            s.push_str(&format!("avg FPS    {mean:8.1}\n"));
+            if let Some(b) = b {
+                let bmin = if b.min_fps.is_finite() { b.min_fps } else { 0.0 };
+                s.push_str(&format!("min FPS    {bmin:8.1}   (deepest frames)\n"));
+                s.push_str(&format!("max FPS    {:8.1}   (shallow frames)\n", b.max_fps));
+            }
+            s.push_str("----------------------------------------\n");
+        }
+        s.push_str(&format!("avg frame  {aframe:8.2} ms\n"));
+        s.push_str(&format!("avg CPU    {acpu:8.2} ms   (reference build)\n"));
+        s.push_str(&format!("avg GPU    {agpu:8.2} ms   (render)\n"));
+        s.push_str(&format!("avg RAM    {:8.1} MB\n", mb(aram)));
+        s.push_str(&format!("peak RAM   {:8.1} MB\n", mb(pram)));
+        s.push_str("----------------------------------------\n");
+        s.push_str(&format!("score      {:8.0}   (avg FPS × 100)", mean * 100.0));
+        s
+    }
+}
+
 #[cfg(test)]
 mod schema_tests {
     /// The checked-in TOURS.md must match what the schema generates — regenerate it with

@@ -8,6 +8,21 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.7
+
+- **Standardized benchmark + burn-in** — the benchmark now has two modes. **Current settings** plays
+  the fixed deep-zoom tour into the live view exactly as before (measures your window/resolution and
+  active settings). **Standardized** pins *every* render setting — Mandelbrot / smooth / Ember, 2× SS,
+  depth-adaptive iterations, series-approx + BLA on, glitch off — and renders a fixed 60-frame dive to
+  1e12× **offscreen** at a chosen resolution (**720p / 1080p / 4K / 5K×2K**), so 4K/5K work regardless
+  of monitor size and the score means the same on every machine. The report now records the full
+  settings block (resolution, SS, iteration policy, deep-zoom flags, dive) alongside the CPU/GPU/RAM
+  facts. **Burn-in** repeats the standardized run N times and reports per-pass FPS, a stability
+  std-dev, and a first-vs-last **throttle** delta — revealing thermal/clock decline under sustained
+  load. In the GUI: *Tools → Benchmark…* (mode / resolution / burn-in dialog; runs a pass at a time so
+  the window stays responsive and cancellable, then restores your live view untouched). Headless:
+  `--benchmark-std [--res 720p|1080p|4k|5k] [--burnin N]` (`--out` saves the report).
+
 ## 0.1.6
 
 - **Progressive settle anti-aliasing** — when the view settles it no longer jumps straight to full AA
