@@ -1,8 +1,9 @@
 # Fractadyne — Current State (resume log)
 
-_Last updated: 2026-06-29. Version **v0.1.0** (auto-incrementing build counter in
+_Last updated: 2026-07-02. Version **v0.1.0** (auto-incrementing build counter in
 `.build_seq` at repo root). [CHANGELOG.md](CHANGELOG.md) is the authoritative running log;
-this file is a higher-level snapshot._
+this file is a higher-level snapshot. Some deep-dive investigation sections below are historical
+(kept for reference) — the CHANGELOG is the source of truth for what shipped._
 
 Companion docs: [TODO.md](TODO.md) (backlog, what's done), [CHANGELOG.md](CHANGELOG.md)
 (per-version changes), [DESIGN.md](DESIGN.md) / [UI-DESIGN.md](UI-DESIGN.md) (specs).
@@ -30,13 +31,19 @@ cargo build --release -p fractadyne-app -j 1
   to unlock the exe before rebuild is authorized.
 
 ## Headless CLI (automation / debugging)
+`fractadyne --help` prints the full, always-current reference (generated from the shared
+`CLI_REFERENCE` table in `help.rs`, the same list the in-app Help window shows). Common:
 ```
+fractadyne --help                                 # full command-line reference, quits
 fractadyne --benchmark [--out report.txt]         # fixed deep-zoom tour, samples FPS/CPU/GPU/RAM, quits
 fractadyne --render --out img.png [--fractal Mandelbrot --center X Y --zoom M \
-           --size W --ss N --iter K --julia --julia-c RE IM --palette I]   # one image, quits
+           --size WxH --ss N --iter K --julia --julia-c RE IM --palette I --show-location]
+fractadyne --render-tour tour.toml --out frames [--fps N --size WxH --ss N --mp4 [f.mp4] --show-location]
 ```
-Both skip session autosave. `--render` reuses the tiled export pipeline; PNG/EXR by
-extension; full-precision center via decimal strings. Great for golden-image checks.
+All skip session autosave. `--render` reuses the tiled export pipeline; PNG/EXR by
+extension; full-precision center via decimal strings. `--render-tour` renders a keyframe-tour
+TOML to a PNG frame sequence (+ optional ffmpeg mp4), pipelining reference/render/encode across
+frames. Great for golden-image checks and movie export.
 
 ## Deep-zoom engine (the headline feature) — current status
 - Arbitrary-precision center (`astro_float::BigFloat`, precision scales with zoom).
@@ -55,7 +62,7 @@ extension; full-precision center via decimal strings. Great for golden-image che
 - Earlier fix: Julia rebasing subtracts `reference[0]` (no-op for Mandelbrot, required
   for Julia where Z₀ ≠ 0).
 
-## Interactive orbit overlay — IN PROGRESS (the live thread)
+## Interactive orbit overlay — ✅ DONE (shipped; notes historical)
 View → "Show orbits" (+ "Normalize (fit to view)", + "Animate (racing dot)" with speed).
 Draws the iteration path of the point under the cursor (`draw_orbit` in `main.rs`).
 - Shallow (≤1e12×): f64 orbit from the exact cursor point (`orbit_points`).
@@ -172,7 +179,12 @@ This is low-risk (only `gen_stops`); implement when we resume.
 - Export: tiled PNG/EXR + reloadable metadata (carries `upp_log2`), gallery browser,
   background render + progress + cancel, dual layouts, quick-save (Ctrl+S).
 - Palette animation: Off/Forward/Reverse/Ping-pong/**Random gradients** (+Shuffle), speed.
-- Scripting (Tools → Play script…): TOML keyframe camera tours; built-in benchmark tour.
+- Scripting (Tools → Play script…): TOML keyframe camera tours with eased moves, timed
+  captions, coordinate-anchored callouts, and spotlight vignettes; built-in benchmark tour.
+  Headless `--render-tour` renders a tour to a PNG sequence + optional ffmpeg **mp4**, with an
+  optional zoom/coordinate HUD (`--show-location`); reference/render/encode pipelined per frame.
+- Watermark: subtle "Fd" mark (BRAND colors) on live view + exports, on by default, toggleable
+  (`--watermark`/`--no-watermark`).
 - In-app **Help** (F1): Overview / Navigation / Coloring / Fractals / How-it-works /
   Command line / Shortcuts / About.
 - **Validation**: `--selftest` (GPU vs CPU-f64 + bignum oracle to 1e30×, goldens), core
@@ -181,11 +193,14 @@ This is low-risk (only `gen_stops`); implement when we resume.
 
 ## Top open items (from TODO.md)
 - Burning Ship / Celtic / Buffalo perturbation (still direct ~1e6×); Newton/Phoenix deep.
-- Series approximation; full glitch correction (Pauldelbrot/multi-ref).
-- Left Parameters panel; dual-view splitter; tile cache + pan reprojection.
-- Autopilot steering modes (minibrot-seek/boundary-track); zoom-movie / record-to-video.
-- Histogram/equalized coloring; benchmark presets + CSV/JSON history; `.fdn` QR codes.
-- Deep goto/metadata past 1e308× ✓; full-precision persisted center ✓ (done).
+- Full glitch correction (Pauldelbrot/multi-ref) — base multi-ref path exists; broaden + thread.
+- Left Parameters panel; dual-view splitter; tile cache + pan reprojection (live reprojection ✓).
+- Autopilot steering modes (minibrot-seek/boundary-track).
+- Tile-level export pipeline (async readback); histogram/equalized coloring; benchmark CSV/JSON history.
+- Done since last snapshot: series approximation ✓, off-thread reference recompute + freeze/
+  reprojection ✓, guided-tour scripting (captions/callouts/spotlights) ✓, zoom-movie export
+  (`--render-tour` + `--mp4`) ✓, `--show-location` HUD ✓, watermark ✓, `--size WxH` ✓,
+  reference/encode pipelining for tours ✓, `--help` ✓, GitHub Releases workflow ✓.
 
 ## Key files
 - `crates/fractadyne-core/src/lib.rs` — Viewport (BigFloat center), `reference_orbit`,

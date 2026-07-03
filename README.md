@@ -26,8 +26,14 @@ zoom** and performance.
 - **Bookmarks** — save and instantly return to favorite (deep) locations.
 - **Shareable locations** — copy/paste or save/load a self-contained `.fdn` location
   (File → "Share location…") to reproduce an exact spot/look; hardened, fuzzed parser.
-- **Tooling** — keyframe camera scripts, a built-in benchmark (FPS / CPU / GPU / RAM +
-  system info), and headless CLI modes.
+- **Guided tours & movie export** — TOML keyframe scripts with eased camera moves, timed
+  captions, coordinate-anchored callouts, and spotlight vignettes. Play them live, or render
+  a tour headless to a PNG frame sequence and (with ffmpeg) straight to an **mp4**. Deep dives
+  overlap the bignum reference, GPU render, and PNG encode across frames for throughput.
+- **Watermark & location HUD** — a subtle "Fd" watermark (on by default, toggleable) and an
+  optional burned-in zoom/coordinate HUD (`--show-location`) on live view and renders.
+- **Tooling** — a built-in benchmark (FPS / CPU / GPU / RAM + system info) and headless CLI
+  modes (`fractadyne --help` for the full reference).
 
 ## Download
 
@@ -51,12 +57,21 @@ Pinned to egui / eframe **0.31** (wgpu backend).
 
 ### Headless CLI
 
+Run `fractadyne --help` for the complete, always-current reference (the same list shown in
+the in-app **Help → Command line** window). The common modes:
+
 ```sh
+fractadyne --help                            # print the full command-line reference and quit
 fractadyne --benchmark [--out report.txt]   # run a fixed deep-zoom tour; report perf + system info; quit
 fractadyne --render --out img.png [--fractal Mandelbrot --center X Y --zoom M \
-           --zoom-log2 L --size W --ss N --iter K --julia --julia-c RE IM --palette I \
-           --method stripe --stripe-freq N --trap point|cross|circle --light --de]
+           --zoom-log2 L --size W|WxH --ss N --iter K --julia --julia-c RE IM --palette I \
+           --method stripe --stripe-freq N --trap point|cross|circle --light --de \
+           --show-location]
            # --zoom-log2 L sets magnification 2^L for depths past f64 range (≥ ~1e308×)
+fractadyne --render-tour tour.toml --out frames [--fps N --size WxH --height H --ss N \
+           --mp4 [out.mp4] --show-location]
+           # render a keyframe-tour TOML to a PNG frame sequence (+ optional mp4 via ffmpeg);
+           # prints live progress (frames done / elapsed / ETA). Example tours in tours/.
 fractadyne --find-minibrot --center X Y --zoom M   # print nearby minibrot period + nucleus
 fractadyne --selftest [--bless] [--out report.md]  # validation suite; exit 0 = all passed
 fractadyne --render-iter --out img.exr [view opts] # export raw iteration data (EXR) for review

@@ -6,6 +6,11 @@ use crate::{version_string, FractalKind};
 
 /// Dispatch the headless CLI modes. Returns true if one ran (caller should exit).
 pub(crate) fn run_headless(args: &[String]) -> bool {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print!("{}", crate::help::cli_help_text());
+        return true;
+    }
+
     if args.iter().any(|a| a == "--find-minibrot") {
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
         let two = |name: &str| {

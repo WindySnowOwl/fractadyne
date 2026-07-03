@@ -69,6 +69,10 @@ Baseline for tracked versioning. Notable capabilities already present:
   for `--render` and `--render-tour`. Explicit `--height` still overrides. Each dimension is clamped
   to 16–16384 px.
 
+- **`fractadyne --help` / `-h`** — prints the full command-line reference to the terminal and exits.
+  Both it and the in-app **Help → Command line** window now render from one shared `CLI_REFERENCE`
+  table, so they can't drift out of sync. Docs (README, STATE) refreshed to match.
+
 - **Location HUD on renders** — `--show-location` (alias `--hud`) burns a small overlay into the
   top-left of each rendered frame: zoom level (amber) + full-precision center coordinates (`re`/`im`).
   Works with `--render` and `--render-tour`; a tour can also set `show_location = true`. Uses the

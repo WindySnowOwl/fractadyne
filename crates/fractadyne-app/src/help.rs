@@ -335,86 +335,109 @@ pub(crate) fn help_methodology(ui: &mut egui::Ui) {
     );
 }
 
+/// One entry in the shared command-line reference. Rendered both in the in-app Help window
+/// ([`help_command_line`]) and by the headless `--help` text ([`cli_help_text`]), so the two can
+/// never drift out of sync.
+pub(crate) enum CliRef {
+    /// A section heading.
+    Section(&'static str),
+    /// A flag (with argument placeholders) and its one-line description.
+    Flag(&'static str, &'static str),
+    /// A free-standing example command line.
+    Example(&'static str),
+}
+
+/// Intro shown above the flag list (both in-app and in `--help`).
+pub(crate) const CLI_INTRO: &str =
+    "Fractadyne runs headless for rendering, movie/tour export, automation, golden-image checks, \
+     and benchmarking. With no flags it launches the interactive GUI.";
+
+/// The single source of truth for the command line. Keep it complete — both the Help window and
+/// `fractadyne --help` render from this list.
+pub(crate) const CLI_REFERENCE: &[CliRef] = {
+    use CliRef::{Example, Flag, Section};
+    &[
+        Section("Modes (pick one; otherwise the GUI launches)"),
+        Flag("--render", "Render one image and exit."),
+        Flag("--render-tour FILE", "Render a keyframe-tour TOML to a PNG frame sequence, then exit (see Tour options)."),
+        Flag("--benchmark, --bench", "Run the benchmark tour and exit (use --out to save the report)."),
+        Flag("--find-minibrot", "Print the nearby minibrot's period + center and exit (--center X Y --zoom M)."),
+        Flag("--selftest [--bless]", "Run the GPU validation suite; exit 0 = all passed. --bless records the goldens."),
+        Flag("--help, -h", "Print this command-line reference and exit."),
+        Section("Output"),
+        Flag("--out PATH, -o PATH", "Output file (PNG/EXR), or the output directory for --render-tour."),
+        Flag("--mp4 [PATH]", "With --render-tour: assemble the frames into an H.264 mp4 via ffmpeg (must be on PATH). Defaults to <out-dir>/tour.mp4; the PNG frames are kept."),
+        Flag("--show-location, --hud", "Burn a zoom-level + center-coordinate HUD into the top-left of each rendered frame (--render / --render-tour)."),
+        Section("Tour options (with --render-tour)"),
+        Flag("--fps N", "Frames per second (default 30)."),
+        Flag("--size W | WxH", "Frame size: bare width (height from aspect) or WIDTHxHEIGHT, e.g. 5120x2160."),
+        Flag("--height H", "Explicit frame height (overrides the height implied by --size)."),
+        Flag("--ss N", "Supersampling 1–8."),
+        Section("View (with --render / --find-minibrot)"),
+        Flag("--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\"."),
+        Flag("--center X Y", "View center (full-precision decimals)."),
+        Flag("--zoom M", "Magnification (f64, up to ~1e308x)."),
+        Flag("--zoom-log2 L", "Magnification = 2^L — for depths past f64 range (>= ~1e308x)."),
+        Flag("--julia", "Julia mode."),
+        Flag("--julia-c RE IM", "Julia parameter c."),
+        Section("Image & color (with --render)"),
+        Flag("--size W | WxH", "Image size: bare width (height from aspect) or WIDTHxHEIGHT."),
+        Flag("--ss N", "Supersampling 1–8."),
+        Flag("--iter N", "Maximum iterations."),
+        Flag("--palette N", "Preset palette index."),
+        Flag("--method NAME", "smooth | stripe | triangle | trap | distance | decomposition."),
+        Flag("--stripe-freq N", "Stripe density (stripe method)."),
+        Flag("--trap SHAPE", "point | cross | circle (orbit-trap method)."),
+        Flag("--binary", "Binary-decomposition coloring."),
+        Flag("--light [--light-angle R]", "Enable 3D relief lighting."),
+        Flag("--de", "Enable distance glow."),
+        Flag("--watermark / --no-watermark", "Force the \"Fd\" watermark on / off (overrides the saved preference)."),
+        Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot."),
+        Flag("--no-perf / --perf", "Hide / show the performance panel."),
+        Section("Validation & diagnostics"),
+        Flag("--render-iter -o F.exr", "Export raw iteration data (EXR) instead of a colored image."),
+        Flag("--compare A B", "Diff two renders/EXRs: max/mean delta + difference heatmap."),
+        Flag("--import-kfr F.kfr", "Load a Kalles Fraktaler (.kfr) location."),
+        Flag("--validate-deep", "Extreme-depth precision self-consistency battery (1e1000 … 1e1000000x)."),
+        Flag("--profile [--reps N] [--regions F] [--out P]", "Dev: time render stages per benchmark region -> JSON log in logs/."),
+        Flag("--crosscheck-f3 raw.exr", "Compare a Fraktaler-3 raw EXR (channel \"N\") against our CPU bignum oracle (--center X Y --zoom-f3 Z [--iter K] [--er R])."),
+        Flag("--frametest [--steps N] [--hold N] [--dive R]", "Dev: deep-dive frame-timing harness."),
+        Section("Examples"),
+        Example("fractadyne --render -o out.png --fractal Mandelbrot --center -0.743644 0.131826 --zoom 2e7 --iter 6000 --method stripe --ss 3"),
+        Example("fractadyne --render-tour tours/deep-spiral-dive.toml --size 1920x1080 --fps 30 --ss 2 --out frames --mp4 --show-location"),
+    ]
+};
+
 pub(crate) fn help_command_line(ui: &mut egui::Ui) {
     help_h(ui, "Command line");
-    help_p(
-        ui,
-        "Fractadyne can run headless for automation, golden-image checks, and benchmarking. Flags:",
-    );
-    help_sub(ui, "Modes");
-    help_kv(ui, "--render", "Render one image and exit.");
-    help_kv(ui, "--out PATH, -o PATH", "Output file (PNG/EXR), or output dir for --render-tour.");
-    help_kv(
-        ui,
-        "--render-tour FILE",
-        "Render a keyframe tour (TOML) to a PNG frame sequence, then exit. Options: \
-         --fps N (default 30), --size W or WxH (e.g. 5120x2160), --height H, --ss N, \
-         --out DIR (default \"frames\"), --mp4 [PATH]. Progress (frames done, elapsed, ETA) is \
-         printed as it renders. See scripts/tour.example.toml.",
-    );
-    help_kv(
-        ui,
-        "--mp4 [PATH]",
-        "With --render-tour: after the frames are written, assemble them into an H.264 mp4 via \
-         ffmpeg (must be on PATH). PATH defaults to <out-dir>/tour.mp4. Frames are kept. \
-         (PNG encoding runs on background threads, overlapping the next frame's render.)",
-    );
-    help_kv(
-        ui,
-        "--show-location, --hud",
-        "Burn a small HUD (zoom level + center coordinates) into the top-left of each rendered \
-         frame. Works with --render and --render-tour; a tour can also set show_location = true.",
-    );
-    help_kv(ui, "--benchmark, --bench", "Run the benchmark tour and exit (use --out to save).");
-    help_kv(ui, "--find-minibrot", "Print the nearby minibrot's period + center and exit.");
-    help_sub(ui, "View");
-    help_kv(ui, "--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\".");
-    help_kv(ui, "--center X Y", "View center (full-precision decimals).");
-    help_kv(ui, "--zoom M", "Magnification (f64, ≤ ~1e308×).");
-    help_kv(ui, "--zoom-log2 L", "Magnification = 2^L — for depths past f64 range (≥ ~1e308×).");
-    help_kv(ui, "--julia", "Julia mode.");
-    help_kv(ui, "--julia-c RE IM", "Julia parameter c.");
-    help_sub(ui, "Image & color");
-    help_kv(ui, "--size W | WxH", "Image size: bare width (height from aspect) or WIDTHxHEIGHT, e.g. 5120x2160.");
-    help_kv(ui, "--ss N", "Supersampling 1–8.");
-    help_kv(ui, "--iter N", "Maximum iterations.");
-    help_kv(ui, "--palette N", "Preset palette index.");
-    help_kv(ui, "--method NAME", "smooth | stripe | triangle | trap | distance | decomposition.");
-    help_kv(ui, "--stripe-freq N", "Stripe density (stripe method).");
-    help_kv(ui, "--trap SHAPE", "point | cross | circle (orbit-trap method).");
-    help_kv(ui, "--light [--light-angle R]", "Enable 3D relief lighting.");
-    help_kv(ui, "--de", "Enable distance glow.");
-    help_kv(ui, "--no-perf / --perf", "Hide / show the performance panel.");
-    help_sub(ui, "Validation");
-    help_kv(ui, "--selftest [--bless]", "Run the validation suite; exit 0 = all passed (--bless records goldens).");
-    help_kv(ui, "--render-iter -o F.exr", "Export raw iteration data (EXR) instead of a colored image.");
-    help_kv(ui, "--compare A B", "Diff two renders/EXRs: max/mean Δ + difference heatmap.");
-    help_kv(ui, "--import-kfr F.kfr", "Load a Kalles Fraktaler location.");
-    help_kv(
-        ui,
-        "--validate-deep",
-        "Extreme-depth precision self-consistency battery (1e1000…1e1000000×).",
-    );
-    help_kv(
-        ui,
-        "--profile [--reps N] [--regions F] [--out P]",
-        "Dev profiling: time render stages per benchmark region → JSON log in logs/.",
-    );
-    help_kv(
-        ui,
-        "--crosscheck-f3 raw.exr",
-        "Compare a Fraktaler-3 raw EXR (channel \"N\") against our CPU bignum oracle \
-         (--center X Y --zoom-f3 Z [--iter K] [--er R]).",
-    );
-    help_sub(ui, "Example");
-    ui.label(
-        egui::RichText::new(
-            "fractadyne --render -o out.png --fractal Mandelbrot \\\n  \
-             --center -0.743644 0.131826 --zoom 2e7 --iter 6000 --method stripe --ss 3",
-        )
-        .monospace()
-        .small(),
-    );
+    help_p(ui, CLI_INTRO);
+    for entry in CLI_REFERENCE {
+        match entry {
+            CliRef::Section(s) => help_sub(ui, s),
+            CliRef::Flag(f, d) => help_kv(ui, f, d),
+            CliRef::Example(x) => {
+                ui.label(egui::RichText::new(*x).monospace().small());
+            }
+        }
+    }
+}
+
+/// The command-line reference as plain text, for the headless `fractadyne --help`. Built from the
+/// same [`CLI_REFERENCE`] as the in-app Help window.
+pub(crate) fn cli_help_text() -> String {
+    let mut s = String::new();
+    s.push_str(&format!("Fractadyne v{} — deep-zoom fractal explorer\n\n", version_string()));
+    s.push_str("Usage: fractadyne [FLAGS]\n\n");
+    s.push_str(CLI_INTRO);
+    s.push('\n');
+    for entry in CLI_REFERENCE {
+        match entry {
+            CliRef::Section(sec) => s.push_str(&format!("\n{sec}:\n")),
+            CliRef::Flag(f, d) => s.push_str(&format!("  {f}\n      {d}\n")),
+            CliRef::Example(x) => s.push_str(&format!("  {x}\n")),
+        }
+    }
+    s
 }
 
 pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
