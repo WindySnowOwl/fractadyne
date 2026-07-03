@@ -165,11 +165,14 @@ fn fe_norm(m: Cdf, e: i32) -> Fe {
     if (mag == 0.0) {
         return fe_make(m, FE_ZERO_E);
     }
-    let shift = i32(floor(log2(mag)));
-    let s = exp2(f32(-shift)); // shift is tiny in steady iteration → s ~ 1, exact
+    // `shift = floor(log2(mag))` via frexp (bit-manip, not the SFU) instead of `log2`; scale by
+    // `2^-shift` via ldexp instead of `exp2`+mul. Both are exact powers of two, so the (m,e) pair
+    // is bit-identical to the old path — but this drops 2 transcendentals/call, and fe_norm runs
+    // several times per iteration, so it was the dominant cost in the deep floatexp loop.
+    let shift = frexp(mag).exp - 1;
     let m2 = cset(
-        vec2<f32>(m.re.x * s, m.re.y * s),
-        vec2<f32>(m.im.x * s, m.im.y * s),
+        vec2<f32>(ldexp(m.re.x, -shift), ldexp(m.re.y, -shift)),
+        vec2<f32>(ldexp(m.im.x, -shift), ldexp(m.im.y, -shift)),
     );
     return fe_make(m2, e + shift);
 }
@@ -182,10 +185,9 @@ fn fe_add(a: Fe, b: Fe) -> Fe {
     if (b.e > a.e) { hi = b; lo = a; }
     let de = hi.e - lo.e; // >= 0
     if (de > 60) { return hi; } // lo below hi's df32 precision (~48 bits)
-    let s = exp2(f32(-de));
     let lom = cset(
-        vec2<f32>(lo.m.re.x * s, lo.m.re.y * s),
-        vec2<f32>(lo.m.im.x * s, lo.m.im.y * s),
+        vec2<f32>(ldexp(lo.m.re.x, -de), ldexp(lo.m.re.y, -de)),
+        vec2<f32>(ldexp(lo.m.im.x, -de), ldexp(lo.m.im.y, -de)),
     );
     return fe_norm(c_add(hi.m, lom), hi.e);
 }
@@ -245,9 +247,8 @@ fn sf_make(m: vec2<f32>, e: i32) -> Sf {
 fn sf_norm(m: vec2<f32>, e: i32) -> Sf {
     let mag = abs(m.x);
     if (mag == 0.0) { return sf_make(m, FE_ZERO_E); }
-    let shift = i32(floor(log2(mag)));
-    let s = exp2(f32(-shift));
-    return sf_make(vec2<f32>(m.x * s, m.y * s), e + shift);
+    let shift = frexp(mag).exp - 1; // floor(log2(mag)) without the SFU (see fe_norm)
+    return sf_make(vec2<f32>(ldexp(m.x, -shift), ldexp(m.y, -shift)), e + shift);
 }
 fn sf_re(f: Fe) -> Sf { return sf_make(f.m.re, f.e); }
 fn sf_im(f: Fe) -> Sf { return sf_make(f.m.im, f.e); }
@@ -258,8 +259,7 @@ fn sf_add(a: Sf, b: Sf) -> Sf {
     if (b.e > a.e) { hi = b; lo = a; }
     let de = hi.e - lo.e; // >= 0
     if (de > 60) { return hi; } // lo below hi's df32 precision (~48 bits)
-    let s = exp2(f32(-de));
-    return sf_norm(df_add(hi.m, vec2<f32>(lo.m.x * s, lo.m.y * s)), hi.e);
+    return sf_norm(df_add(hi.m, vec2<f32>(ldexp(lo.m.x, -de), ldexp(lo.m.y, -de))), hi.e);
 }
 fn sf_neg(a: Sf) -> Sf { return sf_make(vec2<f32>(-a.m.x, -a.m.y), a.e); }
 fn sf_two(a: Sf) -> Sf { return sf_make(a.m, a.e + 1); }

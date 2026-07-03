@@ -101,8 +101,16 @@ proved it can't help filament/Misiurewicz views (no long references exist). The 
 Since the cost is BLA-unskippable floatexp iterations, the levers are:
 
 1. **Cheaper floatexp ops** — profile/optimize `fe_mul`, `fe_add`, `fe_sqr`, `fe_mul_cdf`, etc. in
-   `mandelbrot.wgsl`. A proportional speedup applies to *every* deep frame. Tractable, low-risk,
-   universally beneficial. **Best next candidate.**
+   `mandelbrot.wgsl`.
+   - *Tried 2026-07-03:* replaced the `log2`/`exp2` transcendentals in `fe_norm`/`sf_norm`/`fe_add`/
+     `sf_add` (called several×/iteration) with `frexp`/`ldexp` (ALU bit-ops, no SFU). **Bit-identical**
+     (selftest 55/55, goldens 4/4) but only **~5% on an RTX 3080 — within noise.** The transcendentals
+     were *not* the bottleneck; the **df32 compensated arithmetic** (`df_mul` ≈ 8 f32 ops, `c_mul` ≈ 4
+     `df_mul`, several `c_mul`/iteration) dominates. Kept the frexp/ldexp change anyway — never worse,
+     helps more on SFU-constrained GPUs. Not the fix.
+   - *Untried, higher-risk:* a **single-f32 mantissa** floatexp (drop df32 → f32 for δz) would be
+     ~2–4× cheaper arithmetic, but df32 was chosen deliberately for δ precision — likely reintroduces
+     the deep speckle it fixed. Needs careful precision validation before attempting.
 2. **Better GPU occupancy** — the mode-2 loop carries many live registers (Z, dz, D, dz_prev,
    A/B/C, per-formula temporaries). Reducing register pressure raises occupancy → more pixels in
    flight. Harder to measure without GPU vendor tools.
