@@ -405,6 +405,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--profile [--reps N] [--regions F] [--out P]", "Dev: time render stages per benchmark region -> JSON log in logs/."),
         Flag("--crosscheck-f3 raw.exr", "Compare a Fraktaler-3 raw EXR (channel \"N\") against our CPU bignum oracle (--center X Y --zoom-f3 Z [--iter K] [--er R])."),
         Flag("--frametest [--steps N] [--hold N] [--dive R]", "Dev: deep-dive frame-timing harness."),
+        Flag("--dump-tour-schema", "Print the tour-script (.toml) schema reference as Markdown and exit (generates TOURS.md)."),
         Section("Examples"),
         Example("fractadyne --render -o out.png --fractal Mandelbrot --center -0.743644 0.131826 --zoom 2e7 --iter 6000 --method stripe --ss 3"),
         Example("fractadyne --render-tour tours/deep-spiral-dive.toml --size 1920x1080 --fps 30 --ss 2 --out frames --mp4 --show-location"),

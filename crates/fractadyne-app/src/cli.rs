@@ -46,6 +46,11 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         print!("{}", crate::help::cli_help_text());
         return true;
     }
+    // Print the tour-script schema reference (Markdown) and exit — used to (re)generate TOURS.md.
+    if args.iter().any(|a| a == "--dump-tour-schema") {
+        print!("{}", crate::scripting::tour_schema_markdown());
+        return true;
+    }
     // An unrecognized option shouldn't silently launch the GUI — report it and print the reference
     // to stderr, then exit non-zero (like a conventional CLI).
     if let Some(bad) = first_unknown_flag(args) {

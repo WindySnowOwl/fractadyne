@@ -303,6 +303,199 @@ struct KeyframeFile {
     orbit_im: Option<f64>,
 }
 
+// ---------------------------------------------------------------------------------------------
+// Tour-script schema reference (single source of truth for TOURS.md).
+//
+// This table sits next to the serde structs above and mirrors their fields. `--dump-tour-schema`
+// renders it to Markdown (→ TOURS.md), and the `tour_schema_doc_current` test fails if the checked-
+// in TOURS.md drifts from it — so the docs regenerate from here and can't silently rot.
+// ---------------------------------------------------------------------------------------------
+
+/// One documented field of a tour-script table.
+struct SchemaField {
+    name: &'static str,
+    ty: &'static str,
+    default: &'static str,
+    doc: &'static str,
+}
+
+/// One documented TOML table in the tour schema (top level or a `[[repeatable]]`).
+struct SchemaTable {
+    toml: &'static str,
+    repeatable: bool,
+    summary: &'static str,
+    fields: &'static [SchemaField],
+}
+
+const TOUR_SCHEMA: &[SchemaTable] = &[
+    SchemaTable {
+        toml: "(top level)",
+        repeatable: false,
+        summary: "Script-wide settings.",
+        fields: &[
+            SchemaField { name: "name", ty: "string", default: "\"\"", doc: "Display name (shown in render progress and the end-of-script toast)." },
+            SchemaField { name: "format_version", ty: "int", default: "0", doc: "Schema version the script targets. A version newer than this build warns that some annotations may not render." },
+            SchemaField { name: "palette", ty: "string", default: "(session)", doc: "Coloring palette preset name (e.g. \"Ember\") or index, applied on load so the tour looks the same regardless of the current palette." },
+            SchemaField { name: "loop", ty: "bool", default: "false", doc: "Loop the tour during live playback (Tools -> Play script)." },
+            SchemaField { name: "show_location", ty: "bool", default: "false", doc: "Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag)." },
+            SchemaField { name: "keyframe", ty: "[[keyframe]]", default: "[]", doc: "The camera path (at least one required) — see below." },
+            SchemaField { name: "caption", ty: "[[caption]]", default: "[]", doc: "Timed narration overlays — see below." },
+            SchemaField { name: "callout", ty: "[[callout]]", default: "[]", doc: "Labeled markers anchored to a coordinate — see below." },
+            SchemaField { name: "spotlight", ty: "[[spotlight]]", default: "[]", doc: "Dim-outside-a-circle vignettes — see below." },
+        ],
+    },
+    SchemaTable {
+        toml: "[[keyframe]]",
+        repeatable: true,
+        summary: "A camera waypoint. The view eases from the previous keyframe to this one over `secs`, then holds for `hold`. Discrete settings (center, fractal, julia, dual, orbits) inherit forward until changed.",
+        fields: &[
+            SchemaField { name: "secs", ty: "float", default: "0", doc: "Seconds to glide here from the previous keyframe." },
+            SchemaField { name: "center_x", ty: "string", default: "(inherit)", doc: "Full-precision decimal real part of the center. Omit to inherit the previous center (pure zoom)." },
+            SchemaField { name: "center_y", ty: "string", default: "(inherit)", doc: "Full-precision decimal imaginary part of the center." },
+            SchemaField { name: "mag", ty: "float", default: "1", doc: "Magnification at this keyframe (up to ~1e308)." },
+            SchemaField { name: "mag_log10", ty: "float", default: "(unset)", doc: "Magnification as log10, for depths past f64's ~1e308 ceiling (e.g. 420 = 1e420x). Takes precedence over `mag`." },
+            SchemaField { name: "fractal", ty: "string", default: "(inherit)", doc: "Fractal family name (e.g. \"Mandelbrot\", \"Burning Ship\")." },
+            SchemaField { name: "julia", ty: "bool", default: "false", doc: "Julia mode for the family." },
+            SchemaField { name: "ease", ty: "string", default: "smooth", doc: "Easing for the glide arriving here: smooth, linear, smoother, in (accelerate), or out (decelerate)." },
+            SchemaField { name: "hold", ty: "float", default: "0", doc: "Seconds to pause at this keyframe before the next glide." },
+            SchemaField { name: "dual", ty: "bool", default: "false", doc: "Show the linked dual view (Mandelbrot + its Julia set side by side)." },
+            SchemaField { name: "julia_re", ty: "float", default: "(unset)", doc: "Pin the Julia parameter c (real part). Both julia_re and julia_im are required; interpolated between keyframes." },
+            SchemaField { name: "julia_im", ty: "float", default: "(unset)", doc: "Julia parameter c (imaginary part)." },
+            SchemaField { name: "orbits", ty: "bool", default: "false", doc: "Overlay the escape-time orbit (the path of z under iteration)." },
+            SchemaField { name: "orbit_re", ty: "float", default: "(unset)", doc: "The point whose orbit to draw, real part (both components required; interpolated)." },
+            SchemaField { name: "orbit_im", ty: "float", default: "(unset)", doc: "Orbit point imaginary part." },
+        ],
+    },
+    SchemaTable {
+        toml: "[[caption]]",
+        repeatable: true,
+        summary: "A timed on-screen caption (narration), independent of the camera path.",
+        fields: &[
+            SchemaField { name: "text", ty: "string", default: "(required)", doc: "The text to show (supports \\n for multiple lines)." },
+            SchemaField { name: "at", ty: "float", default: "0", doc: "When it appears on the timeline (seconds from the start)." },
+            SchemaField { name: "secs", ty: "float", default: "0 = until end", doc: "How long it stays (seconds); 0/omitted keeps it until the tour ends." },
+            SchemaField { name: "pos", ty: "string", default: "bottom", doc: "Screen anchor: top, center, or bottom." },
+            SchemaField { name: "fade", ty: "float", default: "0.4", doc: "Fade in/out time (seconds) at each end." },
+            SchemaField { name: "size", ty: "float", default: "22", doc: "Font size in points (scaled to the frame height)." },
+        ],
+    },
+    SchemaTable {
+        toml: "[[callout]]",
+        repeatable: true,
+        summary: "A labeled marker anchored to a fractal coordinate — it tracks the point as the view pans/zooms, with a leader line to the label.",
+        fields: &[
+            SchemaField { name: "text", ty: "string", default: "(required)", doc: "Label text." },
+            SchemaField { name: "center_x", ty: "string", default: "(required)", doc: "Anchor coordinate, real part (full-precision decimal)." },
+            SchemaField { name: "center_y", ty: "string", default: "(required)", doc: "Anchor coordinate, imaginary part." },
+            SchemaField { name: "at", ty: "float", default: "0", doc: "When it appears (seconds)." },
+            SchemaField { name: "secs", ty: "float", default: "0 = until end", doc: "How long it stays (seconds)." },
+            SchemaField { name: "fade", ty: "float", default: "0.4", doc: "Fade in/out time (seconds)." },
+            SchemaField { name: "size", ty: "float", default: "18", doc: "Label font size in points." },
+        ],
+    },
+    SchemaTable {
+        toml: "[[spotlight]]",
+        repeatable: true,
+        summary: "A vignette that dims everything outside a soft circle to draw the eye. Anchored to a coordinate so it tracks the point and stays a constant on-screen size.",
+        fields: &[
+            SchemaField { name: "center_x", ty: "string", default: "(required)", doc: "Circle center, real part (full-precision decimal)." },
+            SchemaField { name: "center_y", ty: "string", default: "(required)", doc: "Circle center, imaginary part." },
+            SchemaField { name: "radius", ty: "float", default: "0.25", doc: "Circle radius as a fraction of the frame height." },
+            SchemaField { name: "softness", ty: "float", default: "0.08", doc: "Soft-edge width as a fraction of the frame height." },
+            SchemaField { name: "dim", ty: "float", default: "0.7", doc: "How dark outside the circle (0..1)." },
+            SchemaField { name: "at", ty: "float", default: "0", doc: "When it appears (seconds)." },
+            SchemaField { name: "secs", ty: "float", default: "0 = until end", doc: "How long it stays (seconds)." },
+            SchemaField { name: "fade", ty: "float", default: "0.4", doc: "Fade in/out time (seconds)." },
+        ],
+    },
+];
+
+/// Render [`TOUR_SCHEMA`] (plus stable prose) to the Markdown of `TOURS.md`. Emitted by
+/// `fractadyne --dump-tour-schema`; kept byte-identical to the checked-in file by a test.
+pub(crate) fn tour_schema_markdown() -> String {
+    let mut s = String::new();
+    s.push_str(
+        "<!-- Generated by `fractadyne --dump-tour-schema` from TOUR_SCHEMA in\n     \
+         crates/fractadyne-app/src/scripting.rs. Do not edit by hand — edit the schema table\n     \
+         there and regenerate (a test enforces this file matches). -->\n\n",
+    );
+    s.push_str("# Fractadyne tour scripts\n\n");
+    s.push_str(
+        "A **tour** is a TOML script describing an eased camera path — plus optional captions, \
+         callouts, and spotlights — through a fractal. Play one live via **Tools -> Play script...**, \
+         or render it headless to a PNG frame sequence (and, with ffmpeg, straight to an mp4):\n\n",
+    );
+    s.push_str(
+        "```sh\nfractadyne --render-tour my-tour.toml --size 1920x1080 --fps 30 --ss 2 --out frames --mp4\n```\n\n",
+    );
+    s.push_str(
+        "Frames are written `<prefix>_00000.png` (prefix defaults to the script's file name; override \
+         with `--prefix`). Ready-made examples live in [`tours/`](tours/); run \
+         `fractadyne --help` for the full CLI.\n\n",
+    );
+
+    s.push_str("## Schema\n\n");
+    for t in TOUR_SCHEMA {
+        let heading = if t.repeatable {
+            format!("### `{}` — repeatable\n\n", t.toml)
+        } else {
+            format!("### `{}`\n\n", t.toml)
+        };
+        s.push_str(&heading);
+        s.push_str(t.summary);
+        s.push_str("\n\n| Field | Type | Default | Description |\n|---|---|---|---|\n");
+        for f in t.fields {
+            s.push_str(&format!("| `{}` | {} | {} | {} |\n", f.name, f.ty, f.default, f.doc));
+        }
+        s.push('\n');
+    }
+
+    s.push_str(
+        "## Timeline\n\n\
+         Keyframe timing is cumulative: each `[[keyframe]]` adds `secs` of glide from the previous \
+         keyframe's hold-end, then `hold` seconds of pause. The first keyframe starts at t=0. \
+         Caption / callout / spotlight `at` times are absolute seconds from the start, and `secs = 0` \
+         means \"until the tour ends\". At `--fps N` the tour renders `round(total * N) + 1` frames.\n\n\
+         For deep dives, keep `secs` generous, use `ease = \"in\"` / `\"out\"` at the ends with `linear` \
+         for the cruise, and express magnifications past f64 range with `mag_log10`. Pan at low zoom \
+         *before* diving so the camera doesn't zoom through the set's black interior.\n\n",
+    );
+
+    s.push_str(
+        "## Example\n\n\
+         ```toml\n\
+         name = \"Mini tour\"\n\
+         palette = \"Ember\"\n\
+         format_version = 1\n\n\
+         [[keyframe]]            # overview\n\
+         secs = 0\n\
+         center_x = \"-0.5\"\n\
+         center_y = \"0.0\"\n\
+         mag = 1\n\
+         hold = 2\n\n\
+         [[keyframe]]            # dive into Seahorse Valley\n\
+         secs = 6\n\
+         center_x = \"-0.743643887037158704752191506114774\"\n\
+         center_y = \"0.131825904205311970493132056385139\"\n\
+         mag_log10 = 6\n\
+         ease = \"in\"\n\
+         hold = 3\n\n\
+         [[caption]]\n\
+         text = \"Seahorse Valley\"\n\
+         at = 8\n\
+         secs = 4\n\
+         pos = \"bottom\"\n\n\
+         [[spotlight]]\n\
+         center_x = \"-0.743643887037158704752191506114774\"\n\
+         center_y = \"0.131825904205311970493132056385139\"\n\
+         radius = 0.28\n\
+         at = 8\n\
+         secs = 4\n\
+         ```\n",
+    );
+    s
+}
+
 /// Easing curve for a keyframe glide segment.
 #[derive(Clone, Copy)]
 enum EaseKind {
@@ -1456,5 +1649,21 @@ impl FractadyneApp {
             pram = mb(b.peak_ram),
             score = avg_fps * 100.0,
         )
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    /// The checked-in TOURS.md must match what the schema generates — regenerate it with
+    /// `fractadyne --dump-tour-schema > TOURS.md` after editing `TOUR_SCHEMA`. (Line endings are
+    /// normalized so a CRLF working copy still matches the LF the generator emits.)
+    #[test]
+    fn tour_schema_doc_current() {
+        let generated = super::tour_schema_markdown();
+        let committed = include_str!("../../../TOURS.md").replace("\r\n", "\n");
+        assert_eq!(
+            generated, committed,
+            "TOURS.md is stale — run `fractadyne --dump-tour-schema > TOURS.md` to regenerate"
+        );
     }
 }

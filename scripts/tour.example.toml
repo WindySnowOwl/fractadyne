@@ -1,21 +1,15 @@
-# Example camera tour for `fractadyne --render-tour scripts/tour.example.toml`.
-# Renders a PNG frame sequence (frame_00000.png …) that you assemble into a video,
-# e.g.:  ffmpeg -framerate 30 -i frames/frame_%05d.png -c:v libx264 -pix_fmt yuv420p tour.mp4
-#
-# Run options:
-#   --render-tour FILE   the script (this file)
-#   --fps N              frames per second sampled along the timeline (default 30)
-#   --size W             frame width in px (default 1280; height = 16:9 unless --height)
-#   --height H           frame height in px (default width*9/16)
-#   --ss N               supersampling 1..8 (default 1)
-#   --out DIR            output directory (default "frames")
-#
-# The tour glides (eased) between keyframes. Each [[keyframe]] adds `secs` seconds of
-# travel from the previous one; a keyframe with no center inherits the previous center
-# (handy for a pure zoom-in). `mag` is the magnification; `cx`/`cy` are full-precision
-# decimal strings so deep targets are exact. `fractal`/`julia` are optional.
-#
+# A minimal example camera tour. Full field reference: TOURS.md (or `fractadyne --dump-tour-schema`).
+# Render it to a PNG sequence (+ optional mp4):
+#   fractadyne --render-tour scripts/tour.example.toml --size 1920x1080 --fps 30 --ss 2 --out frames --mp4
+# Frames are written <prefix>_00000.png (prefix defaults to this file's name; set with --prefix).
 # This file also loads in the app via Tools → "Play script…".
+#
+# The tour glides (eased) between keyframes. Each [[keyframe]] adds `secs` seconds of travel from
+# the previous one; a keyframe with no center inherits the previous center (handy for a pure
+# zoom-in). `mag` is the magnification (use `mag_log10` past ~1e308×); `center_x`/`center_y` are
+# full-precision decimal strings so deep targets are exact. `ease`, `hold`, `fractal`, `julia`,
+# `dual`, `orbits`, and `[[caption]]`/`[[callout]]`/`[[spotlight]]` blocks are all optional — see
+# TOURS.md for every field, and the richer tours under `tours/` for worked examples.
 
 name = "Seahorse Valley dive"
 

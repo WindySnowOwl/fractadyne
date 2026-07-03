@@ -82,6 +82,12 @@ Baseline for tracked versioning. Notable capabilities already present:
   Works with `--render` and `--render-tour`; a tour can also set `show_location = true`. Uses the
   same deep-precision coordinate formatting as the live status bar.
 
+- **Tour-script reference ([TOURS.md](TOURS.md))** — a complete field reference for the tour `.toml`
+  schema (every table + field, types, defaults, a worked example), **auto-generated** from a schema
+  table colocated with the serde structs. `fractadyne --dump-tour-schema` prints it (regenerate with
+  `--dump-tour-schema > TOURS.md`); a test fails if the checked-in file drifts, so it can't rot.
+  Refreshed `scripts/tour.example.toml`'s header and linked the reference from the README.
+
 - **Response files (`@FILE` / `--args-file FILE`)** — read command-line arguments from a text file,
   spliced in place. Whitespace-separated tokens, `#` comments, and `"quotes"` for values with spaces;
   nestable (bounded). Keep a whole render/tour invocation in a file and run `fractadyne @render.args`.
