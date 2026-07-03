@@ -987,8 +987,11 @@ struct FractadyneApp {
     julia_viewport: Viewport,
     /// Complex coordinate under the cursor (for the status bar); `None` when off-canvas.
     pointer_complex: Option<(f64, f64)>,
-    /// App-time of the last interaction; AA stays off until `SETTLE_DELAY` after it.
-    settle_t: f64,
+    /// App-time of the last interaction, **per view** (`[0]` = main/Mandelbrot, `[1]` = Julia); each
+    /// view stays at the coarse "moving" quality until `SETTLE_DELAY` after its own last change. Kept
+    /// per-view so that, in the dual view, driving the Julia `c` with the cursor doesn't force the
+    /// unchanged Mandelbrot panel to re-render at low resolution.
+    settle_t: [f64; 2],
     /// Active smooth "zoom out to home" animation (Home button); `None` when idle.
     home_anim: Option<HomeAnim>,
     /// Auto-zoom autopilot: continuously dive toward the detail-richest region.
@@ -1321,7 +1324,7 @@ impl FractadyneApp {
                 v
             },
             pointer_complex: None,
-            settle_t: 0.0,
+            settle_t: [0.0; 2],
             home_anim: None,
             autopilot: false,
             autopilot_target: (0.5, 0.5),
@@ -2062,10 +2065,11 @@ impl FractadyneApp {
             || apply_zoom.is_some()
             || (scroll != 0.0 && hovering)
             || (self.zoom_vel.abs() > 1e-3 && hovering);
+        let view = is_julia as usize;
         if active {
-            self.settle_t = now;
+            self.settle_t[view] = now;
         }
-        let interacting = now - self.settle_t < SETTLE_DELAY;
+        let interacting = now - self.settle_t[view] < SETTLE_DELAY;
 
         let eff_iter = if self.auto_iter {
             vp.recommended_max_iter(self.max_iter)
@@ -2204,7 +2208,7 @@ impl FractadyneApp {
                 } else {
                     self.julia_pin = Some(cc);
                     self.julia_c = cc;
-                    self.settle_t = ctx.input(|i| i.time);
+                    self.settle_t[1] = ctx.input(|i| i.time); // only the Julia view changed
                     self.ref_cache[1].ref_pt = None; // Julia changed
                 }
             }
@@ -2224,7 +2228,7 @@ impl FractadyneApp {
             pc = Some(coord);
             if !is_julia && self.julia_pin.is_none() && coord != self.julia_c {
                 self.julia_c = coord; // live: cursor over Mandelbrot drives the Julia
-                self.settle_t = ctx.input(|i| i.time);
+                self.settle_t[1] = ctx.input(|i| i.time); // only the Julia panel is changing
                 self.ref_cache[1].ref_pt = None;
                 self.schedule_repaint(ctx);
             }
@@ -3300,7 +3304,7 @@ impl FractadyneApp {
         }
         // Treat the glide as interaction so AA stays off and references aren't
         // recomputed every frame (rebasing covers the motion; quality on settle).
-        self.settle_t = now;
+        self.settle_t = [now; 2];
         self.home_anim = Some(anim);
         true
     }
@@ -4482,7 +4486,7 @@ impl eframe::App for FractadyneApp {
                             let (w, h) = (self.viewport.width_px, self.viewport.height_px);
                             self.viewport.pan_pixels(w * 0.5 - bcx, h * 0.5 - bcy);
                             self.viewport.zoom_at(w * 0.5, h * 0.5, factor);
-                            self.settle_t = ctx.input(|i| i.time);
+                            self.settle_t[0] = ctx.input(|i| i.time);
                         }
                         self.zoom_box = None;
                         zoom_boxing = false;
@@ -4582,9 +4586,9 @@ impl eframe::App for FractadyneApp {
                     || scroll_y != 0.0
                     || space;
                 if active {
-                    self.settle_t = now;
+                    self.settle_t[0] = now;
                 }
-                let interacting = now - self.settle_t < SETTLE_DELAY;
+                let interacting = now - self.settle_t[0] < SETTLE_DELAY;
 
                 let center_bf = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
                 let center = self.viewport.center_f64();
@@ -5206,7 +5210,7 @@ impl eframe::App for FractadyneApp {
         // Navigation history: record a location each time the single view settles after
         // a pan/zoom gesture (its own dedup avoids repeats). Discrete jumps record
         // explicitly. Skipped in dual view.
-        let interacting_now = ctx.input(|i| i.time) - self.settle_t < SETTLE_DELAY;
+        let interacting_now = ctx.input(|i| i.time) - self.settle_t[0] < SETTLE_DELAY;
         if self.nav_was_interacting && !interacting_now && !self.dual {
             self.record_nav();
         }

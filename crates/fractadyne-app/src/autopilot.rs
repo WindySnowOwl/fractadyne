@@ -88,7 +88,7 @@ impl FractadyneApp {
         let px = self.autopilot_target.0 * self.viewport.width_px;
         let py = self.autopilot_target.1 * self.viewport.height_px;
         self.viewport.zoom_at(px, py, factor);
-        self.settle_t = now; // treat as interaction (AA off, throttled reference refresh)
+        self.settle_t = [now; 2]; // treat as interaction (AA off, throttled reference refresh)
         self.schedule_repaint(ctx);
     }
 

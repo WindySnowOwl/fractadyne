@@ -8,6 +8,17 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.5
+
+- **Dual view: per-view settle** — driving the Julia `c` by moving the cursor over the Mandelbrot
+  panel no longer forces the (unchanged) Mandelbrot panel to re-render at the coarse "moving"
+  resolution. The interaction/settle timer is now tracked per view (`settle_t[2]`), so only the panel
+  that actually changed drops quality while moving; the other stays sharp and its cached iteration
+  texture is reused (just re-colored). This also lifts interaction FPS in dual view, since only one
+  panel re-iterates during cursor movement. *(The settled frame rate on a heavy view — dual +
+  Multibrot³ + 8× AA + animated relief lighting — is dominated by the anti-aliased color pass; lower
+  the AA or turn off light rotation for a higher idle FPS.)*
+
 ## 0.1.4
 
 - **Phoenix 3D relief lighting + distance glow** — these need the orbit derivative `dz/dc`, which the
