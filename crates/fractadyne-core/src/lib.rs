@@ -748,6 +748,27 @@ fn step_bf(
     }
 }
 
+/// One arbitrary-precision Phoenix step: `z' = z² + c − 0.5·z_prev` (p = −0.5). Kept separate from
+/// [`step_bf`] because it needs the previous iterate `z_prev`, which the reference loop threads.
+fn phoenix_step_bf(
+    zx: &BigFloat,
+    zy: &BigFloat,
+    zpx: &BigFloat,
+    zpy: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    p: usize,
+) -> (BigFloat, BigFloat) {
+    let x2 = zx.mul(zx, p, RM);
+    let y2 = zy.mul(zy, p, RM);
+    let sx = x2.sub(&y2, p, RM);
+    let sy = double_bf(&zx.mul(zy, p, RM));
+    let half = BigFloat::from_f64(0.5, p);
+    let hpx = zpx.mul(&half, p, RM);
+    let hpy = zpy.mul(&half, p, RM);
+    (sx.add(cx, p, RM).sub(&hpx, p, RM), sy.add(cy, p, RM).sub(&hpy, p, RM))
+}
+
 /// Compute the **orbit** of a point in `f64`, for the interactive orbit overlay.
 /// Mirrors the shader's direct iteration per `formula` (ids match `formula_id`).
 /// Returns the successive iterates `z₀, z₁, …` (including the start) until the
@@ -827,14 +848,27 @@ pub fn reference_orbit(
     let mut out = Vec::with_capacity(max_iter as usize + 1);
     let mut zx = z0x.clone();
     let mut zy = z0y.clone();
+    // Previous iterate, for Phoenix's two-term recurrence (unused by other formulas). Starts at 0.
+    let mut zpx = BigFloat::from_f64(0.0, p);
+    let mut zpy = BigFloat::from_f64(0.0, p);
     let (xh, xl) = split_df64(to_f64(&zx));
     let (yh, yl) = split_df64(to_f64(&zy));
     out.push([xh, yh, xl, yl]); // Z_0
     let mut n = 0u32;
     while n < max_iter {
-        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
-        zx = nzx;
-        zy = nzy;
+        let (nzx, nzy) = if formula == 8 {
+            phoenix_step_bf(&zx, &zy, &zpx, &zpy, cx, cy, p)
+        } else {
+            step_bf(&zx, &zy, cx, cy, formula, p)
+        };
+        if formula == 8 {
+            // Shift z_prev ← z (before z ← z'); std::mem::replace avoids a bignum clone.
+            zpx = std::mem::replace(&mut zx, nzx);
+            zpy = std::mem::replace(&mut zy, nzy);
+        } else {
+            zx = nzx;
+            zy = nzy;
+        }
         let xv = to_f64(&zx);
         let yv = to_f64(&zy);
         let (xh, xl) = split_df64(xv);
@@ -1760,6 +1794,32 @@ mod tests {
 
     fn octaves_for(exp_decimal: f64) -> u64 {
         (exp_decimal * std::f64::consts::LN_10 / std::f64::consts::LN_2).ceil() as u64
+    }
+
+    // The arbitrary-precision Phoenix reference orbit (z' = z² + c − 0.5·z_prev, two-term recurrence)
+    // must reproduce the f64 direct orbit while both are bounded — validates the bignum step +
+    // z_prev threading that the deep-zoom perturbation path relies on.
+    #[test]
+    fn phoenix_reference_matches_direct() {
+        let p = 80;
+        let c = (0.1_f64, 0.05_f64);
+        let (cx, cy) = (BigFloat::from_f64(c.0, p), BigFloat::from_f64(c.1, p));
+        let z0 = BigFloat::from_f64(0.0, p);
+        let (orbit, _len) = reference_orbit(&z0, &z0, &cx, &cy, 8, 60, p);
+        let direct = orbit_points((0.0, 0.0), c, 8, 60, 1.0e12);
+        let mut compared = 0;
+        for i in 0..orbit.len().min(direct.len()) {
+            let (dx, dy) = direct[i];
+            if dx * dx + dy * dy > 16.0 {
+                break; // stop once it's escaping (large values make absolute compare meaningless)
+            }
+            let zx = orbit[i][0] as f64 + orbit[i][2] as f64; // df64 hi + lo
+            let zy = orbit[i][1] as f64 + orbit[i][3] as f64;
+            approx(zx, dx);
+            approx(zy, dy);
+            compared += 1;
+        }
+        assert!(compared >= 12, "only {compared} bounded Phoenix iterates compared");
     }
 
     // Extreme-depth arithmetic validation (feasible single-point form): at a magnification of
