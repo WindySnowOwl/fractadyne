@@ -513,6 +513,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
         let one = cset(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 0.0));
         var dz: Cdf;
         if (iu.julia == 1u) { dz = one; } else { dz = cset(zero, zero); }
+        var dprev = cset(zero, zero); // Phoenix derivative D_{n-1} (two-term)
         let cmag = length(vec2<f32>(c.re.x, c.im.x));
         var aux = aux_init(vec2<f32>(z.re.x, z.im.x));
         loop {
@@ -581,6 +582,13 @@ fn fs_iterate(in: VsOut) -> FragOut {
                     }
                     dz = c_mul(fp, dz);
                     if (iu.julia == 0u) { dz = c_add(dz, one); }
+                } else if (iu.formula == 8u) {
+                    // Phoenix derivative (analytic): D' = 2·z·D + [1 if Mandelbrot] − 0.5·D_{n-1}.
+                    var dn = c_mul(c_two(z), dz);
+                    if (iu.julia == 0u) { dn = c_add(dn, one); }
+                    dn = c_sub(dn, c_scale(dprev, 0.5));
+                    dprev = dz;
+                    dz = dn;
                 }
                 zn = c_add(zn, c);
                 zprev = z;
@@ -604,7 +612,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
         let smit = f32(iter) + 1.0 - nu;
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
-        if (iu.formula <= 3u) {
+        if (iu.formula <= 3u || iu.formula == 8u) {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
             de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
         }
@@ -634,6 +642,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
         // Derivative dz/dc (Mandelbrot) or dz/dz0 (Julia) in floatexp, for DE lighting.
         var D: Fe;
         if (iu.julia == 1u) { D = fe_one(); } else { D = fe_zero(); }
+        var Dprev: Fe = fe_zero(); // Phoenix derivative D_{n-1} (two-term)
         let cmag = select(
             length(vec2<f32>(iu.center.x, iu.center.y)),
             length(vec2<f32>(iu.julia_c.x, iu.julia_c.y)),
@@ -728,6 +737,15 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 let fp = deriv_factor(iu.formula, zfn);
                 D = fe_mul_c(D, fp.x, fp.y);
                 if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
+            } else if (iu.formula == 8u) {
+                // Phoenix derivative: D' = 2·z_n·D + [1 if Mandelbrot] − 0.5·D_{n-1}.
+                let dzc = fe_lo_f32(dz);
+                let zfn = vec2<f32>(r.x + dzc.x, r.y + dzc.y);
+                var dn = fe_mul_c(D, 2.0 * zfn.x, 2.0 * zfn.y);
+                if (iu.julia == 0u) { dn = fe_add(dn, fe_one()); }
+                dn = fe_sub(dn, fe_scale(Dprev, 0.5));
+                Dprev = D;
+                D = dn;
             }
 
             if (iu.formula == 1u) {
@@ -859,7 +877,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
         let smit = f32(iter) + 1.0 - nu;
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
-        if (iu.formula <= 3u) {
+        if (iu.formula <= 3u || iu.formula == 8u) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
@@ -882,6 +900,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
         // Derivative in floatexp (grows past f32 range at depth), for DE lighting.
         var D: Fe;
         if (iu.julia == 1u) { D = fe_one(); } else { D = fe_zero(); }
+        var Dprev: Fe = fe_zero(); // Phoenix derivative D_{n-1} (two-term)
         let cmag = select(
             length(vec2<f32>(iu.center.x, iu.center.y)),
             length(vec2<f32>(iu.julia_c.x, iu.julia_c.y)),
@@ -917,6 +936,14 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 let fp = deriv_factor(iu.formula, zfn);
                 D = fe_mul_c(D, fp.x, fp.y);
                 if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
+            } else if (iu.formula == 8u) {
+                // Phoenix derivative: D' = 2·z_n·D + [1 if Mandelbrot] − 0.5·D_{n-1}.
+                let zfn = vec2<f32>(r.x + dz.re.x, r.y + dz.im.x); // full z_n
+                var dn = fe_mul_c(D, 2.0 * zfn.x, 2.0 * zfn.y);
+                if (iu.julia == 0u) { dn = fe_add(dn, fe_one()); }
+                dn = fe_sub(dn, fe_scale(Dprev, 0.5));
+                Dprev = D;
+                D = dn;
             }
             if (iu.formula == 1u) {
                 power_f = 3.0;
@@ -1011,7 +1038,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
         let smit = f32(iter) + 1.0 - nu;
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
-        if (iu.formula <= 3u) {
+        if (iu.formula <= 3u || iu.formula == 8u) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }

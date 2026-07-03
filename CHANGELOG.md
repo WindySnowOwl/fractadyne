@@ -8,6 +8,16 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.4
+
+- **Phoenix 3D relief lighting + distance glow** — these need the orbit derivative `dz/dc`, which the
+  shader only tracked for the analytic families (formula ≤ 3), so Phoenix rendered flat. Phoenix is
+  analytic, so it *can* have them: added its two-term derivative recurrence `D' = 2·z·D + [1] −
+  0.5·D_{n-1}` (with a previous-derivative register) in all three render paths — direct, df32 (mode 0),
+  and floatexp (mode 2) — and enabled the normal/DE output for it. Relief lighting and distance glow
+  now work on Phoenix at any depth. (The abs families stay unlit — they're non-differentiable at the
+  abs folds; only the analytic families + Phoenix qualify.) Verified visually + selftest 55/55.
+
 ## 0.1.3
 
 - **Dual-view glitch correction** — glitch correction now applies to **dual exports** too (both the
