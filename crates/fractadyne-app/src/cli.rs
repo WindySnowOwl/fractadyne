@@ -4,11 +4,54 @@
 
 use crate::{version_string, FractalKind};
 
+/// Windows- and Unix-style ways to explicitly ask for help.
+const HELP_TOKENS: &[&str] = &["--help", "-h", "-?", "/?", "/h", "/help", "help"];
+
+/// The set of known long options (`--xxx`), harvested from the shared CLI reference so it can never
+/// drift from what `--help` documents (scans both the flag column and descriptions, so options only
+/// mentioned in a parenthetical — e.g. `--zoom-f3`, `--er` — are still recognized).
+fn known_long_flags() -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    for entry in crate::help::CLI_REFERENCE {
+        let (a, b) = match entry {
+            crate::help::CliRef::Flag(f, d) => (*f, *d),
+            _ => continue,
+        };
+        for field in [a, b] {
+            for tok in field.split(|c: char| c.is_whitespace() || matches!(c, ',' | '(' | ')' | '[' | ']')) {
+                if tok.starts_with("--") && tok.len() > 2 {
+                    set.insert(tok.to_string());
+                }
+            }
+        }
+    }
+    set
+}
+
+/// The first argument that looks like an unrecognized option, or `None`. Only `--long` tokens (not
+/// in the known set) are flagged: values — numbers, paths, negative coords like `-0.5` — are never
+/// `--`-prefixed, so this can't misfire on them. (`/?`-style help is handled separately.)
+fn first_unknown_flag(args: &[String]) -> Option<&str> {
+    let known = known_long_flags();
+    args.iter().skip(1).find_map(|s| {
+        let a = s.as_str();
+        (a.starts_with("--") && a.len() > 2 && !known.contains(a)).then_some(a)
+    })
+}
+
 /// Dispatch the headless CLI modes. Returns true if one ran (caller should exit).
 pub(crate) fn run_headless(args: &[String]) -> bool {
-    if args.iter().any(|a| a == "--help" || a == "-h") {
+    // Explicit help request (--help / -h / -? / /? / /h / /help / help) → reference to stdout, exit 0.
+    if args.iter().skip(1).any(|a| HELP_TOKENS.contains(&a.as_str())) {
         print!("{}", crate::help::cli_help_text());
         return true;
+    }
+    // An unrecognized option shouldn't silently launch the GUI — report it and print the reference
+    // to stderr, then exit non-zero (like a conventional CLI).
+    if let Some(bad) = first_unknown_flag(args) {
+        eprintln!("fractadyne: unrecognized option '{bad}'\n");
+        eprint!("{}", crate::help::cli_help_text());
+        std::process::exit(2);
     }
 
     if args.iter().any(|a| a == "--find-minibrot") {

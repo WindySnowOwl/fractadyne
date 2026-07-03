@@ -71,7 +71,11 @@ Baseline for tracked versioning. Notable capabilities already present:
 
 - **`fractadyne --help` / `-h`** — prints the full command-line reference to the terminal and exits.
   Both it and the in-app **Help → Command line** window now render from one shared `CLI_REFERENCE`
-  table, so they can't drift out of sync. Docs (README, STATE) refreshed to match.
+  table, so they can't drift out of sync. Also accepts Windows-style `/?`, `/h`, `/help` (and `-?`).
+  An **unrecognized option** (e.g. a typo'd `--rendr`) now prints the reference to stderr and exits
+  non-zero instead of silently launching the GUI — the known-flag set is derived from the same
+  table, and only `--long` tokens are checked so negative-number values (`--center -0.5 …`) are
+  never misread as flags. Docs (README, STATE) refreshed to match.
 
 - **Location HUD on renders** — `--show-location` (alias `--hud`) burns a small overlay into the
   top-left of each rendered frame: zoom level (amber) + full-precision center coordinates (`re`/`im`).
