@@ -4,6 +4,26 @@
 rates. Today they cost ~1–5 s/frame on interior/filament-heavy views, which forced the
 v0.1.10 "reproject-during-mode-2-motion" hang fix — responsive but **blank**.
 
+## ⚠️ VALIDATION RESULT (2026-07-03): multi-reference will NOT help these views — approach abandoned
+
+A headless prototype (`--refdiag`) sampled reference orbit lengths across an 11×11 grid of the
+deep-spiral views (1e28×…1e75×). **Every point escapes at ~2400–6490 iterations; there are ZERO
+interior/long-orbit references anywhere in the view** (at 1e75× all 121 points escape at *exactly*
+6490 — the Misiurewicz point). Multi-reference only helps when a pixel can rebase onto a *longer,
+still-valid* reference; here none exists. A finer iteration sweep also showed the render cost is
+**flat from iter 4000→10000** and jumps between iter 2000 and 4000 — i.e. the cost is BLA failing
+to skip in the mid-iteration range of the filament structure, **not** rebasing past the reference.
+
+**Conclusion:** the deep cost is expensive floatexp iterations that BLA can't skip in a filament
+field — inherent to the structure, not a reference-placement problem. Multi-reference (and better
+reference selection) cannot fix it. The remaining real levers are **cheaper floatexp ops / better
+GPU occupancy** (proportional speedup to *all* deep frames) and/or accepting the limitation (blank
+during deep live motion; export renders full detail). See the corrected direction at the bottom.
+
+The original design below is kept for the record but is **not the path forward**.
+
+---
+
 ## Root cause (profiled 2026-07-03)
 
 The cost is **rebasing against a single, short reference**, not the shader ops:
@@ -71,6 +91,26 @@ What exists to reuse:
 - Interior views vs filament views may want different K / placement.
 
 ## Status
-Committed 2026-07-03. Groundwork (diagnosis + design) done. Implementation is the next
-focused session(s), starting at step 1. The offline `--render-tour` export path already renders
-full detail (synchronous per-frame reference), so it is unaffected either way.
+
+Multi-reference **abandoned 2026-07-03** after the validation prototype (see the box at top)
+proved it can't help filament/Misiurewicz views (no long references exist). The offline
+`--render-tour` export path already renders full detail (synchronous per-frame reference).
+
+## Corrected direction (what could actually help deep floatexp)
+
+Since the cost is BLA-unskippable floatexp iterations, the levers are:
+
+1. **Cheaper floatexp ops** — profile/optimize `fe_mul`, `fe_add`, `fe_sqr`, `fe_mul_cdf`, etc. in
+   `mandelbrot.wgsl`. A proportional speedup applies to *every* deep frame. Tractable, low-risk,
+   universally beneficial. **Best next candidate.**
+2. **Better GPU occupancy** — the mode-2 loop carries many live registers (Z, dz, D, dz_prev,
+   A/B/C, per-formula temporaries). Reducing register pressure raises occupancy → more pixels in
+   flight. Harder to measure without GPU vendor tools.
+3. **Reduce iterations during motion** — cap `max_iter` lower while moving (interiors render early
+   as black); trades detail for speed. Simple but visibly lower quality.
+4. **Accept the limitation** — keep v0.1.10 (blank during deep live motion), use export for
+   full-detail deep video. The tour file itself says "best rendered to a movie."
+
+The `--refdiag` CLI (added for this validation) samples reference orbit lengths across a view —
+useful for spotting whether a given deep view has long references (multi-ref-friendly) or is a
+filament field (inherently expensive).

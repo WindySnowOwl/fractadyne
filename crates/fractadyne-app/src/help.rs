@@ -362,6 +362,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--render-tour FILE", "Render a keyframe-tour TOML to a PNG frame sequence, then exit (see Tour options)."),
         Flag("--benchmark, --bench", "Run the benchmark with the current settings and exit (use --out to save the report)."),
         Flag("--benchmark-std [--res R] [--depth D] [--burnin N]", "Standardized benchmark: pinned resolution + settings, comparable across machines. --res = 720p | 1080p | 4k | 5k (default 1080p). --depth = standard (1e12x) | ultra (1e28x, hammers the deep-zoom path); --ultra is shorthand. --burnin N repeats it N times (default 10) to check stability / throttling."),
+        Flag("--refdiag --center X Y --zoom-log2 L", "Dev: sample reference orbit lengths across a view."),
         Flag("--find-minibrot", "Print the nearby minibrot's period + center and exit (--center X Y --zoom M)."),
         Flag("--selftest [--bless]", "Run the GPU validation suite; exit 0 = all passed. --bless records the goldens."),
         Flag("--help, -h", "Print this command-line reference and exit."),

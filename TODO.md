@@ -705,20 +705,19 @@ for fun, informative value, and ease of use.
 
 ## Performance & throughput (M7)
 
-- [ ] **Multi-reference LIVE rendering — deep floatexp is ~1–5 s/frame (committed 2026-07-03).**
-  Full design + profiling + plan in [design/multiref-live.md](design/multiref-live.md). Root cause
-  (profiled): deep mode-2 frames rebase against a single, short (escaping) reference, after which
-  BLA can't skip and every step is a full floatexp iteration — ~15 s for the Elephant-Valley spiral
-  at 1e40× (cost jumps nonlinearly at the ~6136-iter reference orbit length, then flat). This forced
-  the v0.1.10 "reproject during mode-2 motion" hang fix (responsive but **blank** during deep dives).
-  Confirmed non-fixes (don't retry): resolution/WORK_BUDGET reduction, aggressive BLA rebuild on
-  zoom-in, longer/predictive reference selection (`REF_SCORE_SCAN` 4096→65536 made it *slower*).
-  The fix = place K references across the view and rebase onto the *nearest* one (KF/Fraktaler-3
-  style) so BLA keeps skipping. Multi-session GPU feature; the CPU multi-ref (`render_multiref_mandel`,
-  glitch correction) is reusable for *placement* but not the GPU model. **Recommended first step: a
-  headless validation prototype** (does nearest-ref rebase actually make the spiral frame fast? — the
-  Misiurewicz filament field may still be a worst case since nearby refs also escape ~6136) before the
-  full GPU wiring. Export (`--render-tour`) is unaffected — it already renders full detail per frame.
+- [ ] **Deep floatexp is ~1–5 s/frame (live) — needs a shader-speed fix, NOT multi-reference.**
+  Full profiling + validation in [design/multiref-live.md](design/multiref-live.md). Deep mode-2
+  frames cost seconds; this forced the v0.1.10 "reproject during mode-2 motion" hang fix (responsive
+  but **blank** during deep dives). **Multi-reference was validated and abandoned (2026-07-03):** a
+  `--refdiag` prototype showed the deep-spiral/Misiurewicz views have **zero long/interior references**
+  (every point escapes at ~2400–6490 iters; at 1e75× all collapse to 6490), so there's nothing to
+  rebase onto — multi-ref can't help. A finer sweep showed the cost is flat iter 4000→10000, so it's
+  **BLA failing to skip in the filament structure**, not rebasing. Confirmed non-fixes (don't retry):
+  resolution/WORK_BUDGET reduction, BLA rebuild on zoom-in, longer/predictive reference selection
+  (`REF_SCORE_SCAN` 4096→65536 was *slower*), multi-reference. **Real levers:** (1) cheaper floatexp
+  ops in `mandelbrot.wgsl` — proportional speedup to every deep frame, best next candidate; (2) GPU
+  occupancy (register pressure); (3) iteration cap during motion (trades detail); (4) accept it —
+  export (`--render-tour`) already renders full detail per frame. `--refdiag` CLI added as a dev tool.
 
 - [x] **FIXED (v0.1.10): fast live dive hung ("Not Responding") crossing into floatexp (~1e28×+).**
   Reproduced 2026-07-03 by auto-playing `tours/deep-spiral-dive.toml` with per-frame stderr timing.
