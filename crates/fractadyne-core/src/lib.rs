@@ -1279,11 +1279,22 @@ fn orbit_length_bf(
     p: usize,
 ) -> u32 {
     let (mut zx, mut zy) = (z0x.clone(), z0y.clone());
+    let mut zpx = BigFloat::from_f64(0.0, p); // previous iterate (Phoenix)
+    let mut zpy = BigFloat::from_f64(0.0, p);
     let mut n = 0u32;
     while n < max_iter {
-        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
-        zx = nzx;
-        zy = nzy;
+        let (nzx, nzy) = if formula == 8 {
+            phoenix_step_bf(&zx, &zy, &zpx, &zpy, cx, cy, p)
+        } else {
+            step_bf(&zx, &zy, cx, cy, formula, p)
+        };
+        if formula == 8 {
+            zpx = std::mem::replace(&mut zx, nzx);
+            zpy = std::mem::replace(&mut zy, nzy);
+        } else {
+            zx = nzx;
+            zy = nzy;
+        }
         n += 1;
         let (xv, yv) = (to_f64(&zx), to_f64(&zy));
         if xv * xv + yv * yv > 1.0e12 {

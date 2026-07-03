@@ -192,7 +192,8 @@ This is low-risk (only `gen_stops`); implement when we resume.
   `--crosscheck-f3` (vs Fraktaler-3), `--compare`, `--render-iter`, `.kfr` import.
 
 ## Top open items (from TODO.md)
-- Burning Ship / Celtic / Buffalo perturbation (still direct ~1e6×); Newton/Phoenix deep.
+- Newton deep zoom (convergence-based; perturbation impractical — stays direct ~1e6×).
+  (Burning Ship/Celtic/Buffalo and Phoenix now perturbation-deep-zoom — done.)
 - Full glitch correction (Pauldelbrot/multi-ref) — base multi-ref path exists; broaden + thread.
 - Left Parameters panel; dual-view splitter; tile cache + pan reprojection (live reprojection ✓).
 - Autopilot steering modes (minibrot-seek/boundary-track).

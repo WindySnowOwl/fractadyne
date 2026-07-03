@@ -823,6 +823,78 @@ impl FractadyneApp {
                     });
                 }
             }
+
+            // ---- Phoenix deep zoom: two-term perturbation vs the trusted direct path ----
+            // Phoenix (z' = z² + c − 0.5·z_{n-1}) carries a two-term δz recurrence with a rebased
+            // previous term (rebase-to-0 works because the reference's z_{-1} = 0). Validate mode 0
+            // (df32) and mode 2 (floatexp) against direct on the smooth region (steep/filament
+            // pixels skipped) at 1e5× — deep enough to exercise δz rebasing, shallow enough that
+            // direct df32 is still accurate. mode 2 is depth-independent, so it's checked here too.
+            {
+                self.fractal = FractalKind::Phoenix;
+                let mag = 1.0e5;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf("0.0").unwrap();
+                vp.center_y = fractadyne_core::parse_bf("0.40").unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag);
+                let mut base = self.current_export_request_for(&vp, false);
+                base.width = N;
+                base.height = N;
+                base.ss = 1;
+                let mut direct = base.clone();
+                direct.mode = 1;
+                let mut m0 = base.clone();
+                m0.mode = 0;
+                let mut m2 = base.clone();
+                m2.mode = 2;
+                let ren = |req: &fractadyne_gpu::ExportRequest| {
+                    fractadyne_gpu::render_iter(device, queue, req).ok().map(|r| r.pixels)
+                };
+                let cmp = |a: &[f32], b: &[f32]| -> (f64, f64, u64) {
+                    let (mut sum, mut n, mut big) = (0.0f64, 0u64, 0u64);
+                    for j in 0..nn {
+                        for i in 0..nn {
+                            if steep(a, i, j) {
+                                continue;
+                            }
+                            let k = j * nn + i;
+                            let (ra, rb) = (a[k * 4], b[k * 4]);
+                            if ra >= 0.0 && rb >= 0.0 {
+                                let d = (ra - rb).abs() as f64;
+                                sum += d;
+                                n += 1;
+                                if d > 2.0 {
+                                    big += 1;
+                                }
+                            }
+                        }
+                    }
+                    let mean = if n == 0 { f64::INFINITY } else { sum / n as f64 };
+                    let frac = if n == 0 { 1.0 } else { big as f64 / n as f64 };
+                    (mean, frac, n)
+                };
+                if let (Some(d), Some(p0), Some(p2)) = (ren(&direct), ren(&m0), ren(&m2)) {
+                    let (mean0, frac0, n0) = cmp(&p0, &d);
+                    checks.push(SelfCheck {
+                        category: "Phoenix deep zoom",
+                        name: "Phoenix perturbation vs direct".into(),
+                        params: format!("1e5×, mode 0 vs 1, n={n0}"),
+                        result: format!("mean Δ={mean0:.4} iter, >2iter {:.3}%", frac0 * 100.0),
+                        threshold: "mean<0.5, <2% differ, n>0",
+                        pass: n0 > 0 && mean0 < 0.5 && frac0 < 0.02,
+                    });
+                    let (mean2, frac2, n2) = cmp(&p2, &p0);
+                    checks.push(SelfCheck {
+                        category: "Phoenix deep zoom",
+                        name: "Phoenix floatexp vs df32".into(),
+                        params: format!("1e5×, mode 2 vs 0, n={n2}"),
+                        result: format!("mean Δ={mean2:.4} iter, >2iter {:.3}%", frac2 * 100.0),
+                        threshold: "mean<0.5, <2% differ, n>0",
+                        pass: n2 > 0 && mean2 < 0.5 && frac2 < 0.02,
+                    });
+                }
+            }
         }
 
         // ---- series approximation engages for the Multibrot families ----

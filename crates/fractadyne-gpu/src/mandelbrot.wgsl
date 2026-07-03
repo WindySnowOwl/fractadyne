@@ -630,6 +630,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
             dz = fe_zero();
             dc = pert;
         }
+        var dz_prev: Fe = fe_zero(); // Phoenix: δz_{n-1} (unused by other formulas)
         // Derivative dz/dc (Mandelbrot) or dz/dz0 (Julia) in floatexp, for DE lighting.
         var D: Fe;
         if (iu.julia == 1u) { D = fe_one(); } else { D = fe_zero(); }
@@ -799,6 +800,14 @@ fn fs_iterate(in: VsOut) -> FragOut {
                         sf_add(sf_diffabs(Wim, sf_im(dw)), sf_im(dc)),
                     );
                 }
+            } else if (iu.formula == 8u) {
+                // Phoenix: δz' = 2Z·δz + δz² + δc − 0.5·δz_{n-1}
+                var t = fe_two(fe_mul_cdf(dz, Z));
+                t = fe_add(t, fe_sqr(dz));
+                t = fe_add(t, dc);
+                let dz_new = fe_sub(t, fe_scale(dz_prev, 0.5));
+                dz_prev = dz;
+                dz = dz_new;
             } else {
                 // Mandelbrot: δz' = 2Z·δz + δz² + δc
                 var t = fe_two(fe_mul_cdf(dz, Z));
@@ -830,6 +839,14 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 let Z0 = cset(vec2<f32>(r0.x, r0.z), vec2<f32>(r0.y, r0.w));
                 let zfull = fe_add(fe_from_cdf(Zn), dz);
                 dz = fe_sub(zfull, fe_from_cdf(Z0));
+                // Phoenix (two-term): also rebase δz_{n-1}. After rebasing to index 0 the "previous"
+                // reference is Z_{-1}=0 (the orbit's initial z_prev), so δz_{n-1} → the full previous
+                // value z_{n-1} = Z_{ref_n-1} + δz_{n-1}. Uses reference[ref_n-1] before ref_n resets.
+                if (iu.formula == 8u) {
+                    let rp = reference[ref_n - 1u];
+                    let Zp = cset(vec2<f32>(rp.x, rp.z), vec2<f32>(rp.y, rp.w));
+                    dz_prev = fe_add(fe_from_cdf(Zp), dz_prev);
+                }
                 ref_n = 0u;
             }
         }
@@ -861,6 +878,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
         var dz: Cdf;
         var dc: Cdf;
         if (iu.julia == 1u) { dz = pert; dc = zero; } else { dz = zero; dc = pert; }
+        var dz_prev: Cdf = zero; // Phoenix: δz_{n-1} (unused by other formulas)
         // Derivative in floatexp (grows past f32 range at depth), for DE lighting.
         var D: Fe;
         if (iu.julia == 1u) { D = fe_one(); } else { D = fe_zero(); }
@@ -943,6 +961,12 @@ fn fs_iterate(in: VsOut) -> FragOut {
                     dz = cset(df_add(df_diffabs(W.re, dw.re), dc.re),
                               df_add(df_diffabs(W.im, dw.im), dc.im));
                 }
+            } else if (iu.formula == 8u) {
+                // Phoenix: δz' = 2Z·δz + δz² + δc − 0.5·δz_{n-1}
+                let base = c_add(c_add(c_two(c_mul(z, dz)), c_sqr(dz)), dc);
+                let dz_new = c_sub(base, c_scale(dz_prev, 0.5));
+                dz_prev = dz;
+                dz = dz_new;
             } else {
                 dz = c_add(c_add(c_two(c_mul(z, dz)), c_sqr(dz)), dc);
             }
@@ -962,6 +986,15 @@ fn fs_iterate(in: VsOut) -> FragOut {
             let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
             if (z2 < dzmag2 || ref_n + 1u >= iu.orbit_len) {
                 let r0 = reference[0];
+                // Phoenix (two-term): rebase δz_{n-1} to Z_{-1}=0 → the full previous value
+                // z_{n-1} = Z_{ref_n-1} + δz_{n-1} (before ref_n resets to 0).
+                if (iu.formula == 8u) {
+                    let rp = reference[ref_n - 1u];
+                    dz_prev = cset(
+                        df_add(vec2<f32>(rp.x, rp.z), dz_prev.re),
+                        df_add(vec2<f32>(rp.y, rp.w), dz_prev.im),
+                    );
+                }
                 dz = cset(
                     df_sub(zr_full, vec2<f32>(r0.x, r0.z)),
                     df_sub(zi_full, vec2<f32>(r0.y, r0.w)),

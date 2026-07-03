@@ -88,9 +88,10 @@ impl FractalKind {
     }
 
     /// Whether deep zoom (CPU reference + GPU perturbation, both the df32 and the
-    /// extended-range floatexp paths) is implemented. The analytic families plus the
-    /// abs-based ones (Burning Ship / Celtic / Buffalo, via the shader's `diffabs`
-    /// fold) qualify; Phoenix and Newton stay on the direct path (clean to ~1e6×).
+    /// extended-range floatexp paths) is implemented. The analytic families, the abs-based
+    /// ones (Burning Ship / Celtic / Buffalo, via the shader's `diffabs` fold), and Phoenix
+    /// (two-term recurrence with a rebased previous term) qualify. Newton stays on the direct
+    /// path (~1e6×) — it's convergence-based with a nonlinear, incompatible perturbation.
     pub(crate) fn supports_perturbation(self) -> bool {
         matches!(
             self,
@@ -102,6 +103,7 @@ impl FractalKind {
                 | FractalKind::BurningShip
                 | FractalKind::Celtic
                 | FractalKind::Buffalo
+                | FractalKind::Phoenix
         )
     }
 

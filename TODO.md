@@ -301,8 +301,13 @@ perturbation + series approximation + glitch correction. The headline feature.
       (non-holomorphic). Remaining: multi-reference glitch correction for the residual
       speckle at the abs folds (where a tiny df32 reference z² component flips the
       diffabs branch — same root cause as Mandelbrot perturbation glitches).
-- [ ] **Newton / Phoenix deep zoom** — Newton is convergence-based; Phoenix needs the
-      previous-iterate δz term + rebasing care. Both still direct.
+- [~] **Newton / Phoenix deep zoom** — **Phoenix DONE (v0.1.2):** perturbation deep zoom in df32
+      (mode 0) + floatexp (mode 2), with the two-term `δz_{n-1}` register and previous-term rebasing
+      (rebase-to-0 valid since the reference's `z_{-1}=0`); bignum reference + `orbit_length_bf` made
+      Phoenix-aware. Validated in `--selftest` (mode 0 vs direct mean Δ 0.007 iter @1e5×; mode 2 vs
+      mode 0 exact) + a core unit test. **Newton stays direct-only** — convergence-based with a
+      nonlinear, coloring-incompatible perturbation (revisit only via a separate higher-precision
+      *direct* path if there's demand).
 - [x] **Click-to-pin Julia `c`** — in dual view, click the Mandelbrot to freeze the
       Julia at that point (a marker is drawn there); click the marker to release and
       resume live cursor-follow. Pinning also stops the per-move Julia reference

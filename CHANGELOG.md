@@ -8,6 +8,17 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.2
+
+- **Phoenix deep zoom** — the Phoenix family (`z' = z² + c − 0.5·z_{n-1}`) now perturbation-deep-zooms
+  like the other families (previously direct-only, ~1e6×). Its two-term recurrence needed care: the
+  GPU carries an extra `δz_{n-1}` register and, on rebasing, the previous term is rebased to the full
+  value (rebase-to-0 works because the reference's `z_{-1} = 0`). Implemented in both the df32 (mode 0)
+  and floatexp (mode 2) paths + the bignum reference. **Rigorously validated:** two new self-test
+  checks show mode-0 perturbation matches the direct path to **mean Δ 0.007 iter** (0 pixels off by
+  >2) and floatexp matches df32 exactly, on the smooth region at 1e5×. (Newton stays direct-only —
+  it's convergence-based, with a nonlinear, coloring-incompatible perturbation.)
+
 ## 0.1.1
 
 - **Glitch correction on by default** — multi-reference (Pauldelbrot) glitch correction, previously
