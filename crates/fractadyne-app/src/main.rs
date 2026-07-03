@@ -1325,7 +1325,7 @@ impl FractadyneApp {
             julia_c: (s.julia_c_re, s.julia_c_im),
             julia_mode: s.julia_mode && fractal.supports_julia(),
             julia_pin: None,
-            dual: s.dual,
+            dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(0.15, 0.85),
             zoom_box: None,
             fullscreen: false,
@@ -1723,6 +1723,7 @@ impl FractadyneApp {
         self.fractal = kind;
         if !kind.supports_julia() {
             self.julia_mode = false;
+            self.dual = false; // no Julia counterpart → dual view is meaningless
         }
         let (cx, cy) = kind.default_center();
         self.viewport.reset();
@@ -3460,6 +3461,10 @@ impl FractadyneApp {
 
     /// Toggle the dual linked view, framing the Julia panel when turning it on.
     fn toggle_dual(&mut self) {
+        if !self.fractal.supports_julia() {
+            self.dual = false; // no Julia → no dual (guards any non-UI caller)
+            return;
+        }
         self.dual = !self.dual;
         if self.dual {
             self.julia_viewport.reset();
@@ -4041,12 +4046,16 @@ impl eframe::App for FractadyneApp {
                         self.invalidate_refs();
                     }
                 });
-                if dual_toggle_button(ui, self.dual)
-                    .on_hover_text("Dual linked view (Mandelbrot ↔ Julia)")
-                    .clicked()
-                {
-                    self.toggle_dual();
-                }
+                // Dual pairs a formula with its Julia set, so it's only meaningful where a Julia
+                // exists (Newton has no free parameter → no Julia → no dual).
+                ui.add_enabled_ui(self.fractal.supports_julia(), |ui| {
+                    if dual_toggle_button(ui, self.dual)
+                        .on_hover_text("Dual linked view (Mandelbrot ↔ Julia)")
+                        .clicked()
+                    {
+                        self.toggle_dual();
+                    }
+                });
                 ui.separator();
                 // ── File / I-O: open & browse, then save ──────────────────────────────
                 if ui.button("📂").on_hover_text("Open view…").clicked() {
