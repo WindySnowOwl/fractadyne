@@ -396,6 +396,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--de", "Enable distance glow."),
         Flag("--watermark / --no-watermark", "Force the \"Fd\" watermark on / off (overrides the saved preference)."),
         Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot."),
+        Flag("--glitch / --no-glitch", "Force multi-reference glitch correction on / off for the export (default on)."),
         Flag("--no-perf / --perf", "Hide / show the performance panel."),
         Section("Validation & diagnostics"),
         Flag("--render-iter -o F.exr", "Export raw iteration data (EXR) instead of a colored image."),

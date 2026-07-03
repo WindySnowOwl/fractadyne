@@ -1483,6 +1483,12 @@ impl FractadyneApp {
         if args.iter().any(|a| a == "--watermark") {
             app.watermark = true;
         }
+        if args.iter().any(|a| a == "--glitch") {
+            app.glitch_correct = true;
+        }
+        if args.iter().any(|a| a == "--no-glitch") {
+            app.glitch_correct = false;
+        }
         if app.auto_benchmark {
             app.start_benchmark();
         }
@@ -3794,9 +3800,9 @@ impl eframe::App for FractadyneApp {
                             .on_hover_text(
                                 "Multi-reference glitch correction for exported images: detects \
                                  perturbation glitches and re-renders those pixels against extra \
-                                 references until clean. Slower; applies to single-view exports up \
-                                 to the GPU texture limit (non-aux coloring). The live view is \
-                                 unaffected.",
+                                 references until clean. On by default. Applies to exports up to \
+                                 ~32 MP / the GPU texture limit (non-aux coloring); larger images \
+                                 and the live view fall back to the plain path.",
                             );
                         ui.checkbox(&mut self.use_bla, "BLA acceleration (deep zoom)")
                             .on_hover_text(

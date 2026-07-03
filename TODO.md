@@ -202,7 +202,11 @@ perturbation + series approximation + glitch correction. The headline feature.
       clamped to a sane octave bound); the metadata blob carries an extended-range
       `upp_log2` (reconstructed on load, with the f64 `upp` kept for back-compat), so
       exported images and bookmarks restore deep views exactly. Round-trip unit-tested.
-- [ ] **Full glitch correction** (Pauldelbrot criterion + multi-reference recompute).
+- [~] **Full glitch correction** (Pauldelbrot criterion + multi-reference recompute). Multi-ref
+      correction is implemented + validated and now **on by default** for single-view exports
+      (≤ ~32 MP / texture limit, non-aux; VRAM-capped; `--glitch`/`--no-glitch`). *Remaining:*
+      dual-view export correction, and live-view correction (settle-time / async — the live pipeline
+      is fragile, so deferred).
 - [x] **AA auto-drop during motion** — full AA only when the view settles (smooth
       deep zoom; sharp still image).
 - [x] **Reference refresh during motion (anti-"impressionist")** — the reference orbit

@@ -578,8 +578,17 @@ impl FractadyneApp {
         width: u32,
         height: u32,
     ) -> Option<fractadyne_gpu::ExportResult> {
+        // Correction renders the whole view in one un-tiled texture set (iter + aux + color +
+        // readback ≈ 64 B/px), so it's bounded by both the GPU's max 2-D texture dimension and, to
+        // avoid OOM now that it's on by default, a conservative area cap. Above either, fall back to
+        // the tiled (uncorrected) path. ~32 MP covers 4K/5K/6K comfortably.
+        const MAX_CORRECT_PX: u64 = 32_000_000;
         let max_dim = device.limits().max_texture_dimension_2d;
-        if width > max_dim || height > max_dim || fractadyne_gpu::method_needs_aux(self.color_method) {
+        if width > max_dim
+            || height > max_dim
+            || (width as u64) * (height as u64) > MAX_CORRECT_PX
+            || fractadyne_gpu::method_needs_aux(self.color_method)
+        {
             return None;
         }
         let (buf, _refs, _residual) =

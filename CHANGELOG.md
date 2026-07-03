@@ -5,7 +5,20 @@ auto-incrementing **build** number (bumped by `build.rs` on every recompile) sho
 `v0.1.0 (build N)` in the title bar, Help menu, and exported image metadata.
 
 The project enters tracked versioning at **0.1.0**; entries below summarize the state
-at that point and changes after it.
+at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
+new functional enhancement.
+
+## 0.1.1
+
+- **Glitch correction on by default** — multi-reference (Pauldelbrot) glitch correction, previously
+  an opt-in export toggle, is now **on by default**, so shared images are glitch-free out of the
+  box. The GPU flags glitched pixels (|z|² < 1e-4·|Z|²) and the CPU drops fresh references into the
+  worst regions and re-renders until clean (up to 64 refs). Bounded to ~32 MP / the GPU texture
+  limit and non-aux coloring; larger images and the live view fall back to the plain path (a VRAM
+  cap was added so the default can't OOM big exports). New `--glitch` / `--no-glitch` CLI overrides.
+  Verified: fixes real glitches at a deep seahorse spot (63 px changed vs uncorrected at 1e13×);
+  selftest glitch checks pass (7 refs, 0 residual); goldens 4/4. *(Still to come: dual-view export
+  correction and live-view correction.)*
 
 ## 0.1.0
 

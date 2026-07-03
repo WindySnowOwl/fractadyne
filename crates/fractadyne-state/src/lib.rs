@@ -133,8 +133,10 @@ pub struct SessionState {
     /// Series approximation (iteration-skipping) preference. Default on.
     #[serde(default = "default_true")]
     pub series_approx: bool,
-    /// Multi-reference glitch correction for exports (slower, glitch-free). Default off.
-    #[serde(default)]
+    /// Multi-reference glitch correction for exports (single + dual, up to ~32 MP / the texture
+    /// limit, non-aux coloring). Detects perturbation glitches and re-renders them against extra
+    /// references until clean. Default on — glitch-free shared images out of the box.
+    #[serde(default = "default_true")]
     pub glitch_correct: bool,
     /// BLA (bilinear approximation) acceleration for deep floatexp Mandelbrot. Default on — it
     /// skips iterations throughout the orbit (measured ~5× faster GPU render at 1e30×) and the
@@ -309,7 +311,7 @@ impl Default for SessionState {
             dual: false,
             dual_split: default_dual_split(),
             series_approx: true,
-            glitch_correct: false,
+            glitch_correct: true,
             use_bla: true,
             watermark: true,
             ui_scale: default_ui_scale(),
