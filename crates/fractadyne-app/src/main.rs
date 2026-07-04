@@ -1086,6 +1086,9 @@ struct FractadyneApp {
     tour_prefix: String,
     /// CLI `--overwrite` / `-y`: replace existing frames without prompting.
     tour_overwrite: bool,
+    /// CLI `--resume`: skip already-rendered frames and render only the missing ones (restart an
+    /// interrupted render).
+    tour_resume: bool,
     /// CLI `--mp4 [PATH]`: after rendering the tour, assemble the frames into an mp4 via ffmpeg.
     tour_mp4: Option<std::path::PathBuf>,
     /// CLI `--selftest`: run the GPU validation suite, print a report, and exit.
@@ -1329,6 +1332,8 @@ impl FractadyneApp {
         });
         // --overwrite / -y: replace existing frames without prompting.
         let tour_overwrite = args.iter().any(|a| a == "--overwrite" || a == "-y");
+        // --resume: keep already-rendered frames and render only the missing ones (restart).
+        let tour_resume = args.iter().any(|a| a == "--resume");
         // --mp4 [PATH]: presence enables ffmpeg encoding after render. A following non-flag token is
         // the output path; otherwise default to `<out-dir>/<prefix>.mp4`.
         let tour_mp4 = args.iter().position(|a| a == "--mp4").map(|i| {
@@ -1439,6 +1444,7 @@ impl FractadyneApp {
             tour_out,
             tour_prefix,
             tour_overwrite,
+            tour_resume,
             tour_mp4,
             selftest,
             selftest_done: false,
@@ -3778,8 +3784,8 @@ impl eframe::App for FractadyneApp {
                     let (w, h) = self.tour_size;
                     let (fps, ss, out) = (self.tour_fps, self.tour_ss, self.tour_out.clone());
                     let mp4 = self.tour_mp4.clone();
-                    let (prefix, overwrite) = (self.tour_prefix.clone(), self.tour_overwrite);
-                    match self.render_tour_to_dir(ctx, dev, q, &script, fps, w, h, ss, &out, &prefix, overwrite, mp4.as_deref()) {
+                    let (prefix, overwrite, resume) = (self.tour_prefix.clone(), self.tour_overwrite, self.tour_resume);
+                    match self.render_tour_to_dir(ctx, dev, q, &script, fps, w, h, ss, &out, &prefix, overwrite, resume, mp4.as_deref()) {
                         Ok(m) => println!("{m}"),
                         Err(e) => eprintln!("Tour render failed: {e}"),
                     }

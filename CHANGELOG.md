@@ -8,6 +8,17 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.13
+
+- **Restartable tour renders** — a long `--render-tour` that gets interrupted can now be resumed.
+  The new **`--resume`** flag keeps the frames already on disk and renders only the missing ones
+  (no per-frame prompt), so you pick up where it stopped instead of starting over.
+- **`scripts/render-spiral-dive.ps1`** uses this: if the target folder already has frames it checks
+  the last frame's resolution and a saved `render.manifest.txt` against the current settings, warns
+  about any mismatch (resolution / fps / supersampling / HUD), and offers to **Resume** or start
+  **Over**. On resume it re-renders the final frame in case it was cut off mid-write. The script
+  also now burns the location **HUD** into frames by default (disable with `-Hud:$false`).
+
 ## 0.1.12
 
 - **Reset application state** — a way to wipe all saved data (session, bookmarks, thumbnails)

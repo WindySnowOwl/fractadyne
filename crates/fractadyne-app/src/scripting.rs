@@ -1301,6 +1301,9 @@ impl FractadyneApp {
         prefix: &str,
         // Replace existing frames without prompting (CLI `--overwrite` / `-y`).
         overwrite: bool,
+        // Resume an interrupted render (CLI `--resume`): silently keep frames that already exist and
+        // render only the missing ones. Takes precedence over `overwrite` for existing frames.
+        resume: bool,
         // Some(path) → after the PNG sequence is written, invoke `ffmpeg` to assemble it into an
         // H.264 mp4 at `path` (frames are kept). None → leave just the PNG sequence.
         mp4: Option<&std::path::Path>,
@@ -1389,6 +1392,12 @@ impl FractadyneApp {
             }
             // Output path for this frame; ask before clobbering an existing one (unless overwriting).
             let frame_path = out_dir.join(format!("{prefix}_{fi:05}.png"));
+            // Resume: a frame that's already on disk is assumed complete — skip it silently and
+            // render only what's missing (no prompt, no re-render). This is what makes an
+            // interrupted render restartable.
+            if resume && frame_path.exists() {
+                continue;
+            }
             if !overwrite_all && frame_path.exists() {
                 match prompt_overwrite(&frame_path)? {
                     OverwriteChoice::Yes => {}

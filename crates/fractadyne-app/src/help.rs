@@ -379,6 +379,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--ss N", "Supersampling 1–8."),
         Flag("--prefix NAME", "Frame-name prefix -> NAME_00000.png (default: the tour script's file name)."),
         Flag("--overwrite, -y", "Replace existing frames without the [y]es/[a]ll/[n]o/[q]uit prompt."),
+        Flag("--resume", "Restart an interrupted render: silently keep frames already on disk and render only the missing ones."),
         Section("View (with --render / --find-minibrot)"),
         Flag("--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\"."),
         Flag("--center X Y", "View center (full-precision decimals)."),
