@@ -1,3 +1,7 @@
+// PROVENANCE: generated runtime for the design mockups (design/*.dc.html) — a Claude design output
+// produced from the project's own requirements, not third-party code. Design-time artifact only;
+// NOT part of the shipped Fractadyne application (the release package excludes design/). References
+// React via `window.React` (React is not bundled here).
 // GENERATED from dc-runtime/src/*.ts — do not edit. Rebuild with `cd dc-runtime && bun run build`.
 "use strict";
 (() => {

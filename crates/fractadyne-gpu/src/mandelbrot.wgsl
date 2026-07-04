@@ -26,8 +26,10 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
 
 // ---------------- double-single (df32) arithmetic --------------------------------
 // A value is a vec2<f32> (hi, lo) with hi the rounded result and lo the error term,
-// giving ~14 decimal digits (vs ~7 for plain f32). Error-free transforms below
-// assume round-to-nearest and a *fused* fma (true on the target GPUs).
+// giving ~14 decimal digits (vs ~7 for plain f32). The `two_sum` / `two_prod` /
+// `quick_two_sum` primitives below are the standard error-free transforms (Dekker 1971,
+// Knuth) — implemented from the math, canonical names — and assume round-to-nearest with
+// a *fused* fma (true on the target GPUs).
 
 fn quick_two_sum(a: f32, b: f32) -> vec2<f32> {
     let s = a + b;
