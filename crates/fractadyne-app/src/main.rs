@@ -1016,6 +1016,10 @@ struct FractadyneApp {
     autopilot_goal: (f64, f64),
     /// App-time of the last autopilot target re-evaluation.
     autopilot_eval_t: f64,
+    /// True while the autopilot is in its deep *stepped* dive (past the smooth regime). Lets the
+    /// render path render real frames between jumps (holding the last full frame meanwhile) instead
+    /// of the smooth-motion mode-2 freeze that would blank the screen. See autopilot.rs / render.rs.
+    autopilot_stepping: bool,
     /// Draw the iteration orbit of the point under the cursor.
     show_orbits: bool,
     /// A tour-scripted orbit point (complex) to draw when there's no cursor (during playback);
@@ -1402,6 +1406,7 @@ impl FractadyneApp {
             autopilot_target: (0.5, 0.5),
             autopilot_goal: (0.5, 0.5),
             autopilot_eval_t: 0.0,
+            autopilot_stepping: false,
             show_orbits: s.show_orbits,
             tour_orbit: None,
             orbit_normalize: s.orbit_normalize,

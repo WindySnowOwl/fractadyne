@@ -8,6 +8,15 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.16
+
+- **Fixed the deep auto-zoom showing a blank colored square.** In the stepped deep dive, every
+  frame was flagged as "moving," which triggered the smooth-motion freeze that never renders a real
+  floatexp frame — so the held frame kept scaling down until only the uniform fill was left. The
+  stepped dive now renders a **real full frame between jumps and holds it on screen while the next
+  one computes** (it waits for a depth-matched reference before each jump, so no blanks and no
+  spin). You watch a slideshow of real deep frames instead of a colored square.
+
 ## 0.1.15
 
 - **Auto-zoom: adjustable dive limit + a stepped deep-dive mode.** The hard ~1e271× cap is gone.

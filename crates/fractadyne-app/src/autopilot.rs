@@ -31,6 +31,7 @@ impl FractadyneApp {
             self.set_toast("Autopilot on — diving toward detail (any input stops)", ctx);
         } else {
             self.zoom_vel = 0.0;
+            self.autopilot_stepping = false;
             self.set_toast("Autopilot off", ctx);
         }
     }
@@ -45,6 +46,7 @@ impl FractadyneApp {
         gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
     ) {
         if !self.autopilot {
+            self.autopilot_stepping = false;
             return;
         }
         // Any manual navigation (or dual view) hands control back to the user.
@@ -53,6 +55,7 @@ impl FractadyneApp {
         });
         if interrupted || self.dual {
             self.autopilot = false;
+            self.autopilot_stepping = false;
             self.zoom_vel = 0.0;
             return;
         }
@@ -60,6 +63,7 @@ impl FractadyneApp {
         let l2 = self.viewport.log2_magnification();
         if l2 >= self.autopilot_dive_log2 {
             self.autopilot = false;
+            self.autopilot_stepping = false;
             self.zoom_vel = 0.0;
             self.set_toast(
                 format!(
@@ -76,6 +80,9 @@ impl FractadyneApp {
         // Past the smooth regime, animating a continuous glide stalls (each frame takes too long),
         // so switch to a stepped dive: on each re-evaluation, snap to the target and JUMP the zoom.
         let stepping = l2 >= AUTOPILOT_SMOOTH_LOG2;
+        // Tells the render path to render real frames between jumps (and hold the last full frame
+        // meanwhile) instead of the smooth-motion freeze that would blank the screen.
+        self.autopilot_stepping = stepping;
 
         // Adaptive re-evaluation: the target-field render + reference recompute slow down with
         // depth, so evaluate less often as frames slow (≈ once per rendered frame when deep) while
@@ -83,7 +90,12 @@ impl FractadyneApp {
         let frame_s = (self.perf.frame_ms / 1000.0).max(0.0);
         let eval_interval = (1.5 * frame_s).max(AUTOPILOT_EVAL_INTERVAL);
 
-        if now - self.autopilot_eval_t > eval_interval {
+        // In stepped mode, only advance once a real (settled) frame has actually rendered at the
+        // current depth (frozen_l2 caught up to now) — so each full frame stays on screen while the
+        // next one computes, instead of jumping onto blanks faster than the deep reference rebuilds.
+        let ready = !stepping || (l2 - self.ref_cache[0].frozen_l2) < 1.0;
+
+        if ready && now - self.autopilot_eval_t > eval_interval {
             self.autopilot_eval_t = now;
             if let Some((dev, q)) = gpu {
                 match self.autopilot_pick_target(dev, q) {
@@ -101,6 +113,7 @@ impl FractadyneApp {
                     }
                     None => {
                         self.autopilot = false;
+                        self.autopilot_stepping = false;
                         self.zoom_vel = 0.0;
                         self.set_toast("Autopilot: no detail ahead (stopped)", ctx);
                         return;

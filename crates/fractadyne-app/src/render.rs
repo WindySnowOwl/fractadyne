@@ -868,7 +868,12 @@ impl FractadyneApp {
             //  • `depth_lag > 1.2`: once motion stops, keep holding until the freshly-recomputed
             //    reference (matched to this depth) lands, then render real detail — so a settle snaps
             //    to full sharpness instead of spinning on the stale reference for its first frame.
-            too_stale = too_stale || (mode == 2 && interacting) || depth_lag > 1.2;
+            // During the autopilot's deep *stepped* dive we WANT real frames between jumps (each one
+            // held on screen while the next computes), so bypass the blanket "never iterate while
+            // moving" freeze — the `depth_lag > 1.2` hold below still waits for a depth-matched
+            // reference, so the real iterate never spins on a stale one.
+            let motion_freeze = mode == 2 && interacting && !self.autopilot_stepping;
+            too_stale = too_stale || motion_freeze || depth_lag > 1.2;
             // At extreme depth the recompute can take long enough that a fast/continuous dive
             // drifts the cached reference too far off-centre before a fresh one lands — rendering
             // with it is dark/glitchy (the "screen goes black" while zooming). Instead freeze the
