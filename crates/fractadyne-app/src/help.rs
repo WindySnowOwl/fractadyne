@@ -649,17 +649,16 @@ pub(crate) fn help_licenses(ui: &mut egui::Ui) {
         ui.ctx().copy_text(NOTICES.to_string());
     }
     ui.add_space(6.0);
-    // Virtualized: only the visible rows are laid out, so the ~4k-line text stays instant.
-    let lines: Vec<&str> = NOTICES.lines().collect();
-    let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
+    // The full notices in a bounded, scrollable monospace pane. No wrap (long license lines scroll
+    // horizontally rather than overlap); egui caches the galley, so the one-time layout of this
+    // rarely-opened pane is a non-issue.
     egui::Frame::group(ui.style()).show(ui, |ui| {
-        egui::ScrollArea::vertical()
-            .max_height(360.0)
+        egui::ScrollArea::both()
+            .max_height(380.0)
             .auto_shrink([false, false])
-            .show_rows(ui, row_h, lines.len(), |ui, range| {
-                for i in range {
-                    ui.add(egui::Label::new(egui::RichText::new(lines[i]).monospace()).wrap());
-                }
+            .show(ui, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                ui.add(egui::Label::new(egui::RichText::new(NOTICES).monospace()));
             });
     });
 }
