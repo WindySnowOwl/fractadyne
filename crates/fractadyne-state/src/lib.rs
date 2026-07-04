@@ -80,6 +80,9 @@ pub struct SessionState {
     /// Dual-view export layout: "side" | "separate" | "active".
     #[serde(default = "default_export_dual_mode")]
     pub export_dual_mode: String,
+    /// Export aspect ratio: "window" (match the live view) or a fixed ratio key ("16:9", "1:1", …).
+    #[serde(default = "default_export_aspect")]
+    pub export_aspect: String,
     /// Palette animation mode: "off" | "forward" | "reverse" | "pingpong".
     #[serde(default = "default_palette_anim")]
     pub palette_anim: String,
@@ -257,6 +260,10 @@ fn default_export_dual_mode() -> String {
     "side".to_string()
 }
 
+fn default_export_aspect() -> String {
+    "window".to_string()
+}
+
 fn default_palette_anim() -> String {
     "off".to_string()
 }
@@ -318,6 +325,7 @@ impl Default for SessionState {
             export_format: default_export_format(),
             export_dir: None,
             export_dual_mode: default_export_dual_mode(),
+            export_aspect: default_export_aspect(),
             palette_anim: default_palette_anim(),
             palette_anim_speed: default_palette_anim_speed(),
             light: false,

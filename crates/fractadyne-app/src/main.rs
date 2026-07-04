@@ -390,6 +390,18 @@ const COLOR_METHODS: [(&str, &str); 6] = [
 const TRAP_TYPES: [(&str, &str); 3] =
     [("point", "Point"), ("cross", "Cross"), ("circle", "Circle")];
 
+/// Fixed export aspect ratios (key, width ÷ height). "window" (not listed) matches the live view.
+const EXPORT_ASPECTS: [(&str, f64); 8] = [
+    ("16:9", 16.0 / 9.0),
+    ("16:10", 16.0 / 10.0),
+    ("3:2", 3.0 / 2.0),
+    ("4:3", 4.0 / 3.0),
+    ("1:1", 1.0),
+    ("2:3", 2.0 / 3.0),
+    ("9:16", 9.0 / 16.0),
+    ("2:1", 2.0),
+];
+
 fn method_from_str(s: &str) -> u32 {
     COLOR_METHODS.iter().position(|(k, _)| *k == s).unwrap_or(0) as u32
 }
@@ -1120,6 +1132,8 @@ struct FractadyneApp {
     export_ss: u32,
     export_format: ExportFormat,
     export_dual_mode: DualExport,
+    /// Export aspect ratio: "window" (match the live view) or a fixed key ("16:9", "1:1", …).
+    export_aspect: String,
     export_notes: String,
     export_status: Option<String>,
     /// In-flight background export; receives the final status message when done.
@@ -1482,6 +1496,7 @@ impl FractadyneApp {
                 "active" => DualExport::ActiveOnly,
                 _ => DualExport::SideBySide,
             },
+            export_aspect: s.export_aspect.clone(),
             export_notes: String::new(),
             export_status: None,
             export_task: None,
@@ -1753,6 +1768,7 @@ impl FractadyneApp {
                 DualExport::Separate => "separate".to_string(),
                 DualExport::ActiveOnly => "active".to_string(),
             },
+            export_aspect: self.export_aspect.clone(),
             palette_anim: self.palette_anim.key().to_string(),
             palette_anim_speed: self.palette_anim_speed,
             light: self.light,
@@ -1846,17 +1862,41 @@ impl FractadyneApp {
 
     /// Build the export job for the current state (single view, or dual per the chosen
     /// layout).
+    /// Export image height (px) for the current width + aspect setting. "window" matches the live
+    /// view's pixel aspect (same as the render); a fixed key uses that ratio. Uses the pixel aspect,
+    /// not `complex_span` (which saturates to 0 past ~1e308× → a bogus 1-px height).
+    fn export_height(&self) -> u32 {
+        let ratio = if self.export_aspect == "window" {
+            (self.viewport.width_px / self.viewport.height_px.max(1.0)).max(1.0e-6)
+        } else {
+            EXPORT_ASPECTS
+                .iter()
+                .find(|(k, _)| *k == self.export_aspect)
+                .map(|(_, r)| *r)
+                .unwrap_or(self.viewport.width_px / self.viewport.height_px.max(1.0))
+        };
+        ((self.export_width as f64) / ratio).round().max(1.0) as u32
+    }
+
     fn build_export_job(&self) -> ExportJob {
+        // Apply the chosen aspect: override the request height (the render centers the extra/fewer
+        // rows on the same center; width stays `export_width`). For "window" this equals the height
+        // the request already derived, so it's a no-op.
+        let h = self.export_height();
+        let fit = |mut req: fractadyne_gpu::ExportRequest| {
+            req.height = h;
+            req
+        };
         if self.dual {
-            let map = self.current_export_request_for(&self.viewport, false);
-            let jul = self.current_export_request_for(&self.julia_viewport, true);
+            let map = fit(self.current_export_request_for(&self.viewport, false));
+            let jul = fit(self.current_export_request_for(&self.julia_viewport, true));
             match self.export_dual_mode {
                 DualExport::SideBySide => ExportJob::SideBySide(map, jul),
                 DualExport::Separate => ExportJob::Separate(map, jul),
                 DualExport::ActiveOnly => ExportJob::Single(map),
             }
         } else {
-            ExportJob::Single(self.current_export_request_for(&self.viewport, self.julia_mode))
+            ExportJob::Single(fit(self.current_export_request_for(&self.viewport, self.julia_mode)))
         }
     }
 
@@ -5567,6 +5607,22 @@ impl eframe::App for FractadyneApp {
                                 ui.selectable_value(&mut self.export_ss, s, format!("{s}×"));
                             }
                         });
+                    egui::ComboBox::from_label("Aspect")
+                        .selected_text(if self.export_aspect == "window" {
+                            "Match window".to_string()
+                        } else {
+                            self.export_aspect.clone()
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.export_aspect,
+                                "window".to_string(),
+                                "Match window",
+                            );
+                            for (k, _) in EXPORT_ASPECTS {
+                                ui.selectable_value(&mut self.export_aspect, k.to_string(), k);
+                            }
+                        });
                     ui.horizontal(|ui| {
                         ui.label("Format:");
                         ui.radio_value(&mut self.export_format, ExportFormat::Png, "PNG");
@@ -5609,12 +5665,10 @@ impl eframe::App for FractadyneApp {
                             self.export_notes = self.export_notes.chars().take(120).collect();
                         }
                     });
-                    let (sx, sy) = self.viewport.complex_span();
-                    let h = ((self.export_width as f64) * sy / sx).round().max(1.0) as u32;
                     ui.label(format!(
                         "Output: {} × {} px   ({} chars left)",
                         self.export_width,
-                        h,
+                        self.export_height(),
                         120usize.saturating_sub(self.export_notes.chars().count()),
                     ));
                     ui.label(

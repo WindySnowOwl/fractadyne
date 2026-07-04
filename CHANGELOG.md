@@ -8,6 +8,15 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.20
+
+- **Fixed the Export dialog showing "W × 1 px" at deep zoom**, and added an **aspect-ratio
+  selector.** The dialog derived the preview height from `complex_span`, which saturates to 0 past
+  ~1e308× → a bogus 1-px height (the *render* was always correct — it uses the pixel aspect). The
+  height display now uses the same pixel-aspect math as the render. New **Aspect** dropdown: *Match
+  window* (default) or a fixed ratio (16:9, 16:10, 3:2, 4:3, 1:1, 2:3, 9:16, 2:1); a fixed ratio
+  renders that many rows centered on the same center. Persisted.
+
 ## 0.1.19
 
 - **"Live render budget" slider (detail vs. speed at deep zoom).** The work budget that decides when
