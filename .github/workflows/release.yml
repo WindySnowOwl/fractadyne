@@ -42,8 +42,16 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "dev" }
           $dir = "fractadyne-$tag-windows-x64"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          # The binary (self-contained: shaders + window icon are embedded).
           Copy-Item target/release/fractadyne.exe -Destination $dir/
-          Copy-Item README.md, LICENSE-APACHE, LICENSE-MIT -Destination $dir/
+          # Docs + licenses.
+          Copy-Item README.md, CHANGELOG.md, TOURS.md, LICENSE-APACHE, LICENSE-MIT -Destination $dir/
+          # Example guided-tour scripts (play in-app, or render headless with --render-tour).
+          New-Item -ItemType Directory -Force -Path "$dir/tours" | Out-Null
+          Copy-Item tours/*.toml -Destination "$dir/tours/"
+          # Example scripting / profiling-region files.
+          New-Item -ItemType Directory -Force -Path "$dir/scripts" | Out-Null
+          Copy-Item scripts/*.example.toml -Destination "$dir/scripts/"
           Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
           $hash = (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $dir.zip" | Out-File -FilePath "$dir.zip.sha256" -Encoding ascii

@@ -8,6 +8,34 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.10
+
+- **Fixed a deep-zoom "Not Responding" hang** — a fast dive (a tour, or holding zoom) crossing into
+  the floatexp range (past ~1e28×) could freeze the app for seconds per frame. Root cause: the
+  floatexp iterate shader spins when its reference/BLA fall behind a fast dive, and since GPU pixels
+  run in parallel the slowest pixel stalls the whole frame — blocking the UI thread. Deep floatexp
+  *motion* now reprojects the last good frame (smooth + responsive) and snaps to full detail when a
+  fresh reference lands or the view settles; the offline `--render-tour` export is unaffected (full
+  detail per frame). *(Live preview of a very deep dive is still soft while moving — an inherent cost
+  of high-precision rendering; see `design/multiref-live.md`.)*
+- **Faster floatexp normalization** — the extended-range `fe_norm`/`sf_norm` now use `frexp`/`ldexp`
+  (ALU bit-ops) instead of `log2`/`exp2` (GPU special-function unit). Bit-identical output; a small,
+  never-worse win in the deep-zoom loop.
+- **Dev:** `--refdiag` samples reference-orbit lengths across a view (diagnoses deep-zoom cost).
+
+## 0.1.9
+
+- **Ultra-deep-zoom benchmark** — the standardized benchmark gains a **Depth** control: *Standard*
+  (1 → 1e12×) or **Ultra deep** (1 → 1e28×, past f64's range, exercising the floatexp/BLA deep-zoom
+  path far harder). CLI: `--depth standard|ultra` (or `--ultra`). The report records the depth.
+- **Benchmark quality-of-life** — reports now include the **run date** (UTC); the standardized run
+  shows a **spinner + per-pass progress bar** and advances one dive-frame per event-loop tick, so the
+  window stays responsive and cancellable throughout (it no longer blocked on a whole pass); and the
+  results window has a **"Run again…"** button that reopens the configuration dialog.
+- **Guided-tour callouts no longer overlap** — landmark callout labels (and the title/caption text)
+  now use collision-avoidance placement, so a tour's intro annotations stay legible instead of
+  stacking on top of each other. Applies to live playback and exported tour frames.
+
 ## 0.1.7
 
 - **Standardized benchmark + burn-in** — the benchmark now has two modes. **Current settings** plays
