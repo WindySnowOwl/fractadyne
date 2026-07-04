@@ -1138,6 +1138,8 @@ struct FractadyneApp {
     export_status: Option<String>,
     /// In-flight background export; receives the final status message when done.
     export_task: Option<std::sync::mpsc::Receiver<String>>,
+    /// Deep single-view export whose reference orbit is building off-thread (before the render).
+    export_prep: Option<crate::export::ExportPrep>,
     /// Export progress in permille (0–1000) and a cooperative cancel flag.
     export_progress: std::sync::Arc<std::sync::atomic::AtomicU32>,
     export_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -1500,6 +1502,7 @@ impl FractadyneApp {
             export_notes: String::new(),
             export_status: None,
             export_task: None,
+            export_prep: None,
             export_progress: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
             export_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             export_last_dir: s.export_dir.clone().map(std::path::PathBuf::from),
@@ -3908,6 +3911,34 @@ impl eframe::App for FractadyneApp {
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => self.export_task = None,
             }
         }
+        // Poll a deep export whose reference is building off-thread. When it lands, assemble the
+        // request (reusing the reference — no rebuild) and dispatch the render to a worker. Keeps the
+        // UI alive during the (long) bignum reference build instead of freezing.
+        if let Some(prep) = self.export_prep.take() {
+            match prep.rx.try_recv() {
+                Ok(res) => {
+                    let mut req = self.current_export_request_with_ref(&prep.vp, prep.julia, Some(res));
+                    req.width = self.export_width.max(1);
+                    req.height = self.export_height();
+                    req.ss = self.export_ss.max(1);
+                    let hud = (self.show_location)
+                        .then(|| crate::scripting::build_location_overlay(ctx, &prep.vp, req.height))
+                        .flatten();
+                    if let Some((dev, q)) = &gpu {
+                        self.spawn_single_export(dev.clone(), q.clone(), req, prep.path, hud);
+                    } else {
+                        self.export_status = Some("GPU not available".to_string());
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.export_prep = Some(prep); // reference still building
+                    ctx.request_repaint();
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.export_status = Some("Export failed: reference build aborted.".to_string());
+                }
+            }
+        }
         if let Some(prev) = self.perf.last_frame {
             let dt = frame_start.duration_since(prev).as_secs_f64() * 1000.0;
             self.perf.frame_ms = ema(self.perf.frame_ms, dt);
@@ -5637,6 +5668,22 @@ impl eframe::App for FractadyneApp {
                                  exported image (scales with the output; single view only).",
                             );
                     });
+                    ui.checkbox(&mut self.glitch_correct, "Glitch correction")
+                        .on_hover_text(
+                            "Multi-reference correction of perturbation glitches. Automatically \
+                             skipped for very deep (floatexp) single-view exports so the reference \
+                             build + render run off-thread and the app stays responsive.",
+                        );
+                    if !self.dual && self.viewport.magnification() >= PERT_FE_THRESHOLD {
+                        ui.label(
+                            egui::RichText::new(
+                                "Deep export: the reference builds off-thread (UI stays live); \
+                                 glitch correction is skipped at this depth.",
+                            )
+                            .weak()
+                            .small(),
+                        );
+                    }
                     if self.dual {
                         egui::ComboBox::from_label("Dual layout")
                             .selected_text(match self.export_dual_mode {
@@ -5690,8 +5737,14 @@ impl eframe::App for FractadyneApp {
                         .small(),
                     );
                     ui.add_space(6.0);
-                    let busy = self.export_task.is_some();
-                    if busy {
+                    let busy = self.export_task.is_some() || self.export_prep.is_some();
+                    if self.export_prep.is_some() {
+                        // Deep export: the bignum reference is building off-thread (UI stays live).
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new());
+                            ui.label("Preparing (building reference)…");
+                        });
+                    } else if busy {
                         let p = self.export_progress.load(std::sync::atomic::Ordering::Relaxed);
                         if p >= 2000 {
                             // Rendering done; encoding/writing the file (not cancelable).

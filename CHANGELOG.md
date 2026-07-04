@@ -8,6 +8,17 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.22
+
+- **Fixed the app freezing ("Not Responding") when exporting at extreme zoom.** A deep export built
+  the bignum reference orbit (and ran glitch correction) *on the UI thread*, so at depths like
+  1e1000×+ with hundreds of thousands of iterations the whole app locked up for minutes. Deep
+  single-view exports now build the reference **off the main thread** (the dialog shows
+  "Preparing — building reference…" and the UI stays live), then render on the background worker with
+  progress + cancel — reusing the pre-built reference (no rebuild). Glitch correction is skipped at
+  that depth (its multi-pass re-render would re-block the UI); a note and a **Glitch correction**
+  checkbox were added to the Export dialog. Shallow / dual exports are unchanged.
+
 ## 0.1.21
 
 - **Location HUD option in the Export dialog.** A new **"Location HUD"** checkbox burns the

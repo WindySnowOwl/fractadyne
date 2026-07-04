@@ -7,6 +7,17 @@ use crate::{
     FractalKind,
 };
 
+/// A deep single-view export whose bignum reference orbit is being built off the main thread (it can
+/// take minutes at extreme depth). Held while `rx` is pending; when the reference lands the request
+/// is assembled (reusing it — no rebuild) and the render dispatched to a worker. Keeps the UI
+/// responsive instead of freezing the whole app during the reference build.
+pub(crate) struct ExportPrep {
+    pub rx: std::sync::mpsc::Receiver<crate::render::RecomputeResult>,
+    pub vp: fractadyne_core::Viewport,
+    pub julia: bool,
+    pub path: std::path::PathBuf,
+}
+
 /// Pre-rasterized "Fd" brand mark for stamping into exports: premultiplied **linear** RGBA at a
 /// high resolution (downscaled per export). Built once on the main thread from the egui font atlas
 /// (same glyphs as the live-view watermark), then blended by the export worker — which has no egui
@@ -446,7 +457,7 @@ impl FractadyneApp {
 
     /// Start a background export, prompting for a path (modal Save dialog).
     pub(crate) fn start_export(&mut self, ctx: &egui::Context, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
-        if self.export_task.is_some() {
+        if self.export_task.is_some() || self.export_prep.is_some() {
             return;
         }
         let ext = self.export_ext();
@@ -469,7 +480,7 @@ impl FractadyneApp {
 
     /// Quick export (hotkey): no dialog — save to the last-used folder with an auto name.
     pub(crate) fn quick_export(&mut self, ctx: &egui::Context, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
-        if self.export_task.is_some() {
+        if self.export_task.is_some() || self.export_prep.is_some() {
             return;
         }
         let dir = self
@@ -651,11 +662,29 @@ impl FractadyneApp {
         queue: eframe::wgpu::Queue,
         path: std::path::PathBuf,
     ) {
-        if self.export_task.is_some() {
+        if self.export_task.is_some() || self.export_prep.is_some() {
             return;
         }
         if let Some(parent) = path.parent() {
             self.export_last_dir = Some(parent.to_path_buf());
+        }
+        // Deep single-view export: build the (slow, bignum) reference orbit OFF the main thread so the
+        // UI stays responsive instead of freezing (at extreme depth the reference build alone is
+        // minutes). The render dispatches once it lands — see the `export_prep` poll in `update()`.
+        // Glitch correction is skipped at this depth (its multi-pass re-render would re-block the UI);
+        // shallow / dual exports keep the existing synchronous path (fast, and correction applies).
+        if !self.dual && self.viewport.magnification() >= crate::PERT_FE_THRESHOLD {
+            if let Some(rx) = self.spawn_export_reference(&self.viewport, self.julia_mode) {
+                self.export_prep = Some(ExportPrep {
+                    rx,
+                    vp: self.viewport.clone(),
+                    julia: self.julia_mode,
+                    path,
+                });
+                self.export_status =
+                    Some("Preparing deep export — building reference (this can take a while)…".to_string());
+                return;
+            }
         }
         let job = self.build_export_job();
         // Optional location HUD: rasterized here on the main thread (needs the egui font atlas),
@@ -727,6 +756,54 @@ impl FractadyneApp {
                         Ok(format!("Saved 2 files → {}", pmap.display()))
                     }
                 }
+            })();
+            let _ = tx.send(match msg {
+                Ok(m) => m,
+                Err(e) if e == "canceled" => "Export canceled.".to_string(),
+                Err(e) => format!("Export failed: {e}"),
+            });
+        });
+    }
+
+    /// Render one already-assembled single-view request on a background worker and write it (watermark
+    /// + HUD applied). Shares the export status channel + progress/cancel. Used by the deep-export
+    /// path once the reference has been built off the main thread (`export_prep`).
+    pub(crate) fn spawn_single_export(
+        &mut self,
+        device: eframe::wgpu::Device,
+        queue: eframe::wgpu::Queue,
+        req: fractadyne_gpu::ExportRequest,
+        path: std::path::PathBuf,
+        hud: Option<crate::scripting::HudOverlay>,
+    ) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let meta = self.view_metadata();
+        let format = self.export_format;
+        self.export_progress.store(0, Relaxed);
+        self.export_cancel.store(false, Relaxed);
+        let progress = self.export_progress.clone();
+        let cancel = self.export_cancel.clone();
+        let wm = self.watermark.then(|| self.watermark_overlay.clone()).flatten();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.export_task = Some(rx);
+        self.export_status = Some("Rendering…".to_string());
+        std::thread::spawn(move || {
+            let msg = (|| -> Result<String, String> {
+                let r = fractadyne_gpu::render_export(&device, &queue, &req, &progress, &cancel)?;
+                progress.store(2000, Relaxed);
+                let (w, h) = (r.width, r.height);
+                let mut px = r.pixels;
+                if let Some(ov) = &wm {
+                    stamp_watermark(&mut px, w, h, ov);
+                }
+                if let Some(ov) = &hud {
+                    crate::scripting::blit_location_overlay(&mut px, w, h, ov);
+                }
+                match format {
+                    ExportFormat::Png => fractadyne_export::write_png(&path, w, h, &px, Some(&meta)),
+                    ExportFormat::Exr => fractadyne_export::write_exr(&path, w, h, &px, Some(&meta)),
+                }?;
+                Ok(format!("Saved {w}×{h} → {}", path.display()))
             })();
             let _ = tx.send(match msg {
                 Ok(m) => m,
