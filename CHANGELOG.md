@@ -8,6 +8,17 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.15
+
+- **Auto-zoom: adjustable dive limit + a stepped deep-dive mode.** The hard ~1e271× cap is gone.
+  A new **"Auto-zoom dive limit"** slider (side panel → Navigation, persisted) sets where the
+  hands-free dive (A key) stops, from 1e30× to 1e5000×. Up to ~1e271× it glides smoothly as
+  before; past that — where each frame is too slow to animate — it switches to a **stepped dive**:
+  pick the detail-richest target, jump the zoom ×4, render, repeat. Choppy, but it reaches extreme
+  depth quickly. Target re-evaluation is now **adaptive**, spacing out as frames slow with depth
+  (≈ once per rendered frame when deep) instead of a fixed 0.35 s, so it doesn't pile up work it
+  can't keep up with.
+
 ## 0.1.14
 
 - **`scripts/render-deepest.ps1`** — reproduces the deepest zoom the project documents: the

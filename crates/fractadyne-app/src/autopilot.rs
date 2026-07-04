@@ -4,10 +4,16 @@
 use crate::{FractadyneApp, ZOOM_RATE};
 use eframe::egui;
 
-/// Auto-zoom autopilot: seconds between target re-evaluations, and the depth (zoom
-/// octaves ≈ log₂ magnification) at which it stops — kept in the smooth, fast regime.
+/// Auto-zoom autopilot: baseline seconds between target re-evaluations (grows adaptively with
+/// depth, since deep frames are slower — see `autopilot_step`).
 const AUTOPILOT_EVAL_INTERVAL: f64 = 0.35;
-const AUTOPILOT_LOG2_CAP: f64 = 900.0; // ≈ 1e271×
+/// Depth (log₂ magnification) up to which the dive glides smoothly. Past this, each frame is too
+/// slow to animate a continuous glide, so the autopilot switches to a stepped dive: pick a target,
+/// then jump the zoom by a fixed factor. Choppy, but it keeps descending toward detail at extreme
+/// depth. The overall stop depth is the user's dive limit (`autopilot_dive_log2`).
+const AUTOPILOT_SMOOTH_LOG2: f64 = 900.0; // ≈ 1e271×
+/// Stepped-dive magnification jump per re-evaluation, in log₂ (2.0 ⇒ ×4 per step).
+const AUTOPILOT_STEP_LOG2: f64 = 2.0;
 /// Time constant (s) for easing the zoom pivot toward each newly-evaluated target — larger
 /// is smoother but lags the detail more.
 const AUTOPILOT_TARGET_TAU: f64 = 0.5;
@@ -50,22 +56,49 @@ impl FractadyneApp {
             self.zoom_vel = 0.0;
             return;
         }
-        if self.viewport.log2_magnification() > AUTOPILOT_LOG2_CAP {
+        // Stop at the user's dive limit.
+        let l2 = self.viewport.log2_magnification();
+        if l2 >= self.autopilot_dive_log2 {
             self.autopilot = false;
             self.zoom_vel = 0.0;
-            self.set_toast("Autopilot: depth cap reached", ctx);
+            self.set_toast(
+                format!(
+                    "Autopilot: dive limit reached (~1e{:.0}×)",
+                    self.autopilot_dive_log2 / std::f64::consts::LOG2_10
+                ),
+                ctx,
+            );
             return;
         }
         let now = ctx.input(|i| i.time);
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
 
-        if now - self.autopilot_eval_t > AUTOPILOT_EVAL_INTERVAL {
+        // Past the smooth regime, animating a continuous glide stalls (each frame takes too long),
+        // so switch to a stepped dive: on each re-evaluation, snap to the target and JUMP the zoom.
+        let stepping = l2 >= AUTOPILOT_SMOOTH_LOG2;
+
+        // Adaptive re-evaluation: the target-field render + reference recompute slow down with
+        // depth, so evaluate less often as frames slow (≈ once per rendered frame when deep) while
+        // staying snappy when shallow.
+        let frame_s = (self.perf.frame_ms / 1000.0).max(0.0);
+        let eval_interval = (1.5 * frame_s).max(AUTOPILOT_EVAL_INTERVAL);
+
+        if now - self.autopilot_eval_t > eval_interval {
             self.autopilot_eval_t = now;
             if let Some((dev, q)) = gpu {
                 match self.autopilot_pick_target(dev, q) {
-                    // Just update the goal — the pivot eases toward it below, every frame,
-                    // so re-evaluation never jumps the zoom point.
-                    Some((tx, ty)) => self.autopilot_goal = (tx, ty),
+                    Some((tx, ty)) => {
+                        self.autopilot_goal = (tx, ty);
+                        if stepping {
+                            // Stepped dive: snap the pivot to the detail and jump the zoom by a
+                            // fixed factor (2^AUTOPILOT_STEP_LOG2×) toward it.
+                            self.autopilot_target = (tx, ty);
+                            let factor = (-AUTOPILOT_STEP_LOG2 * std::f64::consts::LN_2).exp();
+                            let px = tx * self.viewport.width_px;
+                            let py = ty * self.viewport.height_px;
+                            self.viewport.zoom_at(px, py, factor);
+                        }
+                    }
                     None => {
                         self.autopilot = false;
                         self.zoom_vel = 0.0;
@@ -76,18 +109,18 @@ impl FractadyneApp {
             }
         }
 
-        // Glide the zoom pivot toward the goal continuously (time-constant smoothing), so the
-        // panning direction changes smoothly rather than snapping at each re-evaluation.
-        let follow = 1.0 - (-dt / AUTOPILOT_TARGET_TAU).exp();
-        self.autopilot_target.0 += (self.autopilot_goal.0 - self.autopilot_target.0) * follow;
-        self.autopilot_target.1 += (self.autopilot_goal.1 - self.autopilot_target.1) * follow;
-
-        // Continuously zoom in toward the (smoothly moving) target screen fraction.
-        let rate = ZOOM_RATE * self.zoom_rate as f64;
-        let factor = (-rate * dt).exp();
-        let px = self.autopilot_target.0 * self.viewport.width_px;
-        let py = self.autopilot_target.1 * self.viewport.height_px;
-        self.viewport.zoom_at(px, py, factor);
+        if !stepping {
+            // Smooth glide: ease the pivot toward the goal (so the pan direction changes smoothly
+            // rather than snapping at each re-evaluation) and zoom in continuously.
+            let follow = 1.0 - (-dt / AUTOPILOT_TARGET_TAU).exp();
+            self.autopilot_target.0 += (self.autopilot_goal.0 - self.autopilot_target.0) * follow;
+            self.autopilot_target.1 += (self.autopilot_goal.1 - self.autopilot_target.1) * follow;
+            let rate = ZOOM_RATE * self.zoom_rate as f64;
+            let factor = (-rate * dt).exp();
+            let px = self.autopilot_target.0 * self.viewport.width_px;
+            let py = self.autopilot_target.1 * self.viewport.height_px;
+            self.viewport.zoom_at(px, py, factor);
+        }
         self.settle_t = [now; 2]; // treat as interaction (AA off, throttled reference refresh)
         self.schedule_repaint(ctx);
     }

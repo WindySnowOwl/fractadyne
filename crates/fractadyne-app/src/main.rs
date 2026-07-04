@@ -1243,6 +1243,8 @@ struct FractadyneApp {
     auto_iter: bool,
     /// Continuous-zoom speed multiplier (1.0 = default `ZOOM_RATE`).
     zoom_rate: f32,
+    /// Auto-zoom (autopilot) dive limit as log2(magnification); persisted. See autopilot.rs.
+    autopilot_dive_log2: f64,
     /// Supersampling / anti-alias factor (1 = off, 2 = 2×2, 3 = 3×3).
     aa: u32,
     /// Per-view perturbation reference cache (index 0 = main/left, 1 = dual Julia).
@@ -1550,6 +1552,7 @@ impl FractadyneApp {
             watermark_overlay: None,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             zoom_rate: s.zoom_rate,
+            autopilot_dive_log2: s.autopilot_dive_log2,
             aa: s.aa,
             ref_cache: [RefCache::default(), RefCache::default()],
             recompute_rx: [None, None],
@@ -1722,6 +1725,7 @@ impl FractadyneApp {
             cycle: self.cycle,
             offset: self.offset,
             zoom_rate: self.zoom_rate,
+            autopilot_dive_log2: self.autopilot_dive_log2,
             aa: self.aa,
             fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
             export_width: self.export_width,
@@ -4603,6 +4607,24 @@ impl eframe::App for FractadyneApp {
                         .logarithmic(true),
                 )
                 .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
+
+                // Auto-zoom (autopilot) dive limit, edited in decimal orders (1eN×) but stored as log2.
+                let mut dive_log10 = self.autopilot_dive_log2 / std::f64::consts::LOG2_10;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut dive_log10, 30.0..=5000.0)
+                            .text("Auto-zoom dive limit")
+                            .logarithmic(true)
+                            .custom_formatter(|n, _| format!("1e{n:.0}×")),
+                    )
+                    .on_hover_text(
+                        "Depth where auto-zoom (A key) stops. Up to ~1e271× it glides smoothly; \
+                         deeper, it switches to a choppy stepped dive to reach extreme depth quickly.",
+                    )
+                    .changed()
+                {
+                    self.autopilot_dive_log2 = dive_log10 * std::f64::consts::LOG2_10;
+                }
 
                 });
                 // Performance section, docked at the bottom of this same panel

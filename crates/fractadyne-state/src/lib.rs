@@ -49,6 +49,11 @@ pub struct SessionState {
     /// keeps older session files (written before this field) loadable.
     #[serde(default = "default_zoom_rate")]
     pub zoom_rate: f32,
+    /// Auto-zoom (autopilot) dive limit as log2(magnification); the depth at which the hands-free
+    /// dive stops. Default 900 (≈1e271×). Past the smooth regime the autopilot switches to a
+    /// stepped dive to reach this depth.
+    #[serde(default = "default_autopilot_dive_log2")]
+    pub autopilot_dive_log2: f64,
     /// Supersampling / anti-alias factor (1 = off, 2/3/4/8 = N×N).
     #[serde(default = "default_aa")]
     pub aa: u32,
@@ -191,6 +196,10 @@ fn default_dual_split() -> f32 {
     0.5
 }
 
+fn default_autopilot_dive_log2() -> f64 {
+    900.0 // ≈ 1e271×
+}
+
 fn default_zoom_rate() -> f32 {
     1.0
 }
@@ -291,6 +300,7 @@ impl Default for SessionState {
             cycle: 0.27,
             offset: 0.1,
             zoom_rate: default_zoom_rate(),
+            autopilot_dive_log2: default_autopilot_dive_log2(),
             aa: default_aa(),
             fps_cap: default_fps_cap(), // 60 (0 = uncapped)
             export_width: default_export_width(),
