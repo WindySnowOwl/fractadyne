@@ -1562,7 +1562,11 @@ impl FractadyneApp {
             });
         }
 
-        // ---- golden-image regression (set deterministic coloring per spec) ----
+        // ---- golden-image regression ----
+        // Every render-affecting field is pinned explicitly below (per spec + hard-coded coloring
+        // state), so the goldens depend only on the spec and never on the loaded session / current
+        // defaults. Fields gated off here (light/de/duotone/binary, orbit-trap) don't reach the
+        // output, so their sub-parameters are left as-is.
         let bless = std::env::args().any(|a| a == "--bless");
         let report_path = std::env::args()
             .position(|a| a == "--out" || a == "-o")
@@ -1600,6 +1604,12 @@ impl FractadyneApp {
             self.cycle = 0.27;
             self.offset = 0.1;
             self.stripe_freq = 6.0;
+            self.trap_type = 0; // orbit-trap shape — unused by smooth/stripe, pinned for determinism
+            // Pin the palette animation OFF: active_stops() returns the *random* palette when this is
+            // Random, so leaving it at whatever the loaded session had would make the goldens
+            // non-deterministic (random colors) regardless of palette_idx.
+            self.palette_anim = crate::PaletteAnim::Off;
+            self.julia_c = (0.0, 0.0); // unused (julia off) — pinned so nothing leaks from the session
             self.light = false;
             self.de = false;
             self.auto_iter = false;

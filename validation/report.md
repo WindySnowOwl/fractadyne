@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.0 (build 206)
-- **Generated:** 2026-07-01 04:01:46 UTC (unix 1782878506)
+- **Version:** 0.1.18 (build 414)
+- **Generated:** 2026-07-04 18:37:41 UTC (unix 1783190261)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -24,6 +24,9 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Series approximation | SA seed vs full iteration @1e30× | Mandelbrot, 1e30×, skip 27511 of 27512 iter | max Δ 0.0000 smooth iter | skip>0 and max Δ < 0.05 | ✅ PASS |
 | Series approximation | SA seed vs full iteration @1e20× (mode 0) | Mandelbrot, 1e20×, mode 0, skip 19007 of 19008 iter | max Δ 0.0000 smooth iter | mode 0, skip>0, max Δ < 0.05 | ✅ PASS |
 | Glitch | reference independence (3-ref majority) | seahorse, 1e8×, auto vs 2 offset refs (smooth region) | 16649 smooth px: auto dissent 1, no-majority 0 (0.0060%) | <0.2% of smooth pixels | ✅ PASS |
+| Glitch | glitch detection responds to reference quality | seahorse, 1e8×, auto vs far-offset reference | auto-ref flagged 9, far-ref flagged 10 | detection fires (>0) and far-offset flags ≥ auto | ✅ PASS |
+| Glitch | multi-reference correction resolves glitches | seahorse, 1e8×, auto seed + correction | 7 references, 0 residual glitches | 0 residual glitches | ✅ PASS |
+| Glitch | corrected buffer colors to a valid image | seahorse, 1e8×, render_export_corrected | finite true, dark true, bright true, plain interior px 97 | finite + structured (interior & exterior) | ✅ PASS |
 | Invariant | real-axis mirror symmetry | home view (-0.5, 0) | mean Δ=0.00000 iter | mean<0.05 | ✅ PASS |
 | Invariant | home has interior + exterior | home view | interior=true, exterior=true | both present | ✅ PASS |
 | Symmetry (render) | Multibrot-3 180° rotation | origin view, span 3, 44944 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |
@@ -38,10 +41,13 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Abs-family deep zoom | Buffalo perturbation vs direct | 1e5×, mode 0 vs 1, n=48400 | mean Δ=0.0001 iter, >2iter 0.000% | mode 0, mean<0.5, <2% differ, n>0 | ✅ PASS |
 | Abs-family deep zoom | Buffalo floatexp vs df32 | 1e10×, mode 2 vs 0, n=48400 | mean Δ=0.0000 iter, >2iter 0.000% | mean<0.5, <2% differ, n>0 | ✅ PASS |
 | Abs-family deep zoom | Buffalo deep finiteness @1e35× | 1e35×, mode 2 | finite dwell, 48400 escaped / 0 interior, spread 0.0 iter | mode 2, all finite | ✅ PASS |
+| Phoenix deep zoom | Phoenix perturbation vs direct | 1e5×, mode 0 vs 1, n=34635 | mean Δ=0.0072 iter, >2iter 0.000% | mean<0.5, <2% differ, n>0 | ✅ PASS |
+| Phoenix deep zoom | Phoenix floatexp vs df32 | 1e5×, mode 2 vs 0, n=34635 | mean Δ=0.0000 iter, >2iter 0.000% | mean<0.5, <2% differ, n>0 | ✅ PASS |
 | Series approximation | Multibrot 3 SA engages + matches SA-off @1e7× | mode 0, skip 3999 of 4000 iter, 0 escaped | 0 mismatch, finite | skip>0, mode 0, finite, 0 mismatch | ✅ PASS |
 | Series approximation | Multibrot 4 SA engages + matches SA-off @1e7× | mode 0, skip 3999 of 4000 iter, 0 escaped | 0 mismatch, finite | skip>0, mode 0, finite, 0 mismatch | ✅ PASS |
 | Series approximation | Multibrot 5 SA engages + matches SA-off @1e7× | mode 0, skip 3999 of 4000 iter, 0 escaped | 0 mismatch, finite | skip>0, mode 0, finite, 0 mismatch | ✅ PASS |
 | BLA | BLA render == non-BLA @1e30× | Mandelbrot mode 2, bla_on 1, 0 escaped / 48400 interior | 0 mismatch | bla engaged, 0 mismatch | ✅ PASS |
+| BLA | BLA escape path == non-BLA @1e30× (boundary) | seahorse boundary, mode 2, bla_on 1, 48400 escaped | 0 mismatch | bla engaged, escapers>100, 0 mismatch | ✅ PASS |
 | Consistency | resolution independence (N vs 3N) | seahorse, 1e6×, 25544 smooth px | 0 differ | 0 differ | ✅ PASS |
 | Consistency | max-iter monotonic stability | seahorse, 1e6×, 500→3000 iter, 15737 escaped px | 0 changed dwell | 0 changed | ✅ PASS |
 | Consistency | zoom-sequence across direct→df32 seam | seahorse, 4e3×↔1.2e4×, 1814 overlap px | 0 differ | <0.1% differ | ✅ PASS |
@@ -63,7 +69,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Formatting | zoom mantissa grouped | 3.38050027227e15 | 3.38050 02722 7e15 | "3.38050 02722 7e15" | ✅ PASS |
 | Formatting | deep coordinate elides middle | 32-digit center @ ~1e30×; and -0.5 | -0.74364 38870 … 11477 40000  |  -0.5 | leading … frontier; short coord safe | ✅ PASS |
 
-**49/49 checks passed.**
+**55/55 checks passed.**
 
 ## Coverage & scope
 
@@ -84,10 +90,10 @@ Stored in `validation\golden`. Compared against; current renders written to `cur
 
 | Image | Max Δ | Mean Δ | Checksum (FNV-1a) | Verdict | Reproduce |
 |---|---|---|---|---|---|
-| home | 0 | 0.000 | `c387ba2f582c426d` | ✅ match | `fractadyne --render --out home.png --fractal Mandelbrot --center -0.5 0.0 --zoom 1 --size 320 --iter 800 --ss 1 --method smooth --palette 0` |
-| seahorse | 0 | 0.000 | `876e75bc70f76d84` | ✅ match | `fractadyne --render --out seahorse.png --fractal Mandelbrot --center -0.743643887037151 0.131825904205330 --zoom 2000 --size 320 --iter 1500 --ss 1 --method smooth --palette 1` |
-| seahorse-stripe-1e6 | 0 | 0.000 | `c7fce0b7f354080c` | ✅ match | `fractadyne --render --out seahorse-stripe-1e6.png --fractal Mandelbrot --center -0.743643887037151 0.131825904205330 --zoom 1000000 --size 320 --iter 4000 --ss 1 --method stripe --palette 1` |
-| elephant | 0 | 0.000 | `1017955690592063` | ✅ match | `fractadyne --render --out elephant.png --fractal Mandelbrot --center 0.2925755 -0.0149977 --zoom 1500 --size 320 --iter 1500 --ss 1 --method smooth --palette 2` |
+| home | 0 | 0.000 | `c387ba2f582c426d` | ✅ match | `fractadyne --render --out home.png --fractal Mandelbrot --center -0.5 0.0 --zoom 1 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| seahorse | 0 | 0.000 | `876e75bc70f76d84` | ✅ match | `fractadyne --render --out seahorse.png --fractal Mandelbrot --center -0.743643887037151 0.131825904205330 --zoom 2000 --size 320 --iter 1500 --ss 1 --method smooth --palette 1 --no-watermark` |
+| seahorse-stripe-1e6 | 0 | 0.000 | `c7fce0b7f354080c` | ✅ match | `fractadyne --render --out seahorse-stripe-1e6.png --fractal Mandelbrot --center -0.743643887037151 0.131825904205330 --zoom 1000000 --size 320 --iter 4000 --ss 1 --method stripe --palette 1 --no-watermark` |
+| elephant | 0 | 0.000 | `1017955690592063` | ✅ match | `fractadyne --render --out elephant.png --fractal Mandelbrot --center 0.2925755 -0.0149977 --zoom 1500 --size 320 --iter 1500 --ss 1 --method smooth --palette 2 --no-watermark` |
 
 **4/4 golden images within tolerance.**
 
