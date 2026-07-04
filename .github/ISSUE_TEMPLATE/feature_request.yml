@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a new capability or an improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a look at [TODO.md](../blob/main/TODO.md) first — the idea may
+        already be planned or in progress.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: The use case or frustration behind the request. "I want to … but I can't because …".
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you'd like to see. Rough is fine.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / prior art
+      description: Other tools that do this (Ultra Fractal, Kalles Fraktaler, XaoS, …), or workarounds you've tried.
+    validations:
+      required: false

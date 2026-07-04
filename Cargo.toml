@@ -8,7 +8,7 @@ members = ["crates/*"]
 version = "0.1.11"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/fractadyne/fractadyne"
+repository = "https://github.com/WindySnowOwl/fractadyne"
 
 # Shared dependency versions. The egui family is pinned to one version so the
 # wgpu type used by fractadyne-gpu matches the one eframe owns (no duplicate wgpu).
