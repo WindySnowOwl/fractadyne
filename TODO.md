@@ -78,8 +78,34 @@ cache, adaptive iterations, auto-save/restore, and the first side panels.
       settled iteration texture is frozen and translated in the color pass by the accumulated
       pixel offset (no bignum recompute, no re-iterate), so detail slides under the cursor; the
       revealed edge fills with the frame's average color; on settle it re-renders at full detail.
-      Single + dual (left) at deep zoom. *(Remaining: a persistent tile cache for zoom reuse —
-      reprojection currently handles pan only, not scale.)*
+      Single + dual (left) at deep zoom. *(Scale reprojection now also exists — see the
+      XaoS-style item below — but only as a deep-zoom stall fallback, not the primary zoom path.)*
+- [ ] **XaoS-style continuous-zoom pixel reuse (reuse-first zoom)** — the headline UX gap vs.
+      XaoS. Today every zoom frame re-renders from scratch (GPU iterate → color), so a deep dive
+      visibly pixelates/blanks until the frame settles; XaoS instead *remaps already-computed
+      pixels* from the previous frame each step and only computes what's newly needed, so zooming
+      feels continuous. **Foundation already present:** the color shader does an affine
+      scale+translate of the frozen iteration texture (`uv_scale`/`uv_off` — `mandelbrot.wgsl`
+      ~L1148), and `render.rs` computes `reproject_scale = 2^(l2_frozen − l2_now)` +
+      `frozen_center`/`frozen_l2` (~L881–909). But it fires **only** as a stall fallback when the
+      deep reference goes `too_stale` — not on shallow/normal zoom, and it just holds a *scaled*
+      (upsampled, blurry) copy until a fresh reference snaps in. To make it XaoS-like:
+      1. **Promote reuse to the primary zoom path** (all depths, every zoom frame): start each
+         frame from the reprojected prior texture instead of black, so there's never a
+         blank/pixellated intermediate.
+      2. **Refine, don't just upscale** — a scaled frozen texture is upsampling, not real detail.
+         Re-iterate only the newly-revealed annulus at the edges + progressively re-iterate the
+         interior at correct resolution (center-out or priority tiles) so reused regions stay
+         sharp while new detail streams in. Needs the long-planned **coordinate-keyed tile/mip
+         cache** (the "persistent tile cache" noted above) so tiles survive across frames.
+      3. **Shallow regime (mode 1, <1e4×) can reuse *exactly*** — direct per-pixel dwell means the
+         iteration counts can be remapped by coordinate (true XaoS reuse: recompute only the
+         rows/columns that moved past tolerance), cheap and lossless; the deep regime is the
+         tile-refine path in (2).
+      Effort: **large.** The live pipeline is fragile (per the freeze/hang history), so this needs
+      a careful progressive-refinement scheduler + a reuse-vs-full-render golden check (a reused
+      frame must converge to the same image as a from-scratch render). Biggest single win for
+      perceived smoothness; orthogonal to the perturbation math already in place.
 - [x] **Palette animation** — Coloring panel "Animate" (Off / Forward / Reverse /
       Ping-pong / **Random gradients**) + logarithmic Speed slider; modes shift the
       color offset, **Random** synthesizes & continuously morphs gradients (seamless
