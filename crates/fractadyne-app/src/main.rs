@@ -5647,6 +5647,7 @@ impl eframe::App for FractadyneApp {
         if self.export_open {
             let mut open = self.export_open;
             let mut do_export = false;
+            let mut do_export_as = false;
             egui::Window::new("Export image")
                 .open(&mut open)
                 .resizable(false)
@@ -5760,6 +5761,29 @@ impl eframe::App for FractadyneApp {
                         .weak()
                         .small(),
                     );
+                    // Target directory: a persistent folder that "Export" saves into (auto name).
+                    let target_dir = self
+                        .export_last_dir
+                        .clone()
+                        .filter(|d| d.is_dir())
+                        .unwrap_or_else(Self::pictures_dir);
+                    ui.horizontal(|ui| {
+                        ui.label("Folder:");
+                        if ui
+                            .button("Choose…")
+                            .on_hover_text("Pick the target directory for exports")
+                            .clicked()
+                        {
+                            if let Some(d) = rfd::FileDialog::new().set_directory(&target_dir).pick_folder() {
+                                self.export_last_dir = Some(d);
+                            }
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new(target_dir.display().to_string())
+                            .weak()
+                            .small(),
+                    );
                     ui.add_space(6.0);
                     let busy = self.export_task.is_some() || self.export_prep.is_some();
                     if self.export_prep.is_some() {
@@ -5786,8 +5810,23 @@ impl eframe::App for FractadyneApp {
                                     .store(true, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
-                    } else if ui.button("Export").clicked() {
-                        do_export = true;
+                    } else {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button("Export")
+                                .on_hover_text("Render and save into the folder above (auto-named)")
+                                .clicked()
+                            {
+                                do_export = true;
+                            }
+                            if ui
+                                .button("Save as…")
+                                .on_hover_text("Choose the file name and location")
+                                .clicked()
+                            {
+                                do_export_as = true;
+                            }
+                        });
                     }
                     if let Some(s) = &self.export_status {
                         ui.add_space(6.0);
@@ -5796,6 +5835,20 @@ impl eframe::App for FractadyneApp {
                 });
             self.export_open = open;
             if do_export {
+                if let Some((dev, q)) = &gpu {
+                    // Save straight into the chosen folder with an auto (timestamped) name.
+                    let dir = self
+                        .export_last_dir
+                        .clone()
+                        .filter(|d| d.is_dir())
+                        .unwrap_or_else(Self::pictures_dir);
+                    let path = dir.join(self.export_default_name());
+                    self.start_export_to(ctx, dev.clone(), q.clone(), path);
+                } else {
+                    self.export_status = Some("GPU not available".to_string());
+                }
+            }
+            if do_export_as {
                 if let Some((dev, q)) = &gpu {
                     self.start_export(ctx, dev.clone(), q.clone());
                 } else {

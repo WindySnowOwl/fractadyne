@@ -8,6 +8,13 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.25
+
+- **Export target-directory picker.** The Export dialog now shows the target **Folder** with a
+  **Choose…** button (a directory picker), and **Export** saves straight into it with an auto
+  timestamped name — no save dialog to navigate each time. The folder persists across sessions. A
+  **Save as…** button keeps the old flow (pick the file name + location).
+
 ## 0.1.24
 
 - **Fixed the export stretching the fractal when the aspect ratio differs from the view window.**
