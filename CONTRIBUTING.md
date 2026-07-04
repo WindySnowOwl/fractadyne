@@ -14,8 +14,20 @@ opening a public issue.
 
 ## Building
 
-Requires the Rust toolchain (stable, via [rustup](https://rustup.rs)). The first
-build fetches wgpu/egui and takes a few minutes.
+**Windows quick start:** from the repo root, run
+
+```powershell
+./scripts/setup.ps1
+```
+
+It checks for (and can install) the Rust toolchain and the MSVC C++ build tools,
+then does a verification build. Safe to re-run. Pass `-Yes` for unattended setup
+or `-SkipBuild` to only set up the toolchain.
+
+Otherwise (or on Linux/macOS), all you need is the Rust toolchain (stable, via
+[rustup](https://rustup.rs)); on Linux also install the GTK/X11/Wayland dev
+packages that eframe/`rfd` link against. The first build fetches wgpu/egui and
+takes a few minutes.
 
 ```sh
 cargo run   -p fractadyne-app     # launch the app
