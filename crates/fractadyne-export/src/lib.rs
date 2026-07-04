@@ -7,7 +7,31 @@
 
 use std::path::Path;
 
-/// Linear → sRGB transfer (per channel, input/clamped to [0, 1]).
+// Color-space note (why there's no linear→sRGB encode on the PNG path):
+//
+// The renderer is *display-referred*. `fs_color` writes palette colors (0..1) straight into a
+// **non-sRGB** framebuffer — egui-wgpu deliberately selects `Bgra8Unorm`/`Rgba8Unorm` (see
+// `preferred_framebuffer_format`) — so the bytes the GPU stores ARE the sRGB values the monitor
+// shows: the live view is WYSIWYG. Palette interpolation and relief lighting therefore also
+// happen in gamma space, by design (it matches what the user sees while exploring).
+//
+// So the export buffer already holds sRGB display values. The PNG must quantize them *directly*;
+// applying a second linear→sRGB transfer (the old bug) lifts the shadows and desaturates the
+// image relative to the live view. The EXR, a linear-convention container, gets the inverse
+// (`srgb_to_linear`) so a linear-aware viewer reproduces the same appearance.
+
+/// sRGB → linear transfer (per channel, input clamped to [0, 1]). Used for the EXR master.
+fn srgb_to_linear(c: f32) -> f32 {
+    let c = c.clamp(0.0, 1.0);
+    if c <= 0.040_45 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// linear → sRGB transfer (per channel, input clamped to [0, 1]). Used to display the
+/// (linear) EXR master as an 8-bit thumbnail.
 fn srgb_encode(c: f32) -> f32 {
     let c = c.clamp(0.0, 1.0);
     if c <= 0.003_130_8 {
@@ -17,17 +41,23 @@ fn srgb_encode(c: f32) -> f32 {
     }
 }
 
-/// Convert a linear RGBA `f32` buffer to 8-bit sRGB RGBA bytes — identical to what
-/// [`write_png`] stores. Exposed so callers (e.g. golden-image validation) can compare a
-/// fresh render against a decoded PNG on the exact same footing.
+/// Quantize a display-space (sRGB) channel value to 8-bit — a direct round, no transfer.
+fn quantize8(c: f32) -> u8 {
+    (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+/// Convert the renderer's display-space (sRGB) RGBA `f32` buffer to 8-bit RGBA bytes —
+/// identical to what [`write_png`] stores. Exposed so callers (e.g. golden-image validation)
+/// can compare a fresh render against a decoded PNG on the exact same footing. No transfer is
+/// applied: the buffer already holds sRGB display values (see the color-space note above).
 pub fn to_srgb8(rgba: &[f32]) -> Vec<u8> {
     let n = rgba.len() / 4;
     let mut out = Vec::with_capacity(n * 4);
     for px in rgba[..n * 4].chunks_exact(4) {
-        out.push((srgb_encode(px[0]) * 255.0 + 0.5) as u8);
-        out.push((srgb_encode(px[1]) * 255.0 + 0.5) as u8);
-        out.push((srgb_encode(px[2]) * 255.0 + 0.5) as u8);
-        out.push((px[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+        out.push(quantize8(px[0]));
+        out.push(quantize8(px[1]));
+        out.push(quantize8(px[2]));
+        out.push(quantize8(px[3]));
     }
     out
 }
@@ -151,7 +181,9 @@ fn decode_png_rgba8<R: std::io::Read>(r: R) -> Option<(u32, u32, Vec<u8>)> {
 /// tEXt keyword under which the reloadable view state is stored.
 pub const META_KEYWORD: &str = "Fractadyne";
 
-/// Write an 8-bit sRGB PNG from a linear RGBA `f32` buffer (`width*height*4` floats).
+/// Write an 8-bit sRGB PNG from the renderer's display-space (sRGB) RGBA `f32` buffer
+/// (`width*height*4` floats). The colors are quantized directly — no linear→sRGB transfer —
+/// so the PNG matches the live view byte-for-byte (see the color-space note above).
 /// `metadata`, if present, is embedded as a `tEXt` chunk (reloadable view state).
 pub fn write_png(
     path: &Path,
@@ -166,10 +198,10 @@ pub fn write_png(
     }
     let mut bytes = Vec::with_capacity(expected);
     for px in rgba[..expected].chunks_exact(4) {
-        bytes.push((srgb_encode(px[0]) * 255.0 + 0.5) as u8);
-        bytes.push((srgb_encode(px[1]) * 255.0 + 0.5) as u8);
-        bytes.push((srgb_encode(px[2]) * 255.0 + 0.5) as u8);
-        bytes.push((px[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+        bytes.push(quantize8(px[0]));
+        bytes.push(quantize8(px[1]));
+        bytes.push(quantize8(px[2]));
+        bytes.push(quantize8(px[3]));
     }
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
     let w = std::io::BufWriter::new(file);
@@ -337,8 +369,10 @@ pub fn read_png_metadata(path: &Path) -> Option<String> {
         .map(|c| c.text.clone())
 }
 
-/// Write a 32-bit float linear OpenEXR from a linear RGBA `f32` buffer. `metadata`,
-/// if present, is stored as a custom `Fractadyne` image attribute (reloadable view).
+/// Write a 32-bit float **linear** OpenEXR from the renderer's display-space (sRGB) RGBA `f32`
+/// buffer. The color channels are converted sRGB→linear so the EXR is a proper linear master
+/// that reproduces the live/PNG appearance in a linear-aware viewer (alpha is left as-is).
+/// `metadata`, if present, is stored as a custom `Fractadyne` image attribute (reloadable view).
 pub fn write_exr(
     path: &Path,
     width: u32,
@@ -354,7 +388,12 @@ pub fn write_exr(
     let w = width as usize;
     let channels = SpecificChannels::rgba(|pos: Vec2<usize>| {
         let i = (pos.1 * w + pos.0) * 4;
-        (rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3])
+        (
+            srgb_to_linear(rgba[i]),
+            srgb_to_linear(rgba[i + 1]),
+            srgb_to_linear(rgba[i + 2]),
+            rgba[i + 3],
+        )
     });
     let mut image = Image::from_channels((width as usize, height as usize), channels);
     if let Some(meta) = metadata {

@@ -8,6 +8,17 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.26
+
+- **Fixed exported PNGs looking desaturated / washed out versus the live view.** The renderer is
+  display-referred: `fs_color` writes palette colors straight into a **non-sRGB** framebuffer
+  (egui-wgpu picks `Bgra8Unorm`/`Rgba8Unorm`), so the live view is already WYSIWYG. The PNG
+  exporter was applying a second linear→sRGB transfer on top of those already-sRGB values, which
+  lifted the shadows and drained saturation. PNG export now **quantizes the colors directly**, so
+  the file matches the live framebuffer byte-for-byte. The OpenEXR master gets the inverse
+  (sRGB→linear) so it remains a correct **linear** container that reproduces the same look. Golden
+  images were re-blessed against the corrected output (all 55 numeric self-test checks unchanged).
+
 ## 0.1.25
 
 - **Export target-directory picker.** The Export dialog now shows the target **Folder** with a
