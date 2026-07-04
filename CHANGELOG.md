@@ -8,6 +8,12 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.18
+
+- **Esc reliably stops auto-zoom.** Escape is now one of the auto-zoom loop's own interrupt inputs
+  (alongside click / scroll / Space), so it stops the dive directly — including deep in a stepped
+  dive — rather than relying only on the top-level key handler.
+
 ## 0.1.17
 
 - **Auto-zoom toolbar button.** A 🛸 button in the toolbar's navigation group toggles auto-zoom and

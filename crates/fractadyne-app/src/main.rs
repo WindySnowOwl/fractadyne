@@ -3597,6 +3597,7 @@ impl eframe::App for FractadyneApp {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             if self.autopilot {
                 self.autopilot = false;
+                self.autopilot_stepping = false;
                 self.zoom_vel = 0.0;
             } else if self.playback.is_some() {
                 self.playback = None;

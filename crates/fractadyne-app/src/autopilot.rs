@@ -49,9 +49,12 @@ impl FractadyneApp {
             self.autopilot_stepping = false;
             return;
         }
-        // Any manual navigation (or dual view) hands control back to the user.
+        // Any manual navigation, Esc, or dual view hands control back to the user.
         let interrupted = ctx.input(|i| {
-            i.pointer.any_down() || i.smooth_scroll_delta.y != 0.0 || i.key_down(egui::Key::Space)
+            i.pointer.any_down()
+                || i.smooth_scroll_delta.y != 0.0
+                || i.key_down(egui::Key::Space)
+                || i.key_down(egui::Key::Escape)
         });
         if interrupted || self.dual {
             self.autopilot = false;
