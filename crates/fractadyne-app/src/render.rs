@@ -3,7 +3,7 @@
 //! skip, and assembles the live (`MandelbrotParams`) and offscreen (`ExportRequest`) jobs,
 //! choosing the direct / df32-perturbation / floatexp render mode by depth.
 
-use crate::{profile, zoom_iter_cap, FractadyneApp, FractalKind, PERT_FE_THRESHOLD, WORK_BUDGET};
+use crate::{profile, zoom_iter_cap, FractadyneApp, FractalKind, PERT_FE_THRESHOLD};
 use fractadyne_core::Viewport;
 use fractadyne_gpu::MandelbrotParams;
 use std::time::Instant;
@@ -660,10 +660,11 @@ impl FractadyneApp {
         // (not the watchdog) absorbs the cost. Settle frames keep the full budget: by then the
         // reference + BLA have landed and the frame is cheap even in floatexp.
         let is_fe = fractal.supports_perturbation() && magnification >= PERT_FE_THRESHOLD;
+        let wb = self.effective_work_budget();
         let (budget, iter_cap): (u64, u32) = if interacting {
-            (if is_fe { WORK_BUDGET / 6 } else { WORK_BUDGET }, 500_000)
+            (if is_fe { wb / 6 } else { wb }, 500_000)
         } else {
-            (WORK_BUDGET.saturating_mul(6), 500_000)
+            (wb.saturating_mul(6), 500_000)
         };
         let gpu_iter = eff_iter.min(iter_cap).min(zoom_iter_cap(log2mag).max(256));
         // Build the reference orbit a bit longer than the pixels need (`zoom_iter_cap` grows 256

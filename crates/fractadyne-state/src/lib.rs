@@ -54,6 +54,11 @@ pub struct SessionState {
     /// stepped dive to reach this depth.
     #[serde(default = "default_autopilot_dive_log2")]
     pub autopilot_dive_log2: f64,
+    /// Live-render work-budget multiplier (× the built-in `WORK_BUDGET`). Higher renders the live
+    /// deep-zoom view at fuller resolution (crisper) at the cost of frame-rate / GPU-watchdog margin;
+    /// does not affect exports. Default 1.0.
+    #[serde(default = "default_work_budget_scale")]
+    pub work_budget_scale: f64,
     /// Supersampling / anti-alias factor (1 = off, 2/3/4/8 = N×N).
     #[serde(default = "default_aa")]
     pub aa: u32,
@@ -200,6 +205,10 @@ fn default_autopilot_dive_log2() -> f64 {
     900.0 // ≈ 1e271×
 }
 
+fn default_work_budget_scale() -> f64 {
+    1.0
+}
+
 fn default_zoom_rate() -> f32 {
     1.0
 }
@@ -301,6 +310,7 @@ impl Default for SessionState {
             offset: 0.1,
             zoom_rate: default_zoom_rate(),
             autopilot_dive_log2: default_autopilot_dive_log2(),
+            work_budget_scale: default_work_budget_scale(),
             aa: default_aa(),
             fps_cap: default_fps_cap(), // 60 (0 = uncapped)
             export_width: default_export_width(),

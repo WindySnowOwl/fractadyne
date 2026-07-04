@@ -8,6 +8,14 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.19
+
+- **"Live render budget" slider (detail vs. speed at deep zoom).** The work budget that decides when
+  the live view drops to a box-filtered reduced-resolution upscale (the "soft" look at extreme depth
+  on large windows) is now a tunable multiplier (side panel → Navigation, 0.25×–8×, persisted).
+  Higher renders the live deep-zoom view at fuller resolution (crisper) at the cost of frame-rate and
+  GPU-watchdog margin; exports are always full resolution regardless.
+
 ## 0.1.18
 
 - **Esc reliably stops auto-zoom.** Escape is now one of the auto-zoom loop's own interrupt inputs

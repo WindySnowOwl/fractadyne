@@ -1249,6 +1249,9 @@ struct FractadyneApp {
     zoom_rate: f32,
     /// Auto-zoom (autopilot) dive limit as log2(magnification); persisted. See autopilot.rs.
     autopilot_dive_log2: f64,
+    /// Live-render work-budget multiplier (× `WORK_BUDGET`); persisted. Higher = crisper live deep
+    /// zoom (fuller resolution) at lower FPS / less GPU-watchdog margin. Exports are unaffected.
+    work_budget_scale: f64,
     /// Supersampling / anti-alias factor (1 = off, 2 = 2×2, 3 = 3×3).
     aa: u32,
     /// Per-view perturbation reference cache (index 0 = main/left, 1 = dual Julia).
@@ -1558,6 +1561,7 @@ impl FractadyneApp {
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             zoom_rate: s.zoom_rate,
             autopilot_dive_log2: s.autopilot_dive_log2,
+            work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
             aa: s.aa,
             ref_cache: [RefCache::default(), RefCache::default()],
             recompute_rx: [None, None],
@@ -1731,6 +1735,7 @@ impl FractadyneApp {
             offset: self.offset,
             zoom_rate: self.zoom_rate,
             autopilot_dive_log2: self.autopilot_dive_log2,
+            work_budget_scale: self.work_budget_scale,
             aa: self.aa,
             fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
             export_width: self.export_width,
@@ -2071,6 +2076,14 @@ impl FractadyneApp {
         } else {
             0.004 + self.cycle * 0.06
         }
+    }
+
+    /// The live-render work budget (`WORK_BUDGET`) scaled by the user's `work_budget_scale`. Higher
+    /// lets deep/large frames render at fuller resolution (crisper) before the color pass falls back
+    /// to a box-filtered upscale — at the cost of frame-rate and GPU-watchdog margin. Export is
+    /// unaffected (always full resolution).
+    pub(crate) fn effective_work_budget(&self) -> u64 {
+        ((WORK_BUDGET as f64) * self.work_budget_scale.clamp(0.25, 8.0)).max(1.0e9) as u64
     }
 
     /// Render one fractal panel: navigation (drag-pan, wheel-zoom) + draw. Returns
@@ -4583,8 +4596,8 @@ impl eframe::App for FractadyneApp {
                 };
                 let settled_iter = want_iter.min(500_000).min(zoom_iter_cap(log2mag).max(256));
                 let px = (self.viewport.width_px * self.viewport.height_px).max(1.0) as u64;
-                let res_limited =
-                    px.saturating_mul(settled_iter.max(1) as u64) > WORK_BUDGET.saturating_mul(6);
+                let res_limited = px.saturating_mul(settled_iter.max(1) as u64)
+                    > self.effective_work_budget().saturating_mul(6);
                 if res_limited {
                     ui.label(
                         egui::RichText::new(format!(
@@ -4646,6 +4659,20 @@ impl eframe::App for FractadyneApp {
                 {
                     self.autopilot_dive_log2 = dive_log10 * std::f64::consts::LOG2_10;
                 }
+
+                // Live-render work budget: detail-vs-speed for the deep-zoom preview.
+                ui.add(
+                    egui::Slider::new(&mut self.work_budget_scale, 0.25..=8.0)
+                        .text("Live render budget")
+                        .suffix("×")
+                        .logarithmic(true),
+                )
+                .on_hover_text(
+                    "Detail vs. speed for the live view at deep zoom. Higher renders at fuller \
+                     resolution (crisper — less of the \"soft\" upscaled look) but lowers frame-rate, \
+                     and very high values risk a brief GPU stall on the heaviest frames. Exports are \
+                     always full resolution regardless of this.",
+                );
 
                 });
                 // Performance section, docked at the bottom of this same panel
