@@ -8,6 +8,15 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.23
+
+- **Location HUD works in dual view** (was incorrectly greyed out). The HUD reflects the map /
+  Mandelbrot view's zoom + center and lands on the image's top-left (the map panel of a side-by-side
+  stitch).
+- **Extended the deep-export freeze fix to dual view.** 0.1.22 moved the reference build off the UI
+  thread only for single-view exports, so a deep *dual* export still froze. Now the (slow) map
+  reference builds off-thread for dual too; the shallow Julia panel builds instantly when it lands.
+
 ## 0.1.22
 
 - **Fixed the app freezing ("Not Responding") when exporting at extreme zoom.** A deep export built

@@ -12,9 +12,14 @@ use crate::{
 /// is assembled (reusing it — no rebuild) and the render dispatched to a worker. Keeps the UI
 /// responsive instead of freezing the whole app during the reference build.
 pub(crate) struct ExportPrep {
+    /// The deep MAP-view reference, building off-thread.
     pub rx: std::sync::mpsc::Receiver<crate::render::RecomputeResult>,
-    pub vp: fractadyne_core::Viewport,
-    pub julia: bool,
+    pub map_vp: fractadyne_core::Viewport,
+    /// Single-view Julia flag (the dual map is always Mandelbrot, so `false` there).
+    pub julia_mode: bool,
+    /// `Some` ⇒ dual export: the Julia panel to render + combine (usually shallow → builds instantly).
+    pub julia_vp: Option<fractadyne_core::Viewport>,
+    pub dual_mode: crate::DualExport,
     pub path: std::path::PathBuf,
 }
 
@@ -668,17 +673,21 @@ impl FractadyneApp {
         if let Some(parent) = path.parent() {
             self.export_last_dir = Some(parent.to_path_buf());
         }
-        // Deep single-view export: build the (slow, bignum) reference orbit OFF the main thread so the
-        // UI stays responsive instead of freezing (at extreme depth the reference build alone is
+        // Deep export: build the (slow, bignum) MAP reference orbit OFF the main thread so the UI
+        // stays responsive instead of freezing (at extreme depth the reference build alone is
         // minutes). The render dispatches once it lands — see the `export_prep` poll in `update()`.
-        // Glitch correction is skipped at this depth (its multi-pass re-render would re-block the UI);
-        // shallow / dual exports keep the existing synchronous path (fast, and correction applies).
-        if !self.dual && self.viewport.magnification() >= crate::PERT_FE_THRESHOLD {
-            if let Some(rx) = self.spawn_export_reference(&self.viewport, self.julia_mode) {
+        // Works for single AND dual (the dual Julia panel is usually shallow and builds instantly in
+        // the poll). Glitch correction is skipped at this depth (its multi-pass re-render would
+        // re-block the UI); shallower exports keep the synchronous path below (fast; correction applies).
+        if self.viewport.magnification() >= crate::PERT_FE_THRESHOLD {
+            let map_julia = !self.dual && self.julia_mode; // the dual map panel is Mandelbrot
+            if let Some(rx) = self.spawn_export_reference(&self.viewport, map_julia) {
                 self.export_prep = Some(ExportPrep {
                     rx,
-                    vp: self.viewport.clone(),
-                    julia: self.julia_mode,
+                    map_vp: self.viewport.clone(),
+                    julia_mode: self.julia_mode,
+                    julia_vp: self.dual.then(|| self.julia_viewport.clone()),
+                    dual_mode: self.export_dual_mode,
                     path,
                 });
                 self.export_status =
@@ -687,9 +696,11 @@ impl FractadyneApp {
             }
         }
         let job = self.build_export_job();
-        // Optional location HUD: rasterized here on the main thread (needs the egui font atlas),
-        // then blitted by the sync/worker write paths (which have no context). Single view only.
-        let hud = (self.show_location && !self.dual)
+        // Optional location HUD: rasterized here on the main thread (needs the egui font atlas), then
+        // blitted by the sync/worker write paths (which have no context). Built from the map view;
+        // it lands on the image's top-left — which for a side-by-side dual stitch is the map panel.
+        let hud = self
+            .show_location
             .then(|| crate::scripting::build_location_overlay(ctx, &self.viewport, self.export_height()))
             .flatten();
         // Glitch correction re-renders per reference (synchronous, main thread), so it runs here
@@ -701,14 +712,27 @@ impl FractadyneApp {
                 return;
             }
         }
+        self.spawn_export_worker(device, queue, job, path, hud);
+    }
+
+    /// Render an already-assembled export job (references built) on a background worker and write it
+    /// (watermark + HUD applied). Shares the export status channel + progress/cancel. Used by the
+    /// deep-export path once the reference has been built off the main thread (`export_prep`).
+    pub(crate) fn spawn_export_worker(
+        &mut self,
+        device: eframe::wgpu::Device,
+        queue: eframe::wgpu::Queue,
+        job: ExportJob,
+        path: std::path::PathBuf,
+        hud: Option<crate::scripting::HudOverlay>,
+    ) {
+        use std::sync::atomic::Ordering::Relaxed;
         let meta = self.view_metadata();
         let format = self.export_format;
-        use std::sync::atomic::Ordering::Relaxed;
         self.export_progress.store(0, Relaxed);
         self.export_cancel.store(false, Relaxed);
         let progress = self.export_progress.clone();
         let cancel = self.export_cancel.clone();
-        // Clone the pre-rasterized mark into the worker (it has no egui context to build one).
         let wm = self.watermark.then(|| self.watermark_overlay.clone()).flatten();
         let (tx, rx) = std::sync::mpsc::channel();
         self.export_task = Some(rx);
@@ -756,54 +780,6 @@ impl FractadyneApp {
                         Ok(format!("Saved 2 files → {}", pmap.display()))
                     }
                 }
-            })();
-            let _ = tx.send(match msg {
-                Ok(m) => m,
-                Err(e) if e == "canceled" => "Export canceled.".to_string(),
-                Err(e) => format!("Export failed: {e}"),
-            });
-        });
-    }
-
-    /// Render one already-assembled single-view request on a background worker and write it (watermark
-    /// + HUD applied). Shares the export status channel + progress/cancel. Used by the deep-export
-    /// path once the reference has been built off the main thread (`export_prep`).
-    pub(crate) fn spawn_single_export(
-        &mut self,
-        device: eframe::wgpu::Device,
-        queue: eframe::wgpu::Queue,
-        req: fractadyne_gpu::ExportRequest,
-        path: std::path::PathBuf,
-        hud: Option<crate::scripting::HudOverlay>,
-    ) {
-        use std::sync::atomic::Ordering::Relaxed;
-        let meta = self.view_metadata();
-        let format = self.export_format;
-        self.export_progress.store(0, Relaxed);
-        self.export_cancel.store(false, Relaxed);
-        let progress = self.export_progress.clone();
-        let cancel = self.export_cancel.clone();
-        let wm = self.watermark.then(|| self.watermark_overlay.clone()).flatten();
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.export_task = Some(rx);
-        self.export_status = Some("Rendering…".to_string());
-        std::thread::spawn(move || {
-            let msg = (|| -> Result<String, String> {
-                let r = fractadyne_gpu::render_export(&device, &queue, &req, &progress, &cancel)?;
-                progress.store(2000, Relaxed);
-                let (w, h) = (r.width, r.height);
-                let mut px = r.pixels;
-                if let Some(ov) = &wm {
-                    stamp_watermark(&mut px, w, h, ov);
-                }
-                if let Some(ov) = &hud {
-                    crate::scripting::blit_location_overlay(&mut px, w, h, ov);
-                }
-                match format {
-                    ExportFormat::Png => fractadyne_export::write_png(&path, w, h, &px, Some(&meta)),
-                    ExportFormat::Exr => fractadyne_export::write_exr(&path, w, h, &px, Some(&meta)),
-                }?;
-                Ok(format!("Saved {w}×{h} → {}", path.display()))
             })();
             let _ = tx.send(match msg {
                 Ok(m) => m,

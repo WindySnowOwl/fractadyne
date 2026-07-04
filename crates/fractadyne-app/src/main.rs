@@ -3917,15 +3917,33 @@ impl eframe::App for FractadyneApp {
         if let Some(prep) = self.export_prep.take() {
             match prep.rx.try_recv() {
                 Ok(res) => {
-                    let mut req = self.current_export_request_with_ref(&prep.vp, prep.julia, Some(res));
-                    req.width = self.export_width.max(1);
-                    req.height = self.export_height();
-                    req.ss = self.export_ss.max(1);
-                    let hud = (self.show_location)
-                        .then(|| crate::scripting::build_location_overlay(ctx, &prep.vp, req.height))
+                    let (ew, eh, ess) = (self.export_width.max(1), self.export_height(), self.export_ss.max(1));
+                    // Map view: reuse the just-built reference (no rebuild). Dual map is Mandelbrot.
+                    let map_julia = prep.julia_vp.is_none() && prep.julia_mode;
+                    let mut map_req = self.current_export_request_with_ref(&prep.map_vp, map_julia, Some(res));
+                    map_req.width = ew;
+                    map_req.height = eh;
+                    map_req.ss = ess;
+                    let job = if let Some(jvp) = &prep.julia_vp {
+                        // Dual: build the Julia panel now (usually shallow → instant) and combine.
+                        let mut jul = self.current_export_request_for(jvp, true);
+                        jul.width = ew;
+                        jul.height = eh;
+                        jul.ss = ess;
+                        match prep.dual_mode {
+                            DualExport::SideBySide => ExportJob::SideBySide(map_req, jul),
+                            DualExport::Separate => ExportJob::Separate(map_req, jul),
+                            DualExport::ActiveOnly => ExportJob::Single(map_req),
+                        }
+                    } else {
+                        ExportJob::Single(map_req)
+                    };
+                    let hud = self
+                        .show_location
+                        .then(|| crate::scripting::build_location_overlay(ctx, &prep.map_vp, eh))
                         .flatten();
                     if let Some((dev, q)) = &gpu {
-                        self.spawn_single_export(dev.clone(), q.clone(), req, prep.path, hud);
+                        self.spawn_export_worker(dev.clone(), q.clone(), job, prep.path, hud);
                     } else {
                         self.export_status = Some("GPU not available".to_string());
                     }
@@ -5661,20 +5679,19 @@ impl eframe::App for FractadyneApp {
                         ui.radio_value(&mut self.export_format, ExportFormat::Png, "PNG");
                         ui.radio_value(&mut self.export_format, ExportFormat::Exr, "OpenEXR");
                     });
-                    ui.add_enabled_ui(!self.dual, |ui| {
-                        ui.checkbox(&mut self.show_location, "Location HUD")
-                            .on_hover_text(
-                                "Burn a zoom-level + coordinate panel into the top-left of the \
-                                 exported image (scales with the output; single view only).",
-                            );
-                    });
+                    ui.checkbox(&mut self.show_location, "Location HUD")
+                        .on_hover_text(
+                            "Burn a zoom-level + coordinate panel into the top-left of the exported \
+                             image (scales with the output; shows the map/Mandelbrot view's zoom + \
+                             center).",
+                        );
                     ui.checkbox(&mut self.glitch_correct, "Glitch correction")
                         .on_hover_text(
                             "Multi-reference correction of perturbation glitches. Automatically \
                              skipped for very deep (floatexp) single-view exports so the reference \
                              build + render run off-thread and the app stays responsive.",
                         );
-                    if !self.dual && self.viewport.magnification() >= PERT_FE_THRESHOLD {
+                    if self.viewport.magnification() >= PERT_FE_THRESHOLD {
                         ui.label(
                             egui::RichText::new(
                                 "Deep export: the reference builds off-thread (UI stays live); \
