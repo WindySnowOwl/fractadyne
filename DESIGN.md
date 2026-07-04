@@ -1,9 +1,24 @@
-# Fractadyne — Design Document
+# Fractadyne — Design Document (original intent)
 
-**Status:** Draft v0.2
-**Date:** 2026-06-25
+**Status:** Original design intent (2026-06-25) — **historical; not maintained as the code evolved.**
 **Author:** rhong (with Claude Code)
 **Name:** *Fractadyne* — *fract* (fractal) + *-dyne* (Gk *dýnamis*, "power/force"); i.e. a high-performance fractal engine. The on-disk working directory is still `FractEx/` from the project's original title.
+
+> ## ⚠️ This is the *original design intent*, not the current architecture
+>
+> This document captures what the project *set out* to build at kickoff. The implementation has
+> since diverged in several places. **For the system as actually built, see
+> [`ARCHITECTURE.md`](ARCHITECTURE.md)** (authoritative for current state), with
+> [`CHANGELOG.md`](CHANGELOG.md) (per-version log) and [`STATE.md`](STATE.md) (snapshot).
+>
+> Headline divergences (design → as-built): the `Fractal`/`RenderStrategy` trait abstraction (§4)
+> was **not built** — formulas are a `FractalKind` enum switched on by hand-written per-path `match`
+> arms; three crates (`-render`, `-ui`, `-fractals`) are **empty stubs** and their logic lives in
+> `fractadyne-app`; the live view uses **full-frame render + reprojection freeze**, not a per-tile
+> RAM cache; `rayon` is **not used**; and the formula DSL (§8), L-systems / cellular automata (§4.1),
+> and histogram coloring (§6.2) are **not implemented**. Sections describing those in the present
+> tense are aspirational. The deep-zoom engine as built also adds BLA, a 3-tier direct/df32/floatexp
+> mode system, and an extended-range `FloatExp` scale that §5 predates.
 
 > This is an early draft. The prior version of this document was lost before it
 > was written, so nothing here is "recovered" — it is reconstructed from the

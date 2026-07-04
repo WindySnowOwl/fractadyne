@@ -190,8 +190,9 @@ Cargo workspace under `crates/` (9 crates): `fractadyne-core` (numerics / viewpo
 (`fractadyne-render`, `fractadyne-fractals`, `fractadyne-ui`) are reserved stubs for planned
 refactors; that logic currently lives in `fractadyne-app`.
 
-See [DESIGN.md](DESIGN.md), [UI-DESIGN.md](UI-DESIGN.md), [TODO.md](TODO.md),
-[CHANGELOG.md](CHANGELOG.md), and [STATE.md](STATE.md) for details.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the system as built (authoritative),
+[DESIGN.md](DESIGN.md) for the original design intent, and [UI-DESIGN.md](UI-DESIGN.md),
+[TODO.md](TODO.md), [CHANGELOG.md](CHANGELOG.md), [STATE.md](STATE.md) for details.
 
 ## License
 

@@ -6,8 +6,9 @@ authoritative running log; this file is a higher-level snapshot. Some deep-dive 
 sections below are historical (kept for reference) — the CHANGELOG is the source of truth for
 what shipped._
 
-Companion docs: [TODO.md](TODO.md) (backlog, what's done), [CHANGELOG.md](CHANGELOG.md)
-(per-version changes), [DESIGN.md](DESIGN.md) / [UI-DESIGN.md](UI-DESIGN.md) (specs).
+Companion docs: [ARCHITECTURE.md](ARCHITECTURE.md) (system as built), [TODO.md](TODO.md) (backlog,
+what's done), [CHANGELOG.md](CHANGELOG.md) (per-version changes), [DESIGN.md](DESIGN.md) (original
+design intent) / [UI-DESIGN.md](UI-DESIGN.md) (specs).
 
 ## What this is
 Native Windows fractal explorer (Rust + wgpu/egui, eframe 0.31). Priorities: ultra-deep
