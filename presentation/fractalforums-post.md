@@ -15,8 +15,9 @@ questions I'd love input on. Everything below is reproducible; commands and data
   on the CPU, and a GPU perturbation pipeline that switches by depth:
   **direct df32 → df32-δ perturbation → floatexp-δ perturbation** (df32 mantissa + `i32`
   exponent), so the deviation δz never runs out of `f32` exponent range. Zhuoran rebasing;
-  depth bounded by coordinate precision + iteration budget, not a fixed wall (live to ~1e300×; extreme-depth
-  self-consistency validated to 1e1000000×).
+  depth bounded by coordinate precision + iteration budget, not a fixed wall — cross-checked against
+  Fraktaler-3 to 1e300×, renders correctly far deeper (a ~1e1108× sample location, `scripts/deep-sample.fdn`),
+  and extreme-depth arithmetic self-consistency validated to 1e1000000×.
 - **Acceleration.** Order-3 **series approximation** (skips early iterations, validated to
   reproduce full iteration exactly) and **BLA** (bilinear approximation, Zhuoran/KF-style),
   both on the GPU; the slow bignum reference/SA/BLA build runs off the render thread.
@@ -25,8 +26,10 @@ questions I'd love input on. Everything below is reproducible; commands and data
 - **Rendering.** DE/slope relief lighting, distance-glow, several coloring methods
   (smooth, stripe/TIA, orbit trap, decomposition), custom gradient editor, tiled PNG/EXR export
   with reloadable metadata, multi-reference glitch correction on the **export** path.
-- **Tooling.** Guided keyframe tours + headless movie export, `.fdn` shareable locations
-  (hardened/fuzzed parser), a standardized benchmark, and a layered validation harness (below).
+- **Tooling.** Guided keyframe tours + headless movie export (restartable with `--resume`),
+  `.fdn` shareable locations (hardened/fuzzed parser), an auto-zoom autopilot (hands-free dive with
+  an adjustable depth limit; switches to a stepped dive at extreme depth), a standardized benchmark,
+  and a layered validation harness (below).
 
 Stack: Rust, `wgpu`/`egui`/`eframe` 0.31, `astro-float` (bignum), 9-crate workspace. Windows.
 

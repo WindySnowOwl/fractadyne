@@ -67,8 +67,9 @@ These were chosen at kickoff and anchor the rest of the design:
 
 - **3D / distance-estimated 3D fractals** (Mandelbulb, Mandelbox). The
   architecture should not *preclude* them, but they are out of scope for v1.
-- **Animation / zoom-movie rendering.** Design should allow it later
-  (keyframable state already exists), but it is not a v1 feature.
+- **Animation / zoom-movie rendering.** *(Since delivered — guided keyframe tours + headless
+  `--render-tour` PNG-sequence/mp4 export. Originally deferred; the keyframable state made it cheap
+  to add.)*
 - **Networking, cloud rendering, multi-machine distribution, accounts.**
 - **Mobile / touch-first UI.**
 

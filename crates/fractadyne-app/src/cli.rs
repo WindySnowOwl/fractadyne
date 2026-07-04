@@ -489,10 +489,12 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
             md.push_str(
                 "\n## Scope\n\nThis validates the *arithmetic and precision machinery* at extreme \
                  bit-width (the depth-critical numerics), not a full rendered image: a per-pixel \
-                 arbitrary-precision dwell oracle is computationally infeasible this deep, and the \
-                 renderer's `f64` `units_per_pixel` caps live zoom near 1e308× regardless. \
-                 Independent per-pixel cross-checks (`--selftest`, `--crosscheck-f3`) cover the \
-                 renderable depth range.\n",
+                 arbitrary-precision dwell oracle is computationally infeasible this deep, and \
+                 rendering a specific feature at these magnitudes would need a center coordinate of \
+                 roughly that many decimal digits. (The live renderer's scale is an extended-range \
+                 `FloatExp`, not `f64`, so there is no 1e308× scale wall — the practical limit is \
+                 coordinate precision + iteration/compute cost.) Independent per-pixel cross-checks \
+                 (`--selftest`, `--crosscheck-f3`) cover the renderable depth range.\n",
             );
             if let Err(e) = std::fs::write(&path, md) {
                 eprintln!("report write failed: {e}");

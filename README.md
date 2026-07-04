@@ -38,6 +38,18 @@ zoom** and performance.
 - **Tooling** — a built-in benchmark (FPS / CPU / GPU / RAM + system info), with a **standardized**
   mode (pinned resolution + settings, comparable across machines) and a **burn-in** loop for
   stability/thermal checks, plus headless CLI modes (`fractadyne --help` for the full reference).
+- **Auto-zoom (autopilot)** — hands-free dive toward detail (the **A** key or the 🛸 toolbar
+  button, which stays highlighted while running), with an adjustable **dive limit** slider
+  (Navigation panel, 1e30×–1e5000×); past ~1e271× it switches to a stepped dive to reach extreme
+  depth. **Esc** stops it.
+- **Session & state** — the session auto-saves; **File → Reset application state** (or
+  `--reset-state`) wipes the session, bookmarks, and thumbnails after a confirmation. The session
+  file is versioned (it warns if written by a newer build), and `FRACTADYNE_CONFIG_DIR` overrides
+  where state is stored (portable / sandboxed installs).
+- **Restartable renders** — a long `--render-tour` can be resumed with `--resume` (re-renders only
+  the missing frames); `scripts/render-spiral-dive.ps1` detects a prior run and offers Resume / Over.
+- **Open-source notices** — the bundled dependency licenses are reproduced in
+  `THIRD-PARTY-NOTICES.md` (shipped with each release) and in-app under **Help → Licenses**.
 
 ## Download
 
@@ -49,7 +61,9 @@ no toolchain needed). Releases are built automatically from a tagged commit by
 
 ## Build & run
 
-Requires the Rust toolchain (rustup).
+Requires the Rust toolchain (rustup). **Windows quick start:** from the repo root run
+[`./scripts/setup.ps1`](scripts/setup.ps1) — it checks for (and can install) the Rust toolchain +
+the MSVC C++ build tools, then does a verification build.
 
 ```sh
 cargo run -p fractadyne-app                 # debug
@@ -57,7 +71,9 @@ cargo run --release -p fractadyne-app       # release — much faster bignum (re
 cargo test -p fractadyne-core               # viewport / numerics unit tests
 ```
 
-Pinned to egui / eframe **0.31** (wgpu backend).
+Pinned to egui / eframe **0.31** (wgpu backend). Handy scripts live in [`scripts/`](scripts/):
+`render-spiral-dive.ps1` (render the deep-spiral tour to a movie), `render-deepest.ps1` (render the
+~1e1108× sample location in `deep-sample.fdn`), and profiling helpers.
 
 ### Headless CLI
 
@@ -76,10 +92,11 @@ fractadyne --render --out img.png [--fractal Mandelbrot --center X Y --zoom M \
            --show-location]
            # --zoom-log2 L sets magnification 2^L for depths past f64 range (≥ ~1e308×)
 fractadyne --render-tour tour.toml --out frames [--fps N --size WxH --height H --ss N \
-           --prefix NAME --overwrite --mp4 [out.mp4] --show-location]
+           --prefix NAME --resume --overwrite --mp4 [out.mp4] --show-location]
            # render a keyframe-tour TOML to a PNG frame sequence (+ optional mp4 via ffmpeg);
            # frames are <prefix>_00000.png (prefix defaults to the script name); prompts before
-           # overwriting existing frames unless --overwrite/-y. Prints live progress. Tours in tours/.
+           # overwriting existing frames unless --overwrite/-y. --resume continues an interrupted
+           # render (keeps existing frames, renders only the missing ones). Prints live progress.
 fractadyne --find-minibrot --center X Y --zoom M   # print nearby minibrot period + nucleus
 fractadyne --selftest [--bless] [--out report.md]  # validation suite; exit 0 = all passed
 fractadyne --render-iter --out img.exr [view opts] # export raw iteration data (EXR) for review
@@ -161,14 +178,17 @@ or internal cross-checks):
 
 - **Pan** left-drag · **Zoom** wheel (cursor-centered) · **Box-zoom** right-drag
 - **Continuous zoom** hold Space (in) / Shift+Space (out) · **Auto-zoom** A (autopilot dives toward detail)
-- **Ctrl+S** quick-save · **★** bookmark · **🏠** animated zoom-home · **Esc** exit fullscreen
+- **A** auto-zoom · **Ctrl+S** quick-save · **★** bookmark · **🏠** animated zoom-home · **Esc** stop auto-zoom / exit fullscreen
 - Toolbar + menus for fractal, Julia/dual, coloring, export, bookmarks, tools.
 
 ## Layout
 
-Cargo workspace under `crates/`: `fractadyne-core` (numerics/viewport),
-`fractadyne-gpu` (wgpu pipelines + WGSL shaders), `fractadyne-color`,
-`fractadyne-state`, `fractadyne-export`, `fractadyne-app` (the binary).
+Cargo workspace under `crates/` (9 crates): `fractadyne-core` (numerics / viewport),
+`fractadyne-gpu` (wgpu pipelines + WGSL shaders), `fractadyne-color` (palettes),
+`fractadyne-state` (session / bookmarks), `fractadyne-export` (PNG/EXR + reloadable metadata), and
+`fractadyne-app` (the binary — app logic, UI, scripting, CLI, split into modules). Three crates
+(`fractadyne-render`, `fractadyne-fractals`, `fractadyne-ui`) are reserved stubs for planned
+refactors; that logic currently lives in `fractadyne-app`.
 
 See [DESIGN.md](DESIGN.md), [UI-DESIGN.md](UI-DESIGN.md), [TODO.md](TODO.md),
 [CHANGELOG.md](CHANGELOG.md), and [STATE.md](STATE.md) for details.

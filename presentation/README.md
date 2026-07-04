@@ -6,7 +6,9 @@ A self-contained status + validation package for community feedback.
   methodology, deep Fraktaler-3 cross-check, candid known gaps, and specific feedback requests.
 - **[catalog.md](catalog.md)** — externally-verifiable challenge coordinates (period/nucleus +
   set membership), reformatted from [`validation/catalog.toml`](../validation/catalog.toml).
-- **results/** — generated on an RTX 3080 / Ryzen 3950X, Fractadyne v0.1.10, Fraktaler-3 v3.1:
+- **results/** — generated on an RTX 3080 / Ryzen 3950X, Fraktaler-3 v3.1. The deep-zoom numerics
+  are unchanged since v0.1.10, so all results remain representative; `validate-deep` was refreshed
+  at v0.1.18, the rest were captured at v0.1.10:
   - `crosscheck-f3-ladder.md` — pixel-exact agreement vs Fraktaler-3, 1e6× → 1e300×.
   - `selftest.txt` — GPU vs bignum-oracle self-test (55/55, goldens 4/4).
   - `validate-deep.md` — extreme-depth self-consistency battery (to 1e1000000×).

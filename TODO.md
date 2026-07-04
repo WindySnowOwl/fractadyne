@@ -610,10 +610,13 @@ for fun, informative value, and ease of use.
       (56×56) iteration field of the current view through the live perturbation pipeline and
       scores each cell by **boundary adjacency + escape-time gradient**, center-biased for a
       stable dive; it eases the target and zooms toward it each frame (reusing `zoom_at` +
-      the continuous-zoom rate), treating the dive as interaction (AA off, throttled
-      reference refresh). Stops on a dead end (no boundary detail → flat interior/exterior)
-      or the depth cap (~1e271×, the smooth regime). *(Follow-ups: minibrot-seeking /
-      boundary-tracking steering modes; pairs with the planned zoom-movie export.)*
+      the continuous-zoom rate). Stops on a dead end (no boundary detail → flat interior/exterior)
+      or the user-set **dive limit** (Navigation-panel slider, persisted, 1e30×–1e5000×). Up to
+      ~1e271× (the smooth regime) it glides; past that it switches to a **stepped dive** (jump ×4 →
+      render → hold the last full frame while the next computes) so it reaches extreme depth without
+      staring at a blank; re-evaluation is adaptive (spaces out as frames slow). Started/stopped by
+      **A**, the **🛸 toolbar button** (highlighted while running), or the View menu; **Esc** stops
+      it. *(Follow-ups: minibrot-seeking / boundary-tracking steering modes.)*
 - [x] **Zoom-movie / frame→video export** — `--render-tour FILE [--fps N] [--size W]
       [--height H] [--ss N] [--out DIR]` renders a keyframe-tour TOML to a numbered PNG
       frame sequence (`frame_00000.png …`) for assembly into a video (prints an ffmpeg

@@ -1,9 +1,10 @@
 # Fractadyne — Current State (resume log)
 
-_Last updated: 2026-07-02. Version **v0.1.0** (auto-incrementing build counter in
-`.build_seq` at repo root). [CHANGELOG.md](CHANGELOG.md) is the authoritative running log;
-this file is a higher-level snapshot. Some deep-dive investigation sections below are historical
-(kept for reference) — the CHANGELOG is the source of truth for what shipped._
+_Last updated: 2026-07-04. Version **v0.1.18** (auto-incrementing build counter in
+`.build_seq` at repo root, exposed as `FRACT_BUILD`). [CHANGELOG.md](CHANGELOG.md) is the
+authoritative running log; this file is a higher-level snapshot. Some deep-dive investigation
+sections below are historical (kept for reference) — the CHANGELOG is the source of truth for
+what shipped._
 
 Companion docs: [TODO.md](TODO.md) (backlog, what's done), [CHANGELOG.md](CHANGELOG.md)
 (per-version changes), [DESIGN.md](DESIGN.md) / [UI-DESIGN.md](UI-DESIGN.md) (specs).
@@ -169,8 +170,12 @@ This is low-risk (only `gen_stops`); implement when we resume.
 - **Lifted the ~1e308× live-zoom ceiling**: viewport scale is an extended-range `FloatExp`
   (`m·2^e`); `log2_magnification` + `precision_for_octaves`; GPU fed O(1) span mantissa +
   shared `delta_exp` (shader unchanged). `--zoom-log2`, deep goto/`.fdn` persistence.
-- **Auto-zoom autopilot** (A / View menu): renders a small iteration field, steers toward
-  the boundary+gradient-richest region, eased pivot for a smooth dive; Esc/any input stops.
+- **Auto-zoom autopilot** (A key / 🛸 toolbar button / View menu): renders a small iteration
+  field, steers toward the boundary+gradient-richest region, eased smooth dive with an
+  **adjustable dive limit** (Navigation-panel slider, persisted, 1e30×–1e5000×). Past ~1e271× it
+  switches to a **stepped dive** (jump ×4 → render → hold the frame while the next computes) to
+  reach extreme depth. Re-evaluation is adaptive (spaces out as frames slow). Esc / any input
+  stops; the toolbar button highlights while running.
 - **Coloring**: preset/custom gradient editor (≤8 stops), Duotone + Binary two-color modes,
   methods (smooth/stripe/TIA/orbit-trap/distance/decomposition), DE relief lighting + glow.
 - Minibrot finder (M, Newton nucleus + period), minimap overview, famous Locations tour +
@@ -185,8 +190,18 @@ This is low-risk (only `gen_stops`); implement when we resume.
   optional zoom/coordinate HUD (`--show-location`); reference/render/encode pipelined per frame.
 - Watermark: subtle "Fd" mark (BRAND colors) on live view + exports, on by default, toggleable
   (`--watermark`/`--no-watermark`).
-- In-app **Help** (F1): Overview / Navigation / Coloring / Fractals / How-it-works /
-  Command line / Shortcuts / About.
+- In-app **Help** (F1): Overview / Navigation / Coloring & options / Fractals / How it works /
+  Command line / Shortcuts / Recommended hardware / Acknowledgments / Licenses / About.
+- **Reset application state** (File → Reset application state… / `--reset-state`): clears session +
+  bookmarks + thumbnails after a confirmation dialog; the session file is versioned (warns if a
+  newer build wrote it). `FRACTADYNE_CONFIG_DIR` overrides the storage location (sandbox/portable).
+- **Restartable tour renders** (`--render-tour --resume`): keep frames already on disk, render only
+  the missing ones. `scripts/render-spiral-dive.ps1` detects prior runs and offers Resume / Over.
+- **Third-party license notices**: `THIRD-PARTY-NOTICES.md` (generated with cargo-about, shipped
+  with the release) + in-app **Help → Licenses**.
+- **Deep sample location + helper scripts**: `scripts/deep-sample.fdn` (~1e1108× Mandelbrot,
+  loadable via Open view); `scripts/setup.ps1` (Windows build bootstrap),
+  `scripts/render-deepest.ps1`, `scripts/render-spiral-dive.ps1`.
 - **Validation**: `--selftest` (GPU vs CPU-f64 + bignum oracle to 1e30×, goldens), core
   exact-math tests, `--validate-deep` (precision self-consistency to 1e1000000×),
   `--crosscheck-f3` (vs Fraktaler-3), `--compare`, `--render-iter`, `.kfr` import.
@@ -196,12 +211,16 @@ This is low-risk (only `gen_stops`); implement when we resume.
   (Burning Ship/Celtic/Buffalo and Phoenix now perturbation-deep-zoom — done.)
 - Full glitch correction (Pauldelbrot/multi-ref) — base multi-ref path exists; broaden + thread.
 - Left Parameters panel; dual-view splitter; tile cache + pan reprojection (live reprojection ✓).
-- Autopilot steering modes (minibrot-seek/boundary-track).
+- Autopilot steering modes (minibrot-seek/boundary-track) — the adjustable dive limit + stepped
+  deep dive shipped (0.1.15–0.1.18); smarter *steering* is still open.
+- XaoS-style continuous-zoom pixel reuse (reuse-first zoom) — the biggest remaining smoothness win
+  (foundation exists as a deep-zoom stall fallback; not yet the primary path).
 - Tile-level export pipeline (async readback); histogram/equalized coloring; benchmark CSV/JSON history.
-- Done since last snapshot: series approximation ✓, off-thread reference recompute + freeze/
-  reprojection ✓, guided-tour scripting (captions/callouts/spotlights) ✓, zoom-movie export
-  (`--render-tour` + `--mp4`) ✓, `--show-location` HUD ✓, watermark ✓, `--size WxH` ✓,
-  reference/encode pipelining for tours ✓, `--help` ✓, GitHub Releases workflow ✓.
+- Done since last snapshot (0.1.11–0.1.18): third-party license notices + Help→Licenses ✓, reset
+  application state + versioned session + `FRACTADYNE_CONFIG_DIR` ✓, restartable tour renders
+  (`--resume`) ✓, adjustable auto-zoom dive limit + stepped deep dive + toolbar button + Esc-stops ✓,
+  deep-zoom sample location + helper scripts (`setup`/`render-deepest`/`render-spiral-dive`) ✓,
+  softened "unlimited" → concrete depth claims ✓, BLA on by default ✓.
 
 ## Key files
 - `crates/fractadyne-core/src/lib.rs` — Viewport (BigFloat center), `reference_orbit`,
@@ -210,6 +229,9 @@ This is low-risk (only `gen_stops`); implement when we resume.
   `Fe` (floatexp) helpers; `fs_iterate` 3-tier branch.
 - `crates/fractadyne-gpu/src/lib.rs` — Renderer, per-view resources, `IterUniforms`
   (`delta_exp`), `MandelbrotParams`, `render_export` (tiled).
-- `crates/fractadyne-app/src/main.rs` — all app logic/UI (large). `build_params` (mode
-  select), `draw_orbit`, benchmark/scripting/CLI, `fmt_zoom`.
-- `crates/fractadyne-app/build.rs` — build counter → `FRACT_BUILD`.
+- `crates/fractadyne-app/src/` — app split into modules: `main.rs` (app struct + `update()` UI),
+  `render.rs` (mode select + reference recompute / freeze-reproject), `autopilot.rs` (auto-zoom),
+  `scripting.rs` (tours + `render_tour_to_dir`), `help.rs` (`CLI_REFERENCE` + Help window),
+  `export.rs` (view-metadata / `.fdn`), `fractal.rs` (`FractalKind`), `cli.rs` (headless modes),
+  `theme.rs`, `profile.rs`, `sysinfo.rs`, `selftest.rs`.
+- `crates/fractadyne-app/build.rs` — build counter → `FRACT_BUILD` (`.build_seq` at repo root).
