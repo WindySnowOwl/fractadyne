@@ -59,6 +59,39 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         std::process::exit(2);
     }
 
+    // --reset-state [-y|--yes]: permanently delete all persisted application state (session,
+    // bookmarks, thumbnails), then exit. Warns and asks for confirmation on the terminal first
+    // (type `reset`); -y/--yes skips the prompt for scripting. No console (double-click launch) ⇒
+    // the read yields EOF ⇒ treated as "not confirmed", so nothing is deleted.
+    if args.iter().any(|a| a == "--reset-state") {
+        use std::io::Write;
+        let assume_yes = args.iter().any(|a| a == "-y" || a == "--yes");
+        eprintln!("This will PERMANENTLY delete all Fractadyne application state:");
+        eprintln!("  {}", fractadyne_state::state_location_display());
+        eprintln!("  (saved session, bookmarks, and bookmark thumbnails)");
+        let confirmed = if assume_yes {
+            true
+        } else {
+            eprint!("Type 'reset' to confirm (anything else cancels): ");
+            let _ = std::io::stderr().flush();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).is_ok() && line.trim().eq_ignore_ascii_case("reset")
+        };
+        if !confirmed {
+            eprintln!("Cancelled — nothing was deleted.");
+            return true;
+        }
+        match fractadyne_state::reset_all() {
+            Ok(true) => println!("Application state reset."),
+            Ok(false) => println!("No application state to reset (nothing was stored)."),
+            Err(e) => {
+                eprintln!("Reset failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        return true;
+    }
+
     // --refdiag --center X Y --zoom-log2 L [--iter N]: sample reference orbit lengths across the
     // view. Answers whether long/interior references exist (multi-ref can help) or all escape early
     // (rebasing is inherent). Prints the distribution.

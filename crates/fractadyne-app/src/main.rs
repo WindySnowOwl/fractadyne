@@ -1151,6 +1151,12 @@ struct FractadyneApp {
     share_msg: Option<String>,
     /// Transient status toast (message, time set) — e.g. minibrot-finder result.
     toast: Option<(String, f64)>,
+    /// "Reset application state" confirmation dialog open.
+    reset_confirm_open: bool,
+    /// Set after a reset: stop autosaving so we don't recreate the just-deleted state file.
+    suppress_autosave: bool,
+    /// A one-shot warning to show as a toast on the first frame (e.g. a newer-version session).
+    pending_state_warning: Option<String>,
     /// Keyboard/help overlay window open, and the selected Help section index.
     help_open: bool,
     help_section: usize,
@@ -1342,7 +1348,17 @@ impl FractadyneApp {
         // Restore the last session (or defaults). The center comes from the
         // full-precision decimal strings when present (deep-zoom locations survive
         // restart); older session files without them fall back to the f64 fields.
-        let s = fractadyne_state::load();
+        let (s, state_load) = fractadyne_state::load_with_status();
+        // Surface a warning (once the UI is up) if the session file was written by a newer build
+        // than this one can fully account for.
+        let pending_state_warning = match state_load {
+            fractadyne_state::StateLoad::Newer(v) => Some(format!(
+                "This session was saved by a newer Fractadyne (state v{v}; this build handles v{}). \
+                 Some settings may not apply, and saving will rewrite it in this build's format.",
+                fractadyne_state::STATE_FORMAT_VERSION
+            )),
+            _ => None,
+        };
         let mut viewport = Viewport::new(1280.0, 720.0);
         viewport.center_x = fractadyne_core::parse_bf(&s.center_x_str)
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(s.center_x, 64));
@@ -1476,6 +1492,9 @@ impl FractadyneApp {
             share_text: String::new(),
             share_msg: None,
             toast: None,
+            reset_confirm_open: false,
+            suppress_autosave: false,
+            pending_state_warning,
             help_open: false,
             help_section: 0,
             right_panel_open: s.right_panel_open,
@@ -1678,7 +1697,13 @@ impl FractadyneApp {
 
     /// Snapshot current state and save it ~1 s after the last change (or on close).
     fn autosave(&mut self, ctx: &egui::Context) {
+        // After a state reset the user chose not to persist this session — don't recreate the
+        // file we just deleted (on the idle timer or on close).
+        if self.suppress_autosave {
+            return;
+        }
         let cur = fractadyne_state::SessionState {
+            state_version: fractadyne_state::STATE_FORMAT_VERSION,
             center_x: fractadyne_core::to_f64(&self.viewport.center_x),
             center_y: fractadyne_core::to_f64(&self.viewport.center_y),
             center_x_str: fractadyne_core::to_decimal_string(&self.viewport.center_x),
@@ -1822,10 +1847,9 @@ impl FractadyneApp {
             .unwrap_or_else(|| std::path::PathBuf::from("."))
     }
 
-    /// Path to the bookmarks file in the OS config dir.
+    /// Path to the bookmarks file in the config dir (honours `FRACTADYNE_CONFIG_DIR`).
     fn bookmarks_path() -> Option<std::path::PathBuf> {
-        directories::ProjectDirs::from("com", "Fractadyne", "Fractadyne")
-            .map(|d| d.config_dir().join("bookmarks.toml"))
+        fractadyne_state::config_dir().map(|d| d.join("bookmarks.toml"))
     }
 
     /// Load saved bookmarks (empty list if none / unreadable).
@@ -1874,10 +1898,9 @@ impl FractadyneApp {
         self.save_bookmarks();
     }
 
-    /// Directory holding bookmark thumbnail PNGs.
+    /// Directory holding bookmark thumbnail PNGs (honours `FRACTADYNE_CONFIG_DIR`).
     fn bookmark_thumbs_dir() -> Option<std::path::PathBuf> {
-        directories::ProjectDirs::from("com", "Fractadyne", "Fractadyne")
-            .map(|d| d.config_dir().join("bookmark_thumbs"))
+        fractadyne_state::config_dir().map(|d| d.join("bookmark_thumbs"))
     }
 
     fn bookmark_thumb_path(id: &str) -> Option<std::path::PathBuf> {
@@ -3528,6 +3551,11 @@ impl FractadyneApp {
 impl eframe::App for FractadyneApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_start = Instant::now();
+        // Surface a deferred startup warning (e.g. a session saved by a newer build) as a toast,
+        // once, on the first frame where the UI exists.
+        if let Some(msg) = self.pending_state_warning.take() {
+            self.set_toast(msg, ctx);
+        }
         // Rasterize the export watermark once from the font atlas (main thread — the export worker
         // has no egui context). Lazy so it uses the loaded fonts + final DPI.
         if self.watermark && self.watermark_overlay.is_none() {
@@ -3853,6 +3881,17 @@ impl eframe::App for FractadyneApp {
                             ui.close_menu();
                         }
                         ui.separator();
+                        if ui
+                            .button("♻  Reset application state…")
+                            .on_hover_text(
+                                "Delete all saved state (session, bookmarks, thumbnails) and \
+                                 start fresh. Asks for confirmation first.",
+                            )
+                            .clicked()
+                        {
+                            self.reset_confirm_open = true;
+                            ui.close_menu();
+                        }
                         if ui.button("✖  Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
@@ -5001,6 +5040,74 @@ impl eframe::App for FractadyneApp {
                 self.apply_share_text(ctx); // clears share_open on success
             }
             self.share_open = open && self.share_open;
+        }
+
+        // ---- reset application state (confirmation) ----
+        if self.reset_confirm_open {
+            let mut open = self.reset_confirm_open;
+            let (mut confirm, mut cancel) = (false, false);
+            egui::Window::new("Reset application state")
+                .open(&mut open)
+                .resizable(false)
+                .collapsible(false)
+                .default_width(460.0)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(0xE0, 0x6C, 0x60),
+                        "⚠  This permanently deletes all saved Fractadyne data:",
+                    );
+                    ui.add_space(2.0);
+                    ui.label("• the saved session (current view, coloring, preferences)");
+                    ui.label("• all bookmarks and their thumbnails");
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new("Location").weak().small());
+                    ui.label(
+                        egui::RichText::new(fractadyne_state::state_location_display())
+                            .monospace()
+                            .small(),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "This can't be undone. The current session won't be re-saved on exit, \
+                             so defaults load on the next launch.",
+                        )
+                        .weak()
+                        .small(),
+                    );
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        cancel = ui.button("Cancel").clicked();
+                        if ui
+                            .add(egui::Button::new(
+                                egui::RichText::new("Reset everything").color(egui::Color32::WHITE),
+                            ).fill(egui::Color32::from_rgb(0xB0, 0x3A, 0x30)))
+                            .clicked()
+                        {
+                            confirm = true;
+                        }
+                    });
+                });
+            if confirm {
+                match fractadyne_state::reset_all() {
+                    Ok(_) => {
+                        // Don't recreate what we just deleted; reflect the cleared bookmarks in the UI.
+                        self.suppress_autosave = true;
+                        self.bookmarks.clear();
+                        self.set_toast(
+                            "Application state reset — defaults will load on the next launch.",
+                            ctx,
+                        );
+                    }
+                    Err(e) => self.set_toast(format!("Reset failed: {e}"), ctx),
+                }
+                self.reset_confirm_open = false;
+            } else if cancel {
+                self.reset_confirm_open = false;
+            } else {
+                self.reset_confirm_open = open && self.reset_confirm_open;
+            }
         }
 
         // ---- bookmarks manager ----

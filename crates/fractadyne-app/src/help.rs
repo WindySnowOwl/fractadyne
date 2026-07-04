@@ -365,6 +365,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--refdiag --center X Y --zoom-log2 L", "Dev: sample reference orbit lengths across a view."),
         Flag("--find-minibrot", "Print the nearby minibrot's period + center and exit (--center X Y --zoom M)."),
         Flag("--selftest [--bless]", "Run the GPU validation suite; exit 0 = all passed. --bless records the goldens."),
+        Flag("--reset-state [--yes]", "Delete ALL saved state (session, bookmarks, thumbnails) and exit. Prompts for confirmation on the terminal (type 'reset'); --yes (or -y) skips the prompt."),
         Flag("--help, -h", "Print this command-line reference and exit."),
         Flag("@FILE, --args-file FILE", "Read arguments from a text file (whitespace-separated; # comments; \"quotes\" for spaces), spliced in place. Nestable — keep a whole command line in a file."),
         Section("Output"),
@@ -667,6 +668,31 @@ pub(crate) fn help_about(ui: &mut egui::Ui) {
     help_h(ui, "About");
     help_p(ui, &format!("Fractadyne v{}", version_string()));
     help_p(ui, "A native fractal explorer built in Rust with wgpu.");
+
+    help_sub(ui, "Files & data");
+    help_p(
+        ui,
+        "Your session (current view, coloring, and preferences), bookmarks, and their \
+         thumbnails are stored in this per-user folder, and reloaded on the next launch:",
+    );
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(fractadyne_state::state_location_display())
+                .monospace()
+                .small(),
+        );
+        if ui.small_button("📋").on_hover_text("Copy path").clicked() {
+            ui.ctx().copy_text(fractadyne_state::state_location_display());
+        }
+    });
+    help_p(
+        ui,
+        "The session file is versioned; if it was written by a newer Fractadyne than can fully \
+         read it, the app loads it best-effort and warns you. To start completely fresh, use \
+         File ▸ Reset application state… (asks first), or run `fractadyne --reset-state` from a \
+         terminal.",
+    );
+
     help_sub(ui, "License");
     help_p(ui, "MIT OR Apache-2.0 — use under either license, at your option.");
     help_p(ui, "© 2026 Rithea Hong.");

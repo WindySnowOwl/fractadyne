@@ -7,12 +7,26 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// On-disk schema version of the persisted session. Bump this when a change could make an
+/// **older** build misread a **newer** file (e.g. a field's meaning changes). The schema is
+/// otherwise additive — new fields use `#[serde(default)]`, so a newer file still loads
+/// best-effort on an older build; the version only drives the "saved by a newer Fractadyne"
+/// warning. A file with no `state_version` (written before versioning) is treated as v1.
+pub const STATE_FORMAT_VERSION: u32 = 1;
+
+fn default_state_version() -> u32 {
+    1
+}
+
 /// Persisted session. The center is stored at **full precision** as decimal strings
 /// (`center_x_str`/`center_y_str`) so deep-zoom locations survive quit/restart; the
 /// `f64` `center_x`/`center_y` remain for display and backward compatibility with
 /// older session files (used as a fallback when the strings are absent).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct SessionState {
+    /// Schema version this file was written with (see [`STATE_FORMAT_VERSION`]). Missing ⇒ v1.
+    #[serde(default = "default_state_version")]
+    pub state_version: u32,
     pub center_x: f64,
     pub center_y: f64,
     /// Full-precision center (decimal). Empty ⇒ fall back to the `f64` fields.
@@ -264,6 +278,7 @@ fn default_trap_type() -> String {
 impl Default for SessionState {
     fn default() -> Self {
         Self {
+            state_version: STATE_FORMAT_VERSION,
             center_x: -0.5,
             center_y: 0.0,
             center_x_str: String::new(),
@@ -323,17 +338,101 @@ impl Default for SessionState {
     }
 }
 
+/// The config directory that holds all persisted state (session, bookmarks, thumbnails).
+///
+/// Normally the OS per-user config dir. The `FRACTADYNE_CONFIG_DIR` environment variable
+/// overrides it — useful for sandboxing (tests, CI, portable installs) and, importantly, so the
+/// destructive [`reset_all`] can be exercised against a throwaway directory instead of your real
+/// data. (On Windows the `directories` crate resolves the default via the Win32 known-folder API,
+/// which ignores `APPDATA`, so this explicit override is the only reliable sandbox.)
+pub fn config_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("FRACTADYNE_CONFIG_DIR") {
+        if !dir.is_empty() {
+            return Some(PathBuf::from(dir));
+        }
+    }
+    directories::ProjectDirs::from("com", "Fractadyne", "Fractadyne")
+        .map(|d| d.config_dir().to_path_buf())
+}
+
 fn state_path() -> Option<PathBuf> {
-    let dirs = directories::ProjectDirs::from("com", "Fractadyne", "Fractadyne")?;
-    Some(dirs.config_dir().join("session.toml"))
+    config_dir().map(|d| d.join("session.toml"))
+}
+
+/// Human-readable path where application state is stored (for Help / warnings). Returns a
+/// placeholder if the OS config directory can't be determined.
+pub fn state_location_display() -> String {
+    config_dir()
+        .map(|d| d.display().to_string())
+        .unwrap_or_else(|| "(could not determine the OS config directory)".to_string())
+}
+
+/// Outcome of [`load_with_status`], so the caller can warn when a file it can't fully
+/// account for was loaded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StateLoad {
+    /// No saved state (fresh install / after a reset) — defaults returned.
+    Fresh,
+    /// Loaded and the schema version is understood.
+    Ok,
+    /// Loaded best-effort, but the file was written by a **newer** Fractadyne
+    /// (its `state_version`, which exceeds [`STATE_FORMAT_VERSION`]) — some settings may
+    /// not apply, and re-saving will downgrade the file to this build's format.
+    Newer(u32),
+}
+
+/// Load the saved session together with a status describing whether this build can fully
+/// account for it. Missing/corrupt ⇒ defaults + `Fresh`; a newer-version file loads
+/// best-effort with `Newer(v)` so the app can warn.
+pub fn load_with_status() -> (SessionState, StateLoad) {
+    match state_path().and_then(|p| std::fs::read_to_string(p).ok()) {
+        Some(text) => parse_with_status(&text),
+        None => (SessionState::default(), StateLoad::Fresh),
+    }
+}
+
+/// Parse persisted-session TOML into a state + status. Split out from [`load_with_status`] (which
+/// supplies the file contents) so the version/corruption handling is unit-testable.
+fn parse_with_status(text: &str) -> (SessionState, StateLoad) {
+    // Probe just the version first, so a newer file that no longer fully parses still warns
+    // rather than silently reverting to defaults.
+    #[derive(Deserialize)]
+    struct Probe {
+        #[serde(default = "default_state_version")]
+        state_version: u32,
+    }
+    let probed = toml::from_str::<Probe>(text)
+        .map(|p| p.state_version)
+        .unwrap_or(STATE_FORMAT_VERSION);
+    match toml::from_str::<SessionState>(text) {
+        Ok(s) if s.state_version <= STATE_FORMAT_VERSION => (s, StateLoad::Ok),
+        Ok(s) => {
+            let v = s.state_version;
+            (s, StateLoad::Newer(v))
+        }
+        // Unparseable: if the version says it's from the future, warn; otherwise treat as a
+        // legacy/corrupt file and quietly fall back to defaults (no false alarm on old saves).
+        Err(_) if probed > STATE_FORMAT_VERSION => (SessionState::default(), StateLoad::Newer(probed)),
+        Err(_) => (SessionState::default(), StateLoad::Fresh),
+    }
 }
 
 /// Load the saved session, or [`SessionState::default`] if none/unreadable.
 pub fn load() -> SessionState {
-    state_path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| toml::from_str(&s).ok())
-        .unwrap_or_default()
+    load_with_status().0
+}
+
+/// Permanently delete **all** persisted application state — session, bookmarks, and cached
+/// bookmark thumbnails — by removing the config directory. Returns `Ok(true)` if state was
+/// removed, `Ok(false)` if there was nothing to remove.
+pub fn reset_all() -> std::io::Result<bool> {
+    match config_dir() {
+        Some(dir) if dir.exists() => {
+            std::fs::remove_dir_all(&dir)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// Save the session atomically (write temp, then rename). Best-effort: ignores
@@ -407,5 +506,64 @@ mod tests {
         assert_eq!(s.fps_cap, 60.0); // default cap
         assert_eq!(s.fractal, "Mandelbrot");
         assert!(s.series_approx);
+    }
+
+    // A legacy file (no `state_version`) is treated as v1 and loads without a warning.
+    #[test]
+    fn missing_version_is_ok_not_a_warning() {
+        let legacy = "center_x = -0.5\ncenter_y = 0.0\nunits_per_pixel = 0.004\n\
+                      max_iter = 256\nauto_iter = true\npalette_idx = 0\ncycle = 0.27\noffset = 0.1\n";
+        let (s, status) = parse_with_status(legacy);
+        assert_eq!(s.state_version, 1);
+        assert_eq!(status, StateLoad::Ok);
+    }
+
+    // A file from a FUTURE build (higher state_version) still loads best-effort, but flags Newer
+    // so the app can warn — even when unknown extra keys are present.
+    #[test]
+    fn newer_version_file_warns() {
+        let future = format!(
+            "state_version = {}\ncenter_x = -0.5\ncenter_y = 0.0\nunits_per_pixel = 0.004\n\
+             max_iter = 256\nauto_iter = true\npalette_idx = 0\ncycle = 0.1\noffset = 0.0\n\
+             some_future_key = \"whatever\"\n",
+            STATE_FORMAT_VERSION + 5
+        );
+        let (_s, status) = parse_with_status(&future);
+        assert_eq!(status, StateLoad::Newer(STATE_FORMAT_VERSION + 5));
+    }
+
+    // The current-version round-trip is understood (Ok).
+    #[test]
+    fn current_version_roundtrips_ok() {
+        let text = toml::to_string_pretty(&SessionState::default()).expect("serialize");
+        let (s, status) = parse_with_status(&text);
+        assert_eq!(s.state_version, STATE_FORMAT_VERSION);
+        assert_eq!(status, StateLoad::Ok);
+    }
+
+    // Garbage that isn't valid TOML falls back to defaults without a scary version warning.
+    #[test]
+    fn corrupt_file_falls_back_to_fresh() {
+        let (_s, status) = parse_with_status("this is not : valid = toml [[[");
+        assert_eq!(status, StateLoad::Fresh);
+    }
+
+    // reset_all removes the whole config dir, and is a no-op when there's nothing to remove.
+    // Uses the FRACTADYNE_CONFIG_DIR override so it operates on a throwaway dir, never real data.
+    #[test]
+    fn reset_all_removes_config_dir_via_override() {
+        let root = std::env::temp_dir().join(format!("fractadyne_reset_test_{}", std::process::id()));
+        let cfg = root.join("cfg");
+        std::fs::create_dir_all(cfg.join("bookmark_thumbs")).unwrap();
+        std::fs::write(cfg.join("session.toml"), "state_version = 1\n").unwrap();
+        std::fs::write(cfg.join("bookmarks.toml"), "").unwrap();
+        std::env::set_var("FRACTADYNE_CONFIG_DIR", &cfg);
+        assert_eq!(config_dir().as_deref(), Some(cfg.as_path()));
+        assert!(cfg.exists());
+        assert_eq!(reset_all().unwrap(), true); // removed
+        assert!(!cfg.exists());
+        assert_eq!(reset_all().unwrap(), false); // nothing left to remove
+        std::env::remove_var("FRACTADYNE_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

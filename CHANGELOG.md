@@ -8,6 +8,23 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.12
+
+- **Reset application state** — a way to wipe all saved data (session, bookmarks, thumbnails)
+  and start fresh, from both the UI and the command line:
+  - **File ▸ Reset application state…** opens a confirmation dialog that spells out exactly what
+    will be deleted and where, and doesn't touch anything until you confirm. After a reset the
+    current session isn't re-saved on exit, so defaults load next launch.
+  - **`fractadyne --reset-state`** does the same headlessly, printing a warning and requiring you
+    to type `reset` to confirm (`--yes`/`-y` skips the prompt for scripting).
+- **Versioned session file + newer-version warning** — the saved session now carries a
+  `state_version`. If a session was written by a newer Fractadyne than the running build can fully
+  account for, it's loaded best-effort and the app warns (a toast) rather than silently
+  misinterpreting it. Legacy files (no version) still load as before.
+- **`FRACTADYNE_CONFIG_DIR`** environment variable overrides where state is stored — useful for
+  sandboxing/portable installs, and so the destructive reset can be exercised against a throwaway
+  directory. The **Help ▸ About** section now shows where your state lives and how to reset it.
+
 ## 0.1.11
 
 - **Third-party license notices** — the bundled dependencies' licenses are now reproduced in
