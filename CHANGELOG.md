@@ -8,6 +8,15 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.24
+
+- **Fixed the export stretching the fractal when the aspect ratio differs from the view window.**
+  Choosing a fixed export aspect (0.1.20) overrode the image height but kept the window's complex
+  span, so the GPU (which derives the per-texel step as span ÷ resolution per axis) mapped the
+  window's vertical span across the new height — squashing/stretching the image. The vertical span is
+  now set to keep the per-texel step isotropic (`span_y = span_x × height/width`), so a fixed aspect
+  shows more/less vertical extent at the correct proportions, centered. No-op for "Match window".
+
 ## 0.1.23
 
 - **Location HUD works in dual view** (was incorrectly greyed out). The HUD reflects the map /
