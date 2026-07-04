@@ -76,13 +76,13 @@ differently.
 
 **Ladder** (full table + counts in `results/crosscheck-f3-ladder.md`):
 
-| location | zoom (F3) | image | iters | exact | \|Δn\|≤1 | membership | verdict |
-|---|---|---|---|---|---|---|---|
-| Seahorse Valley | 1e6   | 200² | 4000  | 80.1% | **100%** | **100%** | **PASS** |
-| Seahorse Valley | 1e12  | 160² | 60000 | 79.0% | **100%** | **100%** | **PASS** |
-| Seahorse Valley | 1e28  | 120² | 60000 | 77.8% | **100%** | **100%** | **PASS** |
-| Elephant / spiral | 1e100 | 96²  | 60000 | 79.6% | **100%** | **100%** | **PASS** |
-| Elephant / spiral | 1e300 | 56²  | 60000 | 80.0% | **100%** | **100%** | **PASS** |
+| location          | zoom (F3) | image | iters | exact | \|Δn\|≤1 | membership | verdict  |
+| ----------------- | --------- | ----- | ----- | ----- | -------- | ---------- | -------- |
+| Seahorse Valley   | 1e6       | 200²  | 4000  | 80.1% | **100%** | **100%**   | **PASS** |
+| Seahorse Valley   | 1e12      | 160²  | 60000 | 79.0% | **100%** | **100%**   | **PASS** |
+| Seahorse Valley   | 1e28      | 120²  | 60000 | 77.8% | **100%** | **100%**   | **PASS** |
+| Elephant / spiral | 1e100     | 96²   | 60000 | 79.6% | **100%** | **100%**   | **PASS** |
+| Elephant / spiral | 1e300     | 56²   | 60000 | 80.0% | **100%** | **100%**   | **PASS** |
 
 **Every non-boundary exterior pixel matches Fraktaler-3 to within one iteration at every depth
 from 1e6× to 1e300×; interior/exterior membership matches exactly.** `exact` is bit-exact escape

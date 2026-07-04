@@ -24,13 +24,13 @@ ceiling to correctness. The practical limit is **CPU time**, and it differs by c
 cost grows ~linearly (× log) with precision rather than quadratically. Measured on this
 machine (Ryzen 9 3950X), full-precision `z²+c` iterations:
 
-| Magnification | Precision (bits) | Limbs | ns / iteration |
-|---|---|---|---|
-| 1e30× | 163 | 2 | ~680 |
-| 1e3000× | 10,029 | 156 | ~15,700 |
-| 1e30000× | 99,721 | 1,558 | ~550,000 |
-| 1e300000× | 996,642 | 15,572 | ~7,970,000 |
-| **1e1000000×** | **3,321,992** | **51,906** | **~32,000,000** (32 ms) |
+| Magnification  | Precision (bits) | Limbs      | ns / iteration          |
+| -------------- | ---------------- | ---------- | ----------------------- |
+| 1e30×          | 163              | 2          | ~680                    |
+| 1e3000×        | 10,029           | 156        | ~15,700                 |
+| 1e30000×       | 99,721           | 1,558      | ~550,000                |
+| 1e300000×      | 996,642          | 15,572     | ~7,970,000              |
+| **1e1000000×** | **3,321,992**    | **51,906** | **~32,000,000** (32 ms) |
 
 The 1e300000→1e1000000 step (×3.33 limbs → ×4.0 time) confirms FFT scaling, not schoolbook
 `O(n²)` (which would be ×11).

@@ -42,14 +42,14 @@ map (§8) for what's stock vs. the few justified exceptions.
 
 ### 1.2 Lean on the egui ecosystem (not custom code)
 
-| Need | Use (maintained crate / stock) |
-|------|-------------------------------|
-| Dockable/collapsible panels | `egui_dock` |
-| Icons | `egui_phosphor` (Phosphor icon set) |
-| Code editor (formula/coloring) w/ syntax highlight | `egui_code_editor` |
-| Tables / grids (rules, library lists) | `egui_extras` |
-| Toasts / non-blocking notifications | `egui-notify` |
-| Color picking | egui built-in `color_edit_button` / `color_picker` |
+| Need                                               | Use (maintained crate / stock)                     |
+| -------------------------------------------------- | -------------------------------------------------- |
+| Dockable/collapsible panels                        | `egui_dock`                                        |
+| Icons                                              | `egui_phosphor` (Phosphor icon set)                |
+| Code editor (formula/coloring) w/ syntax highlight | `egui_code_editor`                                 |
+| Tables / grids (rules, library lists)              | `egui_extras`                                      |
+| Toasts / non-blocking notifications                | `egui-notify`                                      |
+| Color picking                                      | egui built-in `color_edit_button` / `color_picker` |
 
 Only **one** genuinely custom widget is expected (the gradient/palette stop
 editor, §8) — and it's assembled from stock primitives. Everything else is
@@ -228,24 +228,24 @@ The UI must always communicate what the engine is doing, without blocking:
 
 Reaffirming "avoid custom controls" — nearly everything maps to a stock widget:
 
-| UI need | Implementation | Custom? |
-|---------|----------------|---------|
-| Numeric parameter (power, bailout, iter) | `DragValue` + `Slider` | stock |
-| Zoom (huge range) | log-scaled `Slider` + `+/−` buttons + wheel | stock |
-| High-precision coordinate (100s of digits) | multiline monospace `TextEdit` + copy/paste buttons | stock |
-| Fractal type / algorithm / rule family | `ComboBox` | stock |
-| Toggles (dual view, options) | `Checkbox` / toggle | stock |
-| Single color | `color_edit_button` | stock |
-| **Gradient / palette stops** | horizontal bar with draggable stop handles + `color_picker` per stop | **small custom** (built from stock primitives) |
-| Formula / coloring code | `egui_code_editor` (syntax highlight, error gutter) | crate |
-| L-system rules | `egui_extras` table of `TextEdit` rows | crate |
-| CA rule | `DragValue` (0–255 elementary) or B/S text field + mini preview | stock |
-| Library lists (bookmarks/presets) | `ScrollArea` + selectable rows / `egui_extras` table | stock/crate |
-| Panels & docking | `egui_dock` | crate |
-| Menus / toolbar | `egui::menu::bar` | stock |
-| Dialogs (export, prefs) | `egui::Window` (modal) | stock |
-| Command palette | text field + filtered list | small custom |
-| Icons | `egui_phosphor` | crate |
+| UI need                                    | Implementation                                                       | Custom?                                        |
+| ------------------------------------------ | -------------------------------------------------------------------- | ---------------------------------------------- |
+| Numeric parameter (power, bailout, iter)   | `DragValue` + `Slider`                                               | stock                                          |
+| Zoom (huge range)                          | log-scaled `Slider` + `+/−` buttons + wheel                          | stock                                          |
+| High-precision coordinate (100s of digits) | multiline monospace `TextEdit` + copy/paste buttons                  | stock                                          |
+| Fractal type / algorithm / rule family     | `ComboBox`                                                           | stock                                          |
+| Toggles (dual view, options)               | `Checkbox` / toggle                                                  | stock                                          |
+| Single color                               | `color_edit_button`                                                  | stock                                          |
+| **Gradient / palette stops**               | horizontal bar with draggable stop handles + `color_picker` per stop | **small custom** (built from stock primitives) |
+| Formula / coloring code                    | `egui_code_editor` (syntax highlight, error gutter)                  | crate                                          |
+| L-system rules                             | `egui_extras` table of `TextEdit` rows                               | crate                                          |
+| CA rule                                    | `DragValue` (0–255 elementary) or B/S text field + mini preview      | stock                                          |
+| Library lists (bookmarks/presets)          | `ScrollArea` + selectable rows / `egui_extras` table                 | stock/crate                                    |
+| Panels & docking                           | `egui_dock`                                                          | crate                                          |
+| Menus / toolbar                            | `egui::menu::bar`                                                    | stock                                          |
+| Dialogs (export, prefs)                    | `egui::Window` (modal)                                               | stock                                          |
+| Command palette                            | text field + filtered list                                           | small custom                                   |
+| Icons                                      | `egui_phosphor`                                                      | crate                                          |
 
 > The **gradient stop editor** is the one piece worth designing carefully — it's
 > the most-touched custom surface. Keep it conventional (Photoshop/Inkscape-style
@@ -259,18 +259,18 @@ Concrete starting values; **[DECIDE]** the accent. Neutral, low-chroma chrome.
 
 **Color (dark)**
 
-| Token | Value | Use |
-|-------|-------|-----|
-| `bg.base` | `#1A1B1E` | window/canvas background |
-| `bg.panel` | `#232428` | panels |
-| `bg.elevated` | `#2C2E33` | inputs, popups, headers |
-| `border` | `#3A3D44` | dividers, input outlines |
-| `text.primary` | `#E6E7EA` | main text |
-| `text.secondary` | `#9DA1A8` | labels, hints |
-| `text.disabled` | `#5C6069` | disabled |
-| `accent` | `#E0A030` (amber) | selection, focus, primary action |
-| `accent.hover` | lighten 8% | hover |
-| `success` / `warning` / `error` | `#5BBF7A` / `#E0A030` / `#E0584B` | render/glitch/error states |
+| Token                           | Value                             | Use                              |
+| ------------------------------- | --------------------------------- | -------------------------------- |
+| `bg.base`                       | `#1A1B1E`                         | window/canvas background         |
+| `bg.panel`                      | `#232428`                         | panels                           |
+| `bg.elevated`                   | `#2C2E33`                         | inputs, popups, headers          |
+| `border`                        | `#3A3D44`                         | dividers, input outlines         |
+| `text.primary`                  | `#E6E7EA`                         | main text                        |
+| `text.secondary`                | `#9DA1A8`                         | labels, hints                    |
+| `text.disabled`                 | `#5C6069`                         | disabled                         |
+| `accent`                        | `#E0A030` (amber)                 | selection, focus, primary action |
+| `accent.hover`                  | lighten 8%                        | hover                            |
+| `success` / `warning` / `error` | `#5BBF7A` / `#E0A030` / `#E0584B` | render/glitch/error states       |
 
 > Accent (**locked**): a **muted amber/gold** (`#E0A030`) — echoes the
 > "‑dyne / power" identity and stays clear of rainbow fractal palettes. Kept

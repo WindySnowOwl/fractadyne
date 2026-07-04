@@ -100,21 +100,21 @@ Fractadyne uses **standard extensions** (for editor/tooling interop) except for 
 self-contained *location* format, `.fdn`. App-generated outputs are named predictably — images
 carry a `fractadyne_` brand prefix + timestamp; a tour's frames/movie take the tour script's name.
 
-| Purpose | Ext | Produced / consumed | Notes |
-|---|---|---|---|
-| Exported image | `.png` `.exr` | Export, `--render` | **Reloadable** — embeds view metadata; reopen to return to the spot. In-app default `fractadyne_<Fractal>_<stamp>.ext` |
-| Raw iteration data | `.exr` | `--render-iter` | Four float channels, for review / diffing (no coloring) |
-| Shareable location | `.fdn` | File → Share location | Compact self-contained text snippet of the exact view + look |
-| Session state | `.toml` | auto (config dir) | `session.toml` — persisted preferences, bookmarks |
-| Keyframe tour | `.toml` | `--render-tour`, Play script | Guided-tour script — schema in [TOURS.md](TOURS.md); examples in `tours/` |
-| Profiling regions | `.toml` | `--profile --regions` | Benchmark region list |
-| Response file | *any text* (`.args` by convention) | `@FILE`, `--args-file` | Command-line arguments in a file |
-| Tour frames | `.png` | `--render-tour` | `<prefix>_00000.png` (prefix defaults to the tour name) |
-| Tour movie | `.mp4` | `--render-tour --mp4` | `<prefix>.mp4` via ffmpeg |
-| Benchmark report | `.txt` | `--benchmark[-std] --out` | FPS/CPU/GPU/RAM + system info (+ pinned settings for standardized) |
-| Validation report | `.md` | `--selftest` | `validation/report.md` |
-| Profile log | `.json` | `--profile` | Per-stage timings under `logs/` |
-| Kalles Fraktaler loc. | `.kfr` | `--import-kfr` | External location import |
+| Purpose               | Ext                                | Produced / consumed          | Notes                                                                                                                  |
+| --------------------- | ---------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Exported image        | `.png` `.exr`                      | Export, `--render`           | **Reloadable** — embeds view metadata; reopen to return to the spot. In-app default `fractadyne_<Fractal>_<stamp>.ext` |
+| Raw iteration data    | `.exr`                             | `--render-iter`              | Four float channels, for review / diffing (no coloring)                                                                |
+| Shareable location    | `.fdn`                             | File → Share location        | Compact self-contained text snippet of the exact view + look                                                           |
+| Session state         | `.toml`                            | auto (config dir)            | `session.toml` — persisted preferences, bookmarks                                                                      |
+| Keyframe tour         | `.toml`                            | `--render-tour`, Play script | Guided-tour script — schema in [TOURS.md](TOURS.md); examples in `tours/`                                              |
+| Profiling regions     | `.toml`                            | `--profile --regions`        | Benchmark region list                                                                                                  |
+| Response file         | *any text* (`.args` by convention) | `@FILE`, `--args-file`       | Command-line arguments in a file                                                                                       |
+| Tour frames           | `.png`                             | `--render-tour`              | `<prefix>_00000.png` (prefix defaults to the tour name)                                                                |
+| Tour movie            | `.mp4`                             | `--render-tour --mp4`        | `<prefix>.mp4` via ffmpeg                                                                                              |
+| Benchmark report      | `.txt`                             | `--benchmark[-std] --out`    | FPS/CPU/GPU/RAM + system info (+ pinned settings for standardized)                                                     |
+| Validation report     | `.md`                              | `--selftest`                 | `validation/report.md`                                                                                                 |
+| Profile log           | `.json`                            | `--profile`                  | Per-stage timings under `logs/`                                                                                        |
+| Kalles Fraktaler loc. | `.kfr`                             | `--import-kfr`               | External location import                                                                                               |
 
 ## Validation
 

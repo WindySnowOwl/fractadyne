@@ -56,12 +56,12 @@ formulas and coloring.
 
 These were chosen at kickoff and anchor the rest of the design:
 
-| Axis | Decision |
-|------|----------|
-| **Platform** | Native desktop application |
-| **Language + GPU stack** | Rust + `wgpu` (compute via WGSL) |
-| **Zoom depth** | Unlimited — arbitrary precision + perturbation + series approximation |
-| **Extensibility** | Programmable engine — custom fractal formulas and coloring |
+| Axis                     | Decision                                                              |
+| ------------------------ | --------------------------------------------------------------------- |
+| **Platform**             | Native desktop application                                            |
+| **Language + GPU stack** | Rust + `wgpu` (compute via WGSL)                                      |
+| **Zoom depth**           | Unlimited — arbitrary precision + perturbation + series approximation |
+| **Extensibility**        | Programmable engine — custom fractal formulas and coloring            |
 
 ### 1.4 Non-goals (initial release)
 
@@ -158,11 +158,11 @@ Implemented as a **Cargo workspace** of focused crates (see
 Different families need different pipelines. We model each as a **render
 strategy**:
 
-| Family | Compute model | Render model | Deep-zoom behavior |
-|--------|---------------|--------------|--------------------|
-| **Escape-time** (Mandelbrot, Julia, Burning Ship, …) | Per-pixel iteration; perturbation on GPU + arbitrary-precision reference on CPU | Iteration buffer → coloring shader | Unlimited (perturbation) |
-| **L-system** | CPU grammar expansion → turtle graphics → line/vertex buffer | GPU vector/line rasterization with `f64`→`f32` view transform | Limited by float transform precision; arbitrary-precision transform optional |
-| **Cellular / finite automata** | GPU (or CPU) grid simulation (1D elementary CA spacetime, 2D life-like) | Grid → texture → sampled to screen | Pan/scale over computed grid; on-demand generation |
+| Family                                               | Compute model                                                                   | Render model                                                  | Deep-zoom behavior                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Escape-time** (Mandelbrot, Julia, Burning Ship, …) | Per-pixel iteration; perturbation on GPU + arbitrary-precision reference on CPU | Iteration buffer → coloring shader                            | Unlimited (perturbation)                                                     |
+| **L-system**                                         | CPU grammar expansion → turtle graphics → line/vertex buffer                    | GPU vector/line rasterization with `f64`→`f32` view transform | Limited by float transform precision; arbitrary-precision transform optional |
+| **Cellular / finite automata**                       | GPU (or CPU) grid simulation (1D elementary CA spacetime, 2D life-like)         | Grid → texture → sampled to screen                            | Pan/scale over computed grid; on-demand generation                           |
 
 ```rust
 /// A fractal definition: what to compute and how to describe it.
@@ -554,16 +554,16 @@ Fractadyne/
 
 ## 16. Risks & Mitigations
 
-| Risk | Mitigation |
-|------|------------|
-| **Auto-perturbation for arbitrary custom formulas** (symbolic diff, stability) | Hand-written perturbation for built-ins; auto-derivation for custom with high-precision **fallback** so it always renders. |
-| **No `f64` in WGSL** | High precision stays on CPU (reference orbit); GPU uses `f32`/double-single deltas with rescaling. |
-| **GMP/MPFR build friction on Windows** | Default to pure-Rust bignum (`astro-float`/`dashu`); benchmark `rug` as optional. |
-| **GPU memory limits on huge exports** | Tiled rendering + stream to RAM/disk; never hold the full image on the GPU. |
-| **L-system string explosion at high depth** | Cap expansion depth, stream geometry, warn the user; consider on-the-fly expansion. |
-| **Deep-zoom glitch correctness** | Pauldelbrot criterion + iterative multi-reference correction; golden-image tests at known-hard coordinates. |
-| **Integrated-GPU fallback** | Feature-detect device limits; shrink tiles, hold the conservative precision band, disable optional passes; prioritize correctness over speed (no perf tuning for this tier). |
-| **Cross-platform drift while Windows-first** | Portable `wgpu`/WGSL only, no OS-specific APIs, `directories` crate for paths; periodic macOS/Linux build checks so portability doesn't rot. |
+| Risk                                                                           | Mitigation                                                                                                                                                                   |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Auto-perturbation for arbitrary custom formulas** (symbolic diff, stability) | Hand-written perturbation for built-ins; auto-derivation for custom with high-precision **fallback** so it always renders.                                                   |
+| **No `f64` in WGSL**                                                           | High precision stays on CPU (reference orbit); GPU uses `f32`/double-single deltas with rescaling.                                                                           |
+| **GMP/MPFR build friction on Windows**                                         | Default to pure-Rust bignum (`astro-float`/`dashu`); benchmark `rug` as optional.                                                                                            |
+| **GPU memory limits on huge exports**                                          | Tiled rendering + stream to RAM/disk; never hold the full image on the GPU.                                                                                                  |
+| **L-system string explosion at high depth**                                    | Cap expansion depth, stream geometry, warn the user; consider on-the-fly expansion.                                                                                          |
+| **Deep-zoom glitch correctness**                                               | Pauldelbrot criterion + iterative multi-reference correction; golden-image tests at known-hard coordinates.                                                                  |
+| **Integrated-GPU fallback**                                                    | Feature-detect device limits; shrink tiles, hold the conservative precision band, disable optional passes; prioritize correctness over speed (no perf tuning for this tier). |
+| **Cross-platform drift while Windows-first**                                   | Portable `wgpu`/WGSL only, no OS-specific APIs, `directories` crate for paths; periodic macOS/Linux build checks so portability doesn't rot.                                 |
 
 ---
 

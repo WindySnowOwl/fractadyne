@@ -75,10 +75,10 @@ to the last ULP and the two engines legitimately sample differently.
 
 ## Representative results (Fraktaler-3 v3.1)
 
-| View | Zoom | Membership (non-boundary) | Exterior counts within 1 iter | Exact integer match |
-|------|------|---------------------------|-------------------------------|---------------------|
-| Seahorse valley `(-0.745, 0.113)` | 5×10² | 100% (6832/6832) | 100% (35780/35780) | 78.9% |
-| Deep seahorse `(-0.7436438870…, 0.1318259042…)` | 1×10⁶ | 100% (11548/11548) | 100% (2647/2647) | 79.9% |
+| View                                            | Zoom  | Membership (non-boundary) | Exterior counts within 1 iter | Exact integer match |
+| ----------------------------------------------- | ----- | ------------------------- | ----------------------------- | ------------------- |
+| Seahorse valley `(-0.745, 0.113)`               | 5×10² | 100% (6832/6832)          | 100% (35780/35780)            | 78.9%               |
+| Deep seahorse `(-0.7436438870…, 0.1318259042…)` | 1×10⁶ | 100% (11548/11548)        | 100% (2647/2647)              | 79.9%               |
 
 Every non-boundary exterior pixel matches within **one** iteration; the residual ±1 is the
 escape-test convention (`|z|² ≥ r²` vs `>`, and test-vs-increment ordering) at iso-iteration
