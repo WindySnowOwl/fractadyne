@@ -8,6 +8,18 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.17
+
+- **Auto-zoom toolbar button.** A 🛸 button in the toolbar's navigation group toggles auto-zoom and
+  stays **highlighted while it's running** (click it to stop) — so you can see at a glance that the
+  hands-free dive is active without watching the View menu. Disabled in dual view (single-view only).
+- **Deep-zoom sample location + updated sample render.** Added `scripts/deep-sample.fdn`, a
+  Mandelbrot location at **~1e1108×** with a ~1138-digit center (loadable via File ▸ Open view /
+  Share location). `scripts/render-deepest.ps1` now renders *this* location instead of the tour
+  endpoint — reading the center + scale from the `.fdn` and converting `upp_log2` to the renderer's
+  `--zoom-log2` (`L = log2(3/height) − upp_log2`). Verified it reproduces (real structure, not a
+  blank) at the location's 500k-iteration budget.
+
 ## 0.1.16
 
 - **Fixed the deep auto-zoom showing a blank colored square.** In the stepped deep dive, every

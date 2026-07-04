@@ -4254,6 +4254,21 @@ impl eframe::App for FractadyneApp {
                 if ui.button("🔍−").on_hover_text("Zoom out").clicked() {
                     self.zoom_center(2.0);
                 }
+                // Auto-zoom (autopilot): highlighted while running; click to start/stop. Single view only.
+                ui.add_enabled_ui(!self.dual, |ui| {
+                    let running = self.autopilot;
+                    if ui
+                        .selectable_label(running, "🛸")
+                        .on_hover_text(if running {
+                            "Auto-zoom is running — click to stop"
+                        } else {
+                            "Auto-zoom: dive toward detail (A)"
+                        })
+                        .clicked()
+                    {
+                        self.toggle_autopilot(ctx);
+                    }
+                });
                 if ui.button("🔄").on_hover_text("Reset view (instant)").clicked() {
                     self.reset_view();
                 }
