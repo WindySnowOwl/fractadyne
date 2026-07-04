@@ -707,7 +707,7 @@ impl FractadyneApp {
 
         // Render path: 1 = direct df32 (shallow / unsupported formulas), 0 = df32
         // perturbation (fast, common deep range), 2 = floatexp perturbation (past df32's
-        // ~1e30× exponent limit → unlimited depth, ~1.7× costlier so only when needed).
+        // ~1e30× exponent limit → extreme depth, ~1.7× costlier so only when needed).
         let mode: u32 = if !fractal.supports_perturbation() || magnification < 1.0e4 {
             1
         } else if magnification >= PERT_FE_THRESHOLD {

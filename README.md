@@ -7,11 +7,13 @@ zoom** and performance.
 
 ## Highlights
 
-- **Unlimited deep zoom** — arbitrary-precision center (`astro-float`), a bignum
+- **Extreme deep zoom** — arbitrary-precision center (`astro-float`), a bignum
   reference orbit, and a GPU perturbation pipeline that switches by depth:
   direct df32 → df32 perturbation → **floatexp** perturbation (df32 mantissa + i32
   exponent), so the deviation never runs out of `f32` exponent range. Zhuoran rebasing;
-  depth bounded only by coordinate precision and the iteration budget. **Series
+  depth is bounded by coordinate precision and the iteration budget, not a fixed wall —
+  renders are cross-checked against Fraktaler-3 past 1e300×, and the bundled tour dives to
+  ~1e420×. **Series
   approximation** (order-3) skips the early iterations of deep Mandelbrot renders by seeding
   the perturbation from a polynomial — validated to reproduce full iteration exactly.
 - **Fractal variety** — Mandelbrot, Multibrot 3/4/5, Tricorn, Burning Ship, Celtic,

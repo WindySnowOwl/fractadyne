@@ -146,8 +146,8 @@ fn c_mag2(a: Cdf) -> f32 {
 // ---------------- floatexp complex (df32 mantissa + shared i32 exponent) ----------
 // value = m · 2^e, with the df32 complex mantissa `m` normalized so its larger hi
 // word is ~[1,2). This extends df32's f32 *exponent* range to i32, so the
-// perturbation δz no longer underflows f32 (~1e-38) at extreme depth → effectively
-// unlimited zoom (bounded only by the reference orbit / iteration budget).
+// perturbation δz no longer underflows f32 (~1e-38) at extreme depth → very deep
+// zoom (bounded by the reference orbit / iteration budget, not an f32 wall).
 struct Fe {
     m: Cdf,
     e: i32,
@@ -620,7 +620,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
-        // i32 exponent), so the deviation never underflows f32 → unlimited depth. ~1.7×
+        // i32 exponent), so the deviation never underflows f32 → extreme depth. ~1.7×
         // costlier per iteration than mode 0, so it's used only past df32's reach. In
         // Mandelbrot mode the pixel deviation is δc (δz₀ = 0); in Julia mode it is δz₀
         // (δc = 0). `off_*` and `ref_offset` are mantissas sharing the exponent.

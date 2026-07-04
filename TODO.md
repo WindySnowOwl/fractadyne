@@ -138,7 +138,7 @@ cache, adaptive iterations, auto-save/restore, and the first side panels.
       current view (full-precision center via the export view-metadata blob) to
       `bookmarks.toml` in the config dir; click any bookmark to jump back instantly.
       Manage… window adds (with optional name), lists with zoom, and deletes. Invaluable
-      now that deep zoom is unlimited (re-zooming to 1e30× by hand is painful).
+      now that deep zoom reaches extreme depths (re-zooming to 1e30× by hand is painful).
 - [ ] **Left Parameters panel** (type, power, location, zoom).
 
 ### Planned settings (Preferences UI — mockup 10)
@@ -150,7 +150,7 @@ cache, adaptive iterations, auto-save/restore, and the first side panels.
 
 ## Milestone M2 — Deep zoom (in progress)
 
-Goal (DESIGN.md §5): unlimited zoom via arbitrary-precision reference orbit + GPU
+Goal (DESIGN.md §5): extreme-depth zoom via arbitrary-precision reference orbit + GPU
 perturbation + series approximation + glitch correction. The headline feature.
 
 - [x] **Perturbation pipeline** — CPU reference orbit (`f64`) → per-pixel `δz` on
@@ -173,7 +173,7 @@ perturbation + series approximation + glitch correction. The headline feature.
 - [x] **Double-double (df64) center** — the deep-zoom coordinate **jump is gone**.
       Verified clean *and* smooth to **~4×10³⁰×** (df64 reference + rebasing held far
       past estimate — no noise; the earlier ~10¹⁵× GPU-noise prediction was wrong).
-- [x] **Arbitrary-precision center + reference (unlimited zoom)** — center is now
+- [x] **Arbitrary-precision center + reference (extreme-depth zoom)** — center is now
       `astro_float::BigFloat` at a mantissa size that scales with zoom
       (`precision_for_magnification` = octaves + 64 guard bits), so the coordinate
       never runs out of digits → no jump at *any* depth. The reference orbit is
@@ -201,7 +201,7 @@ perturbation + series approximation + glitch correction. The headline feature.
       debounce so an animating palette offset no longer blocks the idle save.
 - [ ] Re-add `zoom_to_rect` unit test (dropped in the dd rewrite).
 - [x] **UI digit separators** — commas on zoom/iter, spaces grouping coordinate digits.
-- [x] **Floatexp perturbation δ (unlimited depth)** — the df32 δ has f32's *exponent*
+- [x] **Floatexp perturbation δ (extreme depth)** — the df32 δ has f32's *exponent*
       floor, so its low word denormalizes/underflows ~1e31–1e32× → speckle breakdown.
       Added a floatexp δ (df32 mantissa + i32 exponent) that never underflows. **Hybrid
       by depth**: direct df32 (<1e4×) → df32 perturbation (1e4–1e28×, fast) → floatexp
@@ -212,7 +212,7 @@ perturbation + series approximation + glitch correction. The headline feature.
       coordinate precision (auto-scales while zooming) + iteration budget, not f32.
 - [x] **Lifted the ~1e308× render ceiling (extended-range `FloatExp` scale)** — the viewport
       scale was `f64` (`units_per_pixel` underflowed, `magnification()` overflowed near
-      1e308×), which was the real live-zoom wall (the bignum center was already unlimited).
+      1e308×), which was the real live-zoom wall (the bignum center already had no fixed precision cap).
       Replaced it with a `FloatExp` (`m·2^e`, i32 exponent): `Viewport::units_per_pixel` is
       now `FloatExp`, with `log2_magnification` + `precision_for_octaves` driving precision,
       `complex_span_fe`/`gpu_scale` (O(1) span mantissa + shared `delta_exp`) and

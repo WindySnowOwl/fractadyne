@@ -21,9 +21,9 @@
 **Fractadyne** is a high-performance, native desktop application for exploring and
 rendering fractals. Its two defining priorities are:
 
-1. **Ultra-deep zoom** — effectively unlimited magnification (well past `1e-300`),
+1. **Ultra-deep zoom** — extreme magnification (validated well past `1e300×`),
    using arbitrary-precision arithmetic with perturbation theory and series
-   approximation.
+   approximation. Depth is bounded by coordinate precision + compute, not a fixed wall.
 2. **Extreme performance** — saturate all available hardware: multiple CPU cores,
    the GPU, and large amounts of RAM.
 
@@ -60,7 +60,7 @@ These were chosen at kickoff and anchor the rest of the design:
 | ------------------------ | --------------------------------------------------------------------- |
 | **Platform**             | Native desktop application                                            |
 | **Language + GPU stack** | Rust + `wgpu` (compute via WGSL)                                      |
-| **Zoom depth**           | Unlimited — arbitrary precision + perturbation + series approximation |
+| **Zoom depth**           | Extreme — arbitrary precision + perturbation + series approximation (validated past 1e300×) |
 | **Extensibility**        | Programmable engine — custom fractal formulas and coloring            |
 
 ### 1.4 Non-goals (initial release)
@@ -160,7 +160,7 @@ strategy**:
 
 | Family                                               | Compute model                                                                   | Render model                                                  | Deep-zoom behavior                                                           |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| **Escape-time** (Mandelbrot, Julia, Burning Ship, …) | Per-pixel iteration; perturbation on GPU + arbitrary-precision reference on CPU | Iteration buffer → coloring shader                            | Unlimited (perturbation)                                                     |
+| **Escape-time** (Mandelbrot, Julia, Burning Ship, …) | Per-pixel iteration; perturbation on GPU + arbitrary-precision reference on CPU | Iteration buffer → coloring shader                            | Extreme depth (perturbation)                                                 |
 | **L-system**                                         | CPU grammar expansion → turtle graphics → line/vertex buffer                    | GPU vector/line rasterization with `f64`→`f32` view transform | Limited by float transform precision; arbitrary-precision transform optional |
 | **Cellular / finite automata**                       | GPU (or CPU) grid simulation (1D elementary CA spacetime, 2D life-like)         | Grid → texture → sampled to screen                            | Pan/scale over computed grid; on-demand generation                           |
 
@@ -211,7 +211,7 @@ lattice resolution and simulation cost, not floating-point range.
 ## 5. Deep-Zoom Rendering Engine (escape-time)
 
 This is the core of the application and the hardest part. The target is
-*unlimited* zoom with real-time interactivity, which standard `f64` cannot
+*extreme-depth* zoom with real-time interactivity, which standard `f64` cannot
 provide (it pixelates around `~1e-15`).
 
 ### 5.1 The problem

@@ -8,6 +8,19 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.14
+
+- **`scripts/render-deepest.ps1`** — reproduces the deepest zoom the project documents: the
+  Misiurewicz spiral at the endpoint of `tours/deep-spiral-dive.toml`, ~**1e420×** with a
+  ~464-digit center. It reads the coordinate + depth straight from the tour (so it stays in sync),
+  renders one still with an iteration budget matched to the depth (~220/octave), and reports timing
+  — a genuine stress test of the deep-zoom pipeline. Verified end-to-end.
+- **Softened "unlimited" zoom claims to concrete, verifiable ones.** The depth is bounded by
+  coordinate precision and the iteration budget, not a fixed wall — so the docs, in-app **Help**,
+  and code now say **"extreme deep zoom"** with real numbers (cross-checked against Fraktaler-3 past
+  1e300×; the bundled tour reaches ~1e420×) instead of "unlimited." Technical accuracy over
+  marketing.
+
 ## 0.1.13
 
 - **Restartable tour renders** — a long `--render-tour` that gets interrupted can now be resumed.
@@ -503,7 +516,7 @@ Baseline for tracked versioning. Notable capabilities already present:
   `deep_roundtrip_bits`; new `fractadyne-core` tests (`deep_precision_self_consistent_1e1000`,
   plus an `#[ignore]`d 1e100000× case). This surfaced that the renderer's **live** zoom is
   capped near **1e308×** by the viewport's `f64` `units_per_pixel`/`magnification` (the
-  bignum *center* is unlimited; the *scale* underflows) — tracked in TODO as a floatexp /
+  bignum *center* precision scales with depth; the *scale* underflows) — tracked in TODO as a floatexp /
   log-magnitude scale rework. Recipe + measured cost-scaling table:
   [validation/extreme-depth.md](validation/extreme-depth.md).
 
@@ -653,7 +666,7 @@ Baseline for tracked versioning. Notable capabilities already present:
   faster (374 ms → 45 ms), avg CPU ~7.6× faster. Build counter is now shared across
   debug/release profiles (`.build_seq` at the workspace root) so it stays monotonic.
 
-- **Unlimited deep zoom (floatexp δ)** — the GPU perturbation delta now uses a floatexp
+- **Extreme deep zoom (floatexp δ)** — the GPU perturbation delta now uses a floatexp
   representation (df32 mantissa + i32 exponent) past ~1e28×, removing the f32 exponent
   wall that broke rendering around 1e31–1e32×. Hybrid by depth (direct → df32
   perturbation → floatexp perturbation) so the common range keeps full speed; floatexp

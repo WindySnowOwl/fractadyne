@@ -260,7 +260,7 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
     help_sub(ui, "Deep-zoom support");
     help_p(
         ui,
-        "Mandelbrot, Multibrot 3/4/5 and Tricorn support unlimited (floatexp) perturbation deep \
+        "Mandelbrot, Multibrot 3/4/5 and Tricorn support extreme-depth (floatexp) perturbation deep \
          zoom. Burning Ship, Celtic and Buffalo are non-analytic (they take absolute values), so \
          they use a sign-aware perturbation; this now runs at floatexp range too, deep-zooming far \
          past the old ~1e28× df32 limit (rare speckle near the abs folds awaits multi-reference \
@@ -294,13 +294,14 @@ pub(crate) fn help_methodology(ui: &mut egui::Ui) {
          computed on the GPU as a tiny difference δ from it in fast low precision: \
          δz → 2·Z·δz + δz² + δc.",
     );
-    help_sub(ui, "Unlimited depth (floatexp)");
+    help_sub(ui, "Extreme depth (floatexp)");
     help_p(
         ui,
         "Past about 1e28× even that tiny difference underflows 32-bit range, so it is stored as a \
-         mantissa plus a separate integer exponent (\"floatexp\"), removing the depth wall. The \
-         engine switches automatically: direct math when shallow, perturbation when deep, and \
-         floatexp when deepest.",
+         mantissa plus a separate integer exponent (\"floatexp\"), lifting the 32-bit depth wall. \
+         The engine switches automatically: direct math when shallow, perturbation when deep, and \
+         floatexp when deepest. Depth is then bounded by coordinate precision and the iteration \
+         budget rather than a fixed limit (validated past 1e300×; the bundled tour reaches ~1e420×).",
     );
     help_sub(ui, "Reference choice & rebasing");
     help_p(

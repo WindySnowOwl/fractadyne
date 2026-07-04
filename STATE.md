@@ -53,8 +53,8 @@ frames. Great for golden-image checks and movie export.
   - `mode 1` direct df32 — `< 1e4×` or non-perturbation formulas.
   - `mode 0` df32 perturbation — `1e4 … 1e28×` (fast common path).
   - `mode 2` **floatexp** perturbation — `≥ 1e28×` (`PERT_FE_THRESHOLD`). df32 mantissa +
-    i32 exponent (`Fe` type in the shader) → no f32 exponent underflow → **unlimited
-    depth** (now bounded by center-coord precision + iteration budget, not f32).
+    i32 exponent (`Fe` type in the shader) → no f32 exponent underflow → **extreme
+    depth** (bounded by center-coord precision + iteration budget, not f32).
 - Shared base-2 `delta_exp` keeps the input δ mantissas (step / ref_offset) O(1) at any
   depth; the perf panel `mode` line shows which path is active.
 - Verified clean via `--render` at 1e15 / 1e25 / 1e27 (df32) / 1e29 / 1e32 (floatexp);

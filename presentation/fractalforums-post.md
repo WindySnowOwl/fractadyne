@@ -11,11 +11,11 @@ questions I'd love input on. Everything below is reproducible; commands and data
 
 ## 1. What it is
 
-- **Unlimited deep zoom.** Arbitrary-precision center (`astro-float`), a bignum reference orbit
+- **Extreme deep zoom.** Arbitrary-precision center (`astro-float`), a bignum reference orbit
   on the CPU, and a GPU perturbation pipeline that switches by depth:
   **direct df32 → df32-δ perturbation → floatexp-δ perturbation** (df32 mantissa + `i32`
   exponent), so the deviation δz never runs out of `f32` exponent range. Zhuoran rebasing;
-  depth bounded only by coordinate precision + iteration budget (live to ~1e300×; extreme-depth
+  depth bounded by coordinate precision + iteration budget, not a fixed wall (live to ~1e300×; extreme-depth
   self-consistency validated to 1e1000000×).
 - **Acceleration.** Order-3 **series approximation** (skips early iterations, validated to
   reproduce full iteration exactly) and **BLA** (bilinear approximation, Zhuoran/KF-style),
