@@ -13,10 +13,14 @@ new functional enhancement.
 - **Esc reliably stops auto-zoom.** Escape is now one of the auto-zoom loop's own interrupt inputs
   (alongside click / scroll / Space), so it stops the dive directly — including deep in a stepped
   dive — rather than relying only on the top-level key handler.
-- **`--selftest` golden images are now deterministic regardless of session.** The golden-regression
-  renders now pin *every* render-affecting field explicitly — in particular the palette animation
-  (a saved "Random gradients" mode would otherwise make `active_stops()` return a random palette and
-  fail the goldens on a loaded session). Goldens remain bit-identical (4/4, maxΔ 0).
+- **`--selftest` golden images are now deterministic and robustly located.** The golden-regression
+  renders pin *every* render-affecting field explicitly — in particular the palette animation (a
+  saved "Random gradients" mode would otherwise make `active_stops()` return a random palette and
+  fail the goldens on a loaded session). The goldens are also always read from the canonical
+  `validation/golden/` regardless of `--out` (previously `--selftest --out <elsewhere>` looked for a
+  `golden/` next to the report and silently reported a fake `maxΔ 255` failure), and a missing /
+  wrong-size / errored golden now reports a distinct reason instead of masquerading as a pixel diff.
+  Goldens remain bit-identical (4/4, maxΔ 0).
 
 ## 0.1.17
 

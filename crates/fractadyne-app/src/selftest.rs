@@ -1577,7 +1577,11 @@ impl FractadyneApp {
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let golden_dir = out_base.join("golden");
+        // Canonical committed reference set — always read (and, on --bless, write) the goldens from
+        // `validation/golden`, regardless of where --out writes the report. The old
+        // `out_base/golden` derivation silently reported "no golden" (a fake maxΔ 255 fail) when
+        // --out pointed away from validation/. The `current/` side-by-side renders still go by --out.
+        let golden_dir = std::path::PathBuf::from("validation").join("golden");
         let current_dir = out_base.join("current");
         let _ = std::fs::create_dir_all(&golden_dir);
         if !bless {
@@ -1591,8 +1595,10 @@ impl FractadyneApp {
             ("elephant", "0.2925755", "-0.0149977", 1.5e3, 1500, 0, 2),
         ];
         let (gw, gh) = (320u32, 240u32);
-        // (name, max Δ, mean Δ, checksum, pass, reproduce)
-        let mut goldens: Vec<(String, u32, f64, u64, bool, String)> = Vec::new();
+        // (name, max Δ, mean Δ, checksum, pass, reproduce, status). `status` is "" for a normal
+        // compared golden (show maxΔ/meanΔ); otherwise a distinct reason (MISSING / SIZE MISMATCH /
+        // RENDER ERROR) so those never masquerade as a pixel-diff failure.
+        let mut goldens: Vec<(String, u32, f64, u64, bool, String, &'static str)> = Vec::new();
         for &(name, cx, cy, zoom, iter, method, palette) in specs {
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
@@ -1638,20 +1644,31 @@ impl FractadyneApp {
                     let png_path = golden_dir.join(format!("{name}.png"));
                     if bless {
                         let _ = fractadyne_export::write_png(&png_path, r.width, r.height, &r.pixels, Some(&reproduce));
-                        goldens.push((name.to_string(), 0, 0.0, sum, true, reproduce));
+                        goldens.push((name.to_string(), 0, 0.0, sum, true, reproduce, ""));
                     } else {
                         let cur_path = current_dir.join(format!("{name}.png"));
                         let _ = fractadyne_export::write_png(&cur_path, r.width, r.height, &r.pixels, Some(&reproduce));
                         match fractadyne_export::read_png_rgba8(&png_path) {
                             Some((w, h, gpx)) if w == r.width && h == r.height => {
                                 let (max, mean) = img_diff(&srgb, &gpx);
-                                goldens.push((name.to_string(), max, mean, sum, max <= 10 && mean <= 2.0, reproduce));
+                                goldens.push((name.to_string(), max, mean, sum, max <= 10 && mean <= 2.0, reproduce, ""));
                             }
-                            _ => goldens.push((name.to_string(), 255, 255.0, sum, false, format!("{reproduce}  [no golden — run --bless]"))),
+                            // Golden exists but was recorded at a different size — not a render diff.
+                            Some((w, h, _)) => goldens.push((
+                                name.to_string(), 0, 0.0, sum, false,
+                                format!("{reproduce}  [golden is {w}×{h}, expected {}×{}]", r.width, r.height),
+                                "SIZE MISMATCH",
+                            )),
+                            // No golden on disk at the canonical path — needs an initial --bless.
+                            None => goldens.push((
+                                name.to_string(), 0, 0.0, sum, false,
+                                format!("{reproduce}  [no golden at {} — run --selftest --bless]", png_path.display()),
+                                "MISSING GOLDEN",
+                            )),
                         }
                     }
                 }
-                Err(e) => goldens.push((name.to_string(), 255, 255.0, 0, false, format!("render failed: {e}"))),
+                Err(e) => goldens.push((name.to_string(), 0, 0.0, 0, false, format!("render failed: {e}"), "RENDER ERROR")),
             }
         }
 
@@ -1719,11 +1736,18 @@ impl FractadyneApp {
         md.push_str("| Image | Max Δ | Mean Δ | Checksum (FNV-1a) | Verdict | Reproduce |\n");
         md.push_str("|---|---|---|---|---|---|\n");
         for g in &goldens {
+            let verdict = if bless {
+                "📷 recorded"
+            } else if g.4 {
+                "✅ match"
+            } else if !g.6.is_empty() {
+                g.6 // MISSING GOLDEN / SIZE MISMATCH / RENDER ERROR — not a pixel diff
+            } else {
+                "❌ differ"
+            };
             md.push_str(&format!(
                 "| {} | {} | {:.3} | `{:016x}` | {} | `{}` |\n",
-                g.0, g.1, g.2, g.3,
-                if bless { "📷 recorded" } else if g.4 { "✅ match" } else { "❌ differ" },
-                g.5
+                g.0, g.1, g.2, g.3, verdict, g.5
             ));
         }
         md.push_str(&format!(
@@ -1743,10 +1767,13 @@ impl FractadyneApp {
             println!("  [{}] {} — {}", if c.pass { "PASS" } else { "FAIL" }, c.name, c.result);
         }
         for g in &goldens {
-            println!(
-                "  [{}] golden {} — maxΔ {} meanΔ {:.2}",
-                if bless { "REC " } else if g.4 { "PASS" } else { "FAIL" }, g.0, g.1, g.2
-            );
+            let label = if bless { "REC " } else if g.4 { "PASS" } else { "FAIL" };
+            if g.6.is_empty() {
+                println!("  [{label}] golden {} — maxΔ {} meanΔ {:.2}", g.0, g.1, g.2);
+            } else {
+                // Distinct reason (MISSING / SIZE MISMATCH / RENDER ERROR) — not a pixel-diff fail.
+                println!("  [{label}] golden {} — {}", g.0, g.6);
+            }
         }
         println!("{}", "=".repeat(48));
         println!("checks {checks_pass}/{}, goldens {gold_pass}/{} — {}", checks.len(), goldens.len(),
