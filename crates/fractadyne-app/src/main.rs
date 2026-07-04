@@ -1571,7 +1571,8 @@ impl FractadyneApp {
             glitch_correct: s.glitch_correct,
             use_bla: s.use_bla,
             watermark: s.watermark,
-            show_location: args.iter().any(|a| a == "--show-location" || a == "--hud"),
+            show_location: s.show_location
+                || args.iter().any(|a| a == "--show-location" || a == "--hud"),
             watermark_overlay: None,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             zoom_rate: s.zoom_rate,
@@ -1769,6 +1770,7 @@ impl FractadyneApp {
                 DualExport::ActiveOnly => "active".to_string(),
             },
             export_aspect: self.export_aspect.clone(),
+            show_location: self.show_location,
             palette_anim: self.palette_anim.key().to_string(),
             palette_anim_speed: self.palette_anim_speed,
             light: self.light,
@@ -3642,7 +3644,7 @@ impl eframe::App for FractadyneApp {
         // Ctrl+S → quick export (no dialog) to the last folder.
         if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
             if let Some((dev, q)) = &gpu {
-                self.quick_export(dev.clone(), q.clone());
+                self.quick_export(ctx, dev.clone(), q.clone());
             }
         }
 
@@ -4297,7 +4299,7 @@ impl eframe::App for FractadyneApp {
                     .clicked()
                 {
                     if let Some((dev, q)) = &gpu {
-                        self.quick_export(dev.clone(), q.clone());
+                        self.quick_export(ctx, dev.clone(), q.clone());
                     }
                 }
                 ui.separator();
@@ -5628,6 +5630,13 @@ impl eframe::App for FractadyneApp {
                         ui.radio_value(&mut self.export_format, ExportFormat::Png, "PNG");
                         ui.radio_value(&mut self.export_format, ExportFormat::Exr, "OpenEXR");
                     });
+                    ui.add_enabled_ui(!self.dual, |ui| {
+                        ui.checkbox(&mut self.show_location, "Location HUD")
+                            .on_hover_text(
+                                "Burn a zoom-level + coordinate panel into the top-left of the \
+                                 exported image (scales with the output; single view only).",
+                            );
+                    });
                     if self.dual {
                         egui::ComboBox::from_label("Dual layout")
                             .selected_text(match self.export_dual_mode {
@@ -5711,7 +5720,7 @@ impl eframe::App for FractadyneApp {
             self.export_open = open;
             if do_export {
                 if let Some((dev, q)) = &gpu {
-                    self.start_export(dev.clone(), q.clone());
+                    self.start_export(ctx, dev.clone(), q.clone());
                 } else {
                     self.export_status = Some("GPU not available".to_string());
                 }

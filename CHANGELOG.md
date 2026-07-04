@@ -8,6 +8,15 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.21
+
+- **Location HUD option in the Export dialog.** A new **"Location HUD"** checkbox burns the
+  zoom-level + coordinate panel into the top-left of the exported image (single view; scales with the
+  output). Previously the HUD was only reachable via the `--show-location` CLI flag. The setting
+  persists. Implemented by pre-rasterizing the HUD into a premultiplied overlay on the main thread
+  (the background export worker has no egui font context) — the live view / tour frames share the
+  same rasterizer, so the look is identical.
+
 ## 0.1.20
 
 - **Fixed the Export dialog showing "W × 1 px" at deep zoom**, and added an **aspect-ratio

@@ -83,6 +83,9 @@ pub struct SessionState {
     /// Export aspect ratio: "window" (match the live view) or a fixed ratio key ("16:9", "1:1", …).
     #[serde(default = "default_export_aspect")]
     pub export_aspect: String,
+    /// Burn the zoom/coordinate HUD into exports (also settable via the `--show-location` CLI flag).
+    #[serde(default)]
+    pub show_location: bool,
     /// Palette animation mode: "off" | "forward" | "reverse" | "pingpong".
     #[serde(default = "default_palette_anim")]
     pub palette_anim: String,
@@ -326,6 +329,7 @@ impl Default for SessionState {
             export_dir: None,
             export_dual_mode: default_export_dual_mode(),
             export_aspect: default_export_aspect(),
+            show_location: false,
             palette_anim: default_palette_anim(),
             palette_anim_speed: default_palette_anim_speed(),
             light: false,

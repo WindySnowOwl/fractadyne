@@ -789,9 +789,26 @@ fn stamp_caption(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, cap: &Capt
 /// Burn a small location HUD — zoom level + center coordinates — into the top-left of an export
 /// frame, over a soft dark backing. The zoom line is amber (brand accent); the coordinate lines are
 /// light grey monospace. `vp` supplies the arbitrary-precision center + zoom for the current frame.
-pub(crate) fn stamp_location(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, vp: &fractadyne_core::Viewport) {
-    if w == 0 || h == 0 {
-        return;
+/// Pre-rasterized location HUD (dark panel + zoom/coordinate text): premultiplied **linear** RGBA at
+/// its export scale, plus the top-left pixel position. Built on the main thread (needs the egui font
+/// atlas) so it can be blitted by the ctx-less export worker — like the brand watermark. The live
+/// view / tour frames build and blit it in one step via [`stamp_location`].
+pub(crate) struct HudOverlay {
+    pub x: i32,
+    pub y: i32,
+    pub w: usize,
+    pub h: usize,
+    pub px: Vec<f32>, // interleaved RGBA, premultiplied, linear
+}
+
+/// Rasterize the location HUD for an image of height `img_h` into a standalone overlay.
+pub(crate) fn build_location_overlay(
+    ctx: &egui::Context,
+    vp: &fractadyne_core::Viewport,
+    img_h: u32,
+) -> Option<HudOverlay> {
+    if img_h == 0 {
+        return None;
     }
     let log2mag = vp.log2_magnification();
     let lines = [
@@ -799,7 +816,7 @@ pub(crate) fn stamp_location(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32
         format!("re {}", crate::fmt_coord_deep(&vp.center_x, log2mag)),
         format!("im {}", crate::fmt_coord_deep(&vp.center_y, log2mag)),
     ];
-    let scale = h as f32 / 1080.0;
+    let scale = img_h as f32 / 1080.0;
     let ppp = ctx.pixels_per_point();
     let pts = (15.0 * scale / ppp).max(1.0);
     let font = egui::FontId::monospace(pts);
@@ -809,23 +826,91 @@ pub(crate) fn stamp_location(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32
         .collect();
     let line_h = galleys.iter().map(|g| g.size().y).fold(0.0f32, f32::max) * ppp;
     let maxw = galleys.iter().map(|g| g.size().x).fold(0.0f32, f32::max) * ppp;
-    let margin = 16.0 * scale;
     let pad = 8.0 * scale;
-    let (x0, y0) = (margin, margin);
-    let block_h = line_h * galleys.len() as f32;
-    fill_dark(px, w, h, x0 - pad, y0 - pad, x0 + maxw + pad, y0 + block_h + pad, 0.5);
+    let margin = 16.0 * scale;
+    let bw = (maxw + 2.0 * pad).ceil().max(1.0) as usize;
+    let bh = (line_h * galleys.len() as f32 + 2.0 * pad).ceil().max(1.0) as usize;
+    // Local premultiplied-linear buffer seeded with the translucent dark panel (black, α = 0.5).
+    let mut px = vec![0.0f32; bw * bh * 4];
+    for p in px.chunks_exact_mut(4) {
+        p[3] = 0.5; // premult black (rgb already 0)
+    }
     let amber = {
         let c = egui::Rgba::from(crate::theme::BRAND_ACCENT);
         [c.r(), c.g(), c.b()]
     };
-    // Clone the atlas after layout so it holds these glyphs (egui fills it lazily).
     ctx.fonts(|f| {
         let atlas = f.image();
-        for (i, g) in galleys.iter().enumerate() {
-            let col = if i == 0 { amber } else { [0.85, 0.86, 0.88] };
-            blit_galley(&atlas, px, w, h, g, x0, y0 + i as f32 * line_h, ppp, col, 1.0);
+        let aw = atlas.size[0];
+        for (li, g) in galleys.iter().enumerate() {
+            let color = if li == 0 { amber } else { [0.85, 0.86, 0.88] };
+            let by = pad + li as f32 * line_h;
+            for row in &g.rows {
+                for gl in &row.glyphs {
+                    let uv = gl.uv_rect;
+                    if uv.max[0] <= uv.min[0] || uv.max[1] <= uv.min[1] {
+                        continue;
+                    }
+                    let ox = (pad + (gl.pos.x + uv.offset.x) * ppp).round() as i32;
+                    let oy = (by + (gl.pos.y + uv.offset.y) * ppp).round() as i32;
+                    for ty in uv.min[1]..uv.max[1] {
+                        for tx in uv.min[0]..uv.max[0] {
+                            let cov = atlas.pixels[ty as usize * aw + tx as usize];
+                            if cov <= 0.0 {
+                                continue;
+                            }
+                            let dx = ox + (tx - uv.min[0]) as i32;
+                            let dy = oy + (ty - uv.min[1]) as i32;
+                            if dx < 0 || dy < 0 || dx >= bw as i32 || dy >= bh as i32 {
+                                continue;
+                            }
+                            let i = (dy as usize * bw + dx as usize) * 4;
+                            // premult text (color·cov, cov) OVER the current premult pixel.
+                            let inv = 1.0 - cov;
+                            px[i] = color[0] * cov + px[i] * inv;
+                            px[i + 1] = color[1] * cov + px[i + 1] * inv;
+                            px[i + 2] = color[2] * cov + px[i + 2] * inv;
+                            px[i + 3] = cov + px[i + 3] * inv;
+                        }
+                    }
+                }
+            }
         }
     });
+    Some(HudOverlay { x: (margin - pad).round() as i32, y: (margin - pad).round() as i32, w: bw, h: bh, px })
+}
+
+/// Composite a pre-built HUD overlay onto a linear RGBA frame buffer (no egui context needed).
+pub(crate) fn blit_location_overlay(frame: &mut [f32], w: u32, h: u32, ov: &HudOverlay) {
+    for dy in 0..ov.h as i32 {
+        let iy = ov.y + dy;
+        if iy < 0 || iy >= h as i32 {
+            continue;
+        }
+        for dx in 0..ov.w as i32 {
+            let ix = ov.x + dx;
+            if ix < 0 || ix >= w as i32 {
+                continue;
+            }
+            let s = (dy as usize * ov.w + dx as usize) * 4;
+            let a = ov.px[s + 3];
+            if a <= 0.0 {
+                continue;
+            }
+            let d = (iy as usize * w as usize + ix as usize) * 4;
+            let inv = 1.0 - a;
+            frame[d] = ov.px[s] + frame[d] * inv;
+            frame[d + 1] = ov.px[s + 1] + frame[d + 1] * inv;
+            frame[d + 2] = ov.px[s + 2] + frame[d + 2] * inv;
+        }
+    }
+}
+
+/// Build + blit the location HUD in one step (live view / tour frames, which have the egui context).
+pub(crate) fn stamp_location(ctx: &egui::Context, px: &mut [f32], w: u32, h: u32, vp: &fractadyne_core::Viewport) {
+    if let Some(ov) = build_location_overlay(ctx, vp, h) {
+        blit_location_overlay(px, w, h, &ov);
+    }
 }
 
 /// Burn a callout (marker ring + leader line + label) at the target's frame pixel `(vpx, vpy)`.

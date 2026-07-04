@@ -445,7 +445,7 @@ impl FractadyneApp {
     }
 
     /// Start a background export, prompting for a path (modal Save dialog).
-    pub(crate) fn start_export(&mut self, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
+    pub(crate) fn start_export(&mut self, ctx: &egui::Context, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
         if self.export_task.is_some() {
             return;
         }
@@ -464,11 +464,11 @@ impl FractadyneApp {
             self.export_status = Some("Export canceled.".to_string());
             return;
         };
-        self.start_export_to(device, queue, path);
+        self.start_export_to(ctx, device, queue, path);
     }
 
     /// Quick export (hotkey): no dialog — save to the last-used folder with an auto name.
-    pub(crate) fn quick_export(&mut self, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
+    pub(crate) fn quick_export(&mut self, ctx: &egui::Context, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
         if self.export_task.is_some() {
             return;
         }
@@ -478,7 +478,7 @@ impl FractadyneApp {
             .filter(|d| d.is_dir())
             .unwrap_or_else(Self::pictures_dir);
         let path = dir.join(self.export_default_name());
-        self.start_export_to(device, queue, path);
+        self.start_export_to(ctx, device, queue, path);
     }
 
     /// Stamp the "Fd" mark into a linear RGBA image buffer if the watermark is enabled and built.
@@ -599,6 +599,7 @@ impl FractadyneApp {
         queue: &eframe::wgpu::Queue,
         path: &std::path::Path,
         job: &ExportJob,
+        hud: Option<&crate::scripting::HudOverlay>,
     ) -> Option<String> {
         let meta = self.view_metadata();
         let correct = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
@@ -606,6 +607,9 @@ impl FractadyneApp {
         };
         let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| -> Result<(), String> {
             self.apply_watermark(&mut px, w, h);
+            if let Some(ov) = hud {
+                crate::scripting::blit_location_overlay(&mut px, w, h, ov);
+            }
             match self.export_format {
                 ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
                 ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
@@ -642,6 +646,7 @@ impl FractadyneApp {
     /// "separate", to `path` + a sibling). The UI stays responsive; result via channel.
     pub(crate) fn start_export_to(
         &mut self,
+        ctx: &egui::Context,
         device: eframe::wgpu::Device,
         queue: eframe::wgpu::Queue,
         path: std::path::PathBuf,
@@ -653,11 +658,16 @@ impl FractadyneApp {
             self.export_last_dir = Some(parent.to_path_buf());
         }
         let job = self.build_export_job();
+        // Optional location HUD: rasterized here on the main thread (needs the egui font atlas),
+        // then blitted by the sync/worker write paths (which have no context). Single view only.
+        let hud = (self.show_location && !self.dual)
+            .then(|| crate::scripting::build_location_overlay(ctx, &self.viewport, self.export_height()))
+            .flatten();
         // Glitch correction re-renders per reference (synchronous, main thread), so it runs here
         // rather than on the tiled worker. Handles single + dual layouts; falls back to the threaded
         // path for aux coloring methods or views past the ~32 MP / single-texture correction limit.
         if self.glitch_correct {
-            if let Some(msg) = self.export_corrected_sync(&device, &queue, &path, &job) {
+            if let Some(msg) = self.export_corrected_sync(&device, &queue, &path, &job, hud.as_ref()) {
                 self.export_status = Some(msg);
                 return;
             }
@@ -681,6 +691,9 @@ impl FractadyneApp {
             let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| {
                 if let Some(ov) = &wm {
                     stamp_watermark(&mut px, w, h, ov);
+                }
+                if let Some(ov) = &hud {
+                    crate::scripting::blit_location_overlay(&mut px, w, h, ov);
                 }
                 match format {
                     ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
