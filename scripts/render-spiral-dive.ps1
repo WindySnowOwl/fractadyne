@@ -77,6 +77,17 @@ if (-not $Size) {
 }
 if ($Size -notmatch '^\d+x\d+$') { throw "Resolution must be WIDTHxHEIGHT (e.g. 1920x1080); got '$Size'." }
 
+# --- Prompt: assemble an MP4? (requires ffmpeg) ------------------------------
+# Only ask when -Mp4 wasn't given explicitly on the command line.
+if (-not $PSBoundParameters.ContainsKey('Mp4')) {
+    $ans = Read-Host "Assemble the frames into an .mp4 when done? Requires ffmpeg on PATH. [y/N]"
+    $Mp4 = $ans -match '^(y|yes)$'
+}
+if ($Mp4 -and -not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    Write-Host "  [!] ffmpeg was not found on PATH. The frames will still render, but the .mp4" -ForegroundColor Yellow
+    Write-Host "      won't be assembled (install ffmpeg and re-run with -Mp4, or stitch the frames yourself)." -ForegroundColor Yellow
+}
+
 # --- Locate (or build) the renderer ------------------------------------------
 if (-not $Exe) { $Exe = "target\release\fractadyne.exe" }
 if (-not (Test-Path $Exe)) {
