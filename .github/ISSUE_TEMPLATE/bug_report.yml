@@ -7,7 +7,7 @@ body:
       value: |
         Thanks for the report! Please **do not** use this form for security
         vulnerabilities (e.g. a crafted file that crashes the parser) — follow
-        [SECURITY.md](../blob/main/SECURITY.md) instead.
+        [SECURITY.md](https://github.com/WindySnowOwl/fractadyne/blob/main/SECURITY.md) instead.
   - type: input
     id: version
     attributes:
