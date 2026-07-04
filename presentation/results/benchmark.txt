@@ -1,0 +1,27 @@
+Fractadyne standardized benchmark
+version    v0.1.10 (build 388)
+date       2026-07-04 01:09:50 UTC
+cpu        AMD Ryzen 9 3950X 16-Core Processor
+cores      16 physical / 32 logical
+cache      L2 8192 KB · L3 64 MB
+gpu        NVIDIA GeForce RTX 3080
+vram       10240 MB
+---- fixed settings (comparable across machines) ----
+resolution 1080p (1920×1080)  (1920×1080)
+aa (ss)    2x  (4× samples/px)
+fractal    Mandelbrot   coloring  Smooth (Ember)
+max-iter   auto (depth-adaptive)
+deep zoom  series-approx on · BLA on · glitch off
+dive       60 frames, 1 → 1e12× (seahorse valley)
+----------------------------------------
+avg FPS         3.0
+min FPS         0.9   (deepest frames)
+max FPS        15.7   (shallow frames)
+----------------------------------------
+avg frame    334.03 ms
+avg CPU        0.25 ms   (reference build)
+avg GPU      333.78 ms   (render)
+avg RAM       333.7 MB
+peak RAM      370.3 MB
+----------------------------------------
+score           299   (avg FPS × 100)

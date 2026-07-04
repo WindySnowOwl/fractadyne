@@ -1,0 +1,18 @@
+# --refdiag: reference orbit lengths across deep Elephant-Valley/spiral views
+# (illustrates why deep filament views are expensive: no long/interior reference exists)
+
+refdiag @ 1e12.0x, precision 104 bits, max_iter 60000
+  121 points: min=779 median=825 max=3706 interior(>=max_iter)=0
+  orbit-length histogram: <1k=116 <4k=5 <8k=0 <16k=0 <32k=0 >=32k=0
+  best_reference orbit length = 3706  (if << max_iter, pixels rebase past it)
+
+refdiag @ 1e40.0x, precision 197 bits, max_iter 60000
+  121 points: min=3839 median=3884 max=6490 interior(>=max_iter)=0
+  orbit-length histogram: <1k=0 <4k=116 <8k=5 <16k=0 <32k=0 >=32k=0
+  best_reference orbit length = 6490  (if << max_iter, pixels rebase past it)
+
+refdiag @ 1e75.3x, precision 314 bits, max_iter 60000
+  121 points: min=6490 median=6490 max=6490 interior(>=max_iter)=0
+  orbit-length histogram: <1k=0 <4k=0 <8k=121 <16k=0 <32k=0 >=32k=0
+  best_reference orbit length = 6490  (if << max_iter, pixels rebase past it)
+

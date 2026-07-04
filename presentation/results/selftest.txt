@@ -1,0 +1,66 @@
+
+Fractadyne self-test — VALIDATE
+================================================
+  [PASS] df32 perturbation vs CPU f64 dwell — 95.7% agree within 1 iter
+  [PASS] dwell finite (perturbation @2e4×) — all finite
+  [PASS] floatexp vs df32 perturbation — mean Δ=0.0000 iter, >2iter 0.000%
+  [PASS] naive bignum dwell vs GPU @1e6x — 14 agree, 11 boundary, 0 mismatch
+  [PASS] naive bignum dwell vs GPU @1e12x — 15 agree, 10 boundary, 0 mismatch
+  [PASS] naive bignum dwell vs GPU @1e16x — 25 agree, 0 boundary, 0 mismatch
+  [PASS] naive bignum dwell vs GPU @1e24x — 25 agree, 0 boundary, 0 mismatch
+  [PASS] naive bignum dwell vs GPU @1e30x — 25 agree, 0 boundary, 0 mismatch
+  [PASS] SA seed vs full iteration @1e30× — max Δ 0.0000 smooth iter
+  [PASS] SA seed vs full iteration @1e20× (mode 0) — max Δ 0.0000 smooth iter
+  [PASS] reference independence (3-ref majority) — 16649 smooth px: auto dissent 1, no-majority 0 (0.0060%)
+  [PASS] glitch detection responds to reference quality — auto-ref flagged 9, far-ref flagged 10
+  [PASS] multi-reference correction resolves glitches — 7 references, 0 residual glitches
+  [PASS] corrected buffer colors to a valid image — finite true, dark true, bright true, plain interior px 97
+  [PASS] real-axis mirror symmetry — mean Δ=0.00000 iter
+  [PASS] home has interior + exterior — interior=true, exterior=true
+  [PASS] Multibrot-3 180° rotation — 0 asymmetric
+  [PASS] Tricorn real-axis reflection — 0 asymmetric
+  [PASS] Celtic real-axis reflection — 0 asymmetric
+  [PASS] Burning Ship perturbation vs direct — mean Δ=0.0000 iter, >2iter 0.000%
+  [PASS] Burning Ship floatexp vs df32 — mean Δ=0.0000 iter, >2iter 0.000%
+  [PASS] Burning Ship deep finiteness @1e35× — finite dwell, 48400 escaped / 0 interior, spread 0.0 iter
+  [PASS] Celtic perturbation vs direct — mean Δ=0.1837 iter, >2iter 0.000%
+  [PASS] Celtic floatexp vs df32 — mean Δ=0.0000 iter, >2iter 0.000%
+  [PASS] Celtic deep finiteness @1e35× — finite dwell, 9319 escaped / 39081 interior, spread 1217.2 iter
+  [PASS] Buffalo perturbation vs direct — mean Δ=0.0001 iter, >2iter 0.000%
+  [PASS] Buffalo floatexp vs df32 — mean Δ=0.0000 iter, >2iter 0.000%
+  [PASS] Buffalo deep finiteness @1e35× — finite dwell, 48400 escaped / 0 interior, spread 0.0 iter
+  [PASS] Phoenix perturbation vs direct — mean Δ=0.0072 iter, >2iter 0.000%
+  [PASS] Phoenix floatexp vs df32 — mean Δ=0.0000 iter, >2iter 0.000%
+  [PASS] Multibrot 3 SA engages + matches SA-off @1e7× — 0 mismatch, finite
+  [PASS] Multibrot 4 SA engages + matches SA-off @1e7× — 0 mismatch, finite
+  [PASS] Multibrot 5 SA engages + matches SA-off @1e7× — 0 mismatch, finite
+  [PASS] BLA render == non-BLA @1e30× — 0 mismatch
+  [PASS] BLA escape path == non-BLA @1e30× (boundary) — 0 mismatch
+  [PASS] resolution independence (N vs 3N) — 0 differ
+  [PASS] max-iter monotonic stability — 0 changed dwell
+  [PASS] zoom-sequence across direct→df32 seam — 0 differ
+  [PASS] pan consistency — 1 differ
+  [PASS] render determinism (2 runs) — bit-identical
+  [PASS] distance-estimate self-consistency — 0 with DE>16px at boundary
+  [PASS] DE lower bound (Koebe ¼) — 0 disks contain interior
+  [PASS] period-2 disk center (c = -1) — period 2 (want 2), nucleus Δ=1.6e-23
+  [PASS] period-3 bulb nucleus — period 3 (want 3), nucleus Δ=3.6e-16
+  [PASS] period-3 antenna minibrot (real axis) — period 3 (want 3), nucleus Δ=6.0e-17
+  [PASS] period-4 window nucleus (real axis) — period 4 (want 4), nucleus Δ=8.4e-17
+  [PASS] deep period-998 minibrot (Seahorse Valley, 2e7x) — period 998 (want 998), nucleus Δ=3.4e-41
+  [PASS] main-cardioid interior (c = -0.5) — oracle says interior=true
+  [PASS] exterior point (c = 1) — oracle says interior=false
+  [PASS] deep minibrot nucleus interior (full precision) — oracle says interior=true
+  [PASS] metadata round-trips a deep view — iter 1234 aa 3 upp_log2 -120.000 cx -0.743643887037151
+  [PASS] newer format_version flagged — saved by a newer Fractadyne (format v999); some settings may not apply — consider updating
+  [PASS] hostile fields clamped + reported — iter 10000000 aa 16 upp_log2 -3.40e7; clamped [zoom depth, max_iter, cycle, offset, anti-aliasing]; unknown [bogus_field]
+  [PASS] zoom mantissa grouped — 3.38050 02722 7e15
+  [PASS] deep coordinate elides middle — -0.74364 38870 … 11477 40000  |  -0.5
+  [PASS] golden home — maxΔ 0 meanΔ 0.00
+  [PASS] golden seahorse — maxΔ 0 meanΔ 0.00
+  [PASS] golden seahorse-stripe-1e6 — maxΔ 0 meanΔ 0.00
+  [PASS] golden elephant — maxΔ 0 meanΔ 0.00
+================================================
+checks 55/55, goldens 4/4 — OK
+report → validation/report.md
+
