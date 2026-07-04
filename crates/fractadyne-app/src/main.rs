@@ -3103,7 +3103,7 @@ impl FractadyneApp {
         if !self.help_open {
             return;
         }
-        const SECTIONS: [&str; 10] = [
+        const SECTIONS: [&str; 11] = [
             "Overview",
             "Navigation",
             "Coloring & options",
@@ -3113,6 +3113,7 @@ impl FractadyneApp {
             "Shortcuts",
             "Recommended hardware",
             "Acknowledgments",
+            "Licenses",
             "About",
         ];
         let mut open = self.help_open;
@@ -3180,6 +3181,7 @@ impl FractadyneApp {
                                         6 => help_shortcuts(ui),
                                         7 => help_hardware(ui),
                                         8 => help_acknowledgments(ui),
+                                        9 => help_licenses(ui),
                                         _ => help_about(ui),
                                     }
                                 });

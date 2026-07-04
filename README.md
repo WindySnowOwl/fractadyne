@@ -180,6 +180,15 @@ Licensed under either of
 
 at your option.
 
+### Third-party components
+
+Fractadyne is distributed as a statically-linked binary that includes many open-source
+Rust crates and bundled fonts. Their license texts and attributions are reproduced in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (generated with `cargo-about`) and are also
+viewable in-app under **Help → Licenses**. One dependency (`option-ext`) is MPL-2.0; its
+unmodified source is at <https://crates.io/crates/option-ext>. The algorithms and prior art
+Fractadyne builds on are credited under **Help → Acknowledgments**.
+
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for

@@ -1,0 +1,35 @@
+# Third-party licenses — Fractadyne
+
+Fractadyne ships as a statically-linked binary that includes the open-source Rust crates
+and bundled fonts listed below. Each distinct license text appears once, followed by the
+components distributed under it. This file reproduces the notices required by the MIT, BSD,
+Apache-2.0, ISC, Zlib, BSL, Unicode, and font (OFL / Ubuntu) licenses.
+
+The `option-ext` crate is under the **Mozilla Public License 2.0 (MPL-2.0)**; its unmodified
+source is available at <https://crates.io/crates/option-ext> and
+<https://github.com/soc/option-ext>.
+
+Fractadyne's own source is dual-licensed **MIT OR Apache-2.0** (see `LICENSE-MIT` /
+`LICENSE-APACHE`). This notices file is generated with `cargo-about`.
+
+## Licenses in this distribution
+
+{{#each overview}}
+- {{{name}}} — {{count}} component(s)
+{{/each}}
+
+{{#each licenses}}
+
+--------------------------------------------------------------------------------
+
+## {{{name}}}
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+
+```
+{{{text}}}
+```
+{{/each}}

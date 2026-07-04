@@ -44,8 +44,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           # The binary (self-contained: shaders + window icon are embedded).
           Copy-Item target/release/fractadyne.exe -Destination $dir/
-          # Docs + licenses.
-          Copy-Item README.md, CHANGELOG.md, TOURS.md, LICENSE-APACHE, LICENSE-MIT -Destination $dir/
+          # Docs + licenses (incl. third-party dependency notices).
+          Copy-Item README.md, CHANGELOG.md, TOURS.md, THIRD-PARTY-NOTICES.md, LICENSE-APACHE, LICENSE-MIT -Destination $dir/
           # Example guided-tour scripts (play in-app, or render headless with --render-tour).
           New-Item -ItemType Directory -Force -Path "$dir/tours" | Out-Null
           Copy-Item tours/*.toml -Destination "$dir/tours/"

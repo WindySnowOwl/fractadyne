@@ -8,6 +8,15 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.11
+
+- **Third-party license notices** — the bundled dependencies' licenses are now reproduced in
+  `THIRD-PARTY-NOTICES.md` (generated with `cargo-about`; shipped with the download) and are
+  viewable in-app under **Help → Licenses** (with a "Copy all notices" button). This satisfies the
+  MIT/BSD/Apache/Zlib/Unicode/font notice requirements for the statically-linked binary, and calls
+  out the one MPL-2.0 dependency (`option-ext`) and its source. The existing **Help → Acknowledgments**
+  already credits the deep-zoom algorithms and libraries.
+
 ## 0.1.10
 
 - **Fixed a deep-zoom "Not Responding" hang** — a fast dive (a tour, or holding zoom) crossing into
