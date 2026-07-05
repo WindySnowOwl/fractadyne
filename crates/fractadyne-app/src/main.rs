@@ -1004,6 +1004,26 @@ struct ShareDialog {
     msg: Option<String>,
 }
 
+/// Benchmark-configuration dialog state (transient).
+struct BenchConfig {
+    standard: bool,
+    res: BenchRes,
+    depth: BenchDepth,
+    burnin: bool,
+    passes: u32,
+}
+impl Default for BenchConfig {
+    fn default() -> Self {
+        Self {
+            standard: true,
+            res: BenchRes::P1080,
+            depth: BenchDepth::Standard,
+            burnin: false,
+            passes: 10,
+        }
+    }
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1084,11 +1104,7 @@ struct FractadyneApp {
     bench_open: bool,
     /// The "Benchmark…" configuration dialog (mode / resolution / burn-in).
     bench_dialog_open: bool,
-    bench_dlg_standard: bool,
-    bench_dlg_res: BenchRes,
-    bench_dlg_depth: BenchDepth,
-    bench_dlg_burnin: bool,
-    bench_dlg_passes: u32,
+    bench_cfg: BenchConfig,
     /// In-flight standardized benchmark, advanced one pass per frame from `update()`.
     std_bench: Option<StdBench>,
     /// CLI `--benchmark-std [--res RES] [--burnin N]`: run headless, save, quit.
@@ -1468,11 +1484,7 @@ impl FractadyneApp {
             bench_report: None,
             bench_open: false,
             bench_dialog_open: false,
-            bench_dlg_standard: true,
-            bench_dlg_res: BenchRes::P1080,
-            bench_dlg_depth: BenchDepth::Standard,
-            bench_dlg_burnin: false,
-            bench_dlg_passes: 10,
+            bench_cfg: BenchConfig::default(),
             std_bench: None,
             auto_stdbench,
             auto_stdbench_done: false,
@@ -3974,36 +3986,36 @@ impl FractadyneApp {
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.label("Mode");
-                ui.radio_value(&mut self.bench_dlg_standard, false, "Current settings")
+                ui.radio_value(&mut self.bench_cfg.standard, false, "Current settings")
                     .on_hover_text("Play the fixed deep-zoom tour into the live view using your current resolution and settings.");
-                ui.radio_value(&mut self.bench_dlg_standard, true, "Standardized")
+                ui.radio_value(&mut self.bench_cfg.standard, true, "Standardized")
                     .on_hover_text("Pin resolution + all render settings so the score is comparable across machines.");
-                ui.add_enabled_ui(self.bench_dlg_standard, |ui| {
+                ui.add_enabled_ui(self.bench_cfg.standard, |ui| {
                     ui.separator();
                     ui.label("Resolution");
                     egui::ComboBox::from_id_salt("bench_res")
-                        .selected_text(self.bench_dlg_res.label())
+                        .selected_text(self.bench_cfg.res.label())
                         .show_ui(ui, |ui| {
                             for r in BenchRes::ALL {
-                                ui.selectable_value(&mut self.bench_dlg_res, r, r.label());
+                                ui.selectable_value(&mut self.bench_cfg.res, r, r.label());
                             }
                         });
                     ui.add_space(4.0);
                     ui.label("Depth");
                     egui::ComboBox::from_id_salt("bench_depth")
-                        .selected_text(self.bench_dlg_depth.label())
+                        .selected_text(self.bench_cfg.depth.label())
                         .show_ui(ui, |ui| {
                             for d in BenchDepth::ALL {
-                                ui.selectable_value(&mut self.bench_dlg_depth, d, d.label());
+                                ui.selectable_value(&mut self.bench_cfg.depth, d, d.label());
                             }
                         })
                         .response
                         .on_hover_text("Ultra dives past f64's limit (1e28×), stressing the perturbation / series-approx / BLA deep-zoom path much harder.");
                     ui.add_space(4.0);
-                    ui.checkbox(&mut self.bench_dlg_burnin, "Burn-in (repeat)")
+                    ui.checkbox(&mut self.bench_cfg.burnin, "Burn-in (repeat)")
                         .on_hover_text("Run the benchmark repeatedly to reveal stability and thermal throttling.");
-                    ui.add_enabled_ui(self.bench_dlg_burnin, |ui| {
-                        ui.add(egui::Slider::new(&mut self.bench_dlg_passes, 2..=200).text("passes"));
+                    ui.add_enabled_ui(self.bench_cfg.burnin, |ui| {
+                        ui.add(egui::Slider::new(&mut self.bench_cfg.passes, 2..=200).text("passes"));
                     });
                 });
                 ui.separator();
@@ -4015,22 +4027,22 @@ impl FractadyneApp {
                         self.bench_dialog_open = false;
                     }
                 });
-                if self.bench_dlg_standard {
-                    let (w, h) = self.bench_dlg_res.dims();
+                if self.bench_cfg.standard {
+                    let (w, h) = self.bench_cfg.res.dims();
                     ui.add_space(2.0);
                     ui.weak(format!(
                         "Renders offscreen at {w}×{h}, {}× SS, Mandelbrot/smooth, 60-frame dive to 1e{:.0}×.",
                         scripting::STD_AA,
-                        self.bench_dlg_depth.zoom_log10(),
+                        self.bench_cfg.depth.zoom_log10(),
                     ));
                 }
             });
         self.bench_dialog_open = open;
         if run_now {
             self.bench_dialog_open = false;
-            if self.bench_dlg_standard {
-                let passes = if self.bench_dlg_burnin { self.bench_dlg_passes } else { 1 };
-                let run = self.begin_standard_bench(self.bench_dlg_res, passes, self.bench_dlg_depth);
+            if self.bench_cfg.standard {
+                let passes = if self.bench_cfg.burnin { self.bench_cfg.passes } else { 1 };
+                let run = self.begin_standard_bench(self.bench_cfg.res, passes, self.bench_cfg.depth);
                 self.std_bench = Some(run);
                 ctx.request_repaint();
             } else {
