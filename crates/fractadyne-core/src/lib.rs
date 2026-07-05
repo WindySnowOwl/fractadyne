@@ -297,6 +297,39 @@ pub struct FloatExp {
     pub e: i32,
 }
 
+// Extended-range arithmetic as `std::ops`, so call sites read as `a * b - c` rather than
+// `a.mul(b).sub(c)`. `mul` adds exponents; `add` aligns to the larger exponent (the smaller
+// mantissa is dropped once it falls past f64's ~53 bits); `sub` is `self + (−o)`.
+impl std::ops::Mul for FloatExp {
+    type Output = FloatExp;
+    fn mul(self, o: FloatExp) -> FloatExp {
+        FloatExp::norm(self.m * o.m, self.e + o.e)
+    }
+}
+impl std::ops::Add for FloatExp {
+    type Output = FloatExp;
+    fn add(self, o: FloatExp) -> FloatExp {
+        if self.m == 0.0 {
+            return o;
+        }
+        if o.m == 0.0 {
+            return self;
+        }
+        let (hi, lo) = if self.e >= o.e { (self, o) } else { (o, self) };
+        let de = hi.e - lo.e;
+        if de > 120 {
+            return hi;
+        }
+        FloatExp::norm(hi.m + lo.m * 2f64.powi(-de), hi.e)
+    }
+}
+impl std::ops::Sub for FloatExp {
+    type Output = FloatExp;
+    fn sub(self, o: FloatExp) -> FloatExp {
+        self + FloatExp { m: -o.m, e: o.e }
+    }
+}
+
 impl FloatExp {
     pub const ZERO: FloatExp = FloatExp { m: 0.0, e: 0 };
 
@@ -348,39 +381,9 @@ impl FloatExp {
         FloatExp::norm(self.m * k, self.e)
     }
 
-    // NOTE: these inherent `mul`/`add`/`sub` methods are intentionally NOT `std::ops` impls yet.
-    // Migrating the ~100 precedence-sensitive call sites (`a.add(b).mul(c)` ≠ `a + b * c`) to
-    // operators is a Phase 1 readability task done alongside the `floatexp` module extraction — see
-    // REFACTOR-PLAN.md. Allowed per-method (not crate-wide) so the lint keeps guarding new code.
-    #[allow(clippy::should_implement_trait)]
-    pub fn mul(self, o: FloatExp) -> FloatExp {
-        FloatExp::norm(self.m * o.m, self.e + o.e)
-    }
-
+    /// Reciprocal `1/self` in extended range. (`*`/`+`/`-` are `std::ops` impls, above.)
     pub fn recip(self) -> FloatExp {
         FloatExp::norm(1.0 / self.m, -self.e)
-    }
-
-    /// Sum, aligning to the larger exponent (the smaller is dropped past f64's ~53 bits).
-    #[allow(clippy::should_implement_trait)] // see the note on `mul` above (Phase 1 ops-trait migration)
-    pub fn add(self, o: FloatExp) -> FloatExp {
-        if self.m == 0.0 {
-            return o;
-        }
-        if o.m == 0.0 {
-            return self;
-        }
-        let (hi, lo) = if self.e >= o.e { (self, o) } else { (o, self) };
-        let de = hi.e - lo.e;
-        if de > 120 {
-            return hi;
-        }
-        FloatExp::norm(hi.m + lo.m * 2f64.powi(-de), hi.e)
-    }
-
-    #[allow(clippy::should_implement_trait)] // see the note on `mul` above (Phase 1 ops-trait migration)
-    pub fn sub(self, o: FloatExp) -> FloatExp {
-        self.add(FloatExp { m: -o.m, e: o.e })
     }
 
     /// Magnitude (drops the sign).
@@ -403,7 +406,7 @@ impl FloatExp {
 
     /// Signed value comparison (`self < o`).
     pub fn lt(self, o: FloatExp) -> bool {
-        self.sub(o).m < 0.0
+        (self - o).m < 0.0
     }
 
     /// GPU upload form: `(mantissa f32, exponent)` — mantissa is normalized to `[1,2)` (or 0).
@@ -646,9 +649,9 @@ impl Viewport {
     }
 
     pub fn magnification(&self) -> f64 {
-        FloatExp::from_f64(Self::REFERENCE_HEIGHT / self.height_px)
-            .mul(self.units_per_pixel.recip())
-            .to_f64()
+        (FloatExp::from_f64(Self::REFERENCE_HEIGHT / self.height_px)
+            * self.units_per_pixel.recip())
+        .to_f64()
     }
 
     pub fn recommended_max_iter(&self, base: u32) -> u32 {
@@ -1093,22 +1096,26 @@ pub struct CFloatExp {
     pub im: FloatExp,
 }
 
-impl CFloatExp {
-    // See the note on `FloatExp::mul` — deferred `std::ops` migration (REFACTOR-PLAN.md Phase 1).
-    #[allow(clippy::should_implement_trait)]
-    pub fn mul(self, o: CFloatExp) -> CFloatExp {
+impl std::ops::Mul for CFloatExp {
+    type Output = CFloatExp;
+    fn mul(self, o: CFloatExp) -> CFloatExp {
         CFloatExp {
-            re: self.re.mul(o.re).sub(self.im.mul(o.im)),
-            im: self.re.mul(o.im).add(self.im.mul(o.re)),
+            re: self.re * o.re - self.im * o.im,
+            im: self.re * o.im + self.im * o.re,
         }
     }
-    #[allow(clippy::should_implement_trait)]
-    pub fn add(self, o: CFloatExp) -> CFloatExp {
-        CFloatExp { re: self.re.add(o.re), im: self.im.add(o.im) }
+}
+impl std::ops::Add for CFloatExp {
+    type Output = CFloatExp;
+    fn add(self, o: CFloatExp) -> CFloatExp {
+        CFloatExp { re: self.re + o.re, im: self.im + o.im }
     }
+}
+
+impl CFloatExp {
     /// Magnitude `|a| = hypot(re, im)` in extended range.
     pub fn abs(self) -> FloatExp {
-        self.re.mul(self.re).add(self.im.mul(self.im)).sqrt()
+        (self.re * self.re + self.im * self.im).sqrt()
     }
 
     /// GPU upload form: a **shared-exponent** df32 mantissa `[re_hi, re_lo, im_hi, im_lo]`
@@ -1145,13 +1152,13 @@ pub struct BlaNode {
 /// Merge two consecutive BLA nodes (`x` then `y`). Composition `A=A_y·A_x`, `B=A_y·B_x+B_y`;
 /// validity `|δz|≤r_x` **and** `|A_x δz + B_x δc|≤r_y` ⇒ `r = min(r_x, (r_y − |B_x|·δc_max)/|A_x|)`.
 fn bla_merge(x: BlaNode, y: BlaNode, dc_max: FloatExp) -> BlaNode {
-    let a = y.a.mul(x.a);
-    let b = y.a.mul(x.b).add(y.b);
+    let a = y.a * x.a;
+    let b = y.a * x.b + y.b;
     let a1 = x.a.abs();
     let b1 = x.b.abs();
-    let t = y.r.sub(b1.mul(dc_max));
+    let t = y.r - b1 * dc_max;
     let t = if t.m < 0.0 { FloatExp::ZERO } else { t };
-    let r2 = if a1.m == 0.0 { FloatExp::ZERO } else { t.mul(a1.recip()) };
+    let r2 = if a1.m == 0.0 { FloatExp::ZERO } else { t * a1.recip() };
     let r = if x.r.lt(r2) { x.r } else { r2 };
     BlaNode { a, b, r, span: x.span + y.span }
 }
@@ -1254,7 +1261,7 @@ pub fn bla_iterate(
             if m + node.span > nstep || !dzmag.lt(node.r) {
                 continue;
             }
-            let ndz = node.a.mul(dz).add(node.b.mul(dc_c)); // δz = A·δz + B·δc
+            let ndz = node.a * dz + node.b * dc_c; // δz = A·δz + B·δc
             let nm = m + node.span;
             let (zx, zy) = bla_full_z(orbit, nm, &ndz);
             if zx * zx + zy * zy > bailout2 {
@@ -1274,7 +1281,7 @@ pub fn bla_iterate(
             re: FloatExp::from_f64(2.0 * (z[0] as f64 + z[2] as f64)),
             im: FloatExp::from_f64(2.0 * (z[1] as f64 + z[3] as f64)),
         };
-        dz = two_z.mul(dz).add(dz.mul(dz)).add(dc_c);
+        dz = two_z * dz + dz * dz + dc_c;
         m += 1;
         let (zx, zy) = bla_full_z(orbit, m, &dz);
         let mag2 = zx * zx + zy * zy;
@@ -2150,7 +2157,7 @@ mod tests {
                 if m + node.span > target || !dzmag.lt(node.r) {
                     continue;
                 }
-                dz = node.a.mul(dz).add(node.b.mul(dc_c)); // δz = A·δz + B·δc
+                dz = node.a * dz + node.b * dc_c; // δz = A·δz + B·δc
                 m += node.span;
                 used = true;
                 break;
@@ -2159,7 +2166,7 @@ mod tests {
                 let zr = orbit[m as usize][0] as f64 + orbit[m as usize][2] as f64;
                 let zi = orbit[m as usize][1] as f64 + orbit[m as usize][3] as f64;
                 let z = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
-                dz = z.mul(dz).add(dz.mul(dz)).add(dc_c); // δz' = 2Zδz + δz² + δc
+                dz = z * dz + dz * dz + dc_c; // δz' = 2Zδz + δz² + δc
                 m += 1;
             }
         }
