@@ -6,6 +6,20 @@ This plan turns the audit findings into a **sequenced, low-risk, verifiable** re
 
 ---
 
+## Guiding goals (from the maintainer)
+
+1. **Human understanding & maintainability** come first — favor readability wins (named operators, glossaries, single-source-of-truth tables, clear module boundaries) over merely satisfying the compiler.
+2. **Make adding a new formula more straightforward** — reduce the number and spread of edit sites, and document the ones that remain. Weight work toward this.
+
+## Progress log
+
+- ✅ **Phase 0** (v0.1.28) — lint gate, panic hardening, readability, `TOURS.md` fix.
+- ✅ **Phase 1a-i** — `FloatExp`/`CFloatExp` arithmetic migrated to `std::ops` operators (reads `a * b - c`).
+- ✅ **Phase 1a (partial)** — `core::floatexp` module extracted from `lib.rs` (self-contained, re-exported). *Remaining: `bignum`, `viewport`, `reference` submodules; then the `gpu` split (1b) and export de-dup (1c).*
+- ✅ **Formula-ease (goal 2), app side** — all per-family metadata consolidated into one `FractalKind::SPECS` table (one row per formula) + an authoritative "Adding a new formula" checklist + guard tests.
+- ✅ **Formula-ease, core side** — canonical `core::formula::{…}` id constants (single source of truth for the numbering) + `is_valid_formula` + a core checklist mirroring the app one.
+- ⏭️ **Next for formula-ease:** adopt the `core::formula::*` constants at the remaining magic-number dispatch sites (`step_bf`/`orbit_points`/`series_skip`); then evaluate a `Fractal`-trait PoC (Phase 5 pulled forward) to unify the CPU step functions so a family is defined once.
+
 ## Guiding principles
 
 1. **Behavior-preserving.** Every phase is a pure reorganization or a mechanical, semantics-preserving change. The observable output (rendered pixels, exported files, session round-trips) must not change.
