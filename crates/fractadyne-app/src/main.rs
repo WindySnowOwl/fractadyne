@@ -4448,366 +4448,13 @@ impl FractadyneApp {
             }
         }
     }
-}
-
-impl eframe::App for FractadyneApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let frame_start = Instant::now();
-        // Surface a deferred startup warning (e.g. a session saved by a newer build) as a toast,
-        // once, on the first frame where the UI exists.
-        if let Some(msg) = self.pending_state_warning.take() {
-            self.set_toast(msg, ctx);
-        }
-        // Rasterize the export watermark once from the font atlas (main thread — the export worker
-        // has no egui context). Lazy so it uses the loaded fonts + final DPI.
-        if self.watermark && self.watermark_overlay.is_none() {
-            self.watermark_overlay = export::build_watermark_overlay(ctx);
-        }
-        // Apply the UI scale preference (egui zoom factor) when it changes.
-        if (ctx.zoom_factor() - self.ui_scale).abs() > 1.0e-4 {
-            ctx.set_zoom_factor(self.ui_scale);
-        }
-        // GPU handles for offline export (cloned Arcs; cheap).
-        let gpu = frame
-            .wgpu_render_state()
-            .map(|rs| (rs.device.clone(), rs.queue.clone()));
-        self.update_minimap(ctx, &gpu);
-
-        // Ctrl+S → quick export (no dialog) to the last folder.
-        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
-            if let Some((dev, q)) = &gpu {
-                self.quick_export(ctx, dev.clone(), q.clone());
-            }
-        }
-
-        // Esc: stop the autopilot / a playing tour first, otherwise leave fullscreen.
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if self.autopilot {
-                self.autopilot = false;
-                self.autopilot_stepping = false;
-                self.zoom_vel = 0.0;
-            } else if self.playback.is_some() {
-                self.playback = None;
-            } else if self.fullscreen {
-                self.fullscreen = false;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
-            }
-        }
-
-        // Navigation undo/redo (Backspace / Shift+Backspace or Ctrl+Y), unless typing.
-        if !ctx.wants_keyboard_input() {
-            let (undo, redo) = ctx.input(|i| {
-                let bs = i.key_pressed(egui::Key::Backspace);
-                (
-                    bs && !i.modifiers.shift,
-                    (bs && i.modifiers.shift) || (i.modifiers.command && i.key_pressed(egui::Key::Y)),
-                )
-            });
-            if undo {
-                self.undo_view();
-            } else if redo {
-                self.redo_view();
-            }
-            // M: find the nearby minibrot center (single view only).
-            if ctx.input(|i| i.key_pressed(egui::Key::M) && !i.modifiers.any()) && !self.dual {
-                self.find_minibrot(ctx);
-            }
-            // A: toggle the auto-zoom autopilot (single view only).
-            if ctx.input(|i| i.key_pressed(egui::Key::A) && !i.modifiers.any()) && !self.dual {
-                self.toggle_autopilot(ctx);
-            }
-            // F1 / ? : toggle the help overlay.
-            if ctx.input(|i| {
-                i.key_pressed(egui::Key::F1)
-                    || (i.key_pressed(egui::Key::Questionmark))
-                    || (i.modifiers.shift && i.key_pressed(egui::Key::Slash))
-            }) {
-                self.help_open = !self.help_open;
-            }
-        }
-
-        // CLI self-test: run the GPU validation suite, print the report, and exit with a
-        // status code (0 = all passed).
-        if self.selftest && !self.selftest_done {
-            if let Some((dev, q)) = &gpu {
-                self.selftest_done = true;
-                let ok = self.run_selftest(dev, q);
-                std::process::exit(if ok { 0 } else { 1 });
-            }
-        }
-
-        // CLI profiling: render the benchmark regions, time the costly stages, log to `logs/`.
-        if self.profile && !self.profile_done {
-            if let Some((dev, q)) = &gpu {
-                self.profile_done = true;
-                let regions = match &self.profile_regions {
-                    Some(path) => match profile::load_regions(std::path::Path::new(path)) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            eprintln!("--regions {path}: {e}; using built-in regions");
-                            profile::default_regions()
-                        }
-                    },
-                    None => profile::default_regions(),
-                };
-                let secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let out = self.profile_out.clone().unwrap_or_else(|| {
-                    std::path::PathBuf::from(format!("logs/profile-{}.json", Self::file_stamp(secs)))
-                });
-                let reps = self.profile_reps;
-                self.run_profile(dev, q, &regions, reps, &out);
-                std::process::exit(0);
-            }
-        }
-
-        if self.frametest {
-            if let Some((dev, q)) = &gpu {
-                let secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let out = self.profile_out.clone().unwrap_or_else(|| {
-                    std::path::PathBuf::from(format!("logs/frametest-{}.json", Self::file_stamp(secs)))
-                });
-                let (steps, hold, dive) = (self.frametest_steps, self.frametest_hold, self.frametest_dive);
-                self.run_frametest(dev, q, steps, hold, dive, 512, &out);
-                std::process::exit(0);
-            }
-        }
-
-        // CLI standardized benchmark (`--benchmark-std [--res] [--burnin] [--depth]`): run all
-        // passes synchronously, print + save the report, and quit.
-        if self.auto_stdbench && !self.auto_stdbench_done {
-            if let Some((dev, q)) = &gpu {
-                self.auto_stdbench_done = true;
-                let (res, passes, depth) = (self.std_res, self.std_passes, self.std_depth);
-                println!(
-                    "Fractadyne standardized benchmark — {} · {} × {passes} pass{}",
-                    res.label(),
-                    depth.label(),
-                    if passes == 1 { "" } else { "es" }
-                );
-                let mut run = self.begin_standard_bench(res, passes, depth);
-                // step_std_bench now advances one dive-frame per call; print only when a pass
-                // finishes (passes_done ticks up), not on every frame.
-                let mut reported = 0u32;
-                loop {
-                    let done = self.step_std_bench(&mut run, dev, q);
-                    if run.passes_done > reported {
-                        reported = run.passes_done;
-                        println!(
-                            "  pass {}/{}  {:.1} fps",
-                            run.passes_done,
-                            run.passes_total,
-                            run.pass_fps.last().copied().unwrap_or(0.0)
-                        );
-                    }
-                    if done {
-                        break;
-                    }
-                }
-                let report = self.format_std_bench(&run);
-                println!("\n{report}");
-                let out = self.auto_benchmark_out.clone().unwrap_or_else(|| {
-                    std::path::PathBuf::from("fractadyne_benchmark.txt")
-                });
-                match std::fs::write(&out, &report) {
-                    Ok(()) => println!("\nSaved benchmark → {}", out.display()),
-                    Err(e) => eprintln!("Failed to save benchmark to {}: {e}", out.display()),
-                }
-                std::process::exit(0);
-            }
-        }
-
-        // GUI standardized benchmark: advance one pass per frame so the window stays responsive
-        // (and cancellable) between passes.
-        if let Some(mut run) = self.std_bench.take() {
-            if let Some((dev, q)) = &gpu {
-                let done = self.step_std_bench(&mut run, dev, q);
-                if done {
-                    self.bench_report = Some(self.format_std_bench(&run));
-                    self.bench_open = true;
-                    let snap = run.take_snapshot();
-                    self.restore_from_bench(snap);
-                } else {
-                    self.std_bench = Some(run);
-                    ctx.request_repaint();
-                }
-            } else {
-                self.std_bench = Some(run); // wait for the GPU handles
-            }
-        }
-
-        // CLI render-and-exit: render one image offscreen (or the raw iteration EXR), save
-        // it, and quit.
-        if self.auto_render && !self.auto_render_done {
-            if let Some((dev, q)) = &gpu {
-                self.auto_render_done = true;
-                if !self.watermark && !self.render_iter_mode {
-                    println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
-                }
-                let t0 = std::time::Instant::now();
-                let result = if self.render_iter_mode {
-                    let out = self
-                        .auto_render_out
-                        .clone()
-                        .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_iter.exr"));
-                    self.render_iter_to_file(dev, q, &out)
-                } else {
-                    let out = self
-                        .auto_render_out
-                        .clone()
-                        .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_render.png"));
-                    self.render_to_file(ctx, dev, q, &out)
-                };
-                match result {
-                    Ok(m) => println!("{m}  (in {})", Self::fmt_export_duration(t0.elapsed())),
-                    Err(e) => eprintln!("Render failed: {e}"),
-                }
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        }
-
-        // CLI render-tour: render the keyframe script to a PNG frame sequence, then quit.
-        if let Some(script) = self.render_tour.clone() {
-            if !self.render_tour_done {
-                if let Some((dev, q)) = &gpu {
-                    self.render_tour_done = true;
-                    if !self.watermark {
-                        println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
-                    }
-                    let (w, h) = self.tour_size;
-                    let (fps, ss, out) = (self.tour_fps, self.tour_ss, self.tour_out.clone());
-                    let mp4 = self.tour_mp4.clone();
-                    let (prefix, overwrite, resume) = (self.tour_prefix.clone(), self.tour_overwrite, self.tour_resume);
-                    match self.render_tour_to_dir(ctx, dev, q, &script, fps, w, h, ss, &out, &prefix, overwrite, resume, mp4.as_deref()) {
-                        Ok(m) => println!("{m}"),
-                        Err(e) => eprintln!("Tour render failed: {e}"),
-                    }
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            }
-        }
-
-        // Scripted camera tour / benchmark: drive the view before anything renders.
-        if self.playback.is_some() && self.advance_playback(ctx) {
-            self.schedule_repaint(ctx);
-        }
-
-        // CLI auto-benchmark: once the tour has finished and produced a report, print
-        // + save it and quit.
-        if self.auto_benchmark && !self.auto_benchmark_done && self.playback.is_none() {
-            if let Some(r) = self.bench_report.clone() {
-                println!("{r}");
-                let path = self
-                    .auto_benchmark_out
-                    .clone()
-                    .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_benchmark.txt"));
-                match std::fs::write(&path, &r) {
-                    Ok(()) => println!("\nSaved benchmark → {}", path.display()),
-                    Err(e) => eprintln!("Failed to save benchmark to {}: {e}", path.display()),
-                }
-                self.auto_benchmark_done = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        }
-
-        // Smooth "zoom home" glide (Home button) — advance before anything draws so
-        // this frame reflects the new view; keep repainting until it finishes.
-        if self.home_anim.is_some() && self.advance_home_anim(ctx) {
-            self.schedule_repaint(ctx);
-        }
-
-        // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame
-        // reflects the new view).
-        self.autopilot_step(ctx, &gpu);
-
-        // Palette cycling animation (shifts the color offset over time).
-        self.advance_palette_anim(ctx);
-        // Orbit racing-dot animation.
-        self.advance_orbit_anim(ctx);
-
-        // Poll a background export for completion.
-        if let Some(rx) = &self.export_task {
-            match rx.try_recv() {
-                Ok(msg) => {
-                    self.export_status = Some(self.finish_export_status(msg));
-                    self.export_task = None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.export_task = None;
-                    self.export_started = None;
-                }
-            }
-        }
-        // Poll a deep export whose reference is building off-thread. When it lands, assemble the
-        // request (reusing the reference — no rebuild) and dispatch the render to a worker. Keeps the
-        // UI alive during the (long) bignum reference build instead of freezing.
-        if let Some(prep) = self.export_prep.take() {
-            match prep.rx.try_recv() {
-                Ok(res) => {
-                    let (ew, eh, ess) = (self.export_width.max(1), self.export_height(), self.export_ss.max(1));
-                    // Map view: reuse the just-built reference (no rebuild). Dual map is Mandelbrot.
-                    let map_julia = prep.julia_vp.is_none() && prep.julia_mode;
-                    let mut map_req = self.current_export_request_with_ref(&prep.map_vp, map_julia, Some(res));
-                    map_req.width = ew;
-                    map_req.height = eh;
-                    map_req.ss = ess;
-                    // Keep per-texel step isotropic for the chosen aspect (see build_export_job).
-                    map_req.span_mantissa[1] = map_req.span_mantissa[0] * (eh as f64 / ew as f64);
-                    let job = if let Some(jvp) = &prep.julia_vp {
-                        // Dual: build the Julia panel now (usually shallow → instant) and combine.
-                        let mut jul = self.current_export_request_for(jvp, true);
-                        jul.width = ew;
-                        jul.height = eh;
-                        jul.ss = ess;
-                        jul.span_mantissa[1] = jul.span_mantissa[0] * (eh as f64 / ew as f64);
-                        match prep.dual_mode {
-                            DualExport::SideBySide => ExportJob::SideBySide(map_req, jul),
-                            DualExport::Separate => ExportJob::Separate(map_req, jul),
-                            DualExport::ActiveOnly => ExportJob::Single(map_req),
-                        }
-                    } else {
-                        ExportJob::Single(map_req)
-                    };
-                    let hud = self
-                        .show_location
-                        .then(|| crate::scripting::build_location_overlay(ctx, &prep.map_vp, eh))
-                        .flatten();
-                    if let Some((dev, q)) = &gpu {
-                        self.spawn_export_worker(dev.clone(), q.clone(), job, prep.path, hud);
-                    } else {
-                        self.export_status = Some("GPU not available".to_string());
-                    }
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    self.export_prep = Some(prep); // reference still building
-                    ctx.request_repaint();
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.export_status = Some("Export failed: reference build aborted.".to_string());
-                    self.export_started = None;
-                }
-            }
-        }
-        if let Some(prev) = self.perf.last_frame {
-            let dt = frame_start.duration_since(prev).as_secs_f64() * 1000.0;
-            self.perf.frame_ms = ema(self.perf.frame_ms, dt);
-        }
-        self.perf.last_frame = Some(frame_start);
-
-        if !self.auto_benchmark && !self.auto_stdbench && !self.auto_render && !self.selftest && !self.profile && self.render_tour.is_none() && self.std_bench.is_none() {
-            self.autosave(ctx); // don't let a CLI run (or a transient benchmark override) overwrite the saved session
-        }
-
-        // Combined menu bar + action toolbar. `horizontal_wrapped` keeps them on one
-        // line when the window is wide enough, and wraps the toolbar below otherwise.
-        // (We place the menu buttons directly in the wrapped row rather than via
-        // `menu::bar`, which would claim the full width and push the toolbar down.)
+    /// Top menu bar + toolbar (File / Fractal / View / Tools / Bookmarks / Locations / Help)
+    /// plus the icon toolbar. Takes the `gpu` handle for the quick-export toolbar action.
+    fn draw_menu_bar(
+        &mut self,
+        ctx: &egui::Context,
+        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
+    ) {
         egui::TopBottomPanel::top("topbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                     brand_wordmark(ui);
@@ -5184,7 +4831,7 @@ impl eframe::App for FractadyneApp {
                     .on_hover_text("Snapshot — quick export to the last folder (Ctrl+S)")
                     .clicked()
                 {
-                    if let Some((dev, q)) = &gpu {
+                    if let Some((dev, q)) = gpu {
                         self.quick_export(ctx, dev.clone(), q.clone());
                     }
                 }
@@ -5258,6 +4905,368 @@ impl eframe::App for FractadyneApp {
                 }
             });
         });
+    }
+}
+
+impl eframe::App for FractadyneApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let frame_start = Instant::now();
+        // Surface a deferred startup warning (e.g. a session saved by a newer build) as a toast,
+        // once, on the first frame where the UI exists.
+        if let Some(msg) = self.pending_state_warning.take() {
+            self.set_toast(msg, ctx);
+        }
+        // Rasterize the export watermark once from the font atlas (main thread — the export worker
+        // has no egui context). Lazy so it uses the loaded fonts + final DPI.
+        if self.watermark && self.watermark_overlay.is_none() {
+            self.watermark_overlay = export::build_watermark_overlay(ctx);
+        }
+        // Apply the UI scale preference (egui zoom factor) when it changes.
+        if (ctx.zoom_factor() - self.ui_scale).abs() > 1.0e-4 {
+            ctx.set_zoom_factor(self.ui_scale);
+        }
+        // GPU handles for offline export (cloned Arcs; cheap).
+        let gpu = frame
+            .wgpu_render_state()
+            .map(|rs| (rs.device.clone(), rs.queue.clone()));
+        self.update_minimap(ctx, &gpu);
+
+        // Ctrl+S → quick export (no dialog) to the last folder.
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
+            if let Some((dev, q)) = &gpu {
+                self.quick_export(ctx, dev.clone(), q.clone());
+            }
+        }
+
+        // Esc: stop the autopilot / a playing tour first, otherwise leave fullscreen.
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if self.autopilot {
+                self.autopilot = false;
+                self.autopilot_stepping = false;
+                self.zoom_vel = 0.0;
+            } else if self.playback.is_some() {
+                self.playback = None;
+            } else if self.fullscreen {
+                self.fullscreen = false;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+            }
+        }
+
+        // Navigation undo/redo (Backspace / Shift+Backspace or Ctrl+Y), unless typing.
+        if !ctx.wants_keyboard_input() {
+            let (undo, redo) = ctx.input(|i| {
+                let bs = i.key_pressed(egui::Key::Backspace);
+                (
+                    bs && !i.modifiers.shift,
+                    (bs && i.modifiers.shift) || (i.modifiers.command && i.key_pressed(egui::Key::Y)),
+                )
+            });
+            if undo {
+                self.undo_view();
+            } else if redo {
+                self.redo_view();
+            }
+            // M: find the nearby minibrot center (single view only).
+            if ctx.input(|i| i.key_pressed(egui::Key::M) && !i.modifiers.any()) && !self.dual {
+                self.find_minibrot(ctx);
+            }
+            // A: toggle the auto-zoom autopilot (single view only).
+            if ctx.input(|i| i.key_pressed(egui::Key::A) && !i.modifiers.any()) && !self.dual {
+                self.toggle_autopilot(ctx);
+            }
+            // F1 / ? : toggle the help overlay.
+            if ctx.input(|i| {
+                i.key_pressed(egui::Key::F1)
+                    || (i.key_pressed(egui::Key::Questionmark))
+                    || (i.modifiers.shift && i.key_pressed(egui::Key::Slash))
+            }) {
+                self.help_open = !self.help_open;
+            }
+        }
+
+        // CLI self-test: run the GPU validation suite, print the report, and exit with a
+        // status code (0 = all passed).
+        if self.selftest && !self.selftest_done {
+            if let Some((dev, q)) = &gpu {
+                self.selftest_done = true;
+                let ok = self.run_selftest(dev, q);
+                std::process::exit(if ok { 0 } else { 1 });
+            }
+        }
+
+        // CLI profiling: render the benchmark regions, time the costly stages, log to `logs/`.
+        if self.profile && !self.profile_done {
+            if let Some((dev, q)) = &gpu {
+                self.profile_done = true;
+                let regions = match &self.profile_regions {
+                    Some(path) => match profile::load_regions(std::path::Path::new(path)) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            eprintln!("--regions {path}: {e}; using built-in regions");
+                            profile::default_regions()
+                        }
+                    },
+                    None => profile::default_regions(),
+                };
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let out = self.profile_out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from(format!("logs/profile-{}.json", Self::file_stamp(secs)))
+                });
+                let reps = self.profile_reps;
+                self.run_profile(dev, q, &regions, reps, &out);
+                std::process::exit(0);
+            }
+        }
+
+        if self.frametest {
+            if let Some((dev, q)) = &gpu {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let out = self.profile_out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from(format!("logs/frametest-{}.json", Self::file_stamp(secs)))
+                });
+                let (steps, hold, dive) = (self.frametest_steps, self.frametest_hold, self.frametest_dive);
+                self.run_frametest(dev, q, steps, hold, dive, 512, &out);
+                std::process::exit(0);
+            }
+        }
+
+        // CLI standardized benchmark (`--benchmark-std [--res] [--burnin] [--depth]`): run all
+        // passes synchronously, print + save the report, and quit.
+        if self.auto_stdbench && !self.auto_stdbench_done {
+            if let Some((dev, q)) = &gpu {
+                self.auto_stdbench_done = true;
+                let (res, passes, depth) = (self.std_res, self.std_passes, self.std_depth);
+                println!(
+                    "Fractadyne standardized benchmark — {} · {} × {passes} pass{}",
+                    res.label(),
+                    depth.label(),
+                    if passes == 1 { "" } else { "es" }
+                );
+                let mut run = self.begin_standard_bench(res, passes, depth);
+                // step_std_bench now advances one dive-frame per call; print only when a pass
+                // finishes (passes_done ticks up), not on every frame.
+                let mut reported = 0u32;
+                loop {
+                    let done = self.step_std_bench(&mut run, dev, q);
+                    if run.passes_done > reported {
+                        reported = run.passes_done;
+                        println!(
+                            "  pass {}/{}  {:.1} fps",
+                            run.passes_done,
+                            run.passes_total,
+                            run.pass_fps.last().copied().unwrap_or(0.0)
+                        );
+                    }
+                    if done {
+                        break;
+                    }
+                }
+                let report = self.format_std_bench(&run);
+                println!("\n{report}");
+                let out = self.auto_benchmark_out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from("fractadyne_benchmark.txt")
+                });
+                match std::fs::write(&out, &report) {
+                    Ok(()) => println!("\nSaved benchmark → {}", out.display()),
+                    Err(e) => eprintln!("Failed to save benchmark to {}: {e}", out.display()),
+                }
+                std::process::exit(0);
+            }
+        }
+
+        // GUI standardized benchmark: advance one pass per frame so the window stays responsive
+        // (and cancellable) between passes.
+        if let Some(mut run) = self.std_bench.take() {
+            if let Some((dev, q)) = &gpu {
+                let done = self.step_std_bench(&mut run, dev, q);
+                if done {
+                    self.bench_report = Some(self.format_std_bench(&run));
+                    self.bench_open = true;
+                    let snap = run.take_snapshot();
+                    self.restore_from_bench(snap);
+                } else {
+                    self.std_bench = Some(run);
+                    ctx.request_repaint();
+                }
+            } else {
+                self.std_bench = Some(run); // wait for the GPU handles
+            }
+        }
+
+        // CLI render-and-exit: render one image offscreen (or the raw iteration EXR), save
+        // it, and quit.
+        if self.auto_render && !self.auto_render_done {
+            if let Some((dev, q)) = &gpu {
+                self.auto_render_done = true;
+                if !self.watermark && !self.render_iter_mode {
+                    println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
+                }
+                let t0 = std::time::Instant::now();
+                let result = if self.render_iter_mode {
+                    let out = self
+                        .auto_render_out
+                        .clone()
+                        .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_iter.exr"));
+                    self.render_iter_to_file(dev, q, &out)
+                } else {
+                    let out = self
+                        .auto_render_out
+                        .clone()
+                        .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_render.png"));
+                    self.render_to_file(ctx, dev, q, &out)
+                };
+                match result {
+                    Ok(m) => println!("{m}  (in {})", Self::fmt_export_duration(t0.elapsed())),
+                    Err(e) => eprintln!("Render failed: {e}"),
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+
+        // CLI render-tour: render the keyframe script to a PNG frame sequence, then quit.
+        if let Some(script) = self.render_tour.clone() {
+            if !self.render_tour_done {
+                if let Some((dev, q)) = &gpu {
+                    self.render_tour_done = true;
+                    if !self.watermark {
+                        println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
+                    }
+                    let (w, h) = self.tour_size;
+                    let (fps, ss, out) = (self.tour_fps, self.tour_ss, self.tour_out.clone());
+                    let mp4 = self.tour_mp4.clone();
+                    let (prefix, overwrite, resume) = (self.tour_prefix.clone(), self.tour_overwrite, self.tour_resume);
+                    match self.render_tour_to_dir(ctx, dev, q, &script, fps, w, h, ss, &out, &prefix, overwrite, resume, mp4.as_deref()) {
+                        Ok(m) => println!("{m}"),
+                        Err(e) => eprintln!("Tour render failed: {e}"),
+                    }
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+
+        // Scripted camera tour / benchmark: drive the view before anything renders.
+        if self.playback.is_some() && self.advance_playback(ctx) {
+            self.schedule_repaint(ctx);
+        }
+
+        // CLI auto-benchmark: once the tour has finished and produced a report, print
+        // + save it and quit.
+        if self.auto_benchmark && !self.auto_benchmark_done && self.playback.is_none() {
+            if let Some(r) = self.bench_report.clone() {
+                println!("{r}");
+                let path = self
+                    .auto_benchmark_out
+                    .clone()
+                    .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_benchmark.txt"));
+                match std::fs::write(&path, &r) {
+                    Ok(()) => println!("\nSaved benchmark → {}", path.display()),
+                    Err(e) => eprintln!("Failed to save benchmark to {}: {e}", path.display()),
+                }
+                self.auto_benchmark_done = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+
+        // Smooth "zoom home" glide (Home button) — advance before anything draws so
+        // this frame reflects the new view; keep repainting until it finishes.
+        if self.home_anim.is_some() && self.advance_home_anim(ctx) {
+            self.schedule_repaint(ctx);
+        }
+
+        // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame
+        // reflects the new view).
+        self.autopilot_step(ctx, &gpu);
+
+        // Palette cycling animation (shifts the color offset over time).
+        self.advance_palette_anim(ctx);
+        // Orbit racing-dot animation.
+        self.advance_orbit_anim(ctx);
+
+        // Poll a background export for completion.
+        if let Some(rx) = &self.export_task {
+            match rx.try_recv() {
+                Ok(msg) => {
+                    self.export_status = Some(self.finish_export_status(msg));
+                    self.export_task = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.export_task = None;
+                    self.export_started = None;
+                }
+            }
+        }
+        // Poll a deep export whose reference is building off-thread. When it lands, assemble the
+        // request (reusing the reference — no rebuild) and dispatch the render to a worker. Keeps the
+        // UI alive during the (long) bignum reference build instead of freezing.
+        if let Some(prep) = self.export_prep.take() {
+            match prep.rx.try_recv() {
+                Ok(res) => {
+                    let (ew, eh, ess) = (self.export_width.max(1), self.export_height(), self.export_ss.max(1));
+                    // Map view: reuse the just-built reference (no rebuild). Dual map is Mandelbrot.
+                    let map_julia = prep.julia_vp.is_none() && prep.julia_mode;
+                    let mut map_req = self.current_export_request_with_ref(&prep.map_vp, map_julia, Some(res));
+                    map_req.width = ew;
+                    map_req.height = eh;
+                    map_req.ss = ess;
+                    // Keep per-texel step isotropic for the chosen aspect (see build_export_job).
+                    map_req.span_mantissa[1] = map_req.span_mantissa[0] * (eh as f64 / ew as f64);
+                    let job = if let Some(jvp) = &prep.julia_vp {
+                        // Dual: build the Julia panel now (usually shallow → instant) and combine.
+                        let mut jul = self.current_export_request_for(jvp, true);
+                        jul.width = ew;
+                        jul.height = eh;
+                        jul.ss = ess;
+                        jul.span_mantissa[1] = jul.span_mantissa[0] * (eh as f64 / ew as f64);
+                        match prep.dual_mode {
+                            DualExport::SideBySide => ExportJob::SideBySide(map_req, jul),
+                            DualExport::Separate => ExportJob::Separate(map_req, jul),
+                            DualExport::ActiveOnly => ExportJob::Single(map_req),
+                        }
+                    } else {
+                        ExportJob::Single(map_req)
+                    };
+                    let hud = self
+                        .show_location
+                        .then(|| crate::scripting::build_location_overlay(ctx, &prep.map_vp, eh))
+                        .flatten();
+                    if let Some((dev, q)) = &gpu {
+                        self.spawn_export_worker(dev.clone(), q.clone(), job, prep.path, hud);
+                    } else {
+                        self.export_status = Some("GPU not available".to_string());
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.export_prep = Some(prep); // reference still building
+                    ctx.request_repaint();
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.export_status = Some("Export failed: reference build aborted.".to_string());
+                    self.export_started = None;
+                }
+            }
+        }
+        if let Some(prev) = self.perf.last_frame {
+            let dt = frame_start.duration_since(prev).as_secs_f64() * 1000.0;
+            self.perf.frame_ms = ema(self.perf.frame_ms, dt);
+        }
+        self.perf.last_frame = Some(frame_start);
+
+        if !self.auto_benchmark && !self.auto_stdbench && !self.auto_render && !self.selftest && !self.profile && self.render_tour.is_none() && self.std_bench.is_none() {
+            self.autosave(ctx); // don't let a CLI run (or a transient benchmark override) overwrite the saved session
+        }
+
+        // Combined menu bar + action toolbar. `horizontal_wrapped` keeps them on one
+        // line when the window is wide enough, and wraps the toolbar below otherwise.
+        // (We place the menu buttons directly in the wrapped row rather than via
+        // `menu::bar`, which would claim the full width and push the toolbar down.)
+        self.draw_menu_bar(ctx, &gpu);
 
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
