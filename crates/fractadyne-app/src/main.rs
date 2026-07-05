@@ -996,6 +996,14 @@ struct GotoDialog {
     msg: Option<String>,
 }
 
+/// State of the "Share location" (`.fdn`) dialog (transient).
+#[derive(Default)]
+struct ShareDialog {
+    open: bool,
+    text: String,
+    msg: Option<String>,
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1181,9 +1189,7 @@ struct FractadyneApp {
     /// "Go to location" dialog state.
     goto: GotoDialog,
     /// Share-location (`.fdn`) dialog: open flag, editable location text, and an error line.
-    share_open: bool,
-    share_text: String,
-    share_msg: Option<String>,
+    share: ShareDialog,
     /// Transient status toast (message, time set) — e.g. minibrot-finder result.
     toast: Option<(String, f64)>,
     /// "Reset application state" confirmation dialog open.
@@ -1539,9 +1545,7 @@ impl FractadyneApp {
             nav_redo: Vec::new(),
             nav_was_interacting: false,
             goto: GotoDialog::default(),
-            share_open: false,
-            share_text: String::new(),
-            share_msg: None,
+            share: ShareDialog::default(),
             toast: None,
             reset_confirm_open: false,
             suppress_autosave: false,
@@ -3338,22 +3342,22 @@ impl FractadyneApp {
 
     /// Open the Share-location dialog, pre-filled with the current view as `.fdn` text.
     fn open_share(&mut self) {
-        self.share_text = self.view_metadata();
-        self.share_msg = None;
-        self.share_open = true;
+        self.share.text = self.view_metadata();
+        self.share.msg = None;
+        self.share.open = true;
     }
 
     /// Apply the Share dialog's text as a location (hardened: bounded, allow-list parse via
     /// `load_view_metadata`, every field validated/clamped — no paths or code).
     fn apply_share_text(&mut self, ctx: &egui::Context) {
-        let t = self.share_text.trim();
+        let t = self.share.text.trim();
         if t.is_empty() || t.len() > SHARE_MAX {
-            self.share_msg = Some("Nothing to load (or text too large).".into());
+            self.share.msg = Some("Nothing to load (or text too large).".into());
             return;
         }
         // Must look like a Fractadyne location (has our app tag or a center field).
         if meta_get(t, "app") != "Fractadyne" && meta_get(t, "center_x").is_empty() {
-            self.share_msg = Some("Not a Fractadyne location.".into());
+            self.share.msg = Some("Not a Fractadyne location.".into());
             return;
         }
         let t = t.to_string();
@@ -3362,11 +3366,11 @@ impl FractadyneApp {
         match report.note() {
             None => {
                 self.set_toast(format!("Loaded location @ {zoom}×"), ctx);
-                self.share_open = false;
+                self.share.open = false;
             }
             // Keep the dialog open and surface the report rather than silently jumping.
             Some(n) => {
-                self.share_msg = Some(format!("Loaded @ {zoom}× — {n}."));
+                self.share.msg = Some(format!("Loaded @ {zoom}× — {n}."));
             }
         }
     }
@@ -3378,9 +3382,9 @@ impl FractadyneApp {
             .set_file_name("location.fdn")
             .save_file()
         {
-            match std::fs::write(&path, self.share_text.as_bytes()) {
-                Ok(()) => self.share_msg = Some("Saved.".into()),
-                Err(e) => self.share_msg = Some(format!("Save failed: {e}")),
+            match std::fs::write(&path, self.share.text.as_bytes()) {
+                Ok(()) => self.share.msg = Some("Saved.".into()),
+                Err(e) => self.share.msg = Some(format!("Save failed: {e}")),
             }
         }
     }
@@ -3397,13 +3401,13 @@ impl FractadyneApp {
         match std::fs::metadata(&path) {
             Ok(m) if (m.len() as usize) <= SHARE_MAX => match std::fs::read_to_string(&path) {
                 Ok(t) => {
-                    self.share_text = t;
-                    self.share_msg = Some("Loaded into the box — review, then Apply.".into());
+                    self.share.text = t;
+                    self.share.msg = Some("Loaded into the box — review, then Apply.".into());
                 }
-                Err(e) => self.share_msg = Some(format!("Read failed: {e}")),
+                Err(e) => self.share.msg = Some(format!("Read failed: {e}")),
             },
-            Ok(_) => self.share_msg = Some("File too large (not a .fdn location?).".into()),
-            Err(e) => self.share_msg = Some(format!("Read failed: {e}")),
+            Ok(_) => self.share.msg = Some("File too large (not a .fdn location?).".into()),
+            Err(e) => self.share.msg = Some(format!("Read failed: {e}")),
         }
     }
 
@@ -3702,10 +3706,10 @@ impl FractadyneApp {
 
     /// "Share location" (.fdn) dialog — copy/paste/apply/save/load a self-contained location.
     fn draw_share_dialog(&mut self, ctx: &egui::Context) {
-        if !self.share_open {
+        if !self.share.open {
             return;
         }
-        let mut open = self.share_open;
+        let mut open = self.share.open;
         let (mut copy, mut apply, mut save, mut load) = (false, false, false, false);
         egui::Window::new("Share location")
             .open(&mut open)
@@ -3723,13 +3727,13 @@ impl FractadyneApp {
                 ui.add_space(4.0);
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     ui.add(
-                        egui::TextEdit::multiline(&mut self.share_text)
+                        egui::TextEdit::multiline(&mut self.share.text)
                             .desired_width(f32::INFINITY)
                             .desired_rows(10)
                             .code_editor(),
                     );
                 });
-                if let Some(m) = &self.share_msg {
+                if let Some(m) = &self.share.msg {
                     ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA0, 0x30), m);
                 }
                 ui.add_space(4.0);
@@ -3737,16 +3741,16 @@ impl FractadyneApp {
                     apply = ui.button("Apply").on_hover_text("Jump to the location in the box").clicked();
                     copy = ui.button("Copy").on_hover_text("Copy the text to the clipboard").clicked();
                     if ui.button("Use current").clicked() {
-                        self.share_text = self.view_metadata();
-                        self.share_msg = None;
+                        self.share.text = self.view_metadata();
+                        self.share.msg = None;
                     }
                     save = ui.button("Save .fdn…").clicked();
                     load = ui.button("Load .fdn…").clicked();
                 });
             });
         if copy {
-            ctx.copy_text(self.share_text.clone());
-            self.share_msg = Some("Copied to clipboard.".into());
+            ctx.copy_text(self.share.text.clone());
+            self.share.msg = Some("Copied to clipboard.".into());
         }
         if save {
             self.save_share_file();
@@ -3757,7 +3761,7 @@ impl FractadyneApp {
         if apply {
             self.apply_share_text(ctx); // clears share_open on success
         }
-        self.share_open = open && self.share_open;
+        self.share.open = open && self.share.open;
     }
 
     /// "Reset application state" confirmation dialog — permanently deletes all saved data.
