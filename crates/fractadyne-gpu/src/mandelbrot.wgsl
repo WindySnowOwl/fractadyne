@@ -367,7 +367,13 @@ struct IterU {
     max_iter: u32,
     orbit_len: u32,        // number of valid reference samples
     mode: u32,             // 0 = perturbation (deep), 1 = direct df32 (shallow)
-    formula: u32,          // escape-time formula id (see fs_iterate)
+    // Escape-time formula id. These MUST match Rust: `core::formula::*` and
+    // `FractalKind::formula_id` (fractadyne-app/src/fractal.rs). Legend:
+    //   0 Mandelbrot   1 Multibrot3   2 Multibrot4   3 Multibrot5   4 Tricorn
+    //   5 BurningShip  6 Celtic       7 Buffalo      8 Phoenix      9 Newton
+    // Adding a formula: add a branch below in every mode it supports (direct / df32
+    // perturbation / floatexp), keyed on this id — see the checklist in fractal.rs.
+    formula: u32,
     julia: u32,            // 0 = Mandelbrot mode (z0=0, c=pixel), 1 = Julia (z0=pixel, c=const)
     delta_exp: i32,        // shared base-2 exponent of the δ mantissas (step / ref_offset)
     color_method: u32,     // selected coloring method (drives whether aux is accumulated)
