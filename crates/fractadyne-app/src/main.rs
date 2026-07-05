@@ -5277,6 +5277,297 @@ impl FractadyneApp {
             });
         });
     }
+    /// Central fractal area: the render callback (or dual view), pan / zoom / click input, the
+    /// orbit overlay, plus the watermark, guided-tour annotations, minimap, gradient editor,
+    /// and help overlay drawn on top of it.
+    fn draw_central(&mut self, ctx: &egui::Context) {
+        let central = egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| {
+                if self.dual {
+                    self.draw_dual(ui, ctx);
+                    return;
+                }
+                let rect = ui.max_rect();
+                let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+                let ppp = ctx.pixels_per_point() as f64;
+
+                // 1 pixel = constant complex units; resizing reveals more/less plane.
+                self.viewport
+                    .set_size(rect.width() as f64 * ppp, rect.height() as f64 * ppp);
+
+                // Zoom box (Shift+drag): rubber-band a rectangle, then zoom so it fills the
+                // view. Deep-zoom-correct (recenter + scale via the bignum viewport methods).
+                let shift = ctx.input(|i| i.modifiers.shift);
+                if response.drag_started() && shift {
+                    if let Some(p) = response.interact_pointer_pos() {
+                        self.zoom_box = Some(ZoomBox { start: p, end: p, is_julia: false });
+                    }
+                }
+                let mut zoom_boxing = false;
+                if self.zoom_box.as_ref().is_some_and(|z| !z.is_julia) {
+                    zoom_boxing = true;
+                    if let Some(cur) = response.interact_pointer_pos() {
+                        self.zoom_box.as_mut().unwrap().end = cur;
+                    }
+                    let zb = self.zoom_box.as_ref().unwrap();
+                    let boxr = aspect_zoom_box(zb.start, zb.end, rect);
+                    // Foreground layer so the box draws above the fractal paint callback.
+                    let painter = ctx.layer_painter(egui::LayerId::new(
+                        egui::Order::Foreground,
+                        egui::Id::new("fract_zoom_box"),
+                    ));
+                    painter.rect_filled(
+                        boxr,
+                        egui::CornerRadius::ZERO,
+                        egui::Color32::from_rgba_unmultiplied(0xE0, 0xA0, 0x30, 32),
+                    );
+                    painter.rect_stroke(
+                        boxr,
+                        egui::CornerRadius::ZERO,
+                        egui::Stroke::new(1.5, BRAND_ACCENT),
+                        egui::StrokeKind::Inside,
+                    );
+                    if response.drag_stopped() {
+                        if boxr.width() > 6.0 && boxr.height() > 6.0 {
+                            let bcx = (boxr.center().x - rect.min.x) as f64 * ppp;
+                            let bcy = (boxr.center().y - rect.min.y) as f64 * ppp;
+                            let factor = (boxr.width() / rect.width()) as f64; // < 1 ⇒ zoom in
+                            let (w, h) = (self.viewport.width_px, self.viewport.height_px);
+                            self.viewport.pan_pixels(w * 0.5 - bcx, h * 0.5 - bcy);
+                            self.viewport.zoom_at(w * 0.5, h * 0.5, factor);
+                            self.settle_t[0] = ctx.input(|i| i.time);
+                        }
+                        self.zoom_box = None;
+                        zoom_boxing = false;
+                    }
+                }
+
+                // Track the complex coordinate under the cursor (for the status bar).
+                self.pointer_complex = response.hover_pos().map(|p| {
+                    let l = p - rect.min;
+                    self.viewport
+                        .complex_at_pixel_f64(l.x as f64 * ppp, l.y as f64 * ppp)
+                });
+
+                // Pan with left-drag (unless dragging a zoom box).
+                if !zoom_boxing && response.dragged_by(egui::PointerButton::Primary) {
+                    let d = response.drag_delta();
+                    self.viewport.pan_pixels(d.x as f64 * ppp, d.y as f64 * ppp);
+                }
+
+                // Cursor-centered wheel zoom (scroll up = zoom in).
+                let scroll_y = ctx.input(|i| i.smooth_scroll_delta.y) as f64;
+                if scroll_y != 0.0 {
+                    if let Some(pos) = response.hover_pos() {
+                        let local = pos - rect.min;
+                        let factor = (-0.0015 * scroll_y).exp();
+                        self.viewport
+                            .zoom_at(local.x as f64 * ppp, local.y as f64 * ppp, factor);
+                    }
+                }
+
+                // Continuous zoom: hold Space (in) / Shift+Space (out), toward the
+                // cursor. Exponential rate, eased in/out, frame-rate independent.
+                if let Some(pos) = response.hover_pos() {
+                    self.last_cursor = Some(pos);
+                }
+                let (space, shift) =
+                    ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
+                let rate = ZOOM_RATE * self.zoom_rate as f64;
+                let target_vel = if space {
+                    if shift { -rate } else { rate }
+                } else {
+                    0.0
+                };
+                let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
+                let ease = 1.0 - (-dt / EASE_TAU).exp();
+                self.zoom_vel += (target_vel - self.zoom_vel) * ease;
+                if target_vel != 0.0 || self.zoom_vel.abs() > 1e-3 {
+                    self.schedule_repaint(ctx); // animate while held and during glide-out
+                }
+                if self.zoom_vel.abs() > 1e-3 {
+                    let anchor = self.last_cursor.unwrap_or_else(|| rect.center());
+                    let local = anchor - rect.min;
+                    let factor = (-self.zoom_vel * dt).exp(); // vel>0 → factor<1 → zoom in
+                    self.viewport
+                        .zoom_at(local.x as f64 * ppp, local.y as f64 * ppp, factor);
+                }
+
+                // Box-zoom with right-drag: record the start, apply on release.
+                if response.drag_started_by(egui::PointerButton::Secondary) {
+                    self.box_start = response.interact_pointer_pos();
+                }
+                if response.drag_stopped_by(egui::PointerButton::Secondary) {
+                    let end = response
+                        .interact_pointer_pos()
+                        .or_else(|| ctx.input(|i| i.pointer.latest_pos()));
+                    if let (Some(start), Some(end)) = (self.box_start, end) {
+                        let s = start - rect.min;
+                        let e = end - rect.min;
+                        if (e.x - s.x).abs() > 6.0 && (e.y - s.y).abs() > 6.0 {
+                            self.viewport.zoom_to_rect(
+                                s.x as f64 * ppp,
+                                s.y as f64 * ppp,
+                                e.x as f64 * ppp,
+                                e.y as f64 * ppp,
+                            );
+                        }
+                    }
+                    self.box_start = None;
+                }
+
+                // Render the fractal at the current viewport with the chosen palette.
+                let span_fe = self.viewport.complex_span_fe();
+                let eff_iter = if self.auto_iter {
+                    self.viewport.recommended_max_iter(self.max_iter)
+                } else {
+                    self.max_iter
+                };
+                // Quality-on-settle: skip AA while interacting (and for a short
+                // settle window after), then render full AA once the view is still.
+                let now = ctx.input(|i| i.time);
+                // Drawing a zoom box (Shift+left-drag → `zoom_boxing`, or right-drag →
+                // `box_start`) drags the pointer but does NOT move the view, so it must not
+                // count as "active" — otherwise the render drops to the coarse moving preview
+                // while you're framing the box. The zoom is applied on release.
+                let active = self.zoom_vel.abs() > 1e-3
+                    || (response.dragged() && !zoom_boxing && self.box_start.is_none())
+                    || scroll_y != 0.0
+                    || space;
+                if active {
+                    self.settle_t[0] = now;
+                }
+                let interacting = now - self.settle_t[0] < SETTLE_DELAY;
+                // Progressive settle AA (see `nav_and_draw`): refine 1×→2×→4×→… over settled frames.
+                let aa_target = if interacting {
+                    self.settle_frame[0] = 0;
+                    1
+                } else {
+                    let ss = aa_ramp(self.settle_frame[0], self.aa);
+                    if ss < self.aa {
+                        self.settle_frame[0] += 1;
+                        self.schedule_repaint(ctx);
+                    }
+                    ss
+                };
+
+                let center_bf = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+                let center = self.viewport.center_f64();
+                let mag = self.viewport.magnification();
+                let log2mag = self.viewport.log2_magnification();
+                let resolution = [
+                    (rect.width() as f64 * ppp) as u32,
+                    (rect.height() as f64 * ppp) as u32,
+                ];
+                // Pan reprojection: while dragging, translate the last detailed frame instead
+                // of re-rendering coarse (see `nav_and_draw` for the full rationale).
+                let panning = !zoom_boxing && self.box_start.is_none();
+                if response.drag_started_by(egui::PointerButton::Primary) && panning {
+                    self.pan_px = egui::Vec2::ZERO;
+                    self.pan_view = Some(0);
+                }
+                if self.pan_view == Some(0)
+                    && panning
+                    && response.dragged_by(egui::PointerButton::Primary)
+                {
+                    let d = response.drag_delta();
+                    self.pan_px += egui::vec2(d.x * ppp as f32, d.y * ppp as f32);
+                }
+                let reproject = if self.pan_view == Some(0) && interacting {
+                    self.schedule_repaint(ctx);
+                    Some([
+                        self.pan_px.x / resolution[0].max(1) as f32,
+                        self.pan_px.y / resolution[1].max(1) as f32,
+                    ])
+                } else {
+                    if self.pan_view == Some(0) {
+                        self.pan_view = None;
+                    }
+                    None
+                };
+                let params = self.build_params(
+                    center_bf,
+                    center,
+                    span_fe,
+                    mag,
+                    log2mag,
+                    self.fractal,
+                    self.julia_mode,
+                    eff_iter,
+                    interacting,
+                    aa_target,
+                    resolution,
+                    0,
+                    reproject,
+                );
+                add_mandelbrot(ui.painter(), rect, params);
+
+                // Orbit overlay for the point under the cursor — or, during a tour, a scripted point.
+                if self.show_orbits {
+                    let cpx = response
+                        .hover_pos()
+                        .map(|hp| {
+                            let l = hp - rect.min;
+                            (l.x as f64 * ppp, l.y as f64 * ppp)
+                        })
+                        .or_else(|| {
+                            self.tour_orbit.map(|(ox, oy)| {
+                                let p = self.viewport.precision;
+                                self.viewport.complex_to_pixel(
+                                    &fractadyne_core::BigFloat::from_f64(ox, p),
+                                    &fractadyne_core::BigFloat::from_f64(oy, p),
+                                )
+                            })
+                        });
+                    if let Some(cpx) = cpx {
+                        let painter = ui.painter_at(rect);
+                        self.draw_orbit(&painter, rect, &self.viewport, cpx, self.julia_mode, ppp);
+                    }
+                }
+
+                // Draw the in-progress box-zoom selection on top of the fractal.
+                if let Some(start) = self.box_start {
+                    if response.dragged_by(egui::PointerButton::Secondary) {
+                        if let Some(cur) = response.interact_pointer_pos() {
+                            let sel = egui::Rect::from_two_pos(start, cur);
+                            let painter = ui.painter();
+                            painter.rect_filled(
+                                sel,
+                                egui::CornerRadius::ZERO,
+                                egui::Color32::from_rgba_unmultiplied(0xE0, 0xA0, 0x30, 28),
+                            );
+                            painter.rect_stroke(
+                                sel,
+                                egui::CornerRadius::ZERO,
+                                egui::Stroke::new(1.5, egui::Color32::from_rgb(0xE0, 0xA0, 0x30)),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                    }
+                }
+            });
+
+        // ---- brand watermark (lower-right of the fractal area) ----
+        if self.watermark {
+            self.draw_watermark(ctx, central.response.rect);
+        }
+
+        // ---- guided-tour annotations (captions + coordinate-anchored callouts) ----
+        if self.playback.is_some() {
+            let caption_rects = self.draw_captions(ctx, central.response.rect);
+            self.draw_callouts(ctx, central.response.rect, &caption_rects);
+        }
+
+        // ---- minimap overview ----
+        self.draw_minimap(ctx);
+
+        // ---- gradient editor ----
+        self.palette_editor_window(ctx);
+
+        // ---- keyboard / help overlay ----
+        self.help_window(ctx);
+    }
 }
 
 impl eframe::App for FractadyneApp {
@@ -5645,292 +5936,7 @@ impl eframe::App for FractadyneApp {
         // optional performance section. Hidden entirely while in fullscreen.
         self.draw_right_panel(ctx);
 
-        let central = egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show(ctx, |ui| {
-                if self.dual {
-                    self.draw_dual(ui, ctx);
-                    return;
-                }
-                let rect = ui.max_rect();
-                let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-                let ppp = ctx.pixels_per_point() as f64;
-
-                // 1 pixel = constant complex units; resizing reveals more/less plane.
-                self.viewport
-                    .set_size(rect.width() as f64 * ppp, rect.height() as f64 * ppp);
-
-                // Zoom box (Shift+drag): rubber-band a rectangle, then zoom so it fills the
-                // view. Deep-zoom-correct (recenter + scale via the bignum viewport methods).
-                let shift = ctx.input(|i| i.modifiers.shift);
-                if response.drag_started() && shift {
-                    if let Some(p) = response.interact_pointer_pos() {
-                        self.zoom_box = Some(ZoomBox { start: p, end: p, is_julia: false });
-                    }
-                }
-                let mut zoom_boxing = false;
-                if self.zoom_box.as_ref().is_some_and(|z| !z.is_julia) {
-                    zoom_boxing = true;
-                    if let Some(cur) = response.interact_pointer_pos() {
-                        self.zoom_box.as_mut().unwrap().end = cur;
-                    }
-                    let zb = self.zoom_box.as_ref().unwrap();
-                    let boxr = aspect_zoom_box(zb.start, zb.end, rect);
-                    // Foreground layer so the box draws above the fractal paint callback.
-                    let painter = ctx.layer_painter(egui::LayerId::new(
-                        egui::Order::Foreground,
-                        egui::Id::new("fract_zoom_box"),
-                    ));
-                    painter.rect_filled(
-                        boxr,
-                        egui::CornerRadius::ZERO,
-                        egui::Color32::from_rgba_unmultiplied(0xE0, 0xA0, 0x30, 32),
-                    );
-                    painter.rect_stroke(
-                        boxr,
-                        egui::CornerRadius::ZERO,
-                        egui::Stroke::new(1.5, BRAND_ACCENT),
-                        egui::StrokeKind::Inside,
-                    );
-                    if response.drag_stopped() {
-                        if boxr.width() > 6.0 && boxr.height() > 6.0 {
-                            let bcx = (boxr.center().x - rect.min.x) as f64 * ppp;
-                            let bcy = (boxr.center().y - rect.min.y) as f64 * ppp;
-                            let factor = (boxr.width() / rect.width()) as f64; // < 1 ⇒ zoom in
-                            let (w, h) = (self.viewport.width_px, self.viewport.height_px);
-                            self.viewport.pan_pixels(w * 0.5 - bcx, h * 0.5 - bcy);
-                            self.viewport.zoom_at(w * 0.5, h * 0.5, factor);
-                            self.settle_t[0] = ctx.input(|i| i.time);
-                        }
-                        self.zoom_box = None;
-                        zoom_boxing = false;
-                    }
-                }
-
-                // Track the complex coordinate under the cursor (for the status bar).
-                self.pointer_complex = response.hover_pos().map(|p| {
-                    let l = p - rect.min;
-                    self.viewport
-                        .complex_at_pixel_f64(l.x as f64 * ppp, l.y as f64 * ppp)
-                });
-
-                // Pan with left-drag (unless dragging a zoom box).
-                if !zoom_boxing && response.dragged_by(egui::PointerButton::Primary) {
-                    let d = response.drag_delta();
-                    self.viewport.pan_pixels(d.x as f64 * ppp, d.y as f64 * ppp);
-                }
-
-                // Cursor-centered wheel zoom (scroll up = zoom in).
-                let scroll_y = ctx.input(|i| i.smooth_scroll_delta.y) as f64;
-                if scroll_y != 0.0 {
-                    if let Some(pos) = response.hover_pos() {
-                        let local = pos - rect.min;
-                        let factor = (-0.0015 * scroll_y).exp();
-                        self.viewport
-                            .zoom_at(local.x as f64 * ppp, local.y as f64 * ppp, factor);
-                    }
-                }
-
-                // Continuous zoom: hold Space (in) / Shift+Space (out), toward the
-                // cursor. Exponential rate, eased in/out, frame-rate independent.
-                if let Some(pos) = response.hover_pos() {
-                    self.last_cursor = Some(pos);
-                }
-                let (space, shift) =
-                    ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
-                let rate = ZOOM_RATE * self.zoom_rate as f64;
-                let target_vel = if space {
-                    if shift { -rate } else { rate }
-                } else {
-                    0.0
-                };
-                let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
-                let ease = 1.0 - (-dt / EASE_TAU).exp();
-                self.zoom_vel += (target_vel - self.zoom_vel) * ease;
-                if target_vel != 0.0 || self.zoom_vel.abs() > 1e-3 {
-                    self.schedule_repaint(ctx); // animate while held and during glide-out
-                }
-                if self.zoom_vel.abs() > 1e-3 {
-                    let anchor = self.last_cursor.unwrap_or_else(|| rect.center());
-                    let local = anchor - rect.min;
-                    let factor = (-self.zoom_vel * dt).exp(); // vel>0 → factor<1 → zoom in
-                    self.viewport
-                        .zoom_at(local.x as f64 * ppp, local.y as f64 * ppp, factor);
-                }
-
-                // Box-zoom with right-drag: record the start, apply on release.
-                if response.drag_started_by(egui::PointerButton::Secondary) {
-                    self.box_start = response.interact_pointer_pos();
-                }
-                if response.drag_stopped_by(egui::PointerButton::Secondary) {
-                    let end = response
-                        .interact_pointer_pos()
-                        .or_else(|| ctx.input(|i| i.pointer.latest_pos()));
-                    if let (Some(start), Some(end)) = (self.box_start, end) {
-                        let s = start - rect.min;
-                        let e = end - rect.min;
-                        if (e.x - s.x).abs() > 6.0 && (e.y - s.y).abs() > 6.0 {
-                            self.viewport.zoom_to_rect(
-                                s.x as f64 * ppp,
-                                s.y as f64 * ppp,
-                                e.x as f64 * ppp,
-                                e.y as f64 * ppp,
-                            );
-                        }
-                    }
-                    self.box_start = None;
-                }
-
-                // Render the fractal at the current viewport with the chosen palette.
-                let span_fe = self.viewport.complex_span_fe();
-                let eff_iter = if self.auto_iter {
-                    self.viewport.recommended_max_iter(self.max_iter)
-                } else {
-                    self.max_iter
-                };
-                // Quality-on-settle: skip AA while interacting (and for a short
-                // settle window after), then render full AA once the view is still.
-                let now = ctx.input(|i| i.time);
-                // Drawing a zoom box (Shift+left-drag → `zoom_boxing`, or right-drag →
-                // `box_start`) drags the pointer but does NOT move the view, so it must not
-                // count as "active" — otherwise the render drops to the coarse moving preview
-                // while you're framing the box. The zoom is applied on release.
-                let active = self.zoom_vel.abs() > 1e-3
-                    || (response.dragged() && !zoom_boxing && self.box_start.is_none())
-                    || scroll_y != 0.0
-                    || space;
-                if active {
-                    self.settle_t[0] = now;
-                }
-                let interacting = now - self.settle_t[0] < SETTLE_DELAY;
-                // Progressive settle AA (see `nav_and_draw`): refine 1×→2×→4×→… over settled frames.
-                let aa_target = if interacting {
-                    self.settle_frame[0] = 0;
-                    1
-                } else {
-                    let ss = aa_ramp(self.settle_frame[0], self.aa);
-                    if ss < self.aa {
-                        self.settle_frame[0] += 1;
-                        self.schedule_repaint(ctx);
-                    }
-                    ss
-                };
-
-                let center_bf = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
-                let center = self.viewport.center_f64();
-                let mag = self.viewport.magnification();
-                let log2mag = self.viewport.log2_magnification();
-                let resolution = [
-                    (rect.width() as f64 * ppp) as u32,
-                    (rect.height() as f64 * ppp) as u32,
-                ];
-                // Pan reprojection: while dragging, translate the last detailed frame instead
-                // of re-rendering coarse (see `nav_and_draw` for the full rationale).
-                let panning = !zoom_boxing && self.box_start.is_none();
-                if response.drag_started_by(egui::PointerButton::Primary) && panning {
-                    self.pan_px = egui::Vec2::ZERO;
-                    self.pan_view = Some(0);
-                }
-                if self.pan_view == Some(0)
-                    && panning
-                    && response.dragged_by(egui::PointerButton::Primary)
-                {
-                    let d = response.drag_delta();
-                    self.pan_px += egui::vec2(d.x * ppp as f32, d.y * ppp as f32);
-                }
-                let reproject = if self.pan_view == Some(0) && interacting {
-                    self.schedule_repaint(ctx);
-                    Some([
-                        self.pan_px.x / resolution[0].max(1) as f32,
-                        self.pan_px.y / resolution[1].max(1) as f32,
-                    ])
-                } else {
-                    if self.pan_view == Some(0) {
-                        self.pan_view = None;
-                    }
-                    None
-                };
-                let params = self.build_params(
-                    center_bf,
-                    center,
-                    span_fe,
-                    mag,
-                    log2mag,
-                    self.fractal,
-                    self.julia_mode,
-                    eff_iter,
-                    interacting,
-                    aa_target,
-                    resolution,
-                    0,
-                    reproject,
-                );
-                add_mandelbrot(ui.painter(), rect, params);
-
-                // Orbit overlay for the point under the cursor — or, during a tour, a scripted point.
-                if self.show_orbits {
-                    let cpx = response
-                        .hover_pos()
-                        .map(|hp| {
-                            let l = hp - rect.min;
-                            (l.x as f64 * ppp, l.y as f64 * ppp)
-                        })
-                        .or_else(|| {
-                            self.tour_orbit.map(|(ox, oy)| {
-                                let p = self.viewport.precision;
-                                self.viewport.complex_to_pixel(
-                                    &fractadyne_core::BigFloat::from_f64(ox, p),
-                                    &fractadyne_core::BigFloat::from_f64(oy, p),
-                                )
-                            })
-                        });
-                    if let Some(cpx) = cpx {
-                        let painter = ui.painter_at(rect);
-                        self.draw_orbit(&painter, rect, &self.viewport, cpx, self.julia_mode, ppp);
-                    }
-                }
-
-                // Draw the in-progress box-zoom selection on top of the fractal.
-                if let Some(start) = self.box_start {
-                    if response.dragged_by(egui::PointerButton::Secondary) {
-                        if let Some(cur) = response.interact_pointer_pos() {
-                            let sel = egui::Rect::from_two_pos(start, cur);
-                            let painter = ui.painter();
-                            painter.rect_filled(
-                                sel,
-                                egui::CornerRadius::ZERO,
-                                egui::Color32::from_rgba_unmultiplied(0xE0, 0xA0, 0x30, 28),
-                            );
-                            painter.rect_stroke(
-                                sel,
-                                egui::CornerRadius::ZERO,
-                                egui::Stroke::new(1.5, egui::Color32::from_rgb(0xE0, 0xA0, 0x30)),
-                                egui::StrokeKind::Inside,
-                            );
-                        }
-                    }
-                }
-            });
-
-        // ---- brand watermark (lower-right of the fractal area) ----
-        if self.watermark {
-            self.draw_watermark(ctx, central.response.rect);
-        }
-
-        // ---- guided-tour annotations (captions + coordinate-anchored callouts) ----
-        if self.playback.is_some() {
-            let caption_rects = self.draw_captions(ctx, central.response.rect);
-            self.draw_callouts(ctx, central.response.rect, &caption_rects);
-        }
-
-        // ---- minimap overview ----
-        self.draw_minimap(ctx);
-
-        // ---- gradient editor ----
-        self.palette_editor_window(ctx);
-
-        // ---- keyboard / help overlay ----
-        self.help_window(ctx);
+        self.draw_central(ctx);
 
         self.draw_toast(ctx);
         self.draw_goto_dialog(ctx);
