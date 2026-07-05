@@ -234,11 +234,16 @@ pub(crate) fn brand_mark_job(px: f32, f_col: egui::Color32, d_col: egui::Color32
     job
 }
 
-/// The two-color "Fractadyne" logotype (Fracta + amber dyne), for the top bar. Theme-aware: the
-/// text uses the theme's strong ink and the "dyne" its amber accent.
+/// The two-color "Fractadyne" logotype (Fracta + amber dyne), for the top bar. Theme-aware: on dark
+/// it's the bright brand ink (white `#E6E7EA`) + gold accent; on light it's the near-black ink +
+/// the deeper amber. The "dyne" always uses the theme accent.
 pub(crate) fn brand_wordmark(ui: &mut egui::Ui) {
     let font = egui::FontId::proportional(15.0);
-    let text = ui.visuals().strong_text_color();
+    let text = if ui.visuals().dark_mode {
+        BRAND_TEXT
+    } else {
+        ui.visuals().text_color()
+    };
     let accent = ui.visuals().hyperlink_color;
     let mut job = egui::text::LayoutJob::default();
     job.append(
