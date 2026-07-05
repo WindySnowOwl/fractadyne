@@ -212,8 +212,8 @@ impl FractadyneApp {
             self.color_method = r.method;
             self.auto_iter = false;
             self.max_iter = r.iter;
-            self.export_width = r.size;
-            self.export_ss = r.ss;
+            self.export.width = r.size;
+            self.export.ss = r.ss;
             self.invalidate_refs();
 
             let mut vp = Viewport::new(r.size as f64, r.size as f64);

@@ -1424,13 +1424,13 @@ impl FractadyneApp {
         self.auto_iter = true;
         self.max_iter = self.max_iter.max(500_000);
         self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
-        self.export_width = width;
-        self.export_ss = ss.max(1);
+        self.export.width = width;
+        self.export.ss = ss.max(1);
         let fps = fps.max(1.0);
         let frames: u64 = if pb.total <= 0.0 { 1 } else { (pb.total * fps).round() as u64 + 1 };
         println!(
             "Rendering tour \"{}\": {frames} frames at {width}×{height} ss{}, {fps} fps ({:.1}s)…",
-            pb.name, self.export_ss, pb.total
+            pb.name, self.export.ss, pb.total
         );
         let meta = std::sync::Arc::new(self.view_metadata());
         // Encode PNGs on a small worker pool so compression overlaps the next frame's GPU render
@@ -1528,7 +1528,7 @@ impl FractadyneApp {
                 let mut req = app.current_export_request_for(vp, julia);
                 req.width = w;
                 req.height = height;
-                req.ss = app.export_ss;
+                req.ss = app.export.ss;
                 req.max_iter = req.max_iter.max(200);
                 req.vignette = vg;
                 fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
@@ -1556,7 +1556,7 @@ impl FractadyneApp {
                 let mut req = self.current_export_request_with_ref(&self.viewport, self.julia_mode, this_ref);
                 req.width = width;
                 req.height = height;
-                req.ss = self.export_ss;
+                req.ss = self.export.ss;
                 req.max_iter = req.max_iter.max(200);
                 req.vignette = vg;
                 let r = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)

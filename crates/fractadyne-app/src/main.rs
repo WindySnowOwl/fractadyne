@@ -1040,6 +1040,32 @@ struct NavHistory {
     was_interacting: bool,
 }
 
+/// Export-dialog state: the dialog's options, the in-flight background export, and the persisted
+/// target folder. Grouped from the former flat `export_*` fields (Phase 2a).
+struct ExportState {
+    open: bool,
+    width: u32,
+    ss: u32,
+    format: ExportFormat,
+    dual_mode: DualExport,
+    /// Aspect ratio: "window" (match the live view) or a fixed key ("16:9", "1:1", …).
+    aspect: String,
+    notes: String,
+    status: Option<String>,
+    /// In-flight background export; receives the final status message when done.
+    task: Option<std::sync::mpsc::Receiver<String>>,
+    /// Deep single-view export whose reference orbit is building off-thread (before the render).
+    prep: Option<crate::export::ExportPrep>,
+    /// Progress in permille (0–1000) and a cooperative cancel flag.
+    progress: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Last directory an export was saved to (persisted; defaults the Save dialog).
+    last_dir: Option<std::path::PathBuf>,
+    /// When the in-flight export began (deep exports: at the reference build). Drives the live
+    /// "elapsed" readout and the final total-time report.
+    started: Option<std::time::Instant>,
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1179,28 +1205,8 @@ struct FractadyneApp {
     prof: std::cell::Cell<profile::ProfSetup>,
     /// Frame-rate cap (FPS); `None` = uncapped.
     fps_cap: Option<f64>,
-    /// Export dialog state.
-    export_open: bool,
-    export_width: u32,
-    export_ss: u32,
-    export_format: ExportFormat,
-    export_dual_mode: DualExport,
-    /// Export aspect ratio: "window" (match the live view) or a fixed key ("16:9", "1:1", …).
-    export_aspect: String,
-    export_notes: String,
-    export_status: Option<String>,
-    /// In-flight background export; receives the final status message when done.
-    export_task: Option<std::sync::mpsc::Receiver<String>>,
-    /// Deep single-view export whose reference orbit is building off-thread (before the render).
-    export_prep: Option<crate::export::ExportPrep>,
-    /// Export progress in permille (0–1000) and a cooperative cancel flag.
-    export_progress: std::sync::Arc<std::sync::atomic::AtomicU32>,
-    export_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Last directory an export was saved to (persisted; defaults the Save dialog).
-    export_last_dir: Option<std::path::PathBuf>,
-    /// When the in-flight export began (deep exports: at the reference build, so the total
-    /// covers it). Drives the live "elapsed" readout and the final total-time report.
-    export_started: Option<std::time::Instant>,
+    /// Export dialog + in-flight background export state.
+    export: ExportState,
     /// Gallery browser state.
     gallery: GalleryState,
     /// Bookmarks (saved views), persisted to the config dir; + window/input state.
@@ -1535,28 +1541,30 @@ impl FractadyneApp {
             frametest_dive,
             prof: std::cell::Cell::new(profile::ProfSetup::default()),
             fps_cap: (s.fps_cap > 0.0).then_some(s.fps_cap), // 0 = uncapped
-            export_open: false,
-            export_width: s.export_width,
-            export_ss: s.export_ss,
-            export_format: if s.export_format == "exr" {
-                ExportFormat::Exr
-            } else {
-                ExportFormat::Png
+            export: ExportState {
+                open: false,
+                width: s.export_width,
+                ss: s.export_ss,
+                format: if s.export_format == "exr" {
+                    ExportFormat::Exr
+                } else {
+                    ExportFormat::Png
+                },
+                dual_mode: match s.export_dual_mode.as_str() {
+                    "separate" => DualExport::Separate,
+                    "active" => DualExport::ActiveOnly,
+                    _ => DualExport::SideBySide,
+                },
+                aspect: s.export_aspect.clone(),
+                notes: String::new(),
+                status: None,
+                task: None,
+                prep: None,
+                progress: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                last_dir: s.export_dir.clone().map(std::path::PathBuf::from),
+                started: None,
             },
-            export_dual_mode: match s.export_dual_mode.as_str() {
-                "separate" => DualExport::Separate,
-                "active" => DualExport::ActiveOnly,
-                _ => DualExport::SideBySide,
-            },
-            export_aspect: s.export_aspect.clone(),
-            export_notes: String::new(),
-            export_status: None,
-            export_task: None,
-            export_prep: None,
-            export_progress: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            export_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            export_last_dir: s.export_dir.clone().map(std::path::PathBuf::from),
-            export_started: None,
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             bookmarks: Self::load_bookmarks(),
             bookmarks_open: false,
@@ -1698,7 +1706,7 @@ impl FractadyneApp {
         let (size_w, size_h) = val("--size").map(|s| parse_size(s)).unwrap_or((None, None));
         if let Some(w) = size_w {
             let w = w.clamp(16, 16384);
-            self.export_width = w;
+            self.export.width = w;
             let h = size_h.map(|h| h.clamp(16, 16384)).unwrap_or_else(|| {
                 ((w as f64) * self.viewport.height_px / self.viewport.width_px.max(1.0))
                     .round()
@@ -1727,7 +1735,7 @@ impl FractadyneApp {
             self.viewport.set_center_mag(cx, cy, zoom.max(1.0e-300));
         }
         if let Some(ss) = val("--ss").and_then(|s| s.parse::<u32>().ok()) {
-            self.export_ss = ss.clamp(1, 8);
+            self.export.ss = ss.clamp(1, 8);
         }
         if let Some(it) = val("--iter").and_then(|s| s.parse::<u32>().ok()) {
             self.max_iter = it.clamp(16, 200_000);
@@ -1766,9 +1774,9 @@ impl FractadyneApp {
         // Output format from the file extension.
         if let Some(out) = &self.auto_render_out {
             if out.extension().and_then(|e| e.to_str()) == Some("exr") {
-                self.export_format = ExportFormat::Exr;
+                self.export.format = ExportFormat::Exr;
             } else {
-                self.export_format = ExportFormat::Png;
+                self.export.format = ExportFormat::Png;
             }
         }
     }
@@ -1798,22 +1806,22 @@ impl FractadyneApp {
             work_budget_scale: self.work_budget_scale,
             aa: self.aa,
             fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
-            export_width: self.export_width,
-            export_ss: self.export_ss,
-            export_format: match self.export_format {
+            export_width: self.export.width,
+            export_ss: self.export.ss,
+            export_format: match self.export.format {
                 ExportFormat::Png => "png".to_string(),
                 ExportFormat::Exr => "exr".to_string(),
             },
             export_dir: self
-                .export_last_dir
+                .export.last_dir
                 .as_ref()
                 .map(|p| p.display().to_string()),
-            export_dual_mode: match self.export_dual_mode {
+            export_dual_mode: match self.export.dual_mode {
                 DualExport::SideBySide => "side".to_string(),
                 DualExport::Separate => "separate".to_string(),
                 DualExport::ActiveOnly => "active".to_string(),
             },
-            export_aspect: self.export_aspect.clone(),
+            export_aspect: self.export.aspect.clone(),
             show_location: self.show_location,
             palette_anim: self.palette_anim.key().to_string(),
             palette_anim_speed: self.palette_anim_speed,
@@ -1912,16 +1920,16 @@ impl FractadyneApp {
     /// view's pixel aspect (same as the render); a fixed key uses that ratio. Uses the pixel aspect,
     /// not `complex_span` (which saturates to 0 past ~1e308× → a bogus 1-px height).
     fn export_height(&self) -> u32 {
-        let ratio = if self.export_aspect == "window" {
+        let ratio = if self.export.aspect == "window" {
             (self.viewport.width_px / self.viewport.height_px.max(1.0)).max(1.0e-6)
         } else {
             EXPORT_ASPECTS
                 .iter()
-                .find(|(k, _)| *k == self.export_aspect)
+                .find(|(k, _)| *k == self.export.aspect)
                 .map(|(_, r)| *r)
                 .unwrap_or(self.viewport.width_px / self.viewport.height_px.max(1.0))
         };
-        ((self.export_width as f64) / ratio).round().max(1.0) as u32
+        ((self.export.width as f64) / ratio).round().max(1.0) as u32
     }
 
     fn build_export_job(&self) -> ExportJob {
@@ -1940,7 +1948,7 @@ impl FractadyneApp {
         if self.dual {
             let map = fit(self.current_export_request_for(&self.viewport, false));
             let jul = fit(self.current_export_request_for(&self.julia_viewport, true));
-            match self.export_dual_mode {
+            match self.export.dual_mode {
                 DualExport::SideBySide => ExportJob::SideBySide(map, jul),
                 DualExport::Separate => ExportJob::Separate(map, jul),
                 DualExport::ActiveOnly => ExportJob::Single(map),
@@ -4231,7 +4239,7 @@ impl FractadyneApp {
         }
         if let Some(meta) = to_open {
             self.load_view_metadata(&meta);
-            self.export_status = Some("Loaded view from gallery.".to_string());
+            self.export.status = Some("Loaded view from gallery.".to_string());
         }
         // Lazily decode one thumbnail per frame so scanning a folder never freezes.
         if let Some(entry) = self.gallery.entries.iter_mut().find(|e| !e.thumb_tried) {
@@ -4252,10 +4260,10 @@ impl FractadyneApp {
         ctx: &egui::Context,
         gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
     ) {
-        if !self.export_open {
+        if !self.export.open {
             return;
         }
-        let mut open = self.export_open;
+        let mut open = self.export.open;
         let mut do_export = false;
         let mut do_export_as = false;
         egui::Window::new("Export image")
@@ -4263,39 +4271,39 @@ impl FractadyneApp {
             .resizable(false)
             .show(ctx, |ui| {
                 egui::ComboBox::from_label("Width (px)")
-                    .selected_text(format!("{}", self.export_width))
+                    .selected_text(format!("{}", self.export.width))
                     .show_ui(ui, |ui| {
                         for w in [1280u32, 1920, 2560, 3840, 5120, 7680] {
-                            ui.selectable_value(&mut self.export_width, w, format!("{w}"));
+                            ui.selectable_value(&mut self.export.width, w, format!("{w}"));
                         }
                     });
                 egui::ComboBox::from_label("Supersampling")
-                    .selected_text(format!("{}×", self.export_ss))
+                    .selected_text(format!("{}×", self.export.ss))
                     .show_ui(ui, |ui| {
                         for s in [1u32, 2, 3, 4] {
-                            ui.selectable_value(&mut self.export_ss, s, format!("{s}×"));
+                            ui.selectable_value(&mut self.export.ss, s, format!("{s}×"));
                         }
                     });
                 egui::ComboBox::from_label("Aspect")
-                    .selected_text(if self.export_aspect == "window" {
+                    .selected_text(if self.export.aspect == "window" {
                         "Match window".to_string()
                     } else {
-                        self.export_aspect.clone()
+                        self.export.aspect.clone()
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
-                            &mut self.export_aspect,
+                            &mut self.export.aspect,
                             "window".to_string(),
                             "Match window",
                         );
                         for (k, _) in EXPORT_ASPECTS {
-                            ui.selectable_value(&mut self.export_aspect, k.to_string(), k);
+                            ui.selectable_value(&mut self.export.aspect, k.to_string(), k);
                         }
                     });
                 ui.horizontal(|ui| {
                     ui.label("Format:");
-                    ui.radio_value(&mut self.export_format, ExportFormat::Png, "PNG");
-                    ui.radio_value(&mut self.export_format, ExportFormat::Exr, "OpenEXR");
+                    ui.radio_value(&mut self.export.format, ExportFormat::Png, "PNG");
+                    ui.radio_value(&mut self.export.format, ExportFormat::Exr, "OpenEXR");
                 });
                 ui.checkbox(&mut self.show_location, "Location HUD")
                     .on_hover_text(
@@ -4321,24 +4329,24 @@ impl FractadyneApp {
                 }
                 if self.dual {
                     egui::ComboBox::from_label("Dual layout")
-                        .selected_text(match self.export_dual_mode {
+                        .selected_text(match self.export.dual_mode {
                             DualExport::SideBySide => "Side by side",
                             DualExport::Separate => "Separate files",
                             DualExport::ActiveOnly => "Map only",
                         })
                         .show_ui(ui, |ui| {
                             ui.selectable_value(
-                                &mut self.export_dual_mode,
+                                &mut self.export.dual_mode,
                                 DualExport::SideBySide,
                                 "Side by side",
                             );
                             ui.selectable_value(
-                                &mut self.export_dual_mode,
+                                &mut self.export.dual_mode,
                                 DualExport::Separate,
                                 "Separate files",
                             );
                             ui.selectable_value(
-                                &mut self.export_dual_mode,
+                                &mut self.export.dual_mode,
                                 DualExport::ActiveOnly,
                                 "Map only",
                             );
@@ -4347,20 +4355,20 @@ impl FractadyneApp {
                 ui.horizontal(|ui| {
                     ui.label("Notes:");
                     let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.export_notes)
+                        egui::TextEdit::singleline(&mut self.export.notes)
                             .char_limit(120)
                             .desired_width(220.0)
                             .hint_text("saved with the image (≤120 chars)"),
                     );
-                    if resp.changed() && self.export_notes.chars().count() > 120 {
-                        self.export_notes = self.export_notes.chars().take(120).collect();
+                    if resp.changed() && self.export.notes.chars().count() > 120 {
+                        self.export.notes = self.export.notes.chars().take(120).collect();
                     }
                 });
                 ui.label(format!(
                     "Output: {} × {} px   ({} chars left)",
-                    self.export_width,
+                    self.export.width,
                     self.export_height(),
-                    120usize.saturating_sub(self.export_notes.chars().count()),
+                    120usize.saturating_sub(self.export.notes.chars().count()),
                 ));
                 ui.label(
                     egui::RichText::new(
@@ -4373,7 +4381,7 @@ impl FractadyneApp {
                 );
                 // Target directory: a persistent folder that "Export" saves into (auto name).
                 let target_dir = self
-                    .export_last_dir
+                    .export.last_dir
                     .clone()
                     .filter(|d| d.is_dir())
                     .unwrap_or_else(Self::pictures_dir);
@@ -4385,7 +4393,7 @@ impl FractadyneApp {
                         .clicked()
                     {
                         if let Some(d) = rfd::FileDialog::new().set_directory(&target_dir).pick_folder() {
-                            self.export_last_dir = Some(d);
+                            self.export.last_dir = Some(d);
                         }
                     }
                 });
@@ -4395,18 +4403,18 @@ impl FractadyneApp {
                         .small(),
                 );
                 ui.add_space(6.0);
-                let busy = self.export_task.is_some() || self.export_prep.is_some();
+                let busy = self.export.task.is_some() || self.export.prep.is_some();
                 let elapsed = self
-                    .export_started
+                    .export.started
                     .map(|t| Self::fmt_export_duration(t.elapsed()));
-                if self.export_prep.is_some() {
+                if self.export.prep.is_some() {
                     // Deep export: the bignum reference is building off-thread (UI stays live).
                     ui.horizontal(|ui| {
                         ui.add(egui::Spinner::new());
                         ui.label("Preparing (building reference)…");
                     });
                 } else if busy {
-                    let p = self.export_progress.load(std::sync::atomic::Ordering::Relaxed);
+                    let p = self.export.progress.load(std::sync::atomic::Ordering::Relaxed);
                     if p >= 2000 {
                         // Rendering done; encoding/writing the file (not cancelable).
                         ui.horizontal(|ui| {
@@ -4417,7 +4425,7 @@ impl FractadyneApp {
                         ui.label("Rendering…");
                         ui.add(egui::ProgressBar::new(p as f32 / 1000.0).show_percentage());
                         if ui.button("Cancel").clicked() {
-                            self.export_cancel
+                            self.export.cancel
                                 .store(true, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
@@ -4447,31 +4455,31 @@ impl FractadyneApp {
                         }
                     });
                 }
-                if let Some(s) = &self.export_status {
+                if let Some(s) = &self.export.status {
                     ui.add_space(6.0);
                     ui.label(s);
                 }
             });
-        self.export_open = open;
+        self.export.open = open;
         if do_export {
             if let Some((dev, q)) = gpu {
                 // Save straight into the chosen folder with an auto (timestamped) name.
                 let dir = self
-                    .export_last_dir
+                    .export.last_dir
                     .clone()
                     .filter(|d| d.is_dir())
                     .unwrap_or_else(Self::pictures_dir);
                 let path = dir.join(self.export_default_name());
                 self.start_export_to(ctx, dev.clone(), q.clone(), path);
             } else {
-                self.export_status = Some("GPU not available".to_string());
+                self.export.status = Some("GPU not available".to_string());
             }
         }
         if do_export_as {
             if let Some((dev, q)) = gpu {
                 self.start_export(ctx, dev.clone(), q.clone());
             } else {
-                self.export_status = Some("GPU not available".to_string());
+                self.export.status = Some("GPU not available".to_string());
             }
         }
     }
@@ -4497,7 +4505,7 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui.button("💾  Export image…").clicked() {
-                            self.export_open = true;
+                            self.export.open = true;
                             ui.close_menu();
                         }
                         if ui
@@ -4851,7 +4859,7 @@ impl FractadyneApp {
                     self.scan_gallery();
                 }
                 if ui.button("💾").on_hover_text("Export image…").clicked() {
-                    self.export_open = true;
+                    self.export.open = true;
                 }
                 if ui
                     .button("📷")
@@ -5878,26 +5886,26 @@ impl eframe::App for FractadyneApp {
         self.advance_orbit_anim(ctx);
 
         // Poll a background export for completion.
-        if let Some(rx) = &self.export_task {
+        if let Some(rx) = &self.export.task {
             match rx.try_recv() {
                 Ok(msg) => {
-                    self.export_status = Some(self.finish_export_status(msg));
-                    self.export_task = None;
+                    self.export.status = Some(self.finish_export_status(msg));
+                    self.export.task = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.export_task = None;
-                    self.export_started = None;
+                    self.export.task = None;
+                    self.export.started = None;
                 }
             }
         }
         // Poll a deep export whose reference is building off-thread. When it lands, assemble the
         // request (reusing the reference — no rebuild) and dispatch the render to a worker. Keeps the
         // UI alive during the (long) bignum reference build instead of freezing.
-        if let Some(prep) = self.export_prep.take() {
+        if let Some(prep) = self.export.prep.take() {
             match prep.rx.try_recv() {
                 Ok(res) => {
-                    let (ew, eh, ess) = (self.export_width.max(1), self.export_height(), self.export_ss.max(1));
+                    let (ew, eh, ess) = (self.export.width.max(1), self.export_height(), self.export.ss.max(1));
                     // Map view: reuse the just-built reference (no rebuild). Dual map is Mandelbrot.
                     let map_julia = prep.julia_vp.is_none() && prep.julia_mode;
                     let mut map_req = self.current_export_request_with_ref(&prep.map_vp, map_julia, Some(res));
@@ -5928,16 +5936,16 @@ impl eframe::App for FractadyneApp {
                     if let Some((dev, q)) = &gpu {
                         self.spawn_export_worker(dev.clone(), q.clone(), job, prep.path, hud);
                     } else {
-                        self.export_status = Some("GPU not available".to_string());
+                        self.export.status = Some("GPU not available".to_string());
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    self.export_prep = Some(prep); // reference still building
+                    self.export.prep = Some(prep); // reference still building
                     ctx.request_repaint();
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.export_status = Some("Export failed: reference build aborted.".to_string());
-                    self.export_started = None;
+                    self.export.status = Some("Export failed: reference build aborted.".to_string());
+                    self.export.started = None;
                 }
             }
         }

@@ -242,7 +242,7 @@ impl FractadyneApp {
             .unwrap_or(0);
         // Latin-1 / single-line safe notes (PNG tEXt), max 120 chars.
         let notes: String = self
-            .export_notes
+            .export.notes
             .chars()
             .filter(|c| !c.is_control() && (*c as u32) <= 0xFF)
             .take(120)
@@ -379,7 +379,7 @@ impl FractadyneApp {
             self.aa = c;
         }
         if let Some(n) = get("notes") {
-            self.export_notes = n;
+            self.export.notes = n;
         }
         // Match the viewport's working precision to the restored zoom; drop caches.
         self.viewport.precision = fractadyne_core::precision_for_octaves(
@@ -426,13 +426,13 @@ impl FractadyneApp {
         match meta {
             Some(m) => {
                 let report = self.load_view_metadata(&m);
-                self.export_status = Some(match report.note() {
+                self.export.status = Some(match report.note() {
                     None => format!("Loaded view from {}", path.display()),
                     Some(n) => format!("Loaded view from {} — {n}", path.display()),
                 });
             }
             None => {
-                self.export_status =
+                self.export.status =
                     Some("That file has no embedded Fractadyne view metadata.".to_string());
             }
         }
@@ -440,7 +440,7 @@ impl FractadyneApp {
 
 
     pub(crate) fn export_ext(&self) -> &'static str {
-        match self.export_format {
+        match self.export.format {
             ExportFormat::Png => "png",
             ExportFormat::Exr => "exr",
         }
@@ -462,12 +462,12 @@ impl FractadyneApp {
 
     /// Start a background export, prompting for a path (modal Save dialog).
     pub(crate) fn start_export(&mut self, ctx: &egui::Context, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
-        if self.export_task.is_some() || self.export_prep.is_some() {
+        if self.export.task.is_some() || self.export.prep.is_some() {
             return;
         }
         let ext = self.export_ext();
         let start_dir = self
-            .export_last_dir
+            .export.last_dir
             .clone()
             .filter(|d| d.is_dir())
             .unwrap_or_else(Self::pictures_dir);
@@ -477,7 +477,7 @@ impl FractadyneApp {
             .add_filter(ext.to_uppercase(), &[ext])
             .save_file();
         let Some(path) = path else {
-            self.export_status = Some("Export canceled.".to_string());
+            self.export.status = Some("Export canceled.".to_string());
             return;
         };
         self.start_export_to(ctx, device, queue, path);
@@ -485,11 +485,11 @@ impl FractadyneApp {
 
     /// Quick export (hotkey): no dialog — save to the last-used folder with an auto name.
     pub(crate) fn quick_export(&mut self, ctx: &egui::Context, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
-        if self.export_task.is_some() || self.export_prep.is_some() {
+        if self.export.task.is_some() || self.export.prep.is_some() {
             return;
         }
         let dir = self
-            .export_last_dir
+            .export.last_dir
             .clone()
             .filter(|d| d.is_dir())
             .unwrap_or_else(Self::pictures_dir);
@@ -544,7 +544,7 @@ impl FractadyneApp {
         let progress = AtomicU32::new(0);
         let cancel = AtomicBool::new(false);
         let meta = self.view_metadata();
-        let fmt = self.export_format;
+        let fmt = self.export.format;
         let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| {
             self.apply_watermark(&mut px, w, h);
             match fmt {
@@ -627,7 +627,7 @@ impl FractadyneApp {
             if let Some(ov) = hud {
                 crate::scripting::blit_location_overlay(&mut px, w, h, ov);
             }
-            match self.export_format {
+            match self.export.format {
                 ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
                 ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
             }
@@ -668,14 +668,14 @@ impl FractadyneApp {
         queue: eframe::wgpu::Queue,
         path: std::path::PathBuf,
     ) {
-        if self.export_task.is_some() || self.export_prep.is_some() {
+        if self.export.task.is_some() || self.export.prep.is_some() {
             return;
         }
         // Start the export clock now — for a deep export this includes the (long) off-thread
         // reference build, which is part of the wait the user is timing.
-        self.export_started = Some(std::time::Instant::now());
+        self.export.started = Some(std::time::Instant::now());
         if let Some(parent) = path.parent() {
-            self.export_last_dir = Some(parent.to_path_buf());
+            self.export.last_dir = Some(parent.to_path_buf());
         }
         // Deep export: build the (slow, bignum) MAP reference orbit OFF the main thread so the UI
         // stays responsive instead of freezing (at extreme depth the reference build alone is
@@ -686,15 +686,15 @@ impl FractadyneApp {
         if self.viewport.magnification() >= crate::PERT_FE_THRESHOLD {
             let map_julia = !self.dual && self.julia_mode; // the dual map panel is Mandelbrot
             if let Some(rx) = self.spawn_export_reference(&self.viewport, map_julia) {
-                self.export_prep = Some(ExportPrep {
+                self.export.prep = Some(ExportPrep {
                     rx,
                     map_vp: self.viewport.clone(),
                     julia_mode: self.julia_mode,
                     julia_vp: self.dual.then(|| self.julia_viewport.clone()),
-                    dual_mode: self.export_dual_mode,
+                    dual_mode: self.export.dual_mode,
                     path,
                 });
-                self.export_status =
+                self.export.status =
                     Some("Preparing deep export — building reference (this can take a while)…".to_string());
                 return;
             }
@@ -712,7 +712,7 @@ impl FractadyneApp {
         // path for aux coloring methods or views past the ~32 MP / single-texture correction limit.
         if self.glitch_correct {
             if let Some(msg) = self.export_corrected_sync(&device, &queue, &path, &job, hud.as_ref()) {
-                self.export_status = Some(self.finish_export_status(msg));
+                self.export.status = Some(self.finish_export_status(msg));
                 return;
             }
         }
@@ -733,7 +733,7 @@ impl FractadyneApp {
     /// Finalize an export status line: on success append the total elapsed time; either way clear
     /// the timer. Cancel/failure messages pass through unchanged (no time — the run didn't finish).
     pub(crate) fn finish_export_status(&mut self, msg: String) -> String {
-        match self.export_started.take() {
+        match self.export.started.take() {
             Some(t) if msg.starts_with("Saved") => {
                 format!("{msg}  (in {})", Self::fmt_export_duration(t.elapsed()))
             }
@@ -754,15 +754,15 @@ impl FractadyneApp {
     ) {
         use std::sync::atomic::Ordering::Relaxed;
         let meta = self.view_metadata();
-        let format = self.export_format;
-        self.export_progress.store(0, Relaxed);
-        self.export_cancel.store(false, Relaxed);
-        let progress = self.export_progress.clone();
-        let cancel = self.export_cancel.clone();
+        let format = self.export.format;
+        self.export.progress.store(0, Relaxed);
+        self.export.cancel.store(false, Relaxed);
+        let progress = self.export.progress.clone();
+        let cancel = self.export.cancel.clone();
         let wm = self.watermark.then(|| self.watermark_overlay.clone()).flatten();
         let (tx, rx) = std::sync::mpsc::channel();
-        self.export_task = Some(rx);
-        self.export_status = Some("Rendering…".to_string());
+        self.export.task = Some(rx);
+        self.export.status = Some("Rendering…".to_string());
         std::thread::spawn(move || {
             let render = |req: &fractadyne_gpu::ExportRequest| {
                 fractadyne_gpu::render_export(&device, &queue, req, &progress, &cancel)

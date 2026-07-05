@@ -374,7 +374,7 @@ impl FractadyneApp {
         precomputed: Option<RecomputeResult>,
     ) -> fractadyne_gpu::ExportRequest {
         let log2mag = vp.log2_magnification();
-        let width = self.export_width.max(1);
+        let width = self.export.width.max(1);
         // height from aspect: span_y/span_x = height_px/width_px (the scale cancels).
         let height = ((width as f64) * vp.height_px / vp.width_px).round().max(1.0) as u32;
         let mag = vp.magnification(); // saturates to ∞ past 1e308×; fine for the mode compares
@@ -433,7 +433,7 @@ impl FractadyneApp {
         fractadyne_gpu::ExportRequest {
             width,
             height,
-            ss: self.export_ss.max(1),
+            ss: self.export.ss.max(1),
             span_mantissa: scale.span_mantissa,
             center,
             ref_offset,
