@@ -23,6 +23,7 @@ directories.workspace = true
 rfd.workspace = true
 serde.workspace = true
 toml.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

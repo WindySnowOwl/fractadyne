@@ -48,6 +48,7 @@ use fractadyne_gpu::{add_mandelbrot, install_renderer};
 
 mod autopilot;
 mod cli;
+mod error;
 mod export;
 mod fractal;
 mod help;

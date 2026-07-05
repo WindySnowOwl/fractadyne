@@ -1383,6 +1383,7 @@ dependencies = [
  "log",
  "rfd",
  "serde",
+ "thiserror 2.0.18",
  "toml",
 ]
 

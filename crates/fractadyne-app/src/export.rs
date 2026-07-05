@@ -524,13 +524,13 @@ impl FractadyneApp {
         req: &fractadyne_gpu::ExportRequest,
         progress: &std::sync::atomic::AtomicU32,
         cancel: &std::sync::atomic::AtomicBool,
-    ) -> Result<fractadyne_gpu::ExportResult, String> {
+    ) -> Result<fractadyne_gpu::ExportResult, fractadyne_gpu::GpuError> {
         if self.glitch_correct {
             if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height) {
                 return Ok(res);
             }
         }
-        fractadyne_gpu::render_export(device, queue, req, progress, cancel).map_err(|e| e.to_string())
+        fractadyne_gpu::render_export(device, queue, req, progress, cancel)
     }
 
     /// Synchronously render the current view and write it to `path` (used by the
@@ -541,7 +541,7 @@ impl FractadyneApp {
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
         path: &std::path::Path,
-    ) -> Result<String, String> {
+    ) -> Result<String, crate::error::AppError> {
         use std::sync::atomic::AtomicBool;
         use std::sync::atomic::AtomicU32;
         let progress = AtomicU32::new(0);
@@ -554,7 +554,6 @@ impl FractadyneApp {
                 ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
                 ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
             }
-            .map_err(|e| e.to_string())
         };
         // Each view is glitch-corrected when enabled + applicable (single and both dual panels).
         let view = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
@@ -597,16 +596,15 @@ impl FractadyneApp {
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
         path: &std::path::Path,
-    ) -> Result<String, String> {
+    ) -> Result<String, crate::error::AppError> {
         let req = self.current_export_request_for(&self.viewport, self.julia_mode);
-        let r = fractadyne_gpu::render_iter(device, queue, &req).map_err(|e| e.to_string())?;
+        let r = fractadyne_gpu::render_iter(device, queue, &req)?;
         let meta = format!(
             "{}\n# iteration-data EXR: R=smooth_iter (<0 = interior), G=normal.x, \
              B=normal.y, A=log2(distance_estimate_px)",
             self.view_metadata()
         );
-        fractadyne_export::write_exr(path, r.width, r.height, &r.pixels, Some(&meta))
-            .map_err(|e| e.to_string())?;
+        fractadyne_export::write_exr(path, r.width, r.height, &r.pixels, Some(&meta))?;
         Ok(format!("Saved iteration EXR {}×{} → {}", r.width, r.height, path.display()))
     }
 
@@ -627,7 +625,11 @@ impl FractadyneApp {
         let correct = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
             self.render_export_corrected(device, queue, vp, julia, req.width, req.height)
         };
-        let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| -> Result<(), String> {
+        let write = |p: &std::path::Path,
+                     w: u32,
+                     h: u32,
+                     mut px: Vec<f32>|
+         -> Result<(), fractadyne_export::ExportError> {
             self.apply_watermark(&mut px, w, h);
             if let Some(ov) = hud {
                 crate::scripting::blit_location_overlay(&mut px, w, h, ov);
@@ -636,9 +638,8 @@ impl FractadyneApp {
                 ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
                 ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
             }
-            .map_err(|e| e.to_string())
         };
-        let status = |res: Result<(), String>, ok: String| match res {
+        let status = |res: Result<(), fractadyne_export::ExportError>, ok: String| match res {
             Ok(_) => ok,
             Err(e) => format!("Export failed: {e}"),
         };
@@ -772,7 +773,6 @@ impl FractadyneApp {
         std::thread::spawn(move || {
             let render = |req: &fractadyne_gpu::ExportRequest| {
                 fractadyne_gpu::render_export(&device, &queue, req, &progress, &cancel)
-                    .map_err(|e| e.to_string())
             };
             let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| {
                 if let Some(ov) = &wm {
@@ -785,9 +785,8 @@ impl FractadyneApp {
                     ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
                     ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
                 }
-                .map_err(|e| e.to_string())
             };
-            let msg = (|| -> Result<String, String> {
+            let msg = (|| -> Result<String, crate::error::AppError> {
                 match job {
                     ExportJob::Single(req) => {
                         let r = render(&req)?;
@@ -817,7 +816,9 @@ impl FractadyneApp {
             })();
             let _ = tx.send(match msg {
                 Ok(m) => m,
-                Err(e) if e == "canceled" => "Export canceled.".to_string(),
+                Err(crate::error::AppError::Gpu(fractadyne_gpu::GpuError::Canceled)) => {
+                    "Export canceled.".to_string()
+                }
                 Err(e) => format!("Export failed: {e}"),
             });
         });
