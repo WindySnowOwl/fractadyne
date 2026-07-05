@@ -30,7 +30,7 @@ impl FractadyneApp {
             self.playback = None;
             self.set_toast("Autopilot on — diving toward detail (any input stops)", ctx);
         } else {
-            self.zoom_vel = 0.0;
+            self.pointer.zoom_vel = 0.0;
             self.autopilot.stepping = false;
             self.set_toast("Autopilot off", ctx);
         }
@@ -59,7 +59,7 @@ impl FractadyneApp {
         if interrupted || self.dual {
             self.autopilot.active = false;
             self.autopilot.stepping = false;
-            self.zoom_vel = 0.0;
+            self.pointer.zoom_vel = 0.0;
             return;
         }
         // Stop at the user's dive limit.
@@ -67,7 +67,7 @@ impl FractadyneApp {
         if l2 >= self.autopilot.dive_log2 {
             self.autopilot.active = false;
             self.autopilot.stepping = false;
-            self.zoom_vel = 0.0;
+            self.pointer.zoom_vel = 0.0;
             self.set_toast(
                 format!(
                     "Autopilot: dive limit reached (~1e{:.0}×)",
@@ -117,7 +117,7 @@ impl FractadyneApp {
                     None => {
                         self.autopilot.active = false;
                         self.autopilot.stepping = false;
-                        self.zoom_vel = 0.0;
+                        self.pointer.zoom_vel = 0.0;
                         self.set_toast("Autopilot: no detail ahead (stopped)", ctx);
                         return;
                     }
@@ -137,7 +137,7 @@ impl FractadyneApp {
             let py = self.autopilot.target.1 * self.viewport.height_px;
             self.viewport.zoom_at(px, py, factor);
         }
-        self.settle_t = [now; 2]; // treat as interaction (AA off, throttled reference refresh)
+        self.pointer.settle_t = [now; 2]; // treat as interaction (AA off, throttled reference refresh)
         self.schedule_repaint(ctx);
     }
 

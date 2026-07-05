@@ -386,7 +386,7 @@ impl FractadyneApp {
             self.viewport.log2_magnification().max(0.0).ceil() as u64,
         );
         self.invalidate_refs();
-        self.zoom_vel = 0.0;
+        self.pointer.zoom_vel = 0.0;
         self.record_nav();
         // Report any keys we didn't recognize (cap the list so a junk file can't flood it).
         for line in meta.lines() {

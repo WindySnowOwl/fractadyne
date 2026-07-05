@@ -1214,6 +1214,36 @@ struct AutopilotState {
     dive_log2: f64,
 }
 
+/// Transient pointer / zoom / pan interaction state (not persisted): the in-progress zoom-box and
+/// box-zoom gestures, pan reprojection, eased continuous-zoom, cursor tracking, and the per-view
+/// settle-quality timers.
+#[derive(Default)]
+struct PointerState {
+    /// In-progress Shift+drag zoom box (rubber-band → zoom to fill); `None` when not dragging.
+    zoom_box: Option<ZoomBox>,
+    /// Box-zoom (right-drag) start position in screen points; `None` when idle.
+    box_start: Option<egui::Pos2>,
+    /// Pan reprojection: accumulated device-pixel drag offset since the current pan began, and
+    /// which view (0 = main/left, 1 = julia) is being panned. While a pan is pending the frozen
+    /// iteration texture is translated by `pan_px` instead of re-rendered; cleared on settle.
+    pan_px: egui::Vec2,
+    pan_view: Option<u32>,
+    /// Eased continuous-zoom velocity (log-rate per second; + = in, - = out, 0 = idle).
+    zoom_vel: f64,
+    /// Last cursor position over the canvas, for cursor-anchored continuous zoom.
+    last_cursor: Option<egui::Pos2>,
+    /// Complex coordinate under the cursor (for the status bar); `None` when off-canvas.
+    pointer_complex: Option<(f64, f64)>,
+    /// App-time of the last interaction, **per view** (`[0]` = main/Mandelbrot, `[1]` = Julia); each
+    /// view stays at the coarse "moving" quality until `SETTLE_DELAY` after its own last change. Kept
+    /// per-view so the dual view's Julia `c` cursor-drag doesn't force the Mandelbrot panel to
+    /// re-render at low resolution.
+    settle_t: [f64; 2],
+    /// Progressive-AA settle stage, per view. On settle the anti-aliasing ramps 1×→2×→4×→… up to the
+    /// chosen level over consecutive frames (each schedules the next); reset to 0 while interacting.
+    settle_frame: [u32; 2],
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1229,24 +1259,12 @@ struct FractadyneApp {
     dual: bool,
     /// Dual-view split position (fraction of width) — the draggable separator between panels.
     dual_split: f32,
-    /// In-progress Shift+drag zoom box (rubber-band → zoom to fill); `None` when not dragging.
-    zoom_box: Option<ZoomBox>,
     /// Borderless fullscreen state (toolbar toggle).
     fullscreen: bool,
     /// Viewport for the Julia panel in dual view.
     julia_viewport: Viewport,
-    /// Complex coordinate under the cursor (for the status bar); `None` when off-canvas.
-    pointer_complex: Option<(f64, f64)>,
-    /// App-time of the last interaction, **per view** (`[0]` = main/Mandelbrot, `[1]` = Julia); each
-    /// view stays at the coarse "moving" quality until `SETTLE_DELAY` after its own last change. Kept
-    /// per-view so that, in the dual view, driving the Julia `c` with the cursor doesn't force the
-    /// unchanged Mandelbrot panel to re-render at low resolution.
-    settle_t: [f64; 2],
-    /// Progressive-AA settle stage, per view. On settle the anti-aliasing ramps 1×→2×→4×→… up to the
-    /// chosen level over consecutive frames (each schedules the next), so a heavy view shows an
-    /// instant coarse frame and refines to full AA rather than blocking on one expensive frame. Reset
-    /// to 0 whenever the view is interacting.
-    settle_frame: [u32; 2],
+    /// Pointer / zoom / pan interaction state (zoom box, pan reprojection, eased zoom, settle timers).
+    pointer: PointerState,
     /// Active smooth "zoom out to home" animation (Home button); `None` when idle.
     home_anim: Option<HomeAnim>,
     /// Auto-zoom autopilot state.
@@ -1417,17 +1435,6 @@ struct FractadyneApp {
     /// Performance/diagnostic tracking + overlay.
     perf: Perf,
     max_iter: u32,
-    /// Box-zoom (right-drag) start position in screen points; `None` when idle.
-    box_start: Option<egui::Pos2>,
-    /// Pan reprojection: accumulated device-pixel drag offset since the current pan began, and
-    /// which view (0 = main/left, 1 = julia) is being panned. While a pan is pending the frozen
-    /// iteration texture is translated by `pan_px` instead of re-rendered; cleared on settle.
-    pan_px: egui::Vec2,
-    pan_view: Option<u32>,
-    /// Eased continuous-zoom velocity (log-rate per second; + = in, - = out, 0 = idle).
-    zoom_vel: f64,
-    /// Last cursor position over the canvas, for cursor-anchored continuous zoom.
-    last_cursor: Option<egui::Pos2>,
     /// Selected palette index into `fractadyne_color::PRESETS`.
     palette_idx: usize,
     /// Color cycle density slider (0..1; mapped to a shader multiplier).
@@ -1597,7 +1604,6 @@ impl FractadyneApp {
             julia_pin: None,
             dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(0.15, 0.85),
-            zoom_box: None,
             fullscreen: false,
             julia_viewport: {
                 let mut v = Viewport::new(800.0, 800.0);
@@ -1605,9 +1611,7 @@ impl FractadyneApp {
                 v.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
                 v
             },
-            pointer_complex: None,
-            settle_t: [0.0; 2],
-            settle_frame: [0; 2],
+            pointer: PointerState::default(),
             home_anim: None,
             autopilot: AutopilotState {
                 active: false,
@@ -1730,11 +1734,6 @@ impl FractadyneApp {
                 ..Perf::default()
             },
             max_iter: s.max_iter,
-            box_start: None,
-            pan_px: egui::Vec2::ZERO,
-            pan_view: None,
-            zoom_vel: 0.0,
-            last_cursor: None,
             palette_idx: s.palette_idx,
             cycle: s.cycle,
             offset: s.offset,
@@ -2025,7 +2024,7 @@ impl FractadyneApp {
         self.viewport.reset();
         self.viewport.center_x = fractadyne_core::BigFloat::from_f64(cx, 64);
         self.viewport.center_y = fractadyne_core::BigFloat::from_f64(cy, 64);
-        self.zoom_vel = 0.0;
+        self.pointer.zoom_vel = 0.0;
         self.invalidate_refs(); // dynamics changed → drop the cached reference orbits
     }
 
@@ -2340,20 +2339,20 @@ impl FractadyneApp {
         let shift = ctx.input(|i| i.modifiers.shift);
 
         // Zoom box (Shift+drag): rubber-band a rectangle; on release, zoom so it fills the
-        // panel. Handled before borrowing `vp` (uses the separate `self.zoom_box` field).
+        // panel. Handled before borrowing `vp` (uses the separate `self.pointer.zoom_box` field).
         if resp.drag_started() && shift {
             if let Some(p) = resp.interact_pointer_pos() {
-                self.zoom_box = Some(ZoomBox { start: p, end: p, is_julia });
+                self.pointer.zoom_box = Some(ZoomBox { start: p, end: p, is_julia });
             }
         }
         let mut apply_zoom: Option<(f64, f64, f64)> = None; // (box_cx_px, box_cy_px, factor)
         let mut zoom_boxing = false;
-        if self.zoom_box.as_ref().is_some_and(|z| z.is_julia == is_julia) {
+        if self.pointer.zoom_box.as_ref().is_some_and(|z| z.is_julia == is_julia) {
             zoom_boxing = true;
             if let Some(cur) = resp.interact_pointer_pos() {
-                self.zoom_box.as_mut().unwrap().end = cur;
+                self.pointer.zoom_box.as_mut().unwrap().end = cur;
             }
-            let zb = self.zoom_box.as_ref().unwrap();
+            let zb = self.pointer.zoom_box.as_ref().unwrap();
             let boxr = aspect_zoom_box(zb.start, zb.end, rect);
             // Foreground layer so the box draws above the fractal paint callback.
             let painter = ctx.layer_painter(egui::LayerId::new(
@@ -2380,7 +2379,7 @@ impl FractadyneApp {
                         (boxr.width() / rect.width()) as f64, // < 1 ⇒ zoom in
                     ));
                 }
-                self.zoom_box = None;
+                self.pointer.zoom_box = None;
                 zoom_boxing = false;
             }
         }
@@ -2416,12 +2415,12 @@ impl FractadyneApp {
         let active = (resp.dragged() && !zoom_boxing)
             || apply_zoom.is_some()
             || (scroll != 0.0 && hovering)
-            || (self.zoom_vel.abs() > 1e-3 && hovering);
+            || (self.pointer.zoom_vel.abs() > 1e-3 && hovering);
         let view = is_julia as usize;
         if active {
-            self.settle_t[view] = now;
+            self.pointer.settle_t[view] = now;
         }
-        let interacting = now - self.settle_t[view] < SETTLE_DELAY;
+        let interacting = now - self.pointer.settle_t[view] < SETTLE_DELAY;
 
         let eff_iter = if self.auto_iter {
             vp.recommended_max_iter(self.max_iter)
@@ -2437,12 +2436,12 @@ impl FractadyneApp {
         // 1×→2×→4×→… up to the chosen level over consecutive frames, so a heavy view never blocks on
         // one full-AA frame.
         let aa_target = if interacting {
-            self.settle_frame[view] = 0;
+            self.pointer.settle_frame[view] = 0;
             1
         } else {
-            let ss = aa_ramp(self.settle_frame[view], self.aa);
+            let ss = aa_ramp(self.pointer.settle_frame[view], self.aa);
             if ss < self.aa {
-                self.settle_frame[view] += 1;
+                self.pointer.settle_frame[view] += 1;
                 self.schedule_repaint(ctx); // render the next, sharper AA stage
             }
             ss
@@ -2458,25 +2457,25 @@ impl FractadyneApp {
         // can't see what you're panning toward. `pan_px` accumulates the same device-pixel
         // deltas fed to `pan_pixels`, so the slide matches the eventual settled render exactly.
         if resp.drag_started_by(egui::PointerButton::Primary) && !zoom_boxing {
-            self.pan_px = egui::Vec2::ZERO;
-            self.pan_view = Some(view_id);
+            self.pointer.pan_px = egui::Vec2::ZERO;
+            self.pointer.pan_view = Some(view_id);
         }
-        if self.pan_view == Some(view_id)
+        if self.pointer.pan_view == Some(view_id)
             && !zoom_boxing
             && resp.dragged_by(egui::PointerButton::Primary)
         {
             let d = resp.drag_delta();
-            self.pan_px += egui::vec2(d.x * ppp as f32, d.y * ppp as f32);
+            self.pointer.pan_px += egui::vec2(d.x * ppp as f32, d.y * ppp as f32);
         }
-        let reproject = if self.pan_view == Some(view_id) && interacting {
+        let reproject = if self.pointer.pan_view == Some(view_id) && interacting {
             self.schedule_repaint(ctx); // keep rendering until the view settles
             Some([
-                self.pan_px.x / res[0].max(1) as f32,
-                self.pan_px.y / res[1].max(1) as f32,
+                self.pointer.pan_px.x / res[0].max(1) as f32,
+                self.pointer.pan_px.y / res[1].max(1) as f32,
             ])
         } else {
-            if self.pan_view == Some(view_id) {
-                self.pan_view = None; // settled → next frame does a full re-iterate
+            if self.pointer.pan_view == Some(view_id) {
+                self.pointer.pan_view = None; // settled → next frame does a full re-iterate
             }
             None
         };
@@ -2537,14 +2536,14 @@ impl FractadyneApp {
             0.0
         };
         let ease = 1.0 - (-dt / EASE_TAU).exp();
-        self.zoom_vel += (target - self.zoom_vel) * ease;
-        if target != 0.0 || self.zoom_vel.abs() > 1e-3 {
+        self.pointer.zoom_vel += (target - self.pointer.zoom_vel) * ease;
+        if target != 0.0 || self.pointer.zoom_vel.abs() > 1e-3 {
             self.schedule_repaint(ctx);
         }
-        if self.zoom_vel.abs() > 1e-3 {
+        if self.pointer.zoom_vel.abs() > 1e-3 {
             if let Some((p, r, is_julia)) = panel {
                 let l = p - r.min;
-                let factor = (-self.zoom_vel * dt).exp();
+                let factor = (-self.pointer.zoom_vel * dt).exp();
                 let vp = if is_julia {
                     &mut self.julia_viewport
                 } else {
@@ -2575,7 +2574,7 @@ impl FractadyneApp {
                 } else {
                     self.julia_pin = Some(cc);
                     self.julia_c = cc;
-                    self.settle_t[1] = ctx.input(|i| i.time); // only the Julia view changed
+                    self.pointer.settle_t[1] = ctx.input(|i| i.time); // only the Julia view changed
                     self.ref_cache[1].ref_pt = None; // Julia changed
                 }
             }
@@ -2595,7 +2594,7 @@ impl FractadyneApp {
             pc = Some(coord);
             if !is_julia && self.julia_pin.is_none() && coord != self.julia_c {
                 self.julia_c = coord; // live: cursor over Mandelbrot drives the Julia
-                self.settle_t[1] = ctx.input(|i| i.time); // only the Julia panel is changing
+                self.pointer.settle_t[1] = ctx.input(|i| i.time); // only the Julia panel is changing
                 self.ref_cache[1].ref_pt = None;
                 self.schedule_repaint(ctx);
             }
@@ -2665,7 +2664,7 @@ impl FractadyneApp {
             sep_col,
         );
 
-        self.pointer_complex = pc;
+        self.pointer.pointer_complex = pc;
     }
 
     /// Screen position (points) of a complex coordinate in the Mandelbrot viewport,
@@ -2923,7 +2922,7 @@ impl FractadyneApp {
         self.viewport.center_y = s.cy.clone();
         self.viewport.units_per_pixel = s.upp;
         self.viewport.precision = s.prec;
-        self.zoom_vel = 0.0;
+        self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
     }
 
@@ -2981,7 +2980,7 @@ impl FractadyneApp {
                 // Clamp to a sane octave bound so a pasted absurd zoom can't request
                 // runaway precision; well beyond any practical depth.
                 self.viewport.set_center_log2mag(cx, cy, l.clamp(0.0, 1.0e6));
-                self.zoom_vel = 0.0;
+                self.pointer.zoom_vel = 0.0;
                 self.invalidate_refs();
                 self.record_nav();
                 self.goto.msg = None;
@@ -3018,7 +3017,7 @@ impl FractadyneApp {
                 self.viewport.set_center_mag(n.cx, n.cy, mag);
                 self.viewport.precision =
                     fractadyne_core::precision_for_magnification(mag);
-                self.zoom_vel = 0.0;
+                self.pointer.zoom_vel = 0.0;
                 self.invalidate_refs();
                 self.record_nav();
                 self.set_toast(format!("Snapped to period-{} minibrot center", n.period), ctx);
@@ -3218,7 +3217,7 @@ impl FractadyneApp {
                 fractadyne_core::BigFloat::from_f64(ty, 64),
                 1.0,
             );
-            self.zoom_vel = 0.0;
+            self.pointer.zoom_vel = 0.0;
             self.invalidate_refs();
             self.record_nav();
         }
@@ -3341,7 +3340,7 @@ impl FractadyneApp {
         self.julia_mode = false;
         self.viewport.set_center_mag(x, y, mag.max(1.0));
         self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
-        self.zoom_vel = 0.0;
+        self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
         self.set_toast(format!("{name} · {}×", fmt_zoom(mag)), ctx);
@@ -3382,7 +3381,7 @@ impl FractadyneApp {
             mag,
         );
         self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
-        self.zoom_vel = 0.0;
+        self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
         self.set_toast(format!("Random location · {}×", fmt_zoom(mag)), ctx);
@@ -3503,7 +3502,7 @@ impl FractadyneApp {
         }
         self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
         self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
-        self.zoom_vel = 0.0;
+        self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
         Ok(format!("Imported .kfr location @ {}×", fmt_zoom(zoom)))
@@ -3605,7 +3604,7 @@ impl FractadyneApp {
             self.julia_viewport.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
             self.julia_viewport.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
         }
-        self.zoom_vel = 0.0;
+        self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
     }
@@ -3638,7 +3637,7 @@ impl FractadyneApp {
             j_start_logmag: j_logmag,
             dual: self.dual,
         });
-        self.zoom_vel = 0.0;
+        self.pointer.zoom_vel = 0.0;
     }
 
     /// Advance the active zoom-home animation by one frame. Returns true while it is
@@ -3673,7 +3672,7 @@ impl FractadyneApp {
         }
         // Treat the glide as interaction so AA stays off and references aren't
         // recomputed every frame (rebasing covers the motion; quality on settle).
-        self.settle_t = [now; 2];
+        self.pointer.settle_t = [now; 2];
         self.home_anim = Some(anim);
         true
     }
@@ -5420,7 +5419,7 @@ impl FractadyneApp {
                     fmt_coord_deep(&self.viewport.center_y, l2),
                 ));
                 ui.separator();
-                match self.pointer_complex {
+                match self.pointer.pointer_complex {
                     Some((mx, my)) => {
                         ui.monospace(format!("cursor {}, {}", fmt_coord(mx), fmt_coord(my)))
                     }
@@ -5488,16 +5487,16 @@ impl FractadyneApp {
                 let shift = ctx.input(|i| i.modifiers.shift);
                 if response.drag_started() && shift {
                     if let Some(p) = response.interact_pointer_pos() {
-                        self.zoom_box = Some(ZoomBox { start: p, end: p, is_julia: false });
+                        self.pointer.zoom_box = Some(ZoomBox { start: p, end: p, is_julia: false });
                     }
                 }
                 let mut zoom_boxing = false;
-                if self.zoom_box.as_ref().is_some_and(|z| !z.is_julia) {
+                if self.pointer.zoom_box.as_ref().is_some_and(|z| !z.is_julia) {
                     zoom_boxing = true;
                     if let Some(cur) = response.interact_pointer_pos() {
-                        self.zoom_box.as_mut().unwrap().end = cur;
+                        self.pointer.zoom_box.as_mut().unwrap().end = cur;
                     }
-                    let zb = self.zoom_box.as_ref().unwrap();
+                    let zb = self.pointer.zoom_box.as_ref().unwrap();
                     let boxr = aspect_zoom_box(zb.start, zb.end, rect);
                     // Foreground layer so the box draws above the fractal paint callback.
                     let painter = ctx.layer_painter(egui::LayerId::new(
@@ -5523,15 +5522,15 @@ impl FractadyneApp {
                             let (w, h) = (self.viewport.width_px, self.viewport.height_px);
                             self.viewport.pan_pixels(w * 0.5 - bcx, h * 0.5 - bcy);
                             self.viewport.zoom_at(w * 0.5, h * 0.5, factor);
-                            self.settle_t[0] = ctx.input(|i| i.time);
+                            self.pointer.settle_t[0] = ctx.input(|i| i.time);
                         }
-                        self.zoom_box = None;
+                        self.pointer.zoom_box = None;
                         zoom_boxing = false;
                     }
                 }
 
                 // Track the complex coordinate under the cursor (for the status bar).
-                self.pointer_complex = response.hover_pos().map(|p| {
+                self.pointer.pointer_complex = response.hover_pos().map(|p| {
                     let l = p - rect.min;
                     self.viewport
                         .complex_at_pixel_f64(l.x as f64 * ppp, l.y as f64 * ppp)
@@ -5557,7 +5556,7 @@ impl FractadyneApp {
                 // Continuous zoom: hold Space (in) / Shift+Space (out), toward the
                 // cursor. Exponential rate, eased in/out, frame-rate independent.
                 if let Some(pos) = response.hover_pos() {
-                    self.last_cursor = Some(pos);
+                    self.pointer.last_cursor = Some(pos);
                 }
                 let (space, shift) =
                     ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
@@ -5569,27 +5568,27 @@ impl FractadyneApp {
                 };
                 let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
                 let ease = 1.0 - (-dt / EASE_TAU).exp();
-                self.zoom_vel += (target_vel - self.zoom_vel) * ease;
-                if target_vel != 0.0 || self.zoom_vel.abs() > 1e-3 {
+                self.pointer.zoom_vel += (target_vel - self.pointer.zoom_vel) * ease;
+                if target_vel != 0.0 || self.pointer.zoom_vel.abs() > 1e-3 {
                     self.schedule_repaint(ctx); // animate while held and during glide-out
                 }
-                if self.zoom_vel.abs() > 1e-3 {
-                    let anchor = self.last_cursor.unwrap_or_else(|| rect.center());
+                if self.pointer.zoom_vel.abs() > 1e-3 {
+                    let anchor = self.pointer.last_cursor.unwrap_or_else(|| rect.center());
                     let local = anchor - rect.min;
-                    let factor = (-self.zoom_vel * dt).exp(); // vel>0 → factor<1 → zoom in
+                    let factor = (-self.pointer.zoom_vel * dt).exp(); // vel>0 → factor<1 → zoom in
                     self.viewport
                         .zoom_at(local.x as f64 * ppp, local.y as f64 * ppp, factor);
                 }
 
                 // Box-zoom with right-drag: record the start, apply on release.
                 if response.drag_started_by(egui::PointerButton::Secondary) {
-                    self.box_start = response.interact_pointer_pos();
+                    self.pointer.box_start = response.interact_pointer_pos();
                 }
                 if response.drag_stopped_by(egui::PointerButton::Secondary) {
                     let end = response
                         .interact_pointer_pos()
                         .or_else(|| ctx.input(|i| i.pointer.latest_pos()));
-                    if let (Some(start), Some(end)) = (self.box_start, end) {
+                    if let (Some(start), Some(end)) = (self.pointer.box_start, end) {
                         let s = start - rect.min;
                         let e = end - rect.min;
                         if (e.x - s.x).abs() > 6.0 && (e.y - s.y).abs() > 6.0 {
@@ -5601,7 +5600,7 @@ impl FractadyneApp {
                             );
                         }
                     }
-                    self.box_start = None;
+                    self.pointer.box_start = None;
                 }
 
                 // Render the fractal at the current viewport with the chosen palette.
@@ -5618,22 +5617,22 @@ impl FractadyneApp {
                 // `box_start`) drags the pointer but does NOT move the view, so it must not
                 // count as "active" — otherwise the render drops to the coarse moving preview
                 // while you're framing the box. The zoom is applied on release.
-                let active = self.zoom_vel.abs() > 1e-3
-                    || (response.dragged() && !zoom_boxing && self.box_start.is_none())
+                let active = self.pointer.zoom_vel.abs() > 1e-3
+                    || (response.dragged() && !zoom_boxing && self.pointer.box_start.is_none())
                     || scroll_y != 0.0
                     || space;
                 if active {
-                    self.settle_t[0] = now;
+                    self.pointer.settle_t[0] = now;
                 }
-                let interacting = now - self.settle_t[0] < SETTLE_DELAY;
+                let interacting = now - self.pointer.settle_t[0] < SETTLE_DELAY;
                 // Progressive settle AA (see `nav_and_draw`): refine 1×→2×→4×→… over settled frames.
                 let aa_target = if interacting {
-                    self.settle_frame[0] = 0;
+                    self.pointer.settle_frame[0] = 0;
                     1
                 } else {
-                    let ss = aa_ramp(self.settle_frame[0], self.aa);
+                    let ss = aa_ramp(self.pointer.settle_frame[0], self.aa);
                     if ss < self.aa {
-                        self.settle_frame[0] += 1;
+                        self.pointer.settle_frame[0] += 1;
                         self.schedule_repaint(ctx);
                     }
                     ss
@@ -5649,27 +5648,27 @@ impl FractadyneApp {
                 ];
                 // Pan reprojection: while dragging, translate the last detailed frame instead
                 // of re-rendering coarse (see `nav_and_draw` for the full rationale).
-                let panning = !zoom_boxing && self.box_start.is_none();
+                let panning = !zoom_boxing && self.pointer.box_start.is_none();
                 if response.drag_started_by(egui::PointerButton::Primary) && panning {
-                    self.pan_px = egui::Vec2::ZERO;
-                    self.pan_view = Some(0);
+                    self.pointer.pan_px = egui::Vec2::ZERO;
+                    self.pointer.pan_view = Some(0);
                 }
-                if self.pan_view == Some(0)
+                if self.pointer.pan_view == Some(0)
                     && panning
                     && response.dragged_by(egui::PointerButton::Primary)
                 {
                     let d = response.drag_delta();
-                    self.pan_px += egui::vec2(d.x * ppp as f32, d.y * ppp as f32);
+                    self.pointer.pan_px += egui::vec2(d.x * ppp as f32, d.y * ppp as f32);
                 }
-                let reproject = if self.pan_view == Some(0) && interacting {
+                let reproject = if self.pointer.pan_view == Some(0) && interacting {
                     self.schedule_repaint(ctx);
                     Some([
-                        self.pan_px.x / resolution[0].max(1) as f32,
-                        self.pan_px.y / resolution[1].max(1) as f32,
+                        self.pointer.pan_px.x / resolution[0].max(1) as f32,
+                        self.pointer.pan_px.y / resolution[1].max(1) as f32,
                     ])
                 } else {
-                    if self.pan_view == Some(0) {
-                        self.pan_view = None;
+                    if self.pointer.pan_view == Some(0) {
+                        self.pointer.pan_view = None;
                     }
                     None
                 };
@@ -5714,7 +5713,7 @@ impl FractadyneApp {
                 }
 
                 // Draw the in-progress box-zoom selection on top of the fractal.
-                if let Some(start) = self.box_start {
+                if let Some(start) = self.pointer.box_start {
                     if response.dragged_by(egui::PointerButton::Secondary) {
                         if let Some(cur) = response.interact_pointer_pos() {
                             let sel = egui::Rect::from_two_pos(start, cur);
@@ -5797,7 +5796,7 @@ impl eframe::App for FractadyneApp {
             if self.autopilot.active {
                 self.autopilot.active = false;
                 self.autopilot.stepping = false;
-                self.zoom_vel = 0.0;
+                self.pointer.zoom_vel = 0.0;
             } else if self.playback.is_some() {
                 self.playback = None;
             } else if self.fullscreen {
@@ -6172,7 +6171,7 @@ impl eframe::App for FractadyneApp {
         // Navigation history: record a location each time the single view settles after
         // a pan/zoom gesture (its own dedup avoids repeats). Discrete jumps record
         // explicitly. Skipped in dual view.
-        let interacting_now = ctx.input(|i| i.time) - self.settle_t[0] < SETTLE_DELAY;
+        let interacting_now = ctx.input(|i| i.time) - self.pointer.settle_t[0] < SETTLE_DELAY;
         if self.nav.was_interacting && !interacting_now && !self.dual {
             self.record_nav();
         }
