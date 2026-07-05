@@ -1408,10 +1408,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fractadyne-fractals"
-version = "0.1.29"
-
-[[package]]
 name = "fractadyne-gpu"
 version = "0.1.29"
 dependencies = [
@@ -1434,10 +1430,6 @@ dependencies = [
  "serde",
  "toml",
 ]
-
-[[package]]
-name = "fractadyne-ui"
-version = "0.1.29"
 
 [[package]]
 name = "futures-channel"
