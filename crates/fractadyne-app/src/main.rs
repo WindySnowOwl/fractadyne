@@ -1024,6 +1024,14 @@ impl Default for BenchConfig {
     }
 }
 
+/// Gallery-browser dialog state (transient): open flag, scanned folder, and its entries.
+#[derive(Default)]
+struct GalleryState {
+    open: bool,
+    dir: std::path::PathBuf,
+    entries: Vec<GalleryEntry>,
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1186,9 +1194,7 @@ struct FractadyneApp {
     /// covers it). Drives the live "elapsed" readout and the final total-time report.
     export_started: Option<std::time::Instant>,
     /// Gallery browser state.
-    gallery_open: bool,
-    gallery_dir: std::path::PathBuf,
-    gallery_entries: Vec<GalleryEntry>,
+    gallery: GalleryState,
     /// Bookmarks (saved views), persisted to the config dir; + window/input state.
     bookmarks: Vec<Bookmark>,
     bookmarks_open: bool,
@@ -1545,9 +1551,7 @@ impl FractadyneApp {
             export_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             export_last_dir: s.export_dir.clone().map(std::path::PathBuf::from),
             export_started: None,
-            gallery_open: false,
-            gallery_dir: Self::pictures_dir(),
-            gallery_entries: Vec::new(),
+            gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             bookmarks: Self::load_bookmarks(),
             bookmarks_open: false,
             pending_thumb: None,
@@ -2104,8 +2108,8 @@ impl FractadyneApp {
     /// Scan the gallery folder for exported PNG/EXR files with Fractadyne metadata,
     /// newest first. Thumbnails load lazily afterward.
     fn scan_gallery(&mut self) {
-        self.gallery_entries.clear();
-        let Ok(rd) = std::fs::read_dir(&self.gallery_dir) else {
+        self.gallery.entries.clear();
+        let Ok(rd) = std::fs::read_dir(&self.gallery.dir) else {
             return;
         };
         for path in rd.flatten().map(|e| e.path()) {
@@ -2127,7 +2131,7 @@ impl FractadyneApp {
                 .parse::<f64>()
                 .map(|z| format!("{}×", fmt_zoom(z)))
                 .unwrap_or_default();
-            self.gallery_entries.push(GalleryEntry {
+            self.gallery.entries.push(GalleryEntry {
                 fractal: meta_get(&m, "fractal"),
                 zoom,
                 saved: meta_get(&m, "saved"),
@@ -2140,7 +2144,7 @@ impl FractadyneApp {
                 thumb_tried: false,
             });
         }
-        self.gallery_entries
+        self.gallery.entries
             .sort_by_key(|e| std::cmp::Reverse(e.saved_unix));
     }
 
@@ -4145,10 +4149,10 @@ impl FractadyneApp {
 
     /// Gallery browser — scan a folder of exported PNG/EXR images and reopen any view (lazy thumbs).
     fn draw_gallery_dialog(&mut self, ctx: &egui::Context) {
-        if !self.gallery_open {
+        if !self.gallery.open {
             return;
         }
-        let mut open = self.gallery_open;
+        let mut open = self.gallery.open;
         let mut to_open: Option<String> = None;
         let mut do_rescan = false;
         egui::Window::new("Gallery")
@@ -4158,10 +4162,10 @@ impl FractadyneApp {
                 ui.horizontal(|ui| {
                     if ui.button("Folder…").clicked() {
                         if let Some(d) = rfd::FileDialog::new()
-                            .set_directory(&self.gallery_dir)
+                            .set_directory(&self.gallery.dir)
                             .pick_folder()
                         {
-                            self.gallery_dir = d;
+                            self.gallery.dir = d;
                             do_rescan = true;
                         }
                     }
@@ -4169,17 +4173,17 @@ impl FractadyneApp {
                         do_rescan = true;
                     }
                     ui.label(
-                        egui::RichText::new(self.gallery_dir.display().to_string())
+                        egui::RichText::new(self.gallery.dir.display().to_string())
                             .weak()
                             .small(),
                     );
                 });
                 ui.separator();
-                if self.gallery_entries.is_empty() {
+                if self.gallery.entries.is_empty() {
                     ui.label("No Fractadyne images in this folder.");
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for entry in &self.gallery_entries {
+                    for entry in &self.gallery.entries {
                         ui.horizontal(|ui| {
                             match &entry.thumb {
                                 Some(t) => {
@@ -4217,7 +4221,7 @@ impl FractadyneApp {
                     }
                 });
             });
-        self.gallery_open = open;
+        self.gallery.open = open;
         if do_rescan {
             self.scan_gallery();
         }
@@ -4226,7 +4230,7 @@ impl FractadyneApp {
             self.export_status = Some("Loaded view from gallery.".to_string());
         }
         // Lazily decode one thumbnail per frame so scanning a folder never freezes.
-        if let Some(entry) = self.gallery_entries.iter_mut().find(|e| !e.thumb_tried) {
+        if let Some(entry) = self.gallery.entries.iter_mut().find(|e| !e.thumb_tried) {
             entry.thumb_tried = true;
             if let Some((tw, th, rgba)) = fractadyne_export::read_thumbnail(&entry.path, 160) {
                 let img = egui::ColorImage::from_rgba_unmultiplied([tw as usize, th as usize], &rgba);
@@ -4484,7 +4488,7 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui.button("🖼  Gallery…").clicked() {
-                            self.gallery_open = true;
+                            self.gallery.open = true;
                             self.scan_gallery();
                             ui.close_menu();
                         }
@@ -4839,7 +4843,7 @@ impl FractadyneApp {
                     self.open_view();
                 }
                 if ui.button("🖼").on_hover_text("Gallery").clicked() {
-                    self.gallery_open = true;
+                    self.gallery.open = true;
                     self.scan_gallery();
                 }
                 if ui.button("💾").on_hover_text("Export image…").clicked() {
