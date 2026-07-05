@@ -5221,6 +5221,62 @@ impl FractadyneApp {
                 });
         }
     }
+    /// Bottom status bar — center coordinate, cursor, zoom, effective iteration count, and the
+    /// live script / benchmark playback progress.
+    fn draw_status_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let l2 = self.viewport.log2_magnification();
+                ui.monospace(format!(
+                    "center {}, {}",
+                    fmt_coord_deep(&self.viewport.center_x, l2),
+                    fmt_coord_deep(&self.viewport.center_y, l2),
+                ));
+                ui.separator();
+                match self.pointer_complex {
+                    Some((mx, my)) => {
+                        ui.monospace(format!("cursor {}, {}", fmt_coord(mx), fmt_coord(my)))
+                    }
+                    None => ui.monospace("cursor —"),
+                };
+                ui.separator();
+                if self.dual {
+                    ui.monospace(format!(
+                        "zoom  M {}×   J {}×",
+                        fmt_zoom_log2(self.viewport.log2_magnification()),
+                        fmt_zoom_log2(self.julia_viewport.log2_magnification()),
+                    ));
+                } else {
+                    ui.monospace(format!("zoom {}×", fmt_zoom_log2(self.viewport.log2_magnification())));
+                }
+                ui.separator();
+                // Show the count actually rendered last frame (coarse while moving, full when
+                // settled) — matches the Performance panel's "eff iter".
+                let eff_iter = if self.perf.last_eff_iter > 0 {
+                    self.perf.last_eff_iter
+                } else {
+                    let want_iter = if self.auto_iter {
+                        self.viewport.recommended_max_iter(self.max_iter)
+                    } else {
+                        self.max_iter
+                    };
+                    want_iter.min(zoom_iter_cap(self.viewport.log2_magnification()).max(256))
+                };
+                ui.monospace(format!("iter {}", commas(&eff_iter.to_string())));
+                if let Some(pb) = &self.playback {
+                    let elapsed = pb.t0.map_or(0.0, |t0| ctx.input(|i| i.time) - t0);
+                    let pct = if pb.total > 0.0 {
+                        (elapsed / pb.total * 100.0).clamp(0.0, 100.0)
+                    } else {
+                        100.0
+                    };
+                    ui.separator();
+                    let tag = if pb.bench.is_some() { "benchmark" } else { "script" };
+                    ui.monospace(format!("▶ {} {tag} {pct:.0}%", pb.name));
+                }
+            });
+        });
+    }
 }
 
 impl eframe::App for FractadyneApp {
@@ -5583,58 +5639,7 @@ impl eframe::App for FractadyneApp {
         // `menu::bar`, which would claim the full width and push the toolbar down.)
         self.draw_menu_bar(ctx, &gpu);
 
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let l2 = self.viewport.log2_magnification();
-                ui.monospace(format!(
-                    "center {}, {}",
-                    fmt_coord_deep(&self.viewport.center_x, l2),
-                    fmt_coord_deep(&self.viewport.center_y, l2),
-                ));
-                ui.separator();
-                match self.pointer_complex {
-                    Some((mx, my)) => {
-                        ui.monospace(format!("cursor {}, {}", fmt_coord(mx), fmt_coord(my)))
-                    }
-                    None => ui.monospace("cursor —"),
-                };
-                ui.separator();
-                if self.dual {
-                    ui.monospace(format!(
-                        "zoom  M {}×   J {}×",
-                        fmt_zoom_log2(self.viewport.log2_magnification()),
-                        fmt_zoom_log2(self.julia_viewport.log2_magnification()),
-                    ));
-                } else {
-                    ui.monospace(format!("zoom {}×", fmt_zoom_log2(self.viewport.log2_magnification())));
-                }
-                ui.separator();
-                // Show the count actually rendered last frame (coarse while moving, full when
-                // settled) — matches the Performance panel's "eff iter".
-                let eff_iter = if self.perf.last_eff_iter > 0 {
-                    self.perf.last_eff_iter
-                } else {
-                    let want_iter = if self.auto_iter {
-                        self.viewport.recommended_max_iter(self.max_iter)
-                    } else {
-                        self.max_iter
-                    };
-                    want_iter.min(zoom_iter_cap(self.viewport.log2_magnification()).max(256))
-                };
-                ui.monospace(format!("iter {}", commas(&eff_iter.to_string())));
-                if let Some(pb) = &self.playback {
-                    let elapsed = pb.t0.map_or(0.0, |t0| ctx.input(|i| i.time) - t0);
-                    let pct = if pb.total > 0.0 {
-                        (elapsed / pb.total * 100.0).clamp(0.0, 100.0)
-                    } else {
-                        100.0
-                    };
-                    ui.separator();
-                    let tag = if pb.bench.is_some() { "benchmark" } else { "script" };
-                    ui.monospace(format!("▶ {} {tag} {pct:.0}%", pb.name));
-                }
-            });
-        });
+        self.draw_status_bar(ctx);
 
         // Right-hand control panel: fractal info, coloring, navigation, and the
         // optional performance section. Hidden entirely while in fullscreen.
