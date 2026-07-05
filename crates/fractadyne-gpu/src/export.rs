@@ -34,7 +34,7 @@ pub struct ExportRequest {
     pub height: u32,
     pub ss: u32,
     /// Complex span *mantissa* (`span · 2^-delta_exp`, O(1)) — see [`fractadyne_core::GpuScale`].
-    pub span_mantissa: [f64; 2],
+    pub span_mantissa: fractadyne_core::SpanMantissa,
     pub center: [f32; 4],
     pub ref_offset: RefOffset,
     pub delta_exp: i32,
@@ -197,8 +197,8 @@ pub fn render_export(
         (hi, (v - hi as f64) as f32)
     };
     // Step mantissa = span_mantissa (already × 2^-delta_exp) / texdim — O(1), no overflow.
-    let (sxh, sxl) = split(req.span_mantissa[0] / (w as f64 * ss as f64));
-    let (syh, syl) = split(req.span_mantissa[1] / (h as f64 * ss as f64));
+    let (sxh, sxl) = split(req.span_mantissa.x / (w as f64 * ss as f64));
+    let (syh, syl) = split(req.span_mantissa.y / (h as f64 * ss as f64));
 
     let bpp = 16u32; // Rgba32Float
     let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -412,8 +412,8 @@ pub fn render_iter(
         let hi = v as f32;
         (hi, (v - hi as f64) as f32)
     };
-    let (sxh, sxl) = split(req.span_mantissa[0] / w as f64);
-    let (syh, syl) = split(req.span_mantissa[1] / h as f64);
+    let (sxh, sxl) = split(req.span_mantissa.x / w as f64);
+    let (syh, syl) = split(req.span_mantissa.y / h as f64);
     let iu = IterUniforms {
         step: [sxh, sxl, syh, syl],
         ref_offset: req.ref_offset.to_array(),

@@ -2125,7 +2125,7 @@ impl FractadyneApp {
             // Keep the per-texel step isotropic (the GPU derives step = span/resolution per axis):
             // set the vertical span to match the horizontal step × the chosen height, so the fractal
             // isn't stretched when the aspect differs from the window. No-op for "Match window".
-            req.span_mantissa[1] = req.span_mantissa[0] * (h as f64 / req.width.max(1) as f64);
+            req.span_mantissa.y = req.span_mantissa.x * (h as f64 / req.width.max(1) as f64);
             req
         };
         if self.dual {
@@ -3731,14 +3731,14 @@ impl eframe::App for FractadyneApp {
                     map_req.height = eh;
                     map_req.ss = ess;
                     // Keep per-texel step isotropic for the chosen aspect (see build_export_job).
-                    map_req.span_mantissa[1] = map_req.span_mantissa[0] * (eh as f64 / ew as f64);
+                    map_req.span_mantissa.y = map_req.span_mantissa.x * (eh as f64 / ew as f64);
                     let job = if let Some(jvp) = &prep.julia_vp {
                         // Dual: build the Julia panel now (usually shallow → instant) and combine.
                         let mut jul = self.current_export_request_for(jvp, true);
                         jul.width = ew;
                         jul.height = eh;
                         jul.ss = ess;
-                        jul.span_mantissa[1] = jul.span_mantissa[0] * (eh as f64 / ew as f64);
+                        jul.span_mantissa.y = jul.span_mantissa.x * (eh as f64 / ew as f64);
                         match prep.dual_mode {
                             DualExport::SideBySide => ExportJob::SideBySide(map_req, jul),
                             DualExport::Separate => ExportJob::Separate(map_req, jul),

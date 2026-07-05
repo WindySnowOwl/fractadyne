@@ -282,9 +282,9 @@ mod tests {
         // GPU scale: O(1) span mantissa, deep shared exponent.
         let gs = vp.gpu_scale();
         assert!(
-            gs.span_mantissa[0].abs() >= 1.0 && gs.span_mantissa[0].abs() < 4.0,
+            gs.span_mantissa.x.abs() >= 1.0 && gs.span_mantissa.x.abs() < 4.0,
             "span mantissa not O(1): {}",
-            gs.span_mantissa[0]
+            gs.span_mantissa.x
         );
         assert!(gs.delta_exp < -1000, "delta_exp not deep: {}", gs.delta_exp);
         // The per-pixel offset, rescaled by 2^-delta_exp, is the O(1) mantissa the GPU needs.

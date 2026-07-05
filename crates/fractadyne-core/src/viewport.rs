@@ -13,7 +13,24 @@ use astro_float::BigFloat;
 #[derive(Clone, Copy, Debug)]
 pub struct GpuScale {
     pub delta_exp: i32,
-    pub span_mantissa: [f64; 2],
+    pub span_mantissa: SpanMantissa,
+}
+
+/// The complex view span as an O(1) mantissa per axis (`span · 2^-delta_exp`): `x` (width) and `y`
+/// (height). Newtyped so an axis mix-up is a named-field bug, not a silent `[0]`/`[1]` index swap;
+/// `y` is derived as `x · aspect`. It never crosses a GPU/Pod/WGSL boundary (it's lowered CPU-side
+/// into the per-texel `step`), so it's a plain public-axis struct with no layout constraint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpanMantissa {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl SpanMantissa {
+    #[inline]
+    pub fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
 }
 
 /// `(center − reference) · 2^-delta_exp` as an O(1) `f64` mantissa — the per-view reference
@@ -203,7 +220,7 @@ impl Viewport {
         let s = -(delta_exp as f64);
         GpuScale {
             delta_exp,
-            span_mantissa: [sx.mul_pow2(s).to_f64(), sy.mul_pow2(s).to_f64()],
+            span_mantissa: SpanMantissa::new(sx.mul_pow2(s).to_f64(), sy.mul_pow2(s).to_f64()),
         }
     }
 

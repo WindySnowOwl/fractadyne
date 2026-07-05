@@ -406,7 +406,7 @@ impl FractadyneApp {
                 let cxb = fractadyne_core::parse_bf(SX).unwrap();
                 let cyb = fractadyne_core::parse_bf(SY).unwrap();
                 // Actual complex span (shallow here): span_mantissa × 2^delta_exp.
-                let span = base.span_mantissa[0] * 2f64.powi(base.delta_exp);
+                let span = base.span_mantissa.x * 2f64.powi(base.delta_exp);
                 let span_fe = fractadyne_core::FloatExp::from_f64(span);
                 let with_ref = |ox: f64, oy: f64| -> fractadyne_gpu::ExportRequest {
                     let ref_pt = [

@@ -94,7 +94,7 @@ struct IterKey {
     ref_offset: RefOffset,
     center: [f32; 4],
     julia_c: [f32; 4],
-    span_mantissa: [f64; 2],
+    span_mantissa: fractadyne_core::SpanMantissa,
     max_iter: u32,
     size: [u32; 2],
     orbit_id: u64,
@@ -507,7 +507,7 @@ pub struct MandelbrotParams {
     /// 0 = Mandelbrot mode (z0=0, c=pixel), 1 = Julia mode (z0=pixel, c=const).
     pub julia: u32,
     /// Complex span *mantissa* (`span · 2^-delta_exp`, O(1)) — see [`fractadyne_core::GpuScale`].
-    pub span_mantissa: [f64; 2],
+    pub span_mantissa: fractadyne_core::SpanMantissa,
     pub max_iter: u32,
     pub cycle: f32,
     pub offset: f32,
@@ -677,8 +677,8 @@ impl CallbackTrait for MandelbrotParams {
                 let hi = v as f32;
                 (hi, (v - hi as f64) as f32)
             };
-            let (sxh, sxl) = split(self.span_mantissa[0] / size[0] as f64);
-            let (syh, syl) = split(self.span_mantissa[1] / size[1] as f64);
+            let (sxh, sxl) = split(self.span_mantissa.x / size[0] as f64);
+            let (syh, syl) = split(self.span_mantissa.y / size[1] as f64);
             let iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
                 ref_offset: self.ref_offset.to_array(),

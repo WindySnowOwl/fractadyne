@@ -34,7 +34,7 @@ pub(crate) struct RecomputeResult {
 struct RecomputeInputs {
     center_bf: [fractadyne_core::BigFloat; 2],
     span: (fractadyne_core::FloatExp, fractadyne_core::FloatExp),
-    span_mantissa: [f64; 2],
+    span_mantissa: fractadyne_core::SpanMantissa,
     delta_exp: i32,
     gpu_iter: u32,
     precision: usize,
@@ -81,7 +81,7 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
         let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &rp[1], inp.delta_exp, inp.precision);
         let roff = (dx * dx + dy * dy).sqrt();
         let half_diag = 0.5
-            * (inp.span_mantissa[0] * inp.span_mantissa[0] + inp.span_mantissa[1] * inp.span_mantissa[1]).sqrt();
+            * (inp.span_mantissa.x * inp.span_mantissa.x + inp.span_mantissa.y * inp.span_mantissa.y).sqrt();
         let log2_max_dc = inp.delta_exp as f64 + (roff + half_diag).max(1e-300).log2();
         fc::series_skip(&rp[0], &rp[1], log2_max_dc, inp.gpu_iter, len, inp.formula, inp.precision)
     } else {
@@ -243,7 +243,7 @@ impl FractadyneApp {
         mode: RenderMode,
         eff_iter: u32,
         precision: usize,
-        span_mantissa: [f64; 2],
+        span_mantissa: fractadyne_core::SpanMantissa,
         delta_exp: i32,
     ) -> RecomputeInputs {
         let do_sa = (!mode.is_direct())
@@ -288,8 +288,8 @@ impl FractadyneApp {
     /// `orbit_id` instead of rebuilt each frame. A larger `dc_max` only shrinks the skip radii
     /// (safer, never wrong); the few skips lost vs. a per-frame-tight bound are bought back many
     /// times over by not rebuilding the tree every frame.
-    fn bla_dc_max(span_mantissa: [f64; 2], delta_exp: i32) -> fractadyne_core::FloatExp {
-        let diag = (span_mantissa[0] * span_mantissa[0] + span_mantissa[1] * span_mantissa[1]).sqrt();
+    fn bla_dc_max(span_mantissa: fractadyne_core::SpanMantissa, delta_exp: i32) -> fractadyne_core::FloatExp {
+        let diag = (span_mantissa.x * span_mantissa.x + span_mantissa.y * span_mantissa.y).sqrt();
         fractadyne_core::FloatExp::from_f64((2.5 * diag).max(1e-300)).mul_pow2(delta_exp as f64)
     }
 
@@ -622,7 +622,8 @@ impl FractadyneApp {
         // the exponent). `span.0`/`span.1` are FloatExp, valid at any depth.
         let delta_exp = if span.0.m == 0.0 { 0 } else { span.0.log2().floor() as i32 };
         let sm = -(delta_exp as f64);
-        let span_mantissa = [span.0.mul_pow2(sm).to_f64(), span.1.mul_pow2(sm).to_f64()];
+        let span_mantissa =
+            fractadyne_core::SpanMantissa::new(span.0.mul_pow2(sm).to_f64(), span.1.mul_pow2(sm).to_f64());
 
         // Bound per-frame GPU work so a single render can't trip the OS GPU watchdog
         // (TDR ≈ 2 s → device-lost crash). Work ≈ texels × iterations = px·ss²·iter.
@@ -736,9 +737,9 @@ impl FractadyneApp {
             // ratio is exact at any depth (raw f64 differences underflow past ~1e308×).
             let drift = self.ref_cache[vi].ref_pt.as_ref().map(|r| {
                 let dx = fractadyne_core::ref_offset_mantissa(&center_bf[0], &r[0], delta_exp, precision)
-                    / span_mantissa[0];
+                    / span_mantissa.x;
                 let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &r[1], delta_exp, precision)
-                    / span_mantissa[1];
+                    / span_mantissa.y;
                 (dx.abs(), dy.abs())
             });
             // Recomputing the reference orbit is a slow bignum job. `best_reference`
@@ -890,9 +891,9 @@ impl FractadyneApp {
                             .exp2()
                             .clamp(1.0e-4, 1.0);
                         let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &fc[0], delta_exp, precision)
-                            / span_mantissa[0];
+                            / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &fc[1], delta_exp, precision)
-                            / span_mantissa[1];
+                            / span_mantissa.y;
                         reproject_scale = scale;
                         reproject = Some([(-px as f32) * scale, (py as f32) * scale]);
                     }
