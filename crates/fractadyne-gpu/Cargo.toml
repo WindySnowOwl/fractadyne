@@ -10,6 +10,7 @@ fractadyne-core.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true   # re-exports wgpu, so our wgpu version matches eframe's
 bytemuck.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

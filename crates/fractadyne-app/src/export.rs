@@ -530,7 +530,7 @@ impl FractadyneApp {
                 return Ok(res);
             }
         }
-        fractadyne_gpu::render_export(device, queue, req, progress, cancel)
+        fractadyne_gpu::render_export(device, queue, req, progress, cancel).map_err(|e| e.to_string())
     }
 
     /// Synchronously render the current view and write it to `path` (used by the
@@ -599,7 +599,7 @@ impl FractadyneApp {
         path: &std::path::Path,
     ) -> Result<String, String> {
         let req = self.current_export_request_for(&self.viewport, self.julia_mode);
-        let r = fractadyne_gpu::render_iter(device, queue, &req)?;
+        let r = fractadyne_gpu::render_iter(device, queue, &req).map_err(|e| e.to_string())?;
         let meta = format!(
             "{}\n# iteration-data EXR: R=smooth_iter (<0 = interior), G=normal.x, \
              B=normal.y, A=log2(distance_estimate_px)",
@@ -772,6 +772,7 @@ impl FractadyneApp {
         std::thread::spawn(move || {
             let render = |req: &fractadyne_gpu::ExportRequest| {
                 fractadyne_gpu::render_export(&device, &queue, req, &progress, &cancel)
+                    .map_err(|e| e.to_string())
             };
             let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| {
                 if let Some(ov) = &wm {

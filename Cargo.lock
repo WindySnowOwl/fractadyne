@@ -1418,6 +1418,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "fractadyne-core",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

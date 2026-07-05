@@ -13,6 +13,19 @@ use std::sync::Arc;
 
 const EXPORT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
+/// Failure modes of the offscreen GPU render / readback path. `Canceled`'s `Display` is exactly
+/// `"canceled"` (load-bearing: callers may still string-compare it) and `Readback` folds the mpsc
+/// / `map_async` readback failures — neither of which any caller distinguishes further.
+#[derive(Debug, thiserror::Error)]
+pub enum GpuError {
+    /// The caller's cancel flag was set mid-render (a tiled export aborts between tiles).
+    #[error("canceled")]
+    Canceled,
+    /// A GPU buffer readback failed — the mpsc channel dropped or `map_async` reported an error.
+    #[error("GPU readback failed: {0}")]
+    Readback(String),
+}
+
 /// Everything needed to render one frame offscreen at an arbitrary resolution.
 /// Mirrors the live view's parameters (the app fills it from the current view).
 #[derive(Clone)]
@@ -86,7 +99,7 @@ pub fn render_export(
     req: &ExportRequest,
     progress: &std::sync::atomic::AtomicU32,
     cancel: &std::sync::atomic::AtomicBool,
-) -> Result<ExportResult, String> {
+) -> Result<ExportResult, GpuError> {
     use std::sync::atomic::Ordering::Relaxed;
     let max_dim = device.limits().max_texture_dimension_2d;
     let max_buf = device.limits().max_buffer_size;
@@ -200,7 +213,7 @@ pub fn render_export(
         let mut tx0 = 0u32;
         while tx0 < w {
             if cancel.load(Relaxed) {
-                return Err("canceled".to_string());
+                return Err(GpuError::Canceled);
             }
             let tw = tile.min(w - tx0);
             let iw = tw * ss;
@@ -328,8 +341,8 @@ pub fn render_export(
             });
             let _ = device.poll(wgpu::Maintain::Wait);
             rx.recv()
-                .map_err(|e| e.to_string())?
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| GpuError::Readback(e.to_string()))?
+                .map_err(|e| GpuError::Readback(e.to_string()))?;
 
             let data = slice.get_mapped_range();
             let row_floats = (tw * 4) as usize;
@@ -362,7 +375,7 @@ pub fn render_iter(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     req: &ExportRequest,
-) -> Result<ExportResult, String> {
+) -> Result<ExportResult, GpuError> {
     let max_dim = device.limits().max_texture_dimension_2d;
     let w = req.width.clamp(1, max_dim);
     let h = req.height.clamp(1, max_dim);
@@ -515,7 +528,7 @@ pub fn render_iter(
         let _ = tx.send(r);
     });
     let _ = device.poll(wgpu::Maintain::Wait);
-    rx.recv().map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+    rx.recv().map_err(|e| GpuError::Readback(e.to_string()))?.map_err(|e| GpuError::Readback(e.to_string()))?;
 
     let data = slice.get_mapped_range();
     let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
@@ -543,7 +556,7 @@ pub fn color_iter_buffer(
     queue: &wgpu::Queue,
     req: &ExportRequest,
     iter_pixels: &[f32],
-) -> Result<ExportResult, String> {
+) -> Result<ExportResult, GpuError> {
     let w = req.width.max(1);
     let h = req.height.max(1);
     let shader = shader_module(device);
@@ -697,7 +710,7 @@ pub fn color_iter_buffer(
         let _ = tx.send(r);
     });
     let _ = device.poll(wgpu::Maintain::Wait);
-    rx.recv().map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+    rx.recv().map_err(|e| GpuError::Readback(e.to_string()))?.map_err(|e| GpuError::Readback(e.to_string()))?;
 
     let data = slice.get_mapped_range();
     let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
