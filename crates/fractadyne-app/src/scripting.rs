@@ -673,6 +673,7 @@ impl Playback {
 /// Blit a laid-out galley's glyph coverage as `color` (× `alpha`, straight over) onto a
 /// **linear-RGBA** buffer, top-left at `(bx, by)` in frame pixels. `ppp` maps galley points to
 /// atlas texels. Caller passes the atlas (one clone) so repeated calls don't re-clone it.
+#[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2c: moves into the overlay module
 fn blit_galley(
     atlas: &egui::epaint::FontImage, px: &mut [f32], w: u32, h: u32, galley: &egui::Galley,
     bx: f32, by: f32, ppp: f32, color: [f32; 3], alpha: f32,
@@ -708,6 +709,7 @@ fn blit_galley(
 }
 
 /// Multiply a rectangular region toward black (the soft backing behind annotation text).
+#[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2c: moves into the overlay module
 fn fill_dark(px: &mut [f32], w: u32, h: u32, x0: f32, y0: f32, x1: f32, y1: f32, amount: f32) {
     let (rx0, ry0) = (x0.max(0.0) as u32, y0.max(0.0) as u32);
     let (rx1, ry1) = ((x1.min(w as f32)) as u32, (y1.min(h as f32)) as u32);
@@ -732,6 +734,7 @@ fn blend_px(px: &mut [f32], w: u32, h: u32, x: i32, y: i32, color: [f32; 3], a: 
 }
 
 /// Anti-aliased ring outline (marker) of radius `r`, line width `thick`.
+#[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2c: moves into the overlay module
 fn draw_ring(px: &mut [f32], w: u32, h: u32, cx: f32, cy: f32, r: f32, thick: f32, color: [f32; 3], alpha: f32) {
     let lo = (cx - r - thick).floor() as i32;
     let hi = (cx + r + thick).ceil() as i32;
@@ -747,6 +750,7 @@ fn draw_ring(px: &mut [f32], w: u32, h: u32, cx: f32, cy: f32, r: f32, thick: f3
 }
 
 /// A short 2-px-ish leader line from `(x0,y0)` to `(x1,y1)`.
+#[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2c: moves into the overlay module
 fn draw_line(px: &mut [f32], w: u32, h: u32, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 3], alpha: f32) {
     let steps = ((x1 - x0).abs().max((y1 - y0).abs())).ceil().max(1.0) as i32;
     for s in 0..=steps {
@@ -964,6 +968,7 @@ fn place_callout_label(
     lp
 }
 
+#[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2c: moves into the overlay module
 fn stamp_callout(
     ctx: &egui::Context,
     px: &mut [f32],
@@ -1371,6 +1376,7 @@ impl FractadyneApp {
     /// `--render-tour` mode for producing a deep-zoom dive video. Steps the timeline at a
     /// fixed `fps`, rendering each frame at `width×height` (× `ss` supersampling) via the
     /// offscreen export path. Blocking; assemble the frames afterward (e.g. with ffmpeg).
+    #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 3: extract a TourRenderConfig + scripting crate
     pub(crate) fn render_tour_to_dir(
         &mut self,
         ctx: &egui::Context,
@@ -1433,7 +1439,7 @@ impl FractadyneApp {
         // main thread blocks (backpressure) rather than the process ballooning on a large deep tour.
         let frame_bytes = (width as u64) * (height as u64) * 16;
         let inflight = (1_000_000_000u64 / frame_bytes.max(1)).clamp(2, 8) as usize;
-        let workers = inflight.min(3).max(1);
+        let workers = inflight.clamp(1, 3);
         let (enc_tx, enc_rx) = std::sync::mpsc::sync_channel::<EncodeJob>(inflight.saturating_sub(workers).max(1));
         let enc_rx = std::sync::Arc::new(std::sync::Mutex::new(enc_rx));
         let enc_err: std::sync::Arc<std::sync::Mutex<Option<String>>> = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -1445,13 +1451,15 @@ impl FractadyneApp {
                 std::thread::spawn(move || loop {
                     // Hold the lock only across recv() (fast dequeue); encode without it so workers
                     // compress in parallel.
-                    let job = { rx.lock().unwrap().recv() };
+                    // Poison-recover: if another encoder panicked while holding the lock, keep
+                    // draining rather than cascading the panic across every worker.
+                    let job = { rx.lock().unwrap_or_else(|e| e.into_inner()).recv() };
                     let job = match job {
                         Ok(j) => j,
                         Err(_) => break, // channel closed → all frames handed off
                     };
                     if let Err(e) = fractadyne_export::write_png(&job.path, job.w, job.h, &job.px, Some(&meta)) {
-                        let mut slot = err.lock().unwrap();
+                        let mut slot = err.lock().unwrap_or_else(|e| e.into_inner());
                         if slot.is_none() {
                             *slot = Some(format!("frame {}: {e}", job.fi));
                         }
@@ -1586,7 +1594,7 @@ impl FractadyneApp {
                 stamp_location(ctx, &mut px, rw, rh, &self.viewport);
             }
             // Surface any earlier encode failure before enqueuing more work.
-            if let Some(e) = enc_err.lock().unwrap().as_ref() {
+            if let Some(e) = enc_err.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
                 return Err(e.clone());
             }
             // Hand the finished frame to the encoder pool; blocks if the queue is full (backpressure).
@@ -1610,7 +1618,7 @@ impl FractadyneApp {
         for h in encoders {
             let _ = h.join();
         }
-        if let Some(e) = enc_err.lock().unwrap().take() {
+        if let Some(e) = enc_err.lock().unwrap_or_else(|e| e.into_inner()).take() {
             return Err(e);
         }
         let render_secs = started.elapsed().as_secs_f64();

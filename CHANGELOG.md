@@ -8,6 +8,20 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.28
+
+- **Refactor Phase 0 — guardrails & robustness** (behavior-preserving; see `REFACTOR-PLAN.md`). No
+  change to rendered output — verified by the golden self-test (55/55 checks, 4/4 images identical).
+  - **Lint gate:** added `[workspace.lints]` + per-crate `[lints] workspace = true` and a `rustfmt.toml`
+    so clippy/format policy is shared and enforceable. `cargo clippy` is now warning-clean (0/0);
+    applied all machine-applicable fixes.
+  - **Panic hardening:** a missing wgpu backend now exits with a clear message instead of a Rust panic;
+    the tour encoder thread pool recovers from mutex poisoning instead of cascade-crashing.
+  - **Readability:** added a numeric-abbreviation glossary to the `fractadyne-core` module header and
+    `SAFETY:` comments to the three Win32 FFI blocks.
+  - Regenerated `TOURS.md` (its schema-drift guard test had been failing); rounded out workspace
+    package metadata.
+
 ## 0.1.27
 
 - **Export timing.** The Export dialog now shows a live **Elapsed:** readout while an export is in

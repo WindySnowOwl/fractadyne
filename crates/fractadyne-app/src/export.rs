@@ -511,6 +511,7 @@ impl FractadyneApp {
     /// fresh references). Correction is synchronous (multi-pass GPU + readback), so this must run on
     /// the thread owning the device; it falls back to the plain render for aux coloring / oversized
     /// views / when nothing is glitched.
+    #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: fold the request params into a struct
     fn render_export_view(
         &self,
         device: &eframe::wgpu::Device,

@@ -237,6 +237,7 @@ impl FractadyneApp {
     /// `dc_max` is the per-frame-tight bound (no `×2` pan-reuse margin). `None` for the direct path
     /// (`mode == 1`), which iterates from 0 with no reference. Series approximation applies to the
     /// holomorphic polynomial families (Mandelbrot / Multibrot 3-5) with a non-aux coloring method.
+    #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: fold into a reference-inputs struct
     fn export_reference_inputs(
         &self,
         vp: &Viewport,
@@ -480,6 +481,7 @@ impl FractadyneApp {
     /// until nothing is glitched or `max_refs` is hit. Returns the merged raw RGBA32F iteration
     /// buffer (`w*h*4`) plus `(references_used, residual_glitches)`. Single-texture (bounded by the
     /// GPU max dim); the caller colors the result. Perturbation modes only (direct has no glitches).
+    #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: fold into a render-request struct
     pub(crate) fn render_corrected_iter(
         &self,
         device: &eframe::wgpu::Device,

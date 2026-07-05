@@ -275,13 +275,13 @@ impl RandomPalette {
         let v_lo = 0.16 + 0.12 * self.next_f32(); // dim (not black) endpoints
         let v_hi = 0.85 + 0.15 * self.next_f32(); // bright middle
         let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
-        for i in 0..RAND_STOPS {
+        for (i, slot) in out.iter_mut().enumerate().take(RAND_STOPS) {
             let t = i as f32 / (RAND_STOPS - 1) as f32; // 0..1
             let arc = (std::f32::consts::PI * t).sin(); // 0 at ends → 1 at middle
             let h = h0 + dir * hue_span * arc;
             let v = v_lo + (v_hi - v_lo) * arc;
             let c = hsv_to_rgb(h, sat, v);
-            out[i] = [c[0], c[1], c[2], t];
+            *slot = [c[0], c[1], c[2], t];
         }
         for i in RAND_STOPS..fractadyne_color::MAX_STOPS {
             out[i] = out[RAND_STOPS - 1];
@@ -306,6 +306,9 @@ impl RandomPalette {
     /// Current blended stops for GPU upload.
     fn current(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
         let mut out = self.from;
+        // Per-channel lerp of two parallel stop arrays (from/to) into out; explicit indices read
+        // clearer here than a double `enumerate`, so the range-loop lint is allowed locally.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..RAND_STOPS {
             for k in 0..3 {
                 out[i][k] = self.from[i][k] + (self.to[i][k] - self.from[i][k]) * self.t;
@@ -644,7 +647,7 @@ fn parse_zoom_to_log2(s: &str) -> Option<f64> {
         None => (t.as_str(), 0.0),
     };
     let m: f64 = mant.parse().ok()?;
-    if !(m.is_finite() && m > 0.0) || !exp.is_finite() {
+    if !(m.is_finite() && m > 0.0 && exp.is_finite()) {
         return None;
     }
     Some(m.log2() + exp * std::f64::consts::LOG2_10)
@@ -956,7 +959,6 @@ struct GalleryEntry {
     thumb_tried: bool,
 }
 
-/// Formula reference shown in the info panel.
 // `FractalInfo` / `FractalKind` moved to `fractal.rs` (re-exported at the top of this file).
 
 /// An in-progress **zoom box** (Shift+drag): rubber-band rectangle from `start` to `end`
@@ -1288,10 +1290,18 @@ struct FractadyneApp {
 
 impl FractadyneApp {
     fn new(cc: &eframe::CreationContext<'_>, args: &[String]) -> Self {
-        let render_state = cc
-            .wgpu_render_state
-            .as_ref()
-            .expect("Fractadyne requires the wgpu backend (eframe Renderer::Wgpu)");
+        // A missing wgpu render state means the GPU backend failed to initialize. Report it
+        // plainly and exit cleanly rather than surfacing a Rust panic + backtrace to the user.
+        let render_state = match cc.wgpu_render_state.as_ref() {
+            Some(rs) => rs,
+            None => {
+                eprintln!(
+                    "Fractadyne requires the wgpu GPU backend (eframe Renderer::Wgpu), which failed \
+                     to initialize. Check that your GPU drivers support Vulkan/DX12/Metal."
+                );
+                std::process::exit(1);
+            }
+        };
         install_renderer(render_state);
         apply_brand_theme(&cc.egui_ctx);
         let gpu_name = render_state.adapter.get_info().name;
@@ -2112,7 +2122,7 @@ impl FractadyneApp {
             });
         }
         self.gallery_entries
-            .sort_by(|a, b| b.saved_unix.cmp(&a.saved_unix));
+            .sort_by_key(|e| std::cmp::Reverse(e.saved_unix));
     }
 
     // export_ext / start_export / quick_export / render_to_file(_iter) / start_export_to moved to export.rs.

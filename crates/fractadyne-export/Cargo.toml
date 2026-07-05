@@ -8,3 +8,6 @@ description = "Tiled high-res export, PNG/OpenEXR encoders (planned — DESIGN.m
 [dependencies]
 png = "0.17"
 exr = "1"
+
+[lints]
+workspace = true

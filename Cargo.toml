@@ -5,10 +5,22 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.27"
+version = "0.1.28"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/WindySnowOwl/fractadyne"
+homepage = "https://github.com/WindySnowOwl/fractadyne"
+documentation = "https://github.com/WindySnowOwl/fractadyne/blob/main/ARCHITECTURE.md"
+keywords = ["fractal", "mandelbrot", "deep-zoom", "wgpu", "perturbation"]
+categories = ["graphics", "visualization", "mathematics"]
+
+# Shared lint policy — each crate opts in via `[lints] workspace = true`. Keeping the signals the
+# organization audit relied on explicit and uniform stops per-developer drift across the workspace.
+# Known, deferred violations carry a targeted `#[allow(...)]` that references a REFACTOR-PLAN phase,
+# so the lint keeps guarding new code. Start at "warn"; tighten toward "deny" as phases land.
+[workspace.lints.clippy]
+too_many_arguments = "warn"
+should_implement_trait = "warn"
 
 # Shared dependency versions. The egui family is pinned to one version so the
 # wgpu type used by fractadyne-gpu matches the one eframe owns (no duplicate wgpu).

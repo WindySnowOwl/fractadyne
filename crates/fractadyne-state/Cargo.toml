@@ -9,3 +9,6 @@ description = "App state, serde, auto-save, presets/bookmarks (DESIGN.md §13)."
 serde.workspace = true
 toml.workspace = true
 directories.workspace = true
+
+[lints]
+workspace = true

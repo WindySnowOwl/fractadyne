@@ -7,6 +7,17 @@
 //!
 //! Bignum is slow, so the reference orbit should be recomputed only when the
 //! reference point changes (the app caches it), not every frame.
+//!
+//! ## Naming conventions (glossary)
+//!
+//! Short identifiers recur throughout this crate; they mean:
+//! - `p` — working **precision** in mantissa bits for a `BigFloat` (scales with zoom depth).
+//! - `bf` — a `BigFloat`, or a shorthand constructor from an f64.
+//! - `(cx, cy)` — the complex parameter *c* (real, imaginary). `(zx, zy)` — the iterate *z*.
+//! - `(dzx, dzy)` / `dc` — perturbation **deltas** (δz, δc) relative to the reference orbit.
+//! - `FloatExp` (`m`,`e`) — an extended-range float `m·2^e` (see the `FloatExp` docs); `df64`/df32
+//!   — an f32 hi+lo pair (double-single) carrying ~46 bits for the GPU.
+//! - `RM` — `RoundingMode`; `SA` — series approximation; `BLA` — bivariate linear approximation.
 
 pub use astro_float::BigFloat;
 use astro_float::{RoundingMode, Sign};
@@ -337,6 +348,11 @@ impl FloatExp {
         FloatExp::norm(self.m * k, self.e)
     }
 
+    // NOTE: these inherent `mul`/`add`/`sub` methods are intentionally NOT `std::ops` impls yet.
+    // Migrating the ~100 precedence-sensitive call sites (`a.add(b).mul(c)` ≠ `a + b * c`) to
+    // operators is a Phase 1 readability task done alongside the `floatexp` module extraction — see
+    // REFACTOR-PLAN.md. Allowed per-method (not crate-wide) so the lint keeps guarding new code.
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, o: FloatExp) -> FloatExp {
         FloatExp::norm(self.m * o.m, self.e + o.e)
     }
@@ -346,6 +362,7 @@ impl FloatExp {
     }
 
     /// Sum, aligning to the larger exponent (the smaller is dropped past f64's ~53 bits).
+    #[allow(clippy::should_implement_trait)] // see the note on `mul` above (Phase 1 ops-trait migration)
     pub fn add(self, o: FloatExp) -> FloatExp {
         if self.m == 0.0 {
             return o;
@@ -361,6 +378,7 @@ impl FloatExp {
         FloatExp::norm(hi.m + lo.m * 2f64.powi(-de), hi.e)
     }
 
+    #[allow(clippy::should_implement_trait)] // see the note on `mul` above (Phase 1 ops-trait migration)
     pub fn sub(self, o: FloatExp) -> FloatExp {
         self.add(FloatExp { m: -o.m, e: o.e })
     }
@@ -1076,12 +1094,15 @@ pub struct CFloatExp {
 }
 
 impl CFloatExp {
+    // See the note on `FloatExp::mul` — deferred `std::ops` migration (REFACTOR-PLAN.md Phase 1).
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, o: CFloatExp) -> CFloatExp {
         CFloatExp {
             re: self.re.mul(o.re).sub(self.im.mul(o.im)),
             im: self.re.mul(o.im).add(self.im.mul(o.re)),
         }
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, o: CFloatExp) -> CFloatExp {
         CFloatExp { re: self.re.add(o.re), im: self.im.add(o.im) }
     }

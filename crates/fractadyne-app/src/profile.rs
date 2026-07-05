@@ -354,6 +354,7 @@ impl FractadyneApp {
     /// for a few frames: the first frame of a step is where the reference recompute (the stall)
     /// lands, the rest run from cache. Reports interframe stats + a stutter count, so an
     /// optimization (e.g. async recompute) can be validated automatically. Writes a JSON log.
+    #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: group the frametest config into a struct
     pub fn run_frametest(
         &mut self,
         device: &eframe::wgpu::Device,

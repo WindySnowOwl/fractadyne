@@ -494,8 +494,7 @@ mod tests {
     // reloaded as the default 60. Now stored as `0.0` (uncapped), it round-trips.
     #[test]
     fn fps_cap_roundtrips_including_uncapped() {
-        let mut s = SessionState::default();
-        s.fps_cap = 0.0; // uncapped
+        let mut s = SessionState { fps_cap: 0.0, ..Default::default() }; // uncapped
         assert_eq!(roundtrip(&s).fps_cap, 0.0);
         s.fps_cap = 120.0;
         assert_eq!(roundtrip(&s).fps_cap, 120.0);

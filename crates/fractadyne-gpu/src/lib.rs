@@ -791,7 +791,7 @@ pub fn render_export(
     let by_buf = (((max_buf / 16) as f64).sqrt() as u32).max(256);
     let work_per_px = (ss as u64 * ss as u64) * (req.max_iter.max(1) as u64);
     let by_work = (((TILE_WORK_BUDGET / work_per_px.max(1)) as f64).sqrt() as u32).max(64);
-    let tile = by_tex.min(by_buf).min(by_work).min(2048).max(1);
+    let tile = by_tex.min(by_buf).min(by_work).clamp(1, 2048);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("fractadyne.export_shader"),

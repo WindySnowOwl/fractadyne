@@ -58,13 +58,19 @@ fractadyne-render/-ui/-fractals = empty stubs     fractadyne-core  core::{floate
 4. Fix the two **shipped-path panic risks**:
    - `main.rs:1294` — replace `.expect()` on `wgpu_render_state` with a graceful error (dialog/log + clean exit) for the "no GPU backend" case.
    - `scripting.rs` encoder pool — replace `lock().unwrap()` with poison-recovering access (`lock().unwrap_or_else(|e| e.into_inner())`) so a worker panic doesn't cascade-crash the tour render.
-5. Convert the three `#[allow(clippy::too_many_arguments)]` core fns to parameter structs (`orbit_length_bf`, `best_reference`, `render_multiref_mandel` at core `lib.rs:1271/1314/1708`) — removes the suppressions.
-6. Add `SAFETY:` comments to the three `sysinfo.rs` FFI blocks; annotate the safe-by-construction `unwrap`s in `to_f64`/`build_bla_mandel`.
-7. Round out `[workspace.package]` metadata (`homepage`/`documentation`/`keywords`/`categories`) and comment the machine-specific `debug=false` profile.
+5. Add `SAFETY:` comments to the three `sysinfo.rs` FFI blocks; annotate the safe-by-construction `unwrap`s.
+6. Round out `[workspace.package]` metadata (`homepage`/`documentation`/`keywords`/`categories`).
+7. Add a `core` module-header **abbreviations glossary** (`p`, `RM`, `df64`, `zx/zy/dzx/dzy`, …) — a pure readability win the audit called for.
+8. Regenerate `TOURS.md` from the schema so the `tour_schema_doc_current` guard test passes (it had drifted).
 
-**Decouple the `FloatExp` operator naming** (clippy `should_implement_trait`, 5 sites): implement `std::ops::{Add,Sub,Mul}` for `FloatExp`/`CFloatExp` **or** rename the inherent methods (e.g. `mul` → `times`). Prefer implementing the ops traits — it is both idiomatic and removes call-site noise. *(This one touches many call sites in core; keep it a separate commit within Phase 0 and lean on the goldens.)*
+**Deliberately deferred out of Phase 0** (documented `#[allow(...)]` with a plan reference at each site, so the lints stay enforceable for new code):
+- **`FloatExp`/`CFloatExp` → `std::ops` operators** (clippy `should_implement_trait`, 5 sites). This is a real readability win but the migration touches **~100 precedence-sensitive call sites** (`a.add(b).mul(c)` ≠ `a + b * c`), so it moves to **Phase 1**, done carefully alongside the `floatexp` module extraction with the goldens as the gate.
+- **The three core param-struct conversions** (`orbit_length_bf`/`best_reference`/`render_multiref_mandel`) → **Phase 1** (they belong with the core decomposition; `best_reference` also crosses into `app`, so its param struct becomes part of the tidied public API). These stay `#[allow]`'d meanwhile.
+- **The ten `app` `too_many_arguments` sites** → **Phase 2c/3** (rasterization primitives fold into the overlay module; `render_tour_to_dir` extracts with the scripting crate).
 
-**Risk:** very low. **Effort:** Small (S). **Gate:** clippy clean becomes enforceable from here on.
+**Status:** ✅ **completed** at v0.1.28 — build + clippy (0/0) + 46 unit tests + `--selftest` (55/55, goldens 4/4) all green.
+
+**Risk:** very low. **Effort:** Small (S). **Gate:** clippy clean is now enforceable.
 
 ---
 

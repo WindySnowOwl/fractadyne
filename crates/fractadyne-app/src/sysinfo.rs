@@ -60,6 +60,9 @@ pub(crate) fn process_memory() -> (u64, u64) {
         fn GetCurrentProcess() -> isize;
         fn K32GetProcessMemoryInfo(h: isize, c: *mut Pmc, cb: u32) -> i32;
     }
+    // SAFETY: `Pmc` is `#[repr(C)]` matching PROCESS_MEMORY_COUNTERS; we zero it and set `cb` to its
+    // own size before the call, as the Win32 API requires. `GetCurrentProcess()` returns a pseudo-
+    // handle that needs no closing. On failure (non-zero not returned) we ignore `pmc` and return 0s.
     unsafe {
         let mut pmc: Pmc = std::mem::zeroed();
         pmc.cb = std::mem::size_of::<Pmc>() as u32;
@@ -146,6 +149,9 @@ fn cpu_topology() -> (usize, u64, u64) {
     extern "system" {
         fn GetLogicalProcessorInformation(buf: *mut Slpi, len: *mut u32) -> i32;
     }
+    // SAFETY: first call passes a null buffer to query the required byte length into `len`; we then
+    // allocate a `Vec<Slpi>` (`#[repr(C)]` matching SYSTEM_LOGICAL_PROCESSOR_INFORMATION) of exactly
+    // `len/size_of::<Slpi>()` elements and pass its pointer + capacity, so the API cannot overrun it.
     unsafe {
         let mut len: u32 = 0;
         GetLogicalProcessorInformation(std::ptr::null_mut(), &mut len);
@@ -220,6 +226,9 @@ fn gpu_vram_bytes() -> u64 {
         ));
         let mut data = [0u8; 8];
         let mut cb = 8u32;
+        // SAFETY: `key`/`value` are NUL-terminated UTF-16 buffers that outlive the call; `data` is a
+        // fixed 8-byte buffer and `cb` is set to its size, which RegGetValueW respects (it writes at
+        // most `cb` bytes and updates it). A non-zero `rc` means "not found" and we skip the buffer.
         let rc = unsafe {
             RegGetValueW(
                 hklm,

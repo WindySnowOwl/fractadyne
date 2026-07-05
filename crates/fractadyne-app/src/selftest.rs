@@ -607,7 +607,9 @@ impl FractadyneApp {
                 }
                 false
             };
-            let cases: &[(FractalKind, &str, fn(usize, usize, usize) -> (usize, usize))] = &[
+            // (pixel i, pixel j, size n) -> the symmetric pixel expected to match.
+            type SymmetryMap = fn(usize, usize, usize) -> (usize, usize);
+            let cases: &[(FractalKind, &str, SymmetryMap)] = &[
                 (FractalKind::Multibrot3, "Multibrot-3 180° rotation", |i, j, n| (n - 1 - i, n - 1 - j)),
                 (FractalKind::Tricorn, "Tricorn real-axis reflection", |i, j, n| (i, n - 1 - j)),
                 (FractalKind::Celtic, "Celtic real-axis reflection", |i, j, n| (i, n - 1 - j)),

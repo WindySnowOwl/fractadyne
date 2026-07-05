@@ -7,3 +7,6 @@ description = "Core numerics and viewport math for Fractadyne (no GPU/UI deps)."
 
 [dependencies]
 astro-float.workspace = true
+
+[lints]
+workspace = true
