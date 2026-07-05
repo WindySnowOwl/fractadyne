@@ -1244,6 +1244,30 @@ struct PointerState {
     settle_frame: [u32; 2],
 }
 
+/// How the fractal is *computed* (not colored): iteration budget + auto-scale, the perturbation
+/// accelerators, continuous-zoom speed, the live work-budget, and anti-aliasing. All persisted —
+/// round-trips 1:1 through `SessionState`. Grouped from the former flat compute fields (Phase 2a).
+struct RenderConfig {
+    /// Iteration budget ceiling.
+    max_iter: u32,
+    /// Auto-scale iteration count with zoom depth (else use `max_iter` as-is).
+    auto_iter: bool,
+    /// Series approximation (iteration-skipping) for deep Mandelbrot renders. Default on.
+    series_approx: bool,
+    /// Multi-reference glitch correction for exports (multi-pass, glitch-free). Default off.
+    glitch_correct: bool,
+    /// BLA (bilinear approximation): skips iterations throughout the orbit for deep floatexp
+    /// Mandelbrot renders. Off by default while it's validated; enable to accelerate.
+    use_bla: bool,
+    /// Continuous-zoom speed multiplier (1.0 = default `ZOOM_RATE`).
+    zoom_rate: f32,
+    /// Live-render work-budget multiplier (× `WORK_BUDGET`); persisted. Higher = crisper live deep
+    /// zoom (fuller resolution) at lower FPS / less GPU-watchdog margin. Exports are unaffected.
+    work_budget_scale: f64,
+    /// Supersampling / anti-alias factor (1 = off, 2 = 2×2, 3 = 3×3).
+    aa: u32,
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1394,13 +1418,8 @@ struct FractadyneApp {
     help_section: usize,
     /// Whether the right-hand control panel is shown.
     right_panel_open: bool,
-    /// Series approximation (iteration-skipping) for deep Mandelbrot renders. Default on.
-    series_approx: bool,
-    /// Multi-reference glitch correction for exports (multi-pass, glitch-free). Default off.
-    glitch_correct: bool,
-    /// BLA (bilinear approximation): skips iterations throughout the orbit for deep floatexp
-    /// Mandelbrot renders. Off by default while it's validated; enable to accelerate.
-    use_bla: bool,
+    /// Compute knobs (iteration budget, perturbation accelerators, zoom speed, work-budget, AA).
+    render_cfg: RenderConfig,
     /// Draw the discreet "Fd" brand mark in the lower-right of the live view and exports. On by
     /// default; toggleable.
     watermark: bool,
@@ -1434,7 +1453,6 @@ struct FractadyneApp {
     duotone_hi: [f32; 3],
     /// Performance/diagnostic tracking + overlay.
     perf: Perf,
-    max_iter: u32,
     /// Selected palette index into `fractadyne_color::PRESETS`.
     palette_idx: usize,
     /// Color cycle density slider (0..1; mapped to a shader multiplier).
@@ -1448,15 +1466,6 @@ struct FractadyneApp {
     color_method: ColorMethod,
     stripe_freq: f32,
     trap_type: TrapType,
-    /// Auto-scale iteration count with zoom depth (else use `max_iter` as-is).
-    auto_iter: bool,
-    /// Continuous-zoom speed multiplier (1.0 = default `ZOOM_RATE`).
-    zoom_rate: f32,
-    /// Live-render work-budget multiplier (× `WORK_BUDGET`); persisted. Higher = crisper live deep
-    /// zoom (fuller resolution) at lower FPS / less GPU-watchdog margin. Exports are unaffected.
-    work_budget_scale: f64,
-    /// Supersampling / anti-alias factor (1 = off, 2 = 2×2, 3 = 3×3).
-    aa: u32,
     /// Per-view perturbation reference cache (index 0 = main/left, 1 = dual Julia).
     /// Separate caches let both dual panels use perturbation without thrashing.
     ref_cache: [RefCache; 2],
@@ -1733,7 +1742,16 @@ impl FractadyneApp {
                 enabled: !std::env::args().any(|a| a == "--no-perf"),
                 ..Perf::default()
             },
-            max_iter: s.max_iter,
+            render_cfg: RenderConfig {
+                max_iter: s.max_iter,
+                auto_iter: s.auto_iter,
+                series_approx: s.series_approx,
+                glitch_correct: s.glitch_correct,
+                use_bla: s.use_bla,
+                zoom_rate: s.zoom_rate,
+                work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
+                aa: s.aa,
+            },
             palette_idx: s.palette_idx,
             cycle: s.cycle,
             offset: s.offset,
@@ -1751,18 +1769,11 @@ impl FractadyneApp {
             color_method: ColorMethod::from_key(&s.color_method),
             stripe_freq: s.stripe_freq,
             trap_type: TrapType::from_key(&s.trap_type),
-            auto_iter: s.auto_iter,
-            series_approx: s.series_approx,
-            glitch_correct: s.glitch_correct,
-            use_bla: s.use_bla,
             watermark: s.watermark,
             show_location: s.show_location
                 || args.iter().any(|a| a == "--show-location" || a == "--hud"),
             watermark_overlay: None,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
-            zoom_rate: s.zoom_rate,
-            work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
-            aa: s.aa,
             ref_cache: [RefCache::default(), RefCache::default()],
             recompute_rx: [None, None],
             last_state: s,
@@ -1773,10 +1784,10 @@ impl FractadyneApp {
         // the `--render` path) since `--profile`/`--benchmark` don't call `apply_cli_render`;
         // `--no-bla` wins if both are given.
         if args.iter().any(|a| a == "--bla") {
-            app.use_bla = true;
+            app.render_cfg.use_bla = true;
         }
         if args.iter().any(|a| a == "--no-bla") {
-            app.use_bla = false;
+            app.render_cfg.use_bla = false;
         }
         if args.iter().any(|a| a == "--no-watermark") {
             app.watermark = false;
@@ -1785,10 +1796,10 @@ impl FractadyneApp {
             app.watermark = true;
         }
         if args.iter().any(|a| a == "--glitch") {
-            app.glitch_correct = true;
+            app.render_cfg.glitch_correct = true;
         }
         if args.iter().any(|a| a == "--no-glitch") {
-            app.glitch_correct = false;
+            app.render_cfg.glitch_correct = false;
         }
         if app.auto_benchmark {
             app.start_benchmark();
@@ -1870,8 +1881,8 @@ impl FractadyneApp {
             self.export.ss = ss.clamp(1, 8);
         }
         if let Some(it) = val("--iter").and_then(|s| s.parse::<u32>().ok()) {
-            self.max_iter = it.clamp(16, 200_000);
-            self.auto_iter = false;
+            self.render_cfg.max_iter = it.clamp(16, 200_000);
+            self.render_cfg.auto_iter = false;
         }
         if let Some(p) = val("--palette").and_then(|s| s.parse::<usize>().ok()) {
             self.palette_idx = p.min(fractadyne_color::PRESETS.len() - 1);
@@ -1928,15 +1939,15 @@ impl FractadyneApp {
             center_y_str: fractadyne_core::to_decimal_string(&self.viewport.center_y),
             units_per_pixel: self.viewport.units_per_pixel.m,
             units_per_pixel_e: self.viewport.units_per_pixel.e,
-            max_iter: self.max_iter,
-            auto_iter: self.auto_iter,
+            max_iter: self.render_cfg.max_iter,
+            auto_iter: self.render_cfg.auto_iter,
             palette_idx: self.palette_idx,
             cycle: self.cycle,
             offset: self.offset,
-            zoom_rate: self.zoom_rate,
+            zoom_rate: self.render_cfg.zoom_rate,
             autopilot_dive_log2: self.autopilot.dive_log2,
-            work_budget_scale: self.work_budget_scale,
-            aa: self.aa,
+            work_budget_scale: self.render_cfg.work_budget_scale,
+            aa: self.render_cfg.aa,
             fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
             export_width: self.export.width,
             export_ss: self.export.ss,
@@ -1982,9 +1993,9 @@ impl FractadyneApp {
             julia_c_im: self.julia_c.1,
             dual: self.dual,
             dual_split: self.dual_split,
-            series_approx: self.series_approx,
-            glitch_correct: self.glitch_correct,
-            use_bla: self.use_bla,
+            series_approx: self.render_cfg.series_approx,
+            glitch_correct: self.render_cfg.glitch_correct,
+            use_bla: self.render_cfg.use_bla,
             watermark: self.watermark,
             ui_scale: self.ui_scale,
             show_orbits: self.show_orbits,
@@ -2321,7 +2332,7 @@ impl FractadyneApp {
     /// to a box-filtered upscale — at the cost of frame-rate and GPU-watchdog margin. Export is
     /// unaffected (always full resolution).
     pub(crate) fn effective_work_budget(&self) -> u64 {
-        ((WORK_BUDGET as f64) * self.work_budget_scale.clamp(0.25, 8.0)).max(1.0e9) as u64
+        ((WORK_BUDGET as f64) * self.render_cfg.work_budget_scale.clamp(0.25, 8.0)).max(1.0e9) as u64
     }
 
     /// Render one fractal panel: navigation (drag-pan, wheel-zoom) + draw. Returns
@@ -2422,10 +2433,10 @@ impl FractadyneApp {
         }
         let interacting = now - self.pointer.settle_t[view] < SETTLE_DELAY;
 
-        let eff_iter = if self.auto_iter {
-            vp.recommended_max_iter(self.max_iter)
+        let eff_iter = if self.render_cfg.auto_iter {
+            vp.recommended_max_iter(self.render_cfg.max_iter)
         } else {
-            self.max_iter
+            self.render_cfg.max_iter
         };
         let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
         let center = vp.center_f64();
@@ -2439,8 +2450,8 @@ impl FractadyneApp {
             self.pointer.settle_frame[view] = 0;
             1
         } else {
-            let ss = aa_ramp(self.pointer.settle_frame[view], self.aa);
-            if ss < self.aa {
+            let ss = aa_ramp(self.pointer.settle_frame[view], self.render_cfg.aa);
+            if ss < self.render_cfg.aa {
                 self.pointer.settle_frame[view] += 1;
                 self.schedule_repaint(ctx); // render the next, sharper AA stage
             }
@@ -2525,7 +2536,7 @@ impl FractadyneApp {
                 None
             }
         });
-        let rate = ZOOM_RATE * self.zoom_rate as f64;
+        let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
         let target = if space && panel.is_some() {
             if shift {
                 -rate
@@ -2875,7 +2886,7 @@ impl FractadyneApp {
         if p.last_sa_skip > 0 {
             ui.monospace(format!("SA skip    {:>7}", p.last_sa_skip));
         }
-        ui.monospace(format!("aa         {}x", self.aa));
+        ui.monospace(format!("aa         {}x", self.render_cfg.aa));
         ui.monospace(format!("dual       {}", self.dual));
         ui.monospace(format!("zoom       {}×", fmt_zoom_log2(self.viewport.log2_magnification())));
 
@@ -3011,7 +3022,7 @@ impl FractadyneApp {
         let mag = self.viewport.magnification();
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
         let max_period =
-            self.viewport.recommended_max_iter(self.max_iter).clamp(1_000, 100_000);
+            self.viewport.recommended_max_iter(self.render_cfg.max_iter).clamp(1_000, 100_000);
         match fractadyne_core::find_nucleus(&center, mag, self.fractal.formula_id(), max_period) {
             Some(n) => {
                 self.viewport.set_center_mag(n.cx, n.cy, mag);
@@ -3497,8 +3508,8 @@ impl FractadyneApp {
         self.fractal = FractalKind::Mandelbrot;
         self.julia_mode = false;
         if let Some(it) = v.iterations {
-            self.max_iter = it.clamp(64, 50_000);
-            self.auto_iter = false;
+            self.render_cfg.max_iter = it.clamp(64, 50_000);
+            self.render_cfg.auto_iter = false;
         }
         self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
         self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
@@ -4462,7 +4473,7 @@ impl FractadyneApp {
                          image (scales with the output; shows the map/Mandelbrot view's zoom + \
                          center).",
                     );
-                ui.checkbox(&mut self.glitch_correct, "Glitch correction")
+                ui.checkbox(&mut self.render_cfg.glitch_correct, "Glitch correction")
                     .on_hover_text(
                         "Multi-reference correction of perturbation glitches. Automatically \
                          skipped for very deep (floatexp) single-view exports so the reference \
@@ -4769,13 +4780,13 @@ impl FractadyneApp {
                                 "Show a small home-view overview with a \"you are here\" \
                                  marker and the zoom depth. Click it to jump to a region.",
                             );
-                        ui.checkbox(&mut self.series_approx, "Series approximation")
+                        ui.checkbox(&mut self.render_cfg.series_approx, "Series approximation")
                             .on_hover_text(
                                 "Speed up deep Mandelbrot renders (≥1e28×) by seeding the \
                                  perturbation from a polynomial and skipping early iterations. \
                                  Identical output; turn off to compare.",
                             );
-                        ui.checkbox(&mut self.glitch_correct, "Glitch correction (export)")
+                        ui.checkbox(&mut self.render_cfg.glitch_correct, "Glitch correction (export)")
                             .on_hover_text(
                                 "Multi-reference glitch correction for exported images: detects \
                                  perturbation glitches and re-renders those pixels against extra \
@@ -4783,7 +4794,7 @@ impl FractadyneApp {
                                  ~32 MP / the GPU texture limit (non-aux coloring); larger images \
                                  and the live view fall back to the plain path.",
                             );
-                        ui.checkbox(&mut self.use_bla, "BLA acceleration (deep zoom)")
+                        ui.checkbox(&mut self.render_cfg.use_bla, "BLA acceleration (deep zoom)")
                             .on_hover_text(
                                 "Bilinear approximation: skip iterations throughout the orbit at \
                                  extreme depth (floatexp Mandelbrot, ≥1e28×) — ~5× faster GPU \
@@ -5278,10 +5289,10 @@ impl FractadyneApp {
                         .on_hover_text("Flow the glow bands over time (uses the Speed slider).");
                 });
                 ui.separator();
-                ui.checkbox(&mut self.auto_iter, "Auto-scale iterations with zoom");
-                let label = if self.auto_iter { "Iterations (base)" } else { "Iterations" };
+                ui.checkbox(&mut self.render_cfg.auto_iter, "Auto-scale iterations with zoom");
+                let label = if self.render_cfg.auto_iter { "Iterations (base)" } else { "Iterations" };
                 ui.add(
-                    egui::Slider::new(&mut self.max_iter, 64..=500_000)
+                    egui::Slider::new(&mut self.render_cfg.max_iter, 64..=500_000)
                         .logarithmic(true)
                         .text(label),
                 )
@@ -5298,10 +5309,10 @@ impl FractadyneApp {
                 // matches it. Show the current effective (settled) count so the user knows
                 // the true detail level once motion stops.
                 let log2mag = self.viewport.log2_magnification();
-                let want_iter = if self.auto_iter {
-                    self.viewport.recommended_max_iter(self.max_iter)
+                let want_iter = if self.render_cfg.auto_iter {
+                    self.viewport.recommended_max_iter(self.render_cfg.max_iter)
                 } else {
-                    self.max_iter
+                    self.render_cfg.max_iter
                 };
                 let settled_iter = want_iter.min(500_000).min(zoom_iter_cap(log2mag).max(256));
                 let px = (self.viewport.width_px * self.viewport.height_px).max(1.0) as u64;
@@ -5321,7 +5332,7 @@ impl FractadyneApp {
                 }
                 ui.separator();
                 egui::ComboBox::from_label("Anti-alias")
-                    .selected_text(match self.aa {
+                    .selected_text(match self.render_cfg.aa {
                         1 => "Off",
                         2 => "2×",
                         3 => "3×",
@@ -5329,11 +5340,11 @@ impl FractadyneApp {
                         _ => "8×",
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.aa, 1, "Off");
-                        ui.selectable_value(&mut self.aa, 2, "2×");
-                        ui.selectable_value(&mut self.aa, 3, "3×");
-                        ui.selectable_value(&mut self.aa, 4, "4×");
-                        ui.selectable_value(&mut self.aa, 8, "8×");
+                        ui.selectable_value(&mut self.render_cfg.aa, 1, "Off");
+                        ui.selectable_value(&mut self.render_cfg.aa, 2, "2×");
+                        ui.selectable_value(&mut self.render_cfg.aa, 3, "3×");
+                        ui.selectable_value(&mut self.render_cfg.aa, 4, "4×");
+                        ui.selectable_value(&mut self.render_cfg.aa, 8, "8×");
                     })
                     .response
                     .on_hover_text(
@@ -5344,7 +5355,7 @@ impl FractadyneApp {
                 });
                 egui::CollapsingHeader::new("Navigation").default_open(true).show(ui, |ui| {
                 ui.add(
-                    egui::Slider::new(&mut self.zoom_rate, 0.25..=4.0)
+                    egui::Slider::new(&mut self.render_cfg.zoom_rate, 0.25..=4.0)
                         .text("Zoom speed")
                         .suffix("×")
                         .logarithmic(true),
@@ -5371,7 +5382,7 @@ impl FractadyneApp {
 
                 // Live-render work budget: detail-vs-speed for the deep-zoom preview.
                 ui.add(
-                    egui::Slider::new(&mut self.work_budget_scale, 0.25..=8.0)
+                    egui::Slider::new(&mut self.render_cfg.work_budget_scale, 0.25..=8.0)
                         .text("Live render budget")
                         .suffix("×")
                         .logarithmic(true),
@@ -5441,10 +5452,10 @@ impl FractadyneApp {
                 let eff_iter = if self.perf.last_eff_iter > 0 {
                     self.perf.last_eff_iter
                 } else {
-                    let want_iter = if self.auto_iter {
-                        self.viewport.recommended_max_iter(self.max_iter)
+                    let want_iter = if self.render_cfg.auto_iter {
+                        self.viewport.recommended_max_iter(self.render_cfg.max_iter)
                     } else {
-                        self.max_iter
+                        self.render_cfg.max_iter
                     };
                     want_iter.min(zoom_iter_cap(self.viewport.log2_magnification()).max(256))
                 };
@@ -5560,7 +5571,7 @@ impl FractadyneApp {
                 }
                 let (space, shift) =
                     ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
-                let rate = ZOOM_RATE * self.zoom_rate as f64;
+                let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
                 let target_vel = if space {
                     if shift { -rate } else { rate }
                 } else {
@@ -5605,10 +5616,10 @@ impl FractadyneApp {
 
                 // Render the fractal at the current viewport with the chosen palette.
                 let span_fe = self.viewport.complex_span_fe();
-                let eff_iter = if self.auto_iter {
-                    self.viewport.recommended_max_iter(self.max_iter)
+                let eff_iter = if self.render_cfg.auto_iter {
+                    self.viewport.recommended_max_iter(self.render_cfg.max_iter)
                 } else {
-                    self.max_iter
+                    self.render_cfg.max_iter
                 };
                 // Quality-on-settle: skip AA while interacting (and for a short
                 // settle window after), then render full AA once the view is still.
@@ -5630,8 +5641,8 @@ impl FractadyneApp {
                     self.pointer.settle_frame[0] = 0;
                     1
                 } else {
-                    let ss = aa_ramp(self.pointer.settle_frame[0], self.aa);
-                    if ss < self.aa {
+                    let ss = aa_ramp(self.pointer.settle_frame[0], self.render_cfg.aa);
+                    if ss < self.render_cfg.aa {
                         self.pointer.settle_frame[0] += 1;
                         self.schedule_repaint(ctx);
                     }

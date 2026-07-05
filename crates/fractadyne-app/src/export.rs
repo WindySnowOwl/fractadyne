@@ -268,12 +268,12 @@ impl FractadyneApp {
             // exactly; `upp` above is the saturating f64 (back-compat + human-readable).
             self.viewport.units_per_pixel.log2(),
             self.viewport.magnification(),
-            self.max_iter,
-            self.auto_iter as u32,
+            self.render_cfg.max_iter,
+            self.render_cfg.auto_iter as u32,
             self.palette_idx,
             self.cycle,
             self.offset,
-            self.aa,
+            self.render_cfg.aa,
         )
     }
 
@@ -337,10 +337,10 @@ impl FractadyneApp {
             if c != mi {
                 report.clamped.push("max_iter");
             }
-            self.max_iter = c;
+            self.render_cfg.max_iter = c;
         }
         if let Some(ai) = get("auto_iter") {
-            self.auto_iter = ai == "1";
+            self.render_cfg.auto_iter = ai == "1";
         }
         if let Some(p) = get("palette").and_then(|s| s.parse::<usize>().ok()) {
             if p < fractadyne_color::PRESETS.len() {
@@ -376,7 +376,7 @@ impl FractadyneApp {
             if c != a {
                 report.clamped.push("anti-aliasing");
             }
-            self.aa = c;
+            self.render_cfg.aa = c;
         }
         if let Some(n) = get("notes") {
             self.export.notes = n;
@@ -525,7 +525,7 @@ impl FractadyneApp {
         progress: &std::sync::atomic::AtomicU32,
         cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<fractadyne_gpu::ExportResult, fractadyne_gpu::GpuError> {
-        if self.glitch_correct {
+        if self.render_cfg.glitch_correct {
             if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height) {
                 return Ok(res);
             }
@@ -717,7 +717,7 @@ impl FractadyneApp {
         // Glitch correction re-renders per reference (synchronous, main thread), so it runs here
         // rather than on the tiled worker. Handles single + dual layouts; falls back to the threaded
         // path for aux coloring methods or views past the ~32 MP / single-texture correction limit.
-        if self.glitch_correct {
+        if self.render_cfg.glitch_correct {
             if let Some(msg) = self.export_corrected_sync(&device, &queue, &path, &job, hud.as_ref()) {
                 self.export.status = Some(self.finish_export_status(msg));
                 return;

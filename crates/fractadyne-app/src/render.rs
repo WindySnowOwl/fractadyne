@@ -250,7 +250,7 @@ impl FractadyneApp {
             && !julia
             && self.fractal.formula_id() <= 3
             && !self.color_method.needs_aux()
-            && self.series_approx;
+            && self.render_cfg.series_approx;
         RecomputeInputs {
             center_bf: [vp.center_x.clone(), vp.center_y.clone()],
             span: vp.complex_span_fe(),
@@ -274,7 +274,7 @@ impl FractadyneApp {
     /// the view span — both scaled by `2^delta_exp` — used for the worst-case `|δc|`.
     /// Whether BLA applies to this render (deep floatexp Mandelbrot, non-Julia, non-aux coloring).
     fn bla_eligible(&self, mode: RenderMode, julia: bool) -> bool {
-        self.use_bla
+        self.render_cfg.use_bla
             && mode.is_floatexp()
             && !julia
             && self.fractal.formula_id() == 0
@@ -318,10 +318,10 @@ impl FractadyneApp {
         if mode.is_direct() {
             return None;
         }
-        let eff_iter = if self.auto_iter {
-            vp.recommended_max_iter(self.max_iter)
+        let eff_iter = if self.render_cfg.auto_iter {
+            vp.recommended_max_iter(self.render_cfg.max_iter)
         } else {
-            self.max_iter
+            self.render_cfg.max_iter
         }
         .min(zoom_iter_cap(log2mag).max(256));
         let scale = vp.gpu_scale();
@@ -370,10 +370,10 @@ impl FractadyneApp {
         // height from aspect: span_y/span_x = height_px/width_px (the scale cancels).
         let height = ((width as f64) * vp.height_px / vp.width_px).round().max(1.0) as u32;
         let mag = vp.magnification(); // saturates to ∞ past 1e308×; fine for the mode compares
-        let eff_iter = if self.auto_iter {
-            vp.recommended_max_iter(self.max_iter)
+        let eff_iter = if self.render_cfg.auto_iter {
+            vp.recommended_max_iter(self.render_cfg.max_iter)
         } else {
-            self.max_iter
+            self.render_cfg.max_iter
         }
         // Cap at the zoom-appropriate count (same as the live view): avoids noise from
         // over-resolving sub-pixel dust, and keeps the export fast/responsive.
@@ -686,7 +686,7 @@ impl FractadyneApp {
         // the budget forced ss=1 on a settled view the user wanted anti-aliased.
         let aa_filter = if res_scale < 1.0 {
             ((1.0 / res_scale).round() as u32).clamp(2, 4)
-        } else if ss == 1 && self.aa > 1 && !interacting {
+        } else if ss == 1 && self.render_cfg.aa > 1 && !interacting {
             2
         } else {
             1
@@ -796,7 +796,7 @@ impl FractadyneApp {
                 && !julia
                 && fractal.formula_id() <= 3
                 && !self.color_method.needs_aux()
-                && self.series_approx;
+                && self.render_cfg.series_approx;
             if recompute {
                 // The recompute (reference orbit + SA + BLA, all bignum) is the deep-zoom stall.
                 // Run it OFF the render thread: keep drawing with the cached reference and install

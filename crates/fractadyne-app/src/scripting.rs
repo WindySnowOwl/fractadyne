@@ -1421,8 +1421,8 @@ impl FractadyneApp {
         self.dual = false;
         // Auto-scale iterations with depth so deep tour frames resolve (a fixed low cap would
         // render the deep structure as under-iterated blobs). Keep a high base for detail.
-        self.auto_iter = true;
-        self.max_iter = self.max_iter.max(500_000);
+        self.render_cfg.auto_iter = true;
+        self.render_cfg.max_iter = self.render_cfg.max_iter.max(500_000);
         self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
         self.export.width = width;
         self.export.ss = ss.max(1);
@@ -1989,11 +1989,11 @@ impl FractadyneApp {
             julia_mode: self.julia_mode,
             dual: self.dual,
             color_method: self.color_method.to_u32(),
-            auto_iter: self.auto_iter,
-            aa: self.aa,
-            series_approx: self.series_approx,
-            use_bla: self.use_bla,
-            glitch_correct: self.glitch_correct,
+            auto_iter: self.render_cfg.auto_iter,
+            aa: self.render_cfg.aa,
+            series_approx: self.render_cfg.series_approx,
+            use_bla: self.render_cfg.use_bla,
+            glitch_correct: self.render_cfg.glitch_correct,
             palette_idx: self.palette_idx,
             use_binary: self.use_binary,
             use_duotone: self.use_duotone,
@@ -2004,11 +2004,11 @@ impl FractadyneApp {
         self.julia_mode = false;
         self.dual = false;
         self.color_method = crate::ColorMethod::Smooth; // smooth
-        self.auto_iter = true; // depth-appropriate, deterministic per depth
-        self.aa = STD_AA;
-        self.series_approx = true;
-        self.use_bla = true;
-        self.glitch_correct = false; // data-dependent cost → off for a deterministic timing
+        self.render_cfg.auto_iter = true; // depth-appropriate, deterministic per depth
+        self.render_cfg.aa = STD_AA;
+        self.render_cfg.series_approx = true;
+        self.render_cfg.use_bla = true;
+        self.render_cfg.glitch_correct = false; // data-dependent cost → off for a deterministic timing
         self.palette_idx = 0; // Ember
         self.use_binary = false;
         self.use_duotone = false;
@@ -2039,11 +2039,11 @@ impl FractadyneApp {
         self.julia_mode = s.julia_mode;
         self.dual = s.dual;
         self.color_method = crate::ColorMethod::from_u32(s.color_method);
-        self.auto_iter = s.auto_iter;
-        self.aa = s.aa;
-        self.series_approx = s.series_approx;
-        self.use_bla = s.use_bla;
-        self.glitch_correct = s.glitch_correct;
+        self.render_cfg.auto_iter = s.auto_iter;
+        self.render_cfg.aa = s.aa;
+        self.render_cfg.series_approx = s.series_approx;
+        self.render_cfg.use_bla = s.use_bla;
+        self.render_cfg.glitch_correct = s.glitch_correct;
         self.palette_idx = s.palette_idx;
         self.use_binary = s.use_binary;
         self.use_duotone = s.use_duotone;
@@ -2075,7 +2075,7 @@ impl FractadyneApp {
         let span = vp.complex_span_fe();
         let mag = vp.magnification();
         let l2 = vp.log2_magnification();
-        let eff_iter = vp.recommended_max_iter(self.max_iter);
+        let eff_iter = vp.recommended_max_iter(self.render_cfg.max_iter);
         let t = Instant::now();
         let params = self.build_params(
             center_bf, center, span, mag, l2, self.fractal, false, eff_iter, false, STD_AA,

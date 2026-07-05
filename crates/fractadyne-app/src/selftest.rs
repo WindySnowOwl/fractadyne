@@ -618,8 +618,8 @@ impl FractadyneApp {
                 self.julia_mode = false;
                 self.color_method = crate::ColorMethod::Smooth;
                 self.use_custom_palette = false;
-                self.auto_iter = false;
-                self.max_iter = 1500;
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 1500;
                 let mut vp = Viewport::new(N as f64, N as f64);
                 vp.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
                 vp.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
@@ -669,8 +669,8 @@ impl FractadyneApp {
             self.julia_mode = false;
             self.color_method = crate::ColorMethod::Smooth;
             self.use_custom_palette = false;
-            self.auto_iter = false;
-            self.max_iter = 2000;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 2000;
             let nn = N as usize;
             let steep = |px: &[f32], i: usize, j: usize| -> bool {
                 let g = px[(j * nn + i) * 4];
@@ -907,8 +907,8 @@ impl FractadyneApp {
             self.julia_mode = false;
             self.color_method = crate::ColorMethod::Smooth;
             self.use_custom_palette = false;
-            self.auto_iter = false;
-            self.max_iter = 4000;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 4000;
             for (fractal, cx, cy) in [
                 (FractalKind::Multibrot3, "0.2", "0.1"),
                 (FractalKind::Multibrot4, "0.2", "0.1"),
@@ -976,10 +976,10 @@ impl FractadyneApp {
             self.julia_mode = false;
             self.color_method = crate::ColorMethod::Smooth;
             self.use_custom_palette = false;
-            self.auto_iter = false;
-            self.max_iter = 5000;
-            self.series_approx = false; // isolate BLA
-            self.use_bla = true;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 5000;
+            self.render_cfg.series_approx = false; // isolate BLA
+            self.render_cfg.use_bla = true;
             let nn = N as usize;
             let steep = |px: &[f32], i: usize, j: usize| -> bool {
                 let g = px[(j * nn + i) * 4];
@@ -1104,8 +1104,8 @@ impl FractadyneApp {
                     });
                 }
             }
-            self.use_bla = false;
-            self.series_approx = true;
+            self.render_cfg.use_bla = false;
+            self.render_cfg.series_approx = true;
         }
 
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
@@ -1114,7 +1114,7 @@ impl FractadyneApp {
             self.julia_mode = false;
             self.color_method = crate::ColorMethod::Smooth;
             self.use_custom_palette = false;
-            self.auto_iter = false;
+            self.render_cfg.auto_iter = false;
             let cxb = fractadyne_core::parse_bf(SX).unwrap();
             let cyb = fractadyne_core::parse_bf(SY).unwrap();
             // Build a square Mandelbrot iteration render at an explicit center/zoom/size.
@@ -1469,19 +1469,19 @@ impl FractadyneApp {
             self.viewport.center_x = fractadyne_core::parse_bf("-0.743643887037151").unwrap();
             self.viewport.center_y = fractadyne_core::parse_bf("0.131825904205330").unwrap();
             self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(-120.0);
-            self.max_iter = 1234;
-            self.auto_iter = false;
-            self.aa = 3;
+            self.render_cfg.max_iter = 1234;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.aa = 3;
             let blob = self.view_metadata();
             // Scramble live state, then restore from the blob.
-            self.max_iter = 7;
-            self.aa = 1;
+            self.render_cfg.max_iter = 7;
+            self.render_cfg.aa = 1;
             self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0);
             let rt = self.load_view_metadata(&blob);
             let cx = fractadyne_core::to_f64(&self.viewport.center_x);
             let rt_ok = rt.note().is_none()
-                && self.max_iter == 1234
-                && self.aa == 3
+                && self.render_cfg.max_iter == 1234
+                && self.render_cfg.aa == 3
                 && (self.viewport.units_per_pixel.log2() + 120.0).abs() < 1.0e-6
                 && (cx + 0.743643887037151).abs() < 1.0e-12;
             checks.push(SelfCheck {
@@ -1490,7 +1490,7 @@ impl FractadyneApp {
                 params: "serialize → scramble → load".into(),
                 result: format!(
                     "iter {} aa {} upp_log2 {:.3} cx {:.15}",
-                    self.max_iter, self.aa, self.viewport.units_per_pixel.log2(), cx
+                    self.render_cfg.max_iter, self.render_cfg.aa, self.viewport.units_per_pixel.log2(), cx
                 ),
                 threshold: "clean load; fractal/iter/aa/zoom/center preserved",
                 pass: rt_ok,
@@ -1513,8 +1513,8 @@ impl FractadyneApp {
                            upp_log2=-1e30\nmax_iter=4000000000\naa=9999\ncycle=inf\noffset=NaN\n\
                            bogus_field=42\n";
             let hr = self.load_view_metadata(hostile);
-            let clamped = (1..=10_000_000).contains(&self.max_iter)
-                && (1..=16).contains(&self.aa)
+            let clamped = (1..=10_000_000).contains(&self.render_cfg.max_iter)
+                && (1..=16).contains(&self.render_cfg.aa)
                 && self.viewport.units_per_pixel.log2().is_finite()
                 && self.viewport.units_per_pixel.log2() >= -3.4e7 - 1.0
                 && self.cycle.is_finite()
@@ -1527,7 +1527,7 @@ impl FractadyneApp {
                 params: "upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf, bogus_field".into(),
                 result: format!(
                     "iter {} aa {} upp_log2 {:.2e}; clamped [{}]; unknown [{}]",
-                    self.max_iter, self.aa, self.viewport.units_per_pixel.log2(),
+                    self.render_cfg.max_iter, self.render_cfg.aa, self.viewport.units_per_pixel.log2(),
                     hr.clamped.join(", "), hr.unknown.join(", ")
                 ),
                 threshold: "clamped & finite; report lists clamped + unknown",
@@ -1644,8 +1644,8 @@ impl FractadyneApp {
             self.julia_c = (0.0, 0.0); // unused (julia off) — pinned so nothing leaks from the session
             self.effects.light = false;
             self.effects.de = false;
-            self.auto_iter = false;
-            self.max_iter = iter;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = iter;
             let mut vp = Viewport::new(gw as f64, gh as f64);
             vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
             vp.center_y = fractadyne_core::parse_bf(cy).unwrap();

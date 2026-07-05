@@ -131,7 +131,7 @@ impl FractadyneApp {
             let follow = 1.0 - (-dt / AUTOPILOT_TARGET_TAU).exp();
             self.autopilot.target.0 += (self.autopilot.goal.0 - self.autopilot.target.0) * follow;
             self.autopilot.target.1 += (self.autopilot.goal.1 - self.autopilot.target.1) * follow;
-            let rate = ZOOM_RATE * self.zoom_rate as f64;
+            let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
             let factor = (-rate * dt).exp();
             let px = self.autopilot.target.0 * self.viewport.width_px;
             let py = self.autopilot.target.1 * self.viewport.height_px;

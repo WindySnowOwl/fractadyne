@@ -188,16 +188,16 @@ impl FractadyneApp {
         json.push_str(&format!("  \"gpu\": {},\n", js(&self.gpu_name)));
         json.push_str(&format!("  \"cpu\": {},\n", js(&sys.cpu)));
         json.push_str(&format!("  \"os\": {},\n", js(std::env::consts::OS)));
-        json.push_str(&format!("  \"series_approx\": {},\n", self.series_approx));
-        json.push_str(&format!("  \"use_bla\": {},\n", self.use_bla));
+        json.push_str(&format!("  \"series_approx\": {},\n", self.render_cfg.series_approx));
+        json.push_str(&format!("  \"use_bla\": {},\n", self.render_cfg.use_bla));
         json.push_str(&format!("  \"reps\": {reps},\n"));
         json.push_str("  \"regions\": [\n");
 
         println!(
             "Fractadyne profiling — {} regions × {reps} reps (SA {}, BLA {})",
             regions.len(),
-            if self.series_approx { "on" } else { "off" },
-            if self.use_bla { "on" } else { "off" },
+            if self.render_cfg.series_approx { "on" } else { "off" },
+            if self.render_cfg.use_bla { "on" } else { "off" },
         );
         println!(
             "  {:<20} {:>5} {:>8} {:>9} {:>8} {:>9} {:>10} {:>10}",
@@ -210,8 +210,8 @@ impl FractadyneApp {
             self.julia_mode = false;
             self.dual = false;
             self.color_method = crate::ColorMethod::from_u32(r.method);
-            self.auto_iter = false;
-            self.max_iter = r.iter;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = r.iter;
             self.export.width = r.size;
             self.export.ss = r.ss;
             self.invalidate_refs();
@@ -374,7 +374,7 @@ impl FractadyneApp {
         self.julia_mode = false;
         self.dual = false;
         self.color_method = crate::ColorMethod::Smooth;
-        self.auto_iter = true;
+        self.render_cfg.auto_iter = true;
         self.invalidate_refs();
         let size = size.clamp(64, 4096);
 
@@ -384,7 +384,7 @@ impl FractadyneApp {
 
         println!(
             "Fractadyne frame test — {steps} steps × {hold} hold, {size}px, dive → 1e{target_log10:.0}× (BLA {})",
-            if self.use_bla { "on" } else { "off" }
+            if self.render_cfg.use_bla { "on" } else { "off" }
         );
 
         for step in 0..steps {
@@ -400,10 +400,10 @@ impl FractadyneApp {
                 let span = self.viewport.complex_span_fe();
                 let mag = self.viewport.magnification();
                 let l2 = self.viewport.log2_magnification();
-                let eff_iter = self.viewport.recommended_max_iter(self.max_iter);
+                let eff_iter = self.viewport.recommended_max_iter(self.render_cfg.max_iter);
                 let t = Instant::now();
                 let params = self.build_params(
-                    center_bf, center, span, mag, l2, self.fractal, false, eff_iter, false, self.aa,
+                    center_bf, center, span, mag, l2, self.fractal, false, eff_iter, false, self.render_cfg.aa,
                     [size, size], 0, None,
                 );
                 let build_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -451,7 +451,7 @@ impl FractadyneApp {
         json.push_str(&format!("  \"version\": {},\n", js(&crate::version_string())));
         json.push_str(&format!("  \"utc\": {},\n", js(&crate::utc_string(now_unix()))));
         json.push_str(&format!("  \"gpu\": {},\n", js(&self.gpu_name)));
-        json.push_str(&format!("  \"use_bla\": {},\n", self.use_bla));
+        json.push_str(&format!("  \"use_bla\": {},\n", self.render_cfg.use_bla));
         json.push_str(&format!("  \"steps\": {steps}, \"hold\": {hold}, \"size\": {size},\n"));
         json.push_str(&format!("  \"stall_ms\": {STALL_MS},\n"));
         json.push_str(&format!("  \"recompute_stalls\": {stalls},\n"));
