@@ -6,7 +6,7 @@
 use crate::{
     color_bind_group_layout, fullscreen_pipeline, iter_bind_group_layout, make_color_bg,
     make_iter_bg, make_iter_texture, make_orbit_buffer, method_needs_aux, shader_module,
-    ColorUniforms, IterUniforms, Vignette, ITER_FORMAT,
+    ColorUniforms, IterUniforms, RefOffset, Vignette, ITER_FORMAT,
 };
 use egui_wgpu::wgpu;
 use std::sync::Arc;
@@ -23,7 +23,7 @@ pub struct ExportRequest {
     /// Complex span *mantissa* (`span · 2^-delta_exp`, O(1)) — see [`fractadyne_core::GpuScale`].
     pub span_mantissa: [f64; 2],
     pub center: [f32; 4],
-    pub ref_offset: [f32; 4],
+    pub ref_offset: RefOffset,
     pub delta_exp: i32,
     /// Series-approximation skip (0 = none) + order-3 coeffs (complex df32 mantissa × 2^exp).
     pub sa_skip: u32,
@@ -208,7 +208,7 @@ pub fn render_export(
 
             let iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
-                ref_offset: req.ref_offset,
+                ref_offset: req.ref_offset.to_array(),
                 center: req.center,
                 julia_c: req.julia_c,
                 res: [full_iw, full_ih],
@@ -403,7 +403,7 @@ pub fn render_iter(
     let (syh, syl) = split(req.span_mantissa[1] / h as f64);
     let iu = IterUniforms {
         step: [sxh, sxl, syh, syl],
-        ref_offset: req.ref_offset,
+        ref_offset: req.ref_offset.to_array(),
         center: req.center,
         julia_c: req.julia_c,
         res: [w as f32, h as f32],

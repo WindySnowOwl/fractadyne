@@ -5,7 +5,7 @@
 
 use crate::{profile, zoom_iter_cap, FractadyneApp, FractalKind, RenderMode, PERT_FE_THRESHOLD};
 use fractadyne_core::Viewport;
-use fractadyne_gpu::MandelbrotParams;
+use fractadyne_gpu::{MandelbrotParams, RefOffset};
 use std::time::Instant;
 
 /// BLA per-step linear tolerance (drops δz² with relative error ≤ this). Smaller ⇒ more
@@ -123,7 +123,7 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
 /// Shared by the synchronous export path and the pipelined (precomputed) tour path so both derive
 /// these fields identically.
 struct RefFields {
-    ref_offset: [f32; 4],
+    ref_offset: RefOffset,
     orbit: std::sync::Arc<Vec<[f32; 4]>>,
     orbit_len: u32,
     sa: fractadyne_core::SeriesSkip,
@@ -134,7 +134,7 @@ struct RefFields {
 impl Default for RefFields {
     fn default() -> Self {
         Self {
-            ref_offset: [0.0; 4],
+            ref_offset: RefOffset::ZERO,
             orbit: std::sync::Arc::new(Vec::new()),
             orbit_len: 0,
             sa: fractadyne_core::SeriesSkip::NONE,
@@ -149,11 +149,9 @@ impl Default for RefFields {
 fn assemble_ref_fields(vp: &Viewport, precision: usize, delta_exp: i32, res: RecomputeResult) -> RefFields {
     let dx = fractadyne_core::ref_offset_mantissa(&vp.center_x, &res.rp[0], delta_exp, precision);
     let dy = fractadyne_core::ref_offset_mantissa(&vp.center_y, &res.rp[1], delta_exp, precision);
-    let dxh = dx as f32;
-    let dyh = dy as f32;
     let bla_on = if res.bla.is_empty() { 0 } else { 1 };
     RefFields {
-        ref_offset: [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32],
+        ref_offset: RefOffset::from_df32(dx, dy),
         orbit: res.orbit,
         orbit_len: res.orbit_len,
         sa: res.sa,
@@ -531,13 +529,11 @@ impl FractadyneApp {
                 self.compute_reference(&center_bf, span, eff_iter, precision, julia, Some([rx, ry]));
             let dx = fractadyne_core::ref_offset_mantissa(&center_bf[0], &rp[0], delta_exp, precision);
             let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &rp[1], delta_exp, precision);
-            let (dxh, dyh) = (dx as f32, dy as f32);
-
             // Re-reference pass: fresh orbit, no SA/BLA (they were built for the base reference).
             let mut r = req.clone();
             r.orbit = orbit;
             r.orbit_len = len;
-            r.ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
+            r.ref_offset = RefOffset::from_df32(dx, dy);
             r.sa_skip = 0;
             r.bla_on = 0;
             r.bla = std::sync::Arc::new(Vec::new());
@@ -714,7 +710,7 @@ impl FractadyneApp {
         // the freeze below to zoom the held frame as the view keeps diving (zoom-reprojection).
         let mut reproject_scale = 1.0_f32;
 
-        let mut ref_offset = [0.0_f32; 4];
+        let mut ref_offset = RefOffset::ZERO;
         let mut sa = fractadyne_core::SeriesSkip::NONE;
         let mut bla = std::sync::Arc::new(Vec::new());
         let mut bla_on = 0u32;
@@ -902,9 +898,7 @@ impl FractadyneApp {
             // (so it stays O(1) in df32 at any depth; the GPU re-applies the exponent).
             let dx = fractadyne_core::ref_offset_mantissa(&center_bf[0], &rp[0], delta_exp, precision);
             let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &rp[1], delta_exp, precision);
-            let dxh = dx as f32;
-            let dyh = dy as f32;
-            ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
+            ref_offset = RefOffset::from_df32(dx, dy);
             // Series approximation travels with the reference (computed off-thread); read it back.
             if do_sa {
                 sa = self.ref_cache[vi].sa;

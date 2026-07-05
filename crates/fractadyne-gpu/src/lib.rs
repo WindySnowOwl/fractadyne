@@ -91,7 +91,7 @@ pub struct Vignette {
 /// When the iteration pass must re-run.
 #[derive(Clone, Copy, PartialEq)]
 struct IterKey {
-    ref_offset: [f32; 4],
+    ref_offset: RefOffset,
     center: [f32; 4],
     julia_c: [f32; 4],
     span_mantissa: [f64; 2],
@@ -426,6 +426,51 @@ impl ViewResources {
     }
 }
 
+/// The `(center − reference)` offset as a df32 (double-single) pair — the reference-orbit
+/// anchor for perturbation. Typed so the four packed `f32` limbs can't be transposed: the
+/// hi/lo split happens once in [`RefOffset::from_df32`], and the packed GPU layout
+/// `[re_hi, im_hi, re_lo, im_lo]` (what the shader reads as real `(.x,.z)` / imag `(.y,.w)`)
+/// exists only inside [`RefOffset::to_array`], used at the `IterUniforms` boundary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RefOffset {
+    re_hi: f32,
+    im_hi: f32,
+    re_lo: f32,
+    im_lo: f32,
+}
+
+impl RefOffset {
+    /// All-zero offset — the direct (mode 1) path has no reference.
+    pub const ZERO: RefOffset = RefOffset { re_hi: 0.0, im_hi: 0.0, re_lo: 0.0, im_lo: 0.0 };
+
+    /// Pack the real/imag offset mantissas (already scaled by `2^-delta_exp`, so O(1)) as a df32
+    /// pair, splitting each into hi/lo `f32` limbs. The one place the hi/lo split is authored.
+    #[inline]
+    pub fn from_df32(re: f64, im: f64) -> RefOffset {
+        let re_hi = re as f32;
+        let im_hi = im as f32;
+        RefOffset {
+            re_hi,
+            im_hi,
+            re_lo: (re - re_hi as f64) as f32,
+            im_lo: (im - im_hi as f64) as f32,
+        }
+    }
+
+    /// Lower to the packed GPU array `[re_hi, im_hi, re_lo, im_lo]` — the shader reads real from
+    /// `(.x, .z)` and imag from `(.y, .w)`. Used ONLY at the `IterUniforms` (Pod) boundary.
+    #[inline]
+    pub fn to_array(self) -> [f32; 4] {
+        [self.re_hi, self.im_hi, self.re_lo, self.im_lo]
+    }
+}
+
+impl Default for RefOffset {
+    fn default() -> Self {
+        RefOffset::ZERO
+    }
+}
+
 /// Per-frame data the app hands to the paint callback. The reference orbit is
 /// precomputed (arbitrary precision) by the app and shared via `Arc`.
 #[derive(Clone)]
@@ -439,7 +484,7 @@ pub struct MandelbrotParams {
     pub bla: Arc<Vec<[f32; 4]>>,
     pub bla_on: u32,
     /// (view center − reference) *mantissa* (scaled by 2^-delta_exp), df32.
-    pub ref_offset: [f32; 4],
+    pub ref_offset: RefOffset,
     /// Shared base-2 exponent of the δ mantissas (ref_offset and the per-texel step).
     pub delta_exp: i32,
     /// Series-approximation skip (0 = none) + order-3 coefficients (complex df32 mantissa ×
@@ -636,7 +681,7 @@ impl CallbackTrait for MandelbrotParams {
             let (syh, syl) = split(self.span_mantissa[1] / size[1] as f64);
             let iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
-                ref_offset: self.ref_offset,
+                ref_offset: self.ref_offset.to_array(),
                 center: self.center,
                 julia_c: self.julia_c,
                 res: [size[0] as f32, size[1] as f32],

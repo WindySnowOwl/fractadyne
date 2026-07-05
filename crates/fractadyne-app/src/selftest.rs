@@ -418,11 +418,10 @@ impl FractadyneApp {
                     );
                     let dx = fractadyne_core::ref_offset_mantissa(&cxb, &rp[0], base.delta_exp, prec);
                     let dy = fractadyne_core::ref_offset_mantissa(&cyb, &rp[1], base.delta_exp, prec);
-                    let (dxh, dyh) = (dx as f32, dy as f32);
                     let mut r = base.clone();
                     r.orbit = orbit;
                     r.orbit_len = len;
-                    r.ref_offset = [dxh, dyh, (dx - dxh as f64) as f32, (dy - dyh as f64) as f32];
+                    r.ref_offset = fractadyne_gpu::RefOffset::from_df32(dx, dy);
                     r
                 };
                 let altb = with_ref(0.25 * span, 0.20 * span);
