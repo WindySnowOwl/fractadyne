@@ -247,55 +247,75 @@ fn fullscreen_pipeline(
     })
 }
 
+/// The WGSL shader module (iterate + color passes). Created per call site — the live view builds it
+/// once at init and each export builds it once; both are occasional, so the compile cost is
+/// negligible and a single definition keeps the four former copies from drifting.
+fn shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fractadyne.shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("mandelbrot.wgsl").into()),
+    })
+}
+
+/// A fragment-visible uniform buffer at `binding` 0 — shared by both bind-group layouts.
+fn uniform_bgl_entry() -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+/// Bind-group layout for the **iterate** pass: uniforms (0) + the read-only reference/BLA orbit
+/// storage buffer (1). Identical for the live view and every export path.
+fn iter_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("fractadyne.iter_bgl"),
+        entries: &[
+            uniform_bgl_entry(),
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Bind-group layout for the **color** pass: uniforms (0) + the iteration texture (1) + the aux
+/// statistics texture (2). Identical for the live view and every export path.
+fn color_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("fractadyne.color_bgl"),
+        entries: &[uniform_bgl_entry(), tex_entry(1), tex_entry(2)],
+    })
+}
+
 impl Renderer {
     fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("fractadyne.shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("mandelbrot.wgsl").into()),
-        });
-
-        let uniform_entry = wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-
-        let iter_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("fractadyne.iter_bgl"),
-            entries: &[
-                uniform_entry,
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let color_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("fractadyne.color_bgl"),
-            entries: &[uniform_entry, tex_entry(1), tex_entry(2)],
-        });
+        let shader = shader_module(device);
+        let iter_bgl = iter_bind_group_layout(device);
+        let color_bgl = color_bind_group_layout(device);
 
         let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("fractadyne.iter_layout"),
@@ -793,51 +813,9 @@ pub fn render_export(
     let by_work = (((TILE_WORK_BUDGET / work_per_px.max(1)) as f64).sqrt() as u32).max(64);
     let tile = by_tex.min(by_buf).min(by_work).clamp(1, 2048);
 
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("fractadyne.export_shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("mandelbrot.wgsl").into()),
-    });
-
-    let uniform_entry = wgpu::BindGroupLayoutEntry {
-        binding: 0,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    };
-    let iter_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("export.iter_bgl"),
-        entries: &[
-            uniform_entry,
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    });
-    let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-        count: None,
-    };
-    let color_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("export.color_bgl"),
-        entries: &[uniform_entry, tex_entry(1), tex_entry(2)],
-    });
+    let shader = shader_module(device);
+    let iter_bgl = iter_bind_group_layout(device);
+    let color_bgl = color_bind_group_layout(device);
     let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("export.iter_layout"),
         bind_group_layouts: &[&iter_bgl],
@@ -1094,35 +1072,8 @@ pub fn render_iter(
     let w = req.width.clamp(1, max_dim);
     let h = req.height.clamp(1, max_dim);
 
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("fractadyne.selftest_shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("mandelbrot.wgsl").into()),
-    });
-    let iter_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("selftest.iter_bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    });
+    let shader = shader_module(device);
+    let iter_bgl = iter_bind_group_layout(device);
     let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("selftest.iter_layout"),
         bind_group_layouts: &[&iter_bgl],
@@ -1300,34 +1251,8 @@ pub fn color_iter_buffer(
 ) -> Result<ExportResult, String> {
     let w = req.width.max(1);
     let h = req.height.max(1);
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("fractadyne.color_iter_shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("mandelbrot.wgsl").into()),
-    });
-    let uniform_entry = wgpu::BindGroupLayoutEntry {
-        binding: 0,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    };
-    let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-        count: None,
-    };
-    let color_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("coloriter.bgl"),
-        entries: &[uniform_entry, tex_entry(1), tex_entry(2)],
-    });
+    let shader = shader_module(device);
+    let color_bgl = color_bind_group_layout(device);
     let color_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("coloriter.layout"),
         bind_group_layouts: &[&color_bgl],
