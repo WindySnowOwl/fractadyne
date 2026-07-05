@@ -1490,6 +1490,8 @@ struct FractadyneApp {
     watermark_overlay: Option<export::WmOverlay>,
     /// UI scale (egui zoom factor): scales the interface fonts + widgets. 1.0 = default.
     ui_scale: f32,
+    /// Active UI theme (dark / light); persisted. Applied via `theme::apply_theme`.
+    theme: ThemeMode,
     /// Minimap overview cache: home-view thumbnail + the key (formula, palette, method) it was
     /// rendered for (re-render on change). The enable *toggle* lives in [`DialogState`].
     minimap_tex: Option<egui::TextureHandle>,
@@ -1528,7 +1530,7 @@ impl FractadyneApp {
             }
         };
         install_renderer(render_state);
-        apply_brand_theme(&cc.egui_ctx);
+        install_fonts(&cc.egui_ctx); // brand typefaces (theme-independent); visuals applied below
         let gpu_name = render_state.adapter.get_info().name;
 
         // CLI modes (headless, for automation / debugging):
@@ -1627,6 +1629,8 @@ impl FractadyneApp {
             )),
             _ => None,
         };
+        let theme = ThemeMode::from_key(&s.theme);
+        apply_theme(&cc.egui_ctx, theme);
         let mut viewport = Viewport::new(1280.0, 720.0);
         viewport.center_x = fractadyne_core::parse_bf(&s.center_x_str)
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(s.center_x, 64));
@@ -1814,6 +1818,7 @@ impl FractadyneApp {
                 || args.iter().any(|a| a == "--show-location" || a == "--hud"),
             watermark_overlay: None,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
+            theme,
             ref_cache: [RefCache::default(), RefCache::default()],
             recompute_rx: [None, None],
             last_state: s,
@@ -2038,6 +2043,7 @@ impl FractadyneApp {
             use_bla: self.render_cfg.use_bla,
             watermark: self.watermark,
             ui_scale: self.ui_scale,
+            theme: self.theme.key().to_string(),
             show_orbits: self.anim.show_orbits,
             orbit_normalize: self.anim.orbit_normalize,
             orbit_anim: self.anim.orbit_anim,

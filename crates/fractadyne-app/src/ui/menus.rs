@@ -227,6 +227,14 @@ impl FractadyneApp {
                                 self.ui_scale = val;
                             }
                         }
+                        ui.separator();
+                        ui.label("Theme");
+                        for m in [ThemeMode::Dark, ThemeMode::Light] {
+                            if ui.selectable_label(self.theme == m, m.label()).clicked() {
+                                self.theme = m;
+                                apply_theme(ui.ctx(), m);
+                            }
+                        }
                     });
                     ui.menu_button("Tools", |ui| {
                         if ui

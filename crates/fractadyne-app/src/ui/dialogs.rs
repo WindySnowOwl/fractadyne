@@ -202,13 +202,14 @@ impl FractadyneApp {
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
                 .interactable(false)
                 .show(ctx, |ui| {
+                    let fill = ui.visuals().extreme_bg_color.gamma_multiply(fade);
+                    let accent = ui.visuals().hyperlink_color.gamma_multiply(fade);
+                    let ink = ui.visuals().strong_text_color().gamma_multiply(fade);
                     egui::Frame::popup(ui.style())
-                        .fill(egui::Color32::from_rgb(0x23, 0x24, 0x28).gamma_multiply(fade))
-                        .stroke(egui::Stroke::new(1.0, BRAND_ACCENT.gamma_multiply(fade)))
+                        .fill(fill)
+                        .stroke(egui::Stroke::new(1.0, accent))
                         .show(ui, |ui| {
-                            ui.label(
-                                egui::RichText::new(msg).color(BRAND_TEXT.gamma_multiply(fade)),
-                            );
+                            ui.label(egui::RichText::new(msg).color(ink));
                         });
                 });
             ctx.request_repaint(); // keep fading

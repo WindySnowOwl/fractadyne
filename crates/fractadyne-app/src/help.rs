@@ -3,17 +3,19 @@
 //! Pure presentation: each `help_*` section renders into an `egui::Ui`. The window chrome and
 //! table-of-contents live in `FractadyneApp::help_window`; this module is just the text.
 
-use crate::{version_string, BRAND_ACCENT, BRAND_TEXT};
+use crate::version_string;
 use eframe::egui;
 
 fn help_h(ui: &mut egui::Ui, t: &str) {
     ui.add_space(2.0);
-    ui.label(egui::RichText::new(t).size(18.0).strong().color(BRAND_ACCENT));
+    let accent = crate::theme::ui_accent(ui.ctx());
+    ui.label(egui::RichText::new(t).size(18.0).strong().color(accent));
     ui.add_space(4.0);
 }
 fn help_sub(ui: &mut egui::Ui, t: &str) {
     ui.add_space(8.0);
-    ui.label(egui::RichText::new(t).strong().color(BRAND_TEXT));
+    let ink = ui.visuals().strong_text_color();
+    ui.label(egui::RichText::new(t).strong().color(ink));
     ui.add_space(2.0);
 }
 fn help_p(ui: &mut egui::Ui, t: &str) {
@@ -471,7 +473,8 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
 /// A cited entry: bold title, a wrapped description, and a source link.
 fn help_cite(ui: &mut egui::Ui, title: &str, body: &str, link_label: &str, url: &str) {
     ui.add_space(6.0);
-    ui.label(egui::RichText::new(title).strong().color(BRAND_TEXT));
+    let ink = ui.visuals().strong_text_color();
+    ui.label(egui::RichText::new(title).strong().color(ink));
     ui.add(egui::Label::new(body).wrap());
     ui.hyperlink_to(format!("{link_label} \u{2197}"), url);
 }
@@ -526,12 +529,13 @@ pub(crate) fn help_hardware(ui: &mut egui::Ui) {
 pub(crate) fn help_acknowledgments(ui: &mut egui::Ui) {
     help_h(ui, "Acknowledgments & citations");
     // Dedication.
+    let accent = crate::theme::ui_accent(ui.ctx());
     ui.label(
         egui::RichText::new(
             "Dedicated to the Stone Soup Group — the volunteers behind Fractint (from 1988).",
         )
         .italics()
-        .color(BRAND_ACCENT),
+        .color(accent),
     );
     help_p(
         ui,

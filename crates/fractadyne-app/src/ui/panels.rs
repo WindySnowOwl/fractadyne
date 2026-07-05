@@ -219,6 +219,7 @@ impl FractadyneApp {
                 let res_limited = px.saturating_mul(settled_iter.max(1) as u64)
                     > self.effective_work_budget().saturating_mul(6);
                 if res_limited {
+                    let accent = theme::ui_accent(ui.ctx());
                     ui.label(
                         egui::RichText::new(format!(
                             "⚠ At this depth the settled preview renders {} iterations at \
@@ -227,7 +228,7 @@ impl FractadyneApp {
                             commas(&settled_iter.to_string()),
                         ))
                         .small()
-                        .color(theme::BRAND_ACCENT),
+                        .color(accent),
                     );
                 }
                 ui.separator();

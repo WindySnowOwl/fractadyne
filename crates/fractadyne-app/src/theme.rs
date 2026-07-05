@@ -1,10 +1,13 @@
-//! Branding & theme: the Fractadyne color identity (amber accent), the dark egui visuals,
-//! the two-color wordmark, the procedural window icon, and a couple of small painting helpers.
+//! Branding & theme: the Fractadyne color identity (amber accent), the **dark and light** egui
+//! visuals built from a shared semantic [`Palette`], the **Spline Sans / Spline Sans Mono**
+//! typography ([`install_fonts`]), the two-color wordmark, the procedural window icon, and a couple
+//! of small painting helpers. Colors + typography follow the brand system; the app name is its own.
 
 use eframe::egui;
 
-/// Brand accent (amber #E0A030) + logotype text color (#E6E7EA). The wordmark is
-/// "Fracta" (text) + "dyne" (amber).
+/// Fixed brand accent (amber #E0A030) + wordmark text (#E6E7EA), for overlays drawn ON the fractal
+/// render (crosshairs, markers, the export watermark) — the background there is the image, not the
+/// UI theme, so these stay constant. UI *chrome* uses the theme-aware [`ui_accent`] instead.
 pub(crate) const BRAND_ACCENT: egui::Color32 = egui::Color32::from_rgb(0xE0, 0xA0, 0x30);
 pub(crate) const BRAND_TEXT: egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE7, 0xEA);
 
@@ -42,38 +45,182 @@ pub(crate) fn dual_toggle_button(ui: &mut egui::Ui, selected: bool) -> egui::Res
     resp
 }
 
-/// Apply the Fractadyne dark theme (charcoal panels + amber accents, per the design).
-pub(crate) fn apply_brand_theme(ctx: &egui::Context) {
-    let mut v = egui::Visuals::dark();
-    let panel = egui::Color32::from_rgb(0x1A, 0x1B, 0x1E);
-    v.panel_fill = panel;
-    v.window_fill = panel;
-    v.extreme_bg_color = egui::Color32::from_rgb(0x10, 0x10, 0x15);
-    v.faint_bg_color = egui::Color32::from_rgb(0x23, 0x24, 0x28);
-    v.hyperlink_color = BRAND_ACCENT;
-    v.selection.bg_fill = egui::Color32::from_rgb(0x4A, 0x38, 0x14);
-    v.selection.stroke = egui::Stroke::new(1.0, BRAND_ACCENT);
-    v.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(0x23, 0x24, 0x28);
-    v.widgets.inactive.bg_fill = egui::Color32::from_rgb(0x2C, 0x2E, 0x33);
-    v.widgets.hovered.bg_fill = egui::Color32::from_rgb(0x3A, 0x3D, 0x44);
-    v.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(0x3A, 0x3D, 0x44);
-    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, BRAND_ACCENT);
-    v.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, BRAND_ACCENT);
-    v.widgets.active.bg_fill = egui::Color32::from_rgb(0x45, 0x49, 0x52);
-    v.widgets.active.bg_stroke = egui::Stroke::new(1.0, BRAND_ACCENT);
-    v.widgets.open.bg_fill = egui::Color32::from_rgb(0x2C, 0x2E, 0x33);
-    ctx.set_visuals(v);
+/// Light or dark UI theme (persisted; see [`apply_theme`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+}
 
-    // The default proportional font (Ubuntu-Light) lacks some math glyphs (arrows like →,
-    // ≪, super/subscripts) that appear in the Help formulas — they render as tofu boxes.
-    // Append the bundled monospace "Hack" font as a fallback so those glyphs resolve.
+impl ThemeMode {
+    /// Persisted key in `SessionState`.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            ThemeMode::Dark => "dark",
+            ThemeMode::Light => "light",
+        }
+    }
+    pub(crate) fn from_key(s: &str) -> ThemeMode {
+        if s == "light" {
+            ThemeMode::Light
+        } else {
+            ThemeMode::Dark
+        }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            ThemeMode::Dark => "Dark",
+            ThemeMode::Light => "Light",
+        }
+    }
+}
+
+const fn rgb(r: u8, g: u8, b: u8) -> egui::Color32 {
+    egui::Color32::from_rgb(r, g, b)
+}
+
+/// Semantic color roles for one theme (from the brand palette). One `Palette` builds the full egui
+/// `Visuals`; a couple of fields also feed the theme-aware brand chrome ([`ui_accent`]).
+struct Palette {
+    /// Outermost / darkest fill (dark) or warm base (light).
+    window: egui::Color32,
+    /// Side / central panels.
+    panel: egui::Color32,
+    /// Faint raised surface (group boxes, read-out troughs).
+    surface: egui::Color32,
+    /// Inputs / cards (the most-raised neutral fill).
+    elevated: egui::Color32,
+    /// Hovered widget fill.
+    hover: egui::Color32,
+    /// Pressed widget fill.
+    active: egui::Color32,
+    /// Hairlines / widget strokes / separators.
+    border: egui::Color32,
+    /// Primary text.
+    text: egui::Color32,
+    /// Amber accent.
+    accent: egui::Color32,
+    /// Text selection background (amber tint).
+    selection: egui::Color32,
+    dark_mode: bool,
+}
+
+impl Palette {
+    /// Fissiodyne Dark: near-black warm charcoals, bright ink, amber `#E0A030`.
+    fn dark() -> Self {
+        Palette {
+            window: rgb(0x14, 0x15, 0x18),
+            panel: rgb(0x1A, 0x1B, 0x1E),
+            surface: rgb(0x23, 0x24, 0x28),
+            elevated: rgb(0x2C, 0x2E, 0x33),
+            hover: rgb(0x3A, 0x3D, 0x44),
+            active: rgb(0x45, 0x49, 0x52),
+            border: rgb(0x3A, 0x3D, 0x44),
+            text: rgb(0xE6, 0xE7, 0xEA),
+            accent: rgb(0xE0, 0xA0, 0x30),
+            selection: rgb(0x4A, 0x38, 0x14),
+            dark_mode: true,
+        }
+    }
+    /// Fissiodyne Light: warm off-whites, near-black ink, a deeper amber `#B98212` for contrast.
+    fn light() -> Self {
+        Palette {
+            window: rgb(0xFB, 0xFA, 0xF8),
+            panel: rgb(0xF8, 0xF7, 0xF4),
+            surface: rgb(0xF1, 0xEF, 0xE9),
+            elevated: rgb(0xFF, 0xFF, 0xFF),
+            hover: rgb(0xEF, 0xEE, 0xEA),
+            active: rgb(0xE5, 0xE2, 0xDC),
+            border: rgb(0xD8, 0xD5, 0xCE),
+            text: rgb(0x2A, 0x2B, 0x2E),
+            accent: rgb(0xB9, 0x82, 0x12),
+            selection: rgb(0xF0, 0xE3, 0xBC),
+            dark_mode: false,
+        }
+    }
+}
+
+/// The active theme's amber accent for brand *chrome* (wordmark, help headers, panel accents) — it
+/// tracks light/dark, unlike the fixed [`BRAND_ACCENT`] used for overlays drawn on the render.
+/// Stored in `Visuals::hyperlink_color` by [`apply_theme`].
+pub(crate) fn ui_accent(ctx: &egui::Context) -> egui::Color32 {
+    ctx.style().visuals.hyperlink_color
+}
+
+/// Register the Spline Sans (UI) + Spline Sans Mono (numeric / data) brand typefaces, keeping
+/// egui's defaults as fallbacks for glyphs they lack (math arrows like →, emoji). Call once at
+/// startup, before [`apply_theme`].
+pub(crate) fn install_fonts(ctx: &egui::Context) {
+    use std::sync::Arc;
     let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "SplineSans".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!("../assets/fonts/SplineSans.ttf"))),
+    );
+    fonts.font_data.insert(
+        "SplineSansMono".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/fonts/SplineSansMono.ttf"
+        ))),
+    );
+    // Proportional: Spline Sans first, then the egui defaults (Ubuntu / Hack / emoji) so any glyph
+    // Spline Sans lacks (math arrows, sub/superscripts in the Help formulas) still resolves.
     if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        prop.insert(0, "SplineSans".to_owned());
         if !prop.iter().any(|f| f == "Hack") {
             prop.push("Hack".to_owned());
         }
     }
+    // Monospace (the numeric read-outs): Spline Sans Mono first, Hack behind it for fallbacks.
+    if let Some(mono) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+        mono.insert(0, "SplineSansMono".to_owned());
+    }
     ctx.set_fonts(fonts);
+}
+
+/// Apply the Fractadyne theme for `mode` (charcoal panels + amber on dark, warm off-white + deeper
+/// amber on light) by building egui `Visuals` from the semantic [`Palette`]. Cheap; call on startup
+/// and whenever the theme toggles. Fonts are separate — see [`install_fonts`].
+pub(crate) fn apply_theme(ctx: &egui::Context, mode: ThemeMode) {
+    let p = match mode {
+        ThemeMode::Dark => Palette::dark(),
+        ThemeMode::Light => Palette::light(),
+    };
+    let mut v = if p.dark_mode {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
+    v.panel_fill = p.panel;
+    v.window_fill = p.panel;
+    v.window_stroke = egui::Stroke::new(1.0, p.border);
+    v.extreme_bg_color = p.window; // text-edit / slider-trough backing
+    v.faint_bg_color = p.surface; // striped/group backgrounds
+    v.hyperlink_color = p.accent; // doubles as the theme accent (see `ui_accent`)
+    v.selection.bg_fill = p.selection;
+    v.selection.stroke = egui::Stroke::new(1.0, p.accent);
+
+    // Primary text + separators.
+    v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, p.text);
+    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, p.border);
+
+    // Interactive widgets: neutral fills, amber outline/text on hover & press.
+    v.widgets.inactive.weak_bg_fill = p.surface;
+    v.widgets.inactive.bg_fill = p.elevated;
+    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, p.border);
+    v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, p.text);
+    v.widgets.hovered.bg_fill = p.hover;
+    v.widgets.hovered.weak_bg_fill = p.hover;
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, p.accent);
+    v.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, p.accent);
+    v.widgets.active.bg_fill = p.active;
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.0, p.accent);
+    v.widgets.active.fg_stroke = egui::Stroke::new(1.5, p.accent);
+    v.widgets.open.bg_fill = p.elevated;
+    v.widgets.open.bg_stroke = egui::Stroke::new(1.0, p.border);
+
+    ctx.set_visuals(v);
 }
 
 /// The "Fd" brand mark as a two-color layout job (F in `f_col`, d in `d_col`) at `px` size,
@@ -87,19 +234,22 @@ pub(crate) fn brand_mark_job(px: f32, f_col: egui::Color32, d_col: egui::Color32
     job
 }
 
-/// The two-color "Fractadyne" logotype (Fracta + amber dyne), for the top bar.
+/// The two-color "Fractadyne" logotype (Fracta + amber dyne), for the top bar. Theme-aware: the
+/// text uses the theme's strong ink and the "dyne" its amber accent.
 pub(crate) fn brand_wordmark(ui: &mut egui::Ui) {
     let font = egui::FontId::proportional(15.0);
+    let text = ui.visuals().strong_text_color();
+    let accent = ui.visuals().hyperlink_color;
     let mut job = egui::text::LayoutJob::default();
     job.append(
         "Fracta",
         0.0,
-        egui::TextFormat { font_id: font.clone(), color: BRAND_TEXT, ..Default::default() },
+        egui::TextFormat { font_id: font.clone(), color: text, ..Default::default() },
     );
     job.append(
         "dyne",
         0.0,
-        egui::TextFormat { font_id: font, color: BRAND_ACCENT, ..Default::default() },
+        egui::TextFormat { font_id: font, color: accent, ..Default::default() },
     );
     ui.add_space(2.0);
     ui.label(job);

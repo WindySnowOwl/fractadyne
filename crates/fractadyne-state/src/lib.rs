@@ -179,6 +179,9 @@ pub struct SessionState {
     /// UI scale (egui zoom factor) — scales the interface fonts + widgets. 1.0 = default.
     #[serde(default = "default_ui_scale")]
     pub ui_scale: f32,
+    /// UI theme: `"dark"` (default) or `"light"`.
+    #[serde(default = "default_theme")]
+    pub theme: String,
     /// Interactive orbit overlay: shown, normalized-to-view, animated (racing dot), and its
     /// animation speed.
     #[serde(default)]
@@ -245,6 +248,10 @@ fn default_orbit_anim_speed() -> f32 {
 
 fn default_ui_scale() -> f32 {
     1.0
+}
+
+fn default_theme() -> String {
+    "dark".to_string()
 }
 
 fn default_export_width() -> u32 {
@@ -362,6 +369,7 @@ impl Default for SessionState {
             use_bla: true,
             watermark: true,
             ui_scale: default_ui_scale(),
+            theme: default_theme(),
             show_orbits: false,
             orbit_normalize: false,
             orbit_anim: false,
