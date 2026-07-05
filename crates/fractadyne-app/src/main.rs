@@ -1066,6 +1066,22 @@ struct ExportState {
     started: Option<std::time::Instant>,
 }
 
+/// Relief-lighting + distance-estimate-glow effect settings (mostly persisted; `de_phase` is
+/// runtime animation state). Grouped from the former flat `light_*` / `de_*` fields (Phase 2a).
+struct EffectsConfig {
+    /// Distance-estimate relief lighting (slope shading from the derivative).
+    light: bool,
+    light_angle: f32,  // radians
+    light_height: f32, // relief strength (smaller = sharper)
+    light_anim: bool,  // rotate the light direction over time
+    /// Distance-estimate glow (contour bands near the boundary), + animation.
+    de: bool,
+    de_strength: f32,
+    de_width: f32,
+    de_anim: bool,
+    de_phase: f32, // runtime (animated)
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1295,17 +1311,8 @@ struct FractadyneApp {
     cycle: f32,
     /// Palette offset slider (0..1).
     offset: f32,
-    /// Distance-estimate relief lighting (slope shading from the derivative).
-    light: bool,
-    light_angle: f32,  // radians
-    light_height: f32, // relief strength (smaller = sharper)
-    light_anim: bool,  // rotate the light direction over time
-    /// Distance-estimate glow (contour bands near the boundary), + animation.
-    de: bool,
-    de_strength: f32,
-    de_width: f32,
-    de_anim: bool,
-    de_phase: f32, // runtime (animated)
+    /// Relief lighting + distance-estimate glow effect settings.
+    effects: EffectsConfig,
     /// Coloring method (0 smooth, 1 stripe, 2 triangle-ineq, 3 orbit trap,
     /// 4 distance, 5 decomposition) + its parameters.
     color_method: u32,
@@ -1606,15 +1613,17 @@ impl FractadyneApp {
             palette_idx: s.palette_idx,
             cycle: s.cycle,
             offset: s.offset,
-            light: s.light,
-            light_angle: s.light_angle,
-            light_height: s.light_height,
-            light_anim: s.light_anim,
-            de: s.de,
-            de_strength: s.de_strength,
-            de_width: s.de_width,
-            de_anim: s.de_anim,
-            de_phase: 0.0,
+            effects: EffectsConfig {
+                light: s.light,
+                light_angle: s.light_angle,
+                light_height: s.light_height,
+                light_anim: s.light_anim,
+                de: s.de,
+                de_strength: s.de_strength,
+                de_width: s.de_width,
+                de_anim: s.de_anim,
+                de_phase: 0.0,
+            },
             color_method: method_from_str(&s.color_method),
             stripe_freq: s.stripe_freq,
             trap_type: trap_from_str(&s.trap_type),
@@ -1754,13 +1763,13 @@ impl FractadyneApp {
             self.use_custom_palette = false;
         }
         if args.iter().any(|a| a == "--light") {
-            self.light = true;
+            self.effects.light = true;
         }
         if let Some(a) = val("--light-angle").and_then(|s| s.parse::<f32>().ok()) {
-            self.light_angle = a;
+            self.effects.light_angle = a;
         }
         if args.iter().any(|a| a == "--de") {
-            self.de = true;
+            self.effects.de = true;
         }
         if let Some(m) = val("--method") {
             self.color_method = method_from_str(m);
@@ -1825,14 +1834,14 @@ impl FractadyneApp {
             show_location: self.show_location,
             palette_anim: self.palette_anim.key().to_string(),
             palette_anim_speed: self.palette_anim_speed,
-            light: self.light,
-            light_angle: self.light_angle,
-            light_height: self.light_height,
-            light_anim: self.light_anim,
-            de: self.de,
-            de_strength: self.de_strength,
-            de_width: self.de_width,
-            de_anim: self.de_anim,
+            light: self.effects.light,
+            light_angle: self.effects.light_angle,
+            light_height: self.effects.light_height,
+            light_anim: self.effects.light_anim,
+            de: self.effects.de,
+            de_strength: self.effects.de_strength,
+            de_width: self.effects.de_width,
+            de_anim: self.effects.de_anim,
             color_method: method_to_str(self.color_method).to_string(),
             stripe_freq: self.stripe_freq,
             trap_type: trap_to_str(self.trap_type).to_string(),
@@ -3605,13 +3614,13 @@ impl FractadyneApp {
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1) as f32;
         // Distance-estimate glow cycling — flows the contour bands (independent of the
         // palette animation; shares the Speed slider). Phase is in cycles, period 1.
-        if self.de && self.de_anim && self.palette_anim_speed > 0.0 {
-            self.de_phase = (self.de_phase + self.palette_anim_speed * dt).rem_euclid(1.0);
+        if self.effects.de && self.effects.de_anim && self.palette_anim_speed > 0.0 {
+            self.effects.de_phase = (self.effects.de_phase + self.palette_anim_speed * dt).rem_euclid(1.0);
             self.schedule_repaint(ctx);
         }
         // Rotate the relief light direction (cheap — it's a color-pass param).
-        if self.light && self.light_anim && self.palette_anim_speed > 0.0 {
-            self.light_angle = (self.light_angle
+        if self.effects.light && self.effects.light_anim && self.palette_anim_speed > 0.0 {
+            self.effects.light_angle = (self.effects.light_angle
                 + self.palette_anim_speed * dt * std::f32::consts::TAU)
                 .rem_euclid(std::f32::consts::TAU);
             self.schedule_repaint(ctx);
@@ -5089,41 +5098,41 @@ impl FractadyneApp {
                     self.random_palette.reshuffle();
                 }
                 ui.separator();
-                ui.checkbox(&mut self.light, "3D relief lighting")
+                ui.checkbox(&mut self.effects.light, "3D relief lighting")
                     .on_hover_text(
                         "Shade the surface using the distance-estimate slope — an \
                          embossed, lit look. (Holomorphic families: Mandelbrot / \
                          Multibrot.)",
                     );
-                ui.add_enabled_ui(self.light, |ui| {
+                ui.add_enabled_ui(self.effects.light, |ui| {
                     ui.add(
-                        egui::Slider::new(&mut self.light_angle, 0.0..=std::f32::consts::TAU)
+                        egui::Slider::new(&mut self.effects.light_angle, 0.0..=std::f32::consts::TAU)
                             .text("Light angle")
                             .suffix(" rad"),
                     );
                     ui.add(
-                        egui::Slider::new(&mut self.light_height, 0.2..=4.0)
+                        egui::Slider::new(&mut self.effects.light_height, 0.2..=4.0)
                             .text("Relief")
                             .logarithmic(true),
                     )
                     .on_hover_text("Lower = sharper relief; higher = softer/flatter.");
-                    ui.checkbox(&mut self.light_anim, "Rotate light")
+                    ui.checkbox(&mut self.effects.light_anim, "Rotate light")
                         .on_hover_text("Spin the light direction over time (uses the Speed slider).");
                 });
-                ui.checkbox(&mut self.de, "Distance glow")
+                ui.checkbox(&mut self.effects.de, "Distance glow")
                     .on_hover_text(
                         "Bright distance-estimate contour bands that densify into glowing \
                          filaments near the boundary. (Holomorphic families.)",
                     );
-                ui.add_enabled_ui(self.de, |ui| {
-                    ui.add(egui::Slider::new(&mut self.de_strength, 0.0..=1.0).text("Glow"));
+                ui.add_enabled_ui(self.effects.de, |ui| {
+                    ui.add(egui::Slider::new(&mut self.effects.de_strength, 0.0..=1.0).text("Glow"));
                     ui.add(
-                        egui::Slider::new(&mut self.de_width, 0.15..=4.0)
+                        egui::Slider::new(&mut self.effects.de_width, 0.15..=4.0)
                             .text("Band width")
                             .logarithmic(true),
                     )
                     .on_hover_text("Spacing of the distance contours (octaves per band).");
-                    ui.checkbox(&mut self.de_anim, "Animate glow")
+                    ui.checkbox(&mut self.effects.de_anim, "Animate glow")
                         .on_hover_text("Flow the glow bands over time (uses the Speed slider).");
                 });
                 ui.separator();

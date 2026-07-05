@@ -1643,8 +1643,8 @@ impl FractadyneApp {
             // non-deterministic (random colors) regardless of palette_idx.
             self.palette_anim = crate::PaletteAnim::Off;
             self.julia_c = (0.0, 0.0); // unused (julia off) — pinned so nothing leaks from the session
-            self.light = false;
-            self.de = false;
+            self.effects.light = false;
+            self.effects.de = false;
             self.auto_iter = false;
             self.max_iter = iter;
             let mut vp = Viewport::new(gw as f64, gh as f64);
