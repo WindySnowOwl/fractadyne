@@ -3827,6 +3827,131 @@ impl FractadyneApp {
             self.reset_confirm_open = open && self.reset_confirm_open;
         }
     }
+
+    /// Transient status toast (fades out over ~4.5s), e.g. the minibrot-finder result.
+    fn draw_toast(&mut self, ctx: &egui::Context) {
+        let Some((msg, t0)) = self.toast.clone() else {
+            return;
+        };
+        let age = ctx.input(|i| i.time) - t0;
+        if age < 4.5 {
+            let fade = ((4.5 - age) / 0.6).clamp(0.0, 1.0) as f32;
+            egui::Area::new(egui::Id::new("fractadyne.toast"))
+                .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
+                .interactable(false)
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style())
+                        .fill(egui::Color32::from_rgb(0x23, 0x24, 0x28).gamma_multiply(fade))
+                        .stroke(egui::Stroke::new(1.0, BRAND_ACCENT.gamma_multiply(fade)))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(msg).color(BRAND_TEXT.gamma_multiply(fade)),
+                            );
+                        });
+                });
+            ctx.request_repaint(); // keep fading
+        } else {
+            self.toast = None;
+        }
+    }
+
+    /// Bookmarks manager — add the current view, jump to / delete saved locations (with thumbnails).
+    fn draw_bookmarks_dialog(&mut self, ctx: &egui::Context) {
+        if !self.bookmarks_open {
+            return;
+        }
+        let mut open = self.bookmarks_open;
+        let mut jump: Option<usize> = None;
+        let mut delete: Option<usize> = None;
+        let mut changed = false;
+        // Pre-load thumbnail textures (mutable) before the immutable draw loop below.
+        let thumb_ids: Vec<String> = self.bookmarks.iter().map(|b| b.thumb.clone()).collect();
+        for id in &thumb_ids {
+            let _ = self.bookmark_thumb_texture(ctx, id);
+        }
+        egui::Window::new("Bookmarks")
+            .open(&mut open)
+            .default_size([440.0, 480.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.bookmark_name)
+                            .hint_text("name (optional)")
+                            .desired_width(240.0),
+                    );
+                    if ui.button("★ Add current view").clicked() {
+                        let name = self.bookmark_name.clone();
+                        self.add_bookmark(&name);
+                        self.bookmark_name.clear();
+                    }
+                });
+                ui.separator();
+                if self.bookmarks.is_empty() {
+                    ui.label("No bookmarks yet. Add one from the current view.");
+                }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for (i, b) in self.bookmarks.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            // Thumbnail preview (fixed 80px wide, aspect-preserving).
+                            if let Some(tex) = self.thumb_cache.get(&b.thumb) {
+                                let sz = tex.size_vec2();
+                                let w = 80.0_f32;
+                                ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                    tex.id(),
+                                    egui::vec2(w, w * sz.y / sz.x.max(1.0)),
+                                )));
+                            } else {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(80.0, 56.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(
+                                    rect,
+                                    egui::CornerRadius::same(2),
+                                    egui::Color32::from_black_alpha(80),
+                                );
+                            }
+                            ui.vertical(|ui| {
+                                ui.label(&b.name);
+                                let zoom = meta_get(&b.meta, "zoom");
+                                if !zoom.is_empty() {
+                                    ui.label(egui::RichText::new(format!("{zoom}×")).weak().small());
+                                }
+                                ui.horizontal(|ui| {
+                                    if ui.button("Go").clicked() {
+                                        jump = Some(i);
+                                    }
+                                    if ui.button("🗑").on_hover_text("Delete").clicked() {
+                                        delete = Some(i);
+                                    }
+                                });
+                            });
+                        });
+                        ui.separator();
+                    }
+                });
+            });
+        if let Some(i) = jump {
+            let meta = self.bookmarks[i].meta.clone();
+            self.load_view_metadata(&meta);
+        }
+        if let Some(i) = delete {
+            // Remove the thumbnail file + cached texture, then the bookmark.
+            let id = self.bookmarks[i].thumb.clone();
+            if !id.is_empty() {
+                if let Some(p) = Self::bookmark_thumb_path(&id) {
+                    let _ = std::fs::remove_file(p);
+                }
+                self.thumb_cache.remove(&id);
+            }
+            self.bookmarks.remove(i);
+            changed = true;
+        }
+        if changed {
+            self.save_bookmarks();
+        }
+        self.bookmarks_open = open;
+    }
 }
 
 impl eframe::App for FractadyneApp {
@@ -5292,130 +5417,11 @@ impl eframe::App for FractadyneApp {
         // ---- keyboard / help overlay ----
         self.help_window(ctx);
 
-        // ---- transient status toast (e.g. minibrot-finder result) ----
-        if let Some((msg, t0)) = self.toast.clone() {
-            let age = ctx.input(|i| i.time) - t0;
-            if age < 4.5 {
-                let fade = ((4.5 - age) / 0.6).clamp(0.0, 1.0) as f32;
-                egui::Area::new(egui::Id::new("fractadyne.toast"))
-                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 12.0))
-                    .interactable(false)
-                    .show(ctx, |ui| {
-                        egui::Frame::popup(ui.style())
-                            .fill(egui::Color32::from_rgb(0x23, 0x24, 0x28).gamma_multiply(fade))
-                            .stroke(egui::Stroke::new(1.0, BRAND_ACCENT.gamma_multiply(fade)))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    egui::RichText::new(msg)
-                                        .color(BRAND_TEXT.gamma_multiply(fade)),
-                                );
-                            });
-                    });
-                ctx.request_repaint(); // keep fading
-            } else {
-                self.toast = None;
-            }
-        }
-
+        self.draw_toast(ctx);
         self.draw_goto_dialog(ctx);
-
         self.draw_share_dialog(ctx);
         self.draw_reset_dialog(ctx);
-
-        // ---- bookmarks manager ----
-        if self.bookmarks_open {
-            let mut open = self.bookmarks_open;
-            let mut jump: Option<usize> = None;
-            let mut delete: Option<usize> = None;
-            let mut changed = false;
-            // Pre-load thumbnail textures (mutable) before the immutable draw loop below.
-            let thumb_ids: Vec<String> = self.bookmarks.iter().map(|b| b.thumb.clone()).collect();
-            for id in &thumb_ids {
-                let _ = self.bookmark_thumb_texture(ctx, id);
-            }
-            egui::Window::new("Bookmarks")
-                .open(&mut open)
-                .default_size([440.0, 480.0])
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.bookmark_name)
-                                .hint_text("name (optional)")
-                                .desired_width(240.0),
-                        );
-                        if ui.button("★ Add current view").clicked() {
-                            let name = self.bookmark_name.clone();
-                            self.add_bookmark(&name);
-                            self.bookmark_name.clear();
-                        }
-                    });
-                    ui.separator();
-                    if self.bookmarks.is_empty() {
-                        ui.label("No bookmarks yet. Add one from the current view.");
-                    }
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for (i, b) in self.bookmarks.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                // Thumbnail preview (fixed 80px wide, aspect-preserving).
-                                if let Some(tex) = self.thumb_cache.get(&b.thumb) {
-                                    let sz = tex.size_vec2();
-                                    let w = 80.0_f32;
-                                    ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                                        tex.id(),
-                                        egui::vec2(w, w * sz.y / sz.x.max(1.0)),
-                                    )));
-                                } else {
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(80.0, 56.0),
-                                        egui::Sense::hover(),
-                                    );
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        egui::CornerRadius::same(2),
-                                        egui::Color32::from_black_alpha(80),
-                                    );
-                                }
-                                ui.vertical(|ui| {
-                                    ui.label(&b.name);
-                                    let zoom = meta_get(&b.meta, "zoom");
-                                    if !zoom.is_empty() {
-                                        ui.label(egui::RichText::new(format!("{zoom}×")).weak().small());
-                                    }
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Go").clicked() {
-                                            jump = Some(i);
-                                        }
-                                        if ui.button("🗑").on_hover_text("Delete").clicked() {
-                                            delete = Some(i);
-                                        }
-                                    });
-                                });
-                            });
-                            ui.separator();
-                        }
-                    });
-                });
-            if let Some(i) = jump {
-                let meta = self.bookmarks[i].meta.clone();
-                self.load_view_metadata(&meta);
-            }
-            if let Some(i) = delete {
-                // Remove the thumbnail file + cached texture, then the bookmark.
-                let id = self.bookmarks[i].thumb.clone();
-                if !id.is_empty() {
-                    if let Some(p) = Self::bookmark_thumb_path(&id) {
-                        let _ = std::fs::remove_file(p);
-                    }
-                    self.thumb_cache.remove(&id);
-                }
-                self.bookmarks.remove(i);
-                changed = true;
-            }
-            if changed {
-                self.save_bookmarks();
-            }
-            self.bookmarks_open = open;
-        }
+        self.draw_bookmarks_dialog(ctx);
 
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
         // view still matches the bookmark, since adding it didn't move the view).
