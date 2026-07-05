@@ -8,6 +8,9 @@
 # Local diagnostic screenshots
 /diag/
 
+# Local-only scratch folder (notes, experiments, throwaway files) — never version-controlled
+/local/
+
 # Validation: commit the golden references + a checked-in report, but ignore the
 # per-run timestamped reports and the freshly-rendered comparison images.
 /validation/current/
