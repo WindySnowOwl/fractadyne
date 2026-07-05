@@ -21,17 +21,17 @@ const AUTOPILOT_TARGET_TAU: f64 = 0.5;
 impl FractadyneApp {
     /// Toggle the auto-zoom autopilot (single view only).
     pub(crate) fn toggle_autopilot(&mut self, ctx: &egui::Context) {
-        self.autopilot = !self.autopilot;
-        if self.autopilot {
-            self.autopilot_target = (0.5, 0.5);
-            self.autopilot_goal = (0.5, 0.5);
-            self.autopilot_eval_t = 0.0; // force an evaluation next frame
+        self.autopilot.active = !self.autopilot.active;
+        if self.autopilot.active {
+            self.autopilot.target = (0.5, 0.5);
+            self.autopilot.goal = (0.5, 0.5);
+            self.autopilot.eval_t = 0.0; // force an evaluation next frame
             self.home_anim = None;
             self.playback = None;
             self.set_toast("Autopilot on — diving toward detail (any input stops)", ctx);
         } else {
             self.zoom_vel = 0.0;
-            self.autopilot_stepping = false;
+            self.autopilot.stepping = false;
             self.set_toast("Autopilot off", ctx);
         }
     }
@@ -45,8 +45,8 @@ impl FractadyneApp {
         ctx: &egui::Context,
         gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
     ) {
-        if !self.autopilot {
-            self.autopilot_stepping = false;
+        if !self.autopilot.active {
+            self.autopilot.stepping = false;
             return;
         }
         // Any manual navigation, Esc, or dual view hands control back to the user.
@@ -57,21 +57,21 @@ impl FractadyneApp {
                 || i.key_down(egui::Key::Escape)
         });
         if interrupted || self.dual {
-            self.autopilot = false;
-            self.autopilot_stepping = false;
+            self.autopilot.active = false;
+            self.autopilot.stepping = false;
             self.zoom_vel = 0.0;
             return;
         }
         // Stop at the user's dive limit.
         let l2 = self.viewport.log2_magnification();
-        if l2 >= self.autopilot_dive_log2 {
-            self.autopilot = false;
-            self.autopilot_stepping = false;
+        if l2 >= self.autopilot.dive_log2 {
+            self.autopilot.active = false;
+            self.autopilot.stepping = false;
             self.zoom_vel = 0.0;
             self.set_toast(
                 format!(
                     "Autopilot: dive limit reached (~1e{:.0}×)",
-                    self.autopilot_dive_log2 / std::f64::consts::LOG2_10
+                    self.autopilot.dive_log2 / std::f64::consts::LOG2_10
                 ),
                 ctx,
             );
@@ -85,7 +85,7 @@ impl FractadyneApp {
         let stepping = l2 >= AUTOPILOT_SMOOTH_LOG2;
         // Tells the render path to render real frames between jumps (and hold the last full frame
         // meanwhile) instead of the smooth-motion freeze that would blank the screen.
-        self.autopilot_stepping = stepping;
+        self.autopilot.stepping = stepping;
 
         // Adaptive re-evaluation: the target-field render + reference recompute slow down with
         // depth, so evaluate less often as frames slow (≈ once per rendered frame when deep) while
@@ -98,16 +98,16 @@ impl FractadyneApp {
         // next one computes, instead of jumping onto blanks faster than the deep reference rebuilds.
         let ready = !stepping || (l2 - self.ref_cache[0].frozen_l2) < 1.0;
 
-        if ready && now - self.autopilot_eval_t > eval_interval {
-            self.autopilot_eval_t = now;
+        if ready && now - self.autopilot.eval_t > eval_interval {
+            self.autopilot.eval_t = now;
             if let Some((dev, q)) = gpu {
                 match self.autopilot_pick_target(dev, q) {
                     Some((tx, ty)) => {
-                        self.autopilot_goal = (tx, ty);
+                        self.autopilot.goal = (tx, ty);
                         if stepping {
                             // Stepped dive: snap the pivot to the detail and jump the zoom by a
                             // fixed factor (2^AUTOPILOT_STEP_LOG2×) toward it.
-                            self.autopilot_target = (tx, ty);
+                            self.autopilot.target = (tx, ty);
                             let factor = (-AUTOPILOT_STEP_LOG2 * std::f64::consts::LN_2).exp();
                             let px = tx * self.viewport.width_px;
                             let py = ty * self.viewport.height_px;
@@ -115,8 +115,8 @@ impl FractadyneApp {
                         }
                     }
                     None => {
-                        self.autopilot = false;
-                        self.autopilot_stepping = false;
+                        self.autopilot.active = false;
+                        self.autopilot.stepping = false;
                         self.zoom_vel = 0.0;
                         self.set_toast("Autopilot: no detail ahead (stopped)", ctx);
                         return;
@@ -129,12 +129,12 @@ impl FractadyneApp {
             // Smooth glide: ease the pivot toward the goal (so the pan direction changes smoothly
             // rather than snapping at each re-evaluation) and zoom in continuously.
             let follow = 1.0 - (-dt / AUTOPILOT_TARGET_TAU).exp();
-            self.autopilot_target.0 += (self.autopilot_goal.0 - self.autopilot_target.0) * follow;
-            self.autopilot_target.1 += (self.autopilot_goal.1 - self.autopilot_target.1) * follow;
+            self.autopilot.target.0 += (self.autopilot.goal.0 - self.autopilot.target.0) * follow;
+            self.autopilot.target.1 += (self.autopilot.goal.1 - self.autopilot.target.1) * follow;
             let rate = ZOOM_RATE * self.zoom_rate as f64;
             let factor = (-rate * dt).exp();
-            let px = self.autopilot_target.0 * self.viewport.width_px;
-            let py = self.autopilot_target.1 * self.viewport.height_px;
+            let px = self.autopilot.target.0 * self.viewport.width_px;
+            let py = self.autopilot.target.1 * self.viewport.height_px;
             self.viewport.zoom_at(px, py, factor);
         }
         self.settle_t = [now; 2]; // treat as interaction (AA off, throttled reference refresh)

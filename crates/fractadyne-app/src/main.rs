@@ -1082,6 +1082,23 @@ struct EffectsConfig {
     de_phase: f32, // runtime (animated)
 }
 
+/// Auto-zoom autopilot state (transient except `dive_log2`, which is persisted). Grouped from the
+/// former flat `autopilot*` fields (Phase 2a).
+struct AutopilotState {
+    /// Continuously diving toward the detail-richest region.
+    active: bool,
+    /// Screen-fraction pivot (0..1) currently zooming about; eased toward `goal` each frame.
+    target: (f64, f64),
+    /// Latest *evaluated* target (every `AUTOPILOT_EVAL_INTERVAL`); the goal `target` chases.
+    goal: (f64, f64),
+    /// App-time of the last target re-evaluation.
+    eval_t: f64,
+    /// True during the deep *stepped* dive (past the smooth regime) — see autopilot.rs / render.rs.
+    stepping: bool,
+    /// Dive limit as log2(magnification); persisted.
+    dive_log2: f64,
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1117,20 +1134,8 @@ struct FractadyneApp {
     settle_frame: [u32; 2],
     /// Active smooth "zoom out to home" animation (Home button); `None` when idle.
     home_anim: Option<HomeAnim>,
-    /// Auto-zoom autopilot: continuously dive toward the detail-richest region.
-    autopilot: bool,
-    /// Screen-fraction (0..1, 0..1) the autopilot is currently zooming about; eased toward
-    /// `autopilot_goal` every frame so the zoom pivot glides smoothly (no per-eval jumps).
-    autopilot_target: (f64, f64),
-    /// Latest *evaluated* target (set every `AUTOPILOT_EVAL_INTERVAL`); the goal the
-    /// per-frame `autopilot_target` chases.
-    autopilot_goal: (f64, f64),
-    /// App-time of the last autopilot target re-evaluation.
-    autopilot_eval_t: f64,
-    /// True while the autopilot is in its deep *stepped* dive (past the smooth regime). Lets the
-    /// render path render real frames between jumps (holding the last full frame meanwhile) instead
-    /// of the smooth-motion mode-2 freeze that would blank the screen. See autopilot.rs / render.rs.
-    autopilot_stepping: bool,
+    /// Auto-zoom autopilot state.
+    autopilot: AutopilotState,
     /// Draw the iteration orbit of the point under the cursor.
     show_orbits: bool,
     /// A tour-scripted orbit point (complex) to draw when there's no cursor (during playback);
@@ -1322,8 +1327,6 @@ struct FractadyneApp {
     auto_iter: bool,
     /// Continuous-zoom speed multiplier (1.0 = default `ZOOM_RATE`).
     zoom_rate: f32,
-    /// Auto-zoom (autopilot) dive limit as log2(magnification); persisted. See autopilot.rs.
-    autopilot_dive_log2: f64,
     /// Live-render work-budget multiplier (× `WORK_BUDGET`); persisted. Higher = crisper live deep
     /// zoom (fuller resolution) at lower FPS / less GPU-watchdog margin. Exports are unaffected.
     work_budget_scale: f64,
@@ -1488,11 +1491,14 @@ impl FractadyneApp {
             settle_t: [0.0; 2],
             settle_frame: [0; 2],
             home_anim: None,
-            autopilot: false,
-            autopilot_target: (0.5, 0.5),
-            autopilot_goal: (0.5, 0.5),
-            autopilot_eval_t: 0.0,
-            autopilot_stepping: false,
+            autopilot: AutopilotState {
+                active: false,
+                target: (0.5, 0.5),
+                goal: (0.5, 0.5),
+                eval_t: 0.0,
+                stepping: false,
+                dive_log2: s.autopilot_dive_log2,
+            },
             show_orbits: s.show_orbits,
             tour_orbit: None,
             orbit_normalize: s.orbit_normalize,
@@ -1637,7 +1643,6 @@ impl FractadyneApp {
             watermark_overlay: None,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             zoom_rate: s.zoom_rate,
-            autopilot_dive_log2: s.autopilot_dive_log2,
             work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
             aa: s.aa,
             ref_cache: [RefCache::default(), RefCache::default()],
@@ -1811,7 +1816,7 @@ impl FractadyneApp {
             cycle: self.cycle,
             offset: self.offset,
             zoom_rate: self.zoom_rate,
-            autopilot_dive_log2: self.autopilot_dive_log2,
+            autopilot_dive_log2: self.autopilot.dive_log2,
             work_budget_scale: self.work_budget_scale,
             aa: self.aa,
             fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
@@ -4600,7 +4605,7 @@ impl FractadyneApp {
                             }
                         });
                         ui.add_enabled_ui(!self.dual, |ui| {
-                            let label = if self.autopilot {
+                            let label = if self.autopilot.active {
                                 "Stop autopilot  (A)"
                             } else {
                                 "Auto-zoom (autopilot)  (A)"
@@ -4889,7 +4894,7 @@ impl FractadyneApp {
                 }
                 // Auto-zoom (autopilot): highlighted while running; click to start/stop. Single view only.
                 ui.add_enabled_ui(!self.dual, |ui| {
-                    let running = self.autopilot;
+                    let running = self.autopilot.active;
                     if ui
                         .selectable_label(running, "🛸")
                         .on_hover_text(if running {
@@ -5210,7 +5215,7 @@ impl FractadyneApp {
                 .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
 
                 // Auto-zoom (autopilot) dive limit, edited in decimal orders (1eN×) but stored as log2.
-                let mut dive_log10 = self.autopilot_dive_log2 / std::f64::consts::LOG2_10;
+                let mut dive_log10 = self.autopilot.dive_log2 / std::f64::consts::LOG2_10;
                 if ui
                     .add(
                         egui::Slider::new(&mut dive_log10, 30.0..=5000.0)
@@ -5224,7 +5229,7 @@ impl FractadyneApp {
                     )
                     .changed()
                 {
-                    self.autopilot_dive_log2 = dive_log10 * std::f64::consts::LOG2_10;
+                    self.autopilot.dive_log2 = dive_log10 * std::f64::consts::LOG2_10;
                 }
 
                 // Live-render work budget: detail-vs-speed for the deep-zoom preview.
@@ -5646,9 +5651,9 @@ impl eframe::App for FractadyneApp {
 
         // Esc: stop the autopilot / a playing tour first, otherwise leave fullscreen.
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if self.autopilot {
-                self.autopilot = false;
-                self.autopilot_stepping = false;
+            if self.autopilot.active {
+                self.autopilot.active = false;
+                self.autopilot.stepping = false;
                 self.zoom_vel = 0.0;
             } else if self.playback.is_some() {
                 self.playback = None;

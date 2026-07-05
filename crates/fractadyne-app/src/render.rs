@@ -875,7 +875,7 @@ impl FractadyneApp {
             // held on screen while the next computes), so bypass the blanket "never iterate while
             // moving" freeze — the `depth_lag > 1.2` hold below still waits for a depth-matched
             // reference, so the real iterate never spins on a stale one.
-            let motion_freeze = mode == 2 && interacting && !self.autopilot_stepping;
+            let motion_freeze = mode == 2 && interacting && !self.autopilot.stepping;
             too_stale = too_stale || motion_freeze || depth_lag > 1.2;
             // At extreme depth the recompute can take long enough that a fast/continuous dive
             // drifts the cached reference too far off-centre before a fresh one lands — rendering
