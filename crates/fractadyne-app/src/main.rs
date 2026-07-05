@@ -3952,6 +3952,177 @@ impl FractadyneApp {
         }
         self.bookmarks_open = open;
     }
+
+    /// Benchmark configuration dialog — pick current-settings vs standardized (resolution/depth/
+    /// burn-in) and start the run.
+    fn draw_bench_config_dialog(&mut self, ctx: &egui::Context) {
+        if !self.bench_dialog_open {
+            return;
+        }
+        let mut open = self.bench_dialog_open;
+        let mut run_now = false;
+        egui::Window::new("Benchmark")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label("Mode");
+                ui.radio_value(&mut self.bench_dlg_standard, false, "Current settings")
+                    .on_hover_text("Play the fixed deep-zoom tour into the live view using your current resolution and settings.");
+                ui.radio_value(&mut self.bench_dlg_standard, true, "Standardized")
+                    .on_hover_text("Pin resolution + all render settings so the score is comparable across machines.");
+                ui.add_enabled_ui(self.bench_dlg_standard, |ui| {
+                    ui.separator();
+                    ui.label("Resolution");
+                    egui::ComboBox::from_id_salt("bench_res")
+                        .selected_text(self.bench_dlg_res.label())
+                        .show_ui(ui, |ui| {
+                            for r in BenchRes::ALL {
+                                ui.selectable_value(&mut self.bench_dlg_res, r, r.label());
+                            }
+                        });
+                    ui.add_space(4.0);
+                    ui.label("Depth");
+                    egui::ComboBox::from_id_salt("bench_depth")
+                        .selected_text(self.bench_dlg_depth.label())
+                        .show_ui(ui, |ui| {
+                            for d in BenchDepth::ALL {
+                                ui.selectable_value(&mut self.bench_dlg_depth, d, d.label());
+                            }
+                        })
+                        .response
+                        .on_hover_text("Ultra dives past f64's limit (1e28×), stressing the perturbation / series-approx / BLA deep-zoom path much harder.");
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut self.bench_dlg_burnin, "Burn-in (repeat)")
+                        .on_hover_text("Run the benchmark repeatedly to reveal stability and thermal throttling.");
+                    ui.add_enabled_ui(self.bench_dlg_burnin, |ui| {
+                        ui.add(egui::Slider::new(&mut self.bench_dlg_passes, 2..=200).text("passes"));
+                    });
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Run").clicked() {
+                        run_now = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.bench_dialog_open = false;
+                    }
+                });
+                if self.bench_dlg_standard {
+                    let (w, h) = self.bench_dlg_res.dims();
+                    ui.add_space(2.0);
+                    ui.weak(format!(
+                        "Renders offscreen at {w}×{h}, {}× SS, Mandelbrot/smooth, 60-frame dive to 1e{:.0}×.",
+                        scripting::STD_AA,
+                        self.bench_dlg_depth.zoom_log10(),
+                    ));
+                }
+            });
+        self.bench_dialog_open = open;
+        if run_now {
+            self.bench_dialog_open = false;
+            if self.bench_dlg_standard {
+                let passes = if self.bench_dlg_burnin { self.bench_dlg_passes } else { 1 };
+                let run = self.begin_standard_bench(self.bench_dlg_res, passes, self.bench_dlg_depth);
+                self.std_bench = Some(run);
+                ctx.request_repaint();
+            } else {
+                self.start_benchmark();
+            }
+        }
+    }
+
+    /// Standardized-benchmark progress window (advances one dive-frame per event-loop tick).
+    fn draw_bench_progress_dialog(&mut self, ctx: &egui::Context) {
+        let Some((label, done, total, last_fps, (fdone, ftotal))) =
+            self.std_bench.as_ref().map(|r| {
+                (r.res.label(), r.passes_done, r.passes_total, r.pass_fps.last().copied(), r.frame_progress())
+            })
+        else {
+            return;
+        };
+        let mut cancel = false;
+        egui::Window::new("Running benchmark…")
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(format!("Standardized · {label}"));
+                });
+                if total > 1 {
+                    ui.label(format!("Burn-in pass {}/{}", (done + 1).min(total), total));
+                } else {
+                    ui.label("Rendering the fixed dive…");
+                }
+                // Per-pass frame progress so it's visibly advancing (not hung) even mid-pass.
+                ui.add(
+                    egui::ProgressBar::new(fdone as f32 / ftotal.max(1) as f32)
+                        .text(format!("frame {fdone}/{ftotal}")),
+                );
+                if let Some(f) = last_fps {
+                    ui.label(format!("last pass: {f:.1} fps"));
+                }
+                ui.add_space(4.0);
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        if cancel {
+            if let Some(run) = self.std_bench.take() {
+                let report = (!run.pass_fps.is_empty()).then(|| self.format_std_bench(&run));
+                let snap = run.take_snapshot();
+                self.restore_from_bench(snap);
+                if let Some(r) = report {
+                    self.bench_report = Some(r);
+                    self.bench_open = true;
+                }
+            }
+        }
+    }
+
+    /// Benchmark results window — show the report, copy/save it, or reopen the config to run again.
+    fn draw_bench_results_dialog(&mut self, ctx: &egui::Context) {
+        if !self.bench_open {
+            return;
+        }
+        let mut open = self.bench_open;
+        let mut run_again = false;
+        egui::Window::new("Benchmark results")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                if let Some(r) = self.bench_report.clone() {
+                    ui.monospace(&r);
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Copy").clicked() {
+                            ui.ctx().copy_text(r.clone());
+                        }
+                        if ui.button("Save…").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("Text", &["txt"])
+                                .set_file_name("fractadyne_benchmark.txt")
+                                .save_file()
+                            {
+                                let _ = std::fs::write(path, &r);
+                            }
+                        }
+                        if ui.button("Run again…").clicked() {
+                            run_again = true;
+                        }
+                    });
+                } else {
+                    ui.label("No benchmark has been run yet.");
+                }
+            });
+        self.bench_open = open;
+        // Close the results and reopen the benchmark tool to configure another run.
+        if run_again {
+            self.bench_open = false;
+            self.bench_dialog_open = true;
+        }
+    }
 }
 
 impl eframe::App for FractadyneApp {
@@ -5427,166 +5598,9 @@ impl eframe::App for FractadyneApp {
         // view still matches the bookmark, since adding it didn't move the view).
         self.process_pending_thumb(&gpu);
 
-        // ---- benchmark configuration dialog ----
-        if self.bench_dialog_open {
-            let mut open = self.bench_dialog_open;
-            let mut run_now = false;
-            egui::Window::new("Benchmark")
-                .open(&mut open)
-                .resizable(false)
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    ui.label("Mode");
-                    ui.radio_value(&mut self.bench_dlg_standard, false, "Current settings")
-                        .on_hover_text("Play the fixed deep-zoom tour into the live view using your current resolution and settings.");
-                    ui.radio_value(&mut self.bench_dlg_standard, true, "Standardized")
-                        .on_hover_text("Pin resolution + all render settings so the score is comparable across machines.");
-                    ui.add_enabled_ui(self.bench_dlg_standard, |ui| {
-                        ui.separator();
-                        ui.label("Resolution");
-                        egui::ComboBox::from_id_salt("bench_res")
-                            .selected_text(self.bench_dlg_res.label())
-                            .show_ui(ui, |ui| {
-                                for r in BenchRes::ALL {
-                                    ui.selectable_value(&mut self.bench_dlg_res, r, r.label());
-                                }
-                            });
-                        ui.add_space(4.0);
-                        ui.label("Depth");
-                        egui::ComboBox::from_id_salt("bench_depth")
-                            .selected_text(self.bench_dlg_depth.label())
-                            .show_ui(ui, |ui| {
-                                for d in BenchDepth::ALL {
-                                    ui.selectable_value(&mut self.bench_dlg_depth, d, d.label());
-                                }
-                            })
-                            .response
-                            .on_hover_text("Ultra dives past f64's limit (1e28×), stressing the perturbation / series-approx / BLA deep-zoom path much harder.");
-                        ui.add_space(4.0);
-                        ui.checkbox(&mut self.bench_dlg_burnin, "Burn-in (repeat)")
-                            .on_hover_text("Run the benchmark repeatedly to reveal stability and thermal throttling.");
-                        ui.add_enabled_ui(self.bench_dlg_burnin, |ui| {
-                            ui.add(egui::Slider::new(&mut self.bench_dlg_passes, 2..=200).text("passes"));
-                        });
-                    });
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui.button("Run").clicked() {
-                            run_now = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            self.bench_dialog_open = false;
-                        }
-                    });
-                    if self.bench_dlg_standard {
-                        let (w, h) = self.bench_dlg_res.dims();
-                        ui.add_space(2.0);
-                        ui.weak(format!(
-                            "Renders offscreen at {w}×{h}, {}× SS, Mandelbrot/smooth, 60-frame dive to 1e{:.0}×.",
-                            scripting::STD_AA,
-                            self.bench_dlg_depth.zoom_log10(),
-                        ));
-                    }
-                });
-            self.bench_dialog_open = open;
-            if run_now {
-                self.bench_dialog_open = false;
-                if self.bench_dlg_standard {
-                    let passes = if self.bench_dlg_burnin { self.bench_dlg_passes } else { 1 };
-                    let run = self.begin_standard_bench(self.bench_dlg_res, passes, self.bench_dlg_depth);
-                    self.std_bench = Some(run);
-                    ctx.request_repaint();
-                } else {
-                    self.start_benchmark();
-                }
-            }
-        }
-
-        // ---- standardized benchmark progress (advances one dive-frame per event-loop tick) ----
-        if let Some((label, done, total, last_fps, (fdone, ftotal))) =
-            self.std_bench.as_ref().map(|r| {
-                (r.res.label(), r.passes_done, r.passes_total, r.pass_fps.last().copied(), r.frame_progress())
-            })
-        {
-            let mut cancel = false;
-            egui::Window::new("Running benchmark…")
-                .resizable(false)
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(format!("Standardized · {label}"));
-                    });
-                    if total > 1 {
-                        ui.label(format!("Burn-in pass {}/{}", (done + 1).min(total), total));
-                    } else {
-                        ui.label("Rendering the fixed dive…");
-                    }
-                    // Per-pass frame progress so it's visibly advancing (not hung) even mid-pass.
-                    ui.add(
-                        egui::ProgressBar::new(fdone as f32 / ftotal.max(1) as f32)
-                            .text(format!("frame {fdone}/{ftotal}")),
-                    );
-                    if let Some(f) = last_fps {
-                        ui.label(format!("last pass: {f:.1} fps"));
-                    }
-                    ui.add_space(4.0);
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            if cancel {
-                if let Some(run) = self.std_bench.take() {
-                    let report = (!run.pass_fps.is_empty()).then(|| self.format_std_bench(&run));
-                    let snap = run.take_snapshot();
-                    self.restore_from_bench(snap);
-                    if let Some(r) = report {
-                        self.bench_report = Some(r);
-                        self.bench_open = true;
-                    }
-                }
-            }
-        }
-
-        // ---- benchmark results ----
-        if self.bench_open {
-            let mut open = self.bench_open;
-            let mut run_again = false;
-            egui::Window::new("Benchmark results")
-                .open(&mut open)
-                .resizable(false)
-                .show(ctx, |ui| {
-                    if let Some(r) = self.bench_report.clone() {
-                        ui.monospace(&r);
-                        ui.add_space(6.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Copy").clicked() {
-                                ui.ctx().copy_text(r.clone());
-                            }
-                            if ui.button("Save…").clicked() {
-                                if let Some(path) = rfd::FileDialog::new()
-                                    .add_filter("Text", &["txt"])
-                                    .set_file_name("fractadyne_benchmark.txt")
-                                    .save_file()
-                                {
-                                    let _ = std::fs::write(path, &r);
-                                }
-                            }
-                            if ui.button("Run again…").clicked() {
-                                run_again = true;
-                            }
-                        });
-                    } else {
-                        ui.label("No benchmark has been run yet.");
-                    }
-                });
-            self.bench_open = open;
-            // Close the results and reopen the benchmark tool to configure another run.
-            if run_again {
-                self.bench_open = false;
-                self.bench_dialog_open = true;
-            }
-        }
+        self.draw_bench_config_dialog(ctx);
+        self.draw_bench_progress_dialog(ctx);
+        self.draw_bench_results_dialog(ctx);
 
         // ---- gallery browser ----
         if self.gallery_open {
