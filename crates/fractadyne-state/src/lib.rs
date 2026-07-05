@@ -592,9 +592,9 @@ mod tests {
         std::env::set_var("FRACTADYNE_CONFIG_DIR", &cfg);
         assert_eq!(config_dir().as_deref(), Some(cfg.as_path()));
         assert!(cfg.exists());
-        assert_eq!(reset_all().unwrap(), true); // removed
+        assert!(reset_all().unwrap()); // removed
         assert!(!cfg.exists());
-        assert_eq!(reset_all().unwrap(), false); // nothing left to remove
+        assert!(!reset_all().unwrap()); // nothing left to remove
         std::env::remove_var("FRACTADYNE_CONFIG_DIR");
         let _ = std::fs::remove_dir_all(&root);
     }

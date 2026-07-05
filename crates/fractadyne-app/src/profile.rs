@@ -181,7 +181,7 @@ impl FractadyneApp {
 
         let mut json = String::new();
         json.push_str("{\n");
-        json.push_str(&format!("  \"tool\": \"fractadyne --profile\",\n"));
+        json.push_str("  \"tool\": \"fractadyne --profile\",\n");
         json.push_str(&format!("  \"version\": {},\n", js(&crate::version_string())));
         json.push_str(&format!("  \"utc\": {},\n", js(&crate::utc_string(now_unix()))));
         let sys = crate::gather_system_info();
@@ -446,7 +446,7 @@ impl FractadyneApp {
         // JSON.
         let mut json = String::new();
         json.push_str("{\n");
-        json.push_str(&format!("  \"tool\": \"fractadyne --frametest\",\n"));
+        json.push_str("  \"tool\": \"fractadyne --frametest\",\n");
         json.push_str(&format!("  \"version\": {},\n", js(&crate::version_string())));
         json.push_str(&format!("  \"utc\": {},\n", js(&crate::utc_string(now_unix()))));
         json.push_str(&format!("  \"gpu\": {},\n", js(&self.gpu_name)));

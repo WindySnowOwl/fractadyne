@@ -445,8 +445,8 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         let mut all_ok = true;
         println!("Extreme-depth precision self-consistency (arbitrary-precision arithmetic core)");
         println!(
-            "{:>12} {:>11} {:>7} {:>7} {:>13} {:>13} {:>9}  {}",
-            "magnif.", "bits", "limbs", "k", "agree(bits)", "rt(bits)", "time(s)", "result"
+            "{:>12} {:>11} {:>7} {:>7} {:>13} {:>13} {:>9}  result",
+            "magnif.", "bits", "limbs", "k", "agree(bits)", "rt(bits)", "time(s)"
         );
         for (exp, k) in battery.iter().copied() {
             let octaves = (exp * std::f64::consts::LN_10 / std::f64::consts::LN_2).ceil() as u64;

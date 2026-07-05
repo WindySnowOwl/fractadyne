@@ -773,13 +773,13 @@ impl FractadyneApp {
             // recomputing far less often than the old 0.5 — a tiny margin there meant a refresh
             // after almost any motion, which at shallow depth (recompute ≈ instant) churned the
             // reference every few frames and made crisp palettes (Binary) visibly stutter.
-            let out_of_view = drift.map_or(true, |(dx, dy)| dx > 0.7 || dy > 0.7);
+            let out_of_view = drift.is_none_or(|(dx, dy)| dx > 0.7 || dy > 0.7);
             // Once the reference is well outside the view (≫ the ~0.9 span best_reference normally
             // sits at), the perturbation δc is large enough to render wrong/glitchy. On a fast/deep
             // dive the async recompute can lag this far — freeze the last clean frame rather than
             // paint the bad one (see the reprojection freeze below). Kept conservative so normal
             // deep motion (reference merely drifting, still usable) isn't needlessly held.
-            let mut too_stale = drift.map_or(false, |(dx, dy)| dx > 1.5 || dy > 1.5);
+            let mut too_stale = drift.is_some_and(|(dx, dy)| dx > 1.5 || dy > 1.5);
             // Octaves the view has zoomed *in* since the cached reference/BLA were built (BLA dc_max
             // scales with the view span, so its log2 drop = octaves of zoom-in). In floatexp (mode 2)
             // the iterate shader spins ~5 s/frame on a reference this depth-stale — measured spin
@@ -844,7 +844,7 @@ impl FractadyneApp {
                 // freeze the UI) without throttling legitimate refreshes enough to be visible.
                 let spawn_ok = self.ref_cache[vi]
                     .last_recompute
-                    .map_or(true, |t| t.elapsed().as_millis() >= 16);
+                    .is_none_or(|t| t.elapsed().as_millis() >= 16);
                 if self.ref_cache[vi].ref_pt.is_none() {
                     let res = recompute_worker(inputs); // cold start: nothing to draw with yet
                     self.install_recompute(vi, res);

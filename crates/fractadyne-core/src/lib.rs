@@ -26,7 +26,7 @@ pub fn to_f64(bf: &BigFloat) -> f64 {
         None => return 0.0,
     };
     let neg = matches!(bf.sign(), Some(Sign::Neg));
-    let mantissa = *digits.last().unwrap() as u64; // top 64 bits (normalized MSW)
+    let mantissa = *digits.last().unwrap(); // top 64 bits (normalized MSW)
     if mantissa == 0 {
         return 0.0;
     }
@@ -1157,7 +1157,7 @@ pub fn build_bla_mandel(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64) -> Vec<V
     let mut levels = vec![lvl0];
     while levels.last().unwrap().len() > 1 {
         let prev = levels.last().unwrap();
-        let mut next = Vec::with_capacity((prev.len() + 1) / 2);
+        let mut next = Vec::with_capacity(prev.len().div_ceil(2));
         let mut j = 0;
         while j < prev.len() {
             if j + 1 < prev.len() {

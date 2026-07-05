@@ -549,7 +549,7 @@ fn commas(s: &str) -> String {
     let len = digits.len();
     let mut out = String::with_capacity(len + len / 3 + 1);
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -1617,7 +1617,7 @@ impl FractadyneApp {
             app.start_benchmark();
         }
         if app.auto_render {
-            app.apply_cli_render(&args);
+            app.apply_cli_render(args);
         }
         // `--import-kfr FILE`: load a Kalles Fraktaler location at startup (and before any
         // `--render`), so it works both live and headless.
