@@ -15,7 +15,7 @@ This plan turns the audit findings into a **sequenced, low-risk, verifiable** re
 
 - ✅ **Phase 0** (v0.1.28) — lint gate, panic hardening, readability, `TOURS.md` fix.
 - ✅ **Phase 1a-i** — `FloatExp`/`CFloatExp` arithmetic migrated to `std::ops` operators (reads `a * b - c`).
-- ✅ **Phase 1a (partial)** — `core::floatexp` module extracted from `lib.rs` (self-contained, re-exported). *Remaining: `bignum`, `viewport`, `reference` submodules; then the `gpu` split (1b) and export de-dup (1c).*
+- ✅ **Phase 1a — core split COMPLETE.** `core/lib.rs` decomposed from a 2830-line monolith into `floatexp` (219), `bignum` (258), `viewport` (244), `reference` (1103); `lib.rs` is now a thin facade (module decls + re-exports + formula ids + tests). All re-exported so callers are unchanged; each extraction gated (tests 35/35, selftest 55/55, goldens 17/17). *Remaining Phase 1: the `gpu` split (1b) and GPU export de-dup (1c).*
 - ✅ **Formula-ease (goal 2), app side** — all per-family metadata consolidated into one `FractalKind::SPECS` table (one row per formula) + an authoritative "Adding a new formula" checklist + guard tests.
 - ✅ **Formula-ease, core side** — canonical `core::formula::{…}` id constants (single source of truth for the numbering) + `is_valid_formula` + a core checklist mirroring the app one; **adopted the constants at every CPU dispatch site** (`step_bf`/`orbit_points`/`reference_orbit`/`series_skip`), so the arms read `formula::PHOENIX => …`.
 - ✅ **Formula-ease, shader side** — id→family legend + add-a-formula note at the WGSL `formula` uniform, stating the ids must match `core::formula` / `FractalKind::formula_id`. All three dispatch sites (app table · core constants · shader legend) now cross-reference one checklist.
