@@ -43,6 +43,7 @@ directories = "5"
 twofloat = "0.7"
 astro-float = "0.9"
 rfd = "0.15"
+thiserror = "2"
 
 # Internal crates
 fractadyne-core = { path = "crates/fractadyne-core" }

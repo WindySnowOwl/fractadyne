@@ -1403,6 +1403,7 @@ version = "0.1.28"
 dependencies = [
  "exr",
  "png 0.17.16",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

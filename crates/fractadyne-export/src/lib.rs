@@ -7,6 +7,38 @@
 
 use std::path::Path;
 
+/// Failure modes of the export encoders / decoders. The library-error variants (`Io`,
+/// `PngDecode`, `PngEncode`, `Exr`) are `#[from]` sources so `?` threads them through and their
+/// `Display` is transparent (a `{e}` status line reads exactly as before); the hand-written
+/// variants capture distinctions the library types can't express and that a caller may want to
+/// match on (channel-missing vs corrupt vs size-mismatch, instead of collapsing to `None`).
+#[derive(Debug, thiserror::Error)]
+pub enum ExportError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    PngDecode(#[from] png::DecodingError),
+    #[error(transparent)]
+    PngEncode(#[from] png::EncodingError),
+    #[error(transparent)]
+    Exr(#[from] exr::error::Error),
+    /// An EXR named-channel lookup found nothing (e.g. Fraktaler-3's `N` / `NF`).
+    #[error("EXR channel {0:?} not found")]
+    ChannelNotFound(String),
+    /// A PNG color type the decoder can't map to RGBA8.
+    #[error("unsupported PNG color type")]
+    UnsupportedColorType,
+    /// A file extension that isn't a format we can read (thumbnails).
+    #[error("unsupported file format: {0}")]
+    UnsupportedFormat(String),
+    /// A decoded image had zero width or height.
+    #[error("empty image")]
+    EmptyImage,
+    /// A buffer smaller than `width*height*4`, or decoded channel data that didn't match dims.
+    #[error("buffer/size mismatch: expected {expected}, got {got}")]
+    SizeMismatch { expected: usize, got: usize },
+}
+
 // Color-space note (why there's no linear→sRGB encode on the PNG path):
 //
 // The renderer is *display-referred*. `fs_color` writes palette colors (0..1) straight into a
@@ -191,10 +223,10 @@ pub fn write_png(
     height: u32,
     rgba: &[f32],
     metadata: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), ExportError> {
     let expected = width as usize * height as usize * 4;
     if rgba.len() < expected {
-        return Err(format!("buffer too small: {} < {expected}", rgba.len()));
+        return Err(ExportError::SizeMismatch { expected, got: rgba.len() });
     }
     let mut bytes = Vec::with_capacity(expected);
     for px in rgba[..expected].chunks_exact(4) {
@@ -203,19 +235,17 @@ pub fn write_png(
         bytes.push(quantize8(px[2]));
         bytes.push(quantize8(px[3]));
     }
-    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let file = std::fs::File::create(path)?;
     let w = std::io::BufWriter::new(file);
     let mut encoder = png::Encoder::new(w, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     if let Some(meta) = metadata {
-        encoder
-            .add_text_chunk(META_KEYWORD.to_string(), meta.to_string())
-            .map_err(|e| e.to_string())?;
+        encoder.add_text_chunk(META_KEYWORD.to_string(), meta.to_string())?;
     }
-    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-    writer.write_image_data(&bytes).map_err(|e| e.to_string())?;
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(&bytes)?;
     Ok(())
 }
 
@@ -379,11 +409,11 @@ pub fn write_exr(
     height: u32,
     rgba: &[f32],
     metadata: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), ExportError> {
     use exr::prelude::*;
     let expected = width as usize * height as usize * 4;
     if rgba.len() < expected {
-        return Err(format!("buffer too small: {} < {expected}", rgba.len()));
+        return Err(ExportError::SizeMismatch { expected, got: rgba.len() });
     }
     let w = width as usize;
     let channels = SpecificChannels::rgba(|pos: Vec2<usize>| {
@@ -402,7 +432,8 @@ pub fn write_exr(
             .other
             .insert(Text::from(META_KEYWORD), AttributeValue::Text(Text::from(meta)));
     }
-    image.write().to_file(path).map_err(|e| e.to_string())
+    image.write().to_file(path)?;
+    Ok(())
 }
 
 /// Read the embedded Fractadyne view-state metadata from an OpenEXR, if present.

@@ -551,6 +551,7 @@ impl FractadyneApp {
                 ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
                 ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
             }
+            .map_err(|e| e.to_string())
         };
         // Each view is glitch-corrected when enabled + applicable (single and both dual panels).
         let view = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
@@ -601,7 +602,8 @@ impl FractadyneApp {
              B=normal.y, A=log2(distance_estimate_px)",
             self.view_metadata()
         );
-        fractadyne_export::write_exr(path, r.width, r.height, &r.pixels, Some(&meta))?;
+        fractadyne_export::write_exr(path, r.width, r.height, &r.pixels, Some(&meta))
+            .map_err(|e| e.to_string())?;
         Ok(format!("Saved iteration EXR {}×{} → {}", r.width, r.height, path.display()))
     }
 
@@ -631,6 +633,7 @@ impl FractadyneApp {
                 ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
                 ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
             }
+            .map_err(|e| e.to_string())
         };
         let status = |res: Result<(), String>, ok: String| match res {
             Ok(_) => ok,
@@ -778,6 +781,7 @@ impl FractadyneApp {
                     ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
                     ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
                 }
+                .map_err(|e| e.to_string())
             };
             let msg = (|| -> Result<String, String> {
                 match job {
