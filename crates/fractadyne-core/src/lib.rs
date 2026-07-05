@@ -585,47 +585,47 @@ fn step_bf(
     p: usize,
 ) -> (BigFloat, BigFloat) {
     match formula {
-        1 => {
+        formula::MULTIBROT3 => {
             // z³ + c
             let (sx, sy) = cmul_bf(zx, zy, zx, zy, p);
             let (rx, ry) = cmul_bf(&sx, &sy, zx, zy, p);
             (rx.add(cx, p, RM), ry.add(cy, p, RM))
         }
-        2 => {
+        formula::MULTIBROT4 => {
             // z⁴ + c
             let (sx, sy) = cmul_bf(zx, zy, zx, zy, p);
             let (rx, ry) = cmul_bf(&sx, &sy, &sx, &sy, p);
             (rx.add(cx, p, RM), ry.add(cy, p, RM))
         }
-        3 => {
+        formula::MULTIBROT5 => {
             // z⁵ + c
             let (sx, sy) = cmul_bf(zx, zy, zx, zy, p);
             let (qx, qy) = cmul_bf(&sx, &sy, &sx, &sy, p);
             let (rx, ry) = cmul_bf(&qx, &qy, zx, zy, p);
             (rx.add(cx, p, RM), ry.add(cy, p, RM))
         }
-        4 => {
+        formula::TRICORN => {
             // Tricorn: conj(z)² + c = (x²−y²+cx, −2xy+cy)
             let x2 = zx.mul(zx, p, RM);
             let y2 = zy.mul(zy, p, RM);
             let txy = double_bf(&zx.mul(zy, p, RM));
             (x2.sub(&y2, p, RM).add(cx, p, RM), cy.sub(&txy, p, RM))
         }
-        5 => {
+        formula::BURNING_SHIP => {
             // Burning Ship: real = x²−y²+cx, imag = |2xy|+cy
             let x2 = zx.mul(zx, p, RM);
             let y2 = zy.mul(zy, p, RM);
             let xy2 = double_bf(&zx.mul(zy, p, RM));
             (x2.sub(&y2, p, RM).add(cx, p, RM), xy2.abs().add(cy, p, RM))
         }
-        6 => {
+        formula::CELTIC => {
             // Celtic: real = |x²−y²|+cx, imag = 2xy+cy
             let x2 = zx.mul(zx, p, RM);
             let y2 = zy.mul(zy, p, RM);
             let xy2 = double_bf(&zx.mul(zy, p, RM));
             (x2.sub(&y2, p, RM).abs().add(cx, p, RM), xy2.add(cy, p, RM))
         }
-        7 => {
+        formula::BUFFALO => {
             // Buffalo: real = |x²−y²|+cx, imag = |2xy|+cy
             let x2 = zx.mul(zx, p, RM);
             let y2 = zy.mul(zy, p, RM);
@@ -682,7 +682,7 @@ pub fn orbit_points(
     let (mut px, mut py) = (0.0_f64, 0.0_f64); // previous iterate (Phoenix)
     pts.push((zx, zy));
     for _ in 0..max_points {
-        if formula == 9 {
+        if formula == formula::NEWTON {
             // Newton: z ← z − (z³−1)/(3z²); converges to a cube root of unity.
             let (z2x, z2y) = (zx * zx - zy * zy, 2.0 * zx * zy);
             let (z3x, z3y) = (z2x * zx - z2y * zy, z2x * zy + z2y * zx);
@@ -702,18 +702,18 @@ pub fn orbit_points(
         }
         let (sx, sy) = (zx * zx - zy * zy, 2.0 * zx * zy); // z²
         let (nx, ny) = match formula {
-            1 => (sx * zx - sy * zy + c.0, sx * zy + sy * zx + c.1), // z³
-            2 => (sx * sx - sy * sy + c.0, 2.0 * sx * sy + c.1),     // z⁴
-            3 => {
+            formula::MULTIBROT3 => (sx * zx - sy * zy + c.0, sx * zy + sy * zx + c.1), // z³
+            formula::MULTIBROT4 => (sx * sx - sy * sy + c.0, 2.0 * sx * sy + c.1),     // z⁴
+            formula::MULTIBROT5 => {
                 let (qx, qy) = (sx * sx - sy * sy, 2.0 * sx * sy); // z⁴
                 (qx * zx - qy * zy + c.0, qx * zy + qy * zx + c.1) // z⁵
             }
-            4 => (sx + c.0, -sy + c.1),                           // Tricorn z̄²+c
-            5 => (sx + c.0, sy.abs() + c.1),                      // Burning Ship
-            6 => (sx.abs() + c.0, sy + c.1),                      // Celtic
-            7 => (sx.abs() + c.0, sy.abs() + c.1),                // Buffalo
-            8 => (sx + c.0 - 0.5 * px, sy + c.1 - 0.5 * py),      // Phoenix (p=−0.5)
-            _ => (sx + c.0, sy + c.1),                            // Mandelbrot z²+c
+            formula::TRICORN => (sx + c.0, -sy + c.1),                       // Tricorn z̄²+c
+            formula::BURNING_SHIP => (sx + c.0, sy.abs() + c.1),             // Burning Ship
+            formula::CELTIC => (sx.abs() + c.0, sy + c.1),                   // Celtic
+            formula::BUFFALO => (sx.abs() + c.0, sy.abs() + c.1),            // Buffalo
+            formula::PHOENIX => (sx + c.0 - 0.5 * px, sy + c.1 - 0.5 * py),  // Phoenix (p=−0.5)
+            _ => (sx + c.0, sy + c.1),                                       // Mandelbrot z²+c
         };
         px = zx;
         py = zy;
@@ -752,12 +752,12 @@ pub fn reference_orbit(
     out.push([xh, yh, xl, yl]); // Z_0
     let mut n = 0u32;
     while n < max_iter {
-        let (nzx, nzy) = if formula == 8 {
+        let (nzx, nzy) = if formula == formula::PHOENIX {
             phoenix_step_bf(&zx, &zy, &zpx, &zpy, cx, cy, p)
         } else {
             step_bf(&zx, &zy, cx, cy, formula, p)
         };
-        if formula == 8 {
+        if formula == formula::PHOENIX {
             // Shift z_prev ← z (before z ← z'); std::mem::replace avoids a bignum clone.
             zpx = std::mem::replace(&mut zx, nzx);
             zpy = std::mem::replace(&mut zy, nzy);
@@ -860,9 +860,9 @@ pub fn series_skip(
     let limit = max_iter.min(orbit_len.saturating_sub(2));
     // Degree d of z^d + c, and the binomial weights that appear in the order-3 recurrence.
     let deg: u32 = match formula {
-        1 => 3,
-        2 => 4,
-        3 => 5,
+        formula::MULTIBROT3 => 3,
+        formula::MULTIBROT4 => 4,
+        formula::MULTIBROT5 => 5,
         _ => 2,
     };
     let one = bf(1.0, p);
@@ -1135,12 +1135,12 @@ fn orbit_length_bf(
     let mut zpy = BigFloat::from_f64(0.0, p);
     let mut n = 0u32;
     while n < max_iter {
-        let (nzx, nzy) = if formula == 8 {
+        let (nzx, nzy) = if formula == formula::PHOENIX {
             phoenix_step_bf(&zx, &zy, &zpx, &zpy, cx, cy, p)
         } else {
             step_bf(&zx, &zy, cx, cy, formula, p)
         };
-        if formula == 8 {
+        if formula == formula::PHOENIX {
             zpx = std::mem::replace(&mut zx, nzx);
             zpy = std::mem::replace(&mut zy, nzy);
         } else {
