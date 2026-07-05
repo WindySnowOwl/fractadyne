@@ -39,39 +39,19 @@ pub(crate) fn step_bf(
     formula: u32,
     p: usize,
 ) -> (BigFloat, BigFloat) {
+    // Migrated families ({Mandelbrot, Multibrot3/4/5, Burning Ship}) share one `Field`-generic
+    // step (see `crate::fractal`); it reproduces the arms below bit-for-bit. `None` = still on the
+    // enum path (Tricorn / Celtic / Buffalo below; Phoenix / Newton in their own branches).
+    if let Some(r) = crate::fractal::trait_step(formula, zx, zy, cx, cy, p) {
+        return r;
+    }
     match formula {
-        formula::MULTIBROT3 => {
-            // z³ + c
-            let (sx, sy) = cmul_bf(zx, zy, zx, zy, p);
-            let (rx, ry) = cmul_bf(&sx, &sy, zx, zy, p);
-            (rx.add(cx, p, RM), ry.add(cy, p, RM))
-        }
-        formula::MULTIBROT4 => {
-            // z⁴ + c
-            let (sx, sy) = cmul_bf(zx, zy, zx, zy, p);
-            let (rx, ry) = cmul_bf(&sx, &sy, &sx, &sy, p);
-            (rx.add(cx, p, RM), ry.add(cy, p, RM))
-        }
-        formula::MULTIBROT5 => {
-            // z⁵ + c
-            let (sx, sy) = cmul_bf(zx, zy, zx, zy, p);
-            let (qx, qy) = cmul_bf(&sx, &sy, &sx, &sy, p);
-            let (rx, ry) = cmul_bf(&qx, &qy, zx, zy, p);
-            (rx.add(cx, p, RM), ry.add(cy, p, RM))
-        }
         formula::TRICORN => {
             // Tricorn: conj(z)² + c = (x²−y²+cx, −2xy+cy)
             let x2 = zx.mul(zx, p, RM);
             let y2 = zy.mul(zy, p, RM);
             let txy = double_bf(&zx.mul(zy, p, RM));
             (x2.sub(&y2, p, RM).add(cx, p, RM), cy.sub(&txy, p, RM))
-        }
-        formula::BURNING_SHIP => {
-            // Burning Ship: real = x²−y²+cx, imag = |2xy|+cy
-            let x2 = zx.mul(zx, p, RM);
-            let y2 = zy.mul(zy, p, RM);
-            let xy2 = double_bf(&zx.mul(zy, p, RM));
-            (x2.sub(&y2, p, RM).add(cx, p, RM), xy2.abs().add(cy, p, RM))
         }
         formula::CELTIC => {
             // Celtic: real = |x²−y²|+cx, imag = 2xy+cy
@@ -155,20 +135,19 @@ pub fn orbit_points(
             }
             continue;
         }
-        let (sx, sy) = (zx * zx - zy * zy, 2.0 * zx * zy); // z²
-        let (nx, ny) = match formula {
-            formula::MULTIBROT3 => (sx * zx - sy * zy + c.0, sx * zy + sy * zx + c.1), // z³
-            formula::MULTIBROT4 => (sx * sx - sy * sy + c.0, 2.0 * sx * sy + c.1),     // z⁴
-            formula::MULTIBROT5 => {
-                let (qx, qy) = (sx * sx - sy * sy, 2.0 * sx * sy); // z⁴
-                (qx * zx - qy * zy + c.0, qx * zy + qy * zx + c.1) // z⁵
+        // Migrated families ({Mandelbrot, Multibrot3/4/5, Burning Ship}) go through the one
+        // `Field`-generic step shared with `step_bf` (bit-identical in f64); the rest stay inline.
+        let (nx, ny) = if let Some(r) = crate::fractal::trait_step(formula, &zx, &zy, &c.0, &c.1, ()) {
+            r
+        } else {
+            let (sx, sy) = (zx * zx - zy * zy, 2.0 * zx * zy); // z²
+            match formula {
+                formula::TRICORN => (sx + c.0, -sy + c.1),                      // Tricorn z̄²+c
+                formula::CELTIC => (sx.abs() + c.0, sy + c.1),                  // Celtic
+                formula::BUFFALO => (sx.abs() + c.0, sy.abs() + c.1),           // Buffalo
+                formula::PHOENIX => (sx + c.0 - 0.5 * px, sy + c.1 - 0.5 * py), // Phoenix (p=−0.5)
+                _ => (sx + c.0, sy + c.1),                                      // (unreached: Mandelbrot migrated)
             }
-            formula::TRICORN => (sx + c.0, -sy + c.1),                       // Tricorn z̄²+c
-            formula::BURNING_SHIP => (sx + c.0, sy.abs() + c.1),             // Burning Ship
-            formula::CELTIC => (sx.abs() + c.0, sy + c.1),                   // Celtic
-            formula::BUFFALO => (sx.abs() + c.0, sy.abs() + c.1),            // Buffalo
-            formula::PHOENIX => (sx + c.0 - 0.5 * px, sy + c.1 - 0.5 * py),  // Phoenix (p=−0.5)
-            _ => (sx + c.0, sy + c.1),                                       // Mandelbrot z²+c
         };
         px = zx;
         py = zy;

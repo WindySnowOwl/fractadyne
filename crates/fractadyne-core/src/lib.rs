@@ -33,6 +33,8 @@ pub use viewport::*;
 mod reference;
 pub use reference::*;
 
+mod fractal;
+
 /// Canonical numeric ids for the escape-time families — the `u32 formula` argument threaded through
 /// this crate's dispatch and uploaded to the shader. These are the single source of truth for the
 /// numbering; the app's `FractalKind::formula_id` and the WGSL `fs_iterate` branches MUST agree.
