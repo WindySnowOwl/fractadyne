@@ -8,6 +8,13 @@ The project enters tracked versioning at **0.1.0**; entries below summarize the 
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
 new functional enhancement.
 
+## 0.1.27
+
+- **Export timing.** The Export dialog now shows a live **Elapsed:** readout while an export is in
+  flight (including the off-thread reference build for a deep export), and the completion status
+  line reports the **total time** — e.g. `Saved 3840×2160 → … (in 12.4s)`. The headless `--render`
+  CLI prints the same total.
+
 ## 0.1.26
 
 - **Fixed exported PNGs looking desaturated / washed out versus the live view.** The renderer is

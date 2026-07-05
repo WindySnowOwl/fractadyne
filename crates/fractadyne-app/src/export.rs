@@ -670,6 +670,9 @@ impl FractadyneApp {
         if self.export_task.is_some() || self.export_prep.is_some() {
             return;
         }
+        // Start the export clock now — for a deep export this includes the (long) off-thread
+        // reference build, which is part of the wait the user is timing.
+        self.export_started = Some(std::time::Instant::now());
         if let Some(parent) = path.parent() {
             self.export_last_dir = Some(parent.to_path_buf());
         }
@@ -708,11 +711,33 @@ impl FractadyneApp {
         // path for aux coloring methods or views past the ~32 MP / single-texture correction limit.
         if self.glitch_correct {
             if let Some(msg) = self.export_corrected_sync(&device, &queue, &path, &job, hud.as_ref()) {
-                self.export_status = Some(msg);
+                self.export_status = Some(self.finish_export_status(msg));
                 return;
             }
         }
         self.spawn_export_worker(device, queue, job, path, hud);
+    }
+
+    /// Format an export duration compactly: `8.3s`, or `1m 04.0s` past a minute.
+    pub(crate) fn fmt_export_duration(d: std::time::Duration) -> String {
+        let s = d.as_secs_f64();
+        if s < 60.0 {
+            format!("{s:.1}s")
+        } else {
+            let m = (s / 60.0).floor() as u64;
+            format!("{m}m {:04.1}s", s - m as f64 * 60.0)
+        }
+    }
+
+    /// Finalize an export status line: on success append the total elapsed time; either way clear
+    /// the timer. Cancel/failure messages pass through unchanged (no time — the run didn't finish).
+    pub(crate) fn finish_export_status(&mut self, msg: String) -> String {
+        match self.export_started.take() {
+            Some(t) if msg.starts_with("Saved") => {
+                format!("{msg}  (in {})", Self::fmt_export_duration(t.elapsed()))
+            }
+            _ => msg,
+        }
     }
 
     /// Render an already-assembled export job (references built) on a background worker and write it

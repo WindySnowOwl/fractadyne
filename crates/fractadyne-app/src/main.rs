@@ -1145,6 +1145,9 @@ struct FractadyneApp {
     export_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Last directory an export was saved to (persisted; defaults the Save dialog).
     export_last_dir: Option<std::path::PathBuf>,
+    /// When the in-flight export began (deep exports: at the reference build, so the total
+    /// covers it). Drives the live "elapsed" readout and the final total-time report.
+    export_started: Option<std::time::Instant>,
     /// Gallery browser state.
     gallery_open: bool,
     gallery_dir: std::path::PathBuf,
@@ -1506,6 +1509,7 @@ impl FractadyneApp {
             export_progress: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
             export_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             export_last_dir: s.export_dir.clone().map(std::path::PathBuf::from),
+            export_started: None,
             gallery_open: false,
             gallery_dir: Self::pictures_dir(),
             gallery_entries: Vec::new(),
@@ -3824,6 +3828,7 @@ impl eframe::App for FractadyneApp {
                 if !self.watermark && !self.render_iter_mode {
                     println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
                 }
+                let t0 = std::time::Instant::now();
                 let result = if self.render_iter_mode {
                     let out = self
                         .auto_render_out
@@ -3838,7 +3843,7 @@ impl eframe::App for FractadyneApp {
                     self.render_to_file(ctx, dev, q, &out)
                 };
                 match result {
-                    Ok(m) => println!("{m}"),
+                    Ok(m) => println!("{m}  (in {})", Self::fmt_export_duration(t0.elapsed())),
                     Err(e) => eprintln!("Render failed: {e}"),
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -3908,11 +3913,14 @@ impl eframe::App for FractadyneApp {
         if let Some(rx) = &self.export_task {
             match rx.try_recv() {
                 Ok(msg) => {
-                    self.export_status = Some(msg);
+                    self.export_status = Some(self.finish_export_status(msg));
                     self.export_task = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.export_task = None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.export_task = None;
+                    self.export_started = None;
+                }
             }
         }
         // Poll a deep export whose reference is building off-thread. When it lands, assemble the
@@ -3961,6 +3969,7 @@ impl eframe::App for FractadyneApp {
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.export_status = Some("Export failed: reference build aborted.".to_string());
+                    self.export_started = None;
                 }
             }
         }
@@ -5786,6 +5795,9 @@ impl eframe::App for FractadyneApp {
                     );
                     ui.add_space(6.0);
                     let busy = self.export_task.is_some() || self.export_prep.is_some();
+                    let elapsed = self
+                        .export_started
+                        .map(|t| Self::fmt_export_duration(t.elapsed()));
                     if self.export_prep.is_some() {
                         // Deep export: the bignum reference is building off-thread (UI stays live).
                         ui.horizontal(|ui| {
@@ -5809,6 +5821,16 @@ impl eframe::App for FractadyneApp {
                                 self.export_cancel
                                     .store(true, std::sync::atomic::Ordering::Relaxed);
                             }
+                        }
+                    }
+                    // Live elapsed readout while an export is in flight (updated each frame; the
+                    // busy pollers above request repaints). The final total is folded into the
+                    // status line on completion.
+                    if busy {
+                        if let Some(t) = &elapsed {
+                            ui.label(
+                                egui::RichText::new(format!("Elapsed: {t}")).weak().small(),
+                            );
                         }
                     } else {
                         ui.horizontal(|ui| {
