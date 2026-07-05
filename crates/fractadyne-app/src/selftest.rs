@@ -1589,20 +1589,34 @@ impl FractadyneApp {
         if !bless {
             let _ = std::fs::create_dir_all(&current_dir);
         }
-        // (name, cx, cy, zoom, iter, method, palette)
-        let specs: &[(&str, &str, &str, f64, u32, u32, usize)] = &[
-            ("home", "-0.5", "0.0", 1.0, 800, 0, 0),
-            ("seahorse", SX, SY, 2.0e3, 1500, 0, 1),
-            ("seahorse-stripe-1e6", SX, SY, 1.0e6, 4000, 1, 1),
-            ("elephant", "0.2925755", "-0.0149977", 1.5e3, 1500, 0, 2),
+        // (name, fractal, cx, cy, zoom, iter, method, palette). The Mandelbrot views exercise deep
+        // zoom / coloring; the per-family overviews guard each formula's escape dispatch across the
+        // CPU orbit and the direct-mode shader. (The deep-zoom views are all Mandelbrot, so without
+        // these a non-Mandelbrot formula regression would render wrong yet pass — see fractal.rs.)
+        // (name, fractal, center_x, center_y, zoom, max_iter, color_method, palette_idx)
+        type GoldenSpec = (&'static str, FractalKind, &'static str, &'static str, f64, u32, u32, usize);
+        let specs: &[GoldenSpec] = &[
+            ("home", FractalKind::Mandelbrot, "-0.5", "0.0", 1.0, 800, 0, 0),
+            ("seahorse", FractalKind::Mandelbrot, SX, SY, 2.0e3, 1500, 0, 1),
+            ("seahorse-stripe-1e6", FractalKind::Mandelbrot, SX, SY, 1.0e6, 4000, 1, 1),
+            ("elephant", FractalKind::Mandelbrot, "0.2925755", "-0.0149977", 1.5e3, 1500, 0, 2),
+            ("multibrot3", FractalKind::Multibrot3, "0.0", "0.0", 0.8, 800, 0, 0),
+            ("multibrot4", FractalKind::Multibrot4, "0.0", "0.0", 0.8, 800, 0, 0),
+            ("multibrot5", FractalKind::Multibrot5, "0.0", "0.0", 0.8, 800, 0, 0),
+            ("tricorn", FractalKind::Tricorn, "0.0", "0.0", 0.8, 800, 0, 0),
+            ("burning-ship", FractalKind::BurningShip, "-0.5", "-0.5", 0.7, 800, 0, 0),
+            ("celtic", FractalKind::Celtic, "-0.5", "0.0", 0.8, 800, 0, 0),
+            ("buffalo", FractalKind::Buffalo, "-0.5", "-0.5", 0.7, 800, 0, 0),
+            ("phoenix", FractalKind::Phoenix, "0.0", "0.0", 0.7, 800, 0, 0),
+            ("newton", FractalKind::Newton, "0.0", "0.0", 0.7, 400, 0, 0),
         ];
         let (gw, gh) = (320u32, 240u32);
         // (name, max Δ, mean Δ, checksum, pass, reproduce, status). `status` is "" for a normal
         // compared golden (show maxΔ/meanΔ); otherwise a distinct reason (MISSING / SIZE MISMATCH /
         // RENDER ERROR) so those never masquerade as a pixel-diff failure.
         let mut goldens: Vec<(String, u32, f64, u64, bool, String, &'static str)> = Vec::new();
-        for &(name, cx, cy, zoom, iter, method, palette) in specs {
-            self.fractal = FractalKind::Mandelbrot;
+        for &(name, fractal, cx, cy, zoom, iter, method, palette) in specs {
+            self.fractal = fractal;
             self.julia_mode = false;
             self.color_method = method;
             self.palette_idx = palette;
@@ -1632,9 +1646,10 @@ impl FractadyneApp {
             req.height = gh;
             req.ss = 1;
             let reproduce = format!(
-                "fractadyne --render --out {name}.png --fractal Mandelbrot --center {cx} {cy} \
+                "fractadyne --render --out {name}.png --fractal \"{}\" --center {cx} {cy} \
                  --zoom {zoom} --size {gw} --iter {iter} --ss 1 --method {} --palette {palette} \
                  --no-watermark",
+                fractal.name(),
                 method_to_str(method)
             );
             let progress = std::sync::atomic::AtomicU32::new(0);
