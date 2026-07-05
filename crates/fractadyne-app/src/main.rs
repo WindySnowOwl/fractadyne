@@ -4123,6 +4123,331 @@ impl FractadyneApp {
             self.bench_dialog_open = true;
         }
     }
+
+    /// Gallery browser — scan a folder of exported PNG/EXR images and reopen any view (lazy thumbs).
+    fn draw_gallery_dialog(&mut self, ctx: &egui::Context) {
+        if !self.gallery_open {
+            return;
+        }
+        let mut open = self.gallery_open;
+        let mut to_open: Option<String> = None;
+        let mut do_rescan = false;
+        egui::Window::new("Gallery")
+            .open(&mut open)
+            .default_size([540.0, 620.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("Folder…").clicked() {
+                        if let Some(d) = rfd::FileDialog::new()
+                            .set_directory(&self.gallery_dir)
+                            .pick_folder()
+                        {
+                            self.gallery_dir = d;
+                            do_rescan = true;
+                        }
+                    }
+                    if ui.button("Refresh").clicked() {
+                        do_rescan = true;
+                    }
+                    ui.label(
+                        egui::RichText::new(self.gallery_dir.display().to_string())
+                            .weak()
+                            .small(),
+                    );
+                });
+                ui.separator();
+                if self.gallery_entries.is_empty() {
+                    ui.label("No Fractadyne images in this folder.");
+                }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for entry in &self.gallery_entries {
+                        ui.horizontal(|ui| {
+                            match &entry.thumb {
+                                Some(t) => {
+                                    let s = t.size();
+                                    ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                        t.id(),
+                                        egui::vec2(s[0] as f32, s[1] as f32),
+                                    )));
+                                }
+                                None => {
+                                    ui.add_sized(
+                                        [160.0, 100.0],
+                                        egui::Label::new(egui::RichText::new("…").weak()),
+                                    );
+                                }
+                            }
+                            ui.vertical(|ui| {
+                                let title = if entry.fractal.is_empty() {
+                                    "Fractadyne image"
+                                } else {
+                                    &entry.fractal
+                                };
+                                ui.strong(title);
+                                ui.label(format!("zoom {}   {}", entry.zoom, entry.saved));
+                                if !entry.notes.is_empty() {
+                                    ui.label(format!("\u{201c}{}\u{201d}", entry.notes));
+                                }
+                                ui.label(egui::RichText::new(&entry.app_version).weak().small());
+                                if ui.button("Open this view").clicked() {
+                                    to_open = Some(entry.meta.clone());
+                                }
+                            });
+                        });
+                        ui.separator();
+                    }
+                });
+            });
+        self.gallery_open = open;
+        if do_rescan {
+            self.scan_gallery();
+        }
+        if let Some(meta) = to_open {
+            self.load_view_metadata(&meta);
+            self.export_status = Some("Loaded view from gallery.".to_string());
+        }
+        // Lazily decode one thumbnail per frame so scanning a folder never freezes.
+        if let Some(entry) = self.gallery_entries.iter_mut().find(|e| !e.thumb_tried) {
+            entry.thumb_tried = true;
+            if let Some((tw, th, rgba)) = fractadyne_export::read_thumbnail(&entry.path, 160) {
+                let img = egui::ColorImage::from_rgba_unmultiplied([tw as usize, th as usize], &rgba);
+                let name = format!("thumb:{}", entry.path.display());
+                entry.thumb = Some(ctx.load_texture(name, img, egui::TextureOptions::LINEAR));
+            }
+            ctx.request_repaint();
+        }
+    }
+
+    /// Export-image dialog — width/aspect/format/HUD/folder options, then Export (auto-named into
+    /// the chosen folder) or Save as… `gpu` is needed to dispatch the render.
+    fn draw_export_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
+    ) {
+        if !self.export_open {
+            return;
+        }
+        let mut open = self.export_open;
+        let mut do_export = false;
+        let mut do_export_as = false;
+        egui::Window::new("Export image")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                egui::ComboBox::from_label("Width (px)")
+                    .selected_text(format!("{}", self.export_width))
+                    .show_ui(ui, |ui| {
+                        for w in [1280u32, 1920, 2560, 3840, 5120, 7680] {
+                            ui.selectable_value(&mut self.export_width, w, format!("{w}"));
+                        }
+                    });
+                egui::ComboBox::from_label("Supersampling")
+                    .selected_text(format!("{}×", self.export_ss))
+                    .show_ui(ui, |ui| {
+                        for s in [1u32, 2, 3, 4] {
+                            ui.selectable_value(&mut self.export_ss, s, format!("{s}×"));
+                        }
+                    });
+                egui::ComboBox::from_label("Aspect")
+                    .selected_text(if self.export_aspect == "window" {
+                        "Match window".to_string()
+                    } else {
+                        self.export_aspect.clone()
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.export_aspect,
+                            "window".to_string(),
+                            "Match window",
+                        );
+                        for (k, _) in EXPORT_ASPECTS {
+                            ui.selectable_value(&mut self.export_aspect, k.to_string(), k);
+                        }
+                    });
+                ui.horizontal(|ui| {
+                    ui.label("Format:");
+                    ui.radio_value(&mut self.export_format, ExportFormat::Png, "PNG");
+                    ui.radio_value(&mut self.export_format, ExportFormat::Exr, "OpenEXR");
+                });
+                ui.checkbox(&mut self.show_location, "Location HUD")
+                    .on_hover_text(
+                        "Burn a zoom-level + coordinate panel into the top-left of the exported \
+                         image (scales with the output; shows the map/Mandelbrot view's zoom + \
+                         center).",
+                    );
+                ui.checkbox(&mut self.glitch_correct, "Glitch correction")
+                    .on_hover_text(
+                        "Multi-reference correction of perturbation glitches. Automatically \
+                         skipped for very deep (floatexp) single-view exports so the reference \
+                         build + render run off-thread and the app stays responsive.",
+                    );
+                if self.viewport.magnification() >= PERT_FE_THRESHOLD {
+                    ui.label(
+                        egui::RichText::new(
+                            "Deep export: the reference builds off-thread (UI stays live); \
+                             glitch correction is skipped at this depth.",
+                        )
+                        .weak()
+                        .small(),
+                    );
+                }
+                if self.dual {
+                    egui::ComboBox::from_label("Dual layout")
+                        .selected_text(match self.export_dual_mode {
+                            DualExport::SideBySide => "Side by side",
+                            DualExport::Separate => "Separate files",
+                            DualExport::ActiveOnly => "Map only",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.export_dual_mode,
+                                DualExport::SideBySide,
+                                "Side by side",
+                            );
+                            ui.selectable_value(
+                                &mut self.export_dual_mode,
+                                DualExport::Separate,
+                                "Separate files",
+                            );
+                            ui.selectable_value(
+                                &mut self.export_dual_mode,
+                                DualExport::ActiveOnly,
+                                "Map only",
+                            );
+                        });
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Notes:");
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.export_notes)
+                            .char_limit(120)
+                            .desired_width(220.0)
+                            .hint_text("saved with the image (≤120 chars)"),
+                    );
+                    if resp.changed() && self.export_notes.chars().count() > 120 {
+                        self.export_notes = self.export_notes.chars().take(120).collect();
+                    }
+                });
+                ui.label(format!(
+                    "Output: {} × {} px   ({} chars left)",
+                    self.export_width,
+                    self.export_height(),
+                    120usize.saturating_sub(self.export_notes.chars().count()),
+                ));
+                ui.label(
+                    egui::RichText::new(
+                        "Rendered in tiles (no size cap) on a background thread. The \
+                         file embeds the view + notes so it can be reopened via \
+                         File ▸ Open view.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                // Target directory: a persistent folder that "Export" saves into (auto name).
+                let target_dir = self
+                    .export_last_dir
+                    .clone()
+                    .filter(|d| d.is_dir())
+                    .unwrap_or_else(Self::pictures_dir);
+                ui.horizontal(|ui| {
+                    ui.label("Folder:");
+                    if ui
+                        .button("Choose…")
+                        .on_hover_text("Pick the target directory for exports")
+                        .clicked()
+                    {
+                        if let Some(d) = rfd::FileDialog::new().set_directory(&target_dir).pick_folder() {
+                            self.export_last_dir = Some(d);
+                        }
+                    }
+                });
+                ui.label(
+                    egui::RichText::new(target_dir.display().to_string())
+                        .weak()
+                        .small(),
+                );
+                ui.add_space(6.0);
+                let busy = self.export_task.is_some() || self.export_prep.is_some();
+                let elapsed = self
+                    .export_started
+                    .map(|t| Self::fmt_export_duration(t.elapsed()));
+                if self.export_prep.is_some() {
+                    // Deep export: the bignum reference is building off-thread (UI stays live).
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new());
+                        ui.label("Preparing (building reference)…");
+                    });
+                } else if busy {
+                    let p = self.export_progress.load(std::sync::atomic::Ordering::Relaxed);
+                    if p >= 2000 {
+                        // Rendering done; encoding/writing the file (not cancelable).
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new());
+                            ui.label("Saving…");
+                        });
+                    } else {
+                        ui.label("Rendering…");
+                        ui.add(egui::ProgressBar::new(p as f32 / 1000.0).show_percentage());
+                        if ui.button("Cancel").clicked() {
+                            self.export_cancel
+                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                }
+                // Live elapsed readout while an export is in flight (updated each frame; the
+                // busy pollers above request repaints). The final total is folded into the
+                // status line on completion.
+                if busy {
+                    if let Some(t) = &elapsed {
+                        ui.label(egui::RichText::new(format!("Elapsed: {t}")).weak().small());
+                    }
+                } else {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Export")
+                            .on_hover_text("Render and save into the folder above (auto-named)")
+                            .clicked()
+                        {
+                            do_export = true;
+                        }
+                        if ui
+                            .button("Save as…")
+                            .on_hover_text("Choose the file name and location")
+                            .clicked()
+                        {
+                            do_export_as = true;
+                        }
+                    });
+                }
+                if let Some(s) = &self.export_status {
+                    ui.add_space(6.0);
+                    ui.label(s);
+                }
+            });
+        self.export_open = open;
+        if do_export {
+            if let Some((dev, q)) = gpu {
+                // Save straight into the chosen folder with an auto (timestamped) name.
+                let dir = self
+                    .export_last_dir
+                    .clone()
+                    .filter(|d| d.is_dir())
+                    .unwrap_or_else(Self::pictures_dir);
+                let path = dir.join(self.export_default_name());
+                self.start_export_to(ctx, dev.clone(), q.clone(), path);
+            } else {
+                self.export_status = Some("GPU not available".to_string());
+            }
+        }
+        if do_export_as {
+            if let Some((dev, q)) = gpu {
+                self.start_export(ctx, dev.clone(), q.clone());
+            } else {
+                self.export_status = Some("GPU not available".to_string());
+            }
+        }
+    }
 }
 
 impl eframe::App for FractadyneApp {
@@ -5602,331 +5927,9 @@ impl eframe::App for FractadyneApp {
         self.draw_bench_progress_dialog(ctx);
         self.draw_bench_results_dialog(ctx);
 
-        // ---- gallery browser ----
-        if self.gallery_open {
-            let mut open = self.gallery_open;
-            let mut to_open: Option<String> = None;
-            let mut do_rescan = false;
-            egui::Window::new("Gallery")
-                .open(&mut open)
-                .default_size([540.0, 620.0])
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.button("Folder…").clicked() {
-                            if let Some(d) = rfd::FileDialog::new()
-                                .set_directory(&self.gallery_dir)
-                                .pick_folder()
-                            {
-                                self.gallery_dir = d;
-                                do_rescan = true;
-                            }
-                        }
-                        if ui.button("Refresh").clicked() {
-                            do_rescan = true;
-                        }
-                        ui.label(
-                            egui::RichText::new(self.gallery_dir.display().to_string())
-                                .weak()
-                                .small(),
-                        );
-                    });
-                    ui.separator();
-                    if self.gallery_entries.is_empty() {
-                        ui.label("No Fractadyne images in this folder.");
-                    }
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for entry in &self.gallery_entries {
-                            ui.horizontal(|ui| {
-                                match &entry.thumb {
-                                    Some(t) => {
-                                        let s = t.size();
-                                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                                            t.id(),
-                                            egui::vec2(s[0] as f32, s[1] as f32),
-                                        )));
-                                    }
-                                    None => {
-                                        ui.add_sized(
-                                            [160.0, 100.0],
-                                            egui::Label::new(
-                                                egui::RichText::new("…").weak(),
-                                            ),
-                                        );
-                                    }
-                                }
-                                ui.vertical(|ui| {
-                                    let title = if entry.fractal.is_empty() {
-                                        "Fractadyne image"
-                                    } else {
-                                        &entry.fractal
-                                    };
-                                    ui.strong(title);
-                                    ui.label(format!("zoom {}   {}", entry.zoom, entry.saved));
-                                    if !entry.notes.is_empty() {
-                                        ui.label(format!("\u{201c}{}\u{201d}", entry.notes));
-                                    }
-                                    ui.label(
-                                        egui::RichText::new(&entry.app_version).weak().small(),
-                                    );
-                                    if ui.button("Open this view").clicked() {
-                                        to_open = Some(entry.meta.clone());
-                                    }
-                                });
-                            });
-                            ui.separator();
-                        }
-                    });
-                });
-            self.gallery_open = open;
-            if do_rescan {
-                self.scan_gallery();
-            }
-            if let Some(meta) = to_open {
-                self.load_view_metadata(&meta);
-                self.export_status = Some("Loaded view from gallery.".to_string());
-            }
-            // Lazily decode one thumbnail per frame so scanning a folder never freezes.
-            if let Some(entry) = self.gallery_entries.iter_mut().find(|e| !e.thumb_tried) {
-                entry.thumb_tried = true;
-                if let Some((tw, th, rgba)) = fractadyne_export::read_thumbnail(&entry.path, 160) {
-                    let img = egui::ColorImage::from_rgba_unmultiplied(
-                        [tw as usize, th as usize],
-                        &rgba,
-                    );
-                    let name = format!("thumb:{}", entry.path.display());
-                    entry.thumb =
-                        Some(ctx.load_texture(name, img, egui::TextureOptions::LINEAR));
-                }
-                ctx.request_repaint();
-            }
-        }
+        self.draw_gallery_dialog(ctx);
 
-        // ---- export dialog ----
-        if self.export_open {
-            let mut open = self.export_open;
-            let mut do_export = false;
-            let mut do_export_as = false;
-            egui::Window::new("Export image")
-                .open(&mut open)
-                .resizable(false)
-                .show(ctx, |ui| {
-                    egui::ComboBox::from_label("Width (px)")
-                        .selected_text(format!("{}", self.export_width))
-                        .show_ui(ui, |ui| {
-                            for w in [1280u32, 1920, 2560, 3840, 5120, 7680] {
-                                ui.selectable_value(&mut self.export_width, w, format!("{w}"));
-                            }
-                        });
-                    egui::ComboBox::from_label("Supersampling")
-                        .selected_text(format!("{}×", self.export_ss))
-                        .show_ui(ui, |ui| {
-                            for s in [1u32, 2, 3, 4] {
-                                ui.selectable_value(&mut self.export_ss, s, format!("{s}×"));
-                            }
-                        });
-                    egui::ComboBox::from_label("Aspect")
-                        .selected_text(if self.export_aspect == "window" {
-                            "Match window".to_string()
-                        } else {
-                            self.export_aspect.clone()
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.export_aspect,
-                                "window".to_string(),
-                                "Match window",
-                            );
-                            for (k, _) in EXPORT_ASPECTS {
-                                ui.selectable_value(&mut self.export_aspect, k.to_string(), k);
-                            }
-                        });
-                    ui.horizontal(|ui| {
-                        ui.label("Format:");
-                        ui.radio_value(&mut self.export_format, ExportFormat::Png, "PNG");
-                        ui.radio_value(&mut self.export_format, ExportFormat::Exr, "OpenEXR");
-                    });
-                    ui.checkbox(&mut self.show_location, "Location HUD")
-                        .on_hover_text(
-                            "Burn a zoom-level + coordinate panel into the top-left of the exported \
-                             image (scales with the output; shows the map/Mandelbrot view's zoom + \
-                             center).",
-                        );
-                    ui.checkbox(&mut self.glitch_correct, "Glitch correction")
-                        .on_hover_text(
-                            "Multi-reference correction of perturbation glitches. Automatically \
-                             skipped for very deep (floatexp) single-view exports so the reference \
-                             build + render run off-thread and the app stays responsive.",
-                        );
-                    if self.viewport.magnification() >= PERT_FE_THRESHOLD {
-                        ui.label(
-                            egui::RichText::new(
-                                "Deep export: the reference builds off-thread (UI stays live); \
-                                 glitch correction is skipped at this depth.",
-                            )
-                            .weak()
-                            .small(),
-                        );
-                    }
-                    if self.dual {
-                        egui::ComboBox::from_label("Dual layout")
-                            .selected_text(match self.export_dual_mode {
-                                DualExport::SideBySide => "Side by side",
-                                DualExport::Separate => "Separate files",
-                                DualExport::ActiveOnly => "Map only",
-                            })
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut self.export_dual_mode,
-                                    DualExport::SideBySide,
-                                    "Side by side",
-                                );
-                                ui.selectable_value(
-                                    &mut self.export_dual_mode,
-                                    DualExport::Separate,
-                                    "Separate files",
-                                );
-                                ui.selectable_value(
-                                    &mut self.export_dual_mode,
-                                    DualExport::ActiveOnly,
-                                    "Map only",
-                                );
-                            });
-                    }
-                    ui.horizontal(|ui| {
-                        ui.label("Notes:");
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(&mut self.export_notes)
-                                .char_limit(120)
-                                .desired_width(220.0)
-                                .hint_text("saved with the image (≤120 chars)"),
-                        );
-                        if resp.changed() && self.export_notes.chars().count() > 120 {
-                            self.export_notes = self.export_notes.chars().take(120).collect();
-                        }
-                    });
-                    ui.label(format!(
-                        "Output: {} × {} px   ({} chars left)",
-                        self.export_width,
-                        self.export_height(),
-                        120usize.saturating_sub(self.export_notes.chars().count()),
-                    ));
-                    ui.label(
-                        egui::RichText::new(
-                            "Rendered in tiles (no size cap) on a background thread. The \
-                             file embeds the view + notes so it can be reopened via \
-                             File ▸ Open view.",
-                        )
-                        .weak()
-                        .small(),
-                    );
-                    // Target directory: a persistent folder that "Export" saves into (auto name).
-                    let target_dir = self
-                        .export_last_dir
-                        .clone()
-                        .filter(|d| d.is_dir())
-                        .unwrap_or_else(Self::pictures_dir);
-                    ui.horizontal(|ui| {
-                        ui.label("Folder:");
-                        if ui
-                            .button("Choose…")
-                            .on_hover_text("Pick the target directory for exports")
-                            .clicked()
-                        {
-                            if let Some(d) = rfd::FileDialog::new().set_directory(&target_dir).pick_folder() {
-                                self.export_last_dir = Some(d);
-                            }
-                        }
-                    });
-                    ui.label(
-                        egui::RichText::new(target_dir.display().to_string())
-                            .weak()
-                            .small(),
-                    );
-                    ui.add_space(6.0);
-                    let busy = self.export_task.is_some() || self.export_prep.is_some();
-                    let elapsed = self
-                        .export_started
-                        .map(|t| Self::fmt_export_duration(t.elapsed()));
-                    if self.export_prep.is_some() {
-                        // Deep export: the bignum reference is building off-thread (UI stays live).
-                        ui.horizontal(|ui| {
-                            ui.add(egui::Spinner::new());
-                            ui.label("Preparing (building reference)…");
-                        });
-                    } else if busy {
-                        let p = self.export_progress.load(std::sync::atomic::Ordering::Relaxed);
-                        if p >= 2000 {
-                            // Rendering done; encoding/writing the file (not cancelable).
-                            ui.horizontal(|ui| {
-                                ui.add(egui::Spinner::new());
-                                ui.label("Saving…");
-                            });
-                        } else {
-                            ui.label("Rendering…");
-                            ui.add(
-                                egui::ProgressBar::new(p as f32 / 1000.0).show_percentage(),
-                            );
-                            if ui.button("Cancel").clicked() {
-                                self.export_cancel
-                                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-                    }
-                    // Live elapsed readout while an export is in flight (updated each frame; the
-                    // busy pollers above request repaints). The final total is folded into the
-                    // status line on completion.
-                    if busy {
-                        if let Some(t) = &elapsed {
-                            ui.label(
-                                egui::RichText::new(format!("Elapsed: {t}")).weak().small(),
-                            );
-                        }
-                    } else {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button("Export")
-                                .on_hover_text("Render and save into the folder above (auto-named)")
-                                .clicked()
-                            {
-                                do_export = true;
-                            }
-                            if ui
-                                .button("Save as…")
-                                .on_hover_text("Choose the file name and location")
-                                .clicked()
-                            {
-                                do_export_as = true;
-                            }
-                        });
-                    }
-                    if let Some(s) = &self.export_status {
-                        ui.add_space(6.0);
-                        ui.label(s);
-                    }
-                });
-            self.export_open = open;
-            if do_export {
-                if let Some((dev, q)) = &gpu {
-                    // Save straight into the chosen folder with an auto (timestamped) name.
-                    let dir = self
-                        .export_last_dir
-                        .clone()
-                        .filter(|d| d.is_dir())
-                        .unwrap_or_else(Self::pictures_dir);
-                    let path = dir.join(self.export_default_name());
-                    self.start_export_to(ctx, dev.clone(), q.clone(), path);
-                } else {
-                    self.export_status = Some("GPU not available".to_string());
-                }
-            }
-            if do_export_as {
-                if let Some((dev, q)) = &gpu {
-                    self.start_export(ctx, dev.clone(), q.clone());
-                } else {
-                    self.export_status = Some("GPU not available".to_string());
-                }
-            }
-        }
+        self.draw_export_dialog(ctx, &gpu);
 
         // ---- performance overlay + frame timing finalization ----
         let nowi = Instant::now();
