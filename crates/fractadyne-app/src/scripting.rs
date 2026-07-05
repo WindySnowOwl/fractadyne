@@ -1280,7 +1280,7 @@ impl FractadyneApp {
                          annotations may not appear.",
                         pb.name
                     ));
-                    self.bench_open = true;
+                    self.dialogs.bench_open = true;
                 }
                 self.playback = Some(pb);
             }
@@ -1746,7 +1746,7 @@ impl FractadyneApp {
         if finished {
             if let Some(b) = pb.bench.take() {
                 self.bench_report = Some(self.format_bench(&pb, &b));
-                self.bench_open = true;
+                self.dialogs.bench_open = true;
             } else {
                 self.set_toast(format!("Script finished — \"{}\"", pb.name), ctx);
             }

@@ -1328,6 +1328,30 @@ struct AnimationState {
     random_palette: RandomPalette,
 }
 
+/// Scattered window/panel open-flags plus two small chrome selections — pure UI-visibility state the
+/// egui layer reads. Only `right_panel_open` & `minimap` persist; the rest are transient. (Phase 2a.)
+/// (`palette_editor_open` stays in [`ColoringConfig`]; the minimap *cache* — `minimap_tex` /
+/// `minimap_key` — stays flat; only the minimap enable *toggle* joins here.)
+#[derive(Default)]
+struct DialogState {
+    /// Benchmark *results* window open.
+    bench_open: bool,
+    /// Benchmark *config* dialog (mode / resolution / burn-in) open.
+    bench_dialog_open: bool,
+    /// Bookmarks browser open.
+    bookmarks_open: bool,
+    /// "Reset application state" confirmation dialog open.
+    reset_confirm_open: bool,
+    /// Keyboard/help overlay window open.
+    help_open: bool,
+    /// Selected Help section index.
+    help_section: usize,
+    /// Whether the right-hand control panel is shown (persisted).
+    right_panel_open: bool,
+    /// Minimap overview enabled (persisted).
+    minimap: bool,
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1363,9 +1387,6 @@ struct FractadyneApp {
     playback: Option<Playback>,
     /// Last benchmark report text + whether its window is open.
     bench_report: Option<String>,
-    bench_open: bool,
-    /// The "Benchmark…" configuration dialog (mode / resolution / burn-in).
-    bench_dialog_open: bool,
     bench_cfg: BenchConfig,
     /// In-flight standardized benchmark, advanced one pass per frame from `update()`.
     std_bench: Option<StdBench>,
@@ -1431,7 +1452,6 @@ struct FractadyneApp {
     gallery: GalleryState,
     /// Bookmarks (saved views), persisted to the config dir; + window/input state.
     bookmarks: Vec<Bookmark>,
-    bookmarks_open: bool,
     bookmark_name: String,
     /// A just-added bookmark whose thumbnail still needs rendering (deferred to `update`,
     /// where the GPU is available and the current view still matches the bookmark).
@@ -1449,17 +1469,12 @@ struct FractadyneApp {
     /// A toast queued from a context without an `egui::Context` (e.g. a bookmark auto-save
     /// failure in `save_bookmarks`); drained into `toast` early in `update()`.
     pending_toast: Option<String>,
-    /// "Reset application state" confirmation dialog open.
-    reset_confirm_open: bool,
+    /// Window/panel open-flags + the right-panel & minimap toggles (see [`DialogState`]).
+    dialogs: DialogState,
     /// Set after a reset: stop autosaving so we don't recreate the just-deleted state file.
     suppress_autosave: bool,
     /// A one-shot warning to show as a toast on the first frame (e.g. a newer-version session).
     pending_state_warning: Option<String>,
-    /// Keyboard/help overlay window open, and the selected Help section index.
-    help_open: bool,
-    help_section: usize,
-    /// Whether the right-hand control panel is shown.
-    right_panel_open: bool,
     /// Compute knobs (iteration budget, perturbation accelerators, zoom speed, work-budget, AA).
     render_cfg: RenderConfig,
     /// Draw the discreet "Fd" brand mark in the lower-right of the live view and exports. On by
@@ -1474,9 +1489,8 @@ struct FractadyneApp {
     watermark_overlay: Option<export::WmOverlay>,
     /// UI scale (egui zoom factor): scales the interface fonts + widgets. 1.0 = default.
     ui_scale: f32,
-    /// Minimap overview: enabled flag, cached home-view thumbnail, and the key
-    /// (formula, palette, method) the thumbnail was rendered for (re-render on change).
-    minimap: bool,
+    /// Minimap overview cache: home-view thumbnail + the key (formula, palette, method) it was
+    /// rendered for (re-render on change). The enable *toggle* lives in [`DialogState`].
     minimap_tex: Option<egui::TextureHandle>,
     minimap_key: Option<(u32, usize, u32, u32)>,
     /// Static color mapping: palette selection, custom/duotone/binary, cycle/offset, method + params.
@@ -1665,8 +1679,16 @@ impl FractadyneApp {
             orbit_cache: std::cell::RefCell::new(None),
             playback: None,
             bench_report: None,
-            bench_open: false,
-            bench_dialog_open: false,
+            dialogs: DialogState {
+                bench_open: false,
+                bench_dialog_open: false,
+                bookmarks_open: false,
+                reset_confirm_open: false,
+                help_open: false,
+                help_section: 0,
+                right_panel_open: s.right_panel_open,
+                minimap: s.minimap,
+            },
             bench_cfg: BenchConfig::default(),
             std_bench: None,
             auto_stdbench,
@@ -1732,7 +1754,6 @@ impl FractadyneApp {
             },
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             bookmarks: Self::load_bookmarks(),
-            bookmarks_open: false,
             pending_thumb: None,
             thumb_cache: std::collections::HashMap::new(),
             bookmark_name: String::new(),
@@ -1741,13 +1762,8 @@ impl FractadyneApp {
             share: ShareDialog::default(),
             toast: None,
             pending_toast: None,
-            reset_confirm_open: false,
             suppress_autosave: false,
             pending_state_warning,
-            help_open: false,
-            help_section: 0,
-            right_panel_open: s.right_panel_open,
-            minimap: s.minimap,
             minimap_tex: None,
             minimap_key: None,
             coloring: ColoringConfig {
@@ -2002,14 +2018,14 @@ impl FractadyneApp {
             color_method: self.coloring.color_method.key().to_string(),
             stripe_freq: self.coloring.stripe_freq,
             trap_type: self.coloring.trap_type.key().to_string(),
-            minimap: self.minimap,
+            minimap: self.dialogs.minimap,
             custom_palette: self.coloring.custom_palette.clone(),
             use_custom_palette: self.coloring.use_custom_palette,
             use_duotone: self.coloring.use_duotone,
             use_binary: self.coloring.use_binary,
             duotone_lo: self.coloring.duotone_lo,
             duotone_hi: self.coloring.duotone_hi,
-            right_panel_open: self.right_panel_open,
+            right_panel_open: self.dialogs.right_panel_open,
             fractal: self.fractal.name().to_string(),
             julia_mode: self.julia_mode,
             julia_c_re: self.julia_c.0,
@@ -3107,7 +3123,7 @@ impl FractadyneApp {
         // Shown for single Mandelbrot-family views and in dual view (the left panel is the
         // Mandelbrot map); hidden only for a single Julia view, where a Mandelbrot overview
         // wouldn't correspond to the shown set.
-        if !self.minimap || (self.julia_mode && !self.dual) {
+        if !self.dialogs.minimap || (self.julia_mode && !self.dual) {
             return;
         }
         // Key includes the palette identity (preset index or a sentinel) and a revision so
@@ -3169,7 +3185,7 @@ impl FractadyneApp {
     }
 
     fn draw_minimap(&mut self, ctx: &egui::Context) {
-        if !self.minimap || (self.julia_mode && !self.dual) {
+        if !self.dialogs.minimap || (self.julia_mode && !self.dual) {
             return;
         }
         let Some(tex) = self.minimap_tex.clone() else { return };
@@ -3424,7 +3440,7 @@ impl FractadyneApp {
 
     /// The Help window: a left-hand table of contents + a scrollable content pane.
     fn help_window(&mut self, ctx: &egui::Context) {
-        if !self.help_open {
+        if !self.dialogs.help_open {
             return;
         }
         const SECTIONS: [&str; 11] = [
@@ -3440,7 +3456,7 @@ impl FractadyneApp {
             "Licenses",
             "About",
         ];
-        let mut open = self.help_open;
+        let mut open = self.dialogs.help_open;
         // Cap the size to the screen so the content ScrollArea scrolls (rather than the window
         // growing to fit) and the window can't be resized past the screen edge (which pushed
         // the title-bar close button off-screen).
@@ -3472,7 +3488,7 @@ impl FractadyneApp {
                             ui.set_max_width(toc_w);
                             ui.add_space(4.0);
                             for (i, name) in SECTIONS.iter().enumerate() {
-                                ui.selectable_value(&mut self.help_section, i, *name);
+                                ui.selectable_value(&mut self.dialogs.help_section, i, *name);
                             }
                         },
                     );
@@ -3495,7 +3511,7 @@ impl FractadyneApp {
                                 .show(ui, |ui| {
                                     ui.set_max_width(content_w - 18.0); // leave room for the bar
                                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                                    match self.help_section {
+                                    match self.dialogs.help_section {
                                         0 => help_overview(ui),
                                         1 => help_navigation(ui),
                                         2 => help_options(ui),
@@ -3513,7 +3529,7 @@ impl FractadyneApp {
                     );
                 });
             });
-        self.help_open = open;
+        self.dialogs.help_open = open;
     }
 
     /// Load a Kalles Fraktaler `.kfr` location file and jump to it. Defensive: bounds the
@@ -3969,10 +3985,10 @@ impl FractadyneApp {
 
     /// "Reset application state" confirmation dialog — permanently deletes all saved data.
     fn draw_reset_dialog(&mut self, ctx: &egui::Context) {
-        if !self.reset_confirm_open {
+        if !self.dialogs.reset_confirm_open {
             return;
         }
-        let mut open = self.reset_confirm_open;
+        let mut open = self.dialogs.reset_confirm_open;
         let (mut confirm, mut cancel) = (false, false);
         egui::Window::new("Reset application state")
             .open(&mut open)
@@ -4030,11 +4046,11 @@ impl FractadyneApp {
                 }
                 Err(e) => self.set_toast(format!("Reset failed: {e}"), ctx),
             }
-            self.reset_confirm_open = false;
+            self.dialogs.reset_confirm_open = false;
         } else if cancel {
-            self.reset_confirm_open = false;
+            self.dialogs.reset_confirm_open = false;
         } else {
-            self.reset_confirm_open = open && self.reset_confirm_open;
+            self.dialogs.reset_confirm_open = open && self.dialogs.reset_confirm_open;
         }
     }
 
@@ -4067,10 +4083,10 @@ impl FractadyneApp {
 
     /// Bookmarks manager — add the current view, jump to / delete saved locations (with thumbnails).
     fn draw_bookmarks_dialog(&mut self, ctx: &egui::Context) {
-        if !self.bookmarks_open {
+        if !self.dialogs.bookmarks_open {
             return;
         }
-        let mut open = self.bookmarks_open;
+        let mut open = self.dialogs.bookmarks_open;
         let mut jump: Option<usize> = None;
         let mut delete: Option<usize> = None;
         let mut changed = false;
@@ -4160,16 +4176,16 @@ impl FractadyneApp {
         if changed {
             self.save_bookmarks();
         }
-        self.bookmarks_open = open;
+        self.dialogs.bookmarks_open = open;
     }
 
     /// Benchmark configuration dialog — pick current-settings vs standardized (resolution/depth/
     /// burn-in) and start the run.
     fn draw_bench_config_dialog(&mut self, ctx: &egui::Context) {
-        if !self.bench_dialog_open {
+        if !self.dialogs.bench_dialog_open {
             return;
         }
-        let mut open = self.bench_dialog_open;
+        let mut open = self.dialogs.bench_dialog_open;
         let mut run_now = false;
         egui::Window::new("Benchmark")
             .open(&mut open)
@@ -4215,7 +4231,7 @@ impl FractadyneApp {
                         run_now = true;
                     }
                     if ui.button("Cancel").clicked() {
-                        self.bench_dialog_open = false;
+                        self.dialogs.bench_dialog_open = false;
                     }
                 });
                 if self.bench_cfg.standard {
@@ -4228,9 +4244,9 @@ impl FractadyneApp {
                     ));
                 }
             });
-        self.bench_dialog_open = open;
+        self.dialogs.bench_dialog_open = open;
         if run_now {
-            self.bench_dialog_open = false;
+            self.dialogs.bench_dialog_open = false;
             if self.bench_cfg.standard {
                 let passes = if self.bench_cfg.burnin { self.bench_cfg.passes } else { 1 };
                 let run = self.begin_standard_bench(self.bench_cfg.res, passes, self.bench_cfg.depth);
@@ -4285,7 +4301,7 @@ impl FractadyneApp {
                 self.restore_from_bench(snap);
                 if let Some(r) = report {
                     self.bench_report = Some(r);
-                    self.bench_open = true;
+                    self.dialogs.bench_open = true;
                 }
             }
         }
@@ -4293,10 +4309,10 @@ impl FractadyneApp {
 
     /// Benchmark results window — show the report, copy/save it, or reopen the config to run again.
     fn draw_bench_results_dialog(&mut self, ctx: &egui::Context) {
-        if !self.bench_open {
+        if !self.dialogs.bench_open {
             return;
         }
-        let mut open = self.bench_open;
+        let mut open = self.dialogs.bench_open;
         let mut run_again = false;
         // Captured inside the egui closure (which borrows `self`), surfaced as a toast after it.
         let mut bench_save: Option<std::io::Result<()>> = None;
@@ -4328,7 +4344,7 @@ impl FractadyneApp {
                     ui.label("No benchmark has been run yet.");
                 }
             });
-        self.bench_open = open;
+        self.dialogs.bench_open = open;
         if let Some(res) = bench_save {
             self.set_toast(
                 match res {
@@ -4340,8 +4356,8 @@ impl FractadyneApp {
         }
         // Close the results and reopen the benchmark tool to configure another run.
         if run_again {
-            self.bench_open = false;
-            self.bench_dialog_open = true;
+            self.dialogs.bench_open = false;
+            self.dialogs.bench_dialog_open = true;
         }
     }
 
@@ -4714,7 +4730,7 @@ impl FractadyneApp {
                             )
                             .clicked()
                         {
-                            self.reset_confirm_open = true;
+                            self.dialogs.reset_confirm_open = true;
                             ui.close_menu();
                         }
                         if ui.button("✖  Quit").clicked() {
@@ -4797,9 +4813,9 @@ impl FractadyneApp {
                             }
                         });
                         ui.separator();
-                        ui.checkbox(&mut self.right_panel_open, "Control panel")
+                        ui.checkbox(&mut self.dialogs.right_panel_open, "Control panel")
                             .on_hover_text("Show/hide the right-hand control panel.");
-                        ui.checkbox(&mut self.minimap, "Minimap overview")
+                        ui.checkbox(&mut self.dialogs.minimap, "Minimap overview")
                             .on_hover_text(
                                 "Show a small home-view overview with a \"you are here\" \
                                  marker and the zoom depth. Click it to jump to a region.",
@@ -4904,7 +4920,7 @@ impl FractadyneApp {
                             )
                             .clicked()
                         {
-                            self.bench_dialog_open = true;
+                            self.dialogs.bench_dialog_open = true;
                             ui.close_menu();
                         }
                         if ui.button("Play script…").clicked() {
@@ -4914,7 +4930,7 @@ impl FractadyneApp {
                         if self.bench_report.is_some()
                             && ui.button("Show last benchmark").clicked()
                         {
-                            self.bench_open = true;
+                            self.dialogs.bench_open = true;
                             ui.close_menu();
                         }
                         ui.add_enabled_ui(self.playback.is_some(), |ui| {
@@ -4930,7 +4946,7 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui.button("Manage…").clicked() {
-                            self.bookmarks_open = true;
+                            self.dialogs.bookmarks_open = true;
                             ui.close_menu();
                         }
                         if !self.bookmarks.is_empty() {
@@ -4978,7 +4994,7 @@ impl FractadyneApp {
                     });
                     ui.menu_button("Help", |ui| {
                         if ui.button("Help & reference…  (F1)").clicked() {
-                            self.help_open = true;
+                            self.dialogs.help_open = true;
                             ui.close_menu();
                         }
                         ui.separator();
@@ -5130,7 +5146,7 @@ impl FractadyneApp {
     /// Right-side control panel (Coloring + Navigation sections) plus the reopen handle shown
     /// when it's hidden. No-op in fullscreen.
     fn draw_right_panel(&mut self, ctx: &egui::Context) {
-        if !self.fullscreen && self.right_panel_open {
+        if !self.fullscreen && self.dialogs.right_panel_open {
         egui::SidePanel::right("coloring_panel")
             .default_width(280.0)
             .show(ctx, |ui| {
@@ -5138,7 +5154,7 @@ impl FractadyneApp {
                 ui.horizontal(|ui| {
                     // ▶ points toward the right edge the panel collapses to (it's docked right).
                     if ui.small_button("\u{23F5}").on_hover_text("Hide control panel").clicked() {
-                        self.right_panel_open = false;
+                        self.dialogs.right_panel_open = false;
                     }
                     ui.label(egui::RichText::new("Controls").strong());
                 });
@@ -5432,12 +5448,12 @@ impl FractadyneApp {
         }
 
         // Reopen handle when the control panel is hidden (and not fullscreen).
-        if !self.fullscreen && !self.right_panel_open {
+        if !self.fullscreen && !self.dialogs.right_panel_open {
             egui::Area::new(egui::Id::new("panel_reopen"))
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 36.0))
                 .show(ctx, |ui| {
                     if ui.button("\u{2630}").on_hover_text("Show control panel").clicked() {
-                        self.right_panel_open = true;
+                        self.dialogs.right_panel_open = true;
                     }
                 });
         }
@@ -5868,7 +5884,7 @@ impl eframe::App for FractadyneApp {
                     || (i.key_pressed(egui::Key::Questionmark))
                     || (i.modifiers.shift && i.key_pressed(egui::Key::Slash))
             }) {
-                self.help_open = !self.help_open;
+                self.dialogs.help_open = !self.dialogs.help_open;
             }
         }
 
@@ -5975,7 +5991,7 @@ impl eframe::App for FractadyneApp {
                 let done = self.step_std_bench(&mut run, dev, q);
                 if done {
                     self.bench_report = Some(self.format_std_bench(&run));
-                    self.bench_open = true;
+                    self.dialogs.bench_open = true;
                     let snap = run.take_snapshot();
                     self.restore_from_bench(snap);
                 } else {
