@@ -39,44 +39,13 @@ pub(crate) fn step_bf(
     formula: u32,
     p: usize,
 ) -> (BigFloat, BigFloat) {
-    // Migrated families ({Mandelbrot, Multibrot3/4/5, Burning Ship}) share one `Field`-generic
-    // step (see `crate::fractal`); it reproduces the arms below bit-for-bit. `None` = still on the
-    // enum path (Tricorn / Celtic / Buffalo below; Phoenix / Newton in their own branches).
-    if let Some(r) = crate::fractal::trait_step(formula, zx, zy, cx, cy, p) {
-        return r;
-    }
-    match formula {
-        formula::TRICORN => {
-            // Tricorn: conj(z)² + c = (x²−y²+cx, −2xy+cy)
-            let x2 = zx.mul(zx, p, RM);
-            let y2 = zy.mul(zy, p, RM);
-            let txy = double_bf(&zx.mul(zy, p, RM));
-            (x2.sub(&y2, p, RM).add(cx, p, RM), cy.sub(&txy, p, RM))
-        }
-        formula::CELTIC => {
-            // Celtic: real = |x²−y²|+cx, imag = 2xy+cy
-            let x2 = zx.mul(zx, p, RM);
-            let y2 = zy.mul(zy, p, RM);
-            let xy2 = double_bf(&zx.mul(zy, p, RM));
-            (x2.sub(&y2, p, RM).abs().add(cx, p, RM), xy2.add(cy, p, RM))
-        }
-        formula::BUFFALO => {
-            // Buffalo: real = |x²−y²|+cx, imag = |2xy|+cy
-            let x2 = zx.mul(zx, p, RM);
-            let y2 = zy.mul(zy, p, RM);
-            let xy2 = double_bf(&zx.mul(zy, p, RM));
-            (x2.sub(&y2, p, RM).abs().add(cx, p, RM), xy2.abs().add(cy, p, RM))
-        }
-        _ => {
-            // Mandelbrot: z² + c
-            let x2 = zx.mul(zx, p, RM);
-            let y2 = zy.mul(zy, p, RM);
-            (
-                x2.sub(&y2, p, RM).add(cx, p, RM),
-                double_bf(&zx.mul(zy, p, RM)).add(cy, p, RM),
-            )
-        }
-    }
+    // Every perturbation-capable family now shares one `Field`-generic step (`crate::fractal`),
+    // which reproduces the former hand-written arms bit-for-bit (guarded by the exact SA
+    // cross-check tests + goldens). Phoenix / Newton never reach here (they use `phoenix_step_bf`
+    // / the direct path). An unknown id defensively falls back to the Mandelbrot step — the
+    // former `_` default.
+    crate::fractal::trait_step(formula, zx, zy, cx, cy, p)
+        .unwrap_or_else(|| crate::fractal::trait_step(formula::MANDELBROT, zx, zy, cx, cy, p).unwrap())
 }
 
 /// One arbitrary-precision Phoenix step: `z' = z² + c − 0.5·z_prev` (p = −0.5). Kept separate from
@@ -140,13 +109,13 @@ pub fn orbit_points(
         let (nx, ny) = if let Some(r) = crate::fractal::trait_step(formula, &zx, &zy, &c.0, &c.1, ()) {
             r
         } else {
+            // Only Phoenix (two-term, needs the previous iterate) remains inline; everything else
+            // is migrated to the shared step above, so a non-Phoenix id here is the defensive
+            // Mandelbrot default.
             let (sx, sy) = (zx * zx - zy * zy, 2.0 * zx * zy); // z²
             match formula {
-                formula::TRICORN => (sx + c.0, -sy + c.1),                      // Tricorn z̄²+c
-                formula::CELTIC => (sx.abs() + c.0, sy + c.1),                  // Celtic
-                formula::BUFFALO => (sx.abs() + c.0, sy.abs() + c.1),           // Buffalo
                 formula::PHOENIX => (sx + c.0 - 0.5 * px, sy + c.1 - 0.5 * py), // Phoenix (p=−0.5)
-                _ => (sx + c.0, sy + c.1),                                      // (unreached: Mandelbrot migrated)
+                _ => (sx + c.0, sy + c.1),                                      // (Mandelbrot default)
             }
         };
         px = zx;

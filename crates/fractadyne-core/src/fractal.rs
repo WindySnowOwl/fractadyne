@@ -94,6 +94,9 @@ struct Multibrot3;
 struct Multibrot4;
 struct Multibrot5;
 struct BurningShip;
+struct Tricorn;
+struct Celtic;
+struct Buffalo;
 
 impl Fractal for Mandelbrot {
     #[inline]
@@ -136,6 +139,31 @@ impl Fractal for BurningShip {
         (sx.fadd(cx, ctx), sy.fabs().fadd(cy, ctx))
     }
 }
+impl Fractal for Tricorn {
+    #[inline]
+    fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
+        // conj(z)² + c = (Re(z²) + cx, −Im(z²) + cy). `cy − sy` (not `neg(sy) + cy`) so BigFloat
+        // matches the old `cy.sub(&txy)` exactly; in f64 `cy − sy == −sy + cy` (add commutes).
+        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
+        (sx.fadd(cx, ctx), cy.fsub(&sy, ctx))
+    }
+}
+impl Fractal for Celtic {
+    #[inline]
+    fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
+        // |Re(z²)| + cx, Im(z²) + cy — abs on the real part only.
+        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
+        (sx.fabs().fadd(cx, ctx), sy.fadd(cy, ctx))
+    }
+}
+impl Fractal for Buffalo {
+    #[inline]
+    fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
+        // |Re(z²)| + cx, |Im(z²)| + cy — abs on both parts.
+        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
+        (sx.fabs().fadd(cx, ctx), sy.fabs().fadd(cy, ctx))
+    }
+}
 
 /// Dispatch to a migrated family's generic step, or `None` for families still on the enum path.
 /// PoC scope: `{Mandelbrot, Multibrot3/4/5, BurningShip}`. `None` keeps every other family's
@@ -156,6 +184,9 @@ pub(crate) fn trait_step<F: Field>(
         formula::MULTIBROT4 => Multibrot4.step(zx, zy, cx, cy, ctx),
         formula::MULTIBROT5 => Multibrot5.step(zx, zy, cx, cy, ctx),
         formula::BURNING_SHIP => BurningShip.step(zx, zy, cx, cy, ctx),
+        formula::TRICORN => Tricorn.step(zx, zy, cx, cy, ctx),
+        formula::CELTIC => Celtic.step(zx, zy, cx, cy, ctx),
+        formula::BUFFALO => Buffalo.step(zx, zy, cx, cy, ctx),
         _ => return None,
     })
 }
@@ -177,6 +208,9 @@ mod tests {
                 (qx * zx - qy * zy + cx, qx * zy + qy * zx + cy)
             }
             formula::BURNING_SHIP => (sx + cx, sy.abs() + cy),
+            formula::TRICORN => (sx + cx, -sy + cy),
+            formula::CELTIC => (sx.abs() + cx, sy + cy),
+            formula::BUFFALO => (sx.abs() + cx, sy.abs() + cy),
             _ => (sx + cx, sy + cy), // Mandelbrot
         }
     }
@@ -195,6 +229,9 @@ mod tests {
             formula::MULTIBROT4,
             formula::MULTIBROT5,
             formula::BURNING_SHIP,
+            formula::TRICORN,
+            formula::CELTIC,
+            formula::BUFFALO,
         ];
         for &(zx, zy, cx, cy) in &cases {
             for f in families {
