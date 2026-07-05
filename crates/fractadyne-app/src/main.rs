@@ -985,6 +985,17 @@ fn aspect_zoom_box(start: egui::Pos2, end: egui::Pos2, rect: egui::Rect) -> egui
     egui::Rect::from_two_pos(start, corner)
 }
 
+/// State of the "Go to location" dialog (transient — not persisted). First of the Phase-2a
+/// field groups that break up the flat `FractadyneApp` struct (see REFACTOR-PLAN.md).
+#[derive(Default)]
+struct GotoDialog {
+    open: bool,
+    x: String,
+    y: String,
+    zoom: String,
+    msg: Option<String>,
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1167,12 +1178,8 @@ struct FractadyneApp {
     nav_undo: Vec<ViewSnapshot>,
     nav_redo: Vec<ViewSnapshot>,
     nav_was_interacting: bool,
-    /// Go-to-location dialog state.
-    goto_open: bool,
-    goto_x: String,
-    goto_y: String,
-    goto_zoom: String,
-    goto_msg: Option<String>,
+    /// "Go to location" dialog state.
+    goto: GotoDialog,
     /// Share-location (`.fdn`) dialog: open flag, editable location text, and an error line.
     share_open: bool,
     share_text: String,
@@ -1531,11 +1538,7 @@ impl FractadyneApp {
             nav_undo: Vec::new(),
             nav_redo: Vec::new(),
             nav_was_interacting: false,
-            goto_open: false,
-            goto_x: String::new(),
-            goto_y: String::new(),
-            goto_zoom: String::new(),
-            goto_msg: None,
+            goto: GotoDialog::default(),
             share_open: false,
             share_text: String::new(),
             share_msg: None,
@@ -2788,18 +2791,18 @@ impl FractadyneApp {
 
     /// Open the go-to-location dialog, pre-filled with the current view.
     fn open_goto(&mut self) {
-        self.goto_x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
-        self.goto_y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
-        self.goto_zoom = fmt_zoom_field(self.viewport.log2_magnification());
-        self.goto_msg = None;
-        self.goto_open = true;
+        self.goto.x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
+        self.goto.y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
+        self.goto.zoom = fmt_zoom_field(self.viewport.log2_magnification());
+        self.goto.msg = None;
+        self.goto.open = true;
     }
 
     /// Apply the go-to-location dialog: parse + validate, then jump (recording history).
     fn apply_goto(&mut self) {
-        let cx = fractadyne_core::parse_bf(self.goto_x.trim());
-        let cy = fractadyne_core::parse_bf(self.goto_y.trim());
-        let log2mag = parse_zoom_to_log2(&self.goto_zoom);
+        let cx = fractadyne_core::parse_bf(self.goto.x.trim());
+        let cy = fractadyne_core::parse_bf(self.goto.y.trim());
+        let log2mag = parse_zoom_to_log2(&self.goto.zoom);
         match (cx, cy, log2mag) {
             (Some(cx), Some(cy), Some(l)) if l.is_finite() => {
                 // Clamp to a sane octave bound so a pasted absurd zoom can't request
@@ -2808,11 +2811,11 @@ impl FractadyneApp {
                 self.zoom_vel = 0.0;
                 self.invalidate_refs();
                 self.record_nav();
-                self.goto_msg = None;
-                self.goto_open = false;
+                self.goto.msg = None;
+                self.goto.open = false;
             }
             _ => {
-                self.goto_msg = Some("Invalid input — check the coordinates and zoom.".into());
+                self.goto.msg = Some("Invalid input — check the coordinates and zoom.".into());
             }
         }
     }
@@ -3645,10 +3648,10 @@ impl FractadyneApp {
 impl FractadyneApp {
     /// "Go to location" dialog — jump to a pasted center/zoom, or copy the current one to share.
     fn draw_goto_dialog(&mut self, ctx: &egui::Context) {
-        if !self.goto_open {
+        if !self.goto.open {
             return;
         }
-        let mut open = self.goto_open;
+        let mut open = self.goto.open;
         let mut go = false;
         let mut copy = false;
         egui::Window::new("Go to location")
@@ -3657,12 +3660,12 @@ impl FractadyneApp {
             .default_width(420.0)
             .show(ctx, |ui| {
                 ui.label(egui::RichText::new("Center X").weak().small());
-                ui.add(egui::TextEdit::singleline(&mut self.goto_x).desired_width(f32::INFINITY));
+                ui.add(egui::TextEdit::singleline(&mut self.goto.x).desired_width(f32::INFINITY));
                 ui.label(egui::RichText::new("Center Y").weak().small());
-                ui.add(egui::TextEdit::singleline(&mut self.goto_y).desired_width(f32::INFINITY));
+                ui.add(egui::TextEdit::singleline(&mut self.goto.y).desired_width(f32::INFINITY));
                 ui.label(egui::RichText::new("Zoom (magnification)").weak().small());
-                ui.add(egui::TextEdit::singleline(&mut self.goto_zoom).desired_width(220.0));
-                if let Some(m) = &self.goto_msg {
+                ui.add(egui::TextEdit::singleline(&mut self.goto.zoom).desired_width(220.0));
+                if let Some(m) = &self.goto.msg {
                     ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), m);
                 }
                 ui.add_space(4.0);
@@ -3672,10 +3675,10 @@ impl FractadyneApp {
                         copy = true;
                     }
                     if ui.button("Use current").clicked() {
-                        self.goto_x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
-                        self.goto_y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
-                        self.goto_zoom = fmt_zoom_field(self.viewport.log2_magnification());
-                        self.goto_msg = None;
+                        self.goto.x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
+                        self.goto.y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
+                        self.goto.zoom = fmt_zoom_field(self.viewport.log2_magnification());
+                        self.goto.msg = None;
                     }
                 });
                 ui.label(
@@ -3687,14 +3690,14 @@ impl FractadyneApp {
         if copy {
             ctx.copy_text(format!(
                 "center_x={}\ncenter_y={}\nzoom={}",
-                self.goto_x, self.goto_y, self.goto_zoom
+                self.goto.x, self.goto.y, self.goto.zoom
             ));
         }
         if go {
             self.apply_goto(); // clears goto_open on success
         }
         // Closed if the user hit the window's ✕ (open=false) or Go succeeded.
-        self.goto_open = open && self.goto_open;
+        self.goto.open = open && self.goto.open;
     }
 
     /// "Share location" (.fdn) dialog — copy/paste/apply/save/load a self-contained location.
