@@ -17,8 +17,9 @@ This plan turns the audit findings into a **sequenced, low-risk, verifiable** re
 - ✅ **Phase 1a-i** — `FloatExp`/`CFloatExp` arithmetic migrated to `std::ops` operators (reads `a * b - c`).
 - ✅ **Phase 1a (partial)** — `core::floatexp` module extracted from `lib.rs` (self-contained, re-exported). *Remaining: `bignum`, `viewport`, `reference` submodules; then the `gpu` split (1b) and export de-dup (1c).*
 - ✅ **Formula-ease (goal 2), app side** — all per-family metadata consolidated into one `FractalKind::SPECS` table (one row per formula) + an authoritative "Adding a new formula" checklist + guard tests.
-- ✅ **Formula-ease, core side** — canonical `core::formula::{…}` id constants (single source of truth for the numbering) + `is_valid_formula` + a core checklist mirroring the app one.
-- ⏭️ **Next for formula-ease:** adopt the `core::formula::*` constants at the remaining magic-number dispatch sites (`step_bf`/`orbit_points`/`series_skip`); then evaluate a `Fractal`-trait PoC (Phase 5 pulled forward) to unify the CPU step functions so a family is defined once.
+- ✅ **Formula-ease, core side** — canonical `core::formula::{…}` id constants (single source of truth for the numbering) + `is_valid_formula` + a core checklist mirroring the app one; **adopted the constants at every CPU dispatch site** (`step_bf`/`orbit_points`/`reference_orbit`/`series_skip`), so the arms read `formula::PHOENIX => …`.
+- ✅ **Formula-ease, shader side** — id→family legend + add-a-formula note at the WGSL `formula` uniform, stating the ids must match `core::formula` / `FractalKind::formula_id`. All three dispatch sites (app table · core constants · shader legend) now cross-reference one checklist.
+- ⏭️ **Next for formula-ease:** a `Fractal`-trait PoC (Phase 5 pulled forward) unifying the CPU step functions so a family's math is defined once — larger/riskier; note the GPU goldens are Mandelbrot-only, so non-Mandelbrot changes need targeted verification.
 
 ## Guiding principles
 
