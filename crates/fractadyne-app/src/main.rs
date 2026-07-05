@@ -1362,6 +1362,9 @@ struct FractadyneApp {
     share: ShareDialog,
     /// Transient status toast (message, time set) — e.g. minibrot-finder result.
     toast: Option<(String, f64)>,
+    /// A toast queued from a context without an `egui::Context` (e.g. a bookmark auto-save
+    /// failure in `save_bookmarks`); drained into `toast` early in `update()`.
+    pending_toast: Option<String>,
     /// "Reset application state" confirmation dialog open.
     reset_confirm_open: bool,
     /// Set after a reset: stop autosaving so we don't recreate the just-deleted state file.
@@ -1703,6 +1706,7 @@ impl FractadyneApp {
             goto: GotoDialog::default(),
             share: ShareDialog::default(),
             toast: None,
+            pending_toast: None,
             reset_confirm_open: false,
             suppress_autosave: false,
             pending_state_warning,
@@ -2108,8 +2112,9 @@ impl FractadyneApp {
             .unwrap_or_default()
     }
 
-    /// Persist bookmarks (best-effort).
-    fn save_bookmarks(&self) {
+    /// Persist bookmarks. A write failure loses durable user data, so it's surfaced as a toast
+    /// (queued in `pending_toast` since this runs from contexts without an `egui::Context`).
+    fn save_bookmarks(&mut self) {
         let Some(path) = Self::bookmarks_path() else {
             return;
         };
@@ -2119,8 +2124,15 @@ impl FractadyneApp {
         let file = BookmarkFile {
             bookmark: self.bookmarks.clone(),
         };
-        if let Ok(text) = toml::to_string_pretty(&file) {
-            let _ = std::fs::write(path, text);
+        let result = match toml::to_string_pretty(&file) {
+            Ok(text) => std::fs::write(&path, text),
+            Err(e) => {
+                self.pending_toast = Some(format!("Couldn't serialize bookmarks: {e}"));
+                return;
+            }
+        };
+        if let Err(e) = result {
+            self.pending_toast = Some(format!("Couldn't save bookmarks: {e}"));
         }
     }
 
@@ -4252,6 +4264,8 @@ impl FractadyneApp {
         }
         let mut open = self.bench_open;
         let mut run_again = false;
+        // Captured inside the egui closure (which borrows `self`), surfaced as a toast after it.
+        let mut bench_save: Option<std::io::Result<()>> = None;
         egui::Window::new("Benchmark results")
             .open(&mut open)
             .resizable(false)
@@ -4269,7 +4283,7 @@ impl FractadyneApp {
                                 .set_file_name("fractadyne_benchmark.txt")
                                 .save_file()
                             {
-                                let _ = std::fs::write(path, &r);
+                                bench_save = Some(std::fs::write(path, &r));
                             }
                         }
                         if ui.button("Run again…").clicked() {
@@ -4281,6 +4295,15 @@ impl FractadyneApp {
                 }
             });
         self.bench_open = open;
+        if let Some(res) = bench_save {
+            self.set_toast(
+                match res {
+                    Ok(()) => "Benchmark saved.".to_string(),
+                    Err(e) => format!("Save failed: {e}"),
+                },
+                ctx,
+            );
+        }
         // Close the results and reopen the benchmark tool to configure another run.
         if run_again {
             self.bench_open = false;
@@ -5740,6 +5763,11 @@ impl eframe::App for FractadyneApp {
         // Surface a deferred startup warning (e.g. a session saved by a newer build) as a toast,
         // once, on the first frame where the UI exists.
         if let Some(msg) = self.pending_state_warning.take() {
+            self.set_toast(msg, ctx);
+        }
+        // Surface a toast queued from a context without an `egui::Context` (e.g. a bookmark
+        // auto-save failure in `save_bookmarks`).
+        if let Some(msg) = self.pending_toast.take() {
             self.set_toast(msg, ctx);
         }
         // Rasterize the export watermark once from the font atlas (main thread — the export worker

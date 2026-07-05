@@ -1369,7 +1369,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-app"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "directories",
  "eframe",
@@ -1389,18 +1389,18 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-color"
-version = "0.1.28"
+version = "0.1.29"
 
 [[package]]
 name = "fractadyne-core"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "astro-float",
 ]
 
 [[package]]
 name = "fractadyne-export"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "exr",
  "png 0.17.16",
@@ -1409,11 +1409,11 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-fractals"
-version = "0.1.28"
+version = "0.1.29"
 
 [[package]]
 name = "fractadyne-gpu"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1424,11 +1424,11 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-render"
-version = "0.1.28"
+version = "0.1.29"
 
 [[package]]
 name = "fractadyne-state"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "directories",
  "serde",
@@ -1437,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-ui"
-version = "0.1.28"
+version = "0.1.29"
 
 [[package]]
 name = "futures-channel"
