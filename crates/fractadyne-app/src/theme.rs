@@ -110,7 +110,7 @@ pub(crate) fn brand_wordmark(ui: &mut egui::Ui) {
 /// mark if the embedded PNG can't be decoded.
 pub(crate) fn brand_icon() -> egui::IconData {
     const RAW: &[u8] = include_bytes!("../assets/icon.png");
-    if let Some((w, h, rgba)) = fractadyne_export::read_png_rgba8_bytes(RAW) {
+    if let Ok((w, h, rgba)) = fractadyne_export::read_png_rgba8_bytes(RAW) {
         if w > 0 && h > 0 {
             return icon_from_render(w as usize, h as usize, &rgba);
         }

@@ -172,30 +172,30 @@ pub fn list_exr_channels(path: &Path) -> Option<Vec<String>> {
 }
 
 /// Decode a PNG at full resolution to `(width, height, rgba8)` (for golden-image diffs).
-pub fn read_png_rgba8(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
-    let file = std::fs::File::open(path).ok()?;
+pub fn read_png_rgba8(path: &Path) -> Result<(u32, u32, Vec<u8>), ExportError> {
+    let file = std::fs::File::open(path)?;
     decode_png_rgba8(std::io::BufReader::new(file))
 }
 
 /// Decode a PNG from an in-memory byte slice (e.g. an `include_bytes!` asset) to
 /// `(width, height, rgba8)`.
-pub fn read_png_rgba8_bytes(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+pub fn read_png_rgba8_bytes(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), ExportError> {
     decode_png_rgba8(std::io::Cursor::new(bytes))
 }
 
-fn decode_png_rgba8<R: std::io::Read>(r: R) -> Option<(u32, u32, Vec<u8>)> {
+fn decode_png_rgba8<R: std::io::Read>(r: R) -> Result<(u32, u32, Vec<u8>), ExportError> {
     let mut decoder = png::Decoder::new(r);
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info().ok()?;
+    let mut reader = decoder.read_info()?;
     let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
+    let info = reader.next_frame(&mut buf)?;
     let (w, h) = (info.width, info.height);
     let ch = match info.color_type {
         png::ColorType::Rgba => 4usize,
         png::ColorType::Rgb => 3,
         png::ColorType::GrayscaleAlpha => 2,
         png::ColorType::Grayscale => 1,
-        _ => return None,
+        _ => return Err(ExportError::UnsupportedColorType),
     };
     let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4];
     for (i, px) in buf.chunks_exact(ch).take((w * h) as usize).enumerate() {
@@ -207,7 +207,7 @@ fn decode_png_rgba8<R: std::io::Read>(r: R) -> Option<(u32, u32, Vec<u8>)> {
         };
         rgba[i * 4..i * 4 + 4].copy_from_slice(&[r, g, b, a]);
     }
-    Some((w, h, rgba))
+    Ok((w, h, rgba))
 }
 
 /// tEXt keyword under which the reloadable view state is stored.

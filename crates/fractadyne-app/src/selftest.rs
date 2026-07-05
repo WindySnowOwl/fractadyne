@@ -1676,18 +1676,18 @@ impl FractadyneApp {
                         let cur_path = current_dir.join(format!("{name}.png"));
                         let _ = fractadyne_export::write_png(&cur_path, r.width, r.height, &r.pixels, Some(&reproduce));
                         match fractadyne_export::read_png_rgba8(&png_path) {
-                            Some((w, h, gpx)) if w == r.width && h == r.height => {
+                            Ok((w, h, gpx)) if w == r.width && h == r.height => {
                                 let (max, mean) = img_diff(&srgb, &gpx);
                                 goldens.push((name.to_string(), max, mean, sum, max <= 10 && mean <= 2.0, reproduce, ""));
                             }
                             // Golden exists but was recorded at a different size — not a render diff.
-                            Some((w, h, _)) => goldens.push((
+                            Ok((w, h, _)) => goldens.push((
                                 name.to_string(), 0, 0.0, sum, false,
                                 format!("{reproduce}  [golden is {w}×{h}, expected {}×{}]", r.width, r.height),
                                 "SIZE MISMATCH",
                             )),
-                            // No golden on disk at the canonical path — needs an initial --bless.
-                            None => goldens.push((
+                            // No golden on disk at the canonical path (or unreadable) — needs an initial --bless.
+                            Err(_) => goldens.push((
                                 name.to_string(), 0, 0.0, sum, false,
                                 format!("{reproduce}  [no golden at {} — run --selftest --bless]", png_path.display()),
                                 "MISSING GOLDEN",

@@ -2206,7 +2206,7 @@ impl FractadyneApp {
             return Some(tex.clone());
         }
         let path = Self::bookmark_thumb_path(id)?;
-        let (w, h, rgba) = fractadyne_export::read_png_rgba8(&path)?;
+        let (w, h, rgba) = fractadyne_export::read_png_rgba8(&path).ok()?;
         let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
         let tex = ctx.load_texture(format!("bmthumb.{id}"), img, egui::TextureOptions::LINEAR);
         self.thumb_cache.insert(id.to_string(), tex.clone());

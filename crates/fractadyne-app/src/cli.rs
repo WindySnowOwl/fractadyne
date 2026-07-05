@@ -196,6 +196,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
             match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
                 Some("exr") => fractadyne_export::read_exr_rgba_f32(path),
                 Some("png") => fractadyne_export::read_png_rgba8(path)
+                    .ok()
                     .map(|(w, h, bytes)| (w, h, bytes.iter().map(|&x| x as f32).collect())),
                 _ => None,
             }
