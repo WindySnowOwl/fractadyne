@@ -1032,6 +1032,14 @@ struct GalleryState {
     entries: Vec<GalleryEntry>,
 }
 
+/// Navigation history for undo/redo of view changes (transient).
+#[derive(Default)]
+struct NavHistory {
+    undo: Vec<ViewSnapshot>,
+    redo: Vec<ViewSnapshot>,
+    was_interacting: bool,
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1205,9 +1213,7 @@ struct FractadyneApp {
     /// Decoded bookmark-thumbnail textures, keyed by thumb id (lazy-loaded for the dialog).
     thumb_cache: std::collections::HashMap<String, egui::TextureHandle>,
     /// Navigation history (location undo/redo) + settle-edge tracking.
-    nav_undo: Vec<ViewSnapshot>,
-    nav_redo: Vec<ViewSnapshot>,
-    nav_was_interacting: bool,
+    nav: NavHistory,
     /// "Go to location" dialog state.
     goto: GotoDialog,
     /// Share-location (`.fdn`) dialog: open flag, editable location text, and an error line.
@@ -1557,9 +1563,7 @@ impl FractadyneApp {
             pending_thumb: None,
             thumb_cache: std::collections::HashMap::new(),
             bookmark_name: String::new(),
-            nav_undo: Vec::new(),
-            nav_redo: Vec::new(),
-            nav_was_interacting: false,
+            nav: NavHistory::default(),
             goto: GotoDialog::default(),
             share: ShareDialog::default(),
             toast: None,
@@ -1664,7 +1668,7 @@ impl FractadyneApp {
                 Err(e) => eprintln!("--import-kfr: {e}"),
             }
         }
-        app.nav_undo.push(app.snapshot_view()); // baseline for navigation undo
+        app.nav.undo.push(app.snapshot_view()); // baseline for navigation undo
         app
     }
 
@@ -2778,34 +2782,34 @@ impl FractadyneApp {
     /// clear the redo stack. Called when the view settles and after discrete jumps.
     fn record_nav(&mut self) {
         let snap = self.snapshot_view();
-        let dup = self.nav_undo.last().is_some_and(|t| {
+        let dup = self.nav.undo.last().is_some_and(|t| {
             t.upp == snap.upp && t.cx == snap.cx && t.cy == snap.cy
         });
         if !dup {
-            self.nav_undo.push(snap);
-            if self.nav_undo.len() > 256 {
-                self.nav_undo.remove(0);
+            self.nav.undo.push(snap);
+            if self.nav.undo.len() > 256 {
+                self.nav.undo.remove(0);
             }
-            self.nav_redo.clear();
+            self.nav.redo.clear();
         }
     }
 
     /// Step back / forward through visited locations.
     fn undo_view(&mut self) {
-        if self.nav_undo.len() < 2 {
+        if self.nav.undo.len() < 2 {
             return;
         }
-        let cur = self.nav_undo.pop().unwrap();
-        self.nav_redo.push(cur);
-        let prev = self.nav_undo.last().unwrap().clone();
+        let cur = self.nav.undo.pop().unwrap();
+        self.nav.redo.push(cur);
+        let prev = self.nav.undo.last().unwrap().clone();
         self.apply_snapshot(&prev);
-        self.nav_was_interacting = false;
+        self.nav.was_interacting = false;
     }
     fn redo_view(&mut self) {
-        if let Some(s) = self.nav_redo.pop() {
+        if let Some(s) = self.nav.redo.pop() {
             self.apply_snapshot(&s);
-            self.nav_undo.push(s);
-            self.nav_was_interacting = false;
+            self.nav.undo.push(s);
+            self.nav.was_interacting = false;
         }
     }
 
@@ -4552,13 +4556,13 @@ impl FractadyneApp {
                             self.open_goto();
                             ui.close_menu();
                         }
-                        ui.add_enabled_ui(self.nav_undo.len() > 1, |ui| {
+                        ui.add_enabled_ui(self.nav.undo.len() > 1, |ui| {
                             if ui.button("Undo view  (Backspace)").clicked() {
                                 self.undo_view();
                                 ui.close_menu();
                             }
                         });
-                        ui.add_enabled_ui(!self.nav_redo.is_empty(), |ui| {
+                        ui.add_enabled_ui(!self.nav.redo.is_empty(), |ui| {
                             if ui.button("Redo view  (Shift+Backspace)").clicked() {
                                 self.redo_view();
                                 ui.close_menu();
@@ -6004,10 +6008,10 @@ impl eframe::App for FractadyneApp {
         // a pan/zoom gesture (its own dedup avoids repeats). Discrete jumps record
         // explicitly. Skipped in dual view.
         let interacting_now = ctx.input(|i| i.time) - self.settle_t[0] < SETTLE_DELAY;
-        if self.nav_was_interacting && !interacting_now && !self.dual {
+        if self.nav.was_interacting && !interacting_now && !self.dual {
             self.record_nav();
         }
-        self.nav_was_interacting = interacting_now;
+        self.nav.was_interacting = interacting_now;
 
         // Frame-rate cap: pace the main thread so we don't render faster than the cap
         // (paired with vsync this snaps to a clean sub-rate, e.g. 60 on a 120 Hz panel).
