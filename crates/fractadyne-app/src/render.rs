@@ -251,7 +251,7 @@ impl FractadyneApp {
         let do_sa = (mode == 0 || mode == 2)
             && !julia
             && self.fractal.formula_id() <= 3
-            && !fractadyne_gpu::method_needs_aux(self.color_method)
+            && !self.color_method.needs_aux()
             && self.series_approx;
         RecomputeInputs {
             center_bf: [vp.center_x.clone(), vp.center_y.clone()],
@@ -280,7 +280,7 @@ impl FractadyneApp {
             && mode == 2
             && !julia
             && self.fractal.formula_id() == 0
-            && !fractadyne_gpu::method_needs_aux(self.color_method)
+            && !self.color_method.needs_aux()
     }
 
     /// Conservative worst-case `|δc|` (absolute, `·2^delta_exp`) for any pixel a reference serves:
@@ -467,9 +467,9 @@ impl FractadyneApp {
             de_strength: self.effects.de_strength,
             de_width: self.effects.de_width,
             de_phase: self.effects.de_phase,
-            color_method: self.color_method,
+            color_method: self.color_method.to_u32(),
             stripe_freq: self.stripe_freq,
-            trap_type: self.trap_type,
+            trap_type: self.trap_type.to_u32(),
             aa_filter: 1,
             interior_col: self.interior_color(),
         }
@@ -589,7 +589,7 @@ impl FractadyneApp {
         if width > max_dim
             || height > max_dim
             || (width as u64) * (height as u64) > MAX_CORRECT_PX
-            || fractadyne_gpu::method_needs_aux(self.color_method)
+            || self.color_method.needs_aux()
         {
             return None;
         }
@@ -817,7 +817,7 @@ impl FractadyneApp {
             let do_sa = (mode == 0 || mode == 2)
                 && !julia
                 && fractal.formula_id() <= 3
-                && !fractadyne_gpu::method_needs_aux(self.color_method)
+                && !self.color_method.needs_aux()
                 && self.series_approx;
             if recompute {
                 // The recompute (reference orbit + SA + BLA, all bignum) is the deep-zoom stall.
@@ -1006,9 +1006,9 @@ impl FractadyneApp {
             de_strength: self.effects.de_strength,
             de_width: self.effects.de_width,
             de_phase: self.effects.de_phase,
-            color_method: self.color_method,
+            color_method: self.color_method.to_u32(),
             stripe_freq: self.stripe_freq,
-            trap_type: self.trap_type,
+            trap_type: self.trap_type.to_u32(),
             aa_filter,
             interior_col: self.interior_color(),
             resolution,

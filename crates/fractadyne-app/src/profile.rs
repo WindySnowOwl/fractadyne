@@ -126,7 +126,7 @@ pub fn load_regions(path: &std::path::Path) -> Result<Vec<ProfRegion>, String> {
                 iter: s.iter.unwrap_or(2_000).clamp(64, 200_000),
                 size: s.size.unwrap_or(512).clamp(16, 4_096),
                 ss: s.ss.unwrap_or(1).clamp(1, 8),
-                method: crate::method_from_str(s.method.as_deref().unwrap_or("smooth")),
+                method: crate::ColorMethod::from_key(s.method.as_deref().unwrap_or("smooth")).to_u32(),
             }
         })
         .collect();
@@ -209,7 +209,7 @@ impl FractadyneApp {
             self.set_fractal(r.fractal);
             self.julia_mode = false;
             self.dual = false;
-            self.color_method = r.method;
+            self.color_method = crate::ColorMethod::from_u32(r.method);
             self.auto_iter = false;
             self.max_iter = r.iter;
             self.export.width = r.size;
@@ -373,7 +373,7 @@ impl FractadyneApp {
         self.set_fractal(FractalKind::Mandelbrot);
         self.julia_mode = false;
         self.dual = false;
-        self.color_method = 0;
+        self.color_method = crate::ColorMethod::Smooth;
         self.auto_iter = true;
         self.invalidate_refs();
         let size = size.clamp(64, 4096);

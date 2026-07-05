@@ -1988,7 +1988,7 @@ impl FractadyneApp {
             fractal: self.fractal,
             julia_mode: self.julia_mode,
             dual: self.dual,
-            color_method: self.color_method,
+            color_method: self.color_method.to_u32(),
             auto_iter: self.auto_iter,
             aa: self.aa,
             series_approx: self.series_approx,
@@ -2003,7 +2003,7 @@ impl FractadyneApp {
         self.set_fractal(FractalKind::Mandelbrot);
         self.julia_mode = false;
         self.dual = false;
-        self.color_method = 0; // smooth
+        self.color_method = crate::ColorMethod::Smooth; // smooth
         self.auto_iter = true; // depth-appropriate, deterministic per depth
         self.aa = STD_AA;
         self.series_approx = true;
@@ -2038,7 +2038,7 @@ impl FractadyneApp {
         self.set_fractal(s.fractal);
         self.julia_mode = s.julia_mode;
         self.dual = s.dual;
-        self.color_method = s.color_method;
+        self.color_method = crate::ColorMethod::from_u32(s.color_method);
         self.auto_iter = s.auto_iter;
         self.aa = s.aa;
         self.series_approx = s.series_approx;

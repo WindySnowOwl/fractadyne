@@ -4,7 +4,7 @@
 //! `fractadyne-core` unit tests; this validates the visual/render pipeline.)
 
 use crate::{
-    gather_system_info, mandel_escapes, method_to_str, utc_string, version_string, FractadyneApp,
+    gather_system_info, mandel_escapes, utc_string, version_string, FractadyneApp,
     FractalKind,
 };
 use fractadyne_core::Viewport;
@@ -617,7 +617,7 @@ impl FractadyneApp {
             for &(fractal, label, partner) in cases {
                 self.fractal = fractal;
                 self.julia_mode = false;
-                self.color_method = 0;
+                self.color_method = crate::ColorMethod::Smooth;
                 self.use_custom_palette = false;
                 self.auto_iter = false;
                 self.max_iter = 1500;
@@ -668,7 +668,7 @@ impl FractadyneApp {
         // fold-crossing pixels (where a diffabs branch flip is an inherent glitch).
         {
             self.julia_mode = false;
-            self.color_method = 0;
+            self.color_method = crate::ColorMethod::Smooth;
             self.use_custom_palette = false;
             self.auto_iter = false;
             self.max_iter = 2000;
@@ -906,7 +906,7 @@ impl FractadyneApp {
         // is formula-agnostic, already validated for Mandelbrot in modes 0 and 2).
         {
             self.julia_mode = false;
-            self.color_method = 0;
+            self.color_method = crate::ColorMethod::Smooth;
             self.use_custom_palette = false;
             self.auto_iter = false;
             self.max_iter = 4000;
@@ -975,7 +975,7 @@ impl FractadyneApp {
         {
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
-            self.color_method = 0;
+            self.color_method = crate::ColorMethod::Smooth;
             self.use_custom_palette = false;
             self.auto_iter = false;
             self.max_iter = 5000;
@@ -1113,7 +1113,7 @@ impl FractadyneApp {
         {
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
-            self.color_method = 0;
+            self.color_method = crate::ColorMethod::Smooth;
             self.use_custom_palette = false;
             self.auto_iter = false;
             let cxb = fractadyne_core::parse_bf(SX).unwrap();
@@ -1629,7 +1629,7 @@ impl FractadyneApp {
         for &(name, fractal, cx, cy, zoom, iter, method, palette) in specs {
             self.fractal = fractal;
             self.julia_mode = false;
-            self.color_method = method;
+            self.color_method = crate::ColorMethod::from_u32(method);
             self.palette_idx = palette;
             self.use_custom_palette = false;
             self.use_duotone = false;
@@ -1637,7 +1637,7 @@ impl FractadyneApp {
             self.cycle = 0.27;
             self.offset = 0.1;
             self.stripe_freq = 6.0;
-            self.trap_type = 0; // orbit-trap shape — unused by smooth/stripe, pinned for determinism
+            self.trap_type = crate::TrapType::Point; // orbit-trap shape — unused by smooth/stripe, pinned for determinism
             // Pin the palette animation OFF: active_stops() returns the *random* palette when this is
             // Random, so leaving it at whatever the loaded session had would make the goldens
             // non-deterministic (random colors) regardless of palette_idx.
@@ -1661,7 +1661,7 @@ impl FractadyneApp {
                  --zoom {zoom} --size {gw} --iter {iter} --ss 1 --method {} --palette {palette} \
                  --no-watermark",
                 fractal.name(),
-                method_to_str(method)
+                crate::ColorMethod::from_u32(method).key()
             );
             let progress = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);

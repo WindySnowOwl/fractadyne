@@ -380,18 +380,101 @@ pub(crate) const PERT_FE_THRESHOLD: f64 = 1.0e28;
 // Branding (BRAND_ACCENT/BRAND_TEXT, apply_brand_theme, brand_wordmark, brand_icon) moved
 // to `theme.rs` (re-exported below).
 
-// ---- coloring-method <-> persisted-string mapping ----
-/// Coloring methods, in selection order (index = GPU `color_method` id).
-const COLOR_METHODS: [(&str, &str); 6] = [
-    ("smooth", "Smooth iteration"),
-    ("stripe", "Stripe average"),
-    ("triangle", "Triangle inequality"),
-    ("trap", "Orbit trap"),
-    ("distance", "Distance estimate"),
-    ("decomposition", "Decomposition"),
-];
-const TRAP_TYPES: [(&str, &str); 3] =
-    [("point", "Point"), ("cross", "Cross"), ("circle", "Circle")];
+// ---- coloring-method / orbit-trap enums (Phase 4: typed dispatch) ----
+/// Coloring method — a typed replacement for the former bare `u32`. Discriminants match the GPU
+/// `color_method` ids in `mandelbrot.wgsl` `fs_color` (serialized via [`ColorMethod::to_u32`]); the
+/// `key` is the stable string persisted in the session / `.fdn`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum ColorMethod {
+    #[default]
+    Smooth = 0,
+    Stripe = 1,
+    TriangleIneq = 2,
+    OrbitTrap = 3,
+    Distance = 4,
+    Decomposition = 5,
+}
+impl ColorMethod {
+    pub(crate) const ALL: [ColorMethod; 6] = [
+        ColorMethod::Smooth,
+        ColorMethod::Stripe,
+        ColorMethod::TriangleIneq,
+        ColorMethod::OrbitTrap,
+        ColorMethod::Distance,
+        ColorMethod::Decomposition,
+    ];
+    /// GPU dispatch id (matches the shader).
+    pub(crate) fn to_u32(self) -> u32 {
+        self as u32
+    }
+    /// Stable persisted key.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            ColorMethod::Smooth => "smooth",
+            ColorMethod::Stripe => "stripe",
+            ColorMethod::TriangleIneq => "triangle",
+            ColorMethod::OrbitTrap => "trap",
+            ColorMethod::Distance => "distance",
+            ColorMethod::Decomposition => "decomposition",
+        }
+    }
+    /// Human label for the UI combo box.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            ColorMethod::Smooth => "Smooth iteration",
+            ColorMethod::Stripe => "Stripe average",
+            ColorMethod::TriangleIneq => "Triangle inequality",
+            ColorMethod::OrbitTrap => "Orbit trap",
+            ColorMethod::Distance => "Distance estimate",
+            ColorMethod::Decomposition => "Decomposition",
+        }
+    }
+    pub(crate) fn from_key(s: &str) -> ColorMethod {
+        ColorMethod::ALL.into_iter().find(|m| m.key() == s).unwrap_or_default()
+    }
+    pub(crate) fn from_u32(v: u32) -> ColorMethod {
+        ColorMethod::ALL.into_iter().find(|m| m.to_u32() == v).unwrap_or_default()
+    }
+    /// Methods that accumulate the aux statistics texture (stripe / triangle-ineq / decomposition).
+    pub(crate) fn needs_aux(self) -> bool {
+        matches!(
+            self,
+            ColorMethod::Stripe | ColorMethod::TriangleIneq | ColorMethod::Decomposition
+        )
+    }
+}
+
+/// Orbit-trap shape (only meaningful for [`ColorMethod::OrbitTrap`]). Discriminants match the shader.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum TrapType {
+    #[default]
+    Point = 0,
+    Cross = 1,
+    Circle = 2,
+}
+impl TrapType {
+    pub(crate) const ALL: [TrapType; 3] = [TrapType::Point, TrapType::Cross, TrapType::Circle];
+    pub(crate) fn to_u32(self) -> u32 {
+        self as u32
+    }
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            TrapType::Point => "point",
+            TrapType::Cross => "cross",
+            TrapType::Circle => "circle",
+        }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            TrapType::Point => "Point",
+            TrapType::Cross => "Cross",
+            TrapType::Circle => "Circle",
+        }
+    }
+    pub(crate) fn from_key(s: &str) -> TrapType {
+        TrapType::ALL.into_iter().find(|t| t.key() == s).unwrap_or_default()
+    }
+}
 
 /// Fixed export aspect ratios (key, width ÷ height). "window" (not listed) matches the live view.
 const EXPORT_ASPECTS: [(&str, f64); 8] = [
@@ -405,18 +488,6 @@ const EXPORT_ASPECTS: [(&str, f64); 8] = [
     ("2:1", 2.0),
 ];
 
-fn method_from_str(s: &str) -> u32 {
-    COLOR_METHODS.iter().position(|(k, _)| *k == s).unwrap_or(0) as u32
-}
-fn method_to_str(m: u32) -> &'static str {
-    COLOR_METHODS.get(m as usize).map(|(k, _)| *k).unwrap_or("smooth")
-}
-fn trap_from_str(s: &str) -> u32 {
-    TRAP_TYPES.iter().position(|(k, _)| *k == s).unwrap_or(0) as u32
-}
-fn trap_to_str(t: u32) -> &'static str {
-    TRAP_TYPES.get(t as usize).map(|(k, _)| *k).unwrap_or("point")
-}
 
 /// Curated famous Mandelbrot locations: (name, center_x, center_y, magnification).
 /// Coordinates are full-precision strings so deep entries land exactly.
@@ -776,7 +847,7 @@ enum PaletteAnim {
 }
 
 impl PaletteAnim {
-    const ALL: [PaletteAnim; 5] = [
+    pub(crate) const ALL: [PaletteAnim; 5] = [
         PaletteAnim::Off,
         PaletteAnim::Forward,
         PaletteAnim::Reverse,
@@ -792,7 +863,7 @@ impl PaletteAnim {
             PaletteAnim::Random => "Random gradients",
         }
     }
-    fn key(self) -> &'static str {
+    pub(crate) fn key(self) -> &'static str {
         match self {
             PaletteAnim::Off => "off",
             PaletteAnim::Forward => "forward",
@@ -801,7 +872,7 @@ impl PaletteAnim {
             PaletteAnim::Random => "random",
         }
     }
-    fn from_key(s: &str) -> PaletteAnim {
+    pub(crate) fn from_key(s: &str) -> PaletteAnim {
         match s {
             "forward" => PaletteAnim::Forward,
             "reverse" => PaletteAnim::Reverse,
@@ -1320,9 +1391,9 @@ struct FractadyneApp {
     effects: EffectsConfig,
     /// Coloring method (0 smooth, 1 stripe, 2 triangle-ineq, 3 orbit trap,
     /// 4 distance, 5 decomposition) + its parameters.
-    color_method: u32,
+    color_method: ColorMethod,
     stripe_freq: f32,
-    trap_type: u32,
+    trap_type: TrapType,
     /// Auto-scale iteration count with zoom depth (else use `max_iter` as-is).
     auto_iter: bool,
     /// Continuous-zoom speed multiplier (1.0 = default `ZOOM_RATE`).
@@ -1630,9 +1701,9 @@ impl FractadyneApp {
                 de_anim: s.de_anim,
                 de_phase: 0.0,
             },
-            color_method: method_from_str(&s.color_method),
+            color_method: ColorMethod::from_key(&s.color_method),
             stripe_freq: s.stripe_freq,
-            trap_type: trap_from_str(&s.trap_type),
+            trap_type: TrapType::from_key(&s.trap_type),
             auto_iter: s.auto_iter,
             series_approx: s.series_approx,
             glitch_correct: s.glitch_correct,
@@ -1777,13 +1848,13 @@ impl FractadyneApp {
             self.effects.de = true;
         }
         if let Some(m) = val("--method") {
-            self.color_method = method_from_str(m);
+            self.color_method = ColorMethod::from_key(m);
         }
         if let Some(f) = val("--stripe-freq").and_then(|s| s.parse::<f32>().ok()) {
             self.stripe_freq = f.clamp(1.0, 24.0);
         }
         if let Some(t) = val("--trap") {
-            self.trap_type = trap_from_str(t);
+            self.trap_type = TrapType::from_key(t);
         }
         // Output format from the file extension.
         if let Some(out) = &self.auto_render_out {
@@ -1847,9 +1918,9 @@ impl FractadyneApp {
             de_strength: self.effects.de_strength,
             de_width: self.effects.de_width,
             de_anim: self.effects.de_anim,
-            color_method: method_to_str(self.color_method).to_string(),
+            color_method: self.color_method.key().to_string(),
             stripe_freq: self.stripe_freq,
-            trap_type: trap_to_str(self.trap_type).to_string(),
+            trap_type: self.trap_type.key().to_string(),
             minimap: self.minimap,
             custom_palette: self.custom_palette.clone(),
             use_custom_palette: self.use_custom_palette,
@@ -2183,7 +2254,7 @@ impl FractadyneApp {
     /// cycles across the palette; the unbounded ones (iteration / trap / distance) use
     /// the fine per-unit scaling.
     fn color_cycle(&self) -> f32 {
-        if matches!(self.color_method, 1 | 2 | 5) {
+        if self.color_method.needs_aux() {
             0.5 + self.cycle * 4.0
         } else {
             0.004 + self.cycle * 0.06
@@ -2966,7 +3037,7 @@ impl FractadyneApp {
         } else {
             (self.palette_idx, 0)
         };
-        let key = (self.fractal.formula_id(), pal_idx, self.color_method, pal_rev);
+        let key = (self.fractal.formula_id(), pal_idx, self.color_method.to_u32(), pal_rev);
         if self.minimap_key == Some(key) && self.minimap_tex.is_some() {
             return;
         }
@@ -4986,10 +5057,10 @@ impl FractadyneApp {
 
                 egui::CollapsingHeader::new("Coloring").default_open(true).show(ui, |ui| {
                 egui::ComboBox::from_label("Method")
-                    .selected_text(COLOR_METHODS[self.color_method as usize].1)
+                    .selected_text(self.color_method.label())
                     .show_ui(ui, |ui| {
-                        for (i, (_, name)) in COLOR_METHODS.iter().enumerate() {
-                            ui.selectable_value(&mut self.color_method, i as u32, *name);
+                        for m in ColorMethod::ALL {
+                            ui.selectable_value(&mut self.color_method, m, m.label());
                         }
                     })
                     .response
@@ -4998,19 +5069,19 @@ impl FractadyneApp {
                          orbit-trap / decomposition reveal orbit structure; distance \
                          shades by proximity to the boundary.",
                     );
-                if self.color_method == 1 {
+                if self.color_method == ColorMethod::Stripe {
                     ui.add(
                         egui::Slider::new(&mut self.stripe_freq, 1.0..=24.0)
                             .text("Stripe density")
                             .logarithmic(true),
                     );
                 }
-                if self.color_method == 3 {
+                if self.color_method == ColorMethod::OrbitTrap {
                     egui::ComboBox::from_label("Trap shape")
-                        .selected_text(TRAP_TYPES[self.trap_type as usize].1)
+                        .selected_text(self.trap_type.label())
                         .show_ui(ui, |ui| {
-                            for (i, (_, name)) in TRAP_TYPES.iter().enumerate() {
-                                ui.selectable_value(&mut self.trap_type, i as u32, *name);
+                            for t in TrapType::ALL {
+                                ui.selectable_value(&mut self.trap_type, t, t.label());
                             }
                         });
                 }
