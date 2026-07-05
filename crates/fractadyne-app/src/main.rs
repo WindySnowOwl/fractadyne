@@ -3639,6 +3639,196 @@ impl FractadyneApp {
     }
 }
 
+// Modal dialogs, extracted from `update()` so the event loop reads as a sequence of
+// `self.draw_*_dialog(ctx)` calls rather than a wall of inline `egui::Window` blocks.
+// Each is a no-op unless its `*_open` flag is set. (REFACTOR-PLAN Phase 2b.)
+impl FractadyneApp {
+    /// "Go to location" dialog — jump to a pasted center/zoom, or copy the current one to share.
+    fn draw_goto_dialog(&mut self, ctx: &egui::Context) {
+        if !self.goto_open {
+            return;
+        }
+        let mut open = self.goto_open;
+        let mut go = false;
+        let mut copy = false;
+        egui::Window::new("Go to location")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new("Center X").weak().small());
+                ui.add(egui::TextEdit::singleline(&mut self.goto_x).desired_width(f32::INFINITY));
+                ui.label(egui::RichText::new("Center Y").weak().small());
+                ui.add(egui::TextEdit::singleline(&mut self.goto_y).desired_width(f32::INFINITY));
+                ui.label(egui::RichText::new("Zoom (magnification)").weak().small());
+                ui.add(egui::TextEdit::singleline(&mut self.goto_zoom).desired_width(220.0));
+                if let Some(m) = &self.goto_msg {
+                    ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), m);
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    go = ui.button("Go").clicked();
+                    if ui.button("Copy").on_hover_text("Copy this location to the clipboard").clicked() {
+                        copy = true;
+                    }
+                    if ui.button("Use current").clicked() {
+                        self.goto_x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
+                        self.goto_y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
+                        self.goto_zoom = fmt_zoom_field(self.viewport.log2_magnification());
+                        self.goto_msg = None;
+                    }
+                });
+                ui.label(
+                    egui::RichText::new("Paste a center/zoom from someone else, or Copy to share.")
+                        .weak()
+                        .small(),
+                );
+            });
+        if copy {
+            ctx.copy_text(format!(
+                "center_x={}\ncenter_y={}\nzoom={}",
+                self.goto_x, self.goto_y, self.goto_zoom
+            ));
+        }
+        if go {
+            self.apply_goto(); // clears goto_open on success
+        }
+        // Closed if the user hit the window's ✕ (open=false) or Go succeeded.
+        self.goto_open = open && self.goto_open;
+    }
+
+    /// "Share location" (.fdn) dialog — copy/paste/apply/save/load a self-contained location.
+    fn draw_share_dialog(&mut self, ctx: &egui::Context) {
+        if !self.share_open {
+            return;
+        }
+        let mut open = self.share_open;
+        let (mut copy, mut apply, mut save, mut load) = (false, false, false, false);
+        egui::Window::new("Share location")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "A self-contained location (fractal, full-precision center, zoom, \
+                         coloring). Copy it to share, or paste/load one and Apply.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.share_text)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(10)
+                            .code_editor(),
+                    );
+                });
+                if let Some(m) = &self.share_msg {
+                    ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA0, 0x30), m);
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    apply = ui.button("Apply").on_hover_text("Jump to the location in the box").clicked();
+                    copy = ui.button("Copy").on_hover_text("Copy the text to the clipboard").clicked();
+                    if ui.button("Use current").clicked() {
+                        self.share_text = self.view_metadata();
+                        self.share_msg = None;
+                    }
+                    save = ui.button("Save .fdn…").clicked();
+                    load = ui.button("Load .fdn…").clicked();
+                });
+            });
+        if copy {
+            ctx.copy_text(self.share_text.clone());
+            self.share_msg = Some("Copied to clipboard.".into());
+        }
+        if save {
+            self.save_share_file();
+        }
+        if load {
+            self.load_share_file();
+        }
+        if apply {
+            self.apply_share_text(ctx); // clears share_open on success
+        }
+        self.share_open = open && self.share_open;
+    }
+
+    /// "Reset application state" confirmation dialog — permanently deletes all saved data.
+    fn draw_reset_dialog(&mut self, ctx: &egui::Context) {
+        if !self.reset_confirm_open {
+            return;
+        }
+        let mut open = self.reset_confirm_open;
+        let (mut confirm, mut cancel) = (false, false);
+        egui::Window::new("Reset application state")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(460.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.colored_label(
+                    egui::Color32::from_rgb(0xE0, 0x6C, 0x60),
+                    "⚠  This permanently deletes all saved Fractadyne data:",
+                );
+                ui.add_space(2.0);
+                ui.label("• the saved session (current view, coloring, preferences)");
+                ui.label("• all bookmarks and their thumbnails");
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Location").weak().small());
+                ui.label(
+                    egui::RichText::new(fractadyne_state::state_location_display())
+                        .monospace()
+                        .small(),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(
+                        "This can't be undone. The current session won't be re-saved on exit, \
+                         so defaults load on the next launch.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    cancel = ui.button("Cancel").clicked();
+                    if ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("Reset everything").color(egui::Color32::WHITE),
+                        ).fill(egui::Color32::from_rgb(0xB0, 0x3A, 0x30)))
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                });
+            });
+        if confirm {
+            match fractadyne_state::reset_all() {
+                Ok(_) => {
+                    // Don't recreate what we just deleted; reflect the cleared bookmarks in the UI.
+                    self.suppress_autosave = true;
+                    self.bookmarks.clear();
+                    self.set_toast(
+                        "Application state reset — defaults will load on the next launch.",
+                        ctx,
+                    );
+                }
+                Err(e) => self.set_toast(format!("Reset failed: {e}"), ctx),
+            }
+            self.reset_confirm_open = false;
+        } else if cancel {
+            self.reset_confirm_open = false;
+        } else {
+            self.reset_confirm_open = open && self.reset_confirm_open;
+        }
+    }
+}
+
 impl eframe::App for FractadyneApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_start = Instant::now();
@@ -5127,181 +5317,10 @@ impl eframe::App for FractadyneApp {
             }
         }
 
-        // ---- go to location ----
-        if self.goto_open {
-            let mut open = self.goto_open;
-            let mut go = false;
-            let mut copy = false;
-            egui::Window::new("Go to location")
-                .open(&mut open)
-                .resizable(false)
-                .default_width(420.0)
-                .show(ctx, |ui| {
-                    ui.label(egui::RichText::new("Center X").weak().small());
-                    ui.add(egui::TextEdit::singleline(&mut self.goto_x).desired_width(f32::INFINITY));
-                    ui.label(egui::RichText::new("Center Y").weak().small());
-                    ui.add(egui::TextEdit::singleline(&mut self.goto_y).desired_width(f32::INFINITY));
-                    ui.label(egui::RichText::new("Zoom (magnification)").weak().small());
-                    ui.add(egui::TextEdit::singleline(&mut self.goto_zoom).desired_width(220.0));
-                    if let Some(m) = &self.goto_msg {
-                        ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), m);
-                    }
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        go = ui.button("Go").clicked();
-                        if ui.button("Copy").on_hover_text("Copy this location to the clipboard").clicked() {
-                            copy = true;
-                        }
-                        if ui.button("Use current").clicked() {
-                            self.goto_x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
-                            self.goto_y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
-                            self.goto_zoom = fmt_zoom_field(self.viewport.log2_magnification());
-                            self.goto_msg = None;
-                        }
-                    });
-                    ui.label(
-                        egui::RichText::new("Paste a center/zoom from someone else, or Copy to share.")
-                            .weak()
-                            .small(),
-                    );
-                });
-            if copy {
-                ctx.copy_text(format!(
-                    "center_x={}\ncenter_y={}\nzoom={}",
-                    self.goto_x, self.goto_y, self.goto_zoom
-                ));
-            }
-            if go {
-                self.apply_goto(); // clears goto_open on success
-            }
-            // Closed if the user hit the window's ✕ (open=false) or Go succeeded.
-            self.goto_open = open && self.goto_open;
-        }
+        self.draw_goto_dialog(ctx);
 
-        // ---- share location (.fdn) ----
-        if self.share_open {
-            let mut open = self.share_open;
-            let (mut copy, mut apply, mut save, mut load) = (false, false, false, false);
-            egui::Window::new("Share location")
-                .open(&mut open)
-                .resizable(true)
-                .default_width(460.0)
-                .show(ctx, |ui| {
-                    ui.label(
-                        egui::RichText::new(
-                            "A self-contained location (fractal, full-precision center, zoom, \
-                             coloring). Copy it to share, or paste/load one and Apply.",
-                        )
-                        .weak()
-                        .small(),
-                    );
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut self.share_text)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(10)
-                                .code_editor(),
-                        );
-                    });
-                    if let Some(m) = &self.share_msg {
-                        ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA0, 0x30), m);
-                    }
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        apply = ui.button("Apply").on_hover_text("Jump to the location in the box").clicked();
-                        copy = ui.button("Copy").on_hover_text("Copy the text to the clipboard").clicked();
-                        if ui.button("Use current").clicked() {
-                            self.share_text = self.view_metadata();
-                            self.share_msg = None;
-                        }
-                        save = ui.button("Save .fdn…").clicked();
-                        load = ui.button("Load .fdn…").clicked();
-                    });
-                });
-            if copy {
-                ctx.copy_text(self.share_text.clone());
-                self.share_msg = Some("Copied to clipboard.".into());
-            }
-            if save {
-                self.save_share_file();
-            }
-            if load {
-                self.load_share_file();
-            }
-            if apply {
-                self.apply_share_text(ctx); // clears share_open on success
-            }
-            self.share_open = open && self.share_open;
-        }
-
-        // ---- reset application state (confirmation) ----
-        if self.reset_confirm_open {
-            let mut open = self.reset_confirm_open;
-            let (mut confirm, mut cancel) = (false, false);
-            egui::Window::new("Reset application state")
-                .open(&mut open)
-                .resizable(false)
-                .collapsible(false)
-                .default_width(460.0)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(0xE0, 0x6C, 0x60),
-                        "⚠  This permanently deletes all saved Fractadyne data:",
-                    );
-                    ui.add_space(2.0);
-                    ui.label("• the saved session (current view, coloring, preferences)");
-                    ui.label("• all bookmarks and their thumbnails");
-                    ui.add_space(6.0);
-                    ui.label(egui::RichText::new("Location").weak().small());
-                    ui.label(
-                        egui::RichText::new(fractadyne_state::state_location_display())
-                            .monospace()
-                            .small(),
-                    );
-                    ui.add_space(6.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "This can't be undone. The current session won't be re-saved on exit, \
-                             so defaults load on the next launch.",
-                        )
-                        .weak()
-                        .small(),
-                    );
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        cancel = ui.button("Cancel").clicked();
-                        if ui
-                            .add(egui::Button::new(
-                                egui::RichText::new("Reset everything").color(egui::Color32::WHITE),
-                            ).fill(egui::Color32::from_rgb(0xB0, 0x3A, 0x30)))
-                            .clicked()
-                        {
-                            confirm = true;
-                        }
-                    });
-                });
-            if confirm {
-                match fractadyne_state::reset_all() {
-                    Ok(_) => {
-                        // Don't recreate what we just deleted; reflect the cleared bookmarks in the UI.
-                        self.suppress_autosave = true;
-                        self.bookmarks.clear();
-                        self.set_toast(
-                            "Application state reset — defaults will load on the next launch.",
-                            ctx,
-                        );
-                    }
-                    Err(e) => self.set_toast(format!("Reset failed: {e}"), ctx),
-                }
-                self.reset_confirm_open = false;
-            } else if cancel {
-                self.reset_confirm_open = false;
-            } else {
-                self.reset_confirm_open = open && self.reset_confirm_open;
-            }
-        }
+        self.draw_share_dialog(ctx);
+        self.draw_reset_dialog(ctx);
 
         // ---- bookmarks manager ----
         if self.bookmarks_open {
