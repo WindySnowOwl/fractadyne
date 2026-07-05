@@ -71,3 +71,69 @@ pub const PRESETS: &[Palette] = &[
         ],
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each packed slot is `[r, g, b, pos]` — the order the GPU uniform expects.
+    #[test]
+    fn packed_slot_is_rgb_then_pos() {
+        let p = Palette { name: "t", stops: &[(0.0, [0.1, 0.2, 0.3]), (1.0, [0.4, 0.5, 0.6])] };
+        let (out, n) = p.packed();
+        assert_eq!(n, 2);
+        assert_eq!(out[0], [0.1, 0.2, 0.3, 0.0]);
+        assert_eq!(out[1], [0.4, 0.5, 0.6, 1.0]);
+    }
+
+    /// Unused trailing slots repeat the last real stop (so the shader's `stop_count` bound and the
+    /// padded array agree — reading past `n` still yields the terminal color, never garbage).
+    #[test]
+    fn trailing_slots_repeat_last_stop() {
+        let p = Palette { name: "t", stops: &[(0.0, [0.0; 3]), (0.5, [1.0; 3]), (1.0, [0.2; 3])] };
+        let (out, n) = p.packed();
+        assert_eq!(n, 3);
+        assert_eq!(out[2], [0.2, 0.2, 0.2, 1.0]);
+        for slot in &out[n as usize..] {
+            assert_eq!(*slot, out[2]);
+        }
+    }
+
+    /// A single-stop palette fills every slot with that stop (count 1, no out-of-bounds).
+    #[test]
+    fn single_stop_fills_all_slots() {
+        let p = Palette { name: "t", stops: &[(0.3, [0.7, 0.8, 0.9])] };
+        let (out, n) = p.packed();
+        assert_eq!(n, 1);
+        assert!(out.iter().all(|s| *s == [0.7, 0.8, 0.9, 0.3]));
+    }
+
+    /// More stops than the GPU carries: the count saturates at `MAX_STOPS` and the first
+    /// `MAX_STOPS` stops are kept (no panic, no overflow).
+    #[test]
+    fn count_clamps_to_max_stops() {
+        let p = Palette {
+            name: "t",
+            stops: &[
+                (0.0, [0.0; 3]), (0.1, [1.0; 3]), (0.2, [2.0; 3]), (0.3, [3.0; 3]),
+                (0.4, [4.0; 3]), (0.5, [5.0; 3]), (0.6, [6.0; 3]), (0.7, [7.0; 3]),
+                (0.8, [8.0; 3]), (0.9, [9.0; 3]), (1.0, [10.0; 3]),
+            ],
+        };
+        let (out, n) = p.packed();
+        assert_eq!(n as usize, MAX_STOPS);
+        assert_eq!(out[MAX_STOPS - 1], [7.0, 7.0, 7.0, 0.7]);
+    }
+
+    /// Every shipped preset packs within bounds, fits in `MAX_STOPS`, and keeps its first stop.
+    #[test]
+    fn presets_pack_within_bounds() {
+        for p in PRESETS {
+            let (out, n) = p.packed();
+            assert!((1..=MAX_STOPS as u32).contains(&n), "{}: count {n} out of range", p.name);
+            assert_eq!(n as usize, p.stops.len(), "{}: all presets must fit in MAX_STOPS", p.name);
+            let (pos, c) = p.stops[0];
+            assert_eq!(out[0], [c[0], c[1], c[2], pos], "{}: first slot", p.name);
+        }
+    }
+}

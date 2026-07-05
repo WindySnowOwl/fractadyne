@@ -338,6 +338,11 @@ impl FractadyneApp {
     ) -> Option<std::sync::mpsc::Receiver<RecomputeResult>> {
         let inputs = self.export_reference_inputs_for(vp, julia)?;
         let (tx, rx) = std::sync::mpsc::channel();
+        // Fire-and-forget deep-export reference build (see the live-path note above): if the caller
+        // drops the returned `rx` (export canceled) the worker finishes and its send is discarded —
+        // bounded, self-terminating, not a leak. NOTE for a future `fractadyne-render` extraction:
+        // this raw `Receiver` + the `pub` `ExportPrep.rx` should be wrapped behind a method API
+        // before crossing a crate boundary.
         std::thread::spawn(move || {
             let _ = tx.send(recompute_worker(inputs));
         });
@@ -830,6 +835,13 @@ impl FractadyneApp {
                     self.install_recompute(vi, res);
                 } else if self.recompute_rx[vi].is_none() && spawn_ok {
                     let (tx, rx) = std::sync::mpsc::channel();
+                    // Fire-and-forget worker. `let _ = tx.send` deliberately discards the send:
+                    // if the receiver was dropped (view/formula change → `drop_ref_caches`) the
+                    // worker is orphaned and its result is stale. This is NOT a leak — the thread
+                    // runs the bignum orbit to completion then exits; the only cost is bounded,
+                    // self-terminating CPU on a superseded reference (a cooperative-cancel
+                    // AtomicBool is deferred until profiling shows it matters). Spawn is guarded by
+                    // `recompute_rx[vi].is_none()`, so receivers never accumulate.
                     std::thread::spawn(move || {
                         let _ = tx.send(recompute_worker(inputs));
                     });
