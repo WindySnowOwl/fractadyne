@@ -3082,14 +3082,15 @@ impl FractadyneApp {
     /// file size and delegates to the hardened `parse_kfr`. (KF's zoom and ours are both
     /// linear magnification from the home view — close enough that the location lands at
     /// essentially the right place and scale.)
-    fn load_kfr_file(&mut self, path: &std::path::Path) -> Result<String, String> {
-        let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    fn load_kfr_file(&mut self, path: &std::path::Path) -> Result<String, crate::error::AppError> {
+        use crate::error::AppError;
+        let meta = std::fs::metadata(path)?;
         if meta.len() > 4_000_000 {
-            return Err("file too large (not a .kfr location?)".into());
+            return Err(AppError::Message("file too large (not a .kfr location?)".into()));
         }
-        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let text = std::fs::read_to_string(path)?;
         let v = fractadyne_core::parse_kfr(&text)
-            .ok_or("not a valid .kfr location (need Re / Im / Zoom)")?;
+            .ok_or_else(|| AppError::Parse("not a valid .kfr location (need Re / Im / Zoom)".into()))?;
         let zoom = v.zoom;
         self.fractal = FractalKind::Mandelbrot;
         self.julia_mode = false;
