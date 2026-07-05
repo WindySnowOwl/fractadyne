@@ -1,6 +1,6 @@
 # Fractadyne — Architecture (as-built)
 
-**Version:** 0.1.18 · **Updated:** 2026-07-04
+**Version:** 0.1.28 · **Updated:** 2026-07-05
 
 This document describes the system **as it is actually implemented**. It is the counterpart to
 [`DESIGN.md`](DESIGN.md), which is the *original design intent* (2026-06-25) and has diverged from
@@ -36,7 +36,7 @@ stubs whose intended responsibilities currently live in `fractadyne-app`.
 
 | Crate | Status | Responsibility |
 |-------|--------|----------------|
-| `fractadyne-core` | ✅ | Numerics: `Viewport` (BigFloat center, `FloatExp` scale), reference-orbit iteration (`step_bf`, `reference_orbit`), `best_reference`, series approximation (`series_skip`), BLA (`build_bla_mandel`), precision helpers, the CPU dwell oracle, minibrot/nucleus finder. No GPU/UI. |
+| `fractadyne-core` | ✅ | Numerics: `Viewport` (BigFloat center, `FloatExp` scale), reference-orbit iteration (`step_bf`, `reference_orbit`), `best_reference`, series approximation (`series_skip`), BLA (`build_bla_mandel`), precision helpers, the CPU dwell oracle, minibrot/nucleus finder. No GPU/UI. **Decomposed into submodules** — `floatexp`, `bignum`, `viewport`, `reference` — behind a thin `lib.rs` facade that re-exports the public API. |
 | `fractadyne-gpu` | ✅ | `wgpu` device, render pipelines, WGSL shaders (`mandelbrot.wgsl` — iterate + color), `render_export` (tiled), per-view resources. |
 | `fractadyne-color` | ✅ | Preset gradient palettes + interpolation. |
 | `fractadyne-state` | ✅ | Session persistence (`session.toml`), versioned state, `config_dir()` + `FRACTADYNE_CONFIG_DIR`, reset. |
@@ -54,27 +54,35 @@ select + reference recompute / freeze-reproject + export requests), `autopilot.r
 
 ---
 
-## 3. The fractal system (no trait)
+## 3. The fractal system (no trait, but a single metadata table)
 
 There is **no `Fractal`/`RenderStrategy` trait**. Instead, [`fractal.rs`](crates/fractadyne-app/src/fractal.rs)
 defines a `FractalKind` enum (10 families) with an integer **`formula_id()` (0–9)** that every layer
 switches on. Families: Mandelbrot, Multibrot 3/4/5, Tricorn, Burning Ship, Celtic, Buffalo, Phoenix,
-Newton. `FractalKind` also carries `name()`, `info()`, `supports_julia()`, `supports_perturbation()`,
-`default_center()`. Julia mode is an orthogonal flag on any family that supports it.
+Newton. Julia mode is an orthogonal flag on any family that supports it.
 
-The per-iteration step for each family is written **six times**, once per numeric representation, all
-keyed on the formula id:
+All the app-side per-family metadata — `name`, `formula_id`, `default_center`, `supports_julia`,
+`supports_perturbation`, `info` — lives in **one `FractalKind::SPECS` table** (one row per family);
+the accessors read from it, so the app side of adding a formula is a single row (guard tests enforce
+row order and `formula_id == index`). The numeric id numbering is a single source of truth in
+**`core::formula::{MANDELBROT…NEWTON, COUNT}}`**, adopted at every core dispatch site (arms read
+`formula::PHOENIX => …`); the WGSL carries a matching id legend.
 
-1. `core::step_bf` — bignum reference orbit (exact).
-2. `core::orbit_points` — f64 cursor-overlay orbit.
+The per-iteration step for each family is still written **six times**, once per numeric
+representation, all keyed on the formula id — this is the irreducible cost of no trait / no DSL:
+
+1. `core::reference::step_bf` — bignum reference orbit (exact).
+2. `core::reference::orbit_points` — f64 cursor-overlay orbit.
 3. `mandelbrot.wgsl` mode 1 — direct df32 (shallow).
 4. `mandelbrot.wgsl` mode 0 — df32 perturbation δz.
 5. `mandelbrot.wgsl` mode 2 — floatexp perturbation δz.
-6. `core::series_skip` — the SA coefficient recurrence (polynomial families only; generic in degree).
+6. `core::reference::series_skip` — the SA coefficient recurrence (polynomial families only; generic in degree).
 
-Adding a formula means editing all of these (plus the enum and gating). The generic-degree SA
-recurrence is the only place that isn't per-formula hand-coding. (A formula DSL that would generate
-all paths from one definition is designed in `DESIGN.md` §8 but **not built**.)
+Adding a formula means editing all of these (plus the SPECS row). An authoritative **"Adding a new
+formula" checklist** — mapping every edit site across app → core numerics → shader — lives in the
+`fractal.rs` and `core` module docs. (A formula DSL that would generate all paths from one definition
+is designed in `DESIGN.md` §8 but **not built**; a `Fractal` trait unifying the two CPU step paths is
+the next planned step toward that — see `REFACTOR-PLAN.md`.)
 
 ---
 
@@ -220,8 +228,10 @@ Layered, mostly external-data-free:
 - **Core exact-math tests** (`cargo test -p fractadyne-core`) — perturbation/SA/BLA reproduce the
   exact bignum recurrence; nuclei Newton-solve to known constants; coordinate round-trips.
 - **`--selftest`** — GPU pipeline compared pixel-for-pixel against an independent arbitrary-precision
-  **CPU dwell oracle** (shares nothing with the GPU path), plus **golden images** (bit-identical, read
-  from the canonical `validation/golden/`; all render-affecting state pinned so they're deterministic).
+  **CPU dwell oracle** (shares nothing with the GPU path), plus **golden images** (17: a direct-mode
+  overview per family + a deep df32-perturbation, 1e6×, golden per polynomial family — so per-formula
+  dispatch and the deep reference-orbit path are both guarded; bit-identical, read from the canonical
+  `validation/golden/`; all render-affecting state pinned so they're deterministic). `--bless` records.
 - **`--validate-deep`** — precision self-consistency of the bignum core from 1e1000× to 1e1000000×.
 - **`--crosscheck-f3`** — F3's exact integer escape counts vs. the same oracle (transitively:
   GPU≈oracle and F3≈oracle ⇒ GPU≈F3).
@@ -258,8 +268,13 @@ only), live-view multi-reference glitch correction, and autopilot steering modes
 
 ## 15. Key files
 
-- [`crates/fractadyne-core/src/lib.rs`](crates/fractadyne-core/src/lib.rs) — `Viewport`,
-  `reference_orbit`/`step_bf`, `best_reference`, `series_skip`, BLA, precision + oracle.
+- `crates/fractadyne-core/src/` — the numeric core, split into
+  [`lib.rs`](crates/fractadyne-core/src/lib.rs) (facade + `formula` ids + tests),
+  [`floatexp.rs`](crates/fractadyne-core/src/floatexp.rs) (`FloatExp`/`CFloatExp`),
+  [`bignum.rs`](crates/fractadyne-core/src/bignum.rs) (BigFloat helpers + precision),
+  [`viewport.rs`](crates/fractadyne-core/src/viewport.rs) (`Viewport`), and
+  [`reference.rs`](crates/fractadyne-core/src/reference.rs) (`reference_orbit`/`step_bf`,
+  `best_reference`, `series_skip`, BLA, nucleus finder, multi-ref).
 - [`crates/fractadyne-gpu/src/mandelbrot.wgsl`](crates/fractadyne-gpu/src/mandelbrot.wgsl) —
   iterate + color shaders; `Cdf` (df32) + `Fe` (floatexp) helpers; the 3-mode formula branches.
 - [`crates/fractadyne-gpu/src/lib.rs`](crates/fractadyne-gpu/src/lib.rs) — renderer, per-view
