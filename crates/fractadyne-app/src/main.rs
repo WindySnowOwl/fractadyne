@@ -476,6 +476,49 @@ impl TrapType {
     }
 }
 
+/// The numeric representation the renderer uses, chosen by depth (matches the shader's `mode`).
+/// Serialized to `u32` only when written into the GPU uniforms / export request.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RenderMode {
+    /// df32 perturbation of a reference orbit (`1e4× … PERT_FE_THRESHOLD`).
+    Df32Pert = 0,
+    /// Direct df32 from z₀, no reference (shallow `< 1e4×`, or a non-perturbation formula).
+    Direct = 1,
+    /// Extended-range floatexp perturbation (`≥ PERT_FE_THRESHOLD`).
+    Floatexp = 2,
+}
+impl RenderMode {
+    /// Pick the representation for a view: direct when shallow or the formula has no perturbation,
+    /// then df32, switching to floatexp past `PERT_FE_THRESHOLD`. The one place this is decided.
+    pub(crate) fn select(supports_perturbation: bool, mag: f64) -> RenderMode {
+        if !supports_perturbation || mag < 1.0e4 {
+            RenderMode::Direct
+        } else if mag < PERT_FE_THRESHOLD {
+            RenderMode::Df32Pert
+        } else {
+            RenderMode::Floatexp
+        }
+    }
+    pub(crate) fn to_u32(self) -> u32 {
+        self as u32
+    }
+    pub(crate) fn from_u32(v: u32) -> RenderMode {
+        match v {
+            1 => RenderMode::Direct,
+            2 => RenderMode::Floatexp,
+            _ => RenderMode::Df32Pert,
+        }
+    }
+    /// Direct path — no reference orbit, never glitches.
+    pub(crate) fn is_direct(self) -> bool {
+        matches!(self, RenderMode::Direct)
+    }
+    /// Extended-range floatexp path (the deep, ~5×-costlier mode-2).
+    pub(crate) fn is_floatexp(self) -> bool {
+        matches!(self, RenderMode::Floatexp)
+    }
+}
+
 /// Fixed export aspect ratios (key, width ÷ height). "window" (not listed) matches the live view.
 const EXPORT_ASPECTS: [(&str, f64); 8] = [
     ("16:9", 16.0 / 9.0),

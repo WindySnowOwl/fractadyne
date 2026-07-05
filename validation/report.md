@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.18 (build 415)
-- **Generated:** 2026-07-04 18:44:15 UTC (unix 1783190655)
+- **Version:** 0.1.28 (build 517)
+- **Generated:** 2026-07-05 17:13:44 UTC (unix 1783271624)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -90,12 +90,25 @@ Stored in `validation\golden`. Compared against; current renders written to `cur
 
 | Image | Max Δ | Mean Δ | Checksum (FNV-1a) | Verdict | Reproduce |
 |---|---|---|---|---|---|
-| home | 0 | 0.000 | `c387ba2f582c426d` | ✅ match | `fractadyne --render --out home.png --fractal Mandelbrot --center -0.5 0.0 --zoom 1 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
-| seahorse | 0 | 0.000 | `876e75bc70f76d84` | ✅ match | `fractadyne --render --out seahorse.png --fractal Mandelbrot --center -0.743643887037151 0.131825904205330 --zoom 2000 --size 320 --iter 1500 --ss 1 --method smooth --palette 1 --no-watermark` |
-| seahorse-stripe-1e6 | 0 | 0.000 | `c7fce0b7f354080c` | ✅ match | `fractadyne --render --out seahorse-stripe-1e6.png --fractal Mandelbrot --center -0.743643887037151 0.131825904205330 --zoom 1000000 --size 320 --iter 4000 --ss 1 --method stripe --palette 1 --no-watermark` |
-| elephant | 0 | 0.000 | `1017955690592063` | ✅ match | `fractadyne --render --out elephant.png --fractal Mandelbrot --center 0.2925755 -0.0149977 --zoom 1500 --size 320 --iter 1500 --ss 1 --method smooth --palette 2 --no-watermark` |
+| home | 0 | 0.000 | `13d3fde7f7ebb199` | ✅ match | `fractadyne --render --out home.png --fractal "Mandelbrot" --center -0.5 0.0 --zoom 1 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| seahorse | 0 | 0.000 | `9b392fa6aac0138f` | ✅ match | `fractadyne --render --out seahorse.png --fractal "Mandelbrot" --center -0.743643887037151 0.131825904205330 --zoom 2000 --size 320 --iter 1500 --ss 1 --method smooth --palette 1 --no-watermark` |
+| seahorse-stripe-1e6 | 0 | 0.000 | `4ef06b8485bc96e7` | ✅ match | `fractadyne --render --out seahorse-stripe-1e6.png --fractal "Mandelbrot" --center -0.743643887037151 0.131825904205330 --zoom 1000000 --size 320 --iter 4000 --ss 1 --method stripe --palette 1 --no-watermark` |
+| elephant | 0 | 0.000 | `e2a5b19d2794df96` | ✅ match | `fractadyne --render --out elephant.png --fractal "Mandelbrot" --center 0.2925755 -0.0149977 --zoom 1500 --size 320 --iter 1500 --ss 1 --method smooth --palette 2 --no-watermark` |
+| multibrot3 | 0 | 0.000 | `63dbf0f65f007a5d` | ✅ match | `fractadyne --render --out multibrot3.png --fractal "Multibrot 3" --center 0.0 0.0 --zoom 0.8 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| multibrot4 | 0 | 0.000 | `fdfc9e196fb14a2d` | ✅ match | `fractadyne --render --out multibrot4.png --fractal "Multibrot 4" --center 0.0 0.0 --zoom 0.8 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| multibrot5 | 0 | 0.000 | `728fc000006513cd` | ✅ match | `fractadyne --render --out multibrot5.png --fractal "Multibrot 5" --center 0.0 0.0 --zoom 0.8 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| tricorn | 0 | 0.000 | `0b01d8cc19a5eb4d` | ✅ match | `fractadyne --render --out tricorn.png --fractal "Tricorn" --center 0.0 0.0 --zoom 0.8 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| burning-ship | 0 | 0.000 | `f46c1f1c2cbb8874` | ✅ match | `fractadyne --render --out burning-ship.png --fractal "Burning Ship" --center -0.5 -0.5 --zoom 0.7 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| celtic | 0 | 0.000 | `c7b9d4df52597b3d` | ✅ match | `fractadyne --render --out celtic.png --fractal "Celtic" --center -0.5 0.0 --zoom 0.8 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| buffalo | 0 | 0.000 | `1fc4cc68876c8ad6` | ✅ match | `fractadyne --render --out buffalo.png --fractal "Buffalo" --center -0.5 -0.5 --zoom 0.7 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| phoenix | 0 | 0.000 | `7877037c047b6fd1` | ✅ match | `fractadyne --render --out phoenix.png --fractal "Phoenix" --center 0.0 0.0 --zoom 0.7 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| newton | 0 | 0.000 | `bb305b3ab800e151` | ✅ match | `fractadyne --render --out newton.png --fractal "Newton" --center 0.0 0.0 --zoom 0.7 --size 320 --iter 400 --ss 1 --method smooth --palette 0 --no-watermark` |
+| mandelbrot-1e6 | 0 | 0.000 | `7e5fd1f4203227a6` | ✅ match | `fractadyne --render --out mandelbrot-1e6.png --fractal "Mandelbrot" --center -7.219621882920463979621343199249635039400777157391994056859e-1 2.406540627640154659873781066416545013133592385797331352286e-1 --zoom 1000000 --size 320 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
+| multibrot3-1e6 | 0 | 0.000 | `6e8bf2f7ad4cf23e` | ✅ match | `fractadyne --render --out multibrot3-1e6.png --fractal "Multibrot 3" --center 2.19533102209775940218788168856401426185991366731348781648e-1 7.317770073659198278104833118192370226116695264984596408352e-1 --zoom 1000000 --size 320 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
+| multibrot4-1e6 | 0 | 0.000 | `ddd2489ed04de2ad` | ✅ match | `fractadyne --render --out multibrot4-1e6.png --fractal "Multibrot 4" --center 2.28757960884408080137002307307431367850187620104115769219e-1 7.625265362813602953424916065993043372187655480595946595141e-1 --zoom 1000000 --size 320 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
+| multibrot5-1e6 | 0 | 0.000 | `bad6fc4493cc5840` | ✅ match | `fractadyne --render --out multibrot5-1e6.png --fractal "Multibrot 5" --center 2.320768669674853369085651557338865001525750889159483426277e-1 7.735895565582844849904484291320284693154748744446630197764e-1 --zoom 1000000 --size 320 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
 
-**4/4 golden images within tolerance.**
+**17/17 golden images within tolerance.**
 
 ## Summary
 

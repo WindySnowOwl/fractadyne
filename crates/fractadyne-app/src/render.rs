@@ -3,7 +3,7 @@
 //! skip, and assembles the live (`MandelbrotParams`) and offscreen (`ExportRequest`) jobs,
 //! choosing the direct / df32-perturbation / floatexp render mode by depth.
 
-use crate::{profile, zoom_iter_cap, FractadyneApp, FractalKind, PERT_FE_THRESHOLD};
+use crate::{profile, zoom_iter_cap, FractadyneApp, FractalKind, RenderMode, PERT_FE_THRESHOLD};
 use fractadyne_core::Viewport;
 use fractadyne_gpu::MandelbrotParams;
 use std::time::Instant;
@@ -242,13 +242,13 @@ impl FractadyneApp {
         &self,
         vp: &Viewport,
         julia: bool,
-        mode: u32,
+        mode: RenderMode,
         eff_iter: u32,
         precision: usize,
         span_mantissa: [f64; 2],
         delta_exp: i32,
     ) -> RecomputeInputs {
-        let do_sa = (mode == 0 || mode == 2)
+        let do_sa = (!mode.is_direct())
             && !julia
             && self.fractal.formula_id() <= 3
             && !self.color_method.needs_aux()
@@ -275,9 +275,9 @@ impl FractadyneApp {
     /// that BLA would skip). `dx`/`dy` are the reference-offset mantissas and `span_mantissa`
     /// the view span — both scaled by `2^delta_exp` — used for the worst-case `|δc|`.
     /// Whether BLA applies to this render (deep floatexp Mandelbrot, non-Julia, non-aux coloring).
-    fn bla_eligible(&self, mode: u32, julia: bool) -> bool {
+    fn bla_eligible(&self, mode: RenderMode, julia: bool) -> bool {
         self.use_bla
-            && mode == 2
+            && mode.is_floatexp()
             && !julia
             && self.fractal.formula_id() == 0
             && !self.color_method.needs_aux()
@@ -316,14 +316,8 @@ impl FractadyneApp {
     fn export_reference_inputs_for(&self, vp: &Viewport, julia: bool) -> Option<RecomputeInputs> {
         let log2mag = vp.log2_magnification();
         let mag = vp.magnification();
-        let mode: u32 = if !self.fractal.supports_perturbation() || mag < 1.0e4 {
-            1
-        } else if mag >= PERT_FE_THRESHOLD {
-            2
-        } else {
-            0
-        };
-        if mode == 1 {
+        let mode = RenderMode::select(self.fractal.supports_perturbation(), mag);
+        if mode.is_direct() {
             return None;
         }
         let eff_iter = if self.auto_iter {
@@ -386,13 +380,7 @@ impl FractadyneApp {
         // Cap at the zoom-appropriate count (same as the live view): avoids noise from
         // over-resolving sub-pixel dust, and keeps the export fast/responsive.
         .min(zoom_iter_cap(log2mag).max(256));
-        let mode: u32 = if !self.fractal.supports_perturbation() || mag < 1.0e4 {
-            1
-        } else if mag >= PERT_FE_THRESHOLD {
-            2
-        } else {
-            0
-        };
+        let mode = RenderMode::select(self.fractal.supports_perturbation(), mag);
         let precision = vp.precision; // maintained by the viewport; valid at any depth
         let (cx, cy) = vp.center_f64();
         let scale = vp.gpu_scale();
@@ -401,7 +389,7 @@ impl FractadyneApp {
         // Reference orbit + series-approximation + BLA — the slow bignum bundle, computed via the
         // shared `recompute_worker` (same code the live view + the pipelined tour path use, so all
         // three produce byte-identical references). Split timings recorded for `--profile`.
-        let RefFields { ref_offset, orbit, orbit_len, sa, bla, bla_on } = if mode != 1 {
+        let RefFields { ref_offset, orbit, orbit_len, sa, bla, bla_on } = if !mode.is_direct() {
             // Reuse the precomputed reference only if it was built for this exact frame's iteration
             // count + precision; otherwise (stale, or none) compute it now. Fallback is always safe.
             let res = match precomputed {
@@ -453,7 +441,7 @@ impl FractadyneApp {
             bla,
             bla_on,
             max_iter: eff_iter,
-            mode,
+            mode: mode.to_u32(),
             formula: self.fractal.formula_id(),
             julia: julia as u32,
             cycle: self.color_cycle(),
@@ -498,8 +486,8 @@ impl FractadyneApp {
         req.ss = 1;
         req.glitch_on = 1;
         let mut merged = fractadyne_gpu::render_iter(device, queue, &req).ok()?.pixels;
-        // Direct path (mode 1) never glitches; nothing to correct.
-        if req.mode == 1 {
+        // Direct path never glitches; nothing to correct.
+        if RenderMode::from_u32(req.mode).is_direct() {
             return Some((merged, 1, 0));
         }
         let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
@@ -711,13 +699,7 @@ impl FractadyneApp {
         // Render path: 1 = direct df32 (shallow / unsupported formulas), 0 = df32
         // perturbation (fast, common deep range), 2 = floatexp perturbation (past df32's
         // ~1e30× exponent limit → extreme depth, ~1.7× costlier so only when needed).
-        let mode: u32 = if !fractal.supports_perturbation() || magnification < 1.0e4 {
-            1
-        } else if magnification >= PERT_FE_THRESHOLD {
-            2
-        } else {
-            0
-        };
+        let mode = RenderMode::select(fractal.supports_perturbation(), magnification);
         let precision = fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64);
         let vi = view_id as usize;
 
@@ -727,7 +709,7 @@ impl FractadyneApp {
         // flight and the cached reference has drifted fully out of view (extreme depth), so the
         // view holds instead of flashing blank.
         let mut reproject = reproject
-            .filter(|_| mode != 1 && self.ref_cache[vi].ref_pt.is_some());
+            .filter(|_| !mode.is_direct() && self.ref_cache[vi].ref_pt.is_some());
         // Reprojection scale about the view centre: 1.0 for a pan (drag) reprojection; set <1.0 by
         // the freeze below to zoom the held frame as the view keeps diving (zoom-reprojection).
         let mut reproject_scale = 1.0_f32;
@@ -736,7 +718,7 @@ impl FractadyneApp {
         let mut sa = fractadyne_core::SeriesSkip::NONE;
         let mut bla = std::sync::Arc::new(Vec::new());
         let mut bla_on = 0u32;
-        if mode != 1 && reproject.is_none() {
+        if !mode.is_direct() && reproject.is_none() {
             // Install a finished off-thread recompute (if any) before deciding whether another is
             // needed, so the staleness/quality checks below see the fresh reference.
             if let Some(rx) = self.recompute_rx[vi].as_ref() {
@@ -790,7 +772,7 @@ impl FractadyneApp {
             // is the signal that catches a fast zoom-in.
             let depth_lag = {
                 let vc = &self.ref_cache[vi];
-                if mode == 2 && !vc.bla.is_empty() && vc.bla_dc_max_log2.is_finite() {
+                if mode.is_floatexp() && !vc.bla.is_empty() && vc.bla_dc_max_log2.is_finite() {
                     vc.bla_dc_max_log2 - Self::bla_dc_max(span_mantissa, delta_exp).log2()
                 } else {
                     0.0
@@ -814,7 +796,7 @@ impl FractadyneApp {
             // so `> 1.1` refreshes ~0.1 octave into the dive.
             let recompute = out_of_view || needs_quality || depth_lag > 1.1;
             // Whether the series approximation applies to this view (bundled into the recompute).
-            let do_sa = (mode == 0 || mode == 2)
+            let do_sa = (!mode.is_direct())
                 && !julia
                 && fractal.formula_id() <= 3
                 && !self.color_method.needs_aux()
@@ -862,7 +844,7 @@ impl FractadyneApp {
             // Freeze (reproject, which skips the expensive floatexp iterate) rather than paint with a
             // depth-stale reference, which makes the mode-2 shader spin ~5 s/frame → the "Not
             // Responding" hang on a fast dive crossing ~1e28×. Two triggers:
-            //  • `mode == 2 && interacting`: never run a real floatexp iterate *while moving*. On a
+            //  • `mode.is_floatexp() && interacting`: never run a real floatexp iterate *while moving*. On a
             //    dive faster than the (off-thread, ~0.1–1 s) reference recompute, every reference is
             //    already stale by the time it lands, and the spin onset is data-dependent (as low as
             //    ~0.5 octave of lag), so no threshold reliably lets a real frame through without
@@ -875,7 +857,7 @@ impl FractadyneApp {
             // held on screen while the next computes), so bypass the blanket "never iterate while
             // moving" freeze — the `depth_lag > 1.2` hold below still waits for a depth-matched
             // reference, so the real iterate never spins on a stale one.
-            let motion_freeze = mode == 2 && interacting && !self.autopilot.stepping;
+            let motion_freeze = mode.is_floatexp() && interacting && !self.autopilot.stepping;
             too_stale = too_stale || motion_freeze || depth_lag > 1.2;
             // At extreme depth the recompute can take long enough that a fast/continuous dive
             // drifts the cached reference too far off-centre before a fresh one lands — rendering
@@ -966,7 +948,7 @@ impl FractadyneApp {
         let julia_c = [jcxh, jcyh, (jcx - jcxh as f64) as f32, (jcy - jcyh as f64) as f32];
 
         if view_id == 0 {
-            self.perf.last_mode = mode;
+            self.perf.last_mode = mode.to_u32();
             self.perf.last_eff_iter = gpu_iter; // iterations actually rendered this frame
             self.perf.last_precision = precision;
             self.perf.last_orbit_len = self.ref_cache[vi].orbit_len;
@@ -990,7 +972,7 @@ impl FractadyneApp {
             sa_c_exp: sa.c_exp,
             center: center_df,
             julia_c,
-            mode,
+            mode: mode.to_u32(),
             formula: fractal.formula_id(),
             julia: julia as u32,
             span_mantissa,
