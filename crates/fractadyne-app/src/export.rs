@@ -270,9 +270,9 @@ impl FractadyneApp {
             self.viewport.magnification(),
             self.render_cfg.max_iter,
             self.render_cfg.auto_iter as u32,
-            self.palette_idx,
-            self.cycle,
-            self.offset,
+            self.coloring.palette_idx,
+            self.coloring.cycle,
+            self.coloring.offset,
             self.render_cfg.aa,
         )
     }
@@ -344,7 +344,7 @@ impl FractadyneApp {
         }
         if let Some(p) = get("palette").and_then(|s| s.parse::<usize>().ok()) {
             if p < fractadyne_color::PRESETS.len() {
-                self.palette_idx = p;
+                self.coloring.palette_idx = p;
             } else {
                 report.clamped.push("palette");
             }
@@ -355,7 +355,7 @@ impl FractadyneApp {
                 if v != c {
                     report.clamped.push("cycle");
                 }
-                self.cycle = v;
+                self.coloring.cycle = v;
             } else {
                 report.clamped.push("cycle");
             }
@@ -366,7 +366,7 @@ impl FractadyneApp {
                 if v != o {
                     report.clamped.push("offset");
                 }
-                self.offset = v;
+                self.coloring.offset = v;
             } else {
                 report.clamped.push("offset");
             }

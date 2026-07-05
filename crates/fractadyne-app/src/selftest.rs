@@ -616,8 +616,8 @@ impl FractadyneApp {
             for &(fractal, label, partner) in cases {
                 self.fractal = fractal;
                 self.julia_mode = false;
-                self.color_method = crate::ColorMethod::Smooth;
-                self.use_custom_palette = false;
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.use_custom_palette = false;
                 self.render_cfg.auto_iter = false;
                 self.render_cfg.max_iter = 1500;
                 let mut vp = Viewport::new(N as f64, N as f64);
@@ -667,8 +667,8 @@ impl FractadyneApp {
         // fold-crossing pixels (where a diffabs branch flip is an inherent glitch).
         {
             self.julia_mode = false;
-            self.color_method = crate::ColorMethod::Smooth;
-            self.use_custom_palette = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = 2000;
             let nn = N as usize;
@@ -905,8 +905,8 @@ impl FractadyneApp {
         // is formula-agnostic, already validated for Mandelbrot in modes 0 and 2).
         {
             self.julia_mode = false;
-            self.color_method = crate::ColorMethod::Smooth;
-            self.use_custom_palette = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = 4000;
             for (fractal, cx, cy) in [
@@ -974,8 +974,8 @@ impl FractadyneApp {
         {
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
-            self.color_method = crate::ColorMethod::Smooth;
-            self.use_custom_palette = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = 5000;
             self.render_cfg.series_approx = false; // isolate BLA
@@ -1112,8 +1112,8 @@ impl FractadyneApp {
         {
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
-            self.color_method = crate::ColorMethod::Smooth;
-            self.use_custom_palette = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
             self.render_cfg.auto_iter = false;
             let cxb = fractadyne_core::parse_bf(SX).unwrap();
             let cyb = fractadyne_core::parse_bf(SY).unwrap();
@@ -1517,8 +1517,8 @@ impl FractadyneApp {
                 && (1..=16).contains(&self.render_cfg.aa)
                 && self.viewport.units_per_pixel.log2().is_finite()
                 && self.viewport.units_per_pixel.log2() >= -3.4e7 - 1.0
-                && self.cycle.is_finite()
-                && self.offset.is_finite()
+                && self.coloring.cycle.is_finite()
+                && self.coloring.offset.is_finite()
                 && hr.clamped.len() >= 4 // zoom depth, max_iter, aa, cycle, offset
                 && hr.unknown.iter().any(|u| u == "bogus_field");
             checks.push(SelfCheck {
@@ -1628,15 +1628,15 @@ impl FractadyneApp {
         for &(name, fractal, cx, cy, zoom, iter, method, palette) in specs {
             self.fractal = fractal;
             self.julia_mode = false;
-            self.color_method = crate::ColorMethod::from_u32(method);
-            self.palette_idx = palette;
-            self.use_custom_palette = false;
-            self.use_duotone = false;
-            self.use_binary = false;
-            self.cycle = 0.27;
-            self.offset = 0.1;
-            self.stripe_freq = 6.0;
-            self.trap_type = crate::TrapType::Point; // orbit-trap shape — unused by smooth/stripe, pinned for determinism
+            self.coloring.color_method = crate::ColorMethod::from_u32(method);
+            self.coloring.palette_idx = palette;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            self.coloring.cycle = 0.27;
+            self.coloring.offset = 0.1;
+            self.coloring.stripe_freq = 6.0;
+            self.coloring.trap_type = crate::TrapType::Point; // orbit-trap shape — unused by smooth/stripe, pinned for determinism
             // Pin the palette animation OFF: active_stops() returns the *random* palette when this is
             // Random, so leaving it at whatever the loaded session had would make the goldens
             // non-deterministic (random colors) regardless of palette_idx.

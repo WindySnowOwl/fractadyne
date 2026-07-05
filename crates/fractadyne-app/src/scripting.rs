@@ -1248,10 +1248,10 @@ impl FractadyneApp {
             .ok()
             .or_else(|| fractadyne_color::PRESETS.iter().position(|p| p.name.eq_ignore_ascii_case(s)));
         if let Some(i) = idx {
-            self.palette_idx = i.min(fractadyne_color::PRESETS.len() - 1);
-            self.use_binary = false;
-            self.use_duotone = false;
-            self.use_custom_palette = false;
+            self.coloring.palette_idx = i.min(fractadyne_color::PRESETS.len() - 1);
+            self.coloring.use_binary = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_custom_palette = false;
         }
     }
 
@@ -1988,31 +1988,31 @@ impl FractadyneApp {
             fractal: self.fractal,
             julia_mode: self.julia_mode,
             dual: self.dual,
-            color_method: self.color_method.to_u32(),
+            color_method: self.coloring.color_method.to_u32(),
             auto_iter: self.render_cfg.auto_iter,
             aa: self.render_cfg.aa,
             series_approx: self.render_cfg.series_approx,
             use_bla: self.render_cfg.use_bla,
             glitch_correct: self.render_cfg.glitch_correct,
-            palette_idx: self.palette_idx,
-            use_binary: self.use_binary,
-            use_duotone: self.use_duotone,
-            use_custom_palette: self.use_custom_palette,
+            palette_idx: self.coloring.palette_idx,
+            use_binary: self.coloring.use_binary,
+            use_duotone: self.coloring.use_duotone,
+            use_custom_palette: self.coloring.use_custom_palette,
         };
         // Pin the canonical configuration.
         self.set_fractal(FractalKind::Mandelbrot);
         self.julia_mode = false;
         self.dual = false;
-        self.color_method = crate::ColorMethod::Smooth; // smooth
+        self.coloring.color_method = crate::ColorMethod::Smooth; // smooth
         self.render_cfg.auto_iter = true; // depth-appropriate, deterministic per depth
         self.render_cfg.aa = STD_AA;
         self.render_cfg.series_approx = true;
         self.render_cfg.use_bla = true;
         self.render_cfg.glitch_correct = false; // data-dependent cost → off for a deterministic timing
-        self.palette_idx = 0; // Ember
-        self.use_binary = false;
-        self.use_duotone = false;
-        self.use_custom_palette = false;
+        self.coloring.palette_idx = 0; // Ember
+        self.coloring.use_binary = false;
+        self.coloring.use_duotone = false;
+        self.coloring.use_custom_palette = false;
         self.invalidate_refs();
         let cx = fractadyne_core::parse_bf(STD_CX)
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(-0.5, 64));
@@ -2038,16 +2038,16 @@ impl FractadyneApp {
         self.set_fractal(s.fractal);
         self.julia_mode = s.julia_mode;
         self.dual = s.dual;
-        self.color_method = crate::ColorMethod::from_u32(s.color_method);
+        self.coloring.color_method = crate::ColorMethod::from_u32(s.color_method);
         self.render_cfg.auto_iter = s.auto_iter;
         self.render_cfg.aa = s.aa;
         self.render_cfg.series_approx = s.series_approx;
         self.render_cfg.use_bla = s.use_bla;
         self.render_cfg.glitch_correct = s.glitch_correct;
-        self.palette_idx = s.palette_idx;
-        self.use_binary = s.use_binary;
-        self.use_duotone = s.use_duotone;
-        self.use_custom_palette = s.use_custom_palette;
+        self.coloring.palette_idx = s.palette_idx;
+        self.coloring.use_binary = s.use_binary;
+        self.coloring.use_duotone = s.use_duotone;
+        self.coloring.use_custom_palette = s.use_custom_palette;
         self.invalidate_refs();
     }
 

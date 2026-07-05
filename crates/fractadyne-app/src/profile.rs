@@ -209,7 +209,7 @@ impl FractadyneApp {
             self.set_fractal(r.fractal);
             self.julia_mode = false;
             self.dual = false;
-            self.color_method = crate::ColorMethod::from_u32(r.method);
+            self.coloring.color_method = crate::ColorMethod::from_u32(r.method);
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = r.iter;
             self.export.width = r.size;
@@ -373,7 +373,7 @@ impl FractadyneApp {
         self.set_fractal(FractalKind::Mandelbrot);
         self.julia_mode = false;
         self.dual = false;
-        self.color_method = crate::ColorMethod::Smooth;
+        self.coloring.color_method = crate::ColorMethod::Smooth;
         self.render_cfg.auto_iter = true;
         self.invalidate_refs();
         let size = size.clamp(64, 4096);
