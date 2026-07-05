@@ -2259,8 +2259,8 @@ impl FractadyneApp {
                 .map(|e| e.to_ascii_lowercase())
                 .unwrap_or_default();
             let meta = match ext.as_str() {
-                "png" => fractadyne_export::read_png_metadata(&path),
-                "exr" => fractadyne_export::read_exr_metadata(&path),
+                "png" => fractadyne_export::read_png_metadata(&path).ok().flatten(),
+                "exr" => fractadyne_export::read_exr_metadata(&path).ok().flatten(),
                 _ => None,
             };
             let Some(m) = meta else { continue };
@@ -4372,7 +4372,7 @@ impl FractadyneApp {
         // Lazily decode one thumbnail per frame so scanning a folder never freezes.
         if let Some(entry) = self.gallery.entries.iter_mut().find(|e| !e.thumb_tried) {
             entry.thumb_tried = true;
-            if let Some((tw, th, rgba)) = fractadyne_export::read_thumbnail(&entry.path, 160) {
+            if let Ok((tw, th, rgba)) = fractadyne_export::read_thumbnail(&entry.path, 160) {
                 let img = egui::ColorImage::from_rgba_unmultiplied([tw as usize, th as usize], &rgba);
                 let name = format!("thumb:{}", entry.path.display());
                 entry.thumb = Some(ctx.load_texture(name, img, egui::TextureOptions::LINEAR));

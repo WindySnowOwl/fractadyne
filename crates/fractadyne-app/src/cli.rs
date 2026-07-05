@@ -194,7 +194,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         let load = |p: &str| -> Option<(u32, u32, Vec<f32>)> {
             let path = std::path::Path::new(p);
             match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
-                Some("exr") => fractadyne_export::read_exr_rgba_f32(path),
+                Some("exr") => fractadyne_export::read_exr_rgba_f32(path).ok(),
                 Some("png") => fractadyne_export::read_png_rgba8(path)
                     .ok()
                     .map(|(w, h, bytes)| (w, h, bytes.iter().map(|&x| x as f32).collect())),
@@ -292,7 +292,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         let our_mag = 0.75 * f3_zoom;
         let prec = fractadyne_core::precision_for_magnification(our_mag).max(64);
 
-        let Some((w, h, nch)) = fractadyne_export::read_exr_channel_f32(std::path::Path::new(file), "N")
+        let Ok((w, h, nch)) = fractadyne_export::read_exr_channel_f32(std::path::Path::new(file), "N")
         else {
             eprintln!(
                 "could not read EXR channel \"N\" from {file}. Channels present: {:?}\n\

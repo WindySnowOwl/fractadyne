@@ -424,16 +424,19 @@ impl FractadyneApp {
             fractadyne_export::read_png_metadata(&path)
         };
         match meta {
-            Some(m) => {
+            Ok(Some(m)) => {
                 let report = self.load_view_metadata(&m);
                 self.export.status = Some(match report.note() {
                     None => format!("Loaded view from {}", path.display()),
                     Some(n) => format!("Loaded view from {} — {n}", path.display()),
                 });
             }
-            None => {
+            Ok(None) => {
                 self.export.status =
                     Some("That file has no embedded Fractadyne view metadata.".to_string());
+            }
+            Err(e) => {
+                self.export.status = Some(format!("Couldn't read {}: {e}", path.display()));
             }
         }
     }

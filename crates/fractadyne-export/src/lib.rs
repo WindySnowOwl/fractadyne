@@ -96,7 +96,7 @@ pub fn to_srgb8(rgba: &[f32]) -> Vec<u8> {
 
 /// Decode an EXR at full resolution to `(width, height, rgba_f32)` (row-major, 4 floats
 /// per pixel). Used by the `--compare` tool to diff raw iteration data.
-pub fn read_exr_rgba_f32(path: &Path) -> Option<(u32, u32, Vec<f32>)> {
+pub fn read_exr_rgba_f32(path: &Path) -> Result<(u32, u32, Vec<f32>), ExportError> {
     use exr::prelude::*;
     let image = read_first_rgba_layer_from_file(
         path,
@@ -111,13 +111,12 @@ pub fn read_exr_rgba_f32(path: &Path) -> Option<(u32, u32, Vec<f32>)> {
             buf.2[i + 2] = b;
             buf.2[i + 3] = a;
         },
-    )
-    .ok()?;
+    )?;
     let (w, h, data) = image.layer_data.channel_data.pixels;
     if w == 0 || h == 0 {
-        return None;
+        return Err(ExportError::EmptyImage);
     }
-    Some((w as u32, h as u32, data))
+    Ok((w as u32, h as u32, data))
 }
 
 /// Decode a single named channel from an EXR to `(width, height, Vec<f32>)`, converting
@@ -126,7 +125,7 @@ pub fn read_exr_rgba_f32(path: &Path) -> Option<(u32, u32, Vec<f32>)> {
 /// Used for cross-renderer validation against **Fraktaler-3**, whose raw EXR stores the
 /// integer escape count in a UINT channel named `"N"` (exterior `n + 1024`, interior
 /// `0xFFFFFFFF`) and the smooth fraction in float channel `"NF"`.
-pub fn read_exr_channel_f32(path: &Path, name: &str) -> Option<(u32, u32, Vec<f32>)> {
+pub fn read_exr_channel_f32(path: &Path, name: &str) -> Result<(u32, u32, Vec<f32>), ExportError> {
     use exr::prelude::*;
     let image = read()
         .no_deep_data()
@@ -134,31 +133,31 @@ pub fn read_exr_channel_f32(path: &Path, name: &str) -> Option<(u32, u32, Vec<f3
         .all_channels()
         .first_valid_layer()
         .all_attributes()
-        .from_file(path)
-        .ok()?;
+        .from_file(path)?;
     let layer = &image.layer_data;
     let (w, h) = (layer.size.0, layer.size.1);
     if w == 0 || h == 0 {
-        return None;
+        return Err(ExportError::EmptyImage);
     }
     let chan = layer
         .channel_data
         .list
         .iter()
-        .find(|c| c.name.to_string() == name)?;
+        .find(|c| c.name.to_string() == name)
+        .ok_or_else(|| ExportError::ChannelNotFound(name.to_string()))?;
     let data: Vec<f32> = match &chan.sample_data {
         FlatSamples::F16(v) => v.iter().map(|x| x.to_f32()).collect(),
         FlatSamples::F32(v) => v.clone(),
         FlatSamples::U32(v) => v.iter().map(|&x| x as f32).collect(),
     };
     if data.len() != w * h {
-        return None;
+        return Err(ExportError::SizeMismatch { expected: w * h, got: data.len() });
     }
-    Some((w as u32, h as u32, data))
+    Ok((w as u32, h as u32, data))
 }
 
 /// List the channel names present in an EXR's first valid layer (diagnostics / discovery).
-pub fn list_exr_channels(path: &Path) -> Option<Vec<String>> {
+pub fn list_exr_channels(path: &Path) -> Result<Vec<String>, ExportError> {
     use exr::prelude::*;
     let image = read()
         .no_deep_data()
@@ -166,9 +165,8 @@ pub fn list_exr_channels(path: &Path) -> Option<Vec<String>> {
         .all_channels()
         .first_valid_layer()
         .all_attributes()
-        .from_file(path)
-        .ok()?;
-    Some(image.layer_data.channel_data.list.iter().map(|c| c.name.to_string()).collect())
+        .from_file(path)?;
+    Ok(image.layer_data.channel_data.list.iter().map(|c| c.name.to_string()).collect())
 }
 
 /// Decode a PNG at full resolution to `(width, height, rgba8)` (for golden-image diffs).
@@ -251,36 +249,35 @@ pub fn write_png(
 
 /// Decode a PNG and box-downsample it to a thumbnail (≤ `max` px on the long edge).
 /// Returns `(width, height, rgba8)`. Currently PNG only (EXR thumbnails: future).
-pub fn read_thumbnail(path: &Path, max: u32) -> Option<(u32, u32, Vec<u8>)> {
-    match path
+pub fn read_thumbnail(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportError> {
+    let ext = path
         .extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .as_deref()
-    {
+        .map(|e| e.to_ascii_lowercase());
+    match ext.as_deref() {
         Some("png") => thumbnail_png(path, max),
         Some("exr") => thumbnail_exr(path, max),
-        _ => None,
+        other => Err(ExportError::UnsupportedFormat(other.unwrap_or("(none)").to_string())),
     }
 }
 
-fn thumbnail_png(path: &Path, max: u32) -> Option<(u32, u32, Vec<u8>)> {
-    let file = std::fs::File::open(path).ok()?;
+fn thumbnail_png(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportError> {
+    let file = std::fs::File::open(path)?;
     let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info().ok()?;
+    let mut reader = decoder.read_info()?;
     let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
+    let info = reader.next_frame(&mut buf)?;
     let (w, h) = (info.width, info.height);
     if w == 0 || h == 0 {
-        return None;
+        return Err(ExportError::EmptyImage);
     }
     let ch = match info.color_type {
         png::ColorType::Rgba => 4usize,
         png::ColorType::Rgb => 3,
         png::ColorType::GrayscaleAlpha => 2,
         png::ColorType::Grayscale => 1,
-        _ => return None,
+        _ => return Err(ExportError::UnsupportedColorType),
     };
     let scale = (w.max(h).div_ceil(max)).max(1) as usize;
     let tw = (w as usize / scale).max(1);
@@ -323,11 +320,11 @@ fn thumbnail_png(path: &Path, max: u32) -> Option<(u32, u32, Vec<u8>)> {
             out[di + 3] = (as_ / n) as u8;
         }
     }
-    Some((tw as u32, th as u32, out))
+    Ok((tw as u32, th as u32, out))
 }
 
 /// Decode an OpenEXR (linear f32) and box-downsample it to an sRGB thumbnail.
-fn thumbnail_exr(path: &Path, max: u32) -> Option<(u32, u32, Vec<u8>)> {
+fn thumbnail_exr(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportError> {
     use exr::prelude::*;
     let image = read_first_rgba_layer_from_file(
         path,
@@ -342,11 +339,10 @@ fn thumbnail_exr(path: &Path, max: u32) -> Option<(u32, u32, Vec<u8>)> {
             buf.2[i + 2] = b;
             buf.2[i + 3] = a;
         },
-    )
-    .ok()?;
+    )?;
     let (w, h, data) = image.layer_data.channel_data.pixels;
     if w == 0 || h == 0 {
-        return None;
+        return Err(ExportError::EmptyImage);
     }
     let scale = ((w.max(h) as u32).div_ceil(max)).max(1) as usize;
     let tw = (w / scale).max(1);
@@ -382,21 +378,19 @@ fn thumbnail_exr(path: &Path, max: u32) -> Option<(u32, u32, Vec<u8>)> {
             out[di + 3] = ((as_ / n).clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
         }
     }
-    Some((tw as u32, th as u32, out))
+    Ok((tw as u32, th as u32, out))
 }
 
 /// Read the embedded Fractadyne view-state metadata from a PNG, if present.
-pub fn read_png_metadata(path: &Path) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
-    let reader = png::Decoder::new(std::io::BufReader::new(file))
-        .read_info()
-        .ok()?;
-    reader
+pub fn read_png_metadata(path: &Path) -> Result<Option<String>, ExportError> {
+    let file = std::fs::File::open(path)?;
+    let reader = png::Decoder::new(std::io::BufReader::new(file)).read_info()?;
+    Ok(reader
         .info()
         .uncompressed_latin1_text
         .iter()
         .find(|c| c.keyword == META_KEYWORD)
-        .map(|c| c.text.clone())
+        .map(|c| c.text.clone()))
 }
 
 /// Write a 32-bit float **linear** OpenEXR from the renderer's display-space (sRGB) RGBA `f32`
@@ -437,16 +431,16 @@ pub fn write_exr(
 }
 
 /// Read the embedded Fractadyne view-state metadata from an OpenEXR, if present.
-pub fn read_exr_metadata(path: &Path) -> Option<String> {
+pub fn read_exr_metadata(path: &Path) -> Result<Option<String>, ExportError> {
     use exr::prelude::*;
-    let meta = exr::meta::MetaData::read_from_file(path, false).ok()?;
+    let meta = exr::meta::MetaData::read_from_file(path, false)?;
     let key = Text::from(META_KEYWORD);
     for h in &meta.headers {
         for other in [&h.shared_attributes.other, &h.own_attributes.other] {
             if let Some(AttributeValue::Text(t)) = other.get(&key) {
-                return Some(t.to_string());
+                return Ok(Some(t.to_string()));
             }
         }
     }
-    None
+    Ok(None)
 }
