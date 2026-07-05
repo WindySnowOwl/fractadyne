@@ -1720,8 +1720,8 @@ impl FractadyneApp {
             }
             self.julia_pin = Some(c); // hold it (don't let cursor hover override)
         }
-        self.show_orbits = s.orbits;
-        self.tour_orbit = s.orbit;
+        self.anim.show_orbits = s.orbits;
+        self.anim.tour_orbit = s.orbit;
         // log2 path so playback stays exact past f64's 1e308× ceiling.
         self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
         self.pointer.settle_t = [now; 2]; // glide → cheap (interacting) render path

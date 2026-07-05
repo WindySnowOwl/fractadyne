@@ -1640,7 +1640,7 @@ impl FractadyneApp {
             // Pin the palette animation OFF: active_stops() returns the *random* palette when this is
             // Random, so leaving it at whatever the loaded session had would make the goldens
             // non-deterministic (random colors) regardless of palette_idx.
-            self.palette_anim = crate::PaletteAnim::Off;
+            self.anim.palette_anim = crate::PaletteAnim::Off;
             self.julia_c = (0.0, 0.0); // unused (julia off) — pinned so nothing leaks from the session
             self.effects.light = false;
             self.effects.de = false;

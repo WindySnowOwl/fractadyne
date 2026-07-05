@@ -1300,6 +1300,34 @@ struct ColoringConfig {
     trap_type: TrapType,
 }
 
+/// Time-varying visual overlays advanced per-frame: the orbit racing-dot (enable / normalize /
+/// speed + live phase & hue), `show_orbits` and the tour-scripted `tour_orbit` that feed the same
+/// overlay, and palette cycling (mode / speed / ping-pong dir) + the `RandomPalette` morphing
+/// generator. Distinct from the static [`ColoringConfig`]. (Phase 2a.)
+struct AnimationState {
+    /// Draw the iteration orbit of the point under the cursor.
+    show_orbits: bool,
+    /// A tour-scripted orbit point (complex) to draw when there's no cursor (during playback);
+    /// `None` = use the cursor. Set each frame by `advance_playback` (transient).
+    tour_orbit: Option<(f64, f64)>,
+    /// Fit the orbit into a fixed inset (good view at any zoom) instead of overlaying it on the
+    /// fractal through the viewport.
+    orbit_normalize: bool,
+    /// Animate a dot racing out along the orbit, with a cycling color.
+    orbit_anim: bool,
+    /// Racing-dot speed (iterates per second along the path).
+    orbit_anim_speed: f32,
+    /// Position along the orbit path (segment units) and the dot's hue (0..1) — transient.
+    orbit_phase: f32,
+    orbit_hue: f32,
+    /// Palette animation mode + speed (offset cycles/sec), and the ping-pong direction.
+    palette_anim: PaletteAnim,
+    palette_anim_speed: f32,
+    anim_dir: f32,
+    /// State for the randomized morphing-gradient palette mode (transient, seeded generator).
+    random_palette: RandomPalette,
+}
+
 struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
@@ -1325,27 +1353,9 @@ struct FractadyneApp {
     home_anim: Option<HomeAnim>,
     /// Auto-zoom autopilot state.
     autopilot: AutopilotState,
-    /// Draw the iteration orbit of the point under the cursor.
-    show_orbits: bool,
-    /// A tour-scripted orbit point (complex) to draw when there's no cursor (during playback);
-    /// `None` = use the cursor. Set each frame by `advance_playback`.
-    tour_orbit: Option<(f64, f64)>,
-    /// Fit the orbit into a fixed inset (good view at any zoom) instead of overlaying
-    /// it on the fractal through the viewport.
-    orbit_normalize: bool,
-    /// Animate a dot racing out along the orbit, with a cycling color.
-    orbit_anim: bool,
-    /// Racing-dot speed (iterates per second along the path).
-    orbit_anim_speed: f32,
-    /// Position along the orbit path (segment units) and the dot's hue (0..1).
-    orbit_phase: f32,
-    orbit_hue: f32,
-    /// Palette animation mode + speed (offset cycles/sec), and the ping-pong direction.
-    palette_anim: PaletteAnim,
-    palette_anim_speed: f32,
-    anim_dir: f32,
-    /// State for the randomized morphing-gradient palette mode.
-    random_palette: RandomPalette,
+    /// Per-frame visual animation: orbit racing-dot, tour-scripted orbit point, palette cycling,
+    /// and the randomized morphing-gradient generator.
+    anim: AnimationState,
     /// Cache for the interactive orbit overlay (avoids recomputing the bignum orbit
     /// every frame when the cursor/view haven't moved).
     orbit_cache: std::cell::RefCell<Option<OrbitCacheEntry>>,
@@ -1639,17 +1649,19 @@ impl FractadyneApp {
                 stepping: false,
                 dive_log2: s.autopilot_dive_log2,
             },
-            show_orbits: s.show_orbits,
-            tour_orbit: None,
-            orbit_normalize: s.orbit_normalize,
-            orbit_anim: s.orbit_anim,
-            orbit_anim_speed: s.orbit_anim_speed,
-            orbit_phase: 0.0,
-            orbit_hue: 0.0,
-            palette_anim: PaletteAnim::from_key(&s.palette_anim),
-            palette_anim_speed: s.palette_anim_speed,
-            anim_dir: 1.0,
-            random_palette: RandomPalette::new(0x9E37_79B9 ^ BUILD_SEQ.len() as u32),
+            anim: AnimationState {
+                show_orbits: s.show_orbits,
+                tour_orbit: None,
+                orbit_normalize: s.orbit_normalize,
+                orbit_anim: s.orbit_anim,
+                orbit_anim_speed: s.orbit_anim_speed,
+                orbit_phase: 0.0,
+                orbit_hue: 0.0,
+                palette_anim: PaletteAnim::from_key(&s.palette_anim),
+                palette_anim_speed: s.palette_anim_speed,
+                anim_dir: 1.0,
+                random_palette: RandomPalette::new(0x9E37_79B9 ^ BUILD_SEQ.len() as u32),
+            },
             orbit_cache: std::cell::RefCell::new(None),
             playback: None,
             bench_report: None,
@@ -1977,8 +1989,8 @@ impl FractadyneApp {
             },
             export_aspect: self.export.aspect.clone(),
             show_location: self.show_location,
-            palette_anim: self.palette_anim.key().to_string(),
-            palette_anim_speed: self.palette_anim_speed,
+            palette_anim: self.anim.palette_anim.key().to_string(),
+            palette_anim_speed: self.anim.palette_anim_speed,
             light: self.effects.light,
             light_angle: self.effects.light_angle,
             light_height: self.effects.light_height,
@@ -2009,10 +2021,10 @@ impl FractadyneApp {
             use_bla: self.render_cfg.use_bla,
             watermark: self.watermark,
             ui_scale: self.ui_scale,
-            show_orbits: self.show_orbits,
-            orbit_normalize: self.orbit_normalize,
-            orbit_anim: self.orbit_anim,
-            orbit_anim_speed: self.orbit_anim_speed,
+            show_orbits: self.anim.show_orbits,
+            orbit_normalize: self.anim.orbit_normalize,
+            orbit_anim: self.anim.orbit_anim,
+            orbit_anim_speed: self.anim.orbit_anim_speed,
         };
         let now = ctx.input(|i| i.time);
         if cur != self.last_state {
@@ -2636,7 +2648,7 @@ impl FractadyneApp {
         }
 
         // Orbit overlay on the hovered panel — or, during a tour, a scripted point on the Mandelbrot.
-        if self.show_orbits {
+        if self.anim.show_orbits {
             if let Some((p, r, is_julia)) = panel {
                 let l = p - r.min;
                 let vp = if is_julia {
@@ -2647,7 +2659,7 @@ impl FractadyneApp {
                 let cpx = (l.x as f64 * ppp, l.y as f64 * ppp);
                 let painter = ui.painter_at(r);
                 self.draw_orbit(&painter, r, vp, cpx, is_julia, ppp);
-            } else if let Some((ox, oy)) = self.tour_orbit {
+            } else if let Some((ox, oy)) = self.anim.tour_orbit {
                 let pr = self.viewport.precision;
                 let cpx = self.viewport.complex_to_pixel(
                     &fractadyne_core::BigFloat::from_f64(ox, pr),
@@ -2791,7 +2803,7 @@ impl FractadyneApp {
         if pts.len() < 2 {
             return;
         }
-        let screen: Vec<egui::Pos2> = if self.orbit_normalize {
+        let screen: Vec<egui::Pos2> = if self.anim.orbit_normalize {
             // Normalized: fit the orbit's bounding box to the whole panel, so it reads
             // well at any zoom (the viewport mapping pushes it off-screen once you're
             // deep, since the orbit spans the whole |z|≲2 region). A faint wash keeps
@@ -2859,14 +2871,14 @@ impl FractadyneApp {
         painter.circle_filled(screen[n - 1], 3.0, egui::Color32::from_rgb(0xFF, 0x50, 0x40)); // last
 
         // A dot racing out along the orbit on a loop, color cycling over time.
-        if self.orbit_anim && n >= 2 {
+        if self.anim.orbit_anim && n >= 2 {
             let segs = (n - 1) as f32;
-            let phase = self.orbit_phase % segs; // 0..segs, restarts at z₀
+            let phase = self.anim.orbit_phase % segs; // 0..segs, restarts at z₀
             let k = phase.floor() as usize;
             let f = phase - k as f32;
             let k2 = (k + 1).min(n - 1);
             let pos = screen[k] + (screen[k2] - screen[k]) * f;
-            let col = egui::Color32::from(egui::ecolor::Hsva::new(self.orbit_hue, 0.85, 1.0, 1.0));
+            let col = egui::Color32::from(egui::ecolor::Hsva::new(self.anim.orbit_hue, 0.85, 1.0, 1.0));
             let [r, g, b, _] = col.to_array();
             painter.circle_filled(pos, 8.0, egui::Color32::from_rgba_unmultiplied(r, g, b, 70));
             painter.circle_filled(pos, 4.0, col);
@@ -3705,8 +3717,8 @@ impl FractadyneApp {
     /// Stops uploaded to the GPU: the morphing random gradient when in Random mode,
     /// otherwise the selected preset.
     fn active_stops(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
-        if self.palette_anim == PaletteAnim::Random {
-            self.random_palette.current()
+        if self.anim.palette_anim == PaletteAnim::Random {
+            self.anim.random_palette.current()
         } else if self.coloring.use_binary {
             // Flat exterior: a single stop of the `hi` color (interior uses `lo`).
             let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
@@ -3768,35 +3780,35 @@ impl FractadyneApp {
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1) as f32;
         // Distance-estimate glow cycling — flows the contour bands (independent of the
         // palette animation; shares the Speed slider). Phase is in cycles, period 1.
-        if self.effects.de && self.effects.de_anim && self.palette_anim_speed > 0.0 {
-            self.effects.de_phase = (self.effects.de_phase + self.palette_anim_speed * dt).rem_euclid(1.0);
+        if self.effects.de && self.effects.de_anim && self.anim.palette_anim_speed > 0.0 {
+            self.effects.de_phase = (self.effects.de_phase + self.anim.palette_anim_speed * dt).rem_euclid(1.0);
             self.schedule_repaint(ctx);
         }
         // Rotate the relief light direction (cheap — it's a color-pass param).
-        if self.effects.light && self.effects.light_anim && self.palette_anim_speed > 0.0 {
+        if self.effects.light && self.effects.light_anim && self.anim.palette_anim_speed > 0.0 {
             self.effects.light_angle = (self.effects.light_angle
-                + self.palette_anim_speed * dt * std::f32::consts::TAU)
+                + self.anim.palette_anim_speed * dt * std::f32::consts::TAU)
                 .rem_euclid(std::f32::consts::TAU);
             self.schedule_repaint(ctx);
         }
-        if self.palette_anim == PaletteAnim::Off || self.palette_anim_speed <= 0.0 {
+        if self.anim.palette_anim == PaletteAnim::Off || self.anim.palette_anim_speed <= 0.0 {
             return;
         }
-        let step = self.palette_anim_speed * dt;
-        match self.palette_anim {
+        let step = self.anim.palette_anim_speed * dt;
+        match self.anim.palette_anim {
             PaletteAnim::Forward => self.coloring.offset = (self.coloring.offset + step).fract(),
             PaletteAnim::Reverse => self.coloring.offset = (self.coloring.offset - step).rem_euclid(1.0),
             PaletteAnim::PingPong => {
-                self.coloring.offset += self.anim_dir * step;
+                self.coloring.offset += self.anim.anim_dir * step;
                 if self.coloring.offset >= 1.0 {
                     self.coloring.offset = 1.0;
-                    self.anim_dir = -1.0;
+                    self.anim.anim_dir = -1.0;
                 } else if self.coloring.offset <= 0.0 {
                     self.coloring.offset = 0.0;
-                    self.anim_dir = 1.0;
+                    self.anim.anim_dir = 1.0;
                 }
             }
-            PaletteAnim::Random => self.random_palette.advance(dt, self.palette_anim_speed),
+            PaletteAnim::Random => self.anim.random_palette.advance(dt, self.anim.palette_anim_speed),
             PaletteAnim::Off => {}
         }
         self.schedule_repaint(ctx);
@@ -3806,12 +3818,12 @@ impl FractadyneApp {
 
     /// Advance the orbit racing-dot animation (position along the path + hue).
     fn advance_orbit_anim(&mut self, ctx: &egui::Context) {
-        if !(self.show_orbits && self.orbit_anim) {
+        if !(self.anim.show_orbits && self.anim.orbit_anim) {
             return;
         }
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1) as f32;
-        self.orbit_phase = (self.orbit_phase + self.orbit_anim_speed * dt) % 1.0e6;
-        self.orbit_hue = (self.orbit_hue + 0.22 * dt).fract(); // ~4.5 s per color cycle
+        self.anim.orbit_phase = (self.anim.orbit_phase + self.anim.orbit_anim_speed * dt) % 1.0e6;
+        self.anim.orbit_hue = (self.anim.orbit_hue + 0.22 * dt).fract(); // ~4.5 s per color cycle
         self.schedule_repaint(ctx);
     }
 
@@ -4830,24 +4842,24 @@ impl FractadyneApp {
                                 fractadyne_core::BigFloat::from_f64(0.0, 64);
                         }
                         ui.checkbox(&mut self.perf.enabled, "Performance panel");
-                        ui.checkbox(&mut self.show_orbits, "Show orbits")
+                        ui.checkbox(&mut self.anim.show_orbits, "Show orbits")
                             .on_hover_text(
                                 "Draw the iteration path of the point under the cursor.",
                             );
-                        ui.add_enabled_ui(self.show_orbits, |ui| {
-                            ui.checkbox(&mut self.orbit_normalize, "    Normalize (fit to view)")
+                        ui.add_enabled_ui(self.anim.show_orbits, |ui| {
+                            ui.checkbox(&mut self.anim.orbit_normalize, "    Normalize (fit to view)")
                                 .on_hover_text(
                                     "Fit the orbit to the whole view so it stays well-framed \
                                      at any zoom (instead of mapped through the viewport, \
                                      where it flies off-screen when deep).",
                                 );
-                            ui.checkbox(&mut self.orbit_anim, "    Animate (racing dot)")
+                            ui.checkbox(&mut self.anim.orbit_anim, "    Animate (racing dot)")
                                 .on_hover_text(
                                     "Send a color-cycling dot racing out along the orbit.",
                                 );
                             ui.add_enabled(
-                                self.orbit_anim,
-                                egui::Slider::new(&mut self.orbit_anim_speed, 1.0..=40.0)
+                                self.anim.orbit_anim,
+                                egui::Slider::new(&mut self.anim.orbit_anim_speed, 1.0..=40.0)
                                     .text("Orbit speed")
                                     .suffix("/s"),
                             );
@@ -5241,15 +5253,15 @@ impl FractadyneApp {
                 ui.add(egui::Slider::new(&mut self.coloring.cycle, 0.0..=1.0).text("Cycle"));
                 ui.add(egui::Slider::new(&mut self.coloring.offset, 0.0..=1.0).text("Offset"));
                 egui::ComboBox::from_label("Animate")
-                    .selected_text(self.palette_anim.name())
+                    .selected_text(self.anim.palette_anim.name())
                     .show_ui(ui, |ui| {
                         for m in PaletteAnim::ALL {
-                            ui.selectable_value(&mut self.palette_anim, m, m.name());
+                            ui.selectable_value(&mut self.anim.palette_anim, m, m.name());
                         }
                     });
                 ui.add_enabled(
-                    self.palette_anim != PaletteAnim::Off,
-                    egui::Slider::new(&mut self.palette_anim_speed, 0.01..=2.0)
+                    self.anim.palette_anim != PaletteAnim::Off,
+                    egui::Slider::new(&mut self.anim.palette_anim_speed, 0.01..=2.0)
                         .text("Speed")
                         .suffix("/s")
                         .logarithmic(true),
@@ -5258,9 +5270,9 @@ impl FractadyneApp {
                     "Cycle speed: color-offset cycles/sec, or (Random) gradient \
                      changes/sec.",
                 );
-                if self.palette_anim == PaletteAnim::Random && ui.button("Shuffle gradient").clicked()
+                if self.anim.palette_anim == PaletteAnim::Random && ui.button("Shuffle gradient").clicked()
                 {
-                    self.random_palette.reshuffle();
+                    self.anim.random_palette.reshuffle();
                 }
                 ui.separator();
                 ui.checkbox(&mut self.effects.light, "3D relief lighting")
@@ -5713,7 +5725,7 @@ impl FractadyneApp {
                 add_mandelbrot(ui.painter(), rect, params);
 
                 // Orbit overlay for the point under the cursor — or, during a tour, a scripted point.
-                if self.show_orbits {
+                if self.anim.show_orbits {
                     let cpx = response
                         .hover_pos()
                         .map(|hp| {
@@ -5721,7 +5733,7 @@ impl FractadyneApp {
                             (l.x as f64 * ppp, l.y as f64 * ppp)
                         })
                         .or_else(|| {
-                            self.tour_orbit.map(|(ox, oy)| {
+                            self.anim.tour_orbit.map(|(ox, oy)| {
                                 let p = self.viewport.precision;
                                 self.viewport.complex_to_pixel(
                                     &fractadyne_core::BigFloat::from_f64(ox, p),
