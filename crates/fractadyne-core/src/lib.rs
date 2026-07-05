@@ -1651,6 +1651,58 @@ pub fn render_multiref_mandel(
 mod tests {
     use super::*;
 
+    // Utility (run: `cargo test -p fractadyne-core dump_deep_boundary_coords -- --ignored
+    // --nocapture`): bisect a deep boundary point for each perturbation family — the deep-golden
+    // coords hard-coded in selftest.rs. A point accurate to ~1e-39 sits on the boundary at every
+    // scale, so one coord serves both the 1e6× and 1e30× goldens. When adding a formula, add a seed
+    // row here and rerun to get its deep coordinate (see the checklist in fractal.rs).
+    #[test]
+    #[ignore]
+    fn dump_deep_boundary_coords() {
+        // (formula, name, exterior-direction from (0,0); scaled out until it escapes)
+        let seeds: &[(u32, &str, f64, f64)] = &[
+            (formula::MANDELBROT, "mandelbrot", -0.75, 0.25),
+            (formula::MULTIBROT3, "multibrot3", 0.3, 1.0),
+            (formula::MULTIBROT4, "multibrot4", 0.3, 1.0),
+            (formula::MULTIBROT5, "multibrot5", 0.3, 1.0),
+            (formula::TRICORN, "tricorn", 0.3, 1.0),
+            (formula::BURNING_SHIP, "burning-ship", -1.0, -0.6),
+            (formula::CELTIC, "celtic", -1.0, 0.3),
+            (formula::BUFFALO, "buffalo", -0.8, -0.6),
+            (formula::PHOENIX, "phoenix", 0.5, 0.8),
+        ];
+        let p = 160usize;
+        let max_iter = 15000u32;
+        let bounded = |f: u32, cx: &BigFloat, cy: &BigFloat| -> bool {
+            let z0 = bf(0.0, p);
+            let (_, len) = reference_orbit(&z0, &z0, cx, cy, f, max_iter, p);
+            len > max_iter
+        };
+        for &(f, name, sx, sy) in seeds {
+            let (mut ax, mut ay) = (bf(0.0, p), bf(0.0, p)); // interior: (0,0) is bounded for all
+            let (mut bx, mut by) = (bf(sx, p), bf(sy, p));
+            let onehalf = bf(1.5, p);
+            let mut guard = 0;
+            while bounded(f, &bx, &by) && guard < 100 {
+                bx = bx.mul(&onehalf, p, RM);
+                by = by.mul(&onehalf, p, RM);
+                guard += 1;
+            }
+            for _ in 0..130 {
+                let mx = lerp_bf(&ax, &bx, 0.5, p);
+                let my = lerp_bf(&ay, &by, 0.5, p);
+                if bounded(f, &mx, &my) {
+                    ax = mx;
+                    ay = my;
+                } else {
+                    bx = mx;
+                    by = my;
+                }
+            }
+            println!("DEEPCOORD {name} {} {}", to_decimal_string(&ax), to_decimal_string(&ay));
+        }
+    }
+
     fn approx(a: f64, b: f64) {
         assert!((a - b).abs() < 1e-9, "{a} !≈ {b}");
     }

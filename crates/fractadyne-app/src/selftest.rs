@@ -1609,6 +1609,17 @@ impl FractadyneApp {
             ("buffalo", FractalKind::Buffalo, "-0.5", "-0.5", 0.7, 800, 0, 0),
             ("phoenix", FractalKind::Phoenix, "0.0", "0.0", 0.7, 800, 0, 0),
             ("newton", FractalKind::Newton, "0.0", "0.0", 0.7, 400, 0, 0),
+            // Deep mode-0 (df32 perturbation, 1e6×) views at a bisected boundary coordinate (see
+            // core's dump_deep_boundary_coords). These exercise the bignum reference orbit (step_bf)
+            // + series approximation + the df32-perturbation shader branch — the deep pipeline the
+            // shallow overviews don't touch. Limited to the polynomial families: the abs families
+            // (Burning Ship / Celtic / Buffalo) show fold glitch-speckle at deep perturbation zoom
+            // (awaiting multi-reference glitch correction), and Tricorn/Phoenix need better deep
+            // coordinates — a clean deep tier for those (and a mode-2 / floatexp tier) is future work.
+            ("mandelbrot-1e6", FractalKind::Mandelbrot, "-7.219621882920463979621343199249635039400777157391994056859e-1", "2.406540627640154659873781066416545013133592385797331352286e-1", 1.0e6, 3000, 0, 0),
+            ("multibrot3-1e6", FractalKind::Multibrot3, "2.19533102209775940218788168856401426185991366731348781648e-1", "7.317770073659198278104833118192370226116695264984596408352e-1", 1.0e6, 3000, 0, 0),
+            ("multibrot4-1e6", FractalKind::Multibrot4, "2.28757960884408080137002307307431367850187620104115769219e-1", "7.625265362813602953424916065993043372187655480595946595141e-1", 1.0e6, 3000, 0, 0),
+            ("multibrot5-1e6", FractalKind::Multibrot5, "2.320768669674853369085651557338865001525750889159483426277e-1", "7.735895565582844849904484291320284693154748744446630197764e-1", 1.0e6, 3000, 0, 0),
         ];
         let (gw, gh) = (320u32, 240u32);
         // (name, max Δ, mean Δ, checksum, pass, reproduce, status). `status` is "" for a normal
