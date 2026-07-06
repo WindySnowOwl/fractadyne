@@ -1049,3 +1049,266 @@ pub fn render_multiref_mandel(
     }
     MultiRefResult { smooth, refs_used, glitched_pass0, unresolved }
 }
+
+// ---------------- aux⇄BLA coexistence: Phase-0 de-risk oracle -----------------------------------
+// Measures the per-pixel error of folding a per-BLA-node reference-orbit aggregate on each skip
+// (vs exact per-iteration accumulation), so we know BEFORE any GPU work whether the aux coloring
+// stats can safely ride BLA/SA iteration-skipping. Trap is the canary: a min over ~the same values,
+// so its error must be tiny; a large trap error means the ORACLE is buggy, not the method.
+#[cfg(test)]
+mod aux_bla_oracle {
+    use super::*;
+
+    const FREQ: f64 = 6.0; // stripe angular frequency
+    const POWER: f64 = 2.0; // Mandelbrot TIA power
+
+    #[inline]
+    fn mag(x: f64, y: f64) -> f64 {
+        (x * x + y * y).sqrt()
+    }
+    #[inline]
+    fn stripe_term(x: f64, y: f64) -> f64 {
+        0.5 + 0.5 * (FREQ * y.atan2(x)).sin()
+    }
+    #[inline]
+    fn tia_term(prev: f64, cur: f64, cmag: f64) -> f64 {
+        let m = prev.max(1e-12).powf(POWER);
+        let lower = (m - cmag).abs();
+        let upper = m + cmag;
+        ((cur - lower) / (upper - lower).max(1e-9)).clamp(0.0, 1.0)
+    }
+    #[inline]
+    fn zval(orbit: &[[f32; 4]], k: u32) -> (f64, f64) {
+        let z = orbit[k as usize];
+        (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64)
+    }
+
+    /// Running aux state mirroring the shader's `aux_step` (point trap, stripe, power-2 TIA).
+    #[derive(Clone, Copy)]
+    struct Aux {
+        trap: f64,
+        ssum: f64,
+        tsum: f64,
+        n: f64,
+        prev_abs: f64,
+    }
+    impl Aux {
+        fn init(z0: (f64, f64)) -> Self {
+            Aux { trap: 1e30, ssum: 0.0, tsum: 0.0, n: 0.0, prev_abs: mag(z0.0, z0.1) }
+        }
+        /// One *actual* post-step iterate z (exact path, and BLA full steps).
+        fn push_exact(&mut self, z: (f64, f64), cmag: f64) {
+            let cur = mag(z.0, z.1);
+            self.trap = self.trap.min(cur);
+            self.ssum += stripe_term(z.0, z.1);
+            if self.n >= 1.0 {
+                self.tsum += tia_term(self.prev_abs, cur, cmag);
+            }
+            self.prev_abs = cur;
+            self.n += 1.0;
+        }
+        /// Fold the reference-orbit aggregate over a BLA-skipped run (m → nm; this covers the
+        /// landing iterates Z_{m+1..=nm}). Models a per-node PRECOMPUTED aggregate: the stat is a
+        /// pure function of the reference orbit, and the TIA chain uses the reference |Z| (its first
+        /// term's `prev` is the reference |Z_m|, the O(|δz|) entry seam). The exit `prev_abs` is
+        /// restored to the *actual* landing |z_nm| (exact seam — the shader has δz there).
+        fn fold_ref_range(&mut self, orbit: &[[f32; 4]], m: u32, nm: u32, cmag: f64, landing_abs: f64) {
+            let z0 = zval(orbit, m);
+            let mut prev = mag(z0.0, z0.1); // reference |Z_m|
+            for k in (m + 1)..=nm {
+                let (zx, zy) = zval(orbit, k);
+                let cur = mag(zx, zy);
+                self.trap = self.trap.min(cur);
+                self.ssum += stripe_term(zx, zy);
+                if self.n >= 1.0 {
+                    self.tsum += tia_term(prev, cur, cmag);
+                }
+                prev = cur;
+                self.n += 1.0;
+            }
+            self.prev_abs = landing_abs;
+        }
+        fn stripe_avg(&self) -> f64 {
+            self.ssum / self.n.max(1.0)
+        }
+        fn tia_avg(&self) -> f64 {
+            self.tsum / (self.n - 1.0).max(1.0)
+        }
+    }
+
+    /// Exact perturbation iteration (no skips), accumulating aux at every step.
+    fn run_exact(
+        orbit: &[[f32; 4]],
+        dc: (f64, f64),
+        bailout2: f64,
+        max_iter: u32,
+        cmag: f64,
+    ) -> (Option<f64>, Aux) {
+        let dc_c = CFloatExp { re: FloatExp::from_f64(dc.0), im: FloatExp::from_f64(dc.1) };
+        let mut dz = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
+        let mut m: u32 = 0;
+        let nstep = orbit.len().saturating_sub(1) as u32;
+        let mut aux = Aux::init(bla_full_z(orbit, 0, &dz));
+        loop {
+            if m >= max_iter || m >= nstep {
+                return (None, aux);
+            }
+            let (zrx, zry) = zval(orbit, m);
+            let two_z = CFloatExp {
+                re: FloatExp::from_f64(2.0 * zrx),
+                im: FloatExp::from_f64(2.0 * zry),
+            };
+            dz = two_z * dz + dz * dz + dc_c;
+            m += 1;
+            let (zx, zy) = bla_full_z(orbit, m, &dz);
+            aux.push_exact((zx, zy), cmag);
+            let mag2 = zx * zx + zy * zy;
+            if mag2 > bailout2 {
+                let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+                return (Some(m as f64 + 1.0 - nu), aux);
+            }
+        }
+    }
+
+    /// BLA-skipping iteration mirroring `bla_iterate`, folding the reference aggregate on skips.
+    /// Returns (escape, aux, skips, full_steps).
+    fn run_folded(
+        orbit: &[[f32; 4]],
+        levels: &[Vec<BlaNode>],
+        dc: (f64, f64),
+        bailout2: f64,
+        max_iter: u32,
+        cmag: f64,
+    ) -> (Option<f64>, Aux, u32, u32) {
+        let dc_c = CFloatExp { re: FloatExp::from_f64(dc.0), im: FloatExp::from_f64(dc.1) };
+        let mut dz = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
+        let mut m: u32 = 0;
+        let nstep = orbit.len().saturating_sub(1) as u32;
+        let mut aux = Aux::init(bla_full_z(orbit, 0, &dz));
+        let (mut skips, mut fulls) = (0u32, 0u32);
+        loop {
+            if m >= max_iter || m >= nstep {
+                return (None, aux, skips, fulls);
+            }
+            let dzmag = dz.abs();
+            let mut applied = false;
+            for l in (0..levels.len()).rev() {
+                let step = 1u32 << l;
+                if (m & (step - 1)) != 0 {
+                    continue;
+                }
+                let Some(&node) = levels[l].get((m >> l) as usize) else { continue };
+                if m + node.span > nstep || !dzmag.lt(node.r) {
+                    continue;
+                }
+                let ndz = node.a * dz + node.b * dc_c;
+                let nm = m + node.span;
+                let (zx, zy) = bla_full_z(orbit, nm, &ndz);
+                if zx * zx + zy * zy > bailout2 {
+                    continue;
+                }
+                aux.fold_ref_range(orbit, m, nm, cmag, mag(zx, zy));
+                dz = ndz;
+                m = nm;
+                applied = true;
+                skips += 1;
+                break;
+            }
+            if applied {
+                continue;
+            }
+            let (zrx, zry) = zval(orbit, m);
+            let two_z = CFloatExp {
+                re: FloatExp::from_f64(2.0 * zrx),
+                im: FloatExp::from_f64(2.0 * zry),
+            };
+            dz = two_z * dz + dz * dz + dc_c;
+            m += 1;
+            fulls += 1;
+            let (zx, zy) = bla_full_z(orbit, m, &dz);
+            aux.push_exact((zx, zy), cmag);
+            let mag2 = zx * zx + zy * zy;
+            if mag2 > bailout2 {
+                let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+                return (Some(m as f64 + 1.0 - nu), aux, skips, fulls);
+            }
+        }
+    }
+
+    /// Sweep one view; print per-method fold error + the view's min |Z| (the stripe stressor).
+    /// Returns the trap max error (the oracle-bug canary) so the caller can assert on it.
+    fn analyze(label: &str, cx_str: &str, cy_str: &str, octaves: u64, dc_ext: f64) -> f64 {
+        let p = crate::precision_for_octaves(octaves);
+        let cx = crate::parse_bf(cx_str).unwrap();
+        let cy = crate::parse_bf(cy_str).unwrap();
+        let z0 = BigFloat::from_f64(0.0, p);
+        let max_iter = 6000u32;
+        let (orbit, len) = reference_orbit(&z0, &z0, &cx, &cy, formula::MANDELBROT, max_iter, p);
+        let cmag = mag(to_f64(&cx), to_f64(&cy));
+        let bailout2 = 1.0e10f64;
+        let dc_max = FloatExp::from_f64(dc_ext * 1.5);
+        let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6);
+
+        // Min |Z| along the reference (how ill-conditioned stripe's arg gets here). Skip Z_0 = 0
+        // (the trivial Mandelbrot critical point) — aux accumulates z_{k≥1}, not z_0.
+        let min_z = orbit
+            .iter()
+            .take(len as usize)
+            .skip(1)
+            .map(|z| mag(z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64))
+            .fold(f64::INFINITY, f64::min);
+
+        let grid = 48u32;
+        let (mut tmax, mut tsum) = (0.0f64, 0.0f64);
+        let (mut smax, mut ssum) = (0.0f64, 0.0f64);
+        let (mut xmax, mut xsum) = (0.0f64, 0.0f64);
+        let (mut cnt, mut esc_mismatch, mut tot_skips, mut tot_full) = (0u32, 0u32, 0u64, 0u64);
+        for i in 0..grid {
+            for j in 0..grid {
+                let dcx = -dc_ext + 2.0 * dc_ext * (i as f64) / ((grid - 1) as f64);
+                let dcy = -dc_ext + 2.0 * dc_ext * (j as f64) / ((grid - 1) as f64);
+                let (ee, ea) = run_exact(&orbit, (dcx, dcy), bailout2, max_iter, cmag);
+                let (fe, fa, sk, fl) = run_folded(&orbit, &levels, (dcx, dcy), bailout2, max_iter, cmag);
+                let (Some(ei), Some(fi)) = (ee, fe) else { continue };
+                cnt += 1;
+                tot_skips += sk as u64;
+                tot_full += fl as u64;
+                if (ei - fi).abs() > 0.5 {
+                    esc_mismatch += 1;
+                }
+                tmax = tmax.max((ea.trap - fa.trap).abs());
+                tsum += (ea.trap - fa.trap).abs();
+                smax = smax.max((ea.stripe_avg() - fa.stripe_avg()).abs());
+                ssum += (ea.stripe_avg() - fa.stripe_avg()).abs();
+                xmax = xmax.max((ea.tia_avg() - fa.tia_avg()).abs());
+                xsum += (ea.tia_avg() - fa.tia_avg()).abs();
+            }
+        }
+        let c = cnt.max(1) as f64;
+        eprintln!("\n=== {label}: ref len {len}, min|Z| {min_z:.3e}, {cnt} escaping px, {esc_mismatch} escape mismatch ===");
+        eprintln!("  BLA: {tot_skips} skips / {tot_full} full steps");
+        eprintln!("  trap   : max {:.3e}  mean {:.3e}", tmax, tsum / c);
+        eprintln!("  stripe : max {:.3e}  mean {:.3e}   (0..1)", smax, ssum / c);
+        eprintln!("  TIA    : max {:.3e}  mean {:.3e}   (0..1)", xmax, xsum / c);
+        assert!(tot_skips > 0, "{label}: BLA never skipped — oracle exercised no folds");
+        tmax
+    }
+
+    #[test]
+    fn aux_bla_fold_error() {
+        // The seahorse valley is a structured boundary point whose orbit spirals near 0 (low |Z|),
+        // so it already exercises stripe's ill-conditioned regime. Two pixel extents (shallower =
+        // larger δc = looser BLA) bracket how the fold error scales with the perturbation size.
+        let mut trap_worst = 0.0f64;
+        let sx = "-0.7436438870371587047521915061147707";
+        let sy = "0.131825904205311970493132056385139";
+        trap_worst = trap_worst.max(analyze("seahorse δc~2e-12", sx, sy, 40, 2.0e-12));
+        trap_worst = trap_worst.max(analyze("seahorse δc~2e-6", sx, sy, 40, 2.0e-6));
+        // Canary across all views: trap's fold is a min over ~identical values → tiny error;
+        // a large value signals an oracle bug (indexing / seam), not a method verdict.
+        assert!(
+            trap_worst < 0.05,
+            "trap fold error {trap_worst:.3e} too large — oracle bug, not a method verdict"
+        );
+    }
+}
