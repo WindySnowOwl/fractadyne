@@ -747,6 +747,17 @@ for fun, informative value, and ease of use.
   ops in `mandelbrot.wgsl` — proportional speedup to every deep frame, best next candidate; (2) GPU
   occupancy (register pressure); (3) iteration cap during motion (trades detail); (4) accept it —
   export (`--render-tour`) already renders full detail per frame. `--refdiag` CLI added as a dev tool.
+  - **Confirmed (2026-07-06): op-level shader micro-opts are noise vs the floatexp iteration.** A perf
+    recon proposed gating the per-iteration aux stats on the selected color method and a 3-mul `c_sqr`.
+    Both landed bit-exact (pixel-verified; goldens 17/17) but measured **perf-neutral** on the RTX 3080:
+    removing *all* of decomposition's per-iteration aux work (atan2+sin+pow) moved 1e30× iterate
+    298.2→297.0 ms, and `c_sqr` is CSE'd by the compiler. So the aux-at-depth cost is **not** the aux
+    transcendentals — it's that stripe/TIA/decomp disable BLA/SA → 25k full floatexp steps (=the 297 ms;
+    trap keeps BLA → 11 ms). The two real levers stand confirmed: (a) **cheaper floatexp arithmetic**
+    (fe_norm frequency / the compensated-multiply chain / a reduced-precision δ), and (b) **aux⇄BLA
+    coexistence** (or a cheaper aux accumulation that doesn't force full iterations). **Next: land GPU
+    timestamp queries** (wgpu `TIMESTAMP_QUERY`, split iterate vs color vs readback) before attempting
+    (a) — op-counting mis-predicted the wins, so the floatexp levers must be measured, not reasoned.
 
 - [x] **FIXED (v0.1.10): fast live dive hung ("Not Responding") crossing into floatexp (~1e28×+).**
   Reproduced 2026-07-03 by auto-playing `tours/deep-spiral-dive.toml` with per-frame stderr timing.
