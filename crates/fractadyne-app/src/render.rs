@@ -652,9 +652,23 @@ impl FractadyneApp {
         // (not the watchdog) absorbs the cost. Settle frames keep the full budget: by then the
         // reference + BLA have landed and the frame is cheap even in floatexp.
         let is_fe = fractal.supports_perturbation() && magnification >= PERT_FE_THRESHOLD;
+        // Deep df32 *perturbation* (1e4× … 1e28×) is as GPU-heavy per moving frame as floatexp, so it
+        // needs the same relief: without it a continuous zoom (esp. zoom-OUT, which gets neither
+        // pan-reprojection nor the floatexp motion-freeze) renders full-budget ~150 ms frames that
+        // pile into the vsync swapchain faster than the GPU drains — the event loop blocks on
+        // present and the app hangs ("Not Responding"). Shrink the *moving* budget so resolution
+        // absorbs the cost; settle frames keep the full `wb*6`, so the final image is unchanged.
+        let is_pert = fractal.supports_perturbation() && magnification >= 1.0e4;
         let wb = self.effective_work_budget();
         let (budget, iter_cap): (u64, u32) = if interacting {
-            (if is_fe { wb / 6 } else { wb }, 500_000)
+            let moving = if is_fe {
+                wb / 6
+            } else if is_pert {
+                wb / 4
+            } else {
+                wb // direct/shallow: already cheap
+            };
+            (moving, 500_000)
         } else {
             (wb.saturating_mul(6), 500_000)
         };

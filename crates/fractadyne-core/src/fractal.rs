@@ -17,7 +17,7 @@
 //! to the bit — `a + a` doubles exactly at any precision (the sum's mantissa is unchanged, only
 //! the exponent bumps), so no rounding is introduced.
 
-use crate::bignum::RM;
+use crate::bignum::{double_bf, RM};
 use crate::formula;
 use astro_float::BigFloat;
 
@@ -31,6 +31,9 @@ pub(crate) trait Field: Clone {
     fn fadd(&self, o: &Self, ctx: Self::Ctx) -> Self;
     fn fsub(&self, o: &Self, ctx: Self::Ctx) -> Self;
     fn fabs(&self) -> Self;
+    /// Exact doubling (`×2`). For `BigFloat` this is an O(1) exponent bump (`double_bf`), not a
+    /// multiply — the whole reason [`csqr`] beats [`cmul`] for a square.
+    fn fdouble(&self) -> Self;
 }
 
 impl Field for f64 {
@@ -50,6 +53,10 @@ impl Field for f64 {
     #[inline]
     fn fabs(&self) -> f64 {
         (*self).abs()
+    }
+    #[inline]
+    fn fdouble(&self) -> f64 {
+        self * 2.0
     }
 }
 
@@ -71,6 +78,10 @@ impl Field for BigFloat {
     fn fabs(&self) -> BigFloat {
         self.abs()
     }
+    #[inline]
+    fn fdouble(&self) -> BigFloat {
+        double_bf(self)
+    }
 }
 
 /// Complex multiply `(ax + i·ay)·(bx + i·by)`, generic over the field. For `BigFloat` this is
@@ -81,6 +92,18 @@ fn cmul<F: Field>(ax: &F, ay: &F, bx: &F, by: &F, ctx: F::Ctx) -> (F, F) {
     let rx = ax.fmul(bx, ctx).fsub(&ay.fmul(by, ctx), ctx);
     let ry = ax.fmul(by, ctx).fadd(&ay.fmul(bx, ctx), ctx);
     (rx, ry)
+}
+
+/// Complex square `(x + i·y)² = (x² − y², 2·x·y)`, generic over the field. Bit-identical to
+/// `cmul(z, z)` — the imaginary part `x·y + y·x` and `double(x·y)` both equal `2·round(x·y)` (a sum
+/// of a value with itself is exact) — but ONE multiply cheaper: it doubles via [`Field::fdouble`]
+/// (an exponent bump for `BigFloat`) instead of a second `y·x` product. This restores the
+/// hand-optimized cost of the pre-trait `step_bf` for every squaring family.
+#[inline]
+fn csqr<F: Field>(x: &F, y: &F, ctx: F::Ctx) -> (F, F) {
+    let re = x.fmul(x, ctx).fsub(&y.fmul(y, ctx), ctx);
+    let im = x.fmul(y, ctx).fdouble();
+    (re, im)
 }
 
 /// One escape-time step `z → f(z) + c`, authored once per family and generic over the number
@@ -101,14 +124,14 @@ struct Buffalo;
 impl Fractal for Mandelbrot {
     #[inline]
     fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
-        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
+        let (sx, sy) = csqr(zx, zy, ctx); // z²
         (sx.fadd(cx, ctx), sy.fadd(cy, ctx))
     }
 }
 impl Fractal for Multibrot3 {
     #[inline]
     fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
-        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
+        let (sx, sy) = csqr(zx, zy, ctx); // z²
         let (rx, ry) = cmul(&sx, &sy, zx, zy, ctx); // z³ = z²·z
         (rx.fadd(cx, ctx), ry.fadd(cy, ctx))
     }
@@ -116,16 +139,16 @@ impl Fractal for Multibrot3 {
 impl Fractal for Multibrot4 {
     #[inline]
     fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
-        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
-        let (rx, ry) = cmul(&sx, &sy, &sx, &sy, ctx); // z⁴ = (z²)²
+        let (sx, sy) = csqr(zx, zy, ctx); // z²
+        let (rx, ry) = csqr(&sx, &sy, ctx); // z⁴ = (z²)²
         (rx.fadd(cx, ctx), ry.fadd(cy, ctx))
     }
 }
 impl Fractal for Multibrot5 {
     #[inline]
     fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
-        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
-        let (qx, qy) = cmul(&sx, &sy, &sx, &sy, ctx); // z⁴
+        let (sx, sy) = csqr(zx, zy, ctx); // z²
+        let (qx, qy) = csqr(&sx, &sy, ctx); // z⁴
         let (rx, ry) = cmul(&qx, &qy, zx, zy, ctx); // z⁵ = z⁴·z
         (rx.fadd(cx, ctx), ry.fadd(cy, ctx))
     }
@@ -135,7 +158,7 @@ impl Fractal for BurningShip {
     fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
         // (|Re z| + i|Im z|)² + c == (Re(z²) + cx, |Im(z²)| + cy): squaring drops the input signs,
         // so only the imaginary part needs the abs (Im(z²) = 2·x·y).
-        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
+        let (sx, sy) = csqr(zx, zy, ctx); // z²
         (sx.fadd(cx, ctx), sy.fabs().fadd(cy, ctx))
     }
 }
@@ -144,7 +167,7 @@ impl Fractal for Tricorn {
     fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
         // conj(z)² + c = (Re(z²) + cx, −Im(z²) + cy). `cy − sy` (not `neg(sy) + cy`) so BigFloat
         // matches the old `cy.sub(&txy)` exactly; in f64 `cy − sy == −sy + cy` (add commutes).
-        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
+        let (sx, sy) = csqr(zx, zy, ctx); // z²
         (sx.fadd(cx, ctx), cy.fsub(&sy, ctx))
     }
 }
@@ -152,7 +175,7 @@ impl Fractal for Celtic {
     #[inline]
     fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
         // |Re(z²)| + cx, Im(z²) + cy — abs on the real part only.
-        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
+        let (sx, sy) = csqr(zx, zy, ctx); // z²
         (sx.fabs().fadd(cx, ctx), sy.fadd(cy, ctx))
     }
 }
@@ -160,7 +183,7 @@ impl Fractal for Buffalo {
     #[inline]
     fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
         // |Re(z²)| + cx, |Im(z²)| + cy — abs on both parts.
-        let (sx, sy) = cmul(zx, zy, zx, zy, ctx); // z²
+        let (sx, sy) = csqr(zx, zy, ctx); // z²
         (sx.fabs().fadd(cx, ctx), sy.fabs().fadd(cy, ctx))
     }
 }

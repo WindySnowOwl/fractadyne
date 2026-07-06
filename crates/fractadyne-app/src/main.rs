@@ -646,6 +646,12 @@ fn main() -> eframe::Result<()> {
 
     let native_options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
+        // Bound frames-in-flight to 1 so a slow deep-zoom frame can't accumulate a growing present
+        // queue — the swapchain backpressure that hung the UI thread on continuous df32 zoom-out.
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            desired_maximum_frame_latency: Some(1),
+            ..Default::default()
+        },
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([640.0, 400.0])
