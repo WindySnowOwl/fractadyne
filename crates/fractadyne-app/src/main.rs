@@ -444,6 +444,24 @@ impl ColorMethod {
             ColorMethod::Stripe | ColorMethod::TriangleIneq | ColorMethod::Decomposition
         )
     }
+
+    /// Methods that CANNOT skip iterations — BLA and series approximation must stay off. Two reasons
+    /// a method blocks skipping: (1) it accumulates a **running per-iteration** statistic (stripe /
+    /// triangle-inequality average, orbit-trap min) that skipped iterations would silently drop; or
+    /// (2) it is a **discontinuous function of the exact final escape point** — decomposition tiles
+    /// the plane into angular cells, so SA/BLA's small trajectory approximation shifts every cell
+    /// edge (measured ~15% of pixels change with SA enabled), so it is NOT skip-safe despite reading
+    /// only the final z. This set adds orbit-trap versus [`Self::needs_aux`] — the deep-zoom bug
+    /// where trap was absent and thus wrongly kept BLA/SA on, silently dropping skipped-run minima.
+    pub(crate) fn blocks_iter_skip(self) -> bool {
+        matches!(
+            self,
+            ColorMethod::Stripe
+                | ColorMethod::TriangleIneq
+                | ColorMethod::OrbitTrap
+                | ColorMethod::Decomposition
+        )
+    }
 }
 
 /// Orbit-trap shape (only meaningful for [`ColorMethod::OrbitTrap`]). Discriminants match the shader.

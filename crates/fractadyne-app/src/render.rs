@@ -249,7 +249,7 @@ impl FractadyneApp {
         let do_sa = (!mode.is_direct())
             && !julia
             && self.fractal.formula_id() <= 3
-            && !self.coloring.color_method.needs_aux()
+            && !self.coloring.color_method.blocks_iter_skip()
             && self.render_cfg.series_approx;
         RecomputeInputs {
             center_bf: [vp.center_x.clone(), vp.center_y.clone()],
@@ -278,7 +278,7 @@ impl FractadyneApp {
             && mode.is_floatexp()
             && !julia
             && self.fractal.formula_id() == 0
-            && !self.coloring.color_method.needs_aux()
+            && !self.coloring.color_method.blocks_iter_skip()
     }
 
     /// Conservative worst-case `|δc|` (absolute, `·2^delta_exp`) for any pixel a reference serves:
@@ -815,7 +815,7 @@ impl FractadyneApp {
             let do_sa = (!mode.is_direct())
                 && !julia
                 && fractal.formula_id() <= 3
-                && !self.coloring.color_method.needs_aux()
+                && !self.coloring.color_method.blocks_iter_skip()
                 && self.render_cfg.series_approx;
             if recompute {
                 // The recompute (reference orbit + SA + BLA, all bignum) is the deep-zoom stall.
