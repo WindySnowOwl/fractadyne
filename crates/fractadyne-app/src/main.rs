@@ -2452,7 +2452,12 @@ impl FractadyneApp {
         } else {
             &mut self.viewport
         };
-        vp.set_size(rect.width() as f64 * ppp, rect.height() as f64 * ppp);
+        let (nw, nh) = (rect.width() as f64 * ppp, rect.height() as f64 * ppp);
+        // A canvas size change (window maximize / restore / edge-drag, or a dual-split drag) counts
+        // as interacting, so the resize renders coarse and settles to full AA once the size holds —
+        // otherwise every resize step re-renders at full 8× AA and the resize stutters.
+        let resized = (nw - vp.width_px).abs() > 0.5 || (nh - vp.height_px).abs() > 0.5;
+        vp.set_size(nw, nh);
         if let Some((bcx, bcy, factor)) = apply_zoom {
             let (w, h) = (vp.width_px, vp.height_px);
             vp.pan_pixels(w * 0.5 - bcx, h * 0.5 - bcy); // box center → screen center
@@ -2475,7 +2480,8 @@ impl FractadyneApp {
         // Drawing a zoom box drags the pointer but does NOT move the view, so it must not
         // count as "active" (that would drop the render back to the coarse moving preview).
         // Only the actual zoom application (apply_zoom) counts.
-        let active = (resp.dragged() && !zoom_boxing)
+        let active = resized
+            || (resp.dragged() && !zoom_boxing)
             || apply_zoom.is_some()
             || (scroll != 0.0 && hovering)
             || (self.pointer.zoom_vel.abs() > 1e-3 && hovering);

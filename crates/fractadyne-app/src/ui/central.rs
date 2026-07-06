@@ -478,9 +478,15 @@ impl FractadyneApp {
                 let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
                 let ppp = ctx.pixels_per_point() as f64;
 
-                // 1 pixel = constant complex units; resizing reveals more/less plane.
-                self.viewport
-                    .set_size(rect.width() as f64 * ppp, rect.height() as f64 * ppp);
+                // 1 pixel = constant complex units; resizing reveals more/less plane. A size change
+                // (window maximize / restore / edge-drag) marks the view interacting so resize frames
+                // render at the coarse moving quality and settle to full AA once the size holds —
+                // otherwise every resize step re-renders at full 8× AA and the resize stutters.
+                let (nw, nh) = (rect.width() as f64 * ppp, rect.height() as f64 * ppp);
+                if (nw - self.viewport.width_px).abs() > 0.5 || (nh - self.viewport.height_px).abs() > 0.5 {
+                    self.pointer.settle_t[0] = ctx.input(|i| i.time);
+                }
+                self.viewport.set_size(nw, nh);
 
                 // Zoom box (Shift+drag): rubber-band a rectangle, then zoom so it fills the
                 // view. Deep-zoom-correct (recenter + scale via the bignum viewport methods).
