@@ -142,6 +142,14 @@ impl FractadyneApp {
             }
         }
 
+        // "Working" spinner in whichever panel's reference orbit is building off-thread (each view
+        // recomputes independently — e.g. hovering the Mandelbrot rebuilds only the Julia's).
+        let now = ctx.input(|i| i.time);
+        let lp = ui.painter_at(left);
+        self.draw_recompute_spinner(ctx, &lp, left, 0, now);
+        let rp = ui.painter_at(right);
+        self.draw_recompute_spinner(ctx, &rp, right, 1, now);
+
         // Draggable panel separator (fills the reserved gap at `mid`; drawn on top).
         let handle = egui::Rect::from_min_max(
             egui::pos2(mid - HANDLE_W * 0.5, full.min.y),
@@ -371,6 +379,71 @@ impl FractadyneApp {
             painter.galley(pos + off, halo.clone(), egui::Color32::PLACEHOLDER);
         }
         painter.galley(pos, mark, egui::Color32::PLACEHOLDER);
+    }
+
+    /// Draw a small amber "working" spinner in the top-left of view `vi`'s `rect` while a discrete
+    /// jump at deep zoom (goto / bookmark / undo / formula switch / dual-Julia hover) holds a
+    /// reprojected placeholder — the v0.1.39 async cold-start window where the off-thread bignum
+    /// reference build is in flight and no usable reference sits behind the frame yet — so the wait
+    /// reads as "computing" rather than hung. `now` is `ctx.input(|i| i.time)`.
+    ///
+    /// Kept quiet outside that window (see the gate below) and debounced by `SHOW_DELAY` so a build
+    /// quick enough to feel instant never flashes it. Top-left is the one free corner (perf overlay
+    /// = top-right, minimap = bottom-left, watermark = bottom-right).
+    pub(crate) fn draw_recompute_spinner(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        vi: usize,
+        now: f64,
+    ) {
+        const SHOW_DELAY: f64 = 0.15; // let builds quick enough to feel instant resolve unmarked
+        // Show ONLY when a reference build is in flight AND there is no usable reference behind the
+        // frame (`ref_pt` None) — i.e. the cold-start / discrete-jump window where the frame is a
+        // held placeholder. Ordinary deep pan/zoom refinement keeps `ref_pt` Some (it refreshes an
+        // existing reference), so this stays quiet while diving. Tours re-invalidate the reference
+        // every keyframe, so suppress there too rather than strobe.
+        let busy = self.recompute_rx[vi].is_some()
+            && self.ref_cache[vi].ref_pt.is_none()
+            && self.playback.is_none();
+        if busy {
+            // A real gap since the last in-flight frame re-arms the delay, so each fresh build must
+            // again outlast it (a quick one never shows); consecutive frames of one build do not.
+            if now - self.pointer.spin_last[vi] > 0.05 {
+                self.pointer.spin_since[vi] = now;
+            }
+            self.pointer.spin_last[vi] = now;
+        }
+        // Drawn only once a build has held the placeholder past the delay; clears the instant the
+        // reference lands (`busy` false) so the spinner never lingers over the finished frame.
+        if !busy || now - self.pointer.spin_since[vi] < SHOW_DELAY {
+            return;
+        }
+        // The event loop already repaints continuously while a recompute is in flight (main.rs), so
+        // the arc animates; request one anyway to keep this self-contained.
+        ctx.request_repaint();
+
+        // Rotating arc, tail faded so the spin direction reads, over a soft dark disc so it stays
+        // legible on any fractal content (bright or dark).
+        let c = egui::pos2(rect.left() + 24.0, rect.top() + 24.0);
+        let r = 9.0_f32;
+        painter.circle_filled(c, r + 5.0, egui::Color32::from_black_alpha(70));
+        let n = 18;
+        let span = std::f32::consts::TAU * 0.78; // ~280° open arc
+        let head = now as f32 * 4.2; // rotation rate (rad/s)
+        let at = |a: f32| egui::pos2(c.x + r * a.cos(), c.y + r * a.sin());
+        for i in 0..n {
+            let t = i as f32 / n as f32;
+            let alpha = (40.0 + 205.0 * t) as u8; // faint tail → bright head
+            painter.line_segment(
+                [at(head + span * t), at(head + span * (i + 1) as f32 / n as f32)],
+                egui::Stroke::new(
+                    2.4,
+                    egui::Color32::from_rgba_unmultiplied(0xE0, 0xA0, 0x30, alpha),
+                ),
+            );
+        }
     }
 
     pub(crate) fn draw_minimap(&mut self, ctx: &egui::Context) {
@@ -738,6 +811,11 @@ impl FractadyneApp {
                         }
                     }
                 }
+
+                // "Working" spinner while this view's reference orbit builds off-thread (async
+                // cold-start / deep refresh) — the frame is a held placeholder until it lands.
+                let sp = ui.painter_at(rect);
+                self.draw_recompute_spinner(ctx, &sp, rect, 0, now);
             });
 
         // ---- brand watermark (lower-right of the fractal area) ----

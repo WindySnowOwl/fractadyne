@@ -1300,6 +1300,12 @@ struct PointerState {
     /// Progressive-AA settle stage, per view. On settle the anti-aliasing ramps 1×→2×→4×→… up to the
     /// chosen level over consecutive frames (each schedules the next); reset to 0 while interacting.
     settle_frame: [u32; 2],
+    /// Per-view cold-start spinner debounce (see `draw_recompute_spinner`). `spin_since` = app-time
+    /// the current contiguous placeholder-build streak began; `spin_last` = the last frame that view
+    /// had such a build in flight (a >50 ms gap re-arms the streak). Together they impose a show-delay
+    /// so a build too quick to notice never flashes the spinner. Not persisted; `[0.0; 2]` = idle.
+    spin_since: [f64; 2],
+    spin_last: [f64; 2],
 }
 
 /// How the fractal is *computed* (not colored): iteration budget + auto-scale, the perturbation
