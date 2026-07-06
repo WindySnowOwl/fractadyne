@@ -874,10 +874,18 @@ impl FractadyneApp {
                 let spawn_ok = self.ref_cache[vi]
                     .last_recompute
                     .is_none_or(|t| t.elapsed().as_millis() >= 16);
-                if self.ref_cache[vi].ref_pt.is_none() {
-                    let res = recompute_worker(inputs); // cold start: nothing to draw with yet
-                    self.install_recompute(vi, res);
-                } else if self.recompute_rx[vi].is_none() && spawn_ok {
+                // A cold start (no reference yet) bypasses the anti-churn throttle so it spawns at
+                // once — otherwise a jump landing within 16 ms of the last recompute could leave the
+                // view with no reference AND no in-flight job, and if nothing requests a repaint it
+                // would sit stuck. (The `recompute_rx.is_none()` guard still prevents a spawn storm.)
+                let cold = self.ref_cache[vi].ref_pt.is_none();
+                if self.recompute_rx[vi].is_none() && (spawn_ok || cold) {
+                    // Off-thread even for the COLD START (ref_pt is None). It used to run INLINE here,
+                    // which froze the UI ("Not Responding") for the full bignum build on every discrete
+                    // jump — goto, bookmark load, undo/redo, formula switch, and every deep dual-Julia
+                    // hover frame. Now the frame below freezes the last good frame (or blanks a truly
+                    // fresh view) via reprojection until the job lands, and the event loop keeps
+                    // repainting while `recompute_rx[vi]` is in flight — so the window stays responsive.
                     let (tx, rx) = std::sync::mpsc::channel();
                     // Fire-and-forget worker. `let _ = tx.send` deliberately discards the send:
                     // if the receiver was dropped (view/formula change → `drop_ref_caches`) the
@@ -927,7 +935,11 @@ impl FractadyneApp {
             //   uv_scale = span_now/span_frozen = 2^(l2_frozen − l2_now)   (≤ 1 as we dive in)
             //   uv_off   = −pan_current · uv_scale,  pan_current = (center_now − center_frozen)/span
             // (y flips: complex-y is up, screen-uv-y is down.)
-            if too_stale && self.ref_cache[vi].ref_pt.is_some() {
+            // Freeze (reproject the last good frame) when the cached reference is too stale to paint,
+            // OR when there is NO reference yet (cold start now runs off-thread — hold instead of
+            // iterating with no orbit). A fresh view with nothing rendered falls to the static hold /
+            // blank below.
+            if too_stale || self.ref_cache[vi].ref_pt.is_none() {
                 match self.ref_cache[vi].frozen_center.clone() {
                     Some(fc) => {
                         let scale = ((self.ref_cache[vi].frozen_l2 - log2mag) as f32)
@@ -949,12 +961,14 @@ impl FractadyneApp {
                 self.ref_cache[vi].frozen_center = Some(center_bf.clone());
                 self.ref_cache[vi].frozen_l2 = log2mag;
             }
-            let rp = self.ref_cache[vi].ref_pt.as_ref().unwrap();
-            // δ = center − reference, carried as a mantissa scaled by 2^-delta_exp
-            // (so it stays O(1) in df32 at any depth; the GPU re-applies the exponent).
-            let dx = fractadyne_core::ref_offset_mantissa(&center_bf[0], &rp[0], delta_exp, precision);
-            let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &rp[1], delta_exp, precision);
-            ref_offset = RefOffset::from_df32(dx, dy);
+            // δ = center − reference, carried as a mantissa scaled by 2^-delta_exp (O(1) in df32 at
+            // any depth; the GPU re-applies the exponent). Skipped during a cold-start hold — no
+            // reference yet, so this frame is a reprojection freeze and ref_offset stays ZERO/unused.
+            if let Some(rp) = self.ref_cache[vi].ref_pt.as_ref() {
+                let dx = fractadyne_core::ref_offset_mantissa(&center_bf[0], &rp[0], delta_exp, precision);
+                let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &rp[1], delta_exp, precision);
+                ref_offset = RefOffset::from_df32(dx, dy);
+            }
             // Series approximation travels with the reference (computed off-thread); read it back.
             if do_sa {
                 sa = self.ref_cache[vi].sa;
