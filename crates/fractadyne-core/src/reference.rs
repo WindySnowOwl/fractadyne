@@ -520,7 +520,14 @@ pub fn bla_to_gpu(levels: &[Vec<BlaNode>]) -> Vec<[f32; 4]> {
             out.push(am);
             out.push(bm);
             out.push([ae as f32, be as f32, re as f32, rm]);
-            out.push([node.span as f32, 0.0, 0.0, 0.0]);
+            // 4th vec4: span + the aux coloring aggregates (was 3 unused lanes) — folded on a skip
+            // so stripe/TIA/trap can coexist with BLA iteration-skipping (agg over Z_{start+1..span}).
+            out.push([
+                node.span as f32,
+                node.agg_trap as f32,
+                node.agg_tia as f32,
+                node.agg_stripe as f32,
+            ]);
         }
     }
     out

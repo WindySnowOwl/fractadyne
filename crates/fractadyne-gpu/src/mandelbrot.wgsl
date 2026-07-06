@@ -746,6 +746,17 @@ fn fs_iterate(in: VsOut) -> FragOut {
                     ref_n = nref;
                     iter = iter + span;
                     zf = vec2<f32>(zx, zy);
+                    // Fold this node's precomputed aux aggregate over the `span` skipped iterates, so
+                    // stripe/TIA/trap coloring stays correct across the skip instead of dropping the
+                    // skipped run. `zf` is the actual landing value → prev_abs restores exactly.
+                    if (iu.aux_on == 1u) {
+                        let agg = reference[node + 3u]; // [span, trap_min, ΣTIA, Σstripe]
+                        aux.trap = min(aux.trap, agg.y);
+                        aux.tia_sum = aux.tia_sum + agg.z;
+                        aux.sac_sum = aux.sac_sum + agg.w;
+                        aux.n = aux.n + f32(span);
+                        aux.prev_abs = length(zf);
+                    }
                     applied = true;
                     break;
                 }
