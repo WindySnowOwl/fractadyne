@@ -437,7 +437,7 @@ mod tests {
         assert!(len >= target, "reference escaped early (len={len})");
         let dc = (1.0e-9_f64, 0.0_f64); // worst-case corner δc
         let dc_max = FloatExp::from_f64((dc.0 * dc.0 + dc.1 * dc.1).sqrt());
-        let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6);
+        let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6, AuxAggParams::default());
         assert!(!levels.is_empty());
 
         // BLA traversal: skip with the highest valid level, else a full perturbation step.
@@ -532,7 +532,7 @@ mod tests {
         };
 
         let check = |dc_max: f64, dcs: &[(f64, f64)]| {
-            let levels = build_bla_mandel(&orbit, FloatExp::from_f64(dc_max), 1.0e-6);
+            let levels = build_bla_mandel(&orbit, FloatExp::from_f64(dc_max), 1.0e-6, AuxAggParams::default());
             for &dc in dcs {
                 let b = bla_iterate(&orbit, &levels, dc, bail2, max_iter);
                 let n = naive(dc);

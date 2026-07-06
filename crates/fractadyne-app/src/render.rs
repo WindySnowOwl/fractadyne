@@ -93,7 +93,8 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     let t_bla = Instant::now();
     let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
         Some(dc_max) => {
-            let levels = fc::build_bla_mandel(&orbit, dc_max, BLA_EPS);
+            // Aux aggregates default to inert here (not yet folded on the GPU — Phase 2).
+            let levels = fc::build_bla_mandel(&orbit, dc_max, BLA_EPS, fc::AuxAggParams::default());
             let arc = if levels.is_empty() {
                 std::sync::Arc::new(Vec::new())
             } else {
@@ -300,7 +301,12 @@ impl FractadyneApp {
         orbit: &[[f32; 4]],
         dc_max: fractadyne_core::FloatExp,
     ) -> Option<std::sync::Arc<Vec<[f32; 4]>>> {
-        let levels = fractadyne_core::build_bla_mandel(orbit, dc_max, BLA_EPS);
+        let levels = fractadyne_core::build_bla_mandel(
+            orbit,
+            dc_max,
+            BLA_EPS,
+            fractadyne_core::AuxAggParams::default(),
+        );
         if levels.is_empty() {
             return None;
         }

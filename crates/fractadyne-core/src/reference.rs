@@ -368,12 +368,56 @@ pub fn series_skip(
 
 /// One BLA node: the linear map `δz' = A·δz + B·δc`, valid while `|δz| ≤ r`, covering `span`
 /// consecutive reference iterations starting at this node's (aligned) index.
+///
+/// The `agg_*` fields are the per-node **aux coloring aggregates** over the node's landing iterates
+/// `Z_{start+1..=start+span}` (a pure function of the reference orbit, since `z_k ≈ Z_k` while the
+/// skip is valid): the min trap distance, the Σ triangle-inequality terms, and the Σ stripe terms.
+/// A pixel folds these into its running aux stat in O(1) on a skip (aux⇄BLA coexistence) instead of
+/// dropping the skipped iterations. They compose associatively in [`bla_merge`] (min / sum).
 #[derive(Clone, Copy)]
 pub struct BlaNode {
     pub a: CFloatExp,
     pub b: CFloatExp,
     pub r: FloatExp,
     pub span: u32,
+    pub agg_trap: f64,
+    pub agg_tia: f64,
+    pub agg_stripe: f64,
+}
+
+/// Coloring parameters the per-node aux aggregates depend on. Only the `agg_*` lanes depend on
+/// these (not the A/B/r geometry), so they can be recomputed cheaply when coloring changes while
+/// the tree geometry stays cached. `Default` yields inert values for callers that don't fold aux.
+#[derive(Clone, Copy)]
+pub struct AuxAggParams {
+    pub trap_type: u32, // 0 = point |z|, 1 = cross min(|x|,|y|), 2 = circle ||z|−1|
+    pub stripe_freq: f64,
+    pub cmag: f64, // |c| of the reference (triangle-inequality)
+    pub power: f64, // formula degree (triangle-inequality)
+}
+impl Default for AuxAggParams {
+    fn default() -> Self {
+        AuxAggParams { trap_type: 0, stripe_freq: 1.0, cmag: 0.0, power: 2.0 }
+    }
+}
+
+// Per-iterate aux stat contributions, mirroring the GPU `aux_step` (used to seed the BLA
+// aggregates; the shader folds the same quantities on a skip).
+pub(crate) fn aux_trap_dist(zx: f64, zy: f64, trap_type: u32) -> f64 {
+    match trap_type {
+        1 => zx.abs().min(zy.abs()),
+        2 => ((zx * zx + zy * zy).sqrt() - 1.0).abs(),
+        _ => (zx * zx + zy * zy).sqrt(),
+    }
+}
+pub(crate) fn aux_stripe_term(zx: f64, zy: f64, freq: f64) -> f64 {
+    0.5 + 0.5 * (freq * zy.atan2(zx)).sin()
+}
+pub(crate) fn aux_tia_term(prev_abs: f64, cur_abs: f64, cmag: f64, power: f64) -> f64 {
+    let m = prev_abs.max(1e-12).powf(power);
+    let lower = (m - cmag).abs();
+    let upper = m + cmag;
+    ((cur_abs - lower) / (upper - lower).max(1e-9)).clamp(0.0, 1.0)
 }
 
 /// Merge two consecutive BLA nodes (`x` then `y`). Composition `A=A_y·A_x`, `B=A_y·B_x+B_y`;
@@ -387,7 +431,18 @@ fn bla_merge(x: BlaNode, y: BlaNode, dc_max: FloatExp) -> BlaNode {
     let t = if t.m < 0.0 { FloatExp::ZERO } else { t };
     let r2 = if a1.m == 0.0 { FloatExp::ZERO } else { t * a1.recip() };
     let r = if x.r.lt(r2) { x.r } else { r2 };
-    BlaNode { a, b, r, span: x.span + y.span }
+    BlaNode {
+        a,
+        b,
+        r,
+        span: x.span + y.span,
+        // Aux aggregates compose associatively: trap is a running min, TIA/stripe running sums.
+        // `x` covers the earlier range, so its TIA carries the correct entry `prev` (|Z| at the
+        // merged node's start); simple addition preserves the whole chain across the join.
+        agg_trap: x.agg_trap.min(y.agg_trap),
+        agg_tia: x.agg_tia + y.agg_tia,
+        agg_stripe: x.agg_stripe + y.agg_stripe,
+    }
 }
 
 /// Build the BLA binary tree for a **Mandelbrot** reference `orbit` (df32 `[x_hi,y_hi,x_lo,
@@ -395,19 +450,42 @@ fn bla_merge(x: BlaNode, y: BlaNode, dc_max: FloatExp) -> BlaNode {
 /// tolerance (smaller ⇒ more accurate but fewer skips). `levels[l][j]` covers the steps
 /// starting at `j·2^l`; level 0 has one node per step `n` (using `Zₙ`), higher levels merge
 /// pairs (an odd tail carries up with its smaller span).
-pub fn build_bla_mandel(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64) -> Vec<Vec<BlaNode>> {
+pub fn build_bla_mandel(
+    orbit: &[[f32; 4]],
+    dc_max: FloatExp,
+    eps: f64,
+    aux: AuxAggParams,
+) -> Vec<Vec<BlaNode>> {
     let nstep = orbit.len().saturating_sub(1);
     if nstep == 0 {
         return Vec::new();
     }
     let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
     let mut lvl0 = Vec::with_capacity(nstep);
-    for z in orbit.iter().take(nstep) {
-        let zr = z[0] as f64 + z[2] as f64; // df32 → f64 (Z real)
-        let zi = z[1] as f64 + z[3] as f64; // Z imag
+    for n in 0..nstep {
+        let z = orbit[n];
+        let zr = z[0] as f64 + z[2] as f64; // Z_n real
+        let zi = z[1] as f64 + z[3] as f64; // Z_n imag
         let a = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
         let r = a.abs().mul_f64(eps); // |2Z|·eps : drops δz² with rel error ≤ eps
-        lvl0.push(BlaNode { a, b: one, r, span: 1 });
+        // Aux aggregate for this node's single landing iterate Z_{n+1} (the shader accumulates the
+        // POST-step value). TIA's `prev` is |Z_n|; node 0 lands on the global first iterate z_1,
+        // whose TIA is skipped by the `n>=1` guard, so its TIA seed is 0.
+        let z1 = orbit[n + 1];
+        let (z1r, z1i) = (z1[0] as f64 + z1[2] as f64, z1[1] as f64 + z1[3] as f64);
+        let agg_trap = aux_trap_dist(z1r, z1i, aux.trap_type);
+        let agg_stripe = aux_stripe_term(z1r, z1i, aux.stripe_freq);
+        let agg_tia = if n == 0 {
+            0.0
+        } else {
+            aux_tia_term(
+                (zr * zr + zi * zi).sqrt(),
+                (z1r * z1r + z1i * z1i).sqrt(),
+                aux.cmag,
+                aux.power,
+            )
+        };
+        lvl0.push(BlaNode { a, b: one, r, span: 1, agg_trap, agg_tia, agg_stripe });
     }
     let mut levels = vec![lvl0];
     while levels.last().unwrap().len() > 1 {
@@ -1083,6 +1161,23 @@ mod aux_bla_oracle {
         (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64)
     }
 
+    /// Brute-force a node's aggregate over its landing range Z_{start+1..=start+span} — the ground
+    /// truth the precomputed `BlaNode.agg_*` (seeded + merged in `build_bla_mandel`) must match. The
+    /// `k >= 2` guard mirrors the global TIA `n>=1` skip of the very first landing iterate z_1.
+    fn brute_node_agg(orbit: &[[f32; 4]], start: u32, span: u32, cmag: f64) -> (f64, f64, f64) {
+        let (mut trap, mut ss, mut ts) = (1e30f64, 0.0f64, 0.0f64);
+        for k in (start + 1)..=(start + span) {
+            let (zx, zy) = zval(orbit, k);
+            trap = trap.min(mag(zx, zy)); // point trap
+            ss += stripe_term(zx, zy);
+            if k >= 2 {
+                let (px, py) = zval(orbit, k - 1);
+                ts += tia_term(mag(px, py), mag(zx, zy), cmag);
+            }
+        }
+        (trap, ts, ss)
+    }
+
     /// Running aux state mirroring the shader's `aux_step` (point trap, stripe, power-2 TIA).
     #[derive(Clone, Copy)]
     struct Aux {
@@ -1107,25 +1202,15 @@ mod aux_bla_oracle {
             self.prev_abs = cur;
             self.n += 1.0;
         }
-        /// Fold the reference-orbit aggregate over a BLA-skipped run (m → nm; this covers the
-        /// landing iterates Z_{m+1..=nm}). Models a per-node PRECOMPUTED aggregate: the stat is a
-        /// pure function of the reference orbit, and the TIA chain uses the reference |Z| (its first
-        /// term's `prev` is the reference |Z_m|, the O(|δz|) entry seam). The exit `prev_abs` is
-        /// restored to the *actual* landing |z_nm| (exact seam — the shader has δz there).
-        fn fold_ref_range(&mut self, orbit: &[[f32; 4]], m: u32, nm: u32, cmag: f64, landing_abs: f64) {
-            let z0 = zval(orbit, m);
-            let mut prev = mag(z0.0, z0.1); // reference |Z_m|
-            for k in (m + 1)..=nm {
-                let (zx, zy) = zval(orbit, k);
-                let cur = mag(zx, zy);
-                self.trap = self.trap.min(cur);
-                self.ssum += stripe_term(zx, zy);
-                if self.n >= 1.0 {
-                    self.tsum += tia_term(prev, cur, cmag);
-                }
-                prev = cur;
-                self.n += 1.0;
-            }
+        /// Fold a precomputed per-node aggregate on a skip (m → nm) — the actual GPU behavior: add
+        /// the node's Σ/min, advance the count by its span, and restore the exit `prev_abs` to the
+        /// *actual* landing |z_nm| (exact seam, since the shader carries δz there). The TIA entry
+        /// seam (reference |Z_m| as the first `prev`) is already baked into `node.agg_tia`.
+        fn fold_node(&mut self, node: &BlaNode, landing_abs: f64) {
+            self.trap = self.trap.min(node.agg_trap);
+            self.ssum += node.agg_stripe;
+            self.tsum += node.agg_tia;
+            self.n += node.span as f64;
             self.prev_abs = landing_abs;
         }
         fn stripe_avg(&self) -> f64 {
@@ -1207,7 +1292,7 @@ mod aux_bla_oracle {
                 if zx * zx + zy * zy > bailout2 {
                     continue;
                 }
-                aux.fold_ref_range(orbit, m, nm, cmag, mag(zx, zy));
+                aux.fold_node(&node, mag(zx, zy));
                 dz = ndz;
                 m = nm;
                 applied = true;
@@ -1247,7 +1332,21 @@ mod aux_bla_oracle {
         let cmag = mag(to_f64(&cx), to_f64(&cy));
         let bailout2 = 1.0e10f64;
         let dc_max = FloatExp::from_f64(dc_ext * 1.5);
-        let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6);
+        let aux_p = AuxAggParams { trap_type: 0, stripe_freq: FREQ, cmag, power: POWER };
+        let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_p);
+
+        // Phase-1 precompute check: every node's seeded+merged aggregate must equal a brute-force
+        // over its landing range (catches a wrong seed index, a broken merge, or a mis-placed guard).
+        for (l, level) in levels.iter().enumerate() {
+            for (j, node) in level.iter().enumerate() {
+                let start = (j as u32) << l;
+                let (bt, bx, bs) = brute_node_agg(&orbit, start, node.span, cmag);
+                let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(1.0) + 1e-12;
+                assert!(close(bt, node.agg_trap), "{label}: l{l} j{j} trap {bt} vs {}", node.agg_trap);
+                assert!(close(bx, node.agg_tia), "{label}: l{l} j{j} tia {bx} vs {}", node.agg_tia);
+                assert!(close(bs, node.agg_stripe), "{label}: l{l} j{j} stripe {bs} vs {}", node.agg_stripe);
+            }
+        }
 
         // Min |Z| along the reference (how ill-conditioned stripe's arg gets here). Skip Z_0 = 0
         // (the trivial Mandelbrot critical point) — aux accumulates z_{k≥1}, not z_0.
