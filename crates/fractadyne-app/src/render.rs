@@ -275,11 +275,19 @@ impl FractadyneApp {
     /// the view span — both scaled by `2^delta_exp` — used for the worst-case `|δc|`.
     /// Whether BLA applies to this render (deep floatexp Mandelbrot, non-Julia, non-aux coloring).
     fn bla_eligible(&self, mode: RenderMode, julia: bool) -> bool {
+        // Aux coloring blocks iteration-skipping — EXCEPT point orbit-trap, whose per-node aggregate
+        // (the default min-|z| packing) is folded on each BLA skip (GPU-validated: the fold render
+        // matches the full render), so it rides BLA at full speed instead of paying full floatexp
+        // iterations. Cross/circle trap need their own aggregate; stripe/TIA also need the SA-prefix
+        // fold — those stay gated (exact) until wired.
+        let method = self.coloring.color_method;
+        let trap_point =
+            method.to_u32() == 3 && (self.coloring.trap_type as u32) == 0; // OrbitTrap + Point
         self.render_cfg.use_bla
             && mode.is_floatexp()
             && !julia
             && self.fractal.formula_id() == 0
-            && !self.coloring.color_method.blocks_iter_skip()
+            && (!method.blocks_iter_skip() || trap_point)
     }
 
     /// Conservative worst-case `|δc|` (absolute, `·2^delta_exp`) for any pixel a reference serves:
