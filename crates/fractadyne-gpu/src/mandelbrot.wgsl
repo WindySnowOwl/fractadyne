@@ -124,7 +124,12 @@ fn c_mul(a: Cdf, b: Cdf) -> Cdf {
     );
 }
 fn c_sqr(a: Cdf) -> Cdf {
-    return c_mul(a, a);
+    // z² in 3 df32 multiplies instead of c_mul(a,a)'s 4: re·im and im·re are the *same* product
+    // (df_mul commutes bit-for-bit — IEEE mul/fma/add all commute), so the imaginary part is
+    // df_add(ri, ri) with ri computed once. Bit-identical to c_mul(a, a); shaves one multiply off
+    // every Mandelbrot iteration, each Multibrot power, and (via fe_sqr) the whole floatexp loop.
+    let ri = df_mul(a.re, a.im);
+    return cset(df_sub(df_mul(a.re, a.re), df_mul(a.im, a.im)), df_add(ri, ri));
 }
 fn c_scale(a: Cdf, s: f32) -> Cdf {
     return cset(df_mul_f32(a.re, s), df_mul_f32(a.im, s));
@@ -421,30 +426,41 @@ fn aux_init(z0: vec2<f32>) -> Aux {
     a.n = 0.0; a.prev_abs = length(z0); a.trap = 1.0e30;
     return a;
 }
-// Fold one orbit point z into the running statistics.
+// Fold one orbit point z into the running statistics — but only the sub-statistic the *selected*
+// color method actually samples (stripe→aux.x, TIA→aux.y, trap→aux.z; decomposition uses only the
+// final angle in aux_pack, so it accumulates nothing). The un-gated version computed all three every
+// iteration — atan2+sin AND pow AND a trap distance — even though a frame reads exactly one; the two
+// dead ones cost ~10-17× at depth (e.g. stripe at 1e30× carried a pointless per-iteration `pow`).
+// Each branch preserves its own method's exact accumulation order, so per-method output is bit-identical.
 fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
-    let cur_abs = length(zf);
-    // Orbit trap: nearest approach to a shape (point / axes-cross / unit circle).
-    var d: f32;
-    if (iu.trap_type == 1u) { d = min(abs(zf.x), abs(zf.y)); }
-    else if (iu.trap_type == 2u) { d = abs(cur_abs - 1.0); }
-    else { d = cur_abs; }
-    (*a).trap = min((*a).trap, d);
-    // Stripe average: smooth orbit average of a sinusoid of the argument.
-    let term = 0.5 + 0.5 * sin(iu.stripe_freq * atan2(zf.y, zf.x));
-    (*a).sac_prev = (*a).sac_sum;
-    (*a).sac_sum = (*a).sac_sum + term;
-    // Triangle-inequality average: where |z_{n+1}| sits between ||z_n|^p − |c|| and
-    // |z_n|^p + |c|. Needs a valid previous |z|.
-    if ((*a).n >= 1.0) {
-        let m = pow(max((*a).prev_abs, 1.0e-12), power_f);
-        let lower = abs(m - cmag);
-        let upper = m + cmag;
-        let tt = clamp((cur_abs - lower) / max(upper - lower, 1.0e-9), 0.0, 1.0);
-        (*a).tia_prev = (*a).tia_sum;
-        (*a).tia_sum = (*a).tia_sum + tt;
+    let method = iu.color_method;
+    if (method == 3u) {
+        // Orbit trap: nearest approach to a shape (point / axes-cross / unit circle).
+        var d: f32;
+        if (iu.trap_type == 1u) { d = min(abs(zf.x), abs(zf.y)); }
+        else if (iu.trap_type == 2u) { d = abs(length(zf) - 1.0); }
+        else { d = length(zf); }
+        (*a).trap = min((*a).trap, d);
+    } else if (method == 1u) {
+        // Stripe average: smooth orbit average of a sinusoid of the argument.
+        let term = 0.5 + 0.5 * sin(iu.stripe_freq * atan2(zf.y, zf.x));
+        (*a).sac_prev = (*a).sac_sum;
+        (*a).sac_sum = (*a).sac_sum + term;
+    } else if (method == 2u) {
+        // Triangle-inequality average: where |z_{n+1}| sits between ||z_n|^p − |c|| and
+        // |z_n|^p + |c|. Needs a valid previous |z|.
+        let cur_abs = length(zf);
+        if ((*a).n >= 1.0) {
+            let m = pow(max((*a).prev_abs, 1.0e-12), power_f);
+            let lower = abs(m - cmag);
+            let upper = m + cmag;
+            let tt = clamp((cur_abs - lower) / max(upper - lower, 1.0e-9), 0.0, 1.0);
+            (*a).tia_prev = (*a).tia_sum;
+            (*a).tia_sum = (*a).tia_sum + tt;
+        }
+        (*a).prev_abs = cur_abs;
     }
-    (*a).prev_abs = cur_abs;
+    // method == 5u (decomposition): nothing to accumulate — aux_pack reads only the final angle.
     (*a).n = (*a).n + 1.0;
 }
 // Pack the accumulated statistics into the aux target. `frac` is the fractional part
