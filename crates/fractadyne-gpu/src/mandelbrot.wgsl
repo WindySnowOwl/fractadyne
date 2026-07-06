@@ -1097,6 +1097,8 @@ struct ColorU {
     _pad_vig: f32,
     interior_col: vec4<f32>, // color for in-set (non-escaping) pixels; rgb in xyz
     stops: array<vec4<f32>, 8>, // rgb + position
+    out_res: vec2<f32>, // output rect size (px); with reproject, aspect-fits a frozen (old-size) frame
+    _pad_out: vec2<f32>,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -1170,9 +1172,15 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     // view settles and re-iterates.
     var suv = in.uv;
     if (cu.reproject == 1u) {
-        // Scale about the centre then translate: follows both the zoom and pan since the frozen
+        // Aspect-fit first: display the frozen (possibly old-size) iteration texture at NATIVE
+        // scale, centred in the output rect, so a resize to a new aspect ratio doesn't stretch it —
+        // the center stays centred and the revealed border fills with the average color below. When
+        // the frozen frame matches the current size (pan / zoom reprojection) this is the identity.
+        let fit = cu.out_res / max(vec2<f32>(screen_dim), vec2<f32>(1.0));
+        suv = (in.uv - vec2<f32>(0.5)) * fit + vec2<f32>(0.5);
+        // Then scale about the centre + translate: follows both the zoom and pan since the frozen
         // frame was rendered (uv_scale == 1 → pure pan, the original behaviour).
-        suv = (in.uv - vec2<f32>(0.5)) * cu.uv_scale + vec2<f32>(0.5) - cu.uv_off;
+        suv = (suv - vec2<f32>(0.5)) * cu.uv_scale + vec2<f32>(0.5) - cu.uv_off;
         if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {
             return vec4<f32>(view_average(), 1.0);
         }

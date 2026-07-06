@@ -2593,6 +2593,13 @@ impl FractadyneApp {
                 self.pointer.pan_px.x / res[0].max(1) as f32,
                 self.pointer.pan_px.y / res[1].max(1) as f32,
             ])
+        } else if resized {
+            // Window/panel resize: hold the last frame rather than stretching it to the new aspect
+            // ratio. The color pass fit-centres the frozen frame at native scale (center stays
+            // centred) and fills any newly revealed border with the average color, until the size
+            // settles and it re-iterates. `pan_px` stays at whatever it was (uv offset 0 here).
+            self.schedule_repaint(ctx);
+            Some([0.0, 0.0])
         } else {
             if self.pointer.pan_view == Some(view_id) {
                 self.pointer.pan_view = None; // settled → next frame does a full re-iterate

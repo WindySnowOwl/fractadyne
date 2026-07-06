@@ -77,6 +77,8 @@ pub(crate) struct ColorUniforms {
     pub(crate) _pad_vig: f32,
     pub(crate) interior_col: [f32; 4],
     pub(crate) stops: [[f32; 4]; 8],
+    pub(crate) out_res: [f32; 2], // output rect size in px; with `reproject`, aspect-fits a frozen frame
+    pub(crate) _pad_out: [f32; 2],
 }
 
 /// Spotlight vignette parameters (dim outside a soft circle), shared by the live and export paths.
@@ -634,6 +636,8 @@ impl CallbackTrait for MandelbrotParams {
             _pad_vig: 0.0,
             interior_col: self.interior_col,
             stops: self.stops,
+            out_res: [base[0] as f32, base[1] as f32],
+            _pad_out: [0.0, 0.0],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
 

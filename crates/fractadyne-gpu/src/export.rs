@@ -190,6 +190,8 @@ pub fn render_export(
         _pad_vig: 0.0,
         interior_col: req.interior_col,
         stops: req.stops,
+        out_res: [w as f32, h as f32],
+        _pad_out: [0.0, 0.0],
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
     let split = |v: f64| -> (f32, f32) {
@@ -667,6 +669,8 @@ pub fn color_iter_buffer(
         _pad_vig: 0.0,
         interior_col: req.interior_col,
         stops: req.stops,
+        out_res: [w as f32, h as f32],
+        _pad_out: [0.0, 0.0],
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
 
