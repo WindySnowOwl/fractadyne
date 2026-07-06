@@ -45,6 +45,22 @@ struct RecomputeInputs {
     bla_dc_max: Option<fractadyne_core::FloatExp>,
 }
 
+/// Aux coloring aggregates for the BLA tree, derived from a reference orbit. Triangle-inequality
+/// needs `cmag` (= |c_ref| = |Z_1|, since Mandelbrot's Z_0 = 0 ⇒ Z_1 = c) and `power` (= 2, because
+/// BLA is Mandelbrot-only) — both reference-intrinsic, so the tree caches per reference with no live
+/// dependency. Point-trap uses the default trap aggregate (trap_type 0). `stripe_freq` stays default
+/// (stripe's per-node aggregate isn't folded yet — it would need a rebuild on the freq slider).
+fn aux_agg_from_orbit(orbit: &[[f32; 4]]) -> fractadyne_core::AuxAggParams {
+    let cmag = orbit
+        .get(1)
+        .map(|z| {
+            let (x, y) = (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64);
+            (x * x + y * y).sqrt()
+        })
+        .unwrap_or(0.0);
+    fractadyne_core::AuxAggParams { trap_type: 0, stripe_freq: 1.0, cmag, power: 2.0 }
+}
+
 /// Pick a reference, iterate its orbit, and compute the series-approximation skip + BLA tree — the
 /// slow arbitrary-precision work. Pure and `Send`, so it runs on a worker thread; mirrors the
 /// synchronous `compute_reference` + `series_skip_for` + `build_bla`.
@@ -93,8 +109,7 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     let t_bla = Instant::now();
     let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
         Some(dc_max) => {
-            // Aux aggregates default to inert here (not yet folded on the GPU — Phase 2).
-            let levels = fc::build_bla_mandel(&orbit, dc_max, BLA_EPS, fc::AuxAggParams::default());
+            let levels = fc::build_bla_mandel(&orbit, dc_max, BLA_EPS, aux_agg_from_orbit(&orbit));
             let arc = if levels.is_empty() {
                 std::sync::Arc::new(Vec::new())
             } else {
@@ -281,13 +296,17 @@ impl FractadyneApp {
         // iterations. Cross/circle trap need their own aggregate; stripe/TIA also need the SA-prefix
         // fold — those stay gated (exact) until wired.
         let method = self.coloring.color_method;
-        let trap_point =
-            method.to_u32() == 3 && (self.coloring.trap_type as u32) == 0; // OrbitTrap + Point
+        // Aux methods with a GPU-validated BLA-skip fold ride BLA at full speed: point orbit-trap
+        // (default min-|z| aggregate) and triangle-inequality (cmag/power aggregate, reference-
+        // intrinsic so it caches per reference). Cross/circle trap needs a real trap_type aggregate,
+        // stripe needs a rebuild on its live freq, and decomposition isn't skip-safe — those stay gated.
+        let aux_bla_ok = (method.to_u32() == 3 && (self.coloring.trap_type as u32) == 0) // OrbitTrap+Point
+            || method.to_u32() == 2; // TriangleIneq
         self.render_cfg.use_bla
             && mode.is_floatexp()
             && !julia
             && self.fractal.formula_id() == 0
-            && (!method.blocks_iter_skip() || trap_point)
+            && (!method.blocks_iter_skip() || aux_bla_ok)
     }
 
     /// Conservative worst-case `|δc|` (absolute, `·2^delta_exp`) for any pixel a reference serves:
@@ -309,12 +328,8 @@ impl FractadyneApp {
         orbit: &[[f32; 4]],
         dc_max: fractadyne_core::FloatExp,
     ) -> Option<std::sync::Arc<Vec<[f32; 4]>>> {
-        let levels = fractadyne_core::build_bla_mandel(
-            orbit,
-            dc_max,
-            BLA_EPS,
-            fractadyne_core::AuxAggParams::default(),
-        );
+        let levels =
+            fractadyne_core::build_bla_mandel(orbit, dc_max, BLA_EPS, aux_agg_from_orbit(orbit));
         if levels.is_empty() {
             return None;
         }
