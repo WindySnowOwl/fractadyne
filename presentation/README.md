@@ -2,8 +2,6 @@
 
 A self-contained status + validation package for community feedback.
 
-- **[fractalforums-post.md](fractalforums-post.md)** — the post: what it is, validation
-  methodology, deep Fraktaler-3 cross-check, candid known gaps, and specific feedback requests.
 - **[catalog.md](catalog.md)** — externally-verifiable challenge coordinates (period/nucleus +
   set membership), reformatted from [`validation/catalog.toml`](../validation/catalog.toml).
 - **results/** — generated on an RTX 3080 / Ryzen 3950X, Fraktaler-3 v3.1. The deep-zoom numerics
@@ -17,4 +15,4 @@ A self-contained status + validation package for community feedback.
 - **images/** — a Fractadyne depth ladder (`01`–`06`, 1e6× → 1e300×) and Fraktaler-3 ↔ Fractadyne
   side-by-sides (`cmp_<zoom>_f3` / `cmp_<zoom>_fd`) at 1e12×, 1e100×, 1e300×.
 
-Everything is reproducible from the commands in the post and in `results/crosscheck-f3-ladder.md`.
+Everything is reproducible from the commands in `results/crosscheck-f3-ladder.md`.
