@@ -480,9 +480,12 @@ perturbation + series approximation + glitch correction. The headline feature.
       reference orbit, series-approximation setup, GPU iterate / full render) per benchmark
       region and writes a JSON log to `logs/` with run context; `scripts/profile.ps1` runs it
       and `scripts/profile-compare.ps1` diffs before/after to validate optimizations. Logic in
-      a `profile` module. *(Follow-ups: GPU timestamp queries to split iterate vs color
-      precisely; opt-in per-frame logging of live interactive sessions; fold the series
-      coefficients into the reference-orbit pass to cut the ~100 ms series-skip setup at depth.)*
+      a `profile` module. **GPU timestamp queries DONE (v0.1.34):** `--profile` now reports pure-GPU
+      `gpu-it` / `gpu-col` per-pass time (wgpu `TIMESTAMP_QUERY` + a `fractadyne_gpu::timing`
+      thread-local capture bracketing `render_export`'s iterate/color passes), independent of the
+      CPU submit/poll/readback overhead. *(Follow-ups: opt-in per-frame logging of live interactive
+      sessions incl. a live perf-overlay GPU-timestamp row; fold the series coefficients into the
+      reference-orbit pass to cut the ~100 ms series-skip setup at depth.)*
 - [x] **Record-to-video / frame export** from a script (offline, deterministic) — done via
       `--render-tour` (see the Zoom-movie entry below).
 - [x] **Ship compiled binaries on GitHub (Releases)** — `.github/workflows/release.yml`
@@ -753,11 +756,16 @@ for fun, informative value, and ease of use.
     removing *all* of decomposition's per-iteration aux work (atan2+sin+pow) moved 1e30× iterate
     298.2→297.0 ms, and `c_sqr` is CSE'd by the compiler. So the aux-at-depth cost is **not** the aux
     transcendentals — it's that stripe/TIA/decomp disable BLA/SA → 25k full floatexp steps (=the 297 ms;
-    trap keeps BLA → 11 ms). The two real levers stand confirmed: (a) **cheaper floatexp arithmetic**
-    (fe_norm frequency / the compensated-multiply chain / a reduced-precision δ), and (b) **aux⇄BLA
-    coexistence** (or a cheaper aux accumulation that doesn't force full iterations). **Next: land GPU
-    timestamp queries** (wgpu `TIMESTAMP_QUERY`, split iterate vs color vs readback) before attempting
-    (a) — op-counting mis-predicted the wins, so the floatexp levers must be measured, not reasoned.
+    trap keeps BLA → 11 ms).
+  - **Reranked by GPU timestamps (v0.1.34, RTX 3080, 1e30× mode-2 seahorse).** The new per-pass
+    `gpu-it`/`gpu-col` split shows pure-GPU iterate is **1.4 ms WITH BLA vs ~316 ms without** — BLA is
+    a **~220× lever**, and aux is slow at depth *only* because it disables BLA. So **(b) aux⇄BLA
+    coexistence is #1** (a cheaper aux accumulation that lets SA/BLA skip, or per-orbit stats that
+    survive skips); **(a) cheaper floatexp arithmetic is #2** — it only matters for the filament views
+    where BLA genuinely can't skip. The color/downsample pass is **~0.01 ms** at 512² (negligible), and
+    the CPU-timed `iter/render ms` columns carry ~9 ms of fixed submit+poll+readback overhead (smooth's
+    true GPU iterate is 1.4 ms, not the 10.7 ms the CPU clock showed) — which is why op-counting on the
+    CPU columns mis-ranked the earlier pass. Measure GPU levers with `gpu-it`, not the CPU columns.
 
 - [x] **FIXED (v0.1.10): fast live dive hung ("Not Responding") crossing into floatexp (~1e28×+).**
   Reproduced 2026-07-03 by auto-playing `tours/deep-spiral-dive.toml` with per-frame stderr timing.
