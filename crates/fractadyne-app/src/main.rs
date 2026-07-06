@@ -3839,7 +3839,14 @@ impl eframe::App for FractadyneApp {
             _ => {}
         }
         if self.perf.enabled {
-            self.schedule_repaint(ctx); // keep metrics live while the panel is shown
+            // Refresh the readouts without pegging the GPU. A bare `request_repaint()` here forces a
+            // full re-render every frame even on a completely static view, so at deep zoom with high
+            // AA the per-panel color/downsample pass runs continuously and the whole system goes
+            // laggy (the app never idles — the overlay is on by default). A throttled repaint keeps
+            // the metrics live (~4 Hz) while letting egui idle when nothing changes; interaction,
+            // settling, panning and in-flight recomputes still request immediate repaints elsewhere,
+            // so this floor never slows an active frame.
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
         // Keep repainting while an off-thread reference recompute is in flight, so its result is
         // polled and installed (and the view sharpens) as soon as it lands.
