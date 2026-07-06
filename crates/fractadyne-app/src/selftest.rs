@@ -1108,6 +1108,77 @@ impl FractadyneApp {
             self.render_cfg.series_approx = true;
         }
 
+        // ---- aux⇄BLA fold (Phase 2): orbit-trap must match with BLA skipping on vs off ----
+        // The Phase-2 shader folds each skipped run's aux aggregate; the default-param packing is
+        // the correct POINT-trap min, so trap can ride BLA. render_iter forces aux off, so compare
+        // the COLORED trap render (render_export) with BLA on vs off — they must agree except at the
+        // rare BLA escape-boundary pixels the smooth BLA test already tolerates.
+        {
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth; // Smooth so the BLA tree builds
+            self.coloring.use_custom_palette = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 5000;
+            self.render_cfg.series_approx = false; // isolate BLA
+            self.render_cfg.use_bla = true;
+            let nn = N as usize;
+            let mut vp = Viewport::new(N as f64, N as f64);
+            vp.center_x = fractadyne_core::parse_bf(SX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
+            vp.precision = fractadyne_core::precision_for_magnification(1.0e30);
+            let mut on = self.current_export_request_for(&vp, false);
+            on.width = N;
+            on.height = N;
+            on.ss = 1;
+            on.color_method = 3; // orbit trap
+            on.trap_type = 0; // point (matches the default-param BLA aggregate)
+            on.sa_skip = 0; // isolate BLA (no SA prefix yet)
+            let (bla_on, mode) = (on.bla_on, on.mode);
+            let mut off = on.clone();
+            off.bla_on = 0;
+            let prog = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let rex = |req: &fractadyne_gpu::ExportRequest| {
+                fractadyne_gpu::render_export(device, queue, req, &prog, &cancel)
+                    .ok()
+                    .map(|r| r.pixels)
+            };
+            match (rex(&on), rex(&off)) {
+                (Some(a), Some(b)) if bla_on == 1 && mode == 2 && a.len() == b.len() => {
+                    let (mut maxd, mut nd) = (0.0f32, 0u64);
+                    for k in 0..a.len() {
+                        let d = (a[k] - b[k]).abs();
+                        maxd = maxd.max(d);
+                        if d > 0.02 {
+                            nd += 1;
+                        }
+                    }
+                    let chans = (nn * nn * 4) as u64;
+                    checks.push(SelfCheck {
+                        category: "BLA",
+                        name: "orbit-trap: BLA-fold == non-BLA @1e30×".into(),
+                        params: format!("point trap, bla_on {bla_on}, maxΔ {maxd:.4}"),
+                        result: format!("{nd}/{chans} channels >2%"),
+                        threshold: "bla engaged, maxΔ<0.1, <1% differ",
+                        pass: maxd < 0.1 && nd < chans / 100,
+                    });
+                }
+                _ => checks.push(SelfCheck {
+                    category: "BLA",
+                    name: "orbit-trap: BLA-fold == non-BLA @1e30×".into(),
+                    params: format!("bla_on {bla_on}, mode {mode}"),
+                    result: "render failed / BLA not engaged".into(),
+                    threshold: "bla engaged",
+                    pass: false,
+                }),
+            }
+            self.render_cfg.use_bla = false;
+            self.render_cfg.series_approx = true;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+        }
+
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
         {
             self.fractal = FractalKind::Mandelbrot;
