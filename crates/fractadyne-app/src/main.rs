@@ -650,6 +650,39 @@ fn main() -> eframe::Result<()> {
         // queue — the swapchain backpressure that hung the UI thread on continuous df32 zoom-out.
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             desired_maximum_frame_latency: Some(1),
+            // Request GPU timestamp queries when the adapter supports them, so the profiling
+            // harness can time the iterate vs color passes in pure GPU time (see fractadyne_gpu::
+            // timing). Replicates egui-wgpu's default device_descriptor, adding only the one feature
+            // — the app degrades cleanly (CPU-timed columns only) on adapters that lack it.
+            wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
+                eframe::egui_wgpu::WgpuSetupCreateNew {
+                    device_descriptor: std::sync::Arc::new(|adapter: &eframe::wgpu::Adapter| {
+                        let base_limits =
+                            if adapter.get_info().backend == eframe::wgpu::Backend::Gl {
+                                eframe::wgpu::Limits::downlevel_webgl2_defaults()
+                            } else {
+                                eframe::wgpu::Limits::default()
+                            };
+                        let mut features = eframe::wgpu::Features::empty();
+                        if adapter
+                            .features()
+                            .contains(eframe::wgpu::Features::TIMESTAMP_QUERY)
+                        {
+                            features |= eframe::wgpu::Features::TIMESTAMP_QUERY;
+                        }
+                        eframe::wgpu::DeviceDescriptor {
+                            label: Some("fractadyne device"),
+                            required_features: features,
+                            required_limits: eframe::wgpu::Limits {
+                                max_texture_dimension_2d: 8192,
+                                ..base_limits
+                            },
+                            memory_hints: eframe::wgpu::MemoryHints::default(),
+                        }
+                    }),
+                    ..Default::default()
+                },
+            ),
             ..Default::default()
         },
         viewport: egui::ViewportBuilder::default()

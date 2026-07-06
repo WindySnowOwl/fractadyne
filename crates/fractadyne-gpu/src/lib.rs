@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 mod export;
 pub use export::*;
+pub mod timing;
 
 // RGBA: r = smooth iteration value, g/b = slope normal (x,y), a = reserved (DE).
 pub(crate) const ITER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;

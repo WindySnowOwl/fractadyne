@@ -200,8 +200,13 @@ impl FractadyneApp {
             if self.render_cfg.use_bla { "on" } else { "off" },
         );
         println!(
-            "  {:<20} {:>5} {:>8} {:>9} {:>8} {:>9} {:>10} {:>10}",
-            "region", "mode", "skip", "ref ms", "bla ms", "iter ms", "render ms", "total ms"
+            "  {:<20} {:>5} {:>7} {:>8} {:>7} {:>8} {:>9} {:>8} {:>8} {:>9}",
+            "region", "mode", "skip", "ref ms", "bla ms", "iter ms", "render ms", "gpu-it", "gpu-col",
+            "total ms"
+        );
+        println!(
+            "  (iter/render = CPU wall-clock incl. submit+readback; gpu-it/gpu-col = pure-GPU pass \
+             time via timestamps)"
         );
 
         for (ri, r) in regions.iter().enumerate() {
@@ -228,21 +233,33 @@ impl FractadyneApp {
             // Warm up (shader/pipeline compile, first upload), then measure GPU passes.
             let _ = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
             let (mut iter_ms, mut render_ms) = (Vec::new(), Vec::new());
+            let (mut gpu_it, mut gpu_col) = (Vec::new(), Vec::new());
             for _ in 0..reps {
                 let t = Instant::now();
                 let _ = fractadyne_gpu::render_iter(device, queue, &req);
                 iter_ms.push(t.elapsed().as_secs_f64() * 1000.0);
                 let t = Instant::now();
-                let _ = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
+                // Capture per-pass GPU timestamps around the full render (iterate + color).
+                let (_, ts) = fractadyne_gpu::timing::capture(|| {
+                    fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
+                });
                 render_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+                if ts.captured {
+                    gpu_it.push(ts.iterate_ms);
+                    gpu_col.push(ts.color_ms);
+                }
             }
             let iter_s = stat(&mut iter_ms);
             let render_s = stat(&mut render_ms);
             let total = setup.reference_ms + setup.series_ms + setup.bla_ms + render_s.median;
+            let gpu_it_med = (!gpu_it.is_empty()).then(|| stat(&mut gpu_it).median);
+            let gpu_col_med = (!gpu_col.is_empty()).then(|| stat(&mut gpu_col).median);
+            let fmt_opt = |v: Option<f64>| v.map_or_else(|| "n/a".to_string(), |x| format!("{x:.2}"));
 
             println!(
-                "  {:<20} {:>5} {:>8} {:>9.2} {:>8.2} {:>9.2} {:>10.2} {:>10.2}",
-                r.name, req.mode, req.sa_skip, setup.reference_ms, setup.bla_ms, iter_s.median, render_s.median, total
+                "  {:<20} {:>5} {:>7} {:>8.2} {:>7.2} {:>8.2} {:>9.2} {:>8} {:>8} {:>9.2}",
+                r.name, req.mode, req.sa_skip, setup.reference_ms, setup.bla_ms, iter_s.median,
+                render_s.median, fmt_opt(gpu_it_med), fmt_opt(gpu_col_med), total
             );
 
             json.push_str("    {\n");
@@ -265,7 +282,16 @@ impl FractadyneApp {
             json.push_str(&format!("        \"series_skip\": {:.4},\n", setup.series_ms));
             json.push_str(&format!("        \"bla_build\": {:.4},\n", setup.bla_ms));
             json.push_str(&format!("        \"gpu_iterate\": {},\n", stat_json(&iter_s)));
-            json.push_str(&format!("        \"gpu_render\": {}\n", stat_json(&render_s)));
+            json.push_str(&format!("        \"gpu_render\": {},\n", stat_json(&render_s)));
+            let jnum = |v: Option<f64>| v.map_or_else(|| "null".to_string(), |x| format!("{x:.4}"));
+            json.push_str(&format!(
+                "        \"gpu_iterate_pass_ms\": {},\n",
+                jnum(gpu_it_med)
+            ));
+            json.push_str(&format!(
+                "        \"gpu_color_pass_ms\": {}\n",
+                jnum(gpu_col_med)
+            ));
             json.push_str("      }\n");
             json.push_str("    }");
             json.push_str(if ri + 1 < regions.len() { ",\n" } else { "\n" });

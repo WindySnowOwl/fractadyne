@@ -273,6 +273,34 @@ pub fn render_export(
                 mapped_at_creation: false,
             });
 
+            // Optional per-pass GPU timestamps (profiler-only, feature-gated). Four queries:
+            // iterate begin/end (0,1) and color begin/end (2,3), resolved to a buffer and read back
+            // after this tile's poll. Zero cost unless a `timing::capture` scope is active.
+            let ts = if crate::timing::enabled()
+                && device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+            {
+                let set = device.create_query_set(&wgpu::QuerySetDescriptor {
+                    label: Some("export.timestamps"),
+                    ty: wgpu::QueryType::Timestamp,
+                    count: 4,
+                });
+                let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("export.ts_resolve"),
+                    size: 256, // >= 4*8 bytes and a multiple of QUERY_RESOLVE_BUFFER_ALIGNMENT
+                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                });
+                let read = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("export.ts_read"),
+                    size: 32,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                Some((set, resolve, read))
+            } else {
+                None
+            };
+
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("export.encoder"),
             });
@@ -289,7 +317,13 @@ pub fn render_export(
                     label: Some("export.iter_pass"),
                     color_attachments: &[attach(&iter_view), attach(&aux_view)],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes: ts.as_ref().map(|(set, _, _)| {
+                        wgpu::RenderPassTimestampWrites {
+                            query_set: set,
+                            beginning_of_pass_write_index: Some(0),
+                            end_of_pass_write_index: Some(1),
+                        }
+                    }),
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&iter_pipeline);
@@ -308,12 +342,22 @@ pub fn render_export(
                         },
                     })],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes: ts.as_ref().map(|(set, _, _)| {
+                        wgpu::RenderPassTimestampWrites {
+                            query_set: set,
+                            beginning_of_pass_write_index: Some(2),
+                            end_of_pass_write_index: Some(3),
+                        }
+                    }),
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&color_pipeline);
                 pass.set_bind_group(0, &color_bg, &[]);
                 pass.draw(0..3, 0..1);
+            }
+            if let Some((set, resolve, read)) = &ts {
+                enc.resolve_query_set(set, 0..4, resolve, 0);
+                enc.copy_buffer_to_buffer(resolve, 0, read, 0, 32);
             }
             enc.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
@@ -339,10 +383,32 @@ pub fn render_export(
             slice.map_async(wgpu::MapMode::Read, move |r| {
                 let _ = tx.send(r);
             });
+            let ts_rx = ts.as_ref().map(|(_, _, read)| {
+                let (ttx, trx) = std::sync::mpsc::channel();
+                read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = ttx.send(r);
+                });
+                trx
+            });
             let _ = device.poll(wgpu::Maintain::Wait);
             rx.recv()
                 .map_err(|e| GpuError::Readback(e.to_string()))?
                 .map_err(|e| GpuError::Readback(e.to_string()))?;
+
+            // Resolved timestamps → pure-GPU iterate/color ms (ticks × the queue's timestamp
+            // period), accumulated into the active `timing::capture` scope.
+            if let (Some((_, _, read)), Some(ts_rx)) = (&ts, &ts_rx) {
+                if ts_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+                    let mapped = read.slice(..).get_mapped_range();
+                    let t: &[u64] = bytemuck::cast_slice(&mapped[..32]);
+                    let period = queue.get_timestamp_period() as f64; // ns per tick
+                    let iterate_ms = t[1].saturating_sub(t[0]) as f64 * period / 1.0e6;
+                    let color_ms = t[3].saturating_sub(t[2]) as f64 * period / 1.0e6;
+                    drop(mapped);
+                    read.unmap();
+                    crate::timing::accumulate(iterate_ms, color_ms);
+                }
+            }
 
             let data = slice.get_mapped_range();
             let row_floats = (tw * 4) as usize;
