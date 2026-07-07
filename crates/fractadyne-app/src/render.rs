@@ -28,6 +28,11 @@ pub(crate) struct RecomputeResult {
     /// Per-stage timings (for the export `--profile` breakdown; the live path uses only `ref_ms`).
     series_ms: f64,
     bla_ms: f64,
+    /// True when the orbit was TRUNCATED (built to a coarse iteration cap without escaping) — i.e.
+    /// a progressive cold-start's fast first stage. The render then caps `max_iter` to the orbit
+    /// length so it never rebases past the short reference (which would glitch at extreme depth).
+    /// False for a full or escaped orbit.
+    partial: bool,
 }
 
 /// Owned, `Send` inputs for an off-thread reference recompute.
@@ -61,13 +66,20 @@ fn aux_agg_from_orbit(orbit: &[[f32; 4]]) -> fractadyne_core::AuxAggParams {
     fractadyne_core::AuxAggParams { trap_type: 0, stripe_freq: 1.0, cmag, power: 2.0 }
 }
 
-/// Pick a reference, iterate its orbit, and compute the series-approximation skip + BLA tree — the
-/// slow arbitrary-precision work. Pure and `Send`, so it runs on a worker thread; mirrors the
-/// synchronous `compute_reference` + `series_skip_for` + `build_bla`.
+/// Pick a reference (once) then build its orbit + series-approximation skip + BLA tree to
+/// `inp.gpu_iter` — the slow arbitrary-precision work. Pure and `Send`, so it runs on a worker
+/// thread; mirrors the synchronous `compute_reference` + `series_skip_for` + `build_bla`. The
+/// progressive cold start (`recompute_worker_staged`) reuses the `pick`/`build` split below.
 fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
-    use fractadyne_core as fc;
-    let t = Instant::now();
-    let rp = fc::best_reference(
+    let rp = pick_reference(&inp);
+    build_reference_from_point(rp, inp.gpu_iter, &inp)
+}
+
+/// Choose the reference point for `inp`. The ranking scan is internally capped (`REF_SCORE_SCAN`),
+/// so this is cheap and deterministic — the SAME point comes back for any iteration budget past the
+/// cap, which is why a coarse and a full stage share it exactly.
+fn pick_reference(inp: &RecomputeInputs) -> [fractadyne_core::BigFloat; 2] {
+    fractadyne_core::best_reference(
         &inp.center_bf,
         [inp.span.0, inp.span.1],
         inp.formula,
@@ -75,7 +87,21 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
         [inp.julia_c.0, inp.julia_c.1],
         inp.gpu_iter,
         inp.precision,
-    );
+    )
+}
+
+/// Build the orbit (to `orbit_iter`) + series-approximation skip + BLA tree for a PRE-CHOSEN
+/// reference point `rp`. Split out of `recompute_worker` so a progressive cold start builds a short
+/// (coarse) orbit and the full one from the SAME point (no pop on refine). `partial` is set when the
+/// orbit never escaped (a truncated reference) — read from the last sample's magnitude, so an
+/// escape-exactly-at-the-cap orbit is correctly treated as complete.
+fn build_reference_from_point(
+    rp: [fractadyne_core::BigFloat; 2],
+    orbit_iter: u32,
+    inp: &RecomputeInputs,
+) -> RecomputeResult {
+    use fractadyne_core as fc;
+    let t = Instant::now();
     let zero = fc::BigFloat::from_f64(0.0, inp.precision);
     let (z0x, z0y, cx0, cy0) = if inp.julia {
         (
@@ -87,7 +113,17 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     } else {
         (zero.clone(), zero, rp[0].clone(), rp[1].clone())
     };
-    let (o, len) = fc::reference_orbit(&z0x, &z0y, &cx0, &cy0, inp.formula, inp.gpu_iter, inp.precision);
+    let (o, len) = fc::reference_orbit(&z0x, &z0y, &cx0, &cy0, inp.formula, orbit_iter, inp.precision);
+    // Truncated (coarse) iff the orbit never escaped: the last sample stays inside the escape radius
+    // (|z|² ≤ 1e12, the `reference_orbit` bail). A reference that escaped — even exactly at the cap —
+    // is a complete orbit and must NOT cap the render.
+    let partial = o
+        .last()
+        .map(|z| {
+            let (x, y) = (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64);
+            x * x + y * y <= 1.0e12
+        })
+        .unwrap_or(false);
     let orbit = std::sync::Arc::new(o);
     let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
     // Series approximation for the chosen reference.
@@ -99,7 +135,7 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
         let half_diag = 0.5
             * (inp.span_mantissa.x * inp.span_mantissa.x + inp.span_mantissa.y * inp.span_mantissa.y).sqrt();
         let log2_max_dc = inp.delta_exp as f64 + (roff + half_diag).max(1e-300).log2();
-        fc::series_skip(&rp[0], &rp[1], log2_max_dc, inp.gpu_iter, len, inp.formula, inp.precision)
+        fc::series_skip(&rp[0], &rp[1], log2_max_dc, orbit_iter, len, inp.formula, inp.precision)
     } else {
         fc::SeriesSkip::NONE
     };
@@ -128,10 +164,46 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
         bla,
         bla_dc_max_log2,
         prec: inp.precision,
-        iter: inp.gpu_iter,
+        iter: orbit_iter,
         ref_ms,
         series_ms,
         bla_ms,
+        partial,
+    }
+}
+
+/// Off-thread cold-start build with a PROGRESSIVE fast path. Picks the reference once, then — when
+/// `progressive` and the full build is deep enough to be slow — sends a COARSE truncated orbit first
+/// (so a real, if partial, image appears in ~1-2 s and panning has a frame to track), followed by
+/// the FULL orbit for final detail, both from the SAME reference point so the refine doesn't shift.
+/// A non-progressive call (a drift/dive refresh, which already draws real content) just sends the
+/// single full build. The receiver installs each stage and keeps the channel open until this returns.
+fn recompute_worker_staged(
+    inp: RecomputeInputs,
+    tx: std::sync::mpsc::Sender<RecomputeResult>,
+    progressive: bool,
+) {
+    // Coarse-first only helps when the full orbit would run far past this cap; the render's own
+    // `gpu_iter` is already below it at shallow depth (until ~1e17×), so this naturally no-ops for
+    // normal views → a single full build.
+    const COARSE_ITER: u32 = 16384;
+    if progressive && COARSE_ITER < inp.gpu_iter {
+        let rp = pick_reference(&inp);
+        let mut coarse = build_reference_from_point(rp.clone(), COARSE_ITER, &inp);
+        // Report the FULL iteration budget so `needs_quality` doesn't re-fire every frame during the
+        // refine (the full stage is pipelined via the kept channel, not that signal).
+        coarse.iter = inp.gpu_iter;
+        if !coarse.partial {
+            let _ = tx.send(coarse); // escaped within the cap → already the complete reference
+            return;
+        }
+        if tx.send(coarse).is_err() {
+            return; // receiver dropped (view/formula changed) → abandon the full stage
+        }
+        let full = build_reference_from_point(rp, inp.gpu_iter, &inp);
+        let _ = tx.send(full);
+    } else {
+        let _ = tx.send(recompute_worker(inp));
     }
 }
 
@@ -187,6 +259,7 @@ impl FractadyneApp {
         vc.orbit_len = res.orbit_len;
         vc.orbit_prec = res.prec;
         vc.orbit_iter = res.iter;
+        vc.partial = res.partial; // always written, so the full stage clears a prior coarse's flag
         vc.orbit_id = vc.orbit_id.wrapping_add(1);
         vc.last_recompute = Some(Instant::now());
         vc.sa = res.sa;
@@ -766,14 +839,21 @@ impl FractadyneApp {
         if !mode.is_direct() && reproject.is_none() {
             // Install a finished off-thread recompute (if any) before deciding whether another is
             // needed, so the staleness/quality checks below see the fresh reference.
-            if let Some(rx) = self.recompute_rx[vi].as_ref() {
-                match rx.try_recv() {
-                    Ok(res) => {
-                        self.install_recompute(vi, res);
-                        self.recompute_rx[vi] = None;
+            // Install every stage the worker sends — a progressive cold start delivers a coarse
+            // reference first, then the full one — draining all that arrived this frame and keeping
+            // the channel open (Empty) until the worker finishes and drops the sender (Disconnected).
+            // `take()` moves the receiver to a local so the `install_recompute(&mut self)` calls in
+            // the loop don't conflict with a borrow of `self.recompute_rx`.
+            if let Some(rx) = self.recompute_rx[vi].take() {
+                loop {
+                    match rx.try_recv() {
+                        Ok(res) => self.install_recompute(vi, res),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            self.recompute_rx[vi] = Some(rx); // still running → keep polling
+                            break;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => break, // done → leaves None
                     }
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => self.recompute_rx[vi] = None,
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 }
             }
             // Drift = |center − reference| / span, both as 2^-delta_exp mantissas so the
@@ -894,8 +974,16 @@ impl FractadyneApp {
                     // self-terminating CPU on a superseded reference (a cooperative-cancel
                     // AtomicBool is deferred until profiling shows it matters). Spawn is guarded by
                     // `recompute_rx[vi].is_none()`, so receivers never accumulate.
+                    // Progressive (coarse-then-full) only for a genuine cold start, and NOT for the
+                    // live unpinned dual-Julia hover (view 1) which re-invalidates on every cursor
+                    // move — staging there would keep burning full builds on an already-stale c — nor
+                    // during tours (which re-invalidate per keyframe). Shallow views auto-skip inside
+                    // the worker (COARSE_ITER exceeds their gpu_iter).
+                    let progressive = cold
+                        && !(self.dual && vi == 1 && self.julia_pin.is_none())
+                        && self.playback.is_none();
                     std::thread::spawn(move || {
-                        let _ = tx.send(recompute_worker(inputs));
+                        recompute_worker_staged(inputs, tx, progressive);
                     });
                     self.recompute_rx[vi] = Some(rx);
                 }
@@ -1028,10 +1116,18 @@ impl FractadyneApp {
         // placeholder to a trivially cheap iterate (a flat interior fill) until the reference lands.
         // Direct mode has no reference by design, so it keeps its full iteration count.
         const PLACEHOLDER_ITER_CAP: u32 = 256;
-        let shader_iter = if mode.is_direct() || self.ref_cache[vi].ref_pt.is_some() {
+        let shader_iter = if mode.is_direct() {
             gpu_iter
+        } else if self.ref_cache[vi].ref_pt.is_none() {
+            gpu_iter.min(PLACEHOLDER_ITER_CAP) // no reference yet → cheap flat placeholder (TDR-safe)
+        } else if self.ref_cache[vi].partial {
+            // Coarse (truncated) reference from a progressive cold start: cap at orbit_len-1 so the
+            // shader never rebases past the short reference into df32-inaccurate territory (which
+            // speckles at extreme depth) — a clean partial image (fast escapers correct, the rest
+            // interior) until the full reference lands and refines it.
+            gpu_iter.min(self.ref_cache[vi].orbit_len.saturating_sub(1))
         } else {
-            gpu_iter.min(PLACEHOLDER_ITER_CAP)
+            gpu_iter
         };
 
         MandelbrotParams {

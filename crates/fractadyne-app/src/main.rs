@@ -1048,6 +1048,10 @@ struct RefCache {
     /// Precision / iteration count the cached orbit was computed at.
     orbit_prec: usize,
     orbit_iter: u32,
+    /// True while the cached orbit is a TRUNCATED (coarse) reference from a progressive cold start —
+    /// the render caps iterations to its length so it never rebases past it. Cleared when the full
+    /// reference installs.
+    partial: bool,
     /// When the orbit was last recomputed (throttles refresh during interaction).
     last_recompute: Option<Instant>,
     /// Cached series-approximation skip + coefficients for this reference, and the
@@ -1078,6 +1082,7 @@ impl Default for RefCache {
             orbit_id: 0,
             orbit_prec: 0,
             orbit_iter: 0,
+            partial: false,
             last_recompute: None,
             sa: fractadyne_core::SeriesSkip::NONE,
             sa_key: (u64::MAX, u32::MAX),
@@ -3913,9 +3918,21 @@ impl eframe::App for FractadyneApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
         // Keep repainting while an off-thread reference recompute is in flight, so its result is
-        // polled and installed (and the view sharpens) as soon as it lands.
+        // polled and installed (and the view sharpens) as soon as it lands. Repaint immediately while
+        // interacting so an active dive stays smooth; otherwise throttle to ~20 Hz — a progressive
+        // build keeps a receiver open through the multi-second full-refine stage, and a bare
+        // per-frame repaint there re-runs the un-cached color/downsample pass continuously and pegs
+        // the GPU (the iterate pass is IterKey-cached, but the color pass is not). ~50 ms polling
+        // installs the result within an imperceptible delay while letting the GPU idle between polls.
         if self.recompute_rx.iter().any(|r| r.is_some()) {
-            ctx.request_repaint();
+            let now = ctx.input(|i| i.time);
+            let interacting = now - self.pointer.settle_t[0] < SETTLE_DELAY
+                || now - self.pointer.settle_t[1] < SETTLE_DELAY;
+            if interacting {
+                ctx.request_repaint();
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
         }
         self.perf.cpu_ms = ema(self.perf.cpu_ms, frame_start.elapsed().as_secs_f64() * 1000.0);
 
