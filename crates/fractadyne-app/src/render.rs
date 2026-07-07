@@ -814,9 +814,25 @@ impl FractadyneApp {
         let max_ss = ((budget / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
             .sqrt()
             .max(1.0) as u32;
+        // Hard GPU-watchdog (TDR) cap, independent of the BLA-trusting work budget. `max_ss` sizes the
+        // frame assuming BLA delivers its usual ~200× iteration skip — but on a boundary/filament-heavy
+        // deep view (exactly where the user lingers) BLA can barely skip, so the frame's true cost
+        // approaches the *no-skip* estimate `spx·ss²·gpu_iter`. At floatexp depth an 8×-AA settled frame
+        // there is multiple seconds without BLA and freezes the app (Windows resets the GPU after ~2s).
+        // Bound the worst-case (no-BLA) floatexp iterate cost so a single frame stays well under 2s
+        // regardless of how little BLA skips; ~3e11 steps ≈ 0.85s on this GPU class (measured: a
+        // 1.74e12-step frame froze at ~5s). Cheap when BLA works — the frame is far faster than the cap.
+        let max_ss_tdr = if is_fe {
+            const TDR_SAFE_STEPS: u64 = 300_000_000_000;
+            ((TDR_SAFE_STEPS / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
+                .sqrt()
+                .max(1.0) as u32
+        } else {
+            u32::MAX
+        };
         // `aa_target` is 1 while moving and ramps up over settled frames (progressive settle); clamp
-        // to what the per-frame budget affords (`max_ss`) so a stage can't trip the GPU watchdog.
-        let ss = aa_target.min(max_ss).max(1);
+        // to what the per-frame budget affords (`max_ss`) and the watchdog allows (`max_ss_tdr`).
+        let ss = aa_target.min(max_ss).min(max_ss_tdr).max(1);
         // Color-pass anti-aliasing when true supersampling wasn't affordable: widen the box
         // to match an upscaled (resolution-reduced) texture, or apply a gentle 2× box when
         // the budget forced ss=1 on a settled view the user wanted anti-aliased.
