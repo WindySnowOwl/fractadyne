@@ -72,7 +72,7 @@ fn aux_agg_from_orbit(orbit: &[[f32; 4]]) -> fractadyne_core::AuxAggParams {
 /// progressive cold start (`recompute_worker_staged`) reuses the `pick`/`build` split below.
 fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     let rp = pick_reference(&inp);
-    build_reference_from_point(rp, inp.gpu_iter, &inp)
+    build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, &inp)
 }
 
 /// Choose the reference point for `inp`. The ranking scan is internally capped (`REF_SCORE_SCAN`),
@@ -98,6 +98,7 @@ fn pick_reference(inp: &RecomputeInputs) -> [fractadyne_core::BigFloat; 2] {
 fn build_reference_from_point(
     rp: [fractadyne_core::BigFloat; 2],
     orbit_iter: u32,
+    do_sa: bool,
     inp: &RecomputeInputs,
 ) -> RecomputeResult {
     use fractadyne_core as fc;
@@ -128,7 +129,7 @@ fn build_reference_from_point(
     let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
     // Series approximation for the chosen reference.
     let t_sa = Instant::now();
-    let sa = if inp.do_sa {
+    let sa = if do_sa {
         let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &rp[0], inp.delta_exp, inp.precision);
         let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &rp[1], inp.delta_exp, inp.precision);
         let roff = (dx * dx + dy * dy).sqrt();
@@ -189,7 +190,11 @@ fn recompute_worker_staged(
     const COARSE_ITER: u32 = 16384;
     if progressive && COARSE_ITER < inp.gpu_iter {
         let rp = pick_reference(&inp);
-        let mut coarse = build_reference_from_point(rp.clone(), COARSE_ITER, &inp);
+        // Coarse stage skips series approximation: its `series_skip` is a bignum coefficient pass
+        // that costs seconds at extreme depth (≈ as much as the whole reference), and this stage
+        // exists only to put a fast, BLA-accelerated, iteration-capped preview on screen so panning
+        // has a frame to track. SA travels with the FULL stage.
+        let mut coarse = build_reference_from_point(rp.clone(), COARSE_ITER, false, &inp);
         // Report the FULL iteration budget so `needs_quality` doesn't re-fire every frame during the
         // refine (the full stage is pipelined via the kept channel, not that signal).
         coarse.iter = inp.gpu_iter;
@@ -200,7 +205,7 @@ fn recompute_worker_staged(
         if tx.send(coarse).is_err() {
             return; // receiver dropped (view/formula changed) → abandon the full stage
         }
-        let full = build_reference_from_point(rp, inp.gpu_iter, &inp);
+        let full = build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, &inp);
         let _ = tx.send(full);
     } else {
         let _ = tx.send(recompute_worker(inp));
