@@ -793,7 +793,16 @@ impl FractadyneApp {
         } else {
             1.0
         };
-        let resolution = if res_scale < 1.0 {
+        // A reprojection/freeze frame runs NO iterate (it re-samples the frozen texture), so the
+        // motion res_scale saves nothing on it — and worse, it shrinks the frame's base below the
+        // frozen texture's settle-time resolution, so the color-pass aspect-fit `fit = out_res /
+        // frozen_screen_dim` goes < 1 and MAGNIFIES the held frame (a spurious zoom-in) while also
+        // amplifying the pan translation by 1/fit (the "drag is exaggerated / double acceleration"
+        // at deep zoom). Keep native resolution on those frames so fit ≈ 1 and the drag tracks 1:1.
+        let will_reproject = reproject.is_some()
+            || (is_fe && interacting && !self.autopilot.stepping)
+            || self.ref_cache[view_id as usize].ref_pt.is_none();
+        let resolution = if res_scale < 1.0 && !will_reproject {
             [
                 ((resolution[0] as f64 * res_scale) as u32).max(16),
                 ((resolution[1] as f64 * res_scale) as u32).max(16),
@@ -811,7 +820,7 @@ impl FractadyneApp {
         // Color-pass anti-aliasing when true supersampling wasn't affordable: widen the box
         // to match an upscaled (resolution-reduced) texture, or apply a gentle 2× box when
         // the budget forced ss=1 on a settled view the user wanted anti-aliased.
-        let aa_filter = if res_scale < 1.0 {
+        let aa_filter = if res_scale < 1.0 && !will_reproject {
             ((1.0 / res_scale).round() as u32).clamp(2, 4)
         } else if ss == 1 && self.render_cfg.aa > 1 && !interacting {
             2
