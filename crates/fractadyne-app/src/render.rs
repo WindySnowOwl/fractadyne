@@ -1019,6 +1019,21 @@ impl FractadyneApp {
             self.perf.last_sa_skip = sa.skip;
         }
 
+        // Never submit a full-length perturbation iterate without a reference. During the async
+        // cold-start (`ref_pt` None) a FRESH view can't reproject the placeholder — there is no
+        // frozen frame to reproject — so the shader falls through to a real iterate, but with an
+        // empty orbit every pixel runs to `max_iter` against a null reference. At deep zoom with a
+        // large `max_iter` (e.g. 500k) that single GPU frame overruns the Windows GPU-watchdog (TDR)
+        // timeout → the device is lost → wgpu treats it as fatal and the process aborts. Cap the
+        // placeholder to a trivially cheap iterate (a flat interior fill) until the reference lands.
+        // Direct mode has no reference by design, so it keeps its full iteration count.
+        const PLACEHOLDER_ITER_CAP: u32 = 256;
+        let shader_iter = if mode.is_direct() || self.ref_cache[vi].ref_pt.is_some() {
+            gpu_iter
+        } else {
+            gpu_iter.min(PLACEHOLDER_ITER_CAP)
+        };
+
         MandelbrotParams {
             orbit: self.ref_cache[vi].orbit.clone(),
             orbit_id: self.ref_cache[vi].orbit_id,
@@ -1040,7 +1055,7 @@ impl FractadyneApp {
             formula: fractal.formula_id(),
             julia: julia as u32,
             span_mantissa,
-            max_iter: gpu_iter,
+            max_iter: shader_iter,
             cycle: self.color_cycle(),
             offset: self.coloring.offset,
             stop_count,
