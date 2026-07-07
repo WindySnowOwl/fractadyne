@@ -810,20 +810,38 @@ impl FractadyneApp {
         } else {
             resolution
         };
+        // Hard GPU-watchdog (TDR) budget, independent of the BLA-trusting work budget. `max_ss`/`budget`
+        // size the frame assuming BLA delivers its usual ~200× iteration skip — but on a boundary/
+        // filament-heavy deep view (exactly where the user lingers) BLA can barely skip, so the frame's
+        // true cost approaches the *no-skip* estimate `spx·ss²·gpu_iter`. At floatexp depth that frame is
+        // multiple seconds without BLA and freezes the app (Windows resets the GPU after ~2s). Bound the
+        // worst-case (no-BLA) floatexp iterate cost of ONE frame to ~3e11 steps ≈ 0.85s on this GPU
+        // class (measured: a 1.74e12-step frame froze at ~5s). Cheap when BLA works.
+        const TDR_SAFE_STEPS: u64 = 300_000_000_000;
         let spx = (resolution[0] as u64) * (resolution[1] as u64);
+        // First line of defence is lowering ss (`max_ss_tdr` below), but that floors at 1. If even ss=1
+        // would blow the budget — `spx·gpu_iter` alone > TDR_SAFE_STEPS, i.e. a very large floatexp panel
+        // (a maximized 6K+/multi-monitor window at this iter count) — the ss cap can't help, so shrink the
+        // render RESOLUTION too. Only iterating frames need this (`!will_reproject`; a reproject frame
+        // runs no iterate, and shrinking its base would reintroduce the v0.1.44 aspect-fit magnify). Rare,
+        // but it closes the one hole where a single floatexp frame can still overrun the watchdog.
+        let (resolution, spx) = {
+            let iter_cost = spx.saturating_mul(gpu_iter.max(1) as u64);
+            if is_fe && !will_reproject && iter_cost > TDR_SAFE_STEPS {
+                let f = (TDR_SAFE_STEPS as f64 / iter_cost as f64).sqrt();
+                let r = [
+                    ((resolution[0] as f64 * f) as u32).max(16),
+                    ((resolution[1] as f64 * f) as u32).max(16),
+                ];
+                (r, (r[0] as u64) * (r[1] as u64))
+            } else {
+                (resolution, spx)
+            }
+        };
         let max_ss = ((budget / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
             .sqrt()
             .max(1.0) as u32;
-        // Hard GPU-watchdog (TDR) cap, independent of the BLA-trusting work budget. `max_ss` sizes the
-        // frame assuming BLA delivers its usual ~200× iteration skip — but on a boundary/filament-heavy
-        // deep view (exactly where the user lingers) BLA can barely skip, so the frame's true cost
-        // approaches the *no-skip* estimate `spx·ss²·gpu_iter`. At floatexp depth an 8×-AA settled frame
-        // there is multiple seconds without BLA and freezes the app (Windows resets the GPU after ~2s).
-        // Bound the worst-case (no-BLA) floatexp iterate cost so a single frame stays well under 2s
-        // regardless of how little BLA skips; ~3e11 steps ≈ 0.85s on this GPU class (measured: a
-        // 1.74e12-step frame froze at ~5s). Cheap when BLA works — the frame is far faster than the cap.
         let max_ss_tdr = if is_fe {
-            const TDR_SAFE_STEPS: u64 = 300_000_000_000;
             ((TDR_SAFE_STEPS / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
                 .sqrt()
                 .max(1.0) as u32
