@@ -53,6 +53,7 @@ mod export;
 mod fractal;
 mod help;
 mod profile;
+mod refcache_persist;
 mod render;
 mod scripting;
 mod selftest;
@@ -1573,6 +1574,12 @@ struct FractadyneApp {
     /// Per-view perturbation reference cache (index 0 = main/left, 1 = dual Julia).
     /// Separate caches let both dual panels use perturbation without thrashing.
     ref_cache: [RefCache; 2],
+    /// `orbit_id` of view 0's reference last written to `last_reference.bin` (persistence de-dup, so
+    /// autosave doesn't re-serialize an unchanged reference). `None` until a reference is saved.
+    last_saved_ref_id: Option<u64>,
+    /// `(orbit_id, first-seen time)` of a full reference awaiting its debounced persist — see
+    /// `autosave`. Reset whenever the reference changes, so we write once it's been stable ~1 s.
+    ref_save_pending: Option<(u64, f64)>,
     /// In-flight off-thread reference recompute per view (`None` = idle). Keeps the deep-zoom
     /// bignum recompute off the render thread: the frame keeps using the cached reference until the
     /// worker's result arrives (see `build_params`).
@@ -1888,6 +1895,8 @@ impl FractadyneApp {
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             theme,
             ref_cache: [RefCache::default(), RefCache::default()],
+            last_saved_ref_id: None,
+            ref_save_pending: None,
             recompute_rx: [None, None],
             last_state: s,
             dirty_since: None,
@@ -1930,6 +1939,36 @@ impl FractadyneApp {
             match app.load_kfr_file(std::path::Path::new(p)) {
                 Ok(m) => println!("{m}"),
                 Err(e) => eprintln!("--import-kfr: {e}"),
+            }
+        }
+        // Resume the deep-zoom reference saved from last session so the restored view renders
+        // immediately instead of rebuilding the (up to ~10 s) bignum orbit+SA+BLA. Best-effort: only
+        // when the snapshot's view-key exactly matches the view we just restored (centre + zoom
+        // exponent + formula + Julia); any mismatch/corruption falls through to the normal rebuild.
+        if let Some(saved) = refcache_persist::load() {
+            let e = app.viewport.units_per_pixel.e;
+            let prec = app.viewport.precision;
+            // The saved reference is valid iff we restored the SAME view: same zoom exponent + formula
+            // + Julia, and the centre is sub-pixel-identical. The centre is compared NUMERICALLY, not
+            // by decimal string — astro-float's to_string()/parse round-trip wobbles the trailing
+            // digits, so string equality spuriously fails. `ref_offset_mantissa(c, saved, e, prec)` is
+            // (c − saved)·2^-e ≈ the pixel offset; < 4 px means the same centre. Any mismatch (or a
+            // parse failure) falls through to the normal rebuild.
+            let center_ok = |s: &str, c: &fractadyne_core::BigFloat| {
+                fractadyne_core::parse_bf(s)
+                    .map(|b| fractadyne_core::ref_offset_mantissa(c, &b, e, prec).abs() < 4.0)
+                    .unwrap_or(false)
+            };
+            let same_view = saved.upp_e == e
+                && saved.formula_id == app.fractal.formula_id()
+                && saved.julia == app.julia_mode
+                && (!saved.julia
+                    || ((saved.julia_c.0 - app.julia_c.0).abs() < 1e-12
+                        && (saved.julia_c.1 - app.julia_c.1).abs() < 1e-12))
+                && center_ok(&saved.center_x_str, &app.viewport.center_x)
+                && center_ok(&saved.center_y_str, &app.viewport.center_y);
+            if same_view && app.install_saved_ref(0, saved) {
+                app.last_saved_ref_id = Some(app.ref_cache[0].orbit_id);
             }
         }
         app.nav.undo.push(app.snapshot_view()); // baseline for navigation undo
@@ -2133,6 +2172,41 @@ impl FractadyneApp {
                 self.dirty_since = None;
             }
         }
+        // Persist the deep-zoom reference on its OWN debounce (not tied to the session-dirty flag —
+        // the key case is loading a deep view and never touching it, where the session never goes
+        // dirty). Save ~1 s after view 0's full reference stops changing (its `orbit_id` stable), so a
+        // dive that rebuilds references every frame writes once on settle rather than churning 5 MB.
+        let vc0 = &self.ref_cache[0];
+        let unsaved = (!vc0.partial && vc0.ref_pt.is_some() && Some(vc0.orbit_id) != self.last_saved_ref_id)
+            .then_some(vc0.orbit_id);
+        match (unsaved, self.ref_save_pending) {
+            (Some(id), Some((pid, _))) if pid == id => {} // still debouncing the same reference
+            (Some(id), _) => self.ref_save_pending = Some((id, now)), // new unsaved ref → (re)start timer
+            (None, _) => self.ref_save_pending = None,                // nothing to save
+        }
+        if let Some((_, t)) = self.ref_save_pending {
+            if now - t > 1.0 || closing {
+                self.save_reference_snapshot();
+                self.ref_save_pending = None;
+            }
+        }
+    }
+
+    /// Serialize view 0's full reference to `last_reference.bin` if it changed since the last save.
+    /// Off-thread: the ~4–5 MB serialize+write must not hitch the frame or the close. Skips shallow
+    /// views (no reference) and coarse/in-progress references (`build_saved_ref` returns `None`).
+    fn save_reference_snapshot(&mut self) {
+        let Some(snapshot) = self.build_saved_ref(0) else {
+            return;
+        };
+        let id = self.ref_cache[0].orbit_id;
+        if self.last_saved_ref_id == Some(id) {
+            return; // this exact reference is already on disk
+        }
+        self.last_saved_ref_id = Some(id);
+        std::thread::spawn(move || {
+            let _ = refcache_persist::save(&snapshot);
+        });
     }
 
     /// Switch fractal type, resetting to that fractal's default view.

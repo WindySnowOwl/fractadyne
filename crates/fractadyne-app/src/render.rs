@@ -276,6 +276,65 @@ impl FractadyneApp {
         self.perf.recompute_total += 1;
         self.perf.rate_count += 1;
     }
+
+    /// Snapshot view 0's FULL reference for on-disk persistence (see `refcache_persist`), or `None`
+    /// if there's nothing worth saving yet — no reference, an empty orbit, or only a truncated coarse
+    /// one (which would render capped; better to rebuild the full one next launch). The view-key is
+    /// taken from the primary viewport, so this is meaningful only for `vi == 0`.
+    pub(crate) fn build_saved_ref(&self, vi: usize) -> Option<crate::refcache_persist::SavedRef> {
+        let vc = &self.ref_cache[vi];
+        let rp = vc.ref_pt.as_ref()?;
+        if vc.partial || vc.orbit.is_empty() {
+            return None;
+        }
+        Some(crate::refcache_persist::SavedRef {
+            center_x_str: fractadyne_core::to_decimal_string(&self.viewport.center_x),
+            center_y_str: fractadyne_core::to_decimal_string(&self.viewport.center_y),
+            upp_e: self.viewport.units_per_pixel.e,
+            formula_id: self.fractal.formula_id(),
+            julia: self.julia_mode,
+            julia_c: self.julia_c,
+            rp_x_str: fractadyne_core::to_decimal_string(&rp[0]),
+            rp_y_str: fractadyne_core::to_decimal_string(&rp[1]),
+            orbit: vc.orbit.clone(),
+            orbit_len: vc.orbit_len,
+            orbit_iter: vc.orbit_iter,
+            orbit_prec: vc.orbit_prec as u64,
+            partial: vc.partial,
+            sa: vc.sa,
+            bla: vc.bla.clone(),
+            bla_dc_max_log2: vc.bla_dc_max_log2,
+        })
+    }
+
+    /// Install a persisted reference snapshot into view `vi` (reverse of `build_saved_ref`), so a
+    /// restored session renders its deep view at once instead of rebuilding the (up to ~10 s) bignum
+    /// orbit. Mirrors `install_recompute`'s field writes. Returns false and installs nothing if the
+    /// stored reference point can't be parsed (treated as a cache miss → normal rebuild).
+    pub(crate) fn install_saved_ref(&mut self, vi: usize, s: crate::refcache_persist::SavedRef) -> bool {
+        let (Some(rx), Some(ry)) = (
+            fractadyne_core::parse_bf(&s.rp_x_str),
+            fractadyne_core::parse_bf(&s.rp_y_str),
+        ) else {
+            return false;
+        };
+        let vc = &mut self.ref_cache[vi];
+        vc.ref_pt = Some([rx, ry]);
+        vc.orbit = s.orbit;
+        vc.orbit_len = s.orbit_len;
+        vc.orbit_id = vc.orbit_id.wrapping_add(1);
+        vc.orbit_prec = s.orbit_prec as usize;
+        vc.orbit_iter = s.orbit_iter;
+        vc.partial = s.partial;
+        vc.last_recompute = Some(Instant::now());
+        vc.sa = s.sa;
+        vc.sa_key = (vc.orbit_id, s.orbit_iter);
+        vc.bla = s.bla;
+        vc.bla_id = vc.orbit_id;
+        vc.bla_dc_max_log2 = s.bla_dc_max_log2;
+        true
+    }
+
     /// Pick a reference point and compute its high-precision orbit for the current
     /// formula, arranging `Z₀`/`c` for Mandelbrot vs Julia mode. Returns the orbit,
     /// its length, and the chosen reference point (for the δ-offset).
