@@ -1540,3 +1540,82 @@ impl FractadyneApp {
         }
     }
 }
+
+#[cfg(test)]
+mod reuse_tests {
+    //! Verify the deep-dive reference-reuse plumbing end-to-end at the orbit level: `recompute_worker`
+    //! extends a cached orbit instead of rebuilding, and `try_reuse_reference`'s gates reject any
+    //! reference that would be invalid to reuse. (The extended orbit's byte-identity to a fresh build,
+    //! and render invariance to the chosen valid reference, are proven separately in core + selftest.)
+    use super::*;
+    use fractadyne_core::{parse_bf, Viewport};
+
+    // A Mandelbrot recompute for a view at (cx, cy, log2mag) — no BLA/SA, so the orbit is isolated.
+    fn inputs_for(cx: &str, cy: &str, log2mag: f64, gpu_iter: u32, reuse: Option<ReuseRef>) -> RecomputeInputs {
+        let mut vp = Viewport::new(256.0, 256.0);
+        vp.set_center_log2mag(parse_bf(cx).unwrap(), parse_bf(cy).unwrap(), log2mag);
+        let scale = vp.gpu_scale();
+        RecomputeInputs {
+            center_bf: [vp.center_x.clone(), vp.center_y.clone()],
+            span: vp.complex_span_fe(),
+            span_mantissa: scale.span_mantissa,
+            delta_exp: scale.delta_exp,
+            gpu_iter,
+            precision: vp.precision,
+            julia: false,
+            formula: 0,
+            julia_c: (0.0, 0.0),
+            do_sa: false,
+            bla_dc_max: None,
+            stripe_freq: 1.0,
+            trap_type: 0,
+            reuse,
+        }
+    }
+
+    // Seahorse boundary point: survives thousands of iters, so a short build is truncated/extendable.
+    const SX: &str = "-0.7436438870371587047521915061147707";
+    const SY: &str = "0.131825904205311970493132056385139";
+    const L2: f64 = 26.6; // ~1e8× (mode-0 df32 perturbation)
+
+    #[test]
+    fn reuse_extends_cached_orbit_in_place() {
+        let a = recompute_worker(inputs_for(SX, SY, L2, 3000, None));
+        assert!(a.partial, "short seahorse orbit should be truncated (extendable)");
+        let tail = a.orbit_tail.clone().expect("a truncated orbit carries a tail");
+        let reuse = ReuseRef { point: a.rp.clone(), prefix: a.orbit.clone(), tail, prec: a.prec };
+        // A deeper-iter rebuild at the same view must EXTEND a's orbit, not rebuild it.
+        let b = recompute_worker(inputs_for(SX, SY, L2, 6000, Some(reuse)));
+        assert!(b.orbit_len > a.orbit_len, "reuse should have extended the orbit");
+        assert_eq!(b.rp, a.rp, "reuse must keep the cached reference point");
+        assert_eq!(b.prec, a.prec, "extend must stay at the cached (headroom) precision");
+        // Byte-identical prefix ⇒ it truly extended (a fresh build at this depth would differ).
+        assert_eq!(&b.orbit[..a.orbit.len()], &a.orbit[..], "extended orbit must preserve the prefix");
+    }
+
+    #[test]
+    fn reuse_gates_reject_invalid_references() {
+        let a = recompute_worker(inputs_for(SX, SY, L2, 3000, None));
+        let tail = a.orbit_tail.clone().expect("tail");
+        let mk = |r: ReuseRef| inputs_for(SX, SY, L2, 6000, Some(r));
+
+        // Valid reference → reuse fires.
+        let ok = ReuseRef { point: a.rp.clone(), prefix: a.orbit.clone(), tail: tail.clone(), prec: a.prec };
+        assert!(try_reuse_reference(&mk(ok)).is_some(), "a valid in-view reference must reuse");
+
+        // Escaped (complete) orbit → nothing to extend.
+        let mut esc_tail = tail.clone();
+        esc_tail.escaped = true;
+        let esc = ReuseRef { point: a.rp.clone(), prefix: a.orbit.clone(), tail: esc_tail, prec: a.prec };
+        assert!(try_reuse_reference(&mk(esc)).is_none(), "an escaped orbit must not reuse");
+
+        // Cached precision below this depth's need → headroom exhausted.
+        let lowp = ReuseRef { point: a.rp.clone(), prefix: a.orbit.clone(), tail: tail.clone(), prec: 8 };
+        assert!(try_reuse_reference(&mk(lowp)).is_none(), "insufficient precision must not reuse");
+
+        // Point far off-centre (origin is ~0.75 away, ≫ a 1e8× span) → drifted out of validity.
+        let far = [parse_bf("0.0").unwrap(), parse_bf("0.0").unwrap()];
+        let drift = ReuseRef { point: far, prefix: a.orbit.clone(), tail, prec: a.prec };
+        assert!(try_reuse_reference(&mk(drift)).is_none(), "a drifted point must not reuse");
+    }
+}
