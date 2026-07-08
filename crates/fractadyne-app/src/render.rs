@@ -187,7 +187,10 @@ fn finish_reference(
 ) -> RecomputeResult {
     use fractadyne_core as fc;
     let partial = !tail.escaped;
-    let orbit_tail = partial.then_some(tail);
+    // Keep the tail even for a COMPLETE (escaped) orbit: it can't be EXTENDED, but it can still be
+    // REUSED as-is (same point + orbit) so a rebuild doesn't re-pick a fresh reference — which at
+    // extreme depth renders a hair differently each time and makes the view "jump" on zoom.
+    let orbit_tail = Some(tail);
     let orbit = std::sync::Arc::new(o);
     // Series approximation for the chosen reference (at the exact depth precision, not the headroom).
     let t_sa = Instant::now();
@@ -245,14 +248,17 @@ fn finish_reference(
 
 /// Extend a cached reference (`inp.reuse`) to the current depth instead of rebuilding it from
 /// scratch — the deep-dive win (the bignum orbit build dominates a deep frame). Returns `None`
-/// (→ fresh build) when there's no reusable reference, the cached orbit escaped (complete) or lacks
-/// the precision headroom for this depth, or its point has drifted too far to remain a valid in-view
-/// reference. Perturbation is invariant to *which* valid in-view reference is used, so a reused
-/// reference renders the same image as a fresh one — the drift gate keeps it valid.
+/// (→ fresh build) when there's no reusable reference, it lacks the precision headroom for this
+/// depth, or its point has drifted too far to remain a valid in-view reference. A COMPLETE (escaped)
+/// orbit IS reusable — `extend_reference_orbit` returns it unchanged — which keeps the SAME reference
+/// across rebuilds instead of re-picking a fresh one (at extreme depth, re-picking a different valid
+/// reference every ~0.16 octave made the view "jump" on zoom, since the render isn't perfectly
+/// invariant there). Perturbation is invariant to *which* valid in-view reference is used, so a
+/// reused reference renders the same image as a fresh one — the drift gate keeps it valid.
 fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
     use fractadyne_core as fc;
     let reuse = inp.reuse.as_ref()?;
-    if reuse.tail.escaped || reuse.prec < inp.precision || reuse.prefix.is_empty() {
+    if reuse.prec < inp.precision || reuse.prefix.is_empty() {
         return None;
     }
     // Re-verify the point is still a good in-view reference (defence in depth; the caller already
@@ -1014,22 +1020,9 @@ impl FractadyneApp {
         // reprojects instead — so a refresh never renders on a too-short reference (the old ~5 s-spin
         // hazard). Net: floatexp streams real detail every REFRESH_OCTAVES of a continuous dive.
         const REFRESH_OCTAVES: f64 = 0.5;
-        // The reuse-first zoom-HOLD (reproject a scaled frozen frame between real refreshes) is smooth
-        // and sharp up to ~1e100× but produces an unexplained per-refresh positional "jump" past that —
-        // the offset/scale math is sub-pixel-exact through every path (ref_offset_mantissa, zoom_at,
-        // uv_off/uv_scale), so the discrepancy is inside the held-frame path itself, and it did NOT
-        // respond to shrinking the refresh magnification (v0.1.62). So above ~1e100× drop the hold and
-        // render real frames directly while zooming: slightly softer motion (res-scaled real frames),
-        // but no held frame to jump. Pan reprojection (the `reproject` param) and genuine stall-freezes
-        // (`too_stale`/`depth_lag` below) are unaffected; `frozen_l2` still updates each real frame so a
-        // fallback freeze reprojects from the latest view.
-        const REUSE_HOLD_MAX_MAG: f64 = 1.0e100;
         let frozen_drift = (self.ref_cache[view_id as usize].frozen_l2 - log2mag).abs();
-        let reuse_hold = is_pert
-            && interacting
-            && !self.autopilot.stepping
-            && magnification < REUSE_HOLD_MAX_MAG
-            && frozen_drift < REFRESH_OCTAVES;
+        let reuse_hold =
+            is_pert && interacting && !self.autopilot.stepping && frozen_drift < REFRESH_OCTAVES;
         // A reprojection/freeze frame runs NO iterate (it re-samples the frozen texture), so the
         // motion res_scale saves nothing on it — and worse, it shrinks the frame's base below the
         // frozen texture's settle-time resolution, so the color-pass aspect-fit `fit = out_res /
@@ -1242,8 +1235,13 @@ impl FractadyneApp {
             // bit of lag so the still frame is at full precision. The orbit's iteration headroom
             // (`ref_build_iter`) covers the matching depth range, so iters rarely force a rebuild.
             let prec_headroom = if interacting { 32 } else { 0 };
+            // `gpu_iter > orbit_iter` grows a TRUNCATED reference so it serves deeper pixels. A
+            // COMPLETE (escaped) reference is already final — pixels past its escape rebase — so a
+            // rebuild would just re-pick the same-length escaped orbit; gating on `partial` stops it
+            // firing EVERY frame (which, at a location whose reference always escapes, re-picked a
+            // fresh reference each frame → the deep-zoom "jumping").
             let needs_quality = precision > self.ref_cache[vi].orbit_prec + prec_headroom
-                || gpu_iter > self.ref_cache[vi].orbit_iter;
+                || (self.ref_cache[vi].partial && gpu_iter > self.ref_cache[vi].orbit_iter);
             // Refresh whenever the reference has left the view or the depth/iters outgrew it. The
             // old motion throttle is gone: the recompute is now off-thread and gated to one job per
             // view (`recompute_rx`), so spawns are naturally paced by the compute itself — no need
@@ -1274,14 +1272,15 @@ impl FractadyneApp {
                 // Deep-dive reuse: on a deeper-zoom refresh at a still-in-view reference (NOT an
                 // out-of-view re-anchor), hand the worker the cached orbit so it can EXTEND it rather
                 // than recompute every bignum step. The worker re-validates drift/precision and falls
-                // back to a fresh build otherwise. Only a truncated (extendable) orbit with a tail
-                // qualifies; an escaped/complete or cold reference has none.
+                // back to a fresh build otherwise. A truncated orbit is EXTENDED; a complete (escaped)
+                // orbit is reused AS-IS (keeps the same reference, avoiding a re-pick jump) — both
+                // qualify. Only a cold reference (no orbit/tail) has none.
                 let reuse = if out_of_view {
                     None
                 } else {
                     let vc = &self.ref_cache[vi];
                     match (vc.ref_pt.clone(), vc.orbit_tail.clone()) {
-                        (Some(point), Some(tail)) if vc.partial && !vc.orbit.is_empty() => {
+                        (Some(point), Some(tail)) if !vc.orbit.is_empty() => {
                             Some(ReuseRef { point, prefix: vc.orbit.clone(), tail, prec: vc.orbit_prec })
                         }
                         _ => None,
