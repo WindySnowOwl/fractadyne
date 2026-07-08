@@ -636,7 +636,25 @@ impl CallbackTrait for MandelbrotParams {
             _pad_vig: 0.0,
             interior_col: self.interior_col,
             stops: self.stops,
-            out_res: [base[0] as f32, base[1] as f32],
+            // For a reprojection the frozen iteration texture may have been rendered at a REDUCED
+            // resolution (motion `res_scale`) — which now happens mid-dive since v0.1.58/59 refresh
+            // floatexp while moving. The color-pass aspect-fit is `fit = out_res / screen_dim` where
+            // `screen_dim` is the frozen texture's base resolution; if `out_res` were the current
+            // (native) frame size, `fit = 1/res_scale > 1` would shrink the frozen content into a
+            // central patch ringed by the average color (a "circle" that resizes as `res_scale`
+            // varies and slides with `uv_off` — the deep-zoom "jumping" artifact). Use the frozen
+            // texture's own base resolution so `fit = 1` (identity) and the sampler upscales it to
+            // fill the view. Native (settled) frozen frames are unchanged. (Trade-off: a window
+            // resize *during* a reprojection no longer aspect-fits until the next real frame — rare
+            // and self-correcting.)
+            out_res: if reproject {
+                [
+                    (view.size[0] as f32 / color_ss as f32).max(1.0),
+                    (view.size[1] as f32 / color_ss as f32).max(1.0),
+                ]
+            } else {
+                [base[0] as f32, base[1] as f32]
+            },
             _pad_out: [0.0, 0.0],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
