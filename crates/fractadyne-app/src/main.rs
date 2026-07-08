@@ -1071,6 +1071,11 @@ struct RefCache {
     /// the render caps iterations to its length so it never rebases past it. Cleared when the full
     /// reference installs.
     partial: bool,
+    /// Full-precision running state at the end of the cached orbit (`Z`, `Z_prev`, escaped flag), so a
+    /// deeper rebuild at the SAME reference point can EXTEND this orbit instead of recomputing every
+    /// step — the deep-dive reuse win (the bignum orbit build dominates a deep frame). `None` when no
+    /// extendable orbit is cached (cold start, escaped/complete orbit, or a persisted reference).
+    orbit_tail: Option<fractadyne_core::OrbitTail>,
     /// When the orbit was last recomputed (throttles refresh during interaction).
     last_recompute: Option<Instant>,
     /// Cached series-approximation skip + coefficients for this reference, and the
@@ -1110,6 +1115,7 @@ impl Default for RefCache {
             orbit_prec: 0,
             orbit_iter: 0,
             partial: false,
+            orbit_tail: None,
             last_recompute: None,
             sa: fractadyne_core::SeriesSkip::NONE,
             sa_key: (u64::MAX, u32::MAX),

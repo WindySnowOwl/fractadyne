@@ -38,6 +38,20 @@ pub(crate) struct RecomputeResult {
     /// length so it never rebases past the short reference (which would glitch at extreme depth).
     /// False for a full or escaped orbit.
     partial: bool,
+    /// Full-precision running state at the orbit's end, cached so a deeper same-point rebuild can
+    /// extend it (see [`RefCache::orbit_tail`]). `None` when the orbit escaped (complete) or is empty.
+    /// (The precision it was built at — depth precision + reuse HEADROOM — travels in `prec`.)
+    orbit_tail: Option<fractadyne_core::OrbitTail>,
+}
+
+/// A cached reference the worker may EXTEND instead of rebuilding from scratch: the prior orbit's
+/// point, df32 samples, full-precision tail, and the precision it was built at. Supplied by
+/// `build_params` when the current recompute is a deeper zoom at a still-in-view reference.
+struct ReuseRef {
+    point: [fractadyne_core::BigFloat; 2],
+    prefix: std::sync::Arc<Vec<[f32; 4]>>,
+    tail: fractadyne_core::OrbitTail,
+    prec: usize,
 }
 
 /// Owned, `Send` inputs for an off-thread reference recompute.
@@ -59,6 +73,9 @@ struct RecomputeInputs {
     /// Orbit-trap type (0 point / 1 cross / 2 circle) to bake into the BLA `agg_trap` lane (the
     /// aggregate is trap-type-specific). Irrelevant unless orbit-trap rides BLA, but always carried.
     trap_type: u32,
+    /// A prior reference the worker may extend instead of rebuilding (deeper zoom, same in-view
+    /// point). `None` forces a fresh best-reference pick + full orbit build.
+    reuse: Option<ReuseRef>,
 }
 
 /// Aux coloring aggregates for the BLA tree, derived from a reference orbit. Triangle-inequality
@@ -86,6 +103,12 @@ fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32) -> f
 /// thread; mirrors the synchronous `compute_reference` + `series_skip_for` + `build_bla`. The
 /// progressive cold start (`recompute_worker_staged`) reuses the `pick`/`build` split below.
 fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
+    // Deep-dive reuse: when the prior reference is still valid for this (deeper) frame, EXTEND its
+    // orbit instead of recomputing every bignum step (the orbit build dominates a deep frame). Falls
+    // back to a fresh pick + full build when there's no reusable orbit or it no longer qualifies.
+    if let Some(res) = try_reuse_reference(&inp) {
+        return res;
+    }
     let rp = pick_reference(&inp);
     build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, &inp)
 }
@@ -105,11 +128,20 @@ fn pick_reference(inp: &RecomputeInputs) -> [fractadyne_core::BigFloat; 2] {
     )
 }
 
-/// Build the orbit (to `orbit_iter`) + series-approximation skip + BLA tree for a PRE-CHOSEN
-/// reference point `rp`. Split out of `recompute_worker` so a progressive cold start builds a short
-/// (coarse) orbit and the full one from the SAME point (no pop on refine). `partial` is set when the
-/// orbit never escaped (a truncated reference) — read from the last sample's magnitude, so an
-/// escape-exactly-at-the-cap orbit is correctly treated as complete.
+/// Extra orbit precision above the depth's exact requirement, so successive DEEPER rebuilds within
+/// this band can extend the cached orbit (see [`try_reuse_reference`]) instead of recomputing it.
+/// The orbit is stored as df32 with ample accuracy headroom, so building at a higher precision
+/// leaves the df32 samples byte-identical — this only grows the accumulation margin, not the render.
+const REF_PREC_HEADROOM: usize = 128;
+
+/// Hard drift ceiling for reusing a cached reference: a point beyond this fraction of a span
+/// off-centre is re-anchored (fresh pick) instead. Held at the `out_of_view` gate that already
+/// filters the caller, so a reused reference is never worse than one the live path already trusts.
+const REUSE_MAX_DRIFT: f64 = 0.7;
+
+/// Build the orbit (to `orbit_iter`, at reuse-headroom precision) + series-approximation skip + BLA
+/// tree for a PRE-CHOSEN reference point `rp`. Split out of `recompute_worker` so a progressive cold
+/// start builds a short (coarse) orbit and the full one from the SAME point (no pop on refine).
 fn build_reference_from_point(
     rp: [fractadyne_core::BigFloat; 2],
     orbit_iter: u32,
@@ -118,31 +150,46 @@ fn build_reference_from_point(
 ) -> RecomputeResult {
     use fractadyne_core as fc;
     let t = Instant::now();
-    let zero = fc::BigFloat::from_f64(0.0, inp.precision);
+    let orbit_prec = inp.precision + REF_PREC_HEADROOM;
+    let zero = fc::BigFloat::from_f64(0.0, orbit_prec);
     let (z0x, z0y, cx0, cy0) = if inp.julia {
         (
             rp[0].clone(),
             rp[1].clone(),
-            fc::BigFloat::from_f64(inp.julia_c.0, inp.precision),
-            fc::BigFloat::from_f64(inp.julia_c.1, inp.precision),
+            fc::BigFloat::from_f64(inp.julia_c.0, orbit_prec),
+            fc::BigFloat::from_f64(inp.julia_c.1, orbit_prec),
         )
     } else {
         (zero.clone(), zero, rp[0].clone(), rp[1].clone())
     };
-    let (o, len) = fc::reference_orbit(&z0x, &z0y, &cx0, &cy0, inp.formula, orbit_iter, inp.precision);
-    // Truncated (coarse) iff the orbit never escaped: the last sample stays inside the escape radius
-    // (|z|² ≤ 1e12, the `reference_orbit` bail). A reference that escaped — even exactly at the cap —
-    // is a complete orbit and must NOT cap the render.
-    let partial = o
-        .last()
-        .map(|z| {
-            let (x, y) = (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64);
-            x * x + y * y <= 1.0e12
-        })
-        .unwrap_or(false);
-    let orbit = std::sync::Arc::new(o);
+    let (o, len, tail) =
+        fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, orbit_iter, orbit_prec);
     let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
-    // Series approximation for the chosen reference.
+    finish_reference(rp, o, len, tail, orbit_prec, orbit_iter, do_sa, inp, ref_ms)
+}
+
+/// Assemble a `RecomputeResult` from an already-built (fresh or extended) orbit: derive the
+/// truncated/`partial` flag + the extendable `orbit_tail`, then build the series-approximation skip
+/// and the BLA tree. Shared by the fresh build and the reuse/extend path so both produce identical
+/// downstream fields for a given orbit. `partial` (never escaped) marks a truncated reference — the
+/// render caps iterations to it, and only such an orbit carries a tail worth extending.
+#[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: fold into a reference-inputs struct
+fn finish_reference(
+    rp: [fractadyne_core::BigFloat; 2],
+    o: Vec<[f32; 4]>,
+    len: u32,
+    tail: fractadyne_core::OrbitTail,
+    orbit_prec: usize,
+    orbit_iter: u32,
+    do_sa: bool,
+    inp: &RecomputeInputs,
+    ref_ms: f64,
+) -> RecomputeResult {
+    use fractadyne_core as fc;
+    let partial = !tail.escaped;
+    let orbit_tail = partial.then_some(tail);
+    let orbit = std::sync::Arc::new(o);
+    // Series approximation for the chosen reference (at the exact depth precision, not the headroom).
     let t_sa = Instant::now();
     let sa = if do_sa {
         let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &rp[0], inp.delta_exp, inp.precision);
@@ -156,8 +203,8 @@ fn build_reference_from_point(
         fc::SeriesSkip::NONE
     };
     let series_ms = t_sa.elapsed().as_secs_f64() * 1000.0;
-    // BLA tree (Mandelbrot deep only; `None` otherwise). Built with the same conservative dc_max
-    // the live path uses so the main thread reuses it across pans.
+    // BLA tree (Mandelbrot deep only; empty otherwise). Built with the same conservative dc_max the
+    // live path uses so the main thread reuses it across pans.
     let t_bla = Instant::now();
     let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
         Some(dc_max) => {
@@ -186,13 +233,67 @@ fn build_reference_from_point(
         bla_dc_max_log2,
         bla_stripe_freq: inp.stripe_freq,
         bla_trap_type: inp.trap_type,
-        prec: inp.precision,
+        prec: orbit_prec,
         iter: orbit_iter,
         ref_ms,
         series_ms,
         bla_ms,
         partial,
+        orbit_tail,
     }
+}
+
+/// Extend a cached reference (`inp.reuse`) to the current depth instead of rebuilding it from
+/// scratch — the deep-dive win (the bignum orbit build dominates a deep frame). Returns `None`
+/// (→ fresh build) when there's no reusable reference, the cached orbit escaped (complete) or lacks
+/// the precision headroom for this depth, or its point has drifted too far to remain a valid in-view
+/// reference. Perturbation is invariant to *which* valid in-view reference is used, so a reused
+/// reference renders the same image as a fresh one — the drift gate keeps it valid.
+fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
+    use fractadyne_core as fc;
+    let reuse = inp.reuse.as_ref()?;
+    if reuse.tail.escaped || reuse.prec < inp.precision || reuse.prefix.is_empty() {
+        return None;
+    }
+    // Re-verify the point is still a good in-view reference (defence in depth; the caller already
+    // gated on `!out_of_view`, but this snapshot could in principle lag).
+    let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &reuse.point[0], inp.delta_exp, inp.precision)
+        / inp.span_mantissa.x;
+    let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &reuse.point[1], inp.delta_exp, inp.precision)
+        / inp.span_mantissa.y;
+    if dx.abs() > REUSE_MAX_DRIFT || dy.abs() > REUSE_MAX_DRIFT {
+        return None;
+    }
+    let t = Instant::now();
+    let (cx0, cy0) = if inp.julia {
+        (
+            fc::BigFloat::from_f64(inp.julia_c.0, reuse.prec),
+            fc::BigFloat::from_f64(inp.julia_c.1, reuse.prec),
+        )
+    } else {
+        (reuse.point[0].clone(), reuse.point[1].clone())
+    };
+    let (o, len, tail) = fc::extend_reference_orbit(
+        &reuse.prefix,
+        &reuse.tail,
+        &cx0,
+        &cy0,
+        inp.formula,
+        inp.gpu_iter,
+        reuse.prec,
+    );
+    let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
+    Some(finish_reference(
+        reuse.point.clone(),
+        o,
+        len,
+        tail,
+        reuse.prec,
+        inp.gpu_iter,
+        inp.do_sa,
+        inp,
+        ref_ms,
+    ))
 }
 
 /// Off-thread cold-start build with a PROGRESSIVE fast path. Picks the reference once, then — when
@@ -287,6 +388,7 @@ impl FractadyneApp {
         vc.orbit_prec = res.prec;
         vc.orbit_iter = res.iter;
         vc.partial = res.partial; // always written, so the full stage clears a prior coarse's flag
+        vc.orbit_tail = res.orbit_tail; // extendable tail for the next deeper rebuild (None if escaped)
         vc.orbit_id = vc.orbit_id.wrapping_add(1);
         vc.last_recompute = Some(Instant::now());
         vc.sa = res.sa;
@@ -456,6 +558,7 @@ impl FractadyneApp {
             bla_dc_max,
             stripe_freq: self.coloring.stripe_freq as f64,
             trap_type: self.coloring.trap_type as u32,
+            reuse: None, // one-shot export: always a fresh build
         }
     }
 
@@ -1150,6 +1253,22 @@ impl FractadyneApp {
                 // the result when it lands (polled above). Only the very first reference (nothing
                 // cached to draw with) is computed synchronously. Build to `ref_build_iter` (a bit
                 // past what the pixels need) so the orbit serves a range of depths without rebuild.
+                // Deep-dive reuse: on a deeper-zoom refresh at a still-in-view reference (NOT an
+                // out-of-view re-anchor), hand the worker the cached orbit so it can EXTEND it rather
+                // than recompute every bignum step. The worker re-validates drift/precision and falls
+                // back to a fresh build otherwise. Only a truncated (extendable) orbit with a tail
+                // qualifies; an escaped/complete or cold reference has none.
+                let reuse = if out_of_view {
+                    None
+                } else {
+                    let vc = &self.ref_cache[vi];
+                    match (vc.ref_pt.clone(), vc.orbit_tail.clone()) {
+                        (Some(point), Some(tail)) if vc.partial && !vc.orbit.is_empty() => {
+                            Some(ReuseRef { point, prefix: vc.orbit.clone(), tail, prec: vc.orbit_prec })
+                        }
+                        _ => None,
+                    }
+                };
                 let inputs = RecomputeInputs {
                     center_bf: center_bf.clone(),
                     span,
@@ -1165,6 +1284,7 @@ impl FractadyneApp {
                         .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
                     stripe_freq: self.coloring.stripe_freq as f64,
                     trap_type: self.coloring.trap_type as u32,
+                    reuse,
                 };
                 // Anti-churn backstop: never respawn more than ~60×/s (spaced ≥ 16 ms). The wider
                 // `out_of_view` above already keeps refreshes infrequent; this just guards against a
