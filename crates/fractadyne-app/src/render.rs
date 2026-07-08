@@ -914,9 +914,51 @@ impl FractadyneApp {
         } else {
             u32::MAX
         };
+        // Adaptive wall-clock extension of the watchdog cap. `max_ss_tdr` assumes BLA skips
+        // NOTHING — right on boundary/filament-heavy views, but over-throttling the common case
+        // where BLA is effective and full AA would cost milliseconds. A resolved probe (`update`
+        // measures each newly-rendered settle stage's frame interval) tells us this view's REAL
+        // cost, so allow at most one doubling past the measured stage, quadratically projected
+        // and kept under ~800 ms (≈2.5× margin under the ~2 s watchdog). Each further doubling
+        // needs its own measurement, so the extension can never outrun reality by more than 4×;
+        // interaction clears the measurement (below), so it can't carry across views. Where BLA
+        // truly can't skip, the measured cost is high, the extension is nil, and the static cap
+        // stands — the settled frame stays bounded exactly as before.
+        let vs = view_id as usize;
+        if interacting {
+            self.perf.aa_measured[vs] = None;
+            self.perf.aa_probe[vs] = None;
+        }
+        let max_ss_meas = self.perf.aa_measured[vs]
+            .filter(|_| is_fe)
+            .map(|(s, ms)| {
+                const TDR_SAFE_MS: f64 = 800.0;
+                let by_cost = ((s as f64) * (TDR_SAFE_MS / ms.max(1.0)).sqrt()).floor() as u32;
+                by_cost.clamp(s, s.saturating_mul(2))
+            })
+            .unwrap_or(0);
         // `aa_target` is 1 while moving and ramps up over settled frames (progressive settle); clamp
-        // to what the per-frame budget affords (`max_ss`) and the watchdog allows (`max_ss_tdr`).
-        let ss = aa_target.min(max_ss).min(max_ss_tdr).max(1);
+        // to what the per-frame budget affords (`max_ss`) and the watchdog allows (static worst-case
+        // cap, extended by the measured allowance where the real cost is known).
+        let ss = aa_target.min(max_ss).min(max_ss_tdr.max(max_ss_meas)).max(1);
+        // Arm a probe only on a frame that actually RE-ITERATES (a cached frame's interval is
+        // ~vsync and would wildly over-authorize): the iterate re-runs when its key inputs change
+        // (ss stage, resolution, reference), and on the first settled frame after an interaction
+        // (the view moved, so that frame re-iterates even with an unchanged key — this bootstraps
+        // the ladder on views whose static cap is 1, which otherwise never see an ss change).
+        let key = (ss, resolution, self.ref_cache[vs].orbit_id);
+        let key_changed = key != self.perf.aa_last_key[vs];
+        self.perf.aa_last_key[vs] = key;
+        let bootstrap =
+            self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none();
+        if is_fe
+            && !interacting
+            && !will_reproject
+            && self.playback.is_none() // tour frames move every keyframe — not settled-cost data
+            && (key_changed || bootstrap)
+        {
+            self.perf.aa_probe[vs] = Some((ss, self.perf.frame_idx, 0.0));
+        }
         // Color-pass anti-aliasing when true supersampling wasn't affordable: widen the box
         // to match an upscaled (resolution-reduced) texture, or apply a gentle 2× box when
         // the budget forced ss=1 on a settled view the user wanted anti-aliased.

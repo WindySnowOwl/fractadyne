@@ -90,6 +90,20 @@ struct Perf {
     last_precision: usize,
     last_orbit_len: u32,
     last_sa_skip: u32,
+    /// Monotonic frame counter, for resolving adaptive-AA probes (below).
+    frame_idx: u64,
+    /// Armed adaptive-AA wall-clock probe per view: `(ss rendered, frame armed, max frame-interval
+    /// ms observed since)`. Armed by `build_params` when a settle-ramp stage renders a new ss;
+    /// resolved in `update` two frames later (`desired_maximum_frame_latency = 1` means a heavy GPU
+    /// frame back-pressures the NEXT acquire, so its cost lands in the following interval).
+    aa_probe: [Option<(u32, u64, f64)>; 2],
+    /// Last resolved stage cost per view: `(ss, ms)`. Lets the TDR cap extend past its static
+    /// no-BLA worst case where the MEASURED cost shows BLA is effective. Cleared on interaction,
+    /// so a measurement can never carry across views.
+    aa_measured: [Option<(u32, f64)>; 2],
+    /// Iterate-key `(ss, resolution, orbit_id)` submitted last frame per view — change detection
+    /// for probe arming (a probe is only valid on a frame that actually re-iterates).
+    aa_last_key: [(u32, [u32; 2], u64); 2],
 }
 
 impl Default for Perf {
@@ -109,6 +123,10 @@ impl Default for Perf {
             last_precision: 0,
             last_orbit_len: 0,
             last_sa_skip: 0,
+            frame_idx: 0,
+            aa_probe: [None, None],
+            aa_measured: [None, None],
+            aa_last_key: [(1, [0, 0], 0), (1, [0, 0], 0)],
         }
     }
 }
@@ -3958,7 +3976,26 @@ impl eframe::App for FractadyneApp {
         if let Some(prev) = self.perf.last_frame {
             let dt = frame_start.duration_since(prev).as_secs_f64() * 1000.0;
             self.perf.frame_ms = ema(self.perf.frame_ms, dt);
+            // Resolve adaptive-AA probes (see `Perf::aa_probe`): a stage armed on frame F is
+            // costed as the max frame interval over F+1..=F+2 — with frame latency 1 a heavy GPU
+            // frame stalls the NEXT acquire, so its cost shows up one interval late. A resolution
+            // requests one repaint: the settle ramp's own repaint chain ends when its counter
+            // exhausts, so without this a measurement that lands afterwards would sit unapplied
+            // (the view would idle below the AA the measurement just authorized).
+            for v in 0..2 {
+                if let Some((ss, armed, mx)) = self.perf.aa_probe[v] {
+                    let mx = mx.max(dt);
+                    if self.perf.frame_idx >= armed + 2 {
+                        self.perf.aa_measured[v] = Some((ss, mx));
+                        self.perf.aa_probe[v] = None;
+                        ctx.request_repaint();
+                    } else {
+                        self.perf.aa_probe[v] = Some((ss, armed, mx));
+                    }
+                }
+            }
         }
+        self.perf.frame_idx += 1;
         self.perf.last_frame = Some(frame_start);
 
         if !self.auto_benchmark && !self.auto_stdbench && !self.auto_render && !self.selftest && !self.profile && self.render_tour.is_none() && self.std_bench.is_none() {
