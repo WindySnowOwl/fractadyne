@@ -140,9 +140,11 @@ impl FractadyneApp {
                             );
                         ui.checkbox(&mut self.render_cfg.series_approx, "Series approximation")
                             .on_hover_text(
-                                "Speed up deep Mandelbrot renders (≥1e28×) by seeding the \
-                                 perturbation from a polynomial and skipping early iterations. \
-                                 Identical output; turn off to compare.",
+                                "Speed up deep renders by seeding the perturbation from a \
+                                 polynomial and skipping early iterations. Applies where BLA \
+                                 isn't available (df32 depths, Multibrot, BLA off) — with BLA \
+                                 active the same skip comes from the BLA tree, so the costly \
+                                 series pass is skipped. Identical output; turn off to compare.",
                             );
                         ui.checkbox(&mut self.render_cfg.glitch_correct, "Glitch correction (export)")
                             .on_hover_text(

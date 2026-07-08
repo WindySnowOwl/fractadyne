@@ -399,11 +399,20 @@ impl FractadyneApp {
         span_mantissa: fractadyne_core::SpanMantissa,
         delta_exp: i32,
     ) -> RecomputeInputs {
+        let bla_dc_max = self
+            .bla_eligible(mode, julia)
+            .then(|| Self::bla_dc_max(span_mantissa, delta_exp));
+        // BLA subsumes SA: when a BLA tree is built for this render it skips the same initial
+        // iterations the series seed would (measured: gpu-it 22→27 ms at 1e1105×), while the SA
+        // coefficient pass is the DOMINANT deep build cost (~9.4 s of a ~10.8 s build at 1e1105×,
+        // ~8× the whole build). So compute SA only when no BLA tree will exist for this view
+        // (df32-pert mode 0, Multibrot, BLA off/aux-gated) — there it remains the only skip.
         let do_sa = (!mode.is_direct())
             && !julia
             && self.fractal.formula_id() <= 3
             && !self.coloring.color_method.blocks_iter_skip()
-            && self.render_cfg.series_approx;
+            && self.render_cfg.series_approx
+            && bla_dc_max.is_none();
         RecomputeInputs {
             center_bf: [vp.center_x.clone(), vp.center_y.clone()],
             span: vp.complex_span_fe(),
@@ -415,9 +424,7 @@ impl FractadyneApp {
             formula: self.fractal.formula_id(),
             julia_c: self.julia_c,
             do_sa,
-            bla_dc_max: self
-                .bla_eligible(mode, julia)
-                .then(|| Self::bla_dc_max(span_mantissa, delta_exp)),
+            bla_dc_max,
         }
     }
 
@@ -1028,11 +1035,17 @@ impl FractadyneApp {
             // so `> 1.1` refreshes ~0.1 octave into the dive.
             let recompute = out_of_view || needs_quality || depth_lag > 1.1;
             // Whether the series approximation applies to this view (bundled into the recompute).
+            // BLA subsumes SA (see `export_reference_inputs`): when this view builds a BLA tree,
+            // skip the SA coefficient pass — it's the dominant deep build cost (~9.4 s at 1e1105×)
+            // for a skip BLA already provides (gpu-it 22→27 ms). SA stays on where BLA can't go
+            // (mode 0, Multibrot, BLA off/aux-gated), where it remains the only iteration skip.
+            let bla_will_build = self.bla_eligible(mode, julia);
             let do_sa = (!mode.is_direct())
                 && !julia
                 && fractal.formula_id() <= 3
                 && !self.coloring.color_method.blocks_iter_skip()
-                && self.render_cfg.series_approx;
+                && self.render_cfg.series_approx
+                && !bla_will_build;
             if recompute {
                 // The recompute (reference orbit + SA + BLA, all bignum) is the deep-zoom stall.
                 // Run it OFF the render thread: keep drawing with the cached reference and install
@@ -1050,8 +1063,7 @@ impl FractadyneApp {
                     formula: self.fractal.formula_id(),
                     julia_c: self.julia_c,
                     do_sa,
-                    bla_dc_max: self
-                        .bla_eligible(mode, julia)
+                    bla_dc_max: bla_will_build
                         .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
                 };
                 // Anti-churn backstop: never respawn more than ~60×/s (spaced ≥ 16 ms). The wider

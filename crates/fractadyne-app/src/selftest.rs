@@ -121,14 +121,16 @@ impl FractadyneApp {
         let render = |req: &fractadyne_gpu::ExportRequest| -> Option<Vec<f32>> {
             fractadyne_gpu::render_iter(device, queue, req).ok().map(|r| r.pixels)
         };
-        // A square request at the seahorse, then caller overrides the mode.
-        let make = |cx: &str, cy: &str, mag: f64| -> fractadyne_gpu::ExportRequest {
+        // A square request at the seahorse, then caller overrides the mode. Takes the app
+        // explicitly (no captured `self` borrow) so checks can flip `render_cfg` knobs — e.g.
+        // `use_bla`, which since the SA⊂BLA gate also decides whether SA is computed — between calls.
+        let make = |app: &Self, cx: &str, cy: &str, mag: f64| -> fractadyne_gpu::ExportRequest {
             let mut vp = Viewport::new(N as f64, N as f64);
             vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
             vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
             vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
             vp.precision = fractadyne_core::precision_for_magnification(mag);
-            let mut req = self.current_export_request_for(&vp, false);
+            let mut req = app.current_export_request_for(&vp, false);
             req.width = N;
             req.height = N;
             req.ss = 1;
@@ -220,7 +222,7 @@ impl FractadyneApp {
         {
             // (A) df32 perturbation vs an independent CPU f64 dwell @2e4× (f64 exact here).
             let mag = 2.0e4;
-            let req = make(SX, SY, mag);
+            let req = make(self, SX, SY, mag);
             if let Some(px) = render(&req) {
                 let cx0 = fractadyne_core::to_f64(&fractadyne_core::parse_bf(SX).unwrap());
                 let cy0 = fractadyne_core::to_f64(&fractadyne_core::parse_bf(SY).unwrap());
@@ -263,7 +265,7 @@ impl FractadyneApp {
             }
 
             // (B) floatexp vs df32 perturbation @1e10× — two representations, must agree.
-            let mut a = make(SX, SY, 1.0e10);
+            let mut a = make(self, SX, SY, 1.0e10);
             a.mode = 0;
             let mut b = a.clone();
             b.mode = 2;
@@ -294,7 +296,7 @@ impl FractadyneApp {
                 ("1e30x", NX, NY, 1.0e30),
             ];
             for (label, cx, cy, mag) in battery {
-                let req = make(cx, cy, *mag); // mode chosen by the real depth selector
+                let req = make(self, cx, cy, *mag); // mode chosen by the real depth selector
                 if let Some(px) = render(&req) {
                     let (checked, agree, boundary, mism) = oracle(cx, cy, *mag, req.max_iter, &px);
                     checks.push(SelfCheck {
@@ -319,9 +321,17 @@ impl FractadyneApp {
 
             // (D3) Series approximation — at deep zoom (mode 2) the order-3 polynomial seed
             // must (a) actually engage (skip > 0) and (b) reproduce the full-iteration render.
-            // Compare an SA-on render to the same view with the skip forced to 0.
+            // Compare an SA-on render to the same view with the skip forced to 0. BLA is forced
+            // OFF for the request build: since the SA⊂BLA gate, SA is only computed when no BLA
+            // tree is built — this exercises the SA path exactly where it still runs (BLA off /
+            // unavailable), rather than passing vacuously with skip 0.
             {
-                let on = make(NX, NY, 1.0e30);
+                let (saved_bla, saved_sa) = (self.render_cfg.use_bla, self.render_cfg.series_approx);
+                self.render_cfg.use_bla = false;
+                self.render_cfg.series_approx = true;
+                let on = make(self, NX, NY, 1.0e30);
+                self.render_cfg.use_bla = saved_bla;
+                self.render_cfg.series_approx = saved_sa;
                 let mut off = on.clone();
                 off.sa_skip = 0;
                 let skip = on.sa_skip;
@@ -355,11 +365,32 @@ impl FractadyneApp {
                 }
             }
 
+            // (D3g) The SA⊂BLA gate — when a BLA tree is built for a floatexp Mandelbrot view,
+            // the request must carry NO series seed (SA's bignum coefficient pass is the dominant
+            // deep build cost, ~9.4 s at 1e1105×, for a skip BLA already provides) and an engaged
+            // BLA. Guards against silently re-paying the SA build wherever BLA is active.
+            {
+                let (saved_bla, saved_sa) = (self.render_cfg.use_bla, self.render_cfg.series_approx);
+                self.render_cfg.use_bla = true;
+                self.render_cfg.series_approx = true;
+                let req = make(self, NX, NY, 1.0e30);
+                self.render_cfg.use_bla = saved_bla;
+                self.render_cfg.series_approx = saved_sa;
+                checks.push(SelfCheck {
+                    category: "Series approximation",
+                    name: "SA gated off when BLA active @1e30×".into(),
+                    params: format!("Mandelbrot mode {}, SA toggle on, BLA on", req.mode),
+                    result: format!("sa_skip {}, bla_on {}", req.sa_skip, req.bla_on),
+                    threshold: "sa_skip == 0 and bla_on == 1",
+                    pass: req.sa_skip == 0 && req.bla_on == 1,
+                });
+            }
+
             // (D3b) Series approximation on the df32 path (mode 0) — same engage + fidelity
             // check at a depth the depth-selector renders with mode 0 (< 1e28×). The seed is
             // computed in floatexp then collapsed to the absolute df32 δ this path carries.
             {
-                let on = make(NX, NY, 1.0e20);
+                let on = make(self, NX, NY, 1.0e20);
                 let mut off = on.clone();
                 off.sa_skip = 0;
                 let (skip, mode) = (on.sa_skip, on.mode);
@@ -401,7 +432,7 @@ impl FractadyneApp {
             // independent votes.
             {
                 let mag = 1.0e8;
-                let base = make(SX, SY, mag); // mode 0, best_reference
+                let base = make(self, SX, SY, mag); // mode 0, best_reference
                 let prec = fractadyne_core::precision_for_magnification(mag);
                 let cxb = fractadyne_core::parse_bf(SX).unwrap();
                 let cyb = fractadyne_core::parse_bf(SY).unwrap();
@@ -527,7 +558,7 @@ impl FractadyneApp {
                     // export on the smooth region (correction only touches the rare glitched px).
                     if let (Some(cor), Some(plain)) = (
                         self.render_export_corrected(device, queue, &vp, false, N, N),
-                        render(&make(SX, SY, mag)),
+                        render(&make(self, SX, SY, mag)),
                     ) {
                         let n = (N * N) as usize;
                         let finite = cor.pixels.iter().all(|v| v.is_finite());
@@ -551,7 +582,7 @@ impl FractadyneApp {
             }
 
             // (E) Real-axis symmetry + interior/exterior presence + finiteness @home.
-            let req = make("-0.5", "0.0", 1.0);
+            let req = make(self, "-0.5", "0.0", 1.0);
             if let Some(px) = render(&req) {
                 let w = N as usize;
                 let (mut sum, mut n) = (0.0f64, 0u64);
