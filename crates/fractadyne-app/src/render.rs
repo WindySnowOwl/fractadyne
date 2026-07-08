@@ -859,18 +859,30 @@ impl FractadyneApp {
         } else {
             1.0
         };
+        // REUSE-FIRST ZOOM hold decision (used by BOTH the native-res gate here and the freeze
+        // trigger below — they must agree). While interacting, hold + reproject the last good frame
+        // (scaled to follow the zoom) instead of re-iterating. Floatexp holds throughout: a real
+        // deep frame would spin ~5 s on the stale reference, so its refresh is reference-recompute-
+        // driven (the `depth_lag` hold below). Mode-0 (df32) CAN afford to re-render, so once the
+        // held frame has been magnified past REFRESH_OCTAVES it takes ONE real (res-scaled) frame to
+        // refresh detail — otherwise a continuous mode-0 zoom keeps upsampling the frozen texture
+        // into large blocks before it settles. `frozen_l2 − log2mag` = octaves the view has zoomed
+        // since the held frame was rendered; a real frame resets it (updates `frozen_l2` below).
+        const REFRESH_OCTAVES: f64 = 0.5;
+        let frozen_drift = (self.ref_cache[view_id as usize].frozen_l2 - log2mag).abs();
+        let reuse_hold = is_pert
+            && interacting
+            && !self.autopilot.stepping
+            && (is_fe || frozen_drift < REFRESH_OCTAVES);
         // A reprojection/freeze frame runs NO iterate (it re-samples the frozen texture), so the
         // motion res_scale saves nothing on it — and worse, it shrinks the frame's base below the
         // frozen texture's settle-time resolution, so the color-pass aspect-fit `fit = out_res /
         // frozen_screen_dim` goes < 1 and MAGNIFIES the held frame (a spurious zoom-in) while also
         // amplifying the pan translation by 1/fit (the "drag is exaggerated / double acceleration"
-        // at deep zoom). Keep native resolution on those frames so fit ≈ 1 and the drag tracks 1:1.
-        // `is_pert` (not `is_fe`) so this also covers mode-0 (df32) reuse-first zoom below: while
-        // interacting, ALL perturbation modes reproject the held frame rather than re-iterate, so
-        // this native-res gate must match the `reuse_hold` freeze trigger (both perturbation +
-        // interacting + !stepping) or a mode-0 reproject would inherit the shrunk-fit bug.
+        // at deep zoom). Keep native resolution on a held frame so fit ≈ 1; a mode-0 REFRESH frame
+        // (reuse_hold false) re-iterates and is res-scaled like the old behaviour, so it stays cheap.
         let will_reproject = reproject.is_some()
-            || (is_pert && interacting && !self.autopilot.stepping)
+            || reuse_hold
             || self.ref_cache[view_id as usize].ref_pt.is_none();
         let resolution = if res_scale < 1.0 && !will_reproject {
             [
@@ -1176,15 +1188,11 @@ impl FractadyneApp {
             // moving" freeze — the `depth_lag > 1.2` hold below still waits for a depth-matched
             // reference, so the real iterate never spins on a stale one.
             //
-            // REUSE-FIRST ZOOM (all perturbation modes, not just floatexp): while interacting, hold
-            // the last good frame and scale/pan it to follow the zoom (the transform above) instead
-            // of re-iterating. For floatexp this also dodges the ~5 s stale-reference spin; for
-            // mode-0 (df32, 1e4–1e28×) it replaces the per-frame res-scaled (blurry) re-render with a
-            // sharp reprojected hold, so a zoom stays continuous and only snaps to fresh detail on
-            // settle. Cheaper than re-iterating, and the settled frame is unchanged (goldens hold).
-            // `is_direct` (mode 1, <1e4×) still re-renders every frame — it's cheap and sharp, and
-            // has no frozen perturbation texture to reproject.
-            let reuse_hold = !mode.is_direct() && interacting && !self.autopilot.stepping;
+            // REUSE-FIRST ZOOM: hold the last good frame and scale/pan it to follow the zoom rather
+            // than re-iterating (see `reuse_hold` above, where the decision is made — floatexp holds
+            // throughout, mode-0 holds until it has drifted REFRESH_OCTAVES then takes a real frame).
+            // `is_direct` (mode 1, <1e4×) still re-renders every frame — cheap, sharp, no frozen
+            // perturbation texture to reproject.
             too_stale = too_stale || reuse_hold || depth_lag > 1.2;
             // At extreme depth the recompute can take long enough that a fast/continuous dive
             // drifts the cached reference too far off-centre before a fresh one lands — rendering
