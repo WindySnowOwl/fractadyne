@@ -8,12 +8,13 @@ Fraktaler-3 in batch mode, and copies the resulting PNG to renders/<slug>-frakta
 Convention: F3 zoom = 1 shows a vertical extent of 4; Fractadyne mag = 1 shows 3. To frame
 the SAME view, f3_zoom = our_mag * 4/3 (see validation/crosscheck-fraktaler3.md).
 
-KNOWN LIMITATION on this machine: Fraktaler-3 3.1's extended-exponent number types
-(softfloat / floatexp / doubleexp) render blank (all-interior) past ~1e8x — verified on both
-the GPU and CPU code paths, independent of iteration count. So only the float/double-regime
-locations produce real images here; deeper ones are detected as blank and skipped, leaving the
-catalog's placeholder. The .kfr / param files are still written for every location so the deep
-renders can be produced on a working F3 install (another machine / build / driver).
+KNOWN LIMITATION on this machine: Fraktaler-3 renders correctly through the double-precision
+regime (~1e13x) but its extended-exponent number types (softfloat / floatexp / doubleexp),
+engaged past that, render blank (all-interior) here — confirmed on GPU and forced-CPU, in both
+F3 3.0 and 3.1, and on the 3080 alone. It is F3's extended-type CUDA kernels vs this machine's
+NVIDIA driver. So the double-regime locations produce real images; deeper ones are detected as
+blank and skipped, leaving the catalog's placeholder. The .kfr / param files are written for
+every location so the deep renders can be produced once F3 works (driver update / other machine).
 
 Run from repo root:  python validation/corpus/generate_fraktaler.py
 """
@@ -78,7 +79,7 @@ def write_param(loc):
 def main():
     if not os.path.exists(F3):
         sys.exit("Fraktaler-3 binary not found: %s" % F3)
-    # This machine's F3 3.1 renders blank past ~1e8x (extended-type limitation). `--max-log10 X`
+    # This machine's F3 renders blank past ~1e13x (extended-type limitation). `--max-log10 X`
     # skips RUNNING F3 beyond depth X (param files are still written) so we don't spend minutes per
     # confirmed-blank deep render; pass a large value on a working F3 install to render everything.
     max_log10 = float("inf")
@@ -109,7 +110,7 @@ def main():
         size = os.path.getsize(raw)
         dest = os.path.join(CORPUS, "renders", loc["slug"] + "-fraktaler.png")
         if size < BLANK_BYTES:
-            print("  blank (%d B) - F3 extended-type limitation past ~1e8x; skipped" % size)
+            print("  blank (%d B) - F3 extended-type limitation past ~1e13x; skipped" % size)
             os.remove(raw)
             blank.append(loc["slug"])
         else:

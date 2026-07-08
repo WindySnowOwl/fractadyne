@@ -49,13 +49,19 @@ You can also render any location by hand: **Kalles Fraktaler 2** or **fraktaler-
 
 ### ⚠ Deep-render limitation on this machine
 
-Fraktaler-3 3.1's **extended-exponent number types** (softfloat / floatexp / doubleexp — the ones
-it switches to past ~1e8×) render **blank (all-interior)** here, on both the GPU and CPU code
-paths, independent of iteration count. So only the float/double-regime locations (**01–03**,
-≤ 1e6×) have real F3 renders; **04–10 await a working F3 install** (a different build / driver /
-machine). The `.f3.toml` / `.kfr` params are written for all ten, so producing the deep side there
-is one command. This is an F3-side issue — Fractadyne renders all ten, and the shallow pairs
-confirm the coordinate + framing conventions match exactly.
+Fraktaler-3 renders correctly only in the **double-precision regime (through ~1e13×** — verified:
+1e6, 1e10, 1e13 all produce full detail). Past that it switches to its **extended-exponent number
+types** (softfloat / floatexp / doubleexp), which render **blank (all-interior)** here — confirmed on
+both the GPU and forced-CPU paths, independent of iteration count, and **identically in F3 3.0 and
+3.1** (so it is not a version regression) and on the 3080 alone (so it is not the second GPU). The
+cause is F3's extended-type CUDA kernels not working on this machine's NVIDIA driver — an F3/driver
+issue, not a Fractadyne one.
+
+Net: of the corpus, **01–03** (≤ 1e6×) have real F3 renders; **04–10** (≥ 1e12×) blank and await a
+working F3 setup — most likely an **NVIDIA driver update**, else a different machine or a
+source build. The `.f3.toml` / `.kfr` params are written for all ten, so producing the deep side is
+one command (`python validation/corpus/generate_fraktaler.py`) once F3 works there. Fractadyne
+renders all ten; the shallow pairs confirm the coordinate + framing conventions match exactly.
 
 ## Reading the comparison
 

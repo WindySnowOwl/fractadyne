@@ -143,7 +143,7 @@ def write_catalog(locs):
       <img src="renders/{slug}-fraktaler.png" alt="Fraktaler render"
            onerror="this.closest('figure').classList.add('missing')">
       <figcaption>Fraktaler-3 &mdash; from <code>locations/{slug}.f3.toml</code>. Missing = F3&rsquo;s
-        extended-type limitation past ~1e8&times; on this machine (see README); render on a working
+        extended-type limitation past ~1e13&times; on this machine (see README); render on a working
         F3 install.</figcaption>
     </figure>
   </div>
@@ -188,7 +188,7 @@ def write_catalog(locs):
 <p>Ten locations from the full-set overview to 4.6e1105&times;, rendered by both apps from the exact same
 center / magnification / iteration cap for side-by-side structural comparison. Fractadyne renders (all
 ten) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
-<strong>Fraktaler-3 3.1 on this machine renders blank past ~1e8&times;</strong> (an extended-type
+<strong>Fraktaler-3 on this machine renders blank past ~1e13&times;</strong> (its extended-type
 limitation, GPU and CPU alike), so only locations 01&ndash;03 currently have an F3 counterpart; the rest
 show a placeholder with the <code>.f3.toml</code> ready for a working F3 install. The shallow pairs
 confirm the coordinate + framing conventions line up exactly.</p>
