@@ -399,18 +399,19 @@ impl FractadyneApp {
         now: f64,
     ) {
         const SHOW_DELAY: f64 = 0.15; // let builds quick enough to feel instant resolve unmarked
-        // Show ONLY when a reference build is in flight AND there is no usable reference behind the
-        // frame (`ref_pt` None) — i.e. the cold-start / discrete-jump window where the frame is a
-        // held placeholder. Ordinary deep pan/zoom refinement keeps `ref_pt` Some (it refreshes an
-        // existing reference), so this stays quiet while diving. Tours re-invalidate the reference
-        // every keyframe, so suppress there too rather than strobe.
-        let busy = self.recompute_rx[vi].is_some()
-            && self.ref_cache[vi].ref_pt.is_none()
-            && self.playback.is_none();
+        // Show whenever a reference build (bignum orbit + SA + BLA) is in flight for this view — the
+        // "working" cue while the deep view resolves, whether that's a cold start, a discrete jump, or
+        // a deep pan/zoom refreshing its reference. The SHOW_DELAY below keeps quick (shallow) builds
+        // unmarked so it never strobes, and consecutive frames of one build re-use the same start. Tour
+        // playback re-invalidates the reference every keyframe, so suppress there rather than strobe.
+        let busy = self.recompute_rx[vi].is_some() && self.playback.is_none();
         if busy {
             // A real gap since the last in-flight frame re-arms the delay, so each fresh build must
-            // again outlast it (a quick one never shows); consecutive frames of one build do not.
-            if now - self.pointer.spin_last[vi] > 0.05 {
+            // again outlast it (a quick one never shows); consecutive frames of one build do not. The
+            // threshold MUST exceed the repaint-while-building interval (main.rs throttles idle
+            // recompute repaints to ~50 ms) — otherwise every build frame counts as a gap and the
+            // delay never accumulates, so the spinner never appears.
+            if now - self.pointer.spin_last[vi] > 0.2 {
                 self.pointer.spin_since[vi] = now;
             }
             self.pointer.spin_last[vi] = now;
