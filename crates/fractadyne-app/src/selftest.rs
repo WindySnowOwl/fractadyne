@@ -1142,13 +1142,17 @@ impl FractadyneApp {
         // ---- aux⇄BLA fold (Phase 2): aux coloring must match with BLA skipping on vs off ----
         // The Phase-2 shader folds each skipped run's aux aggregate. render_iter forces aux off, so
         // compare the COLORED render (render_export) with BLA on vs off for the BLA-folded methods —
-        // point orbit-trap (default min-|z| aggregate) and triangle-inequality (cmag/power). They
-        // must agree except at the rare BLA escape-boundary pixels the smooth BLA test tolerates.
+        // point orbit-trap (default min-|z| aggregate), triangle-inequality (cmag/power), and stripe
+        // average (Σ stripe terms). They must agree except at the rare BLA escape-boundary pixels the
+        // smooth BLA test tolerates. Stripe is tested at a NON-DEFAULT frequency so the BLA aggregate
+        // must have been built with the live frequency (not the old hardcoded 1.0) to match.
         {
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::Smooth; // Smooth so the BLA tree builds
             self.coloring.use_custom_palette = false;
+            let saved_stripe_freq = self.coloring.stripe_freq;
+            self.coloring.stripe_freq = 5.0; // ≠ default 1.0 → exercises the freq-specific stripe aggregate
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = 5000;
             self.render_cfg.series_approx = false; // isolate BLA
@@ -1167,7 +1171,7 @@ impl FractadyneApp {
                     .ok()
                     .map(|r| r.pixels)
             };
-            for (m, label) in [(3u32, "orbit-trap"), (2u32, "triangle-ineq")] {
+            for (m, label) in [(3u32, "orbit-trap"), (2u32, "triangle-ineq"), (1u32, "stripe")] {
                 let mut on = base.clone();
                 on.width = N;
                 on.height = N;
@@ -1211,6 +1215,7 @@ impl FractadyneApp {
             self.render_cfg.use_bla = false;
             self.render_cfg.series_approx = true;
             self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.stripe_freq = saved_stripe_freq;
         }
 
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----

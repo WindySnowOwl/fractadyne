@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.1.53 (build 710)
-- **Generated:** 2026-07-08 12:38:31 UTC (unix 1783514311)
+- **Version:** 0.1.54 (build 716)
+- **Generated:** 2026-07-08 13:08:29 UTC (unix 1783516109)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -51,6 +51,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | BLA | BLA escape path == non-BLA @1e30× (boundary) | seahorse boundary, mode 2, bla_on 1, 48400 escaped | 0 mismatch | bla engaged, escapers>100, 0 mismatch | ✅ PASS |
 | BLA | orbit-trap: BLA-fold == non-BLA @1e30× | bla_on 1, maxΔ 0.0000 | 0/193600 channels >2% | bla engaged, maxΔ<0.1, <1% differ | ✅ PASS |
 | BLA | triangle-ineq: BLA-fold == non-BLA @1e30× | bla_on 1, maxΔ 0.0000 | 0/193600 channels >2% | bla engaged, maxΔ<0.1, <1% differ | ✅ PASS |
+| BLA | stripe: BLA-fold == non-BLA @1e30× | bla_on 1, maxΔ 0.0000 | 0/193600 channels >2% | bla engaged, maxΔ<0.1, <1% differ | ✅ PASS |
 | Consistency | resolution independence (N vs 3N) | seahorse, 1e6×, 25544 smooth px | 0 differ | 0 differ | ✅ PASS |
 | Consistency | max-iter monotonic stability | seahorse, 1e6×, 500→3000 iter, 15737 escaped px | 0 changed dwell | 0 changed | ✅ PASS |
 | Consistency | zoom-sequence across direct→df32 seam | seahorse, 4e3×↔1.2e4×, 1814 overlap px | 0 differ | <0.1% differ | ✅ PASS |
@@ -72,7 +73,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Formatting | zoom mantissa grouped | 3.38050027227e15 | 3.38050 02722 7e15 | "3.38050 02722 7e15" | ✅ PASS |
 | Formatting | deep coordinate elides middle | 32-digit center @ ~1e30×; and -0.5 | -0.74364 38870 … 11477 40000  |  -0.5 | leading … frontier; short coord safe | ✅ PASS |
 
-**58/58 checks passed.**
+**59/59 checks passed.**
 
 ## Coverage & scope
 

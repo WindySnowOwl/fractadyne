@@ -22,6 +22,9 @@ pub(crate) struct RecomputeResult {
     sa: fractadyne_core::SeriesSkip,
     bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla_dc_max_log2: f64,
+    /// Stripe frequency the BLA's `agg_stripe` lane was built with, so the live path can detect a
+    /// frequency-slider change against it and rebuild (see `RefCache::bla_stripe_freq`).
+    bla_stripe_freq: f64,
     prec: usize,
     iter: u32,
     ref_ms: f64,
@@ -48,6 +51,9 @@ struct RecomputeInputs {
     julia_c: (f64, f64),
     do_sa: bool,
     bla_dc_max: Option<fractadyne_core::FloatExp>,
+    /// Stripe-average frequency to bake into the BLA `agg_stripe` lane (the aggregate is
+    /// freq-specific). Irrelevant unless the stripe coloring rides BLA, but always carried.
+    stripe_freq: f64,
 }
 
 /// Aux coloring aggregates for the BLA tree, derived from a reference orbit. Triangle-inequality
@@ -55,7 +61,7 @@ struct RecomputeInputs {
 /// BLA is Mandelbrot-only) — both reference-intrinsic, so the tree caches per reference with no live
 /// dependency. Point-trap uses the default trap aggregate (trap_type 0). `stripe_freq` stays default
 /// (stripe's per-node aggregate isn't folded yet — it would need a rebuild on the freq slider).
-fn aux_agg_from_orbit(orbit: &[[f32; 4]]) -> fractadyne_core::AuxAggParams {
+fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64) -> fractadyne_core::AuxAggParams {
     let cmag = orbit
         .get(1)
         .map(|z| {
@@ -63,7 +69,11 @@ fn aux_agg_from_orbit(orbit: &[[f32; 4]]) -> fractadyne_core::AuxAggParams {
             (x * x + y * y).sqrt()
         })
         .unwrap_or(0.0);
-    fractadyne_core::AuxAggParams { trap_type: 0, stripe_freq: 1.0, cmag, power: 2.0 }
+    // `stripe_freq` must be the LIVE value (stripe's aggregate Σ(0.5+0.5·sin(freq·arg Z)) is
+    // freq-specific), so a stripe BLA tree rebuilds when the frequency slider changes (see the live
+    // rebuild in build_params). `trap_type`/`power` stay at their point-trap/Mandelbrot defaults —
+    // cross/circle trap would thread `trap_type` here the same way once enabled.
+    fractadyne_core::AuxAggParams { trap_type: 0, stripe_freq, cmag, power: 2.0 }
 }
 
 /// Pick a reference (once) then build its orbit + series-approximation skip + BLA tree to
@@ -146,7 +156,8 @@ fn build_reference_from_point(
     let t_bla = Instant::now();
     let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
         Some(dc_max) => {
-            let levels = fc::build_bla_mandel(&orbit, dc_max, BLA_EPS, aux_agg_from_orbit(&orbit));
+            let levels =
+                fc::build_bla_mandel(&orbit, dc_max, BLA_EPS, aux_agg_from_orbit(&orbit, inp.stripe_freq));
             let arc = if levels.is_empty() {
                 std::sync::Arc::new(Vec::new())
             } else {
@@ -164,6 +175,7 @@ fn build_reference_from_point(
         sa,
         bla,
         bla_dc_max_log2,
+        bla_stripe_freq: inp.stripe_freq,
         prec: inp.precision,
         iter: orbit_iter,
         ref_ms,
@@ -272,6 +284,7 @@ impl FractadyneApp {
         vc.bla = res.bla;
         vc.bla_id = vc.orbit_id;
         vc.bla_dc_max_log2 = res.bla_dc_max_log2;
+        vc.bla_stripe_freq = res.bla_stripe_freq;
         self.perf.recompute_ms = res.ref_ms;
         self.perf.recompute_total += 1;
         self.perf.rate_count += 1;
@@ -330,6 +343,9 @@ impl FractadyneApp {
         vc.sa = s.sa;
         vc.sa_key = (vc.orbit_id, s.orbit_iter);
         vc.bla = s.bla;
+        // The persisted tree's stripe-frequency isn't stored (not part of the view-key), so mark it
+        // unknown — a stripe render then rebuilds once against the live frequency (cheap, ~20 ms).
+        vc.bla_stripe_freq = f64::NEG_INFINITY;
         vc.bla_id = vc.orbit_id;
         vc.bla_dc_max_log2 = s.bla_dc_max_log2;
         true
@@ -425,6 +441,7 @@ impl FractadyneApp {
             julia_c: self.julia_c,
             do_sa,
             bla_dc_max,
+            stripe_freq: self.coloring.stripe_freq as f64,
         }
     }
 
@@ -434,18 +451,17 @@ impl FractadyneApp {
     /// the view span — both scaled by `2^delta_exp` — used for the worst-case `|δc|`.
     /// Whether BLA applies to this render (deep floatexp Mandelbrot, non-Julia, non-aux coloring).
     fn bla_eligible(&self, mode: RenderMode, julia: bool) -> bool {
-        // Aux coloring blocks iteration-skipping — EXCEPT point orbit-trap, whose per-node aggregate
-        // (the default min-|z| packing) is folded on each BLA skip (GPU-validated: the fold render
-        // matches the full render), so it rides BLA at full speed instead of paying full floatexp
-        // iterations. Cross/circle trap need their own aggregate; stripe/TIA also need the SA-prefix
-        // fold — those stay gated (exact) until wired.
+        // Aux coloring blocks iteration-skipping — EXCEPT the methods whose per-BLA-node aggregate is
+        // folded on each skip (GPU-validated: the fold render matches the full render), which ride BLA
+        // at full speed instead of paying full floatexp iterations. Cross/circle trap still need a
+        // trap_type-specific aggregate; decomposition isn't skip-safe — those stay gated.
         let method = self.coloring.color_method;
-        // Aux methods with a GPU-validated BLA-skip fold ride BLA at full speed: point orbit-trap
-        // (default min-|z| aggregate) and triangle-inequality (cmag/power aggregate, reference-
-        // intrinsic so it caches per reference). Cross/circle trap needs a real trap_type aggregate,
-        // stripe needs a rebuild on its live freq, and decomposition isn't skip-safe — those stay gated.
+        // Aux methods with a GPU-validated BLA-skip fold: point orbit-trap (default min-|z| aggregate),
+        // triangle-inequality (cmag/power aggregate, reference-intrinsic), and stripe-average (Σ stripe
+        // terms — freq-specific, so the tree rebuilds when the frequency slider changes, see build_params).
         let aux_bla_ok = (method.to_u32() == 3 && (self.coloring.trap_type as u32) == 0) // OrbitTrap+Point
-            || method.to_u32() == 2; // TriangleIneq
+            || method.to_u32() == 2 // TriangleIneq
+            || method.to_u32() == 1; // Stripe average
         self.render_cfg.use_bla
             && mode.is_floatexp()
             && !julia
@@ -472,8 +488,12 @@ impl FractadyneApp {
         orbit: &[[f32; 4]],
         dc_max: fractadyne_core::FloatExp,
     ) -> Option<std::sync::Arc<Vec<[f32; 4]>>> {
-        let levels =
-            fractadyne_core::build_bla_mandel(orbit, dc_max, BLA_EPS, aux_agg_from_orbit(orbit));
+        let levels = fractadyne_core::build_bla_mandel(
+            orbit,
+            dc_max,
+            BLA_EPS,
+            aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64),
+        );
         if levels.is_empty() {
             return None;
         }
@@ -1128,6 +1148,7 @@ impl FractadyneApp {
                     do_sa,
                     bla_dc_max: bla_will_build
                         .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
+                    stripe_freq: self.coloring.stripe_freq as f64,
                 };
                 // Anti-churn backstop: never respawn more than ~60×/s (spaced ≥ 16 ms). The wider
                 // `out_of_view` above already keeps refreshes infrequent; this just guards against a
@@ -1256,10 +1277,16 @@ impl FractadyneApp {
                 let oid = self.ref_cache[vi].orbit_id;
                 let dc_max = Self::bla_dc_max(span_mantissa, delta_exp);
                 let need_log2 = dc_max.log2();
+                // Stripe (method 1) bakes the live frequency into `agg_stripe`, so a change to the
+                // frequency slider stales the tree (unlike trap/TIA, whose aggregates don't depend on
+                // a live coloring param). Rebuild when it drifts; harmless for other methods since it
+                // gates on the method. Cheap (~20 ms, off the deep-zoom hot path) and rare.
+                let stripe_stale = self.coloring.color_method.to_u32() == 1
+                    && (self.coloring.stripe_freq as f64 - self.ref_cache[vi].bla_stripe_freq).abs() > 1.0e-9;
                 let vc = &self.ref_cache[vi];
-                // Rebuild if the orbit changed or the current view needs a bigger dc_max than the
-                // cached tree was built for (tiny epsilon guards float noise).
-                if vc.bla_id != oid || need_log2 > vc.bla_dc_max_log2 + 1.0e-6 {
+                // Rebuild if the orbit changed, the current view needs a bigger dc_max than the cached
+                // tree was built for (tiny epsilon guards float noise), or the stripe frequency moved.
+                if vc.bla_id != oid || need_log2 > vc.bla_dc_max_log2 + 1.0e-6 || stripe_stale {
                     let orbit = self.ref_cache[vi].orbit.clone();
                     // Build with 2× headroom (dc_max·2 ⇒ +1 in log2) so continuous zoom-out doesn't
                     // rebuild every frame; still valid (a larger dc_max only shrinks skip radii).
@@ -1269,6 +1296,7 @@ impl FractadyneApp {
                     vc.bla = built.unwrap_or_else(|| std::sync::Arc::new(Vec::new()));
                     vc.bla_id = oid;
                     vc.bla_dc_max_log2 = build_dc.log2();
+                    vc.bla_stripe_freq = self.coloring.stripe_freq as f64;
                 }
                 let vc = &self.ref_cache[vi];
                 if !vc.bla.is_empty() {

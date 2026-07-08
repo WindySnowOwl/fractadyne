@@ -1085,6 +1085,10 @@ struct RefCache {
     bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla_id: u64,
     bla_dc_max_log2: f64,
+    /// Stripe-average frequency the cached BLA tree's `agg_stripe` lane was built with. Stripe's
+    /// aggregate is frequency-specific, so the tree is rebuilt when the live frequency drifts from
+    /// this (only while the stripe method is active). `NEG_INFINITY` = never built / unknown.
+    bla_stripe_freq: f64,
     /// View (center + log2 magnification) the current iteration texture was rendered at. A freeze
     /// uses this to zoom-reproject the frozen frame — scaling/panning it to follow the dive until a
     /// fresh reference lands (see `build_params`). `None` until the first real render.
@@ -1108,6 +1112,7 @@ impl Default for RefCache {
             bla: std::sync::Arc::new(Vec::new()),
             bla_id: u64::MAX,
             bla_dc_max_log2: f64::NEG_INFINITY,
+            bla_stripe_freq: f64::NEG_INFINITY,
             frozen_center: None,
             frozen_l2: 0.0,
         }
