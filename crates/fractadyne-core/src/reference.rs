@@ -733,13 +733,18 @@ fn orbit_length_bf(
     n
 }
 
-/// Iteration cap for reference-candidate scoring (surviving this long ⇒ great
-/// reference; bounds the cost of the 5×5 bignum search).
+/// Quick iteration cap for the FIRST-pass reference-candidate ranking (a point surviving this long
+/// is a candidate worth a deeper look; keeps the 5×5 bignum grid scan cheap). The survivors are then
+/// deep-ranked to the full render length — see [`best_reference`].
 const REF_SCORE_SCAN: u32 = 4096;
 
-/// Pick a reference within the view with the longest orbit (prefers an interior
-/// point). For a Julia view, candidates are `Z₀` values with the fixed `julia_c`;
-/// otherwise they are `c` values with `Z₀ = 0`. Returns the chosen bignum point.
+/// Deep-scan at most this many survivors in phase 2 (bounds a pathological build; the survivors are
+/// in candidate order, so these are the most central — the likeliest good references).
+const REF_DEEP_MAX: usize = 16;
+
+/// Pick a reference within the view with the longest orbit (prefers an interior point). For a Julia
+/// view, candidates are `Z₀` values with the fixed `julia_c`; otherwise they are `c` values with
+/// `Z₀ = 0`. Returns the chosen bignum point.
 #[allow(clippy::too_many_arguments)]
 pub fn best_reference(
     center: &[BigFloat; 2],
@@ -750,55 +755,78 @@ pub fn best_reference(
     max_iter: u32,
     p: usize,
 ) -> [BigFloat; 2] {
-    // Score candidates by orbit length in **bignum** (f64 coords collapse to the same
-    // value at deep zoom, which broke reference selection on cold jumps like bookmark
-    // reloads). Cap the scan: a point surviving this many iterations is already an
-    // excellent reference, and rebasing covers the rest — keeps the 5×5 search cheap.
-    let scan = max_iter.min(REF_SCORE_SCAN);
+    // Score candidates by orbit length in **bignum** (f64 coords collapse to the same value at deep
+    // zoom, which broke reference selection on cold jumps). TWO PHASES: rank cheaply to `quick`, then
+    // DEEP-rank the survivors to the full render length and take the longest-surviving. A reference
+    // that survives the whole render needs NO rebasing, which is what keeps a continuous deep zoom
+    // smooth; ranking only to `quick` couldn't tell a filament point (survives to `max_iter`) from a
+    // near-exterior point that escapes just past `quick`, so at near-filament spots it picked an
+    // escaping reference → heavy rebasing → the deep-zoom "jump on zoom". Deep-ranking only survivors
+    // (centre first, early-break once one survives the full render) keeps the common boundary case
+    // cheap; a genuine deep-exterior dive (no survivor) falls back to the longest-escaping point.
+    let quick = max_iter.min(REF_SCORE_SCAN);
     let jcx = bf(julia_c[0], p);
     let jcy = bf(julia_c[1], p);
     let zero = bf(0.0, p);
-    let score = |zx: &BigFloat, zy: &BigFloat| -> u32 {
+    let score = |zx: &BigFloat, zy: &BigFloat, cap: u32| -> u32 {
         if julia {
-            orbit_length_bf(zx, zy, &jcx, &jcy, formula, scan, p)
+            orbit_length_bf(zx, zy, &jcx, &jcy, formula, cap, p)
         } else {
-            orbit_length_bf(&zero, &zero, zx, zy, formula, scan, p)
+            orbit_length_bf(&zero, &zero, zx, zy, formula, cap, p)
         }
     };
-    let mut best = [center[0].clone(), center[1].clone()];
-    let mut best_len = score(&center[0], &center[1]);
-    if best_len >= scan {
-        return best;
-    }
-    // Search a 5×5 grid at several **scales** (fraction of span), concentrated toward
-    // the center where the user is looking. A single coarse ±0.5-span grid is too
-    // sparse: at deep zoom the detail is thin filaments, and a wide window spreads the
-    // grid into the gaps between them → every candidate escapes fast → a useless
-    // reference → uniform render. The inner scales reliably sample the central detail
-    // regardless of window width. Fine→coarse so a good hit returns early.
+    // Candidate points: the centre first, then a 5×5 grid at several span fractions (fine→coarse), so
+    // the search reliably samples the central detail even when the boundary is a thin filament (a
+    // single coarse ±0.5-span grid falls into the gaps between filaments at deep zoom).
     const N: usize = 5;
     const SCALES: [f64; 4] = [0.04, 0.12, 0.28, 0.5];
+    let mut cands: Vec<[BigFloat; 2]> = Vec::with_capacity(1 + SCALES.len() * N * N);
+    cands.push([center[0].clone(), center[1].clone()]);
     for &sc in &SCALES {
         for j in 0..N {
             for i in 0..N {
                 let fx = (i as f64 / (N as f64 - 1.0) - 0.5) * 2.0 * sc;
                 let fy = (j as f64 / (N as f64 - 1.0) - 0.5) * 2.0 * sc;
-                // Offsets via the extended-range span so the grid doesn't collapse to the
-                // center past ~1e308× (where an f64 span would underflow to 0).
+                // Offsets via the extended-range span so the grid doesn't collapse to the centre
+                // past ~1e308× (where an f64 span would underflow to 0).
                 let px = center[0].add(&span[0].mul_f64(fx).to_bf(p), p, RM);
                 let py = center[1].add(&span[1].mul_f64(fy).to_bf(p), p, RM);
-                let len = score(&px, &py);
-                if len > best_len {
-                    best_len = len;
-                    best = [px, py];
-                    if best_len >= scan {
-                        return best;
-                    }
-                }
+                cands.push([px, py]);
             }
         }
     }
-    best
+    // Phase 1 — cheap rank to `quick`. A candidate reaching the cap is a "survivor" worth a deep
+    // look; otherwise track the longest-escaping as the fallback.
+    let mut survivors: Vec<usize> = Vec::new();
+    let (mut esc_i, mut esc_len) = (0usize, 0u32);
+    for (idx, c) in cands.iter().enumerate() {
+        let len = score(&c[0], &c[1], quick);
+        if len >= quick {
+            survivors.push(idx);
+        } else if len > esc_len {
+            esc_len = len;
+            esc_i = idx;
+        }
+    }
+    if survivors.is_empty() {
+        return cands[esc_i].clone(); // deep exterior — take the longest-escaping point
+    }
+    // Phase 2 — deep-rank survivors to the full render length; take the longest-surviving. The centre
+    // (cands[0], usually best on the boundary) is scanned first with an early break, so a boundary
+    // dive stays cheap; a near-filament dive spends a little more but ends on the least-rebasing
+    // reference. `dl >= max_iter` ⇒ a reference that survives the whole render (no rebasing at all).
+    let (mut best_i, mut best_len) = (survivors[0], 0u32);
+    for &idx in survivors.iter().take(REF_DEEP_MAX) {
+        let dl = score(&cands[idx][0], &cands[idx][1], max_iter);
+        if dl > best_len {
+            best_len = dl;
+            best_i = idx;
+            if dl >= max_iter {
+                break;
+            }
+        }
+    }
+    cands[best_i].clone()
 }
 
 /// Real difference `a - b` as `f64` (used for the small reference offset).
