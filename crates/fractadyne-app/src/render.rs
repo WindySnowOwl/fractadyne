@@ -865,8 +865,12 @@ impl FractadyneApp {
         // frozen_screen_dim` goes < 1 and MAGNIFIES the held frame (a spurious zoom-in) while also
         // amplifying the pan translation by 1/fit (the "drag is exaggerated / double acceleration"
         // at deep zoom). Keep native resolution on those frames so fit ≈ 1 and the drag tracks 1:1.
+        // `is_pert` (not `is_fe`) so this also covers mode-0 (df32) reuse-first zoom below: while
+        // interacting, ALL perturbation modes reproject the held frame rather than re-iterate, so
+        // this native-res gate must match the `reuse_hold` freeze trigger (both perturbation +
+        // interacting + !stepping) or a mode-0 reproject would inherit the shrunk-fit bug.
         let will_reproject = reproject.is_some()
-            || (is_fe && interacting && !self.autopilot.stepping)
+            || (is_pert && interacting && !self.autopilot.stepping)
             || self.ref_cache[view_id as usize].ref_pt.is_none();
         let resolution = if res_scale < 1.0 && !will_reproject {
             [
@@ -1171,8 +1175,17 @@ impl FractadyneApp {
             // held on screen while the next computes), so bypass the blanket "never iterate while
             // moving" freeze — the `depth_lag > 1.2` hold below still waits for a depth-matched
             // reference, so the real iterate never spins on a stale one.
-            let motion_freeze = mode.is_floatexp() && interacting && !self.autopilot.stepping;
-            too_stale = too_stale || motion_freeze || depth_lag > 1.2;
+            //
+            // REUSE-FIRST ZOOM (all perturbation modes, not just floatexp): while interacting, hold
+            // the last good frame and scale/pan it to follow the zoom (the transform above) instead
+            // of re-iterating. For floatexp this also dodges the ~5 s stale-reference spin; for
+            // mode-0 (df32, 1e4–1e28×) it replaces the per-frame res-scaled (blurry) re-render with a
+            // sharp reprojected hold, so a zoom stays continuous and only snaps to fresh detail on
+            // settle. Cheaper than re-iterating, and the settled frame is unchanged (goldens hold).
+            // `is_direct` (mode 1, <1e4×) still re-renders every frame — it's cheap and sharp, and
+            // has no frozen perturbation texture to reproject.
+            let reuse_hold = !mode.is_direct() && interacting && !self.autopilot.stepping;
+            too_stale = too_stale || reuse_hold || depth_lag > 1.2;
             // At extreme depth the recompute can take long enough that a fast/continuous dive
             // drifts the cached reference too far off-centre before a fresh one lands — rendering
             // with it is dark/glitchy (the "screen goes black" while zooming). Instead freeze the
