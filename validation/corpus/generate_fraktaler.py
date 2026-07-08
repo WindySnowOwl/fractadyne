@@ -11,8 +11,8 @@ the SAME view, f3_zoom = our_mag * 4/3 (see validation/crosscheck-fraktaler3.md)
 KNOWN LIMITATION on this machine: Fraktaler-3 renders correctly through the double-precision
 regime (~1e13x) but its extended-exponent number types (softfloat / floatexp / doubleexp),
 engaged past that, render blank (all-interior) here — confirmed on GPU and forced-CPU, in both
-F3 3.0 and 3.1, and on the 3080 alone. It is F3's extended-type CUDA kernels vs this machine's
-NVIDIA driver. So the double-regime locations produce real images; deeper ones are detected as
+F3 3.0 and 3.1, on the 3080 alone, AND after a full NVIDIA driver update (still blank). It is
+F3's OpenCL extended-type kernels vs this GPU arch, not a driver-version issue. So the double-regime locations produce real images; deeper ones are detected as
 blank and skipped, leaving the catalog's placeholder. The .kfr / param files are written for
 every location so the deep renders can be produced once F3 works (driver update / other machine).
 
