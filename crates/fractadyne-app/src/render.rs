@@ -999,19 +999,24 @@ impl FractadyneApp {
         };
         // REUSE-FIRST ZOOM hold decision (used by BOTH the native-res gate here and the freeze
         // trigger below — they must agree). While interacting, hold + reproject the last good frame
-        // (scaled to follow the zoom) instead of re-iterating. Floatexp holds throughout: a real
-        // deep frame would spin ~5 s on the stale reference, so its refresh is reference-recompute-
-        // driven (the `depth_lag` hold below). Mode-0 (df32) CAN afford to re-render, so once the
-        // held frame has been magnified past REFRESH_OCTAVES it takes ONE real (res-scaled) frame to
-        // refresh detail — otherwise a continuous mode-0 zoom keeps upsampling the frozen texture
-        // into large blocks before it settles. `frozen_l2 − log2mag` = octaves the view has zoomed
-        // since the held frame was rendered; a real frame resets it (updates `frozen_l2` below).
+        // (scaled to follow the zoom) instead of re-iterating. Once the held frame has been magnified
+        // past REFRESH_OCTAVES, take ONE real (res-scaled) frame to refresh detail at the new depth —
+        // otherwise a continuous zoom keeps upsampling the frozen texture into ever-larger blocks
+        // until it settles. `frozen_l2 − log2mag` = octaves zoomed since the held frame was rendered;
+        // a real frame resets it (updates `frozen_l2` below).
+        //
+        // This now applies to floatexp (mode 2, >~1e28×) as well as df32 (mode 0). It used to hold
+        // floatexp THROUGHOUT — a fast dive past ~1e28× went increasingly blocky until you stopped to
+        // let it settle — because a floatexp refresh could trigger a multi-second bignum reference
+        // rebuild. It no longer can: the reference/BLA build is off-thread (v0.1.57 orbit REUSE cut it
+        // ~20×), and the refresh frame itself is only a cheap res-scaled + TDR-bounded GPU iterate. If
+        // the reference is still too short for the new depth, the `depth_lag > 1.2` gate below holds/
+        // reprojects instead — so a refresh never renders on a too-short reference (the old ~5 s-spin
+        // hazard). Net: floatexp now streams real detail every ~½ octave during a continuous dive.
         const REFRESH_OCTAVES: f64 = 0.5;
         let frozen_drift = (self.ref_cache[view_id as usize].frozen_l2 - log2mag).abs();
-        let reuse_hold = is_pert
-            && interacting
-            && !self.autopilot.stepping
-            && (is_fe || frozen_drift < REFRESH_OCTAVES);
+        let reuse_hold =
+            is_pert && interacting && !self.autopilot.stepping && frozen_drift < REFRESH_OCTAVES;
         // A reprojection/freeze frame runs NO iterate (it re-samples the frozen texture), so the
         // motion res_scale saves nothing on it — and worse, it shrinks the frame's base below the
         // frozen texture's settle-time resolution, so the color-pass aspect-fit `fit = out_res /
