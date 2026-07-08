@@ -246,6 +246,51 @@ mod tests {
         assert!(vp.units_per_pixel.log2() < base_upp.log2());
     }
 
+    // Box-zoom: a centered rectangle that is ¼ of the view in BOTH axes zooms uniformly to 4×,
+    // and its center stays put (the constraining ratio is the same on each axis).
+    #[test]
+    fn zoom_to_rect_centers_and_scales() {
+        let want = Viewport::new(800.0, 600.0).pixel_to_complex(400.0, 300.0);
+        let base_upp = Viewport::new(800.0, 600.0).units_per_pixel.to_f64();
+        let mut vp = Viewport::new(800.0, 600.0);
+        vp.zoom_to_rect(300.0, 225.0, 500.0, 375.0); // ¼ w AND ¼ h, centered
+        approx(to_f64(&vp.center_x), to_f64(&want.0));
+        approx(to_f64(&vp.center_y), to_f64(&want.1));
+        approx(vp.units_per_pixel.to_f64(), base_upp * 0.25);
+        approx(vp.magnification(), 4.0);
+    }
+
+    // Box-zoom, general case: the rect's center becomes the view center, its larger *relative*
+    // dimension exactly fills the view (the other fits within), and the drag direction is
+    // irrelevant (opposite corners give the identical view).
+    #[test]
+    fn zoom_to_rect_fits_and_ignores_drag_direction() {
+        let base_upp = Viewport::new(800.0, 600.0).units_per_pixel.to_f64();
+        let (px0, py0, px1, py1) = (100.0, 120.0, 700.0, 270.0); // off-center, wider than tall
+        let want = Viewport::new(800.0, 600.0).pixel_to_complex((px0 + px1) * 0.5, (py0 + py1) * 0.5);
+
+        let mut vp = Viewport::new(800.0, 600.0);
+        vp.zoom_to_rect(px0, py0, px1, py1);
+        approx(to_f64(&vp.center_x), to_f64(&want.0));
+        approx(to_f64(&vp.center_y), to_f64(&want.1));
+
+        // Box extent (in the OLD units) relative to the NEW view extent: the constraining axis
+        // fills it exactly (ratio 1), the other fits within (ratio ≤ 1).
+        let new_upp = vp.units_per_pixel.to_f64();
+        let ratio_w = (px1 - px0).abs() * base_upp / (vp.width_px * new_upp);
+        let ratio_h = (py1 - py0).abs() * base_upp / (vp.height_px * new_upp);
+        approx(ratio_w.max(ratio_h), 1.0);
+        assert!(ratio_w.min(ratio_h) <= 1.0 + 1e-9, "box overflows the view: {ratio_w}, {ratio_h}");
+        assert!(ratio_w > ratio_h, "width should be the constraining axis for this box");
+
+        // Dragging the opposite corners must yield the identical view.
+        let mut rev = Viewport::new(800.0, 600.0);
+        rev.zoom_to_rect(px1, py1, px0, py0);
+        approx(rev.units_per_pixel.to_f64(), new_upp);
+        approx(to_f64(&rev.center_x), to_f64(&vp.center_x));
+        approx(to_f64(&rev.center_y), to_f64(&vp.center_y));
+    }
+
     #[test]
     fn pan_moves_center() {
         let mut vp = Viewport::new(800.0, 600.0);
