@@ -1012,19 +1012,24 @@ impl FractadyneApp {
         // ~20×), and the refresh frame itself is only a cheap res-scaled + TDR-bounded GPU iterate. If
         // the reference is still too short for the new depth, the `depth_lag` gate below holds/
         // reprojects instead — so a refresh never renders on a too-short reference (the old ~5 s-spin
-        // hazard). Net: floatexp now streams real detail every REFRESH_OCTAVES of a continuous dive.
-        //
-        // REFRESH_OCTAVES also bounds how far the held frame is magnified before a real frame replaces
-        // it: at 0.5 the frozen texture was upsampled up to 2^0.5 ≈ 1.41× (soft), then the real frame
-        // snapped to sharp — a soft→sharp POP every ½ octave that, deep (>~1e100×), reads as the view
-        // "jumping" on zoom (only on zoom; a pan doesn't grow `frozen_drift`; rate-independent because
-        // it is octave- not time-gated). Refresh far more often (0.12 octave ⇒ ≤ 2^0.12 ≈ 1.09×
-        // magnification) so each pop is tiny/imperceptible and the held frame stays near-sharp. The
-        // extra real frames are affordable — the recompute is off-thread and the iterate is cheap.
-        const REFRESH_OCTAVES: f64 = 0.12;
+        // hazard). Net: floatexp streams real detail every REFRESH_OCTAVES of a continuous dive.
+        const REFRESH_OCTAVES: f64 = 0.5;
+        // The reuse-first zoom-HOLD (reproject a scaled frozen frame between real refreshes) is smooth
+        // and sharp up to ~1e100× but produces an unexplained per-refresh positional "jump" past that —
+        // the offset/scale math is sub-pixel-exact through every path (ref_offset_mantissa, zoom_at,
+        // uv_off/uv_scale), so the discrepancy is inside the held-frame path itself, and it did NOT
+        // respond to shrinking the refresh magnification (v0.1.62). So above ~1e100× drop the hold and
+        // render real frames directly while zooming: slightly softer motion (res-scaled real frames),
+        // but no held frame to jump. Pan reprojection (the `reproject` param) and genuine stall-freezes
+        // (`too_stale`/`depth_lag` below) are unaffected; `frozen_l2` still updates each real frame so a
+        // fallback freeze reprojects from the latest view.
+        const REUSE_HOLD_MAX_MAG: f64 = 1.0e100;
         let frozen_drift = (self.ref_cache[view_id as usize].frozen_l2 - log2mag).abs();
-        let reuse_hold =
-            is_pert && interacting && !self.autopilot.stepping && frozen_drift < REFRESH_OCTAVES;
+        let reuse_hold = is_pert
+            && interacting
+            && !self.autopilot.stepping
+            && magnification < REUSE_HOLD_MAX_MAG
+            && frozen_drift < REFRESH_OCTAVES;
         // A reprojection/freeze frame runs NO iterate (it re-samples the frozen texture), so the
         // motion res_scale saves nothing on it — and worse, it shrinks the frame's base below the
         // frozen texture's settle-time resolution, so the color-pass aspect-fit `fit = out_res /
