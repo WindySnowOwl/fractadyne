@@ -144,16 +144,42 @@ pub fn reference_orbit(
     max_iter: u32,
     p: usize,
 ) -> (Vec<[f32; 4]>, u32) {
-    let mut out = Vec::with_capacity(max_iter as usize + 1);
-    let mut zx = z0x.clone();
-    let mut zy = z0y.clone();
-    // Previous iterate, for Phoenix's two-term recurrence (unused by other formulas). Starts at 0.
-    let mut zpx = BigFloat::from_f64(0.0, p);
-    let mut zpy = BigFloat::from_f64(0.0, p);
-    let (xh, xl) = split_df64(to_f64(&zx));
-    let (yh, yl) = split_df64(to_f64(&zy));
-    out.push([xh, yh, xl, yl]); // Z_0
-    let mut n = 0u32;
+    let (o, l, _) = reference_orbit_t(z0x, z0y, cx, cy, formula, max_iter, p);
+    (o, l)
+}
+
+/// The full-precision running state at the end of a reference orbit, so a later call can **extend**
+/// it (via [`extend_reference_orbit`]) to a larger `max_iter` without recomputing the shared prefix
+/// — the deep-zoom win, since the orbit build (`max_iter × step` in bignum) dominates a deep frame.
+/// `escaped` marks a *complete* orbit (bailed the escape radius): nothing more to extend.
+#[derive(Clone)]
+pub struct OrbitTail {
+    pub zx: BigFloat,
+    pub zy: BigFloat,
+    /// Previous iterate `Z_{n-1}` (Phoenix's two-term recurrence; zero/unused for other formulas).
+    pub zpx: BigFloat,
+    pub zpy: BigFloat,
+    pub escaped: bool,
+}
+
+/// Append `Z_{n+1..max_iter}` (df64 samples) to `out`, which already holds `Z_0..Z_n`, iterating from
+/// the running state `(zx, zy)` with previous iterate `(zpx, zpy)`. Returns the final [`OrbitTail`].
+/// Shared by the fresh build and the extend path so both emit **byte-identical** samples.
+#[allow(clippy::too_many_arguments)]
+fn run_orbit(
+    out: &mut Vec<[f32; 4]>,
+    mut zx: BigFloat,
+    mut zy: BigFloat,
+    mut zpx: BigFloat,
+    mut zpy: BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    mut n: u32,
+    max_iter: u32,
+    p: usize,
+) -> OrbitTail {
+    let mut escaped = false;
     while n < max_iter {
         let (nzx, nzy) = if formula == formula::PHOENIX {
             phoenix_step_bf(&zx, &zy, &zpx, &zpy, cx, cy, p)
@@ -175,11 +201,74 @@ pub fn reference_orbit(
         out.push([xh, yh, xl, yl]);
         n += 1;
         if xv * xv + yv * yv > 1.0e12 {
+            escaped = true;
             break;
         }
     }
+    OrbitTail { zx, zy, zpx, zpy, escaped }
+}
+
+/// As [`reference_orbit`], but also returns the full-precision [`OrbitTail`] so the orbit can be
+/// resumed/extended later (see [`extend_reference_orbit`]).
+pub fn reference_orbit_t(
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    let mut out = Vec::with_capacity(max_iter as usize + 1);
+    let zx = z0x.clone();
+    let zy = z0y.clone();
+    // Previous iterate, for Phoenix's two-term recurrence (unused by other formulas). Starts at 0.
+    let zpx = BigFloat::from_f64(0.0, p);
+    let zpy = BigFloat::from_f64(0.0, p);
+    let (xh, xl) = split_df64(to_f64(&zx));
+    let (yh, yl) = split_df64(to_f64(&zy));
+    out.push([xh, yh, xl, yl]); // Z_0
+    let tail = run_orbit(&mut out, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p);
     let len = out.len() as u32;
-    (out, len)
+    (out, len, tail)
+}
+
+/// Extend a previously-built (truncated) orbit to a larger `max_iter` **without recomputing the
+/// shared prefix**. `prefix` = the cached `Z_0..Z_k` samples; `tail` = the full-precision running
+/// state at `Z_k` from [`reference_orbit_t`]. **Requires the identical `(cx, cy, formula, p)`** the
+/// prefix was built with — then the result is byte-identical to a fresh `reference_orbit` to
+/// `max_iter`. If the cached orbit already escaped (a complete reference) or is already long enough,
+/// it is returned unchanged.
+pub fn extend_reference_orbit(
+    prefix: &[[f32; 4]],
+    tail: &OrbitTail,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    let n = prefix.len().saturating_sub(1) as u32; // last cached sample is Z_n
+    if tail.escaped || prefix.is_empty() || n >= max_iter {
+        return (prefix.to_vec(), prefix.len() as u32, tail.clone());
+    }
+    let mut out = Vec::with_capacity(max_iter as usize + 1);
+    out.extend_from_slice(prefix);
+    let new_tail = run_orbit(
+        &mut out,
+        tail.zx.clone(),
+        tail.zy.clone(),
+        tail.zpx.clone(),
+        tail.zpy.clone(),
+        cx,
+        cy,
+        formula,
+        n,
+        max_iter,
+        p,
+    );
+    let len = out.len() as u32;
+    (out, len, new_tail)
 }
 
 /// Series-approximation skip: how many initial perturbation iterations can be replaced by a
@@ -1143,6 +1232,30 @@ pub fn render_multiref_mandel(
 #[cfg(test)]
 mod aux_bla_oracle {
     use super::*;
+
+    // Extending a cached (truncated) orbit must be byte-identical to a from-scratch build to the same
+    // length — this is what lets a deep dive reuse the prior orbit instead of recomputing every step.
+    #[test]
+    fn extend_orbit_is_byte_identical_to_fresh() {
+        let p = 220usize;
+        let zero = BigFloat::from_f64(0.0, p);
+        let cases: [(&str, &str, u32, u32); 3] = [
+            // Seahorse boundary point: survives thousands of iters → the extend path actually runs.
+            ("-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139", 1500, 6000),
+            ("-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139", 64, 5000),
+            // Fast-escaping exterior point: coarse already escaped → extend is a no-op, still matches.
+            ("1.0", "0.5", 64, 5000),
+        ];
+        for (cxs, cys, coarse, full) in cases {
+            let cx = crate::parse_bf(cxs).unwrap();
+            let cy = crate::parse_bf(cys).unwrap();
+            let (fresh, fresh_len) = reference_orbit(&zero, &zero, &cx, &cy, 0, full, p);
+            let (pre, _pl, tail) = reference_orbit_t(&zero, &zero, &cx, &cy, 0, coarse, p);
+            let (ext, ext_len, _t) = extend_reference_orbit(&pre, &tail, &cx, &cy, 0, full, p);
+            assert_eq!(ext_len, fresh_len, "len mismatch @({cxs},{cys}) coarse {coarse} full {full}");
+            assert_eq!(ext, fresh, "extended != fresh @({cxs},{cys}) coarse {coarse} full {full}");
+        }
+    }
 
     const FREQ: f64 = 6.0; // stripe angular frequency
     const POWER: f64 = 2.0; // Mandelbrot TIA power
