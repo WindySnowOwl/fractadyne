@@ -104,6 +104,11 @@ struct Perf {
     /// Iterate-key `(ss, resolution, orbit_id)` submitted last frame per view — change detection
     /// for probe arming (a probe is only valid on a frame that actually re-iterates).
     aa_last_key: [(u32, [u32; 2], u64); 2],
+    /// Adaptive deep-motion resolution scale (AIMD), driven by `frame_ms` in `build_params`. The
+    /// WORK_BUDGET `res_scale` sizes moving frames from the *no-BLA-skip* cost and over-shrinks them
+    /// where the BLA skips; this measured scale grows toward native while frames stay near vsync and
+    /// backs off when they run long. Only deep perturbation motion reads it.
+    motion_res: f64,
 }
 
 impl Default for Perf {
@@ -127,6 +132,7 @@ impl Default for Perf {
             aa_probe: [None, None],
             aa_measured: [None, None],
             aa_last_key: [(1, [0, 0], 0), (1, [0, 0], 0)],
+            motion_res: 0.6,
         }
     }
 }

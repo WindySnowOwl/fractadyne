@@ -998,10 +998,35 @@ impl FractadyneApp {
         // GPU-watchdog safety: if even the capped work won't fit the budget, reduce the
         // iteration-texture resolution (the color pass box-filters the upscale).
         let want = px.saturating_mul(gpu_iter.max(1) as u64);
-        let res_scale = if want > budget {
+        let budget_res_scale = if want > budget {
             (budget as f64 / want as f64).sqrt()
         } else {
             1.0
+        };
+        // ADAPTIVE MOTION RESOLUTION (AIMD). `budget_res_scale` sizes the moving frame from
+        // `px·gpu_iter` — the *no-BLA-skip* cost. Where the BLA skips (the common deep case) the real
+        // GPU cost is a tiny fraction of that, so the budget over-shrinks the moving frame (≈0.47 →
+        // 668 px at 1e263×) and the reprojected/held texture goes blocky — the "distorted overlapping
+        // tiles" seen when a zoom crosses from detail into the exterior. Instead drive the deep moving
+        // res_scale by the MEASURED frame interval: additive-increase while frames stay near vsync (BLA
+        // is skipping → headroom to sharpen), multiplicative-decrease when they run long (no skip →
+        // back off). Adapts per view, needs no GPU-timestamp readback, and cannot hang — a slow frame
+        // immediately shrinks the next, and the TDR cap below is still the hard watchdog floor. Only
+        // deep perturbation motion is affected; shallow/settled keep the budget scale. The AIMD step
+        // runs once per frame (view 0); both views read the shared scale.
+        let res_scale = if interacting && is_pert {
+            if view_id == 0 {
+                let fm = self.perf.frame_ms;
+                if fm > 26.0 {
+                    self.perf.motion_res = (self.perf.motion_res * 0.82).max(0.30);
+                } else if fm > 0.0 && fm < 19.0 {
+                    self.perf.motion_res = (self.perf.motion_res + 0.03).min(1.0);
+                }
+                // 19..=26 ms (≈38–53 fps): deadband — hold, so it settles instead of hunting.
+            }
+            self.perf.motion_res
+        } else {
+            budget_res_scale
         };
         // REUSE-FIRST ZOOM hold decision (used by BOTH the native-res gate here and the freeze
         // trigger below — they must agree). While interacting, hold + reproject the last good frame
