@@ -1010,7 +1010,7 @@ impl FractadyneApp {
         // let it settle — because a floatexp refresh could trigger a multi-second bignum reference
         // rebuild. It no longer can: the reference/BLA build is off-thread (v0.1.57 orbit REUSE cut it
         // ~20×), and the refresh frame itself is only a cheap res-scaled + TDR-bounded GPU iterate. If
-        // the reference is still too short for the new depth, the `depth_lag > 1.2` gate below holds/
+        // the reference is still too short for the new depth, the `depth_lag` gate below holds/
         // reprojects instead — so a refresh never renders on a too-short reference (the old ~5 s-spin
         // hazard). Net: floatexp now streams real detail every ~½ octave during a continuous dive.
         const REFRESH_OCTAVES: f64 = 0.5;
@@ -1334,28 +1334,25 @@ impl FractadyneApp {
                 // else: a recompute is already in flight (or throttled) — use the cached reference.
             }
             // Freeze (reproject, which skips the expensive floatexp iterate) rather than paint with a
-            // depth-stale reference, which makes the mode-2 shader spin ~5 s/frame → the "Not
-            // Responding" hang on a fast dive crossing ~1e28×. Two triggers:
-            //  • `mode.is_floatexp() && interacting`: never run a real floatexp iterate *while moving*. On a
-            //    dive faster than the (off-thread, ~0.1–1 s) reference recompute, every reference is
-            //    already stale by the time it lands, and the spin onset is data-dependent (as low as
-            //    ~0.5 octave of lag), so no threshold reliably lets a real frame through without
-            //    risking the spin. Reprojecting the last good frame is smooth + always cheap; the
-            //    positional `drift` trigger never caught this because a centered dive keeps drift ≈ 0.
-            //  • `depth_lag > 1.2`: once motion stops, keep holding until the freshly-recomputed
-            //    reference (matched to this depth) lands, then render real detail — so a settle snaps
-            //    to full sharpness instead of spinning on the stale reference for its first frame.
-            // During the autopilot's deep *stepped* dive we WANT real frames between jumps (each one
-            // held on screen while the next computes), so bypass the blanket "never iterate while
-            // moving" freeze — the `depth_lag > 1.2` hold below still waits for a depth-matched
-            // reference, so the real iterate never spins on a stale one.
-            //
-            // REUSE-FIRST ZOOM: hold the last good frame and scale/pan it to follow the zoom rather
-            // than re-iterating (see `reuse_hold` above, where the decision is made — floatexp holds
-            // throughout, mode-0 holds until it has drifted REFRESH_OCTAVES then takes a real frame).
-            // `is_direct` (mode 1, <1e4×) still re-renders every frame — cheap, sharp, no frozen
-            // perturbation texture to reproject.
-            too_stale = too_stale || reuse_hold || depth_lag > 1.2;
+            // depth-stale reference. Three triggers combine into `too_stale`:
+            //  • `drift > 1.5` (above): the reference drifted out of view → δc too large → glitchy.
+            //  • `reuse_hold` (decided above): the REUSE-FIRST hold — scale/pan the last good frame to
+            //    follow the zoom rather than re-iterate, until it has drifted REFRESH_OCTAVES, then take
+            //    one real frame. Applies to both df32 and (since v0.1.58) floatexp. `!stepping` there
+            //    lets the autopilot's stepped dive render real frames between jumps.
+            //  • `depth_lag > DEEP_LAG_HOLD`: octaves the view has zoomed past the cached BLA's build
+            //    depth (its dc_max shrinks with the span). The reference stays USABLE far past a fresh
+            //    install (~1 octave of headroom): the mode-2 shader only starts spinning near ~3 octaves
+            //    of lag, and even that is now TDR-bounded to ~0.85 s (not the old ~5 s "Not Responding"
+            //    hang). This used to hold at 1.2 — barely past the 1.1 the recompute SPAWNS at — so on a
+            //    fast dive past ~1e58× the ~15–30 ms rebuild couldn't land in that 0.1-octave window and
+            //    the view held (blocky) until you paused for it to catch up. Holding at 1.8 keeps the
+            //    frame rendering real (if progressively-less-skipped) detail while the off-thread rebuild
+            //    catches up, so a continuous dive stays sharp far deeper; beyond it, a depth-matched
+            //    reference lands and the view snaps to full sharpness. (`is_direct`, mode 1 <1e4×,
+            //    re-renders every frame — cheap, sharp, no frozen texture to reproject.)
+            const DEEP_LAG_HOLD: f64 = 1.8;
+            too_stale = too_stale || reuse_hold || depth_lag > DEEP_LAG_HOLD;
             // At extreme depth the recompute can take long enough that a fast/continuous dive
             // drifts the cached reference too far off-centre before a fresh one lands — rendering
             // with it is dark/glitchy (the "screen goes black" while zooming). Instead freeze the
