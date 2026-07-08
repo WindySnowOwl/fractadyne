@@ -1376,9 +1376,18 @@ impl FractadyneApp {
             if too_stale || self.ref_cache[vi].ref_pt.is_none() {
                 match self.ref_cache[vi].frozen_center.clone() {
                     Some(fc) => {
+                        // uv_scale = span_now/span_frozen = 2^(l2_frozen − l2_now); ≤ 1 as we dive in.
+                        // The lower bound must stay tiny: `uv_off` below is `px · scale`, so if `scale`
+                        // is clamped ABOVE its true value (while the view keeps diving) the held frame
+                        // translates by too much and visibly SLIDES/jitters. The old 1e-4 floor (≈13
+                        // octaves of frozen-drift) was hit whenever the off-thread rebuild fell behind on
+                        // a fast dive past ~1e100×, producing exactly that. f32 represents down to ~2^-126,
+                        // so floor at 2^-40 (~40 octaves — unreachable in a real dive) → the reprojection
+                        // stays correctly positioned; a very stale frozen frame just magnifies (blocky)
+                        // in place instead of sliding.
                         let scale = ((self.ref_cache[vi].frozen_l2 - log2mag) as f32)
                             .exp2()
-                            .clamp(1.0e-4, 1.0);
+                            .clamp(9.094_947e-13, 1.0); // 2^-40
                         let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &fc[0], delta_exp, precision)
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &fc[1], delta_exp, precision)
