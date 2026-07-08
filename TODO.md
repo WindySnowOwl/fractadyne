@@ -199,7 +199,9 @@ perturbation + series approximation + glitch correction. The headline feature.
       the old f64 fields). Deep-zoom locations now survive quit/restart instead of
       truncating to f64 → a wrong spot → uniform screen. Also fixed the autosave
       debounce so an animating palette offset no longer blocks the idle save.
-- [ ] Re-add `zoom_to_rect` unit test (dropped in the dd rewrite).
+- [x] Re-add `zoom_to_rect` unit test (dropped in the dd rewrite) — two tests in
+      `fractadyne-core` cover centered uniform 4× scaling, the max()-fit invariant for
+      off-center/non-aspect boxes, and drag-direction independence.
 - [x] **UI digit separators** — commas on zoom/iter, spaces grouping coordinate digits.
 - [x] **Floatexp perturbation δ (extreme depth)** — the df32 δ has f32's *exponent*
       floor, so its low word denormalizes/underflows ~1e31–1e32× → speckle breakdown.
