@@ -886,14 +886,19 @@ impl FractadyneApp {
         const TDR_SAFE_STEPS: u64 = 300_000_000_000;
         let spx = (resolution[0] as u64) * (resolution[1] as u64);
         // First line of defence is lowering ss (`max_ss_tdr` below), but that floors at 1. If even ss=1
-        // would blow the budget — `spx·gpu_iter` alone > TDR_SAFE_STEPS, i.e. a very large floatexp panel
-        // (a maximized 6K+/multi-monitor window at this iter count) — the ss cap can't help, so shrink the
-        // render RESOLUTION too. Only iterating frames need this (`!will_reproject`; a reproject frame
-        // runs no iterate, and shrinking its base would reintroduce the v0.1.44 aspect-fit magnify). Rare,
-        // but it closes the one hole where a single floatexp frame can still overrun the watchdog.
+        // would blow the budget — `spx·gpu_iter` alone > TDR_SAFE_STEPS, i.e. a large floatexp panel at
+        // a high fixed iteration count — the ss cap can't help, so shrink the render RESOLUTION too.
+        // Applied to reproject frames AS WELL: the frozen texture they re-sample was rendered by a
+        // settled frame that took this same (deterministic: same panel, same iter count) shrink, so a
+        // reproject frame must take it too for the color pass aspect-fit `fit = out_res /
+        // frozen_screen_dim` to stay 1. Skipping it here (as v0.1.46 briefly did) leaves the reproject
+        // frame at native res over a shrunk frozen texture → fit > 1 → the held image displays SHRUNK
+        // (average-color borders) and the pan translation runs slow by the same factor — the inverse of
+        // the v0.1.44 magnify. (The MOTION res_scale above stays gated on `!will_reproject`: unlike this
+        // shrink it differs between moving and settled frames, which is what caused the v0.1.44 bug.)
         let (resolution, spx) = {
             let iter_cost = spx.saturating_mul(gpu_iter.max(1) as u64);
-            if is_fe && !will_reproject && iter_cost > TDR_SAFE_STEPS {
+            if is_fe && iter_cost > TDR_SAFE_STEPS {
                 let f = (TDR_SAFE_STEPS as f64 / iter_cost as f64).sqrt();
                 let r = [
                     ((resolution[0] as f64 * f) as u32).max(16),
