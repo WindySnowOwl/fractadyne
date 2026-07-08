@@ -1,0 +1,16 @@
+[location]
+real = "-0.7436438870371587047521915061147707"
+imag = "0.131825904205311970493132056385139"
+zoom = "1.333333e4"
+[image]
+width = 1280
+height = 720
+subframes = 4
+[bailout]
+iterations = 1500
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "02-seahorse-1e4-f3"
+save_png = true

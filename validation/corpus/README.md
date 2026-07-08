@@ -12,8 +12,10 @@ location's full compute details.
 | `locations.toml` | Canonical location list (full-precision centers, log10 magnification, iterations) — the single source of truth everything else derives from. |
 | `locations/*.kfr` | Kalles Fraktaler 2 location files (fraktaler-3 reads them too). |
 | `renders/<slug>-fractadyne.png` | Fractadyne renders (1280×720, 2× supersampling, Ember palette, smooth iteration). |
-| `renders/<slug>-fraktaler.png` | **You produce these** — the catalog shows a placeholder until each exists. |
+| `renders/<slug>-fraktaler.png` | Fraktaler-3 renders (1280×720; produced by `generate_fraktaler.py` where F3 works — see the limitation below). |
+| `locations/*.f3.toml` | Fraktaler-3 batch parameter files (one per location), written for **every** location. |
 | `generate_corpus.py` | Regenerates the `.kfr` files, the Fractadyne renders, and `catalog.html` from `locations.toml`. |
+| `generate_fraktaler.py` | Runs the vendored Fraktaler-3 (`diag/fraktaler/`) in batch mode to produce the F3 renders + `.f3.toml` params. |
 
 ## Regenerating the Fractadyne side
 
@@ -28,15 +30,32 @@ so the framing comes from the exact `center + mag_log10` — independent of wind
 session's iteration cap is staged per location (fixed iterations, auto-scale off, HUD off) and
 your session file is restored afterwards.
 
-## Producing the Kalles Fraktaler side
+## Producing the Fraktaler side
 
-1. In **Kalles Fraktaler 2**: *File → Open* the location's `.kfr`.
-2. Set the image size to **1280×720** (Image → Image size). Iterations are already in the file.
-3. Render, then *File → Save PNG* as `renders/<slug>-fraktaler.png` (same slug as the `.kfr`).
-4. Re-open `catalog.html` — the pair appears side by side.
+Automated, using the Fraktaler-3 3.1 binary vendored at `diag/fraktaler/`:
 
-**fraktaler-3** also opens `.kfr` files directly; render at the same size and save under the
-same name.
+```
+python validation/corpus/generate_fraktaler.py               # render everything F3 can
+python validation/corpus/generate_fraktaler.py --max-log10 8 # only run F3 up to ~1e8x
+```
+
+It writes an F3 batch param (`locations/<slug>.f3.toml`) for **every** location and renders each
+to `renders/<slug>-fraktaler.png` (1280×720, matched framing via `f3_zoom = mag × 4/3`), detecting
+and skipping blank output.
+
+You can also render any location by hand: **Kalles Fraktaler 2** or **fraktaler-3** opens the
+`.kfr` (or the `.f3.toml`); set the image size to 1280×720 and save the PNG as
+`renders/<slug>-fraktaler.png`.
+
+### ⚠ Deep-render limitation on this machine
+
+Fraktaler-3 3.1's **extended-exponent number types** (softfloat / floatexp / doubleexp — the ones
+it switches to past ~1e8×) render **blank (all-interior)** here, on both the GPU and CPU code
+paths, independent of iteration count. So only the float/double-regime locations (**01–03**,
+≤ 1e6×) have real F3 renders; **04–10 await a working F3 install** (a different build / driver /
+machine). The `.f3.toml` / `.kfr` params are written for all ten, so producing the deep side there
+is one command. This is an F3-side issue — Fractadyne renders all ten, and the shallow pairs
+confirm the coordinate + framing conventions match exactly.
 
 ## Reading the comparison
 

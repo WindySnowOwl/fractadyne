@@ -1,0 +1,16 @@
+[location]
+real = "-6.70209187903253724099340233845986400901890228472988919658169553187602139279518e-1"
+imag = "4.58060975296945872909213676106313996238241655922637652387687460587764642477807e-1"
+zoom = "8.865878e43"
+[image]
+width = 1280
+height = 720
+subframes = 4
+[bailout]
+iterations = 60000
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "08-deep-6.6e43-f3"
+save_png = true
