@@ -1012,8 +1012,16 @@ impl FractadyneApp {
         // ~20×), and the refresh frame itself is only a cheap res-scaled + TDR-bounded GPU iterate. If
         // the reference is still too short for the new depth, the `depth_lag` gate below holds/
         // reprojects instead — so a refresh never renders on a too-short reference (the old ~5 s-spin
-        // hazard). Net: floatexp now streams real detail every ~½ octave during a continuous dive.
-        const REFRESH_OCTAVES: f64 = 0.5;
+        // hazard). Net: floatexp now streams real detail every REFRESH_OCTAVES of a continuous dive.
+        //
+        // REFRESH_OCTAVES also bounds how far the held frame is magnified before a real frame replaces
+        // it: at 0.5 the frozen texture was upsampled up to 2^0.5 ≈ 1.41× (soft), then the real frame
+        // snapped to sharp — a soft→sharp POP every ½ octave that, deep (>~1e100×), reads as the view
+        // "jumping" on zoom (only on zoom; a pan doesn't grow `frozen_drift`; rate-independent because
+        // it is octave- not time-gated). Refresh far more often (0.12 octave ⇒ ≤ 2^0.12 ≈ 1.09×
+        // magnification) so each pop is tiny/imperceptible and the held frame stays near-sharp. The
+        // extra real frames are affordable — the recompute is off-thread and the iterate is cheap.
+        const REFRESH_OCTAVES: f64 = 0.12;
         let frozen_drift = (self.ref_cache[view_id as usize].frozen_l2 - log2mag).abs();
         let reuse_hold =
             is_pert && interacting && !self.autopilot.stepping && frozen_drift < REFRESH_OCTAVES;
