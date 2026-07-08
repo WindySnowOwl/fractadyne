@@ -1439,6 +1439,11 @@ struct FractadyneApp {
     dual_split: f32,
     /// Borderless fullscreen state (toolbar toggle).
     fullscreen: bool,
+    /// `Ui::id` of the menu-bar row (captured each frame in `draw_menu_bar`) — the key egui stores
+    /// the bar's open-menu state under. Lets `close_menu_bar` dismiss a still-open menu when the
+    /// user starts navigating the fractal view (wheel-zoom doesn't count as a "click elsewhere",
+    /// so egui would otherwise leave the dropdown hanging over the canvas).
+    menu_bar_id: Option<egui::Id>,
     /// Viewport for the Julia panel in dual view.
     julia_viewport: Viewport,
     /// Pointer / zoom / pan interaction state (zoom box, pan reprojection, eased zoom, settle timers).
@@ -1727,6 +1732,7 @@ impl FractadyneApp {
             dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(0.15, 0.85),
             fullscreen: false,
+            menu_bar_id: None,
             julia_viewport: {
                 let mut v = Viewport::new(800.0, 800.0);
                 v.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
@@ -2613,6 +2619,27 @@ impl FractadyneApp {
             }
         }
         let now = ctx.input(|i| i.time);
+        // Dismiss a still-open menu the moment the user starts navigating the view. egui closes
+        // menus on a click elsewhere, but wheel-zoom never clicks, and a drag's press can land on
+        // the canvas without registering as one — either way the dropdown would hang over the
+        // fractal while it pans/zooms underneath. Deliberately excludes `resized` (a window resize
+        // isn't the user leaving the menu) but includes a zoom-box drag (pointer engagement).
+        // (Inline rather than a `&self` helper: `vp` mutably borrows a self field here, so only
+        // disjoint field reads — `menu_bar_id` is one — are allowed, not whole-`self` calls.)
+        if resp.dragged()
+            || apply_zoom.is_some()
+            || (scroll != 0.0 && hovering)
+            || (self.pointer.zoom_vel.abs() > 1e-3 && hovering)
+        {
+            if let Some(id) = self.menu_bar_id {
+                // egui keeps the bar's open-menu state in a `BarState` keyed by the bar row's
+                // `Ui::id` (recorded in `draw_menu_bar`); storing a default clears it through
+                // public API. Guarded so egui memory isn't dirtied when no menu is open.
+                if egui::menu::BarState::load(ctx, id).is_some() {
+                    egui::menu::BarState::default().store(ctx, id);
+                }
+            }
+        }
         // Drawing a zoom box drags the pointer but does NOT move the view, so it must not
         // count as "active" (that would drop the render back to the coarse moving preview).
         // Only the actual zoom application (apply_zoom) counts.

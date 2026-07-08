@@ -12,6 +12,9 @@ impl FractadyneApp {
     ) {
         egui::TopBottomPanel::top("topbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
+                    // The id egui keys this row's `menu_button` open-state (`BarState`) under —
+                    // recorded so `close_menu_bar` can dismiss a hanging menu on view navigation.
+                    self.menu_bar_id = Some(ui.id());
                     brand_wordmark(ui);
                     ui.separator();
                     ui.menu_button("File", |ui| {
