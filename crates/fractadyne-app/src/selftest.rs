@@ -1152,7 +1152,7 @@ impl FractadyneApp {
             self.coloring.color_method = crate::ColorMethod::Smooth; // Smooth so the BLA tree builds
             self.coloring.use_custom_palette = false;
             let saved_stripe_freq = self.coloring.stripe_freq;
-            self.coloring.stripe_freq = 5.0; // ≠ default 1.0 → exercises the freq-specific stripe aggregate
+            let saved_trap_type = self.coloring.trap_type;
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = 5000;
             self.render_cfg.series_approx = false; // isolate BLA
@@ -1163,7 +1163,6 @@ impl FractadyneApp {
             vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
             vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
             vp.precision = fractadyne_core::precision_for_magnification(1.0e30);
-            let base = self.current_export_request_for(&vp, false);
             let prog = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);
             let rex = |req: &fractadyne_gpu::ExportRequest| {
@@ -1171,13 +1170,24 @@ impl FractadyneApp {
                     .ok()
                     .map(|r| r.pixels)
             };
-            for (m, label) in [(3u32, "orbit-trap"), (2u32, "triangle-ineq"), (1u32, "stripe")] {
-                let mut on = base.clone();
+            // Each case sets the live aux params BEFORE building the request, so the BLA aggregate is
+            // baked for exactly the method / trap-type / frequency the render then reads (all three
+            // trap types exercised; stripe at a non-default 5.0). Rebuilt per case for that reason.
+            for (m, tt, freq, label) in [
+                (3u32, 0u32, 1.0f32, "orbit-trap-point"),
+                (3u32, 1u32, 1.0, "orbit-trap-cross"),
+                (3u32, 2u32, 1.0, "orbit-trap-circle"),
+                (2u32, 0u32, 1.0, "triangle-ineq"),
+                (1u32, 0u32, 5.0, "stripe"),
+            ] {
+                self.coloring.trap_type = crate::TrapType::ALL[tt as usize];
+                self.coloring.stripe_freq = freq;
+                let mut on = self.current_export_request_for(&vp, false);
                 on.width = N;
                 on.height = N;
                 on.ss = 1;
                 on.color_method = m;
-                on.trap_type = 0; // point (matches the default-param trap aggregate)
+                on.trap_type = tt;
                 on.sa_skip = 0; // isolate BLA (no SA prefix yet)
                 let (bla_on, mode) = (on.bla_on, on.mode);
                 let mut off = on.clone();
@@ -1216,6 +1226,7 @@ impl FractadyneApp {
             self.render_cfg.series_approx = true;
             self.coloring.color_method = crate::ColorMethod::Smooth;
             self.coloring.stripe_freq = saved_stripe_freq;
+            self.coloring.trap_type = saved_trap_type;
         }
 
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
