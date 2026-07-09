@@ -187,14 +187,27 @@ fn finish_reference(
 ) -> RecomputeResult {
     use fractadyne_core as fc;
     let partial = !tail.escaped;
+    // A SHORT ESCAPED reference (deep EXTERIOR): the orbit escapes early (e.g. ~3.3k iters at
+    // 1e261×). Its BLA is skipped below — it saves almost nothing there (most pixels escape in tens
+    // of iterations) and, worse, this orbit geometry has an early-iteration perturbation glitch that
+    // the BLA leaves EXPOSED, shattering the view into "distorted overlapping tiles" (confirmed
+    // headlessly). SERIES APPROXIMATION masks that glitch by seeding δz analytically past the early
+    // iterations, so it must be re-enabled here (a BLA view normally turns SA off — "BLA subsumes
+    // SA" — which is exactly what left the glitch showing). Surviving references (deep interior/
+    // boundary) keep their BLA and are unaffected. Gate on the escape being well short of the budget
+    // so a rare long escaper keeps its tree.
+    let short_escaper = inp.bla_dc_max.is_some()
+        && !partial
+        && (len as u64).saturating_mul(2) < inp.gpu_iter.max(1) as u64;
     // Keep the tail even for a COMPLETE (escaped) orbit: it can't be EXTENDED, but it can still be
     // REUSED as-is (same point + orbit) so a rebuild doesn't re-pick a fresh reference — which at
     // extreme depth renders a hair differently each time and makes the view "jump" on zoom.
     let orbit_tail = Some(tail);
     let orbit = std::sync::Arc::new(o);
     // Series approximation for the chosen reference (at the exact depth precision, not the headroom).
+    // Forced on for a short escaper (see above) even though `do_sa` was cleared by BLA eligibility.
     let t_sa = Instant::now();
-    let sa = if do_sa {
+    let sa = if do_sa || short_escaper {
         let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &rp[0], inp.delta_exp, inp.precision);
         let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &rp[1], inp.delta_exp, inp.precision);
         let roff = (dx * dx + dy * dy).sqrt();
@@ -208,9 +221,19 @@ fn finish_reference(
     let series_ms = t_sa.elapsed().as_secs_f64() * 1000.0;
     // BLA tree (Mandelbrot deep only; empty otherwise). Built with the same conservative dc_max the
     // live path uses so the main thread reuses it across pans.
+    //
+    // SKIP the BLA for a SHORT ESCAPED reference (deep EXTERIOR). At such a spot every candidate
+    // orbit escapes early (e.g. ~3.3k iters at 1e261×) and most pixels escape in tens of iterations,
+    // so the BLA saves almost nothing — but its linear skips accumulate df32 coefficient error at
+    // this orbit geometry and shatter the view into "distorted overlapping tiles" (confirmed
+    // headlessly: BLA on = blocks, BLA off = pristine, independent of eps / dc_max / max-skip-level).
+    // A SURVIVING reference (`partial`: reached the iter cap without escaping — deep interior/
+    // boundary) KEEPS its BLA: there it's both essential for speed and accurate. Gate on the escape
+    // being well short of the budget so a rare long escaper (where the skip still pays for itself)
+    // keeps its tree.
     let t_bla = Instant::now();
     let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
-        Some(dc_max) => {
+        Some(dc_max) if !short_escaper => {
             let levels = fc::build_bla_mandel(
                 &orbit,
                 dc_max,
@@ -224,7 +247,7 @@ fn finish_reference(
             };
             (arc, dc_max.log2())
         }
-        None => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
+        _ => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
     };
     let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
     RecomputeResult {
@@ -1246,13 +1269,14 @@ impl FractadyneApp {
             // onset ≈ 3 octaves of lag (18 ms at lag 3.1, then 5167 ms the next frame). Since a
             // *centered* dive keeps `drift ≈ 0`, the positional `too_stale` above never fires, so this
             // is the signal that catches a fast zoom-in.
-            let depth_lag = {
-                let vc = &self.ref_cache[vi];
-                if mode.is_floatexp() && !vc.bla.is_empty() && vc.bla_dc_max_log2.is_finite() {
-                    vc.bla_dc_max_log2 - Self::bla_dc_max(span_mantissa, delta_exp).log2()
-                } else {
-                    0.0
-                }
+            let bla_active = mode.is_floatexp()
+                && !self.ref_cache[vi].bla.is_empty()
+                && self.ref_cache[vi].bla_dc_max_log2.is_finite();
+            let depth_lag = if bla_active {
+                self.ref_cache[vi].bla_dc_max_log2
+                    - Self::bla_dc_max(span_mantissa, delta_exp).log2()
+            } else {
+                0.0
             };
             // While moving, tolerate the reference lagging in precision (it has 64 guard bits, good
             // for ~40 more octaves) so we don't rebuild the slow bignum orbit every octave — that
@@ -1274,8 +1298,19 @@ impl FractadyneApp {
             // In mode 2, refresh the reference/BLA as soon as it lags (off-thread, cheap) so fresh
             // references keep coming; freeze (below) just above that while each refresh lands. A
             // fresh install sits at depth_lag ≈ 1 (the BLA is built with 1 octave of dc_max headroom),
-            // so `> 1.1` refreshes ~0.1 octave into the dive.
-            let recompute = out_of_view || needs_quality || depth_lag > 1.1;
+            // valid across a narrow window around it:
+            //   depth_lag > 1.1  → zoomed IN past the headroom (the mode-2 shader starts to spin).
+            //   depth_lag < 0.85 → zoomed OUT so the view span now EXCEEDS the BLA's dc_max at the
+            //     edges: the perturbation applies BLA nodes outside their validity and renders block/
+            //     "tile" artifacts. This was the e260 zoom-out tiling — a settled view sat at
+            //     depth_lag 0.69 with an escaped reference and never rebuilt, because only the zoom-IN
+            //     edge had a trigger. Rebuild whenever the BLA leaves the window in EITHER direction;
+            //     the off-thread orbit-reuse rebuild is cheap and resets depth_lag to ≈ 1. (Lower
+            //     bound 0.85: below the ≈1.0 fresh-install point with margin so it can't thrash, well
+            //     above the measured 0.69 tiling onset so it rebuilds before artifacts show. Zoom-IN
+            //     never drops below 1.0, so this leaves the dive path untouched.)
+            let bla_out_of_range = bla_active && !(0.85..=1.1).contains(&depth_lag);
+            let recompute = out_of_view || needs_quality || bla_out_of_range;
             // Whether the series approximation applies to this view (bundled into the recompute).
             // BLA subsumes SA (see `export_reference_inputs`): when this view builds a BLA tree,
             // skip the SA coefficient pass — it's the dominant deep build cost (~9.4 s at 1e1105×)
@@ -1422,9 +1457,17 @@ impl FractadyneApp {
                         // so floor at 2^-40 (~40 octaves — unreachable in a real dive) → the reprojection
                         // stays correctly positioned; a very stale frozen frame just magnifies (blocky)
                         // in place instead of sliding.
+                        // scale = 2^(l2_frozen − l2_now): ≤ 1 zooming IN (frozen frame magnifies),
+                        // > 1 zooming OUT (frozen frame shrinks toward centre, the average fills the
+                        // revealed border). The old upper clamp of 1.0 pinned zoom-out reprojection at
+                        // 1:1 — the held frame stayed full-size instead of shrinking, so a zoom-out
+                        // held its stale (too-magnified) detail until the refresh snapped it smaller.
+                        // Allow > 1; the shader maps out-of-[0,1] samples to the frame average, so a
+                        // very stale zoom-out just shows a shrinking patch on the average field. Bounds
+                        // stay finite for f32 (2^±40, ~40 octaves — unreachable in a real drift).
                         let scale = ((self.ref_cache[vi].frozen_l2 - log2mag) as f32)
                             .exp2()
-                            .clamp(9.094_947e-13, 1.0); // 2^-40
+                            .clamp(9.094_947e-13, 1.099_512e12); // 2^-40 .. 2^40
                         let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &fc[0], delta_exp, precision)
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &fc[1], delta_exp, precision)
@@ -1449,15 +1492,24 @@ impl FractadyneApp {
                 let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &rp[1], delta_exp, precision);
                 ref_offset = RefOffset::from_df32(dx, dy);
             }
+            // SHORT ESCAPED reference (deep EXTERIOR): mirror `finish_reference` — suppress the BLA
+            // (it barely helps and its skips expose an early-iteration perturbation glitch → "tiles")
+            // and use SERIES APPROXIMATION instead (which masks the glitch). `finish_reference` already
+            // built the SA and left the orbit's BLA empty; this main-thread cache path would otherwise
+            // REBUILD the BLA (its rebuild fires because the suppressed tree reads dc_max_log2 = −∞) and
+            // leave SA unread (`do_sa` is off under BLA eligibility). Keep the two paths in lock-step.
+            let short_escaper = self.bla_eligible(mode, julia)
+                && !self.ref_cache[vi].partial
+                && (self.ref_cache[vi].orbit_len as u64).saturating_mul(2) < ref_build_iter.max(1) as u64;
             // Series approximation travels with the reference (computed off-thread); read it back.
-            if do_sa {
+            if do_sa || short_escaper {
                 sa = self.ref_cache[vi].sa;
             }
             // BLA tree, cached per reference: reused across frames (and pans — the conservative
             // `dc_max` is offset-independent) and rebuilt only when the orbit changes or the view
             // zooms out enough to need a larger `dc_max`. Removes the ~20 ms/frame rebuild while
             // never reusing a tree whose validity radii are too optimistic for the current view.
-            if self.bla_eligible(mode, julia) {
+            if self.bla_eligible(mode, julia) && !short_escaper {
                 let oid = self.ref_cache[vi].orbit_id;
                 let dc_max = Self::bla_dc_max(span_mantissa, delta_exp);
                 let need_log2 = dc_max.log2();
@@ -1522,11 +1574,21 @@ impl FractadyneApp {
             gpu_iter
         } else if self.ref_cache[vi].ref_pt.is_none() {
             gpu_iter.min(PLACEHOLDER_ITER_CAP) // no reference yet → cheap flat placeholder (TDR-safe)
-        } else if self.ref_cache[vi].partial {
-            // Coarse (truncated) reference from a progressive cold start: cap at orbit_len-1 so the
-            // shader never rebases past the short reference into df32-inaccurate territory (which
-            // speckles at extreme depth) — a clean partial image (fast escapers correct, the rest
-            // interior) until the full reference lands and refines it.
+        } else if self.ref_cache[vi].partial
+            || self.ref_cache[vi].orbit_len < gpu_iter
+        {
+            // Cap at orbit_len-1 so the shader never rebases past a SHORT reference into
+            // df32-inaccurate territory (which speckles/tiles at extreme depth). Two cases:
+            //  • `partial`: a coarse (truncated) reference from a progressive cold start.
+            //  • `orbit_len < gpu_iter`: an ESCAPED reference shorter than the pixel budget. At a deep
+            //    EXTERIOR location every candidate escapes early (e.g. ~3.3k iters), and best_reference's
+            //    grid can land a hair SHORTER than the longest-surviving pixels — those few then rebase
+            //    past the orbit and the whole view breaks into "distorted overlapping tiles" (the e260
+            //    exterior artifact). The export path renders such spots cleanly only because its
+            //    reference happens to run a few iters longer, so nothing rebases. Capping makes the live
+            //    view match: fast escapers stay correct, the sliver that would rebase reads as interior
+            //    (invisible here — such a location has no genuinely-interior pixels). Deep-BOUNDARY
+            //    zooms keep a SURVIVING reference (orbit_len ≥ gpu_iter), so this never fires there.
             gpu_iter.min(self.ref_cache[vi].orbit_len.saturating_sub(1))
         } else {
             gpu_iter
