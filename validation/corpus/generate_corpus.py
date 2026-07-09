@@ -142,9 +142,8 @@ def write_catalog(locs):
     <figure>
       <img src="renders/{slug}-fraktaler.png" alt="Fraktaler render"
            onerror="this.closest('figure').classList.add('missing')">
-      <figcaption>Fraktaler-3 &mdash; from <code>locations/{slug}.f3.toml</code>. Missing = F3&rsquo;s
-        extended-type limitation past ~1e13&times; on this machine (see README); render on a working
-        F3 install.</figcaption>
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/{slug}.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
     </figure>
   </div>
   <table class="meta">
@@ -188,11 +187,13 @@ def write_catalog(locs):
 <p>Ten locations from the full-set overview to 4.6e1105&times;, rendered by both apps from the exact same
 center / magnification / iteration cap for side-by-side structural comparison. Fractadyne renders (all
 ten) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
-<strong>Fraktaler-3 on this machine renders blank past ~1e13&times;</strong> (its extended-type
-limitation, GPU and CPU alike), so locations 01&ndash;04 (through 2.9e12&times;, inside F3's
-double-precision regime) have an F3 counterpart; 05&ndash;10 cross into its extended-exponent kernels
-and show a placeholder, with the <code>.f3.toml</code> ready for a working F3 install. The 01&ndash;04
-pairs confirm the coordinate + framing conventions line up exactly, arm-for-arm.</p>
+With <code>maximum_reference_iterations</code> set in each F3 param (see README &mdash; F3&rsquo;s batch
+default is far too low for a zoomed view and blanks silently, which long masqueraded as a ~1e13&times;
+ceiling), <strong>F3 renders deep correctly here</strong>: locations 01&ndash;06 and 08&ndash;10 have
+real, arm-for-arm F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The
+lone gap, 07 (1e30&times;), is a center-precision placeholder &mdash; its 34-digit seahorse center is
+too coarse for a reproducible cross-app match there, while 08 (83-digit), 09 (526-digit) and 10
+(1141-digit) carry far more digits and match far deeper.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a

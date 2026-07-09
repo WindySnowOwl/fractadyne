@@ -47,31 +47,30 @@ You can also render any location by hand: **Kalles Fraktaler 2** or **fraktaler-
 `.kfr` (or the `.f3.toml`); set the image size to 1280×720 and save the PNG as
 `renders/<slug>-fraktaler.png`.
 
-### ⚠ Deep-render limitation on this machine
+### F3 deep renders and the `maximum_reference_iterations` gotcha
 
-Fraktaler-3 renders correctly only in the **double-precision regime (through ~1e13×** — verified:
-1e6, 1e10, 1e13 all produce full detail). Past that it switches to its **extended-exponent number
-types** (softfloat / floatexp / doubleexp), which render **blank (all-interior)** here — confirmed on
-both the GPU and forced-CPU paths, independent of iteration count, and **identically in F3 3.0 and
-3.1** (so it is not a version regression), on the 3080 alone (so it is not the second GPU), and
-**after a full NVIDIA driver update + reboot** (still blank at 1e30 while 1e6/1e13 render fine — so
-it is not a driver-version issue either; NVIDIA's OpenCL runtime ships with the driver and updating
-it changed nothing). The cause is F3's OpenCL extended-type kernels vs this GPU architecture — an
-F3-side issue, not a Fractadyne one.
+Fraktaler-3's **batch** mode defaults `maximum_reference_iterations` far too low for a zoomed view,
+so without it F3 silently renders a **uniform / blank** image **at any depth** — no error, just a
+flat result. For a long time this looked like a hard *"F3 blanks past ~1e13×"* ceiling (its
+extended-exponent kernels vs this GPU): every deep test shared the same missing setting, so they all
+blanked identically and consistently — across GPU and forced-CPU, F3 3.0 and 3.1, and a full NVIDIA
+driver update + reboot. That reproducibility read as a hardware wall. It was a **config gap**.
 
-Net: **01–04** have real F3 renders — through **2.9e12×** (location 04), F3's deepest reproducible
-depth here, still inside its double-precision regime. **05–10** (≥ 1e16×) blank because they cross
-into F3's extended-exponent kernels, which don't work on this GPU; those await a **different
-machine** or an **F3-from-source** build. The `.f3.toml` / `.kfr` params are written for all ten, so
-producing the deep side is one command (`python validation/corpus/generate_fraktaler.py`) once F3
-works there. Fractadyne renders all ten; 01–04 pair arm-for-arm with F3.
+`generate_fraktaler.py` now writes `maximum_reference_iterations`, `maximum_perturb_iterations`, and
+`maximum_bla_steps` into every `.f3.toml`. With those set, **F3 renders deep correctly here** — real,
+arm-for-arm matches verified all the way to **4.60e1105×** (location 10, a 1141-digit center; ~4 min
+to render). Two further things have to hold for a clean cross-app match: the iteration cap must be
+high enough for the depth (F3's reference otherwise truncates and blanks), and the **center must carry
+enough digits for the depth *plus* margin** for F3's internal reference rounding, which is coarser
+than Fractadyne's full-precision bignum reference.
 
-> **A config gotcha that masqueraded as the kernel limit:** location 04 previously blanked too — but
-> at 2.9e12× it is *inside* the double regime, so that was **not** the extended-kernel ceiling. F3
-> batch's default `maximum_reference_iterations` is too low for a zoomed view, so it silently
-> rendered uniform. `generate_fraktaler.py` now writes `maximum_reference_iterations` /
-> `maximum_perturb_iterations` / `maximum_bla_steps` into every `.f3.toml`, and 04 renders correctly.
-> (This does **not** rescue 05–10 — those are the genuine extended-kernel ceiling.)
+Net: real, arm-for-arm F3 matches at **01–06 and 08–10** — from 1× to **4.60e1105×**, over a thousand
+orders of magnitude of zoom. The single gap is **07** (1e30×): its shared 34-digit seahorse center
+(only ~3 digits past what 1-pixel placement needs) is too coarse for a reproducible match there — F3
+rounds it below Fractadyne's bignum reference and lands on different sub-structure, so 07 stays an
+honest placeholder. That is a **center-precision** limit, not a depth one — the plainest proof being
+that 08 (83-digit center), 09 (526-digit), and 10 (1141-digit) all render and match *far* deeper. The
+`.f3.toml` / `.kfr` params are written for all ten, and Fractadyne renders all ten.
 
 ## Reading the comparison
 

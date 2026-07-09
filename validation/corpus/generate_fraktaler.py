@@ -8,13 +8,18 @@ Fraktaler-3 in batch mode, and copies the resulting PNG to renders/<slug>-frakta
 Convention: F3 zoom = 1 shows a vertical extent of 4; Fractadyne mag = 1 shows 3. To frame
 the SAME view, f3_zoom = our_mag * 4/3 (see validation/crosscheck-fraktaler3.md).
 
-KNOWN LIMITATION on this machine: Fraktaler-3 renders correctly through the double-precision
-regime (~1e13x) but its extended-exponent number types (softfloat / floatexp / doubleexp),
-engaged past that, render blank (all-interior) here — confirmed on GPU and forced-CPU, in both
-F3 3.0 and 3.1, on the 3080 alone, AND after a full NVIDIA driver update (still blank). It is
-F3's OpenCL extended-type kernels vs this GPU arch, not a driver-version issue. So the double-regime locations produce real images; deeper ones are detected as
-blank and skipped, leaving the catalog's placeholder. The .kfr / param files are written for
-every location so the deep renders can be produced once F3 works (driver update / other machine).
+DEPTH NOTE: Fraktaler-3's batch mode defaults maximum_reference_iterations far too low for a
+zoomed view, so without it F3 silently renders uniform/blank at ANY depth. For a long time that
+looked like a hard "F3 blanks past ~1e13x" extended-type ceiling (softfloat/floatexp kernels vs
+this GPU) — but every deep test shared the same missing setting, so they all blanked identically.
+It was a config gap, not a kernel wall. write_param now sets maximum_reference_iterations /
+maximum_perturb_iterations / maximum_bla_steps, and with those F3 renders deep correctly here —
+real, arm-for-arm matches verified out to 4.6e1105x (location 10, ~4 min). Two more things must
+hold: the iteration cap must be high enough for the depth (else the reference truncates to blank),
+and the center must carry enough digits for the depth PLUS margin for F3's internal reference
+rounding (coarser than Fractadyne's full bignum). Location 07 (1e30x) is the corpus's one gap: its
+34-digit seahorse center is too coarse there, so F3 lands on different sub-structure — 08/09/10,
+with far more center digits, match far deeper.
 
 Run from repo root:  python validation/corpus/generate_fraktaler.py
 """
@@ -66,10 +71,11 @@ def write_param(loc):
         "width = %d\nheight = %d\nsubframes = %d\n" % (WIDTH, HEIGHT, SUBFRAMES) +
         "[bailout]\n"
         "iterations = %d\n" % loc["iterations"] +
-        # F3 batch's default maximum_reference_iterations is too low for zoomed views — without
-        # these it silently renders uniform/blank even in the double regime. Set them to the
-        # iteration budget so in-range deep locations (< ~1e13x) render. (Past ~1e13x F3's
-        # extended-type kernels blank regardless of these — that ceiling is separate.)
+        # F3 batch's default maximum_reference_iterations is far too low for zoomed views — without
+        # these it silently renders uniform/blank at ANY depth (this, not an extended-type kernel
+        # ceiling, is why the deep corpus renders were blank before). Set them to the iteration
+        # budget; with a depth-appropriate cap F3 renders the whole practical range (through 6.6e43x
+        # here). The cap must scale with depth: 1e30x needs >=30k or the reference truncates to blank.
         "maximum_reference_iterations = %d\n" % loc["iterations"] +
         "maximum_perturb_iterations = %d\n" % loc["iterations"] +
         "maximum_bla_steps = 8192\n"
@@ -87,9 +93,9 @@ def write_param(loc):
 def main():
     if not os.path.exists(F3):
         sys.exit("Fraktaler-3 binary not found: %s" % F3)
-    # This machine's F3 renders blank past ~1e13x (extended-type limitation). `--max-log10 X`
-    # skips RUNNING F3 beyond depth X (param files are still written) so we don't spend minutes per
-    # confirmed-blank deep render; pass a large value on a working F3 install to render everything.
+    # `--max-log10 X` skips RUNNING F3 beyond depth X (param files are still written) — handy for
+    # regenerating params without re-running the slow deep renders (09 ~9 min, 10 ~4 min).
+    # Default: render everything.
     max_log10 = float("inf")
     if "--max-log10" in sys.argv:
         max_log10 = float(sys.argv[sys.argv.index("--max-log10") + 1])
@@ -118,7 +124,7 @@ def main():
         size = os.path.getsize(raw)
         dest = os.path.join(CORPUS, "renders", loc["slug"] + "-fraktaler.png")
         if size < BLANK_BYTES:
-            print("  blank (%d B) - F3 extended-type limitation past ~1e13x; skipped" % size)
+            print("  blank (%d B) - reference truncated (raise iterations) or beyond practical range; skipped" % size)
             os.remove(raw)
             blank.append(loc["slug"])
         else:
