@@ -1,17 +1,17 @@
 # Fractadyne — Architecture (as-built)
 
-**Version:** 0.1.28 · **Updated:** 2026-07-05
+**Version:** 0.2.0 · **Updated:** 2026-07-09
 
 This document describes the system **as it is actually implemented**. It is the counterpart to
 [`DESIGN.md`](DESIGN.md), which is the *original design intent* (2026-06-25) and has diverged from
 the code in several places. Where the two disagree, this document is authoritative for the current
-state; [`CHANGELOG.md`](CHANGELOG.md) is the running per-version log and [`STATE.md`](STATE.md) a
-higher-level snapshot.
+state; [`CHANGELOG.md`](CHANGELOG.md) is the running per-version log.
 
 > **Divergence summary (design → as-built):** the `Fractal`/`RenderStrategy` trait abstraction was
 > not built (formulas are a `FractalKind` enum switched on by hand-written per-path `match` arms);
-> three crates (`-render`, `-ui`, `-fractals`) are empty stubs and their intended logic lives in
-> `fractadyne-app`; the live view uses **full-frame render + reprojection freeze**, not a per-tile
+> one crate (`-render`) is an empty stub whose intended logic lives in `fractadyne-app` (the `-ui`
+> and `-fractals` stubs were retired, and UI is split under `fractadyne-app/src/ui/`); the live view
+> uses **full-frame render + reprojection freeze**, not a per-tile
 > RAM cache; `rayon` is not used (off-thread work is `std::thread`); and the programmable formula
 > DSL, L-systems, cellular automata, and histogram coloring are **not implemented** (roadmap).
 
@@ -31,8 +31,8 @@ the arbitrary-precision core is self-consistency-validated to 1e1000000×.
 
 ## 2. Crate layout
 
-A 9-crate Cargo workspace under `crates/`, but **only six are functional** — three are reserved
-stubs whose intended responsibilities currently live in `fractadyne-app`.
+A 7-crate Cargo workspace under `crates/`: **six are functional** and one (`fractadyne-render`) is a
+reserved stub whose intended responsibility currently lives in `fractadyne-app`.
 
 | Crate | Status | Responsibility |
 |-------|--------|----------------|
@@ -42,15 +42,15 @@ stubs whose intended responsibilities currently live in `fractadyne-app`.
 | `fractadyne-state` | ✅ | Session persistence (`session.toml`), versioned state, `config_dir()` + `FRACTADYNE_CONFIG_DIR`, reset. |
 | `fractadyne-export` | ✅ | PNG/OpenEXR encode/decode + embedded view metadata. |
 | `fractadyne-app` | ✅ | **Everything else** — app struct, UI, input, scripting, CLI, autopilot, coloring/mode logic, `FractalKind`. Split into modules (below). |
-| `fractadyne-render` | ⛔ stub | *Planned:* tile scheduler / cache. (5-line placeholder.) |
-| `fractadyne-fractals` | ⛔ stub | *Planned:* `Fractal` defs, L-systems, CA. (6-line placeholder.) |
-| `fractadyne-ui` | ⛔ stub | *Planned:* extracted egui panels. (6-line placeholder.) |
+| `fractadyne-render` | ⛔ stub | *Planned:* tile scheduler / cache. (Placeholder; the two earlier `-ui` / `-fractals` stubs were retired in the refactor.) |
 
 **`fractadyne-app` modules:** `main.rs` (app struct + `update()` UI loop), `render.rs` (mode
-select + reference recompute / freeze-reproject + export requests), `autopilot.rs` (auto-zoom),
-`scripting.rs` (tours + `render_tour_to_dir`), `help.rs` (`CLI_REFERENCE` + Help window), `cli.rs`
-(headless modes), `export.rs` (view-metadata / `.fdn`), `fractal.rs` (`FractalKind`), `selftest.rs`
-(GPU validation), `theme.rs`, `profile.rs`, `sysinfo.rs`.
+select + reference recompute / reuse / freeze-reproject + export requests), `autopilot.rs`
+(auto-zoom), `scripting.rs` (tours + `render_tour_to_dir`), `help.rs` (`CLI_REFERENCE` + Help
+window), `cli.rs` (headless modes), `export.rs` (view-metadata / `.fdn`), `fractal.rs`
+(`FractalKind`), `refcache_persist.rs` (persist/restore the deep-zoom reference), `error.rs`
+(`AppError`), `selftest.rs` (GPU validation), `theme.rs`, `profile.rs`, `sysinfo.rs`, and a `ui/`
+submodule tree (`central.rs`, `menus.rs`, `panels.rs`, `dialogs.rs`) from the intra-crate UI split.
 
 ---
 
@@ -81,8 +81,8 @@ representation, all keyed on the formula id — this is the irreducible cost of 
 Adding a formula means editing all of these (plus the SPECS row). An authoritative **"Adding a new
 formula" checklist** — mapping every edit site across app → core numerics → shader — lives in the
 `fractal.rs` and `core` module docs. (A formula DSL that would generate all paths from one definition
-is designed in `DESIGN.md` §8 but **not built**; a `Fractal` trait unifying the two CPU step paths is
-the next planned step toward that — see `REFACTOR-PLAN.md`.)
+is designed in `DESIGN.md` §8 but **not built**; a `Fractal` trait unifying the two CPU step paths
+remains a possible future step.)
 
 ---
 
@@ -109,7 +109,11 @@ Layered on top:
   non-Julia. Coefficients iterated in bignum alongside the reference.
 - **BLA (bilinear approximation):** a binary tree of merged linear maps that skips iterations
   *throughout* the orbit (Zhuoran/KF style). **Mandelbrot mode-2 only, on by default** (~5× faster
-  GPU render at 1e30×). Appended into the same orbit storage buffer.
+  GPU render at 1e30×). Appended into the same orbit storage buffer. Per-node **aux aggregates** let
+  orbit-trap / TIA / stripe coloring ride the BLA (folded O(1) on a skip, ~146–150× faster than
+  dropping the skip); where the BLA is active it subsumes SA's early skip. **Deep-exterior
+  exception:** for a *short escaped* reference the BLA is kept but SA is forced back on — otherwise
+  "BLA subsumes SA" leaves an early-iteration perturbation glitch exposed and the view tiles.
 - **Zhuoran rebasing:** single-reference glitch handling (rebase to `δz = z_full − reference[0]`;
   the `−reference[0]` term is required for Julia, a no-op for Mandelbrot).
 - **Reference selection:** `best_reference` picks a long/interior reference (scored in bignum).
@@ -118,13 +122,18 @@ Layered on top:
 **Reference recompute is off the render thread.** The bignum reference + SA + BLA bundle
 (`recompute_worker`) is the deep-zoom stall, so it runs on a spawned `std::thread`; the render keeps
 drawing with the cached reference and installs the fresh one when it lands. Only the very first
-(cold) reference is synchronous.
+(cold) reference is synchronous. A deeper rebuild **reuses** the cached orbit — it *extends* the
+stored bignum prefix from a saved tail (byte-identical) instead of recomputing every step, since the
+orbit build is ~90% of a deep frame (~20× faster dive-rebuilds). The last deep view's reference also
+persists across sessions (`refcache_persist.rs`) so it resumes instantly.
 
 **Freeze / reproject on motion.** While the reference is stale for the current depth (`depth_lag`)
 or a fast dive would spin the mode-2 shader, `render.rs` holds the last good iteration texture and
 **reprojects** it (scale + translate in the color pass, `uv_scale`/`uv_off`) so the view keeps
 moving smoothly until the fresh reference snaps in. This replaced the "Not Responding" hang; it is
-frame-level, not tile-level.
+frame-level, not tile-level. Moving-frame resolution is **adaptive** (AIMD, `perf.motion_res`): it
+follows the measured frame time — raised while frames stay near vsync (the BLA is skipping), backed
+off when they run long — so deep motion sharpens without stalling.
 
 ---
 

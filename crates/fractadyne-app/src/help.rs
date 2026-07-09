@@ -66,7 +66,7 @@ pub(crate) fn help_overview(ui: &mut egui::Ui) {
     );
     help_sub(ui, "What you can do");
     help_bullet(ui, "Pan and zoom essentially without limit (position is exact at any depth).");
-    help_bullet(ui, "Switch between ten fractal families, and view any as a Julia set.");
+    help_bullet(ui, "Switch between ten fractal families, and view any (except Newton) as a Julia set.");
     help_bullet(ui, "Recolor with preset or custom gradients and several coloring methods.");
     help_bullet(ui, "Add 3D relief lighting and glowing boundary contours.");
     help_bullet(ui, "Snap to minibrots, bookmark spots, and export high-resolution images.");
@@ -266,7 +266,9 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          zoom. Burning Ship, Celtic and Buffalo are non-analytic (they take absolute values), so \
          they use a sign-aware perturbation; this now runs at floatexp range too, deep-zooming far \
          past the old ~1e28× df32 limit (rare speckle near the abs folds awaits multi-reference \
-         glitch correction). Phoenix and Newton currently use the direct path, sharp to ~1e6×.",
+         glitch correction). Phoenix uses a two-term perturbation and also deep-zooms at floatexp \
+         range (without SA/BLA, so heavier than Mandelbrot). Only Newton uses the direct path, \
+         sharp to ~1e6×.",
     );
 }
 
@@ -320,7 +322,9 @@ pub(crate) fn help_methodology(ui: &mut egui::Ui) {
          coefficients are iterated along the reference. The renderer skips ahead to the last \
          iteration where that polynomial is still accurate for the whole view, then iterates \
          normally — saving the skipped steps with no change to the image (toggle in View). \
-         Mandelbrot, deepest range, non-stripe coloring for now.",
+         Mandelbrot and Multibrot 3/4/5, deepest range; not with stripe / triangle-inequality / \
+         orbit-trap / decomposition coloring (those need every iteration). Where the BLA is active \
+         it already subsumes this early skip.",
     );
     help_sub(ui, "Distance estimation & lighting");
     help_p(

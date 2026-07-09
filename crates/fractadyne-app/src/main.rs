@@ -1204,8 +1204,8 @@ fn aspect_zoom_box(start: egui::Pos2, end: egui::Pos2, rect: egui::Rect) -> egui
     egui::Rect::from_two_pos(start, corner)
 }
 
-/// State of the "Go to location" dialog (transient — not persisted). First of the Phase-2a
-/// field groups that break up the flat `FractadyneApp` struct (see REFACTOR-PLAN.md).
+/// State of the "Go to location" dialog (transient — not persisted). One of the field groups
+/// (from the completed refactor) that break up the flat `FractadyneApp` struct.
 #[derive(Default)]
 struct GotoDialog {
     open: bool,
@@ -1688,7 +1688,7 @@ impl FractadyneApp {
         let std_depth = val("--depth")
             .and_then(|s| BenchDepth::from_token(s))
             .unwrap_or(if ultra_flag { BenchDepth::Ultra } else { BenchDepth::Standard });
-        let auto_stdbench = args.iter().any(|a| a == "--benchmark-std" || a == "--std-benchmark")
+        let auto_stdbench = args.iter().any(|a| a == "--benchmark-std")
             || burnin_flag
             || ultra_flag
             || args.iter().any(|a| a == "--res" || a == "--depth");

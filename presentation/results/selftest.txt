@@ -10,11 +10,12 @@ Fractadyne self-test — VALIDATE
   [PASS] naive bignum dwell vs GPU @1e24x — 25 agree, 0 boundary, 0 mismatch
   [PASS] naive bignum dwell vs GPU @1e30x — 25 agree, 0 boundary, 0 mismatch
   [PASS] SA seed vs full iteration @1e30× — max Δ 0.0000 smooth iter
+  [PASS] SA gated off when BLA active @1e30× — sa_skip 0, bla_on 1
   [PASS] SA seed vs full iteration @1e20× (mode 0) — max Δ 0.0000 smooth iter
-  [PASS] reference independence (3-ref majority) — 16649 smooth px: auto dissent 1, no-majority 0 (0.0060%)
+  [PASS] reference independence (3-ref majority) — 16672 smooth px: auto dissent 1, no-majority 0 (0.0060%)
   [PASS] glitch detection responds to reference quality — auto-ref flagged 9, far-ref flagged 10
   [PASS] multi-reference correction resolves glitches — 7 references, 0 residual glitches
-  [PASS] corrected buffer colors to a valid image — finite true, dark true, bright true, plain interior px 97
+  [PASS] corrected buffer colors to a valid image — finite true, dark true, bright true, plain interior px 312
   [PASS] real-axis mirror symmetry — mean Δ=0.00000 iter
   [PASS] home has interior + exterior — interior=true, exterior=true
   [PASS] Multibrot-3 180° rotation — 0 asymmetric
@@ -36,6 +37,11 @@ Fractadyne self-test — VALIDATE
   [PASS] Multibrot 5 SA engages + matches SA-off @1e7× — 0 mismatch, finite
   [PASS] BLA render == non-BLA @1e30× — 0 mismatch
   [PASS] BLA escape path == non-BLA @1e30× (boundary) — 0 mismatch
+  [PASS] orbit-trap-point: BLA-fold == non-BLA @1e30× — 0/193600 channels >2%
+  [PASS] orbit-trap-cross: BLA-fold == non-BLA @1e30× — 0/193600 channels >2%
+  [PASS] orbit-trap-circle: BLA-fold == non-BLA @1e30× — 0/193600 channels >2%
+  [PASS] triangle-ineq: BLA-fold == non-BLA @1e30× — 0/193600 channels >2%
+  [PASS] stripe: BLA-fold == non-BLA @1e30× — 0/193600 channels >2%
   [PASS] resolution independence (N vs 3N) — 0 differ
   [PASS] max-iter monotonic stability — 0 changed dwell
   [PASS] zoom-sequence across direct→df32 seam — 0 differ
@@ -60,7 +66,20 @@ Fractadyne self-test — VALIDATE
   [PASS] golden seahorse — maxΔ 0 meanΔ 0.00
   [PASS] golden seahorse-stripe-1e6 — maxΔ 0 meanΔ 0.00
   [PASS] golden elephant — maxΔ 0 meanΔ 0.00
+  [PASS] golden multibrot3 — maxΔ 0 meanΔ 0.00
+  [PASS] golden multibrot4 — maxΔ 0 meanΔ 0.00
+  [PASS] golden multibrot5 — maxΔ 0 meanΔ 0.00
+  [PASS] golden tricorn — maxΔ 0 meanΔ 0.00
+  [PASS] golden burning-ship — maxΔ 0 meanΔ 0.00
+  [PASS] golden celtic — maxΔ 0 meanΔ 0.00
+  [PASS] golden buffalo — maxΔ 0 meanΔ 0.00
+  [PASS] golden phoenix — maxΔ 0 meanΔ 0.00
+  [PASS] golden newton — maxΔ 0 meanΔ 0.00
+  [PASS] golden mandelbrot-1e6 — maxΔ 0 meanΔ 0.00
+  [PASS] golden multibrot3-1e6 — maxΔ 0 meanΔ 0.00
+  [PASS] golden multibrot4-1e6 — maxΔ 0 meanΔ 0.00
+  [PASS] golden multibrot5-1e6 — maxΔ 0 meanΔ 0.00
 ================================================
-checks 55/55, goldens 4/4 — OK
+checks 61/61, goldens 17/17 — OK
 report → validation/report.md
 

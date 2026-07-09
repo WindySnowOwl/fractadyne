@@ -12,8 +12,8 @@ Today that logic lives in the app crate:
 
 Extracting it into this crate is **deferred** until that code has a headless, method-based API
 (rather than reaching into `&mut FractadyneApp` and passing raw `mpsc::Receiver`s around). Pair the
-extraction with the Phase 2c overlay/annotation consolidation, which gives the tour renderer a
-goldens-testable input→output boundary worth a crate. See `REFACTOR-PLAN.md`.
+extraction with an overlay/annotation consolidation, which gives the tour renderer a
+goldens-testable input→output boundary worth a crate. (The workspace refactor is otherwise complete.)
 
 The two other former stubs (`fractadyne-ui`, `fractadyne-fractals`) were **retired** — the UI lives
 as `impl FractadyneApp` blocks in `fractadyne-app/src/ui/`, and the fractal metadata's future home is

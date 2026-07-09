@@ -9,12 +9,12 @@
 > This document captures what the project *set out* to build at kickoff. The implementation has
 > since diverged in several places. **For the system as actually built, see
 > [`ARCHITECTURE.md`](ARCHITECTURE.md)** (authoritative for current state), with
-> [`CHANGELOG.md`](CHANGELOG.md) (per-version log) and [`STATE.md`](STATE.md) (snapshot).
+> [`CHANGELOG.md`](CHANGELOG.md) (per-version log).
 >
 > Headline divergences (design → as-built): the `Fractal`/`RenderStrategy` trait abstraction (§4)
 > was **not built** — formulas are a `FractalKind` enum switched on by hand-written per-path `match`
-> arms; three crates (`-render`, `-ui`, `-fractals`) are **empty stubs** and their logic lives in
-> `fractadyne-app`; the live view uses **full-frame render + reprojection freeze**, not a per-tile
+> arms; one crate (`-render`) is an **empty stub** (the `-ui` / `-fractals` stubs were retired) and
+> its logic lives in `fractadyne-app`; the live view uses **full-frame render + reprojection freeze**, not a per-tile
 > RAM cache; `rayon` is **not used**; and the formula DSL (§8), L-systems / cellular automata (§4.1),
 > and histogram coloring (§6.2) are **not implemented**. Sections describing those in the present
 > tense are aspirational. The deep-zoom engine as built also adds BLA, a 3-tier direct/df32/floatexp

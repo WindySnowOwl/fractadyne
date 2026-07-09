@@ -2,11 +2,67 @@
 
 All notable changes to Fractadyne. Versioning is `MAJOR.MINOR.PATCH` (Cargo) plus an
 auto-incrementing **build** number (bumped by `build.rs` on every recompile) shown as
-`v0.1.0 (build N)` in the title bar, Help menu, and exported image metadata.
+`v0.2.0 (build N)` in the title bar, Help menu, and exported image metadata.
 
 The project enters tracked versioning at **0.1.0**; entries below summarize the state
 at that point and changes after it. From **0.1.1** on, the patch version is bumped for each
-new functional enhancement.
+new functional enhancement; a **minor** bump (e.g. 0.2.0) marks a milestone that rolls up a
+run of patch releases. The `0.2.0` entry summarizes **0.1.29 – 0.1.68** by theme — per-version
+detail is in the git history.
+
+## 0.2.0
+
+Minor-version milestone rolling up **0.1.29 – 0.1.68**: the deep-zoom stability +
+performance line, responsiveness/watchdog hardening, and the validation corpus. Validation
+grew from **55/55 checks · 4/4 goldens** to **61/61 · 17/17**, and the 6-phase refactor
+completed. Per-version detail is in the git history.
+
+- **Deep-zoom performance.**
+  - **Reference-orbit reuse** — a deeper rebuild now *extends* the cached bignum orbit
+    (byte-identical) instead of recomputing it, cutting ~20× off dive-rebuilds (the orbit build
+    was ~90% of a deep frame); truncated *and* escaped/complete references are reused so the view
+    keeps one reference across rebuilds instead of re-picking and "jumping," and the last deep
+    view's reference persists across sessions. (0.1.47, 0.1.57, 0.1.64, 0.1.65.)
+  - **Adaptive deep-motion resolution (AIMD)** — moving-frame resolution follows the measured
+    frame time: raise it while frames stay near vsync (the BLA is skipping), back off when they
+    run long. (0.1.66.)
+  - **aux⇄BLA coexistence** — orbit-trap (point/cross/circle), triangle-inequality, and stripe
+    coloring ride the BLA via per-node aggregates folded O(1) on a skip: ~146–150× faster at
+    depth, still exact. Series approximation is skipped where the BLA is active (it subsumes SA's
+    early skip) — ~8× faster deep builds. (0.1.35, 0.1.37, 0.1.38, 0.1.49, 0.1.55, 0.1.56.)
+  - **Reuse-first zoom for mode 0** — periodic-refresh scaled-frame reuse extended to the
+    df32-perturbation path so a continuous zoom stays sharp. (0.1.53, 0.1.54.)
+- **Deep-zoom correctness & smoothness.**
+  - **Frozen-frame reprojection & hold** — the last good frame is scaled+panned to follow the
+    zoom between real frames, with periodic refresh, fixing "goes blocky past ~1e28×," the
+    >1e100× slide/jitter/jumping, and the reduced-resolution reproject "floating circle." (0.1.36,
+    0.1.44, 0.1.58–0.1.63.)
+  - **Deep-exterior tiling fix (SA-vs-BLA)** — at a deep exterior spot every candidate reference
+    escapes early with an early-iteration perturbation glitch that series approximation masks; a
+    BLA view had turned SA *off* ("BLA subsumes SA"), exposing it as distorted tiling. Fixed by
+    keeping the BLA but forcing SA back on for short escaped references; plus a zoom-out BLA
+    rebuild window and zoom-out reprojection scaling. `best_reference` also deep-ranks survivors
+    to prefer a full-render-surviving reference. (0.1.65, 0.1.67, 0.1.68.)
+- **Responsiveness & stability.**
+  - **Async / progressive deep navigation** — the cold-start bignum reference builds off the
+    render thread with a "working" spinner and a coarse-then-full progressive reference, so deep
+    jumps stay responsive; fixed an async cold-start GPU device-loss crash. (0.1.39–0.1.43, 0.1.48.)
+  - **GPU-watchdog (TDR) hardening** — a hard per-frame cost cap for deep floatexp frames plus
+    adaptive wall-clock AA that lets measured-cheap frames extend the cap, preventing the deep
+    floatexp freeze (with ss=1-floor hardening for large panels). (0.1.45, 0.1.46, 0.1.51, 0.1.52.)
+  - **Resize / zoom-out fixes** — render coarse while resizing, aspect-fit (not stretch) the
+    frozen frame on resize, fix the deep df32 zoom-out UI freeze, throttle the perf-overlay
+    repaint, and close a menu when navigation starts. (0.1.31–0.1.33, 0.1.36, 0.1.50.)
+- **UI / branding.** Dark + light themes, Spline Sans typography, and the wordmark. (0.1.30.)
+- **Tooling / validation.** GPU timestamp queries split iterate-vs-color GPU time in the
+  profiling harness (0.1.34); a **Kalles Fraktaler ↔ Fraktaler-3 cross-check corpus** under
+  `validation/corpus/` (documenting that F3's extended-exponent kernels render blank past ~1e13×
+  on this GPU); box-zoom (`zoom_to_rect`) test coverage.
+- **Refactor complete.** The 6-phase refactor landed (core / GPU-export / app-module splits, an
+  intra-crate `src/ui/` split, enum dispatch, structured `AppError`); the workspace slimmed
+  **9 → 7 crates** as the empty `fractadyne-ui` / `fractadyne-fractals` stubs were retired
+  (`fractadyne-render` remains the one reserved stub). Behavior-preserving throughout — goldens
+  bit-identical at each step.
 
 ## 0.1.28
 

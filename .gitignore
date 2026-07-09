@@ -41,3 +41,6 @@ Desktop.ini
 *.swp
 *~
 *.orig
+
+# Archived docs (completed/abandoned plans + stale snapshots) — kept locally, out of the tracked repo
+/archive/

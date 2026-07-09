@@ -1,8 +1,17 @@
 # Fractadyne — UI/UX Design Brief
 
-**Status:** Draft v0.1
-**Date:** 2026-06-25
+**Status:** Original UI/UX intent (2026-06-25) — **historical; not maintained as the code evolved.**
 **Companion to:** [`DESIGN.md`](DESIGN.md) (engineering/architecture spec)
+
+> ## ⚠️ This is the *original UI intent*, not the current UI
+>
+> Like [`DESIGN.md`](DESIGN.md), this captures what the UI *set out* to be at kickoff; the shipped UI
+> has since diverged. **For the UI as actually built, see [`ARCHITECTURE.md`](ARCHITECTURE.md) §5–§7.**
+> Several surfaces specified below are **unbuilt / roadmap** — the programmable formula &amp; coloring-code
+> editors, cellular-automata / L-system rule editors, the `Ctrl+P` command palette, `egui_dock`
+> dockable panels, and the left Parameters panel. Built surfaces (gradient stop editor, coloring
+> panel, dual linked view, bookmarks library, high-res export dialog, dark + light themes) are
+> described accurately.
 
 > This is the **UI/UX brief**: design principles, information architecture,
 > layout, theme tokens, a stock-widget component map, and per-screen specs. Hand

@@ -80,8 +80,12 @@ cache, adaptive iterations, auto-save/restore, and the first side panels.
       revealed edge fills with the frame's average color; on settle it re-renders at full detail.
       Single + dual (left) at deep zoom. *(Scale reprojection now also exists — see the
       XaoS-style item below — but only as a deep-zoom stall fallback, not the primary zoom path.)*
-- [ ] **XaoS-style continuous-zoom pixel reuse (reuse-first zoom)** — the headline UX gap vs.
-      XaoS. Today every zoom frame re-renders from scratch (GPU iterate → color), so a deep dive
+- [~] **XaoS-style continuous-zoom pixel reuse (reuse-first zoom)** — the headline UX gap vs.
+      XaoS. *Shipped since (v0.1.53–57, 0.1.66): reuse-first refresh for mode-0 zoom, deep-dive
+      reference **reuse** (extend the cached orbit, ~20× faster rebuilds), frozen-frame
+      reprojection/hold, and adaptive motion resolution (AIMD) — deep zoom is now smooth in motion;
+      the full coordinate-keyed tile/mip reuse in (2) below remains open.* Today every zoom frame
+      still re-renders from scratch on settle (GPU iterate → color), so a deep dive
       visibly pixelates/blanks until the frame settles; XaoS instead *remaps already-computed
       pixels* from the previous frame each step and only computes what's newly needed, so zooming
       feels continuous. **Foundation already present:** the color shader does an affine
@@ -739,8 +743,11 @@ for fun, informative value, and ease of use.
 
 ## Performance & throughput (M7)
 
-- [ ] **Deep floatexp is ~1–5 s/frame (live) — needs a shader-speed fix, NOT multi-reference.**
-  Full profiling + validation in [design/multiref-live.md](design/multiref-live.md). Deep mode-2
+- [ ] **Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference.**
+  *Update (v0.1.57–0.1.68): interactive MOTION is now smooth — reference-orbit reuse (~20× faster
+  rebuilds), frozen-frame reprojection/hold, and adaptive motion resolution (AIMD) replaced the old
+  "blank during deep dives." What remains is a full-detail SETTLED frame in filament/Misiurewicz
+  fields.* Full profiling in the archived `multiref-live` design note (git history). Deep mode-2
   frames cost seconds; this forced the v0.1.10 "reproject during mode-2 motion" hang fix (responsive
   but **blank** during deep dives). **Multi-reference was validated and abandoned (2026-07-03):** a
   `--refdiag` prototype showed the deep-spiral/Misiurewicz views have **zero long/interior references**
