@@ -187,15 +187,17 @@ fn finish_reference(
 ) -> RecomputeResult {
     use fractadyne_core as fc;
     let partial = !tail.escaped;
-    // A SHORT ESCAPED reference (deep EXTERIOR): the orbit escapes early (e.g. ~3.3k iters at
-    // 1e261×). Its BLA is skipped below — it saves almost nothing there (most pixels escape in tens
-    // of iterations) and, worse, this orbit geometry has an early-iteration perturbation glitch that
-    // the BLA leaves EXPOSED, shattering the view into "distorted overlapping tiles" (confirmed
-    // headlessly). SERIES APPROXIMATION masks that glitch by seeding δz analytically past the early
-    // iterations, so it must be re-enabled here (a BLA view normally turns SA off — "BLA subsumes
-    // SA" — which is exactly what left the glitch showing). Surviving references (deep interior/
-    // boundary) keep their BLA and are unaffected. Gate on the escape being well short of the budget
-    // so a rare long escaper keeps its tree.
+    // A SHORT ESCAPED reference (deep EXTERIOR): the orbit escapes early (e.g. ~3.3k iters at 1e261×)
+    // and this orbit geometry has an EARLY-ITERATION perturbation glitch. A BLA view normally turns
+    // SERIES APPROXIMATION off ("BLA subsumes SA") — which leaves that glitch EXPOSED and shatters the
+    // view into "distorted overlapping tiles" (the e260 exterior artifact; confirmed headlessly:
+    // independent of BLA eps / dc_max / max-skip-level — it was never the skip validity). SA masks the
+    // glitch by seeding δz analytically PAST the early iterations, so force it back on here. The BLA is
+    // KEPT (SA seeds, the BLA skips from there): dropping it instead would make a nearby MINIBROT's
+    // interior/late-escaping boundary pixels iterate to max_iter un-accelerated (slow, and a capped
+    // stand-in gives a hard borderless minibrot). Surviving references (partial: reached the cap
+    // without escaping) already run SA-or-BLA correctly. Gate on the escape being well short of the
+    // budget so this only touches genuine short escapers.
     let short_escaper = inp.bla_dc_max.is_some()
         && !partial
         && (len as u64).saturating_mul(2) < inp.gpu_iter.max(1) as u64;
@@ -233,7 +235,7 @@ fn finish_reference(
     // keeps its tree.
     let t_bla = Instant::now();
     let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
-        Some(dc_max) if !short_escaper => {
+        Some(dc_max) => {
             let levels = fc::build_bla_mandel(
                 &orbit,
                 dc_max,
@@ -1492,12 +1494,11 @@ impl FractadyneApp {
                 let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &rp[1], delta_exp, precision);
                 ref_offset = RefOffset::from_df32(dx, dy);
             }
-            // SHORT ESCAPED reference (deep EXTERIOR): mirror `finish_reference` — suppress the BLA
-            // (it barely helps and its skips expose an early-iteration perturbation glitch → "tiles")
-            // and use SERIES APPROXIMATION instead (which masks the glitch). `finish_reference` already
-            // built the SA and left the orbit's BLA empty; this main-thread cache path would otherwise
-            // REBUILD the BLA (its rebuild fires because the suppressed tree reads dc_max_log2 = −∞) and
-            // leave SA unread (`do_sa` is off under BLA eligibility). Keep the two paths in lock-step.
+            // SHORT ESCAPED reference (deep EXTERIOR): mirror `finish_reference` — the BLA turned SA
+            // off ("BLA subsumes SA"), which exposed an early-iteration perturbation glitch as tiles.
+            // The BLA is kept (speed), but SA must be read back so it seeds δz past the glitch. Under
+            // BLA eligibility `do_sa` is false, so without this the (off-thread-computed) SA would sit
+            // unused. Same predicate as `finish_reference` keeps the two paths in lock-step.
             let short_escaper = self.bla_eligible(mode, julia)
                 && !self.ref_cache[vi].partial
                 && (self.ref_cache[vi].orbit_len as u64).saturating_mul(2) < ref_build_iter.max(1) as u64;
@@ -1509,7 +1510,7 @@ impl FractadyneApp {
             // `dc_max` is offset-independent) and rebuilt only when the orbit changes or the view
             // zooms out enough to need a larger `dc_max`. Removes the ~20 ms/frame rebuild while
             // never reusing a tree whose validity radii are too optimistic for the current view.
-            if self.bla_eligible(mode, julia) && !short_escaper {
+            if self.bla_eligible(mode, julia) {
                 let oid = self.ref_cache[vi].orbit_id;
                 let dc_max = Self::bla_dc_max(span_mantissa, delta_exp);
                 let need_log2 = dc_max.log2();
@@ -1574,21 +1575,15 @@ impl FractadyneApp {
             gpu_iter
         } else if self.ref_cache[vi].ref_pt.is_none() {
             gpu_iter.min(PLACEHOLDER_ITER_CAP) // no reference yet → cheap flat placeholder (TDR-safe)
-        } else if self.ref_cache[vi].partial
-            || self.ref_cache[vi].orbit_len < gpu_iter
-        {
-            // Cap at orbit_len-1 so the shader never rebases past a SHORT reference into
-            // df32-inaccurate territory (which speckles/tiles at extreme depth). Two cases:
-            //  • `partial`: a coarse (truncated) reference from a progressive cold start.
-            //  • `orbit_len < gpu_iter`: an ESCAPED reference shorter than the pixel budget. At a deep
-            //    EXTERIOR location every candidate escapes early (e.g. ~3.3k iters), and best_reference's
-            //    grid can land a hair SHORTER than the longest-surviving pixels — those few then rebase
-            //    past the orbit and the whole view breaks into "distorted overlapping tiles" (the e260
-            //    exterior artifact). The export path renders such spots cleanly only because its
-            //    reference happens to run a few iters longer, so nothing rebases. Capping makes the live
-            //    view match: fast escapers stay correct, the sliver that would rebase reads as interior
-            //    (invisible here — such a location has no genuinely-interior pixels). Deep-BOUNDARY
-            //    zooms keep a SURVIVING reference (orbit_len ≥ gpu_iter), so this never fires there.
+        } else if self.ref_cache[vi].partial {
+            // Coarse (truncated) reference from a progressive cold start: cap at orbit_len-1 so the
+            // shader never rebases past the short reference into df32-inaccurate territory (which
+            // speckles at extreme depth) — a clean partial image (fast escapers correct, the rest
+            // interior) until the full reference lands and refines it. (Do NOT cap escaped-short
+            // references: those pixels ESCAPE, they don't rebase-glitch — the deep-exterior "tiles"
+            // were the BLA/SA issue, fixed in `finish_reference`. Capping an escaped-short reference
+            // instead collapses every late-escaping BOUNDARY pixel to interior → a hard black border
+            // with no filament detail around a deep minibrot.)
             gpu_iter.min(self.ref_cache[vi].orbit_len.saturating_sub(1))
         } else {
             gpu_iter
