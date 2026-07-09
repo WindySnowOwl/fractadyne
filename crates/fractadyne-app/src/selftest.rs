@@ -327,11 +327,16 @@ impl FractadyneApp {
             // unavailable), rather than passing vacuously with skip 0.
             {
                 let (saved_bla, saved_sa) = (self.render_cfg.use_bla, self.render_cfg.series_approx);
+                let saved_method = self.coloring.color_method;
                 self.render_cfg.use_bla = false;
                 self.render_cfg.series_approx = true;
+                // A blocking coloring method (stripe/TIA/trap/decomposition) gates SA off; the session
+                // may have loaded one, so pin Smooth for the SA build (as the Multibrot SA checks do).
+                self.coloring.color_method = crate::ColorMethod::Smooth;
                 let on = make(self, NX, NY, 1.0e30);
                 self.render_cfg.use_bla = saved_bla;
                 self.render_cfg.series_approx = saved_sa;
+                self.coloring.color_method = saved_method;
                 let mut off = on.clone();
                 off.sa_skip = 0;
                 let skip = on.sa_skip;
@@ -390,7 +395,13 @@ impl FractadyneApp {
             // check at a depth the depth-selector renders with mode 0 (< 1e28×). The seed is
             // computed in floatexp then collapsed to the absolute df32 δ this path carries.
             {
+                let (saved_sa, saved_method) = (self.render_cfg.series_approx, self.coloring.color_method);
+                self.render_cfg.series_approx = true;
+                // A blocking coloring method (stripe/TIA/trap/decomposition) gates SA off; pin Smooth.
+                self.coloring.color_method = crate::ColorMethod::Smooth;
                 let on = make(self, NX, NY, 1.0e20);
+                self.render_cfg.series_approx = saved_sa;
+                self.coloring.color_method = saved_method;
                 let mut off = on.clone();
                 off.sa_skip = 0;
                 let (skip, mode) = (on.sa_skip, on.mode);
@@ -556,6 +567,11 @@ impl FractadyneApp {
                     // (D2d) Corrected → colored export. The merged buffer colors into a finite,
                     // structured image (both interior and exterior present), and matches a normal
                     // export on the smooth region (correction only touches the rare glitched px).
+                    // Pin Smooth so this check is session-independent (a blocking coloring method left
+                    // by the session — e.g. stripe — otherwise makes a render return None and the
+                    // whole check silently skip, dropping the total check count).
+                    let d2d_method = self.coloring.color_method;
+                    self.coloring.color_method = crate::ColorMethod::Smooth;
                     if let (Some(cor), Some(plain)) = (
                         self.render_export_corrected(device, queue, &vp, false, N, N),
                         render(&make(self, SX, SY, mag)),
@@ -578,6 +594,7 @@ impl FractadyneApp {
                             pass: finite && cor_dark && cor_bright,
                         });
                     }
+                    self.coloring.color_method = d2d_method;
                 }
             }
 
