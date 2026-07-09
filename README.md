@@ -12,7 +12,8 @@ zoom** and performance.
   direct df32 → df32 perturbation → **floatexp** perturbation (df32 mantissa + i32
   exponent), so the deviation never runs out of `f32` exponent range. Zhuoran rebasing;
   depth is bounded by coordinate precision and the iteration budget, not a fixed wall —
-  renders are cross-checked against Fraktaler-3 past 1e300×, and the bundled tour dives to
+  renders are cross-checked pixel-for-pixel against Fraktaler-3 up to ~1e13× (F3's range on the
+  test GPU) and self-consistency-validated far deeper, and the bundled tour dives to
   ~1e420×. **Series
   approximation** (order-3) skips the early iterations of deep Mandelbrot renders by seeding
   the perturbation from a polynomial — validated to reproduce full iteration exactly.

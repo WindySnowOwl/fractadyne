@@ -23,12 +23,19 @@ exactness, not resolution.
 | ----------------- | --------- | ----- | ----- | ----- | -------- | ---------- | -------- |
 | Seahorse Valley   | 1e6       | 200²  | 4000  | 80.1% | **100%** | **100%**   | **PASS** |
 | Seahorse Valley   | 1e12      | 160²  | 60000 | 79.0% | **100%** | **100%**   | **PASS** |
-| Seahorse Valley   | 1e28      | 120²  | 60000 | 77.8% | **100%** | **100%**   | **PASS** |
-| Elephant / spiral | 1e100     | 96²   | 60000 | 79.6% | **100%** | **100%**   | **PASS** |
-| Elephant / spiral | 1e300     | 56²   | 60000 | 80.0% | **100%** | **100%**   | **PASS** |
 
-**Every non-boundary exterior pixel matches Fraktaler-3 to within one iteration at every depth
-from 1e6× to 1e300×, and interior/exterior membership matches exactly.**
+**Every non-boundary exterior pixel matches Fraktaler-3 to within one iteration across F3's
+working depth range on this hardware (1e6× – 1e12×), and interior/exterior membership matches
+exactly.**
+
+> **F3 depth ceiling — why this cross-renderer ladder stops at ~1e13×.** Fraktaler-3's
+> extended-exponent kernels render **blank (all-interior) past ~1e13× on this RTX 3080** — a
+> driver/kernel-level limit, not a batch-config issue (tested F3 3.0 + 3.1; see
+> [`../../validation/corpus/README.md`](../../validation/corpus/README.md)). So the *cross-renderer*
+> comparison is bounded to where F3 actually renders here. Correctness **deeper than that** is
+> carried by Fractadyne's own arbitrary-precision self-consistency battery — `--validate-deep`,
+> validated to **1e1000000×** ([`validate-deep.md`](validate-deep.md)) — which needs no second
+> renderer.
 
 ## Reproduce
 
