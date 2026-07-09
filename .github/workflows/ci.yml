@@ -1,12 +1,12 @@
 name: CI
 
-# Gate every push/PR: run the exact-math core tests (CPU-only, cross-platform) and
-# confirm the full workspace — including the GPU/egui crates — still compiles on the
-# Windows target. The GPU `--selftest` needs a real GPU, so it stays a local/manual gate.
+# Manual-only — does NOT run automatically on push/PR (to control GitHub Actions usage). Trigger it
+# explicitly from the repo's Actions tab ("Run workflow") or with `gh workflow run ci.yml`. It runs
+# the exact-math core tests (CPU-only, cross-platform) and confirms the full workspace — including
+# the GPU/egui crates — still compiles on the Windows target. The GPU `--selftest` needs a real GPU,
+# so it stays a local gate.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
