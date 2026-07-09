@@ -8,6 +8,9 @@ height = 720
 subframes = 4
 [bailout]
 iterations = 1500
+maximum_reference_iterations = 1500
+maximum_perturb_iterations = 1500
+maximum_bla_steps = 8192
 escape_radius = 256
 [transform]
 exponential_map = false

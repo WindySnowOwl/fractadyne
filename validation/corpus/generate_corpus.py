@@ -189,9 +189,10 @@ def write_catalog(locs):
 center / magnification / iteration cap for side-by-side structural comparison. Fractadyne renders (all
 ten) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
 <strong>Fraktaler-3 on this machine renders blank past ~1e13&times;</strong> (its extended-type
-limitation, GPU and CPU alike), so only locations 01&ndash;03 currently have an F3 counterpart; the rest
-show a placeholder with the <code>.f3.toml</code> ready for a working F3 install. The shallow pairs
-confirm the coordinate + framing conventions line up exactly.</p>
+limitation, GPU and CPU alike), so locations 01&ndash;04 (through 2.9e12&times;, inside F3's
+double-precision regime) have an F3 counterpart; 05&ndash;10 cross into its extended-exponent kernels
+and show a placeholder, with the <code>.f3.toml</code> ready for a working F3 install. The 01&ndash;04
+pairs confirm the coordinate + framing conventions line up exactly, arm-for-arm.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a

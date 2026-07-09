@@ -59,11 +59,19 @@ it is not a driver-version issue either; NVIDIA's OpenCL runtime ships with the 
 it changed nothing). The cause is F3's OpenCL extended-type kernels vs this GPU architecture — an
 F3-side issue, not a Fractadyne one.
 
-Net: of the corpus, **01–03** (≤ 1e6×) have real F3 renders; **04–10** (≥ 1e12×) blank and await a
-working F3 setup — a **different machine**, or **building F3 from source** (post-3.1 git may fix the
-kernels). The `.f3.toml` / `.kfr` params are written for all ten, so producing the deep side is one
-command (`python validation/corpus/generate_fraktaler.py`) once F3 works there. Fractadyne renders
-all ten; the shallow pairs confirm the coordinate + framing conventions match exactly.
+Net: **01–04** have real F3 renders — through **2.9e12×** (location 04), F3's deepest reproducible
+depth here, still inside its double-precision regime. **05–10** (≥ 1e16×) blank because they cross
+into F3's extended-exponent kernels, which don't work on this GPU; those await a **different
+machine** or an **F3-from-source** build. The `.f3.toml` / `.kfr` params are written for all ten, so
+producing the deep side is one command (`python validation/corpus/generate_fraktaler.py`) once F3
+works there. Fractadyne renders all ten; 01–04 pair arm-for-arm with F3.
+
+> **A config gotcha that masqueraded as the kernel limit:** location 04 previously blanked too — but
+> at 2.9e12× it is *inside* the double regime, so that was **not** the extended-kernel ceiling. F3
+> batch's default `maximum_reference_iterations` is too low for a zoomed view, so it silently
+> rendered uniform. `generate_fraktaler.py` now writes `maximum_reference_iterations` /
+> `maximum_perturb_iterations` / `maximum_bla_steps` into every `.f3.toml`, and 04 renders correctly.
+> (This does **not** rescue 05–10 — those are the genuine extended-kernel ceiling.)
 
 ## Reading the comparison
 

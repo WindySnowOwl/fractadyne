@@ -1,13 +1,16 @@
 [location]
-real = "-0.7436438870371587047521915061147707"
-imag = "0.131825904205311970493132056385139"
-zoom = "1.333333e12"
+real = "-0.743643908041274519886726"
+imag = "0.131825923574324509717824"
+zoom = "3.900947e12"
 [image]
 width = 1280
 height = 720
 subframes = 4
 [bailout]
-iterations = 6000
+iterations = 60000
+maximum_reference_iterations = 60000
+maximum_perturb_iterations = 60000
+maximum_bla_steps = 8192
 escape_radius = 256
 [transform]
 exponential_map = false

@@ -32,12 +32,12 @@ note = "Classic KF benchmark depth (double precision exhausted)."
 
 [[location]]
 slug = "04-seahorse-1e12"
-title = "Seahorse Valley 1e12x"
-center_x = "-0.7436438870371587047521915061147707"
-center_y = "0.131825904205311970493132056385139"
-mag_log10 = 12.0000000000
-iterations = 6000
-note = "Deep df32-perturbation regime."
+title = "Seahorse Valley 2.9e12x"
+center_x = "-0.743643908041274519886726"
+center_y = "0.131825923574324509717824"
+mag_log10 = 12.4662313355
+iterations = 60000
+note = "Deep df32-perturbation regime; a real Fraktaler-3 comparison point (within F3's ~1e13x double-precision range on this GPU)."
 
 [[location]]
 slug = "05-seahorse-1e16"

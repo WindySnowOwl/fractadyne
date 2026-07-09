@@ -65,7 +65,15 @@ def write_param(loc):
         "[image]\n"
         "width = %d\nheight = %d\nsubframes = %d\n" % (WIDTH, HEIGHT, SUBFRAMES) +
         "[bailout]\n"
-        "iterations = %d\nescape_radius = 256\n" % loc["iterations"] +
+        "iterations = %d\n" % loc["iterations"] +
+        # F3 batch's default maximum_reference_iterations is too low for zoomed views — without
+        # these it silently renders uniform/blank even in the double regime. Set them to the
+        # iteration budget so in-range deep locations (< ~1e13x) render. (Past ~1e13x F3's
+        # extended-type kernels blank regardless of these — that ceiling is separate.)
+        "maximum_reference_iterations = %d\n" % loc["iterations"] +
+        "maximum_perturb_iterations = %d\n" % loc["iterations"] +
+        "maximum_bla_steps = 8192\n"
+        "escape_radius = 256\n" +
         "[transform]\nexponential_map = false\n"
         "[render]\n"
         # Relative filename (resolved against cwd=PARAMS in main): an absolute Windows path here
