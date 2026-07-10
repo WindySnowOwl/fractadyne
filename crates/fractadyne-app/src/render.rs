@@ -12,6 +12,43 @@ use std::time::Instant;
 /// accurate but fewer/smaller skips; 1e-6 keeps pixel error negligible while still merging.
 const BLA_EPS: f64 = 1.0e-6;
 
+/// GPU time a settled floatexp frame is aimed at. Comfortably under the ~2 s GPU watchdog AND short
+/// enough that the UI thread keeps pumping messages between frames (Windows paints a window "Not
+/// Responding" after ~5 s), so an unaffordable view degrades in resolution instead of hanging.
+pub(crate) const TDR_BUDGET_MS: f64 = 900.0;
+/// Per-measurement budget change limits. Growth is capped well under 2× so the next frame cannot leap
+/// from the target into the watchdog; shrink is allowed to halve at once.
+///
+/// The budget is retargeted by the measured-time RATIO, deliberately without modelling cost as
+/// `steps ∝ time`. That model is false at deep interior views: every pixel runs the full iteration
+/// count on a dependent chain, so a small frame is LATENCY-bound (~89.9k iterations ≈ 415 ms here no
+/// matter how few pixels) and only becomes throughput-bound once it saturates GPU occupancy. Assuming
+/// proportionality made the loop conclude a shrunk frame should be fast, and it drove the view to a
+/// postage stamp trying to reach a target that no resolution could reach. A ratio search needs no such
+/// assumption — it just walks toward whatever size actually measures near the target.
+pub(crate) const TDR_GROW_MAX: f64 = 1.5;
+pub(crate) const TDR_SHRINK_MAX: f64 = 0.5;
+/// Cost of the very first floatexp frame, before any measurement exists. Deliberately tiny — a few ms
+/// even on a GPU orders of magnitude slower than a desktop discrete part — so the bootstrap frame is
+/// safe on hardware we have never seen. Everything above it is measured, not assumed.
+pub(crate) const TDR_BOOTSTRAP_STEPS: u64 = 400_000_000;
+/// Never exceed this even if a view measures absurdly cheap (a lone quick interval shouldn't uncork a
+/// multi-second dispatch).
+pub(crate) const TDR_STEPS_CEIL: u64 = 300_000_000_000;
+
+/// `FRACTADYNE_TRACE=1` prints the per-frame GPU sizing decision (resolution, ss, iteration cap,
+/// nominal steps, watchdog budget) to stderr.
+///
+/// Deep-zoom frames are sized by a feedback loop against the GPU watchdog and the UI thread, and its
+/// inputs are invisible from outside: a device-lost crash and a hung window can both come from the
+/// same over-large dispatch, while the obvious knobs (`max_iter`, `aa`) turn out not to move it at all
+/// because the resolution shrink normalises the frame back onto the budget. Reading the real numbers
+/// settles in one run what guessing at the constants does not.
+pub(crate) fn trace_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FRACTADYNE_TRACE").is_ok_and(|v| v != "0"))
+}
+
 /// A completed reference recompute (orbit + series-approximation + BLA), ready to install into a
 /// view's reference cache. Produced by [`recompute_worker`], off the render thread, so the slow
 /// deep-zoom bignum work never blocks a frame.
@@ -1104,15 +1141,18 @@ impl FractadyneApp {
         // minibrot submitted a ~5.5e10-step frame (≈2.2 s at the measured ~2.5e7 steps/ms) as ONE
         // dispatch, Windows reset the GPU, and the app died on LOAD before any measurement existed.
         //
-        // So price the frame from MEASURED throughput (`fe_rate_spm`) rather than assuming a skip
-        // factor: budget = rate × TDR_BUDGET_MS. The seed is pessimistic (the worst case measured), so
-        // the first frame is safe with no measurement; resolved probes then raise it, and BLA-effective
-        // views climb back to the old ceiling and render at native resolution. The floor keeps even a
-        // pathological view (interior + `auto_iter` off + huge `max_iter`) inside the watchdog — such a
-        // view simply cannot render native res in one dispatch, and reduced res is the correct answer.
-        const TDR_BUDGET_MS: f64 = 800.0;
-        const TDR_STEPS_FLOOR: u64 = 5_000_000_000;
-        const TDR_STEPS_CEIL: u64 = 300_000_000_000;
+        // So size the frame from MEASUREMENT rather than from an assumed skip factor. `Perf::fe_budget`
+        // is a closed loop on wall-clock cost: each resolved probe retargets it to whatever step count
+        // would have taken `TDR_BUDGET_MS`. Nothing here is calibrated to one GPU — before any
+        // measurement exists the frame uses TDR_BOOTSTRAP_STEPS, tiny on any hardware, and the loop
+        // climbs from there. A slower GPU just measures a longer frame and settles at a smaller budget
+        // for the same wall-clock target; a faster one climbs to the ceiling and renders native res.
+        //
+        // The budget bounds the frame's FULL cost `spx·ss²·gpu_iter`, not just the ss=1 part: the
+        // resolution shrink below fits `spx·gpu_iter` under it and `max_ss_tdr` then keeps ss² inside
+        // the same envelope. Nothing may override that cap — a previous revision let a measured-AA
+        // extension push ss past it, which quadrupled the frame to ~3.2 s and, while that stopped short
+        // of the watchdog, it blocked the UI thread and hung the window ("Not Responding").
         let vidx = view_id as usize;
         // One-shot offscreen renders (`--render`, `--render-tour`, exports) never resolve a probe —
         // they draw a single frame — so an adaptive budget would strand them on the pessimistic seed
@@ -1127,7 +1167,11 @@ impl FractadyneApp {
         } else if will_reproject && self.perf.frozen_budget[vidx] != 0 {
             self.perf.frozen_budget[vidx]
         } else {
-            ((self.perf.fe_rate_spm * TDR_BUDGET_MS) as u64).clamp(TDR_STEPS_FLOOR, TDR_STEPS_CEIL)
+            // Zero until the first probe resolves; the loop in `update` maintains it thereafter.
+            match self.perf.fe_budget[vidx] {
+                0 => TDR_BOOTSTRAP_STEPS,
+                b => b.clamp(TDR_BOOTSTRAP_STEPS, TDR_STEPS_CEIL),
+            }
         };
         if !offscreen && !will_reproject {
             self.perf.frozen_budget[vidx] = tdr_steps;
@@ -1169,33 +1213,21 @@ impl FractadyneApp {
         } else {
             u32::MAX
         };
-        // Adaptive wall-clock extension of the watchdog cap. `max_ss_tdr` assumes BLA skips
-        // NOTHING — right on boundary/filament-heavy views, but over-throttling the common case
-        // where BLA is effective and full AA would cost milliseconds. A resolved probe (`update`
-        // measures each newly-rendered settle stage's frame interval) tells us this view's REAL
-        // cost, so allow at most one doubling past the measured stage, quadratically projected
-        // and kept under ~800 ms (≈2.5× margin under the ~2 s watchdog). Each further doubling
-        // needs its own measurement, so the extension can never outrun reality by more than 4×;
-        // interaction clears the measurement (below), so it can't carry across views. Where BLA
-        // truly can't skip, the measured cost is high, the extension is nil, and the static cap
-        // stands — the settled frame stays bounded exactly as before.
+        // `max_ss_tdr` used to be extendable past its own value by a measured-AA allowance, on the
+        // grounds that it assumed BLA skips NOTHING and so over-throttled views where BLA is effective.
+        // That reasoning is now folded into `tdr_steps` itself, which is DERIVED from measurement — a
+        // BLA-effective view simply measures a high rate and gets a big budget. Letting AA override the
+        // cap on top of that double-counts, and it is exactly what hung the app: ss=2 quadrupled a
+        // budget-sized frame to ~3.2 s, which stopped short of the watchdog but blocked the UI thread.
+        // The cap is therefore hard — the frame's full `spx·ss²·gpu_iter` stays inside the budget.
         let vs = view_id as usize;
         if interacting {
             self.perf.aa_measured[vs] = None;
             self.perf.aa_probe[vs] = None;
         }
-        let max_ss_meas = self.perf.aa_measured[vs]
-            .filter(|_| is_fe)
-            .map(|(s, ms)| {
-                const TDR_SAFE_MS: f64 = 800.0;
-                let by_cost = ((s as f64) * (TDR_SAFE_MS / ms.max(1.0)).sqrt()).floor() as u32;
-                by_cost.clamp(s, s.saturating_mul(2))
-            })
-            .unwrap_or(0);
         // `aa_target` is 1 while moving and ramps up over settled frames (progressive settle); clamp
-        // to what the per-frame budget affords (`max_ss`) and the watchdog allows (static worst-case
-        // cap, extended by the measured allowance where the real cost is known).
-        let ss = aa_target.min(max_ss).min(max_ss_tdr.max(max_ss_meas)).max(1);
+        // to what the per-frame budget affords (`max_ss`) and what the watchdog / UI thread allow.
+        let ss = aa_target.min(max_ss).min(max_ss_tdr).max(1);
         // Arm a probe only on a frame that actually RE-ITERATES (a cached frame's interval is
         // ~vsync and would wildly over-authorize): the iterate re-runs when its key inputs change
         // (ss stage, resolution, reference), and on the first settled frame after an interaction
@@ -1204,6 +1236,16 @@ impl FractadyneApp {
         let key = (ss, resolution, self.ref_cache[vs].orbit_id);
         let key_changed = key != self.perf.aa_last_key[vs];
         self.perf.aa_last_key[vs] = key;
+        if trace_enabled() && is_fe {
+            let steps = spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64);
+            eprintln!(
+                "[fd-trace] view={vs} res={}x{} ss={ss} gpu_iter={gpu_iter} steps={:.3e} \
+                 budget={:.3e} reproj={will_reproject} iterates={key_changed}",
+                resolution[0], resolution[1], steps as f64, tdr_steps as f64,
+            );
+        }
         let bootstrap =
             self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none();
         if is_fe
@@ -1630,7 +1672,20 @@ impl FractadyneApp {
             gpu_iter
         };
 
+        // Record the nominal cost of a frame that will actually re-iterate, so `update` can price the
+        // measurement that comes back for it. Only such frames run the pass, so only they arm a
+        // timestamp — but the SINK must be attached on EVERY frame: the readback lands a couple of
+        // frames later, by which time the view is usually serving cached/reproject frames, and a
+        // sink-less pump would silently discard the reading.
+        if is_fe && key_changed && !will_reproject {
+            self.perf.fe_steps_last[vs] = spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64);
+        }
+        let iterate_ms = is_fe.then(|| self.perf.iterate_ms[vs].clone());
+
         MandelbrotParams {
+            iterate_ms,
             orbit: self.ref_cache[vi].orbit.clone(),
             orbit_id: self.ref_cache[vi].orbit_id,
             orbit_len: self.ref_cache[vi].orbit_len,

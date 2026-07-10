@@ -115,7 +115,115 @@ struct IterKey {
 /// Per-view GPU resources (one set per on-screen panel, keyed by `view_id`). Each
 /// view owns its offscreen iteration texture, uniforms, orbit buffer, and caching
 /// state so two panels (e.g. Mandelbrot + Julia) can render without clobbering.
+/// GPU-timestamp capture around the LIVE `iterate_pass`, so the app can size deep frames against what
+/// the iterate ACTUALLY costs on this GPU at this view.
+///
+/// Every cheaper proxy was tried and is wrong. A wall-clock frame interval is dominated by repaint
+/// scheduling (~420 ms here regardless of frame size). CPU time around the offscreen `render_iter` is
+/// ~440 ms of fixed per-call overhead. And the offscreen `render_export` pass — even timestamped — runs
+/// ~25× slower per step than the live pass, so it under-reads the rate and shrinks the view to a
+/// postage stamp. Only the live pass measures the live pass.
+///
+/// The result lands two frames late (record → submit → map), which is fine: the budget it feeds is a
+/// slow-moving control, and until it arrives the frame uses the tiny bootstrap budget.
+struct IterTiming {
+    qs: wgpu::QuerySet,
+    /// `resolve_query_set` target (QUERY_RESOLVE | COPY_SRC), then copied into `read`.
+    resolve: wgpu::Buffer,
+    /// MAP_READ staging copy: two u64 ticks.
+    read: wgpu::Buffer,
+    state: TimingState,
+    done: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum TimingState {
+    /// Nothing in flight — the next iterate may bracket itself with timestamps.
+    Idle,
+    /// Timestamps written + resolved into `read`; the encoder has not been submitted yet.
+    Recorded,
+    /// `map_async` issued; waiting for the callback.
+    Mapping,
+}
+
+impl IterTiming {
+    fn new(device: &wgpu::Device) -> Option<Self> {
+        if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let buf = |label, usage| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: 16,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
+        Some(Self {
+            qs: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("fractadyne.iterate_ts"),
+                ty: wgpu::QueryType::Timestamp,
+                count: 2,
+            }),
+            resolve: buf(
+                "fractadyne.iterate_ts.resolve",
+                wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            ),
+            read: buf(
+                "fractadyne.iterate_ts.read",
+                wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            ),
+            state: TimingState::Idle,
+            done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        })
+    }
+
+    /// Advance the readback state machine; publishes the last completed pass time (ms, f64 bits) into
+    /// `out`. Called once per `prepare`, before the pass is (re)recorded.
+    fn pump(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+    ) {
+        use std::sync::atomic::Ordering::SeqCst;
+        match self.state {
+            // The encoder that wrote these timestamps was submitted after last frame's `prepare`
+            // returned, so the copy is queued now and `map_async` can be issued against it.
+            TimingState::Recorded => {
+                self.done.store(false, SeqCst);
+                let done = self.done.clone();
+                self.read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    if r.is_ok() {
+                        done.store(true, SeqCst);
+                    }
+                });
+                self.state = TimingState::Mapping;
+            }
+            TimingState::Mapping => {
+                let _ = device.poll(wgpu::Maintain::Poll);
+                if self.done.load(SeqCst) {
+                    {
+                        let data = self.read.slice(..).get_mapped_range();
+                        let ticks: [u64; 2] = bytemuck::pod_read_unaligned(&data[..16]);
+                        let ns = ticks[1].saturating_sub(ticks[0]) as f64
+                            * queue.get_timestamp_period() as f64;
+                        if let Some(o) = out {
+                            o.store((ns / 1.0e6).to_bits(), SeqCst);
+                        }
+                    }
+                    self.read.unmap();
+                    self.state = TimingState::Idle;
+                }
+            }
+            TimingState::Idle => {}
+        }
+    }
+}
+
 struct ViewResources {
+    /// GPU timing for the live iterate pass; `None` when the device lacks `TIMESTAMP_QUERY`.
+    timing: Option<IterTiming>,
     iter_uniform: wgpu::Buffer,
     color_uniform: wgpu::Buffer,
     iter_bg: wgpu::BindGroup,
@@ -383,6 +491,7 @@ impl ViewResources {
             make_color_bg(device, color_bgl, &color_uniform, &tex_view, &aux_view);
 
         Self {
+            timing: IterTiming::new(device),
             iter_uniform,
             color_uniform,
             iter_bg,
@@ -478,6 +587,10 @@ impl Default for RefOffset {
 /// precomputed (arbitrary precision) by the app and shared via `Arc`.
 #[derive(Clone)]
 pub struct MandelbrotParams {
+    /// Sink for the live iterate pass's measured GPU time (milliseconds, as `f64::to_bits`). The app
+    /// sizes deep floatexp frames against it; see [`IterTiming`]. `None` disables capture. Written a
+    /// couple of frames after the pass it describes, and only for frames that actually re-iterate.
+    pub iterate_ms: Option<Arc<std::sync::atomic::AtomicU64>>,
     pub orbit: Arc<Vec<[f32; 4]>>,
     /// Changes whenever `orbit` changes — triggers a GPU re-upload.
     pub orbit_id: u64,
@@ -584,6 +697,11 @@ impl CallbackTrait for MandelbrotParams {
         let color_bgl = &r.color_bgl;
         let iter_pipeline = &r.iter_pipeline;
         let view = r.views.get_mut(&self.view_id).unwrap();
+
+        // Drain any timestamp readback armed on an earlier frame before this frame may re-arm it.
+        if let Some(t) = view.timing.as_mut() {
+            t.pump(device, queue, self.iterate_ms.as_ref());
+        }
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed
         // the device's max 2D texture dimension (e.g. 8192) or wgpu fatally errors —
@@ -730,6 +848,13 @@ impl CallbackTrait for MandelbrotParams {
                 bla_on: self.bla_on,
             };
             queue.write_buffer(&view.iter_uniform, 0, bytemuck::bytes_of(&iu));
+            // Bracket the iterate with GPU timestamps when nothing is already in flight. This is the
+            // only measurement of the deep iterate that isn't contaminated by vsync, repaint
+            // scheduling, pipeline setup, or the offscreen path's different cost profile.
+            let arm_ts = view
+                .timing
+                .as_ref()
+                .is_some_and(|t| t.state == TimingState::Idle);
             {
                 let attach = |v| Some(wgpu::RenderPassColorAttachment {
                     view: v,
@@ -739,16 +864,27 @@ impl CallbackTrait for MandelbrotParams {
                         store: wgpu::StoreOp::Store,
                     },
                 });
+                let ts_writes = arm_ts.then(|| wgpu::RenderPassTimestampWrites {
+                    query_set: &view.timing.as_ref().unwrap().qs,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                });
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("fractadyne.iterate_pass"),
                     color_attachments: &[attach(&view.tex_view), attach(&view.aux_view)],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes: ts_writes,
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(iter_pipeline);
                 pass.set_bind_group(0, &view.iter_bg, &[]);
                 pass.draw(0..3, 0..1);
+            }
+            if arm_ts {
+                let t = view.timing.as_mut().unwrap();
+                encoder.resolve_query_set(&t.qs, 0..2, &t.resolve, 0);
+                encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.read, 0, 16);
+                t.state = TimingState::Recorded;
             }
             view.last_iter_key = Some(key);
             view.last_ss = ss; // remember the ss this texture was built at (for reprojection)

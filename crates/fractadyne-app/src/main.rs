@@ -104,18 +104,28 @@ struct Perf {
     /// no-BLA worst case where the MEASURED cost shows BLA is effective. Cleared on interaction,
     /// so a measurement can never carry across views.
     aa_measured: [Option<(u32, f64)>; 2],
-    /// MEASURED floatexp iterate throughput: nominal steps (`spx·ss²·gpu_iter`) per millisecond.
+    /// Per-view floatexp frame budget in nominal steps (`spx·ss²·gpu_iter`); 0 ⇒ not yet measured.
     ///
-    /// The TDR resolution budget used to be a hard constant calibrated on a view where BLA skipped
-    /// ~200×, so nominal steps wildly overstated real work. On a deep INTERIOR minibrot BLA cannot
-    /// skip — every pixel runs the full iteration count — and nominal == actual, making that constant
-    /// ~15× too generous: the load frame ran ~2 s in ONE dispatch and Windows reset the GPU.
+    /// The budget used to be a hard constant calibrated on a view where BLA skipped ~200×, so nominal
+    /// steps wildly overstated real work. On a deep INTERIOR minibrot BLA cannot skip — every pixel
+    /// runs the full iteration count — and nominal == actual, making that constant ~15× too generous:
+    /// the load frame ran ~2 s in ONE dispatch and Windows reset the GPU.
     ///
-    /// So measure it instead. Seeded pessimistically (worst case observed ≈ 2.5e7 steps/ms; the seed
-    /// is ~4× under that) so the very first frame — which has no measurement yet — can never trip the
-    /// watchdog. Resolved probes then raise it, restoring full resolution wherever BLA is effective.
-    /// Drops are adopted immediately (safety); rises are eased in.
-    fe_rate_spm: f64,
+    /// So close a loop on the only thing that matters — how long a frame actually takes. A resolved
+    /// probe reports the frame's step count and its measured wall cost, and the budget is retargeted
+    /// to `steps × TDR_BUDGET_MS / measured_ms`. Growth is capped per probe; shrink is unrestricted,
+    /// because both the GPU watchdog and the UI thread are unforgiving.
+    ///
+    /// It is set by `calibrate_fe_rate`, which times the real iterate offscreen at two tiny sizes and
+    /// takes the slope. Do NOT try to derive it from frame intervals: a wall-clock frame gap is
+    /// dominated by repaint scheduling (~420 ms here regardless of frame size), so a loop closed on it
+    /// carries no signal and decays the view to a postage stamp. Nothing here is tuned to one GPU — a
+    /// slower part measures a lower rate and gets a smaller budget for the same wall-clock target.
+    fe_budget: [u64; 2],
+    /// Live iterate GPU time (ms, `f64::to_bits`; 0 = nothing new) published by the paint callback.
+    iterate_ms: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// Nominal steps of the last frame that actually re-iterated — the cost that `iterate_ms` prices.
+    fe_steps_last: [u64; 2],
     /// TDR step budget in force on the last frame that actually re-iterated, per view. A reproject
     /// frame re-samples that frame's frozen texture, so it must reproduce its exact resolution or the
     /// color-pass aspect-fit `fit = out_res / frozen_screen_dim` drifts off 1 (the v0.1.44/46
@@ -153,9 +163,10 @@ impl Default for Perf {
             aa_probe: [None, None],
             aa_measured: [None, None],
             aa_last_key: [(1, [0, 0], 0), (1, [0, 0], 0)],
-            // 6.25e6 steps/ms ⇒ a 5e9-step cold-start budget at TDR_SAFE_MS — measured safe (~0.66 s
-            // including one-time pipeline setup) on the worst case we have: a 1e106× interior minibrot.
-            fe_rate_spm: 6_250_000.0,
+            // Unknown until measured — the first floatexp frame uses the hardware-agnostic bootstrap.
+            fe_budget: [0, 0],
+            iterate_ms: [Default::default(), Default::default()],
+            fe_steps_last: [0, 0],
             frozen_budget: [0, 0],
             motion_res: 0.6,
         }
@@ -3697,6 +3708,34 @@ impl eframe::App for FractadyneApp {
         let gpu = frame
             .wgpu_render_state()
             .map(|rs| (rs.device.clone(), rs.queue.clone()));
+
+        // Re-size the floatexp frame budget from the LIVE iterate's measured GPU time, published by the
+        // paint callback a couple of frames after the pass it describes. Walk the budget toward the
+        // size that measures near TDR_BUDGET_MS by the observed time RATIO — no cost model, because at
+        // a deep interior view frame time is latency-bound below GPU occupancy and `steps ∝ time` is
+        // simply false there (see `render::TDR_GROW_MAX`). Growth is capped so the next frame cannot
+        // leap from the target into the watchdog; shrink may halve at once, since both the watchdog and
+        // the UI thread are unforgiving. Nothing is tuned to a particular GPU — a slower part measures
+        // a longer pass and settles at a smaller budget for the same target.
+        for v in 0..2 {
+            let bits = self.perf.iterate_ms[v].swap(0, std::sync::atomic::Ordering::SeqCst);
+            let ms = f64::from_bits(bits);
+            if bits == 0 || !(ms > 0.01) || self.perf.fe_steps_last[v] == 0 {
+                continue;
+            }
+            let cur = self.perf.fe_budget[v].max(render::TDR_BOOTSTRAP_STEPS);
+            let factor = (render::TDR_BUDGET_MS / ms).clamp(render::TDR_SHRINK_MAX, render::TDR_GROW_MAX);
+            let next = ((cur as f64 * factor) as u64)
+                .clamp(render::TDR_BOOTSTRAP_STEPS, render::TDR_STEPS_CEIL);
+            if render::trace_enabled() {
+                eprintln!(
+                    "[fd-gpu] view={v} gpu_iterate={ms:.1}ms x{factor:.2} cur={:.3e} -> next={:.3e}",
+                    cur as f64, next as f64
+                );
+            }
+            self.perf.fe_budget[v] = next;
+            ctx.request_repaint();
+        }
         self.update_minimap(ctx, &gpu);
 
         // Ctrl+S → quick export (no dialog) to the last folder.
@@ -4034,17 +4073,19 @@ impl eframe::App for FractadyneApp {
                     let mx = mx.max(dt);
                     if self.perf.frame_idx >= armed + 2 {
                         self.perf.aa_measured[v] = Some((ss, mx));
-                        // Same interval also prices the floatexp iterate: nominal steps / ms. A fall
-                        // is taken at once (the watchdog is unforgiving); a rise is eased in, so one
-                        // anomalously quick interval can't authorize a frame that then overruns.
-                        if steps > 0 && mx >= 1.0 {
-                            let observed = steps as f64 / mx;
-                            self.perf.fe_rate_spm = if observed < self.perf.fe_rate_spm {
-                                observed
-                            } else {
-                                ema(self.perf.fe_rate_spm, observed)
-                            };
-                        }
+                        // The same interval retargets the floatexp frame budget: this frame cost `mx` at
+                        // `steps`, so the budget that would cost TDR_BUDGET_MS is `steps × target / mx`.
+                        // Growth is capped per probe so one anomalously quick interval can't authorize a
+                        // frame that then overruns; shrink is immediate and uncapped. A frame cheaper
+                        // than the interval floor simply grows the budget, which is what stops the loop
+                        // from spiralling downward. See `Perf::fe_budget`.
+                        // NOTE: this interval must NOT be used to price the GPU. `mx` is a wall-clock
+                        // frame gap, and it is dominated by repaint scheduling (`request_repaint_after`,
+                        // animation timers), not by the iterate: halving a frame's work leaves it at a
+                        // near-constant ~420 ms, so any budget loop closed on it decays to nothing.
+                        // The floatexp budget is calibrated against the real GPU instead — see
+                        // `calibrate_fe_rate`. This probe still prices AA stages, as before.
+                        let _ = steps;
                         self.perf.aa_probe[v] = None;
                         ctx.request_repaint();
                     } else {
