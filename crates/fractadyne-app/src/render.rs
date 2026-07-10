@@ -1095,26 +1095,61 @@ impl FractadyneApp {
         // size the frame assuming BLA delivers its usual ~200× iteration skip — but on a boundary/
         // filament-heavy deep view (exactly where the user lingers) BLA can barely skip, so the frame's
         // true cost approaches the *no-skip* estimate `spx·ss²·gpu_iter`. At floatexp depth that frame is
-        // multiple seconds without BLA and freezes the app (Windows resets the GPU after ~2s). Bound the
-        // worst-case (no-BLA) floatexp iterate cost of ONE frame to ~3e11 steps ≈ 0.85s on this GPU
-        // class (measured: a 1.74e12-step frame froze at ~5s). Cheap when BLA works.
-        const TDR_SAFE_STEPS: u64 = 300_000_000_000;
+        // multiple seconds without BLA and freezes the app (Windows resets the GPU after ~2s).
+        //
+        // This budget used to be the constant 3e11 "steps ≈ 0.85 s". That was calibrated on a view
+        // where BLA skipped ~200×, so the NOMINAL count `spx·ss²·gpu_iter` overstated real work by the
+        // same factor. On a deep INTERIOR minibrot BLA cannot skip — every pixel runs the full
+        // iteration count — so nominal == actual and the constant was ~15× too generous: a 1e106×
+        // minibrot submitted a ~5.5e10-step frame (≈2.2 s at the measured ~2.5e7 steps/ms) as ONE
+        // dispatch, Windows reset the GPU, and the app died on LOAD before any measurement existed.
+        //
+        // So price the frame from MEASURED throughput (`fe_rate_spm`) rather than assuming a skip
+        // factor: budget = rate × TDR_BUDGET_MS. The seed is pessimistic (the worst case measured), so
+        // the first frame is safe with no measurement; resolved probes then raise it, and BLA-effective
+        // views climb back to the old ceiling and render at native resolution. The floor keeps even a
+        // pathological view (interior + `auto_iter` off + huge `max_iter`) inside the watchdog — such a
+        // view simply cannot render native res in one dispatch, and reduced res is the correct answer.
+        const TDR_BUDGET_MS: f64 = 800.0;
+        const TDR_STEPS_FLOOR: u64 = 5_000_000_000;
+        const TDR_STEPS_CEIL: u64 = 300_000_000_000;
+        let vidx = view_id as usize;
+        // One-shot offscreen renders (`--render`, `--render-tour`, exports) never resolve a probe —
+        // they draw a single frame — so an adaptive budget would strand them on the pessimistic seed
+        // and silently shrink their internal resolution. They are not the watchdog case that motivated
+        // this (they have always run at the ceiling and never tripped it), so leave them exactly as
+        // they were: deep exports and the validation corpus must stay bit-for-bit reproducible.
+        let offscreen = self.auto_render || self.playback.is_some();
+        // A reproject frame re-samples the frozen texture, so it must land on the SAME resolution as
+        // the frame that produced it; recomputing from a moving budget would drift `fit` off 1.
+        let tdr_steps = if offscreen {
+            TDR_STEPS_CEIL
+        } else if will_reproject && self.perf.frozen_budget[vidx] != 0 {
+            self.perf.frozen_budget[vidx]
+        } else {
+            ((self.perf.fe_rate_spm * TDR_BUDGET_MS) as u64).clamp(TDR_STEPS_FLOOR, TDR_STEPS_CEIL)
+        };
+        if !offscreen && !will_reproject {
+            self.perf.frozen_budget[vidx] = tdr_steps;
+        }
         let spx = (resolution[0] as u64) * (resolution[1] as u64);
         // First line of defence is lowering ss (`max_ss_tdr` below), but that floors at 1. If even ss=1
-        // would blow the budget — `spx·gpu_iter` alone > TDR_SAFE_STEPS, i.e. a large floatexp panel at
+        // would blow the budget — `spx·gpu_iter` alone > the budget, i.e. a large floatexp panel at
         // a high fixed iteration count — the ss cap can't help, so shrink the render RESOLUTION too.
         // Applied to reproject frames AS WELL: the frozen texture they re-sample was rendered by a
-        // settled frame that took this same (deterministic: same panel, same iter count) shrink, so a
-        // reproject frame must take it too for the color pass aspect-fit `fit = out_res /
-        // frozen_screen_dim` to stay 1. Skipping it here (as v0.1.46 briefly did) leaves the reproject
+        // settled frame that took this same shrink, so a reproject frame must take it too for the color
+        // pass aspect-fit `fit = out_res / frozen_screen_dim` to stay 1. This used to hold because the
+        // shrink was deterministic (same panel, same iter count, constant budget); now that the budget
+        // adapts, the reproject frame reuses the producing frame's stored `frozen_budget` to land on the
+        // identical resolution. Skipping the shrink here (as v0.1.46 briefly did) leaves the reproject
         // frame at native res over a shrunk frozen texture → fit > 1 → the held image displays SHRUNK
         // (average-color borders) and the pan translation runs slow by the same factor — the inverse of
         // the v0.1.44 magnify. (The MOTION res_scale above stays gated on `!will_reproject`: unlike this
         // shrink it differs between moving and settled frames, which is what caused the v0.1.44 bug.)
         let (resolution, spx) = {
             let iter_cost = spx.saturating_mul(gpu_iter.max(1) as u64);
-            if is_fe && iter_cost > TDR_SAFE_STEPS {
-                let f = (TDR_SAFE_STEPS as f64 / iter_cost as f64).sqrt();
+            if is_fe && iter_cost > tdr_steps {
+                let f = (tdr_steps as f64 / iter_cost as f64).sqrt();
                 let r = [
                     ((resolution[0] as f64 * f) as u32).max(16),
                     ((resolution[1] as f64 * f) as u32).max(16),
@@ -1128,7 +1163,7 @@ impl FractadyneApp {
             .sqrt()
             .max(1.0) as u32;
         let max_ss_tdr = if is_fe {
-            ((TDR_SAFE_STEPS / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
+            ((tdr_steps / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
                 .sqrt()
                 .max(1.0) as u32
         } else {
@@ -1177,7 +1212,13 @@ impl FractadyneApp {
             && self.playback.is_none() // tour frames move every keyframe — not settled-cost data
             && (key_changed || bootstrap)
         {
-            self.perf.aa_probe[vs] = Some((ss, self.perf.frame_idx, 0.0));
+            // Carry this frame's nominal step count: both arming conditions re-iterate (a changed key
+            // re-runs the iterate; a bootstrap frame is the first settled one after the view moved), so
+            // the interval that resolves the probe prices real GPU work and yields `fe_rate_spm`.
+            let steps = spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64);
+            self.perf.aa_probe[vs] = Some((ss, self.perf.frame_idx, 0.0, steps));
         }
         // Color-pass anti-aliasing when true supersampling wasn't affordable: widen the box
         // to match an upscaled (resolution-reduced) texture, or apply a gentle 2× box when

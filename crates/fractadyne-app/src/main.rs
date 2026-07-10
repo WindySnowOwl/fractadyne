@@ -96,11 +96,32 @@ struct Perf {
     /// ms observed since)`. Armed by `build_params` when a settle-ramp stage renders a new ss;
     /// resolved in `update` two frames later (`desired_maximum_frame_latency = 1` means a heavy GPU
     /// frame back-pressures the NEXT acquire, so its cost lands in the following interval).
-    aa_probe: [Option<(u32, u64, f64)>; 2],
+    /// The 4th element is the frame's NOMINAL step count (`spx·ss²·gpu_iter`), used to derive
+    /// `fe_rate_spm` when the probe resolves. Only armed on frames that actually re-iterate, so the
+    /// step count always corresponds to real GPU work.
+    aa_probe: [Option<(u32, u64, f64, u64)>; 2],
     /// Last resolved stage cost per view: `(ss, ms)`. Lets the TDR cap extend past its static
     /// no-BLA worst case where the MEASURED cost shows BLA is effective. Cleared on interaction,
     /// so a measurement can never carry across views.
     aa_measured: [Option<(u32, f64)>; 2],
+    /// MEASURED floatexp iterate throughput: nominal steps (`spx·ss²·gpu_iter`) per millisecond.
+    ///
+    /// The TDR resolution budget used to be a hard constant calibrated on a view where BLA skipped
+    /// ~200×, so nominal steps wildly overstated real work. On a deep INTERIOR minibrot BLA cannot
+    /// skip — every pixel runs the full iteration count — and nominal == actual, making that constant
+    /// ~15× too generous: the load frame ran ~2 s in ONE dispatch and Windows reset the GPU.
+    ///
+    /// So measure it instead. Seeded pessimistically (worst case observed ≈ 2.5e7 steps/ms; the seed
+    /// is ~4× under that) so the very first frame — which has no measurement yet — can never trip the
+    /// watchdog. Resolved probes then raise it, restoring full resolution wherever BLA is effective.
+    /// Drops are adopted immediately (safety); rises are eased in.
+    fe_rate_spm: f64,
+    /// TDR step budget in force on the last frame that actually re-iterated, per view. A reproject
+    /// frame re-samples that frame's frozen texture, so it must reproduce its exact resolution or the
+    /// color-pass aspect-fit `fit = out_res / frozen_screen_dim` drifts off 1 (the v0.1.44/46
+    /// magnify/shrink bugs). Since the budget is now adaptive, reproject frames reuse the stored value
+    /// rather than recomputing from a moving one.
+    frozen_budget: [u64; 2],
     /// Iterate-key `(ss, resolution, orbit_id)` submitted last frame per view — change detection
     /// for probe arming (a probe is only valid on a frame that actually re-iterates).
     aa_last_key: [(u32, [u32; 2], u64); 2],
@@ -132,6 +153,10 @@ impl Default for Perf {
             aa_probe: [None, None],
             aa_measured: [None, None],
             aa_last_key: [(1, [0, 0], 0), (1, [0, 0], 0)],
+            // 6.25e6 steps/ms ⇒ a 5e9-step cold-start budget at TDR_SAFE_MS — measured safe (~0.66 s
+            // including one-time pipeline setup) on the worst case we have: a 1e106× interior minibrot.
+            fe_rate_spm: 6_250_000.0,
+            frozen_budget: [0, 0],
             motion_res: 0.6,
         }
     }
@@ -4005,14 +4030,25 @@ impl eframe::App for FractadyneApp {
             // exhausts, so without this a measurement that lands afterwards would sit unapplied
             // (the view would idle below the AA the measurement just authorized).
             for v in 0..2 {
-                if let Some((ss, armed, mx)) = self.perf.aa_probe[v] {
+                if let Some((ss, armed, mx, steps)) = self.perf.aa_probe[v] {
                     let mx = mx.max(dt);
                     if self.perf.frame_idx >= armed + 2 {
                         self.perf.aa_measured[v] = Some((ss, mx));
+                        // Same interval also prices the floatexp iterate: nominal steps / ms. A fall
+                        // is taken at once (the watchdog is unforgiving); a rise is eased in, so one
+                        // anomalously quick interval can't authorize a frame that then overruns.
+                        if steps > 0 && mx >= 1.0 {
+                            let observed = steps as f64 / mx;
+                            self.perf.fe_rate_spm = if observed < self.perf.fe_rate_spm {
+                                observed
+                            } else {
+                                ema(self.perf.fe_rate_spm, observed)
+                            };
+                        }
                         self.perf.aa_probe[v] = None;
                         ctx.request_repaint();
                     } else {
-                        self.perf.aa_probe[v] = Some((ss, armed, mx));
+                        self.perf.aa_probe[v] = Some((ss, armed, mx, steps));
                     }
                 }
             }
