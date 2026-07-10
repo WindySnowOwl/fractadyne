@@ -173,6 +173,9 @@ def esc(s):
 
 
 def write_catalog(locs):
+    # Catalog cards in MAGNIFICATION order (locations.toml keeps its stable numbering — slugs,
+    # files, and cross-references don't move; only the browsing order is depth-sorted).
+    locs = sorted(locs, key=lambda l: l["mag_log10"])
     cards = []
     for loc in locs:
         octaves = loc["mag_log10"] * 3.321928
@@ -232,7 +235,7 @@ def write_catalog(locs):
          font-size:.78em; white-space:pre-wrap; word-break:break-all; }}
 </style>
 <h1>Fractadyne vs Kalles Fraktaler &mdash; reference render corpus</h1>
-<p>Twenty locations from the full-set overview to 1.2e1008&times;, rendered by both apps from the exact same
+<p>Twenty locations, ordered by magnification from the full-set overview to 4.6e1105&times;, rendered by both apps from the exact same
 center / magnification / iteration cap for side-by-side structural comparison. Fractadyne renders (all
 ten) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
 With <code>maximum_reference_iterations</code> set in each F3 param (see README &mdash; F3&rsquo;s batch
