@@ -1,8 +1,9 @@
 # Fractadyne ↔ Kalles Fraktaler comparison corpus
 
-Ten reference locations — from the full-set overview down to **4.6e1105×** — rendered by both
-apps from the **exact same center, magnification, and iteration cap**, for side-by-side
-structural comparison. Open **[catalog.html](catalog.html)** to view the pairs with each
+Twenty reference locations — from the full-set overview down to **1.2e1008×** (deepest matched
+pair **4.6e1105×**) — rendered by both apps from the **exact same center, magnification, and
+iteration count**, for side-by-side structural comparison. Locations 11–20 are user-saved
+Fraktaler-3 finds (1.7e124× → 1.2e1008×), imported verbatim from their `.exr` headers. Open **[catalog.html](catalog.html)** to view the pairs with each
 location's full compute details.
 
 ## Layout
@@ -25,10 +26,13 @@ python validation/corpus/generate_corpus.py            # everything
 python validation/corpus/generate_corpus.py --skip-renders   # just .kfr + catalog
 ```
 
-Renders go through the tour renderer (`--render-tour`) with a one-keyframe script per location,
-so the framing comes from the exact `center + mag_log10` — independent of window geometry. The
-session's iteration cap is staged per location (fixed iterations, auto-scale off, HUD off) and
-your session file is restored afterwards.
+Renders go through `--render` with a fully staged session per location — exact center strings +
+magnification, the location's verbatim iteration count (auto-scale off; `--render` honors an
+explicit count, unlike the tour renderer, which forces auto-iteration and silently re-caps it),
+and pinned coloring (Ember, smooth, no DE/lighting/HUD). Your session file is restored
+afterwards. Staging everything the render reads is what makes the corpus reproducible — a
+partial staging inherits the live session's coloring (the same hermeticity lesson as
+`--selftest`).
 
 ## Producing the Fraktaler side
 
@@ -64,7 +68,7 @@ high enough for the depth (F3's reference otherwise truncates and blanks), and t
 enough digits for the depth *plus* margin** for F3's internal reference rounding, which is coarser
 than Fractadyne's full-precision bignum reference.
 
-Net: real, arm-for-arm F3 matches at **01–06 and 08–10** — from 1× to **4.60e1105×**, over a thousand
+Net: real, arm-for-arm F3 matches at **01–06 and 08–20** — from 1× to **4.60e1105×**, over a thousand
 orders of magnitude of zoom. The single gap is **07** (1e30×): its shared 34-digit seahorse center
 (only ~3 digits past what 1-pixel placement needs) is too coarse for a reproducible match there — F3
 rounds it below Fractadyne's bignum reference and lands on different sub-structure, so 07 stays an

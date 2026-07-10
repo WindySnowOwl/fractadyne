@@ -3,6 +3,31 @@
 Living backlog. Specs: [DESIGN.md](DESIGN.md), [UI-DESIGN.md](UI-DESIGN.md).
 Mockups: [design/mockups/](design/mockups/).
 
+## Open bugs
+
+- [ ] **Glitch-correction pass goes pathological (>1 hour) at extreme depth in the export
+  path.** An offscreen `--render` of corpus location 09 (6.1e500x, 150k iterations, ~1700-bit
+  precision) hangs for over an hour with `glitch_correct = true` and completes in ~12 s with it
+  off — single-variable confirmed (identical staged session, smooth coloring, SA off in both).
+  The multi-reference correction rebuilds bignum references per glitch cluster; at this depth
+  each rebuild is expensive and there are evidently many. Aux coloring methods (stripe/TIA/
+  trap/decomposition) skip correction entirely, which masked this for any stripe-flavored
+  session. Workaround in tooling: the corpus render staging pins `glitch_correct = false` (and
+  `series_approx = false` for fewest-approximations purity). Fix ideas: cap correction passes /
+  cluster count at depth, reuse the primary reference's tail, or time-box the pass.
+
+- [ ] **Uniform-exterior misrender past ~1e142× on the corpus 11–15 dive path.** Corpus
+  locations 14 (1.2e148×) and 15 (3.7e163×) render as flat escaped-exterior while
+  Fraktaler-3 shows dendrites at the same center/zoom/iterations; location 13 (1e141×,
+  same dive path — shared center prefix) still matches. Bracketed: structure survives
+  `--zoom-log2 470`, gone at `475`. Ruled out: the reference (healthy full 600k
+  non-escaped orbit either side of the break — see the `[fd-ref]` trace in render.rs),
+  `--no-bla`, center precision (161-digit), iteration count (600k and 6M identical).
+  Not a depth wall: corpus 16–20 (e250→e1008, other centers) match F3. The failure is
+  in the GPU iterate consuming a healthy reference. Repro:
+  `fractadyne.exe --render --center <loc14 center> --zoom-log2 475 --iter 600000`
+  (uniform) vs the same at `--zoom-log2 470` (structured).
+
 ## Design follow-ups (from mockup review, 2026-06-25)
 
 - [ ] **CA 2-D Birth/Survive rows only go 0–5; must be 0–8.** A 2-D life-like cell

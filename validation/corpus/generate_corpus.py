@@ -3,17 +3,20 @@
 
 Reads locations.toml (the canonical list) and produces, for each location:
   locations/<slug>.kfr            - Kalles Fraktaler 2 / fraktaler-3 location file
-  renders/<slug>-fractadyne.png   - Fractadyne render (via --render-tour, exact framing)
+  renders/<slug>-fractadyne.png   - Fractadyne render (via --render, exact framing)
 plus catalog.html (side-by-side viewer; the Fraktaler slot expects
-renders/<slug>-fraktaler.png, which you produce manually in KF and drop in).
+renders/<slug>-fraktaler.png, produced by generate_fraktaler.py or manually).
 
 Run from the repo root:  python validation/corpus/generate_corpus.py [--skip-renders]
 
-The Fractadyne render goes through the tour renderer rather than --render because a
-tour keyframe takes the exact center strings + mag_log10 and the frame size comes from
---size (no dependence on the live window/panel geometry). Session settings that the
-tour engine still reads (iteration cap) are staged into session.toml per location and
-the original session is restored afterwards.
+The Fractadyne render goes through `--render` with a FULLY staged session (location,
+iterations, coloring), restored afterwards. It must NOT go through the tour renderer:
+render_tour_to_dir forces auto_iter=true, silently re-capping an explicit iteration
+count — deep corpus locations whose structure escapes above the cap rendered
+interior-black while Fraktaler-3 used the full count. And the staging must pin the
+COLORING too (Ember / smooth, no DE/lighting — the catalog contract): a partial staging
+inherits whatever stripe/relief config the live session happens to have, so the corpus
+renders weren't reproducible (the same hermeticity lesson as --selftest).
 """
 
 import os
@@ -21,7 +24,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS = os.path.join(ROOT, "validation", "corpus")
@@ -67,43 +69,89 @@ def write_kfr(loc):
     return path
 
 
-def stage_session(iterations):
-    """Point session.toml at fixed iterations so the tour renders with the same cap as KF.
+def stage_session(loc):
+    """Stage the session for one corpus render: pinned coloring + a LIGHT home view.
 
-    Also forces the location HUD off: the tour engine ORs the session's `show_location`
-    with the script's, so a session with the HUD on would burn it into every frame.
+    Hermetic by design (the --selftest lesson): anything the render reads that is NOT staged
+    here silently inherits the user's live session, making the corpus unreproducible. The
+    catalog contract is 1280x720 2xSS, Ember palette, smooth iteration, no DE/lighting/HUD,
+    and the location's EXACT iteration count.
+
+    The LOCATION deliberately does NOT go into the session: it rides the `--render` command
+    line (`--center`/`--zoom-log2`/`--iter`), which sets the viewport and its precision
+    (`set_center_log2mag` -> `refresh_precision`) exactly. Staging the deep view into the
+    session as well makes the app BOOT on it — and a live window booting an extreme-depth
+    session while the export runs hung the e500 render for over an hour (the identical CLI
+    render with a light session takes ~11 s). The session view is pinned to HOME with
+    auto-iteration on and a small cap, so the boot frame costs nothing.
     """
     t = open(SESSION, encoding="utf-8").read()
-    t = re.sub(r"max_iter = \d+", "max_iter = %d" % iterations, t, count=1)
-    t = re.sub(r"auto_iter = \w+", "auto_iter = false", t, count=1)
-    t = re.sub(r"show_location = \w+", "show_location = false", t, count=1)
-    open(SESSION, "w", encoding="utf-8").write(t)
+
+    def setk(t, key, val):
+        pat = r"^%s = .*$" % re.escape(key)
+        rep = "%s = %s" % (key, val)
+        if re.search(pat, t, re.M):
+            return re.sub(pat, rep.replace("\\", "\\\\"), t, count=1, flags=re.M)
+        return t + "\n" + rep + "\n"
+
+    del loc  # location intentionally unused here: it rides the CLI (see docstring)
+    for key, val in [
+        ("center_x", "-0.5"),
+        ("center_y", "0.0"),
+        ("center_x_str", '"-0.5"'),
+        ("center_y_str", '"0.0"'),
+        ("units_per_pixel", repr(3.0 / HEIGHT)),
+        ("units_per_pixel_e", "0"),
+        ("max_iter", "1000"),
+        ("auto_iter", "true"),
+        ("show_location", "false"),
+        ("color_method", '"smooth"'),
+        # SA and glitch correction off: a fixed-iteration comparison render wants the fewest
+        # approximations/post-passes in play — and the multi-reference glitch-correction pass goes
+        # pathological (>1 h) at extreme depth (it rebuilds ~1700-bit references per glitch; see
+        # TODO.md "Open bugs"). Stripe-method sessions never showed it because aux methods skip
+        # correction — which is why corpus renders inherited from a stripe session looked fine
+        # while hermetic smooth renders hung. BLA still accelerates the deep iterate.
+        ("series_approx", "false"),
+        ("glitch_correct", "false"),
+        ("palette_idx", "0"),  # Ember
+        ("de", "false"),
+        ("light", "false"),
+        ("palette_anim", '"off"'),
+        ("use_custom_palette", "false"),
+        ("export_ss", str(SS)),
+        ("fractal", '"Mandelbrot"'),
+        ("julia_mode", "false"),
+        ("dual", "false"),
+    ]:
+        t = setk(t, key, val)
+    open(SESSION, "w", encoding="utf-8", newline="\n").write(t)
 
 
 def render_location(loc):
-    """Render one location through the tour renderer; returns the output PNG path."""
+    """Render one location via `--render`; returns the output PNG path.
+
+    The location goes on the COMMAND LINE (`--center`/`--zoom-log2`/`--iter`): `--render` is a
+    one-shot CLI renderer that always resets center+zoom from its flags (defaulting to the HOME
+    view when they are absent — a session-staged location is silently ignored, which once rendered
+    the corpus as twenty copies of the full set). `--zoom-log2` carries arbitrary depth; `--iter`
+    is honored verbatim (auto-iter off). The session staging above still pins what has no CLI
+    flag: coloring method, DE/lighting, HUD.
+    """
+    import math
     out_png = os.path.join(CORPUS, "renders", loc["slug"] + "-fractadyne.png")
-    stage_session(loc["iterations"])
-    with tempfile.TemporaryDirectory() as td:
-        tour = os.path.join(td, "loc.toml")
-        with open(tour, "w", newline="\n") as f:
-            f.write('name = "corpus %s"\npalette = "Ember"\n\n' % loc["slug"])
-            f.write("[[keyframe]]\n")
-            f.write('center_x = "%s"\ncenter_y = "%s"\n' % (loc["center_x"], loc["center_y"]))
-            f.write("mag_log10 = %.10f\n" % loc["mag_log10"])
-            f.write('fractal = "Mandelbrot"\ndual = false\nsecs = 0.0\nhold = 1.0\n')
-        frames = os.path.join(td, "frames")
-        os.makedirs(frames)
-        cmd = [
-            EXE, "--render-tour", tour,
-            "--size", "%dx%d" % (WIDTH, HEIGHT), "--ss", str(SS),
-            "--fps", "1", "--prefix", "frame", "--out", frames, "-y",
-        ]
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=1800)
-        pngs = sorted(f for f in os.listdir(frames) if f.endswith(".png"))
-        if not pngs:
-            sys.exit("no frames rendered for %s\nstdout: %s\nstderr: %s" % (loc["slug"], r.stdout[-2000:], r.stderr[-2000:]))
-        shutil.copyfile(os.path.join(frames, pngs[-1]), out_png)
+    stage_session(loc)
+    cmd = [
+        EXE, "--render", "--out", out_png, "--size", "%dx%d" % (WIDTH, HEIGHT),
+        "--center", loc["center_x"], loc["center_y"],
+        "--zoom-log2", "%.10f" % (loc["mag_log10"] * math.log2(10.0)),
+        "--iter", str(loc["iterations"]),
+        "--ss", str(SS),
+        "--palette", "0",  # Ember
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=3600)
+    if not os.path.exists(out_png):
+        sys.exit("no render for %s\nstdout: %s\nstderr: %s" % (loc["slug"], r.stdout[-2000:], r.stderr[-2000:]))
     return out_png
 
 
@@ -184,16 +232,18 @@ def write_catalog(locs):
          font-size:.78em; white-space:pre-wrap; word-break:break-all; }}
 </style>
 <h1>Fractadyne vs Kalles Fraktaler &mdash; reference render corpus</h1>
-<p>Ten locations from the full-set overview to 4.6e1105&times;, rendered by both apps from the exact same
+<p>Twenty locations from the full-set overview to 1.2e1008&times;, rendered by both apps from the exact same
 center / magnification / iteration cap for side-by-side structural comparison. Fractadyne renders (all
 ten) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
 With <code>maximum_reference_iterations</code> set in each F3 param (see README &mdash; F3&rsquo;s batch
 default is far too low for a zoomed view and blanks silently, which long masqueraded as a ~1e13&times;
-ceiling), <strong>F3 renders deep correctly here</strong>: locations 01&ndash;06 and 08&ndash;10 have
+ceiling), <strong>F3 renders deep correctly here</strong>: locations 01&ndash;06 and 08&ndash;20 have
 real, arm-for-arm F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The
 lone gap, 07 (1e30&times;), is a center-precision placeholder &mdash; its 34-digit seahorse center is
-too coarse for a reproducible cross-app match there, while 08 (83-digit), 09 (526-digit) and 10
-(1141-digit) carry far more digits and match far deeper.</p>
+too coarse for a reproducible cross-app match there, while every deeper location carries hundreds of
+center digits and matches. Locations 11&ndash;20 are user-saved Fraktaler-3 finds (1.7e124&times; to
+1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken
+verbatim.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a

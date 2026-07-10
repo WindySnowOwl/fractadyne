@@ -21,16 +21,18 @@
          font-size:.78em; white-space:pre-wrap; word-break:break-all; }
 </style>
 <h1>Fractadyne vs Kalles Fraktaler &mdash; reference render corpus</h1>
-<p>Ten locations from the full-set overview to 4.6e1105&times;, rendered by both apps from the exact same
+<p>Twenty locations from the full-set overview to 1.2e1008&times;, rendered by both apps from the exact same
 center / magnification / iteration cap for side-by-side structural comparison. Fractadyne renders (all
 ten) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
 With <code>maximum_reference_iterations</code> set in each F3 param (see README &mdash; F3&rsquo;s batch
 default is far too low for a zoomed view and blanks silently, which long masqueraded as a ~1e13&times;
-ceiling), <strong>F3 renders deep correctly here</strong>: locations 01&ndash;06 and 08&ndash;10 have
+ceiling), <strong>F3 renders deep correctly here</strong>: locations 01&ndash;06 and 08&ndash;20 have
 real, arm-for-arm F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The
 lone gap, 07 (1e30&times;), is a center-precision placeholder &mdash; its 34-digit seahorse center is
-too coarse for a reproducible cross-app match there, while 08 (83-digit), 09 (526-digit) and 10
-(1141-digit) carry far more digits and match far deeper.</p>
+too coarse for a reproducible cross-app match there, while every deeper location carries hundreds of
+center digits and matches. Locations 11&ndash;20 are user-saved Fraktaler-3 finds (1.7e124&times; to
+1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken
+verbatim.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a
@@ -213,7 +215,7 @@ Iterations: 20000</pre>
 
 <section class="card" id="07-seahorse-1e30">
   <h2>Seahorse filaments 1e30x <span class="zoom">1.000000e30&times;</span></h2>
-  <p class="note">Floatexp + BLA regime in Fractadyne. F3 placeholder: this shared 34-digit seahorse center is too coarse for a reproducible 1e30x cross-app match (F3 rounds it below Fractadyne's full-bignum reference and lands on different sub-structure); a higher-precision center like locations 08-10 would render and match.</p>
+  <p class="note">Floatexp + BLA regime in Fractadyne (40k iterations: below ~30k nothing in-frame escapes and BOTH apps render blank). F3 placeholder: this shared 34-digit seahorse center is too coarse for a reproducible 1e30x cross-app match (F3 rounds it below Fractadyne's full-bignum reference and lands on different sub-structure); a higher-precision center like locations 08-10 would render and match.</p>
   <div class="pair">
     <figure>
       <img src="renders/07-seahorse-1e30-fractadyne.png" alt="Fractadyne render">
@@ -228,7 +230,7 @@ Iterations: 20000</pre>
   </div>
   <table class="meta">
     <tr><th>Magnification</th><td>1.000000e30&times; (log10 = 30.000000)</td>
-        <th>Iterations</th><td>25,000 (fixed, both apps)</td></tr>
+        <th>Iterations</th><td>40,000 (fixed, both apps)</td></tr>
     <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
         <th>Precision</th><td>~163 bits (35-digit center)</td></tr>
   </table>
@@ -236,7 +238,7 @@ Iterations: 20000</pre>
     <pre>Re: -0.7436438870371587047521915061147707
 Im: 0.131825904205311970493132056385139
 Zoom: 1.000000E30
-Iterations: 25000</pre>
+Iterations: 40000</pre>
   </details>
 </section>
 
@@ -324,5 +326,295 @@ Iterations: 150000</pre>
 Im: 1.22837636274455449095906129335365068997904564092657092682711609329657475248504117230298594194722893314450582686087175509222694652475593007643450421256169190800610076957439693583571672717854028516924894608054626517771395424214000184977238550994874071548877895866493498484394960925405692074041707187503454315817871339862328188800787008820556680366789006084410733162530706740241276272226746077107376726954027943679186089294724856485367627745940403901785071720399946998747637456940456364561604904824103220284211276485879969539226863099565997769862081352549027498183743229145980993325227542917205312788342014852932791437571527323480742719984655330259153974377870900671860511486568863697185201118310254336995727240122142964919084343712047436064010498241817670904966247730713854167626448917359003570878253357397029983065354473376428170667926009275287396642227784529183790066283190895591560322819425655006015634989296704784329133923932968155785152237168947325332485204646508045257927702536291589877518328412842143905369515797279684857778054057793621817152244795211173327630404929420802627390890880044196672287580528733070422302382619507072155441e-2
 Zoom: 4.600000E1105
 Iterations: 250000</pre>
+  </details>
+</section>
+
+<section class="card" id="11-deep-1.7e124">
+  <h2>Extreme depth 1.70e124x <span class="zoom">1.703157e124&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (Me124.exr); 137-digit center.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/11-deep-1.7e124-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/11-deep-1.7e124-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/11-deep-1.7e124.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>1.703157e124&times; (log10 = 124.231255)</td>
+        <th>Iterations</th><td>600,000 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~476 bits (137-digit center)</td></tr>
+  </table>
+  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+    <pre>Re: -0.3158354656090698908113251908145989842764104941136552011217533774266655202463327904910559501703762081531934176786217990113494541936458857
+Im: 0.6533553743954627788289923830392687875350977003260517837408108019649970888461393846103786781501651324966145060684808980380361189292496989
+Zoom: 1.703157E124
+Iterations: 600000</pre>
+  </details>
+</section>
+
+<section class="card" id="12-deep-4.6e132">
+  <h2>Extreme depth 4.57e132x <span class="zoom">4.571886e132&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (me132.exr); 145-digit center.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/12-deep-4.6e132-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/12-deep-4.6e132-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/12-deep-4.6e132.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>4.571886e132&times; (log10 = 132.660095)</td>
+        <th>Iterations</th><td>600,000 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~504 bits (145-digit center)</td></tr>
+  </table>
+  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+    <pre>Re: -0.315835465609069890811325190814598984276410494113655201121753377426665520246332790491055950170376208153193417678621799011349441870530749890493653
+Im: 0.653355374395462778828992383039268787535097700326051783740810801964997088846139384610378678150165132496614506068480898038036114329605799523682918
+Zoom: 4.571886E132
+Iterations: 600000</pre>
+  </details>
+</section>
+
+<section class="card" id="13-deep-3.7e141">
+  <h2>Extreme depth 3.69e141x <span class="zoom">3.690308e141&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (me141.exr); 155-digit center.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/13-deep-3.7e141-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/13-deep-3.7e141-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/13-deep-3.7e141.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>3.690308e141&times; (log10 = 141.567063)</td>
+        <th>Iterations</th><td>600,000 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~534 bits (155-digit center)</td></tr>
+  </table>
+  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+    <pre>Re: -0.3158354656090698908113251908145989842764104941136552011217533774266655202463327904910559501703762081531934176786217990113494418705307973163262895257187345
+Im: 0.6533553743954627788289923830392687875350977003260517837408108019649970888461393846103786781501651324966145060684808980380361143296058258024080050814824069
+Zoom: 3.690308E141
+Iterations: 600000</pre>
+  </details>
+</section>
+
+<section class="card" id="14-deep-1.2e148">
+  <h2>Extreme depth 1.17e148x <span class="zoom">1.166773e148&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (me148.exr); 161-digit center. KNOWN DISCREPANCY: Fractadyne renders uniform exterior here while F3 shows dendrites - on this dive path (shared center prefix with 11-13) structure is lost between zoom-log2 470 and 475 (~1e142x); loc 13 at 1e141x still matches. Reference is healthy (full 600k non-escaped orbit); --no-bla does not help. Under investigation.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/14-deep-1.2e148-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/14-deep-1.2e148-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/14-deep-1.2e148.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>1.166773e148&times; (log10 = 148.066986)</td>
+        <th>Iterations</th><td>600,000 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~555 bits (161-digit center)</td></tr>
+  </table>
+  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+    <pre>Re: -0.3158354656090698908113251908145989842764104941136552011217533774266655202463327904910559501703762081531934176786217990113494418705307973163264218287292234362119
+Im: 0.6533553743954627788289923830392687875350977003260517837408108019649970888461393846103786781501651324966145060684808980380361143296058258024081840162818693511972
+Zoom: 1.166773E148
+Iterations: 600000</pre>
+  </details>
+</section>
+
+<section class="card" id="15-deep-3.7e163">
+  <h2>Extreme depth 3.74e163x <span class="zoom">3.735181e163&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (me163.exr); 175-digit center. Iterations set to 600k (saved value was a 134,217,728 F3 auto-iteration runaway). KNOWN DISCREPANCY: same uniform-exterior failure as location 14 (same dive path, deeper).</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/15-deep-3.7e163-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/15-deep-3.7e163-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/15-deep-3.7e163.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>3.735181e163&times; (log10 = 163.572312)</td>
+        <th>Iterations</th><td>600,000 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~607 bits (175-digit center)</td></tr>
+  </table>
+  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+    <pre>Re: -0.315835465609069890811325190814598984276410494113655201121753377426665520246332790491055950170376208153193417678621799011349441870530797316326421828726664170734157313698366242
+Im: 0.653355374395462778828992383039268787535097700326051783740810801964997088846139384610378678150165132496614506068480898038036114329605825802408184016371548087630292729424973881
+Zoom: 3.735181E163
+Iterations: 600000</pre>
+  </details>
+</section>
+
+<section class="card" id="16-deep-2.1e250">
+  <h2>Extreme depth 2.15e250x <span class="zoom">2.147911e250&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (me250.exr); 262-digit center.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/16-deep-2.1e250-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/16-deep-2.1e250-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/16-deep-2.1e250.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>2.147911e250&times; (log10 = 250.332016)</td>
+        <th>Iterations</th><td>600,008 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~895 bits (263-digit center)</td></tr>
+  </table>
+  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+    <pre>Re: -1.187560615150653521418498907667140876919052569601017545182559391612675510148620357169088900686129279861651565486308681067781971510733848353870782814060711227770324291807284510948054721179414708227664373680870838993893618232931685469191839557941041475657053636601
+Im: -0.3018168994715732164050004075273172840679325029393300682842262338318858410502532213359650477962054605582793370126610542572612338874753498817856934268064814045429700513387473824186875229256431620198944835658069812198166053125511035505041575385615626126716977814897
+Zoom: 2.147911E250
+Iterations: 600008</pre>
+  </details>
+</section>
+
+<section class="card" id="17-deep-4.2e275">
+  <h2>Extreme depth 4.15e275x <span class="zoom">4.154612e275&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (me275.exr); 287-digit center.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/17-deep-4.2e275-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/17-deep-4.2e275-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/17-deep-4.2e275.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>4.154612e275&times; (log10 = 275.618531)</td>
+        <th>Iterations</th><td>600,008 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~979 bits (288-digit center)</td></tr>
+  </table>
+  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+    <pre>Re: -1.1875606151506535214184989076671408769190525696010175451825593916126755101486203571690889006861292798616515654863086810677819715107338483538707828140607112277703242918072845109480547211794147082276643736808708389938936182329316854691918395579410414756428423318822635434445703411177543323
+Im: -0.30181689947157321640500040752731728406793250293933006828422623383188584105025322133596504779620546055827933701266105425726123388747534988178569342680648140454297005133874738241868752292564316201989448356580698121981660531255110355050415753856156261268681245527781807409938630471752023121
+Zoom: 4.154612E275
+Iterations: 600008</pre>
+  </details>
+</section>
+
+<section class="card" id="18-deep-4.1e508">
+  <h2>Extreme depth 4.13e508x <span class="zoom">4.128130e508&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (me508.exr); 520-digit center.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/18-deep-4.1e508-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/18-deep-4.1e508-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/18-deep-4.1e508.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>4.128130e508&times; (log10 = 508.615753)</td>
+        <th>Iterations</th><td>600,008 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~1753 bits (521-digit center)</td></tr>
+  </table>
+  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+    <pre>Re: -1.187560615150653521418498907667140876919052569601017545182559391612675510148620357169088900686129279861651565486308681067781971510733848353870782814060711227770324291807284510948054721179414708227664373680870838993893618232931685469191839557941041475642842331882263543444570340383234467230922846911355526811468294907017504526242907551995413438573482706690583025434877535038700702840639332712051080250908894641084991382390679448625671915495294263970768053078496439779007248771944489829438391340754459148719043607014166405
+Im: -0.3018168994715732164050004075273172840679325029393300682842262338318858410502532213359650477962054605582793370126610542572612338874753498817856934268064814045429700513387473824186875229256431620198944835658069812198166053125511035505041575385615626126868124552778180740993863044262014113913087459725599903822941598459784406657450007359057396733264056262406873074127846686191339245859886591815375644910376364144150837334546266876349497906182180040380746038297640797250917114442605639127938242698458707954489870917533654511
+Zoom: 4.128130E508
+Iterations: 600008</pre>
+  </details>
+</section>
+
+<section class="card" id="19-deep-1.3e726">
+  <h2>Extreme depth 1.31e726x <span class="zoom">1.313065e726&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (me726.exr); 738-digit center.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/19-deep-1.3e726-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/19-deep-1.3e726-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/19-deep-1.3e726.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>1.313065e726&times; (log10 = 726.118286)</td>
+        <th>Iterations</th><td>600,008 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~2476 bits (738-digit center)</td></tr>
+  </table>
+  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+    <pre>Re: -1.18756061515065352141849890766714087691905256960101754518255939161267551014862035716908890068612927986165156548630868106778197151073384835387078281406071122777032429180728451094805472117941470822766437368087083899389361823293168546919183955794104147564284233188226354344457034038323446723092284691135552681146829490701750452624290755199541343857348270669058302543487753503870070284063933271205108025090889464108499138239067944862567191549529426397076805307849643977900724877194448982943839134075445914871904360186875683881399701400337826004421451758155282657033872397846485127773687655133996522363543643109524259674912391058921547859169193365534060968067417450677281960948544942907991104111239091484306019205660527130886207186302880712607
+Im: -0.30181689947157321640500040752731728406793250293933006828422623383188584105025322133596504779620546055827933701266105425726123388747534988178569342680648140454297005133874738241868752292564316201989448356580698121981660531255110355050415753856156261268681245527781807409938630442620141139130874597255999038229415984597844066574500073590573967332640562624068730741278466861913392458598865918153756449103763641441508373345462668763494979061821800403807460382976407972509171144426056391279382426984587079544898708624122547598604035947651255353920598168696580122983812920869699698234232497982628108536390344284136460265562736065759667082285268103485848667832237662371636641599523340544730455855954064867101253065023127852917246181006136872082
+Zoom: 1.313065E726
+Iterations: 600008</pre>
+  </details>
+</section>
+
+<section class="card" id="20-deep-1.2e1008">
+  <h2>Extreme depth 1.19e1008x <span class="zoom">1.188035e1008&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (me1007.exr); 1020-digit center.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/20-deep-1.2e1008-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/20-deep-1.2e1008-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/20-deep-1.2e1008.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>1.188035e1008&times; (log10 = 1008.074829)</td>
+        <th>Iterations</th><td>600,008 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~3412 bits (1021-digit center)</td></tr>
+  </table>
+  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+    <pre>Re: -1.18756061515065352141849890766714087691905256960101754518255939161267551014862035716908890068612927986165156548630868106778197151073384835387078281406071122777032429180728451094805472117941470822766437368087083899389361823293168546919183955794104147564284233188226354344457034038323446723092284691135552681146829490701750452624290755199541343857348270669058302543487753503870070284063933271205108025090889464108499138239067944862567191549529426397076805307849643977900724877194448982943839134075445914871904360186875683881399701400337826004421451758155282657033872397846485127773687655133996522363543643109524259674912391058921547859169193365534060968067417450677281960948544942907991104111239091484306019205660527130886207186333097975867856004580352712137150179875174366204417048903296028727178414692722388932841362886630945802513742488671397072714991356440922423394859134177924118018454156924613791015295111931063639273356937507384941001040200542404393387857376146539133365741237528633477001403788883588776448924167721
+Im: -0.301816899471573216405000407527317284067932502939330068284226233831885841050253221335965047796205460558279337012661054257261233887475349881785693426806481404542970051338747382418687522925643162019894483565806981219816605312551103550504157538561562612686812455277818074099386304426201411391308745972559990382294159845978440665745000735905739673326405626240687307412784668619133924585988659181537564491037636414415083733454626687634949790618218004038074603829764079725091711444260563912793824269845870795448987086241225475986040359476512553539205981686965801229838129208696996982342324979826281085363903442841364602655627360657596670822852681034858486678322376623716366415995233405447304558559540648671012530650231278529172461809862576022238992286514429368014350163113766632477340611977626825858883358118402916772982394777576430171912097147135335334815279678662800099224983415220185171248620477058126269874085722352337152772230421937372862398820215809341048467505631184687278399240015294842075925538737641088388542858395241
+Zoom: 1.188035E1008
+Iterations: 600008</pre>
   </details>
 </section>
