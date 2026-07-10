@@ -318,6 +318,15 @@ fn finish_reference(
         _ => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
     };
     let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
+    if trace_enabled() {
+        eprintln!(
+            "[fd-ref] len={len} iter={orbit_iter} prec={orbit_prec} partial={partial} \
+             escaped={} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={}",
+            orbit_tail.is_none() && !partial,
+            sa.skip,
+            bla.len(),
+        );
+    }
     RecomputeResult {
         orbit,
         orbit_len: len,
@@ -728,10 +737,14 @@ impl FractadyneApp {
         }
         let eff_iter = if self.render_cfg.auto_iter {
             vp.recommended_max_iter(self.render_cfg.max_iter)
+                .min(zoom_iter_cap(log2mag).max(256))
         } else {
+            // Auto-iter OFF is an explicit instruction — honor the count verbatim. The cap is an
+            // auto-mode nicety; applied here it silently rendered deep validation-corpus locations
+            // interior-black (their structure escapes above the cap) while Fraktaler-3 used the
+            // full count, breaking the corpus contract of "same iterations, both apps".
             self.render_cfg.max_iter
-        }
-        .min(zoom_iter_cap(log2mag).max(256));
+        };
         let scale = vp.gpu_scale();
         Some(self.export_reference_inputs(vp, julia, mode, eff_iter, vp.precision, scale.span_mantissa, scale.delta_exp))
     }
@@ -784,13 +797,18 @@ impl FractadyneApp {
         let height = ((width as f64) * vp.height_px / vp.width_px).round().max(1.0) as u32;
         let mag = vp.magnification(); // saturates to ∞ past 1e308×; fine for the mode compares
         let eff_iter = if self.render_cfg.auto_iter {
+            // Cap at the zoom-appropriate count: avoids noise from over-resolving sub-pixel dust,
+            // and keeps the export fast/responsive.
             vp.recommended_max_iter(self.render_cfg.max_iter)
+                .min(zoom_iter_cap(log2mag).max(256))
         } else {
+            // Auto-iter OFF is an explicit instruction — honor the count verbatim (must stay in
+            // lock-step with `export_reference_inputs_for` above). Capping it silently rendered
+            // deep validation-corpus locations interior-black (their structure escapes above the
+            // cap) while Fraktaler-3 used the full count — breaking the corpus contract of "same
+            // iterations, both apps".
             self.render_cfg.max_iter
-        }
-        // Cap at the zoom-appropriate count (same as the live view): avoids noise from
-        // over-resolving sub-pixel dust, and keeps the export fast/responsive.
-        .min(zoom_iter_cap(log2mag).max(256));
+        };
         let mode = RenderMode::select(self.fractal.supports_perturbation(), mag);
         let precision = vp.precision; // maintained by the viewport; valid at any depth
         let (cx, cy) = vp.center_f64();

@@ -2147,7 +2147,10 @@ impl FractadyneApp {
             self.export.ss = ss.clamp(1, 8);
         }
         if let Some(it) = val("--iter").and_then(|s| s.parse::<u32>().ok()) {
-            self.render_cfg.max_iter = it.clamp(16, 200_000);
+            // An explicit CLI count is honored (the validation corpus renders fixed-iteration
+            // frames up to the millions); the ceiling only guards against absurd typos — the real
+            // practical bound is the reference-build time, which is the caller's choice to spend.
+            self.render_cfg.max_iter = it.clamp(16, 100_000_000);
             self.render_cfg.auto_iter = false;
         }
         if let Some(p) = val("--palette").and_then(|s| s.parse::<usize>().ok()) {
