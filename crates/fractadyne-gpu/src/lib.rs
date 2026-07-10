@@ -92,6 +92,12 @@ pub struct Vignette {
 }
 
 /// When the iteration pass must re-run.
+///
+/// NOTE for anyone adding a field: the app's tiled settle (see `MandelbrotParams::tile`) re-renders
+/// SCISSORED tiles under an app-side key that must change whenever this key changes — a key change
+/// the app misses re-renders only the current tile rect and splices new-output data into an
+/// old-output frame. If the new field changes the iterate's OUTPUT, mirror it in the app's
+/// `settings_hash` (fractadyne-app/src/render.rs, build_params).
 #[derive(Clone, Copy, PartialEq)]
 struct IterKey {
     ref_offset: RefOffset,
@@ -112,9 +118,6 @@ struct IterKey {
     bla_on: u32,
 }
 
-/// Per-view GPU resources (one set per on-screen panel, keyed by `view_id`). Each
-/// view owns its offscreen iteration texture, uniforms, orbit buffer, and caching
-/// state so two panels (e.g. Mandelbrot + Julia) can render without clobbering.
 /// GPU-timestamp capture around the LIVE `iterate_pass`, so the app can size deep frames against what
 /// the iterate ACTUALLY costs on this GPU at this view.
 ///
@@ -221,9 +224,15 @@ impl IterTiming {
     }
 }
 
+/// Per-view GPU resources (one set per on-screen panel, keyed by `view_id`). Each
+/// view owns its offscreen iteration texture, uniforms, orbit buffer, and caching
+/// state so two panels (e.g. Mandelbrot + Julia) can render without clobbering.
 struct ViewResources {
     /// GPU timing for the live iterate pass; `None` when the device lacks `TIMESTAMP_QUERY`.
     timing: Option<IterTiming>,
+    /// The tile rect rendered last (base px), alongside `last_iter_key`: a tiled settle re-renders
+    /// when the RECT advances even though the key (view/orbit/size) is unchanged.
+    last_tile: Option<[u32; 4]>,
     iter_uniform: wgpu::Buffer,
     color_uniform: wgpu::Buffer,
     iter_bg: wgpu::BindGroup,
@@ -248,6 +257,9 @@ struct ViewResources {
 struct Renderer {
     iter_pipeline: wgpu::RenderPipeline,
     color_pipeline: wgpu::RenderPipeline,
+    /// Nearest-neighbour upscale of the old iteration/aux textures into a resized pair — runs once
+    /// when a tiled settle grows the texture, so the display never drops to black mid-refine.
+    seed_pipeline: wgpu::RenderPipeline,
     iter_bgl: wgpu::BindGroupLayout,
     color_bgl: wgpu::BindGroupLayout,
     views: std::collections::HashMap<u32, ViewResources>,
@@ -450,10 +462,17 @@ impl Renderer {
             device, &shader, &color_layout, "fs_color", &[target_format],
             "fractadyne.color_pipeline",
         );
+        // Upscale-copy for a tiled settle's resize (see `MandelbrotParams::tile`). Shares the color
+        // pass's layout: fs_seed reads only the two texture bindings.
+        let seed_pipeline = fullscreen_pipeline(
+            device, &shader, &color_layout, "fs_seed", &[ITER_FORMAT, ITER_FORMAT],
+            "fractadyne.seed_pipeline",
+        );
 
         Self {
             iter_pipeline,
             color_pipeline,
+            seed_pipeline,
             iter_bgl,
             color_bgl,
             views: std::collections::HashMap::new(),
@@ -492,6 +511,7 @@ impl ViewResources {
 
         Self {
             timing: IterTiming::new(device),
+            last_tile: None,
             iter_uniform,
             color_uniform,
             iter_bg,
@@ -521,7 +541,53 @@ impl ViewResources {
         );
         self.size = size;
         self.last_iter_key = None;
+        self.last_tile = None;
         self.rendered = false; // the new texture is blank until re-iterated
+    }
+
+    /// Resize for a tiled settle: like [`resize`](Self::resize), but seed the new textures with a
+    /// nearest-neighbour upscale of the old ones before any tile lands. The refine then happens in
+    /// place — coarse everywhere, sharpening tile by tile — instead of against a black texture.
+    /// `rendered` stays true: the seeded content is real (just coarse), so reprojection and the
+    /// color pass may keep using it mid-grid.
+    fn seeded_resize(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        color_bgl: &wgpu::BindGroupLayout,
+        seed_pipeline: &wgpu::RenderPipeline,
+        size: [u32; 2],
+    ) {
+        let old_tex = std::mem::replace(&mut self.tex_view, make_iter_texture(device, size));
+        let old_aux = std::mem::replace(&mut self.aux_view, make_iter_texture(device, size));
+        self.color_bg = make_color_bg(
+            device, color_bgl, &self.color_uniform, &self.tex_view, &self.aux_view,
+        );
+        // fs_seed reads only the texture bindings; the uniform slot is filled to satisfy the layout.
+        let seed_bg = make_color_bg(device, color_bgl, &self.color_uniform, &old_tex, &old_aux);
+        {
+            let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                view: v,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fractadyne.seed_pass"),
+                color_attachments: &[attach(&self.tex_view), attach(&self.aux_view)],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(seed_pipeline);
+            pass.set_bind_group(0, &seed_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        self.size = size;
+        self.last_iter_key = None;
+        self.last_tile = None;
     }
 
     fn ensure_orbit_capacity(
@@ -591,6 +657,14 @@ pub struct MandelbrotParams {
     /// sizes deep floatexp frames against it; see [`IterTiming`]. `None` disables capture. Written a
     /// couple of frames after the pass it describes, and only for frames that actually re-iterate.
     pub iterate_ms: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Tiled settle: `Some([x, y, w, h])` in BASE pixels renders only that sub-rect of the iteration
+    /// texture this frame (scissored, `LoadOp::Load`), leaving the rest intact. The uniforms are
+    /// identical to a full-frame render and the fragment coordinates are absolute in the texture, so
+    /// a completed grid of tiles is exactly the frame ONE dispatch would have produced — just split
+    /// into dispatches the GPU watchdog and the UI thread can tolerate. A zero-area rect is a "hold":
+    /// render nothing, keep the texture (used when another view owns this frame's tile slot).
+    /// `None` = the ordinary full-frame path, unchanged.
+    pub tile: Option<[u32; 4]>,
     pub orbit: Arc<Vec<[f32; 4]>>,
     /// Changes whenever `orbit` changes — triggers a GPU re-upload.
     pub orbit_id: u64,
@@ -696,6 +770,7 @@ impl CallbackTrait for MandelbrotParams {
         let iter_bgl = &r.iter_bgl;
         let color_bgl = &r.color_bgl;
         let iter_pipeline = &r.iter_pipeline;
+        let seed_pipeline = &r.seed_pipeline;
         let view = r.views.get_mut(&self.view_id).unwrap();
 
         // Drain any timestamp readback armed on an earlier frame before this frame may re-arm it.
@@ -723,10 +798,22 @@ impl CallbackTrait for MandelbrotParams {
         // been rendered into it). Skip the resize so the texture isn't cleared, and color it
         // with the ss it was built at.
         let reproject = self.reproject == 1 && view.rendered;
-        if !reproject && size != view.size {
-            view.resize(device, color_bgl, size);
+        // A zero-area tile is a "hold" frame (another view owns this frame's tile slot): render
+        // nothing, keep the texture exactly as it is — like a reprojection with no translation.
+        let hold = self.tile.is_some_and(|t| t[2] == 0 || t[3] == 0);
+        if !reproject && !hold && size != view.size {
+            if self.tile.is_some() && view.rendered {
+                // Entering (or re-entering) a tiled settle at a new texture size: seed the resized
+                // textures from the old content so the refine happens in place, not against black.
+                view.seeded_resize(device, encoder, color_bgl, seed_pipeline, size);
+            } else {
+                view.resize(device, color_bgl, size);
+            }
         }
-        let color_ss = if reproject { view.last_ss.max(1) } else { ss };
+        // A held frame (reprojection or tile-hold) displays the EXISTING texture, so it must be
+        // colored at the ss and size it was built with, not this frame's request.
+        let held = reproject || hold;
+        let color_ss = if held { view.last_ss.max(1) } else { ss };
 
         // Coloring uniform is cheap — refresh every frame so recolor is instant.
         let cu = ColorUniforms {
@@ -765,7 +852,7 @@ impl CallbackTrait for MandelbrotParams {
             // fill the view. Native (settled) frozen frames are unchanged. (Trade-off: a window
             // resize *during* a reprojection no longer aspect-fits until the next real frame — rare
             // and self-correcting.)
-            out_res: if reproject {
+            out_res: if held {
                 [
                     (view.size[0] as f32 / color_ss as f32).max(1.0),
                     (view.size[1] as f32 / color_ss as f32).max(1.0),
@@ -810,7 +897,10 @@ impl CallbackTrait for MandelbrotParams {
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
         };
-        if !reproject && view.last_iter_key != Some(key) {
+        // Re-render when the key changed (new view/orbit/size) OR when a tiled settle advanced to a
+        // new rect under an unchanged key. A completed grid keeps sending its final rect, so
+        // `(key, tile)` stops changing and the frame is served from the texture like any cached one.
+        if !reproject && !hold && (view.last_iter_key != Some(key) || view.last_tile != self.tile) {
             // Per-texel step *mantissa*: span_mantissa (= span · 2^-delta_exp, already O(1))
             // divided by the texture dim. The shared exponent carries the true scale, so no
             // tiny span / huge 2^-delta_exp ever appears here → no underflow/overflow at depth.
@@ -855,14 +945,29 @@ impl CallbackTrait for MandelbrotParams {
                 .timing
                 .as_ref()
                 .is_some_and(|t| t.state == TimingState::Idle);
+            // Tile rect in TEXTURE pixels (base px × ss), clamped inside the target. Fragment
+            // coordinates are absolute in the texture, so a scissored draw fills exactly this
+            // sub-rect with the values a full-frame draw would have put there.
+            let tile_px = self.tile.map(|t| {
+                let x = t[0].saturating_mul(ss).min(size[0]);
+                let y = t[1].saturating_mul(ss).min(size[1]);
+                let w = t[2].saturating_mul(ss).min(size[0] - x);
+                let h = t[3].saturating_mul(ss).min(size[1] - y);
+                [x, y, w, h]
+            });
             {
+                // A tile must compose with the tiles (and seed) already in the texture, so it loads
+                // rather than clears. Full frames clear, as before. (`view.rendered` guards the
+                // cold-start corner: a brand-new texture is zero-initialized either way.)
+                let load = if tile_px.is_some() && view.rendered {
+                    wgpu::LoadOp::Load
+                } else {
+                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                };
                 let attach = |v| Some(wgpu::RenderPassColorAttachment {
                     view: v,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
+                    ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                 });
                 let ts_writes = arm_ts.then(|| wgpu::RenderPassTimestampWrites {
                     query_set: &view.timing.as_ref().unwrap().qs,
@@ -876,6 +981,9 @@ impl CallbackTrait for MandelbrotParams {
                     timestamp_writes: ts_writes,
                     occlusion_query_set: None,
                 });
+                if let Some(t) = tile_px {
+                    pass.set_scissor_rect(t[0], t[1], t[2], t[3]);
+                }
                 pass.set_pipeline(iter_pipeline);
                 pass.set_bind_group(0, &view.iter_bg, &[]);
                 pass.draw(0..3, 0..1);
@@ -887,6 +995,7 @@ impl CallbackTrait for MandelbrotParams {
                 t.state = TimingState::Recorded;
             }
             view.last_iter_key = Some(key);
+            view.last_tile = self.tile;
             view.last_ss = ss; // remember the ss this texture was built at (for reprojection)
             view.rendered = true; // the texture now holds a real frame (survives orbit swaps)
         }

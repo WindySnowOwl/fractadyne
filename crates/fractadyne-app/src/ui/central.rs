@@ -711,7 +711,10 @@ impl FractadyneApp {
                     1
                 } else {
                     let ss = aa_ramp(self.pointer.settle_frame[0], self.render_cfg.aa);
-                    if ss < self.render_cfg.aa {
+                    // Hold the ramp while a tiled settle is mid-grid: advancing ss changes the
+                    // iterate key, which would restart the grid every few frames and the view
+                    // would never finish sharpening. Resumes the frame after the grid completes.
+                    if ss < self.render_cfg.aa && !self.perf.tile_pending[0] {
                         self.pointer.settle_frame[0] += 1;
                         self.schedule_repaint(ctx);
                     }
@@ -752,6 +755,9 @@ impl FractadyneApp {
                     }
                     None
                 };
+                // Only the live view may start a tiled settle (the profiling/benchmark callers of
+                // `build_params` time single dispatches).
+                self.allow_tiled_settle = true;
                 let params = self.build_params(
                     center_bf,
                     center,
@@ -767,6 +773,11 @@ impl FractadyneApp {
                     0,
                     reproject,
                 );
+                self.allow_tiled_settle = false;
+                // A settle grid in progress needs the next frame promptly — one tile per frame.
+                if self.perf.tile_pending[0] {
+                    self.schedule_repaint(ctx);
+                }
                 add_mandelbrot(ui.painter(), rect, params);
 
                 // Orbit overlay for the point under the cursor — or, during a tour, a scripted point.

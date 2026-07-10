@@ -1115,6 +1115,32 @@ struct ColorU {
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
 @group(0) @binding(2) var aux_tex: texture_2d<f32>;
 
+// ---------------------------------------------------------------------------
+// Seed pass (tiled settle): nearest-neighbour upscale of the previous
+// iteration + aux textures into a freshly resized pair, so a tiled settle
+// starts from the coarse frame it is refining instead of from black. Raw
+// iteration data upscales losslessly-in-meaning (same values, coarser grid),
+// so the display before the first tile lands is exactly the blocky image the
+// user was already seeing. Reuses the color pass's bind group layout (the
+// uniform at binding 0 is bound but unread). textureLoad, not a sampler:
+// ITER_FORMAT is rgba32float, which is not filterable without an optional
+// device feature.
+
+struct SeedOut {
+    @location(0) tex: vec4<f32>,
+    @location(1) aux: vec4<f32>,
+}
+
+@fragment
+fn fs_seed(in: VsOut) -> SeedOut {
+    let dims = vec2<f32>(textureDimensions(iter_tex));
+    let p = vec2<i32>(clamp(in.uv * dims, vec2<f32>(0.0), dims - vec2<f32>(1.0)));
+    var out: SeedOut;
+    out.tex = textureLoad(iter_tex, p, 0);
+    out.aux = textureLoad(aux_tex, p, 0);
+    return out;
+}
+
 fn palette(t_in: f32) -> vec3<f32> {
     let t = fract(t_in);
     var col = cu.stops[0].xyz;

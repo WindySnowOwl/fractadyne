@@ -35,6 +35,35 @@ pub(crate) const TDR_BOOTSTRAP_STEPS: u64 = 400_000_000;
 /// Never exceed this even if a view measures absurdly cheap (a lone quick interval shouldn't uncork a
 /// multi-second dispatch).
 pub(crate) const TDR_STEPS_CEIL: u64 = 300_000_000_000;
+/// Most budget-sized dispatches a tiled settle may spend sharpening one frame. Bounds both the total
+/// settle time (~tiles × TDR_BUDGET_MS of GPU work) and how far the settled resolution may exceed
+/// what a single dispatch affords; a view too costly even for this many tiles renders shrunk, tiled.
+pub(crate) const TDR_MAX_TILES: u64 = 16;
+
+/// One view's tiled-settle progress. `None` geometry = ARMED: the view has rendered its coarse
+/// single-dispatch frame under this key and the next settled frame may start the grid. Tiles then
+/// advance one per app frame, center-out.
+pub(crate) struct TileGrid {
+    /// `(orbit_id, gpu_iter, view_gen, panel_px, settings_hash)` — identifies the exact frame
+    /// content being refined. The generation counter stands in for the view position: at 1e106× the
+    /// f64 center is degenerate (nearby views project to identical values), so instead ANY motion
+    /// frame (interacting, reproject, autopilot) bumps the generation, invalidating the grid.
+    /// Composing tiles over a texture whose content belongs to a different view would splice two
+    /// views into one image. `panel_px` is the RAW panel resolution, before any budget-derived
+    /// shrink: the shrunk resolution jitters with the budget (that jitter is exactly what the
+    /// geometry pin exists to absorb), but the panel itself only changes on a real window/layout
+    /// resize — which must invalidate the grid, or a completed pin would keep serving the old-size
+    /// frame forever. `settings_hash` covers every iterate-affecting setting the GPU's IterKey
+    /// watches (coloring method / stripe / trap / SA / BLA / Julia c): a setting change under a
+    /// pinned grid must re-arm it, because the GPU-side re-render is scissored to the current tile
+    /// and would otherwise splice new-settings data into an old-settings frame.
+    pub key: (u64, u32, u64, [u32; 2], u64),
+    /// `(resolution, ss, tile side in base px)` — frozen when the grid starts, so a budget update
+    /// mid-grid can't reshape the rects underneath the cursor. `None` until the first tiled frame.
+    pub geo: Option<([u32; 2], u32, u32)>,
+    /// Next tile index (in center-out order) to render.
+    pub next: u32,
+}
 
 /// `FRACTADYNE_TRACE=1` prints the per-frame GPU sizing decision (resolution, ss, iteration cap,
 /// nominal steps, watchdog budget) to stderr.
@@ -969,6 +998,82 @@ impl FractadyneApp {
         fractadyne_gpu::color_iter_buffer(device, queue, &req, &buf).ok()
     }
 
+    /// Advance a view's tiled settle by one tile and return its rect (base px). Grid geometry is
+    /// frozen at grid start; the cursor walks the tiles CENTER-OUT, so the part of the image the
+    /// user is looking at sharpens first. Returns a zero-area "hold" rect when another view already
+    /// spent this frame's tile (two budget-sized dispatches in one submission could pair up past the
+    /// watchdog), and repeats the final rect once the grid is complete (the GPU dedupes it, so a
+    /// finished view costs nothing per frame).
+    fn next_settle_tile(
+        &mut self,
+        vidx: usize,
+        resolution: [u32; 2],
+        ss: u32,
+        gpu_iter: u32,
+        tdr_steps: u64,
+    ) -> [u32; 4] {
+        let Some(state) = self.perf.tile_state[vidx].as_mut() else {
+            return [0, 0, 0, 0]; // unreachable: `tiling` guarantees an armed state
+        };
+        // Freeze geometry on the first tile: the side is what one dispatch budget affords at this
+        // ss/iteration count, so every tile lands near TDR_BUDGET_MS. A mid-grid budget update
+        // reshapes nothing; it applies to the NEXT grid (or the next ss stage).
+        let (res, geo_ss, side) = match state.geo {
+            Some(g) if g.0 == resolution && g.1 == ss => g,
+            _ => {
+                let per_px = (gpu_iter.max(1) as u64).saturating_mul((ss as u64) * (ss as u64));
+                let side = ((tdr_steps / per_px.max(1)) as f64).sqrt() as u32;
+                let side = side.clamp(16, resolution[0].max(resolution[1]).max(16));
+                state.geo = Some((resolution, ss, side));
+                state.next = 0;
+                (resolution, ss, side)
+            }
+        };
+        let _ = geo_ss;
+        let cols = res[0].div_ceil(side).max(1);
+        let rows = res[1].div_ceil(side).max(1);
+        let n = cols * rows;
+        // Center-out visit order: sort tile indices by their center's distance from the grid center.
+        // n ≤ ~TDR_MAX_TILES + rounding, so sorting per frame is trivial.
+        let mut order: Vec<u32> = (0..n).collect();
+        let (cx, cy) = ((cols as f64 - 1.0) / 2.0, (rows as f64 - 1.0) / 2.0);
+        let dist = |i: u32| {
+            let (x, y) = ((i % cols) as f64 - cx, (i / cols) as f64 - cy);
+            x * x + y * y
+        };
+        order.sort_by(|&a, &b| dist(a).partial_cmp(&dist(b)).unwrap_or(std::cmp::Ordering::Equal));
+        let done = state.next >= n;
+        let idx = order[state.next.min(n - 1) as usize];
+        let rect = |i: u32| {
+            let x = (i % cols) * side;
+            let y = (i / cols) * side;
+            [x, y, side.min(res[0] - x), side.min(res[1] - y)]
+        };
+        if done {
+            self.perf.tile_pending[vidx] = false;
+            return rect(idx); // repeat the final rect: (key, tile) unchanged → GPU skips
+        }
+        // Hold while the OTHER view is busy: its tile (turn token), its own budget-sized
+        // re-iterate (two ~TDR_BUDGET_MS dispatches in one egui submission pair up toward the
+        // watchdog), or the user interacting in it (a ~1 s tile per frame would pin the
+        // interactive panel at ~1 fps for the grid's whole duration). Draw order means the
+        // guard sees the other view's markers one frame late in one direction — a residual,
+        // rare single overlap, still inside the watchdog with TDR_BUDGET_MS' ~2.2x margin.
+        let other = 1 - vidx;
+        let f = self.perf.frame_idx;
+        if self.perf.tile_turn == f
+            || f.saturating_sub(self.perf.fe_iter_frame[other]) <= 1
+            || f.saturating_sub(self.perf.interact_frame[other]) <= 1
+        {
+            self.perf.tile_pending[vidx] = true;
+            return [0, 0, 0, 0];
+        }
+        self.perf.tile_turn = self.perf.frame_idx;
+        state.next += 1;
+        self.perf.tile_pending[vidx] = state.next < n;
+        rect(idx)
+    }
+
     /// Build the GPU params for one fractal view, computing the perturbation
     /// reference (deep Mandelbrot) or selecting the direct df32 path. Shared by the
     /// single view and both panels of the dual view.
@@ -1176,6 +1281,92 @@ impl FractadyneApp {
         if !offscreen && !will_reproject {
             self.perf.frozen_budget[vidx] = tdr_steps;
         }
+        // TILED SETTLE. A single dispatch caps a settled deep frame at whatever resolution fits the
+        // watchdog budget — at a worst-case interior view that is a fraction of the panel, displayed
+        // upscaled and permanently blocky. So once the view is SETTLED, spend up to TDR_MAX_TILES
+        // budget-sized dispatches instead: keep (near-)native resolution and render it as a grid of
+        // scissored tiles, one per frame, composing into exactly the frame one big dispatch would
+        // have produced. Motion is untouched — it keeps the cheap shrunk single-dispatch frames.
+        //
+        // Any motion invalidates the grid via a view GENERATION (the f64 center cannot key a view at
+        // depth — see `TileGrid::key`), and a grid only STARTS after one coarse full frame has
+        // rendered under the same key (the ARMED step): that frame is what guarantees the texture the
+        // tiles compose over shows this view's content everywhere, and it is also what the seeded
+        // resize upscales. Requires a CONVERGED budget (`fe_budget_ok`): grids sized off a
+        // still-climbing budget restart at every measurement, and bootstrap-sized tiles would mean
+        // hundreds of dispatches.
+        if interacting || will_reproject || self.autopilot.active {
+            self.perf.view_gen[vidx] = self.perf.frame_idx;
+        }
+        if interacting {
+            self.perf.interact_frame[vidx] = self.perf.frame_idx;
+        }
+        let can_tile = is_fe
+            && self.allow_tiled_settle
+            && !offscreen
+            && !interacting
+            && !will_reproject
+            && self.perf.fe_budget[vidx] != 0;
+        // Everything the ITERATE's output depends on that isn't covered by orbit_id / gen /
+        // resolution, folded to one hash. The GPU re-renders whenever ITS IterKey changes
+        // (color method, stripe frequency, trap type, SA/BLA toggles, Julia c, …) — but under a
+        // pinned grid that re-render is SCISSORED to the current tile, so any such change the
+        // app-side key misses would update one tile rect and leave the rest of the texture holding
+        // data computed for the OLD settings, cached indefinitely (e.g. switching Smooth→Stripe
+        // would show stripe coloring reading stale zero aux everywhere but one corner). Any field
+        // added to the GPU IterKey that changes the iterate's OUTPUT must be reflected here.
+        let settings_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::hash::DefaultHasher::new();
+            self.coloring.color_method.to_u32().hash(&mut h);
+            self.coloring.stripe_freq.to_bits().hash(&mut h);
+            self.coloring.trap_type.to_u32().hash(&mut h);
+            self.render_cfg.series_approx.hash(&mut h);
+            self.render_cfg.use_bla.hash(&mut h);
+            eff_iter.hash(&mut h);
+            if julia {
+                self.julia_c.0.to_bits().hash(&mut h);
+                self.julia_c.1.to_bits().hash(&mut h);
+            }
+            h.finish()
+        };
+        // `resolution` here is still the raw panel size: the motion res_scale doesn't apply to
+        // settled frames, and the budget shrink / geometry pin happen below.
+        let view_key = (
+            self.ref_cache[vidx].orbit_id,
+            gpu_iter,
+            self.perf.view_gen[vidx],
+            resolution,
+            settings_hash,
+        );
+        let tiling = can_tile
+            && match &self.perf.tile_state[vidx] {
+                Some(g) if g.key == view_key => true,
+                _ if self.perf.fe_budget_ok[vidx] => {
+                    // ARM: this frame renders the coarse single-dispatch full frame; the grid may
+                    // start next frame, seeded from it. Arming (but ONLY arming) waits for a
+                    // CONVERGED budget: a grid sized off a still-climbing budget restarts at every
+                    // measurement. Once armed/running, an `ok` flap must NOT tear the grid down —
+                    // that threw away completed near-native frames whenever a stray measurement
+                    // nudged the budget.
+                    self.perf.tile_state[vidx] =
+                        Some(TileGrid { key: view_key, geo: None, next: 0 });
+                    false
+                }
+                _ => false,
+            };
+        if !can_tile && !will_reproject {
+            // Leaving settle: drop the grid so the next settle re-arms from a fresh coarse frame.
+            // (Held/reproject frames keep it — they don't change what the texture shows.)
+            self.perf.tile_state[vidx] = None;
+            self.perf.tile_pending[vidx] = false;
+        }
+        // A tiled frame may spend TDR_MAX_TILES dispatch budgets in total; everything else gets one.
+        let tdr_allowed = if tiling {
+            tdr_steps.saturating_mul(TDR_MAX_TILES)
+        } else {
+            tdr_steps
+        };
         let spx = (resolution[0] as u64) * (resolution[1] as u64);
         // First line of defence is lowering ss (`max_ss_tdr` below), but that floors at 1. If even ss=1
         // would blow the budget — `spx·gpu_iter` alone > the budget, i.e. a large floatexp panel at
@@ -1192,8 +1383,8 @@ impl FractadyneApp {
         // shrink it differs between moving and settled frames, which is what caused the v0.1.44 bug.)
         let (resolution, spx) = {
             let iter_cost = spx.saturating_mul(gpu_iter.max(1) as u64);
-            if is_fe && iter_cost > tdr_steps {
-                let f = (tdr_steps as f64 / iter_cost as f64).sqrt();
+            if is_fe && iter_cost > tdr_allowed {
+                let f = (tdr_allowed as f64 / iter_cost as f64).sqrt();
                 let r = [
                     ((resolution[0] as f64 * f) as u32).max(16),
                     ((resolution[1] as f64 * f) as u32).max(16),
@@ -1207,7 +1398,7 @@ impl FractadyneApp {
             .sqrt()
             .max(1.0) as u32;
         let max_ss_tdr = if is_fe {
-            ((tdr_steps / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
+            ((tdr_allowed / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
                 .sqrt()
                 .max(1.0) as u32
         } else {
@@ -1228,6 +1419,29 @@ impl FractadyneApp {
         // `aa_target` is 1 while moving and ramps up over settled frames (progressive settle); clamp
         // to what the per-frame budget affords (`max_ss`) and what the watchdog / UI thread allow.
         let ss = aa_target.min(max_ss).min(max_ss_tdr).max(1);
+        // PIN the frame geometry to an existing grid's. Resolution and ss above are derived from the
+        // LIVE budget, which jitters a few percent per measurement — recomputing them each frame
+        // restarts the grid every few tiles (observed: every ~4) and it never finishes; worse, after
+        // completion the same jitter would resize the texture and throw the sharp frame away. So
+        // while the grid's key holds, its stored geometry wins. The one deliberate exception: a
+        // COMPLETED grid steps aside when the freshly computed ss came out strictly higher — that is
+        // the AA ramp's next stage becoming genuinely affordable (a new grid, seeded from the
+        // completed one). A merely jittered resolution can't unpin anything.
+        let (resolution, ss) = if tiling {
+            match &self.perf.tile_state[vidx] {
+                Some(st) if st.geo.is_some() => {
+                    let (gres, gss, side) = st.geo.unwrap();
+                    let cols = gres[0].div_ceil(side).max(1);
+                    let rows = gres[1].div_ceil(side).max(1);
+                    let upgrade = st.next >= cols * rows && ss > gss;
+                    if upgrade { (resolution, ss) } else { (gres, gss) }
+                }
+                _ => (resolution, ss),
+            }
+        } else {
+            (resolution, ss)
+        };
+        let spx = (resolution[0] as u64) * (resolution[1] as u64);
         // Arm a probe only on a frame that actually RE-ITERATES (a cached frame's interval is
         // ~vsync and would wildly over-authorize): the iterate re-runs when its key inputs change
         // (ss stage, resolution, reference), and on the first settled frame after an interaction
@@ -1236,14 +1450,49 @@ impl FractadyneApp {
         let key = (ss, resolution, self.ref_cache[vs].orbit_id);
         let key_changed = key != self.perf.aa_last_key[vs];
         self.perf.aa_last_key[vs] = key;
+        // Emit this frame's settle tile, if the (now-final) resolution and ss still exceed one
+        // dispatch. `tile` travels into `MandelbrotParams` below; a real (non-hold) rect also
+        // reprices the timing sink, since the timestamped dispatch is the tile, not a full frame.
+        let mut tile: Option<[u32; 4]> = None;
+        if tiling {
+            let total = spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64);
+            if total > tdr_steps {
+                let rect = self.next_settle_tile(vidx, resolution, ss, gpu_iter, tdr_steps);
+                if rect[2] > 0 && rect[3] > 0 {
+                    self.perf.fe_steps_last[vs] = (rect[2] as u64)
+                        .saturating_mul(rect[3] as u64)
+                        .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                        .saturating_mul(gpu_iter.max(1) as u64);
+                }
+                tile = Some(rect);
+                // The texture a later reproject frame re-samples is (near-)native here, NOT shrunk
+                // to one dispatch — a reproject frame must reproduce that, or fit drifts off 1.
+                self.perf.frozen_budget[vidx] = u64::MAX;
+            } else {
+                // The budget grew enough that the whole frame fits one dispatch after all.
+                self.perf.tile_state[vidx] = None;
+                self.perf.tile_pending[vidx] = false;
+            }
+        }
         if trace_enabled() && is_fe {
             let steps = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
             eprintln!(
-                "[fd-trace] view={vs} res={}x{} ss={ss} gpu_iter={gpu_iter} steps={:.3e} \
-                 budget={:.3e} reproj={will_reproject} iterates={key_changed}",
-                resolution[0], resolution[1], steps as f64, tdr_steps as f64,
+                "[fd-trace] f={} view={vs} res={}x{} ss={ss} gpu_iter={gpu_iter} steps={:.3e} \
+                 budget={:.3e} reproj={will_reproject} iterates={key_changed} tile={:?} pending={} \
+                 interacting={interacting} can_tile={can_tile} tiling={tiling} key={view_key:?} \
+                 allow={} offs={offscreen}",
+                self.perf.frame_idx,
+                resolution[0],
+                resolution[1],
+                steps as f64,
+                tdr_steps as f64,
+                tile,
+                self.perf.tile_pending[vs],
+                self.allow_tiled_settle,
             );
         }
         let bootstrap =
@@ -1681,11 +1930,13 @@ impl FractadyneApp {
             self.perf.fe_steps_last[vs] = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
+            self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
         }
         let iterate_ms = is_fe.then(|| self.perf.iterate_ms[vs].clone());
 
         MandelbrotParams {
             iterate_ms,
+            tile,
             orbit: self.ref_cache[vi].orbit.clone(),
             orbit_id: self.ref_cache[vi].orbit_id,
             orbit_len: self.ref_cache[vi].orbit_len,

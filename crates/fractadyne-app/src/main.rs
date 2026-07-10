@@ -126,6 +126,26 @@ struct Perf {
     iterate_ms: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// Nominal steps of the last frame that actually re-iterated — the cost that `iterate_ms` prices.
     fe_steps_last: [u64; 2],
+    /// True once a view's budget measurement has converged near the target — the gate for
+    /// starting a tiled settle (see the controller in `update`).
+    fe_budget_ok: [bool; 2],
+    /// Tiled-settle progress per view (see `render::TileGrid`); `None` = no grid armed or running.
+    tile_state: [Option<render::TileGrid>; 2],
+    /// True while a view's settle grid has tiles left — holds the AA ramp and keeps repaints coming.
+    tile_pending: [bool; 2],
+    /// `frame_idx` of the last frame that spent its tile: one budget-sized tile per submission, so
+    /// two deep views can't pair their dispatches past the watchdog.
+    tile_turn: u64,
+    /// `frame_idx` of each view's last interacting frame / last re-iterating floatexp dispatch.
+    /// A settle tile HOLDS while the OTHER view is on either marker: a budget-sized tile must not
+    /// share a submission with the other view's budget-sized frame (two ~TDR_BUDGET_MS dispatches
+    /// pair up toward the watchdog), and a grid must not hog ~1 fps frames while the user is
+    /// actively working in the other panel.
+    interact_frame: [u64; 2],
+    fe_iter_frame: [u64; 2],
+    /// Bumped (to `frame_idx`) by any motion/reproject/autopilot frame; part of the tile-grid key,
+    /// standing in for the view position (the f64 center is degenerate at depth).
+    view_gen: [u64; 2],
     /// TDR step budget in force on the last frame that actually re-iterated, per view. A reproject
     /// frame re-samples that frame's frozen texture, so it must reproduce its exact resolution or the
     /// color-pass aspect-fit `fit = out_res / frozen_screen_dim` drifts off 1 (the v0.1.44/46
@@ -167,6 +187,13 @@ impl Default for Perf {
             fe_budget: [0, 0],
             iterate_ms: [Default::default(), Default::default()],
             fe_steps_last: [0, 0],
+            fe_budget_ok: [false, false],
+            tile_state: [None, None],
+            tile_pending: [false, false],
+            tile_turn: u64::MAX,
+            interact_frame: [0, 0],
+            fe_iter_frame: [0, 0],
+            view_gen: [0, 0],
             frozen_budget: [0, 0],
             motion_res: 0.6,
         }
@@ -1592,6 +1619,10 @@ struct FractadyneApp {
     frametest_steps: u32,
     frametest_hold: u32,
     frametest_dive: f64,
+    /// True only while `draw_central` builds the LIVE view's params: `build_params` may start a
+    /// tiled settle only then. The other callers (profiling and benchmark harnesses) time
+    /// single-dispatch renders, and a silently tiled frame would corrupt their numbers.
+    allow_tiled_settle: bool,
     /// Per-render setup timings (reference / series-skip), recorded by
     /// `current_export_request_for` via a `Cell` and read by the profiler.
     prof: std::cell::Cell<profile::ProfSetup>,
@@ -1888,6 +1919,7 @@ impl FractadyneApp {
             frametest_steps,
             frametest_hold,
             frametest_dive,
+            allow_tiled_settle: false,
             prof: std::cell::Cell::new(profile::ProfSetup::default()),
             fps_cap: (s.fps_cap > 0.0).then_some(s.fps_cap), // 0 = uncapped
             export: ExportState {
@@ -2748,7 +2780,10 @@ impl FractadyneApp {
             1
         } else {
             let ss = aa_ramp(self.pointer.settle_frame[view], self.render_cfg.aa);
-            if ss < self.render_cfg.aa {
+            // Hold the ramp while a tiled settle is mid-grid: advancing ss changes the iterate key,
+            // which would restart the grid every few frames and the view would never finish
+            // sharpening. The ramp resumes the frame after the grid completes.
+            if ss < self.render_cfg.aa && !self.perf.tile_pending[view] {
                 self.pointer.settle_frame[view] += 1;
                 self.schedule_repaint(ctx); // render the next, sharper AA stage
             }
@@ -2794,6 +2829,9 @@ impl FractadyneApp {
             }
             None
         };
+        // Only the live view may start a tiled settle (the profiling/benchmark callers of
+        // `build_params` time single dispatches).
+        self.allow_tiled_settle = true;
         let params = self.build_params(
             center_bf,
             center,
@@ -2809,6 +2847,11 @@ impl FractadyneApp {
             view_id,
             reproject,
         );
+        self.allow_tiled_settle = false;
+        // A settle grid in progress needs the next frame promptly — each frame renders one tile.
+        if self.perf.tile_pending[view_id as usize] {
+            self.schedule_repaint(ctx);
+        }
         add_mandelbrot(ui.painter(), rect, params);
         resp
     }
@@ -3724,13 +3767,35 @@ impl eframe::App for FractadyneApp {
                 continue;
             }
             let cur = self.perf.fe_budget[v].max(render::TDR_BOOTSTRAP_STEPS);
+            // A dispatch well under budget size — a clamped edge/corner tile of a settle grid —
+            // finishes fast because it is SMALL, not because the GPU got faster; at depth it is
+            // latency-bound, so its time says nothing about throughput. Pricing it as budget-sized
+            // rails `factor` at the grow clamp, inflating the budget off a meaningless reading and
+            // flapping `fe_budget_ok` (which used to tear down the very grid mid-flight). Ignore
+            // it; full frames and interior tiles are budget-sized by construction and carry the
+            // real signal.
+            if (self.perf.fe_steps_last[v] as f64) < cur as f64 * 0.7 {
+                if render::trace_enabled() {
+                    eprintln!(
+                        "[fd-gpu] view={v} gpu_iterate={ms:.1}ms IGNORED (steps={:.3e} < 0.7×budget)",
+                        self.perf.fe_steps_last[v] as f64
+                    );
+                }
+                continue;
+            }
             let factor = (render::TDR_BUDGET_MS / ms).clamp(render::TDR_SHRINK_MAX, render::TDR_GROW_MAX);
             let next = ((cur as f64 * factor) as u64)
                 .clamp(render::TDR_BOOTSTRAP_STEPS, render::TDR_STEPS_CEIL);
+            // CONVERGED = the last frame measured near the target (or the budget is pinned at a
+            // clamp and cannot move). A tiled settle waits for this: starting a grid while the
+            // budget is still climbing would reshape/restart it every measurement, throwing tiles
+            // away — the single-dispatch frames of the climb are themselves decent progressive
+            // feedback (each one sharper than the last).
+            self.perf.fe_budget_ok[v] = next == cur || (0.8..=1.25).contains(&factor);
             if render::trace_enabled() {
                 eprintln!(
-                    "[fd-gpu] view={v} gpu_iterate={ms:.1}ms x{factor:.2} cur={:.3e} -> next={:.3e}",
-                    cur as f64, next as f64
+                    "[fd-gpu] view={v} gpu_iterate={ms:.1}ms x{factor:.2} cur={:.3e} -> next={:.3e} ok={}",
+                    cur as f64, next as f64, self.perf.fe_budget_ok[v]
                 );
             }
             self.perf.fe_budget[v] = next;
