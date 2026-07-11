@@ -1522,6 +1522,7 @@ impl FractadyneApp {
                     }
                 }
             }
+            crate::diag::breadcrumb(format!("tour frame {}/{frames}", fi + 1));
             let progress = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);
             let render = |app: &Self, vp: &fractadyne_core::Viewport, julia: bool, w: u32, vg| -> Result<fractadyne_gpu::ExportResult, String> {

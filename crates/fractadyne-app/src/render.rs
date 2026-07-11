@@ -65,18 +65,13 @@ pub(crate) struct TileGrid {
     pub next: u32,
 }
 
-/// `FRACTADYNE_TRACE=1` prints the per-frame GPU sizing decision (resolution, ss, iteration cap,
-/// nominal steps, watchdog budget) to stderr.
-///
-/// Deep-zoom frames are sized by a feedback loop against the GPU watchdog and the UI thread, and its
-/// inputs are invisible from outside: a device-lost crash and a hung window can both come from the
-/// same over-large dispatch, while the obvious knobs (`max_iter`, `aa`) turn out not to move it at all
-/// because the resolution shrink normalises the frame back onto the budget. Reading the real numbers
-/// settles in one run what guessing at the constants does not.
-pub(crate) fn trace_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("FRACTADYNE_TRACE").is_ok_and(|v| v != "0"))
-}
+// `FRACTADYNE_TRACE` tracing moved to `diag` (categories: req, ref, gpu, tile, glitch —
+// see diag::trace_on). The per-frame GPU sizing trace is the `tile` category below: deep-zoom
+// frames are sized by a feedback loop against the GPU watchdog and the UI thread, and its
+// inputs are invisible from outside — a device-lost crash and a hung window can both come from
+// the same over-large dispatch, while the obvious knobs (`max_iter`, `aa`) turn out not to move
+// it at all because the resolution shrink normalises the frame back onto the budget. Reading
+// the real numbers settles in one run what guessing at the constants does not.
 
 /// A completed reference recompute (orbit + series-approximation + BLA), ready to install into a
 /// view's reference cache. Produced by [`recompute_worker`], off the render thread, so the slow
@@ -171,6 +166,12 @@ fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32) -> f
 /// thread; mirrors the synchronous `compute_reference` + `series_skip_for` + `build_bla`. The
 /// progressive cold start (`recompute_worker_staged`) reuses the `pick`/`build` split below.
 fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
+    // The bignum orbit build is the longest silent phase in the app — name it for the
+    // watchdog/crash report before starting (D1.2).
+    crate::diag::breadcrumb(format!(
+        "building reference: iter={} prec={}",
+        inp.gpu_iter, inp.precision
+    ));
     // Deep-dive reuse: when the prior reference is still valid for this (deeper) frame, EXTEND its
     // orbit instead of recomputing every bignum step (the orbit build dominates a deep frame). Falls
     // back to a fresh pick + full build when there's no reusable orbit or it no longer qualifies.
@@ -320,13 +321,17 @@ fn finish_reference(
         _ => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
     };
     let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
-    if trace_enabled() {
-        eprintln!(
-            "[fd-ref] len={len} iter={orbit_iter} prec={orbit_prec} partial={partial} \
-             escaped={} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={}",
-            orbit_tail.is_none() && !partial,
-            sa.skip,
-            bla.len(),
+    crate::diag::breadcrumb(format!("reference built: len={len} iter={orbit_iter} prec={orbit_prec}"));
+    if crate::diag::trace_on("ref") {
+        crate::diag::trace(
+            "ref",
+            format!(
+                "len={len} iter={orbit_iter} prec={orbit_prec} partial={partial} \
+                 escaped={} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={}",
+                orbit_tail.is_none() && !partial,
+                sa.skip,
+                bla.len(),
+            ),
         );
     }
     RecomputeResult {
@@ -848,17 +853,22 @@ impl FractadyneApp {
         let jcyh = jcy as f32;
         let julia_c = [jcxh, jcyh, (jcx - jcxh as f64) as f32, (jcy - jcyh as f64) as f32];
         let (stops, stop_count) = self.active_stops();
-        if trace_enabled() {
-            eprintln!(
-                "[fd-req] mode={} iter={eff_iter} orbit_len={orbit_len} sa_skip={} bla_on={bla_on} \
-                 delta_exp={delta_exp} span_m=({:.6e},{:.6e}) ref_off={:?} prec={precision}",
-                mode.to_u32(),
-                sa.skip,
-                scale.span_mantissa.x,
-                scale.span_mantissa.y,
-                ref_offset,
-            );
-        }
+        // The effective render manifest: kept globally for crash reports (D1.3) and printed
+        // under the `req` trace category. This is the record that killed F8 — it states what
+        // a render was *actually* asked to do, not what the caller believed.
+        let manifest = format!(
+            "mode={} iter={eff_iter} orbit_len={orbit_len} sa_skip={} bla_on={bla_on} \
+             delta_exp={delta_exp} span_m=({:.6e},{:.6e}) ref_off={:?} prec={precision} \
+             size={width}x{height} ss={}",
+            mode.to_u32(),
+            sa.skip,
+            scale.span_mantissa.x,
+            scale.span_mantissa.y,
+            ref_offset,
+            self.export.ss.max(1),
+        );
+        crate::diag::set_manifest(manifest.clone());
+        crate::diag::trace("req", manifest);
 
         fractadyne_gpu::ExportRequest {
             width,
@@ -939,6 +949,10 @@ impl FractadyneApp {
         let delta_exp = req.delta_exp;
         let (w, h) = (width as usize, height as usize);
         let mut refs_used = 1usize;
+        // The multi-reference loop is the app's worst historical time sink (>1 h at 1e500×,
+        // F3/F14) — every pass names itself for the watchdog and, under the `glitch` trace
+        // category, reports its cost, so "slow" and "hung" are distinguishable.
+        let t_glitch = Instant::now();
 
         for _ in 1..max_refs {
             // Glitched pixels carry the -2 sentinel (r < -1.5); interior is -1, escaped ≥ 0.
@@ -946,6 +960,12 @@ impl FractadyneApp {
             if glitch.is_empty() {
                 break;
             }
+            crate::diag::breadcrumb(format!(
+                "glitch correction: pass {}/{max_refs}, {} px glitched, {:.1}s elapsed",
+                refs_used,
+                glitch.len(),
+                t_glitch.elapsed().as_secs_f64(),
+            ));
             // New reference at the glitched pixel nearest the region's centroid.
             let (mut sx, mut sy) = (0.0f64, 0.0f64);
             for &i in &glitch {
@@ -992,6 +1012,15 @@ impl FractadyneApp {
         }
         // Residual glitches after the final pass (0 = fully corrected).
         let residual = (0..w * h).filter(|&i| merged[i * 4] < -1.5).count();
+        if crate::diag::trace_on("glitch") {
+            crate::diag::trace(
+                "glitch",
+                format!(
+                    "correction done: refs={refs_used} residual={residual} in {:.1}s",
+                    t_glitch.elapsed().as_secs_f64()
+                ),
+            );
+        }
         Some((merged, refs_used, residual))
     }
 
@@ -1507,23 +1536,26 @@ impl FractadyneApp {
                 self.perf.tile_pending[vidx] = false;
             }
         }
-        if trace_enabled() && is_fe {
+        if crate::diag::trace_on("tile") && is_fe {
             let steps = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
-            eprintln!(
-                "[fd-trace] f={} view={vs} res={}x{} ss={ss} gpu_iter={gpu_iter} steps={:.3e} \
-                 budget={:.3e} reproj={will_reproject} iterates={key_changed} tile={:?} pending={} \
-                 interacting={interacting} can_tile={can_tile} tiling={tiling} key={view_key:?} \
-                 allow={} offs={offscreen}",
-                self.perf.frame_idx,
-                resolution[0],
-                resolution[1],
-                steps as f64,
-                tdr_steps as f64,
-                tile,
-                self.perf.tile_pending[vs],
-                self.allow_tiled_settle,
+            crate::diag::trace(
+                "tile",
+                format!(
+                    "f={} view={vs} res={}x{} ss={ss} gpu_iter={gpu_iter} steps={:.3e} \
+                     budget={:.3e} reproj={will_reproject} iterates={key_changed} tile={:?} pending={} \
+                     interacting={interacting} can_tile={can_tile} tiling={tiling} key={view_key:?} \
+                     allow={} offs={offscreen}",
+                    self.perf.frame_idx,
+                    resolution[0],
+                    resolution[1],
+                    steps as f64,
+                    tdr_steps as f64,
+                    tile,
+                    self.perf.tile_pending[vs],
+                    self.allow_tiled_settle,
+                ),
             );
         }
         let bootstrap =

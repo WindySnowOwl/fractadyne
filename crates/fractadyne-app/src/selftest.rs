@@ -69,6 +69,9 @@ fn push_check(checks: &mut Vec<SelfCheck>, last: &mut std::time::Instant, c: Sel
         c.name,
         c.result
     );
+    // "Last completed check" is what the watchdog/crash report names when the NEXT check
+    // wedges — exactly how the 2-hour F10 hog was identified.
+    crate::diag::breadcrumb(format!("selftest: after '{}'", c.name));
     checks.push(c);
 }
 

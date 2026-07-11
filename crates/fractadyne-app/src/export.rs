@@ -130,7 +130,10 @@ pub(crate) fn stamp_watermark(pixels: &mut [f32], w: u32, h: u32, ov: &WmOverlay
     if ov.w == 0 || ov.h == 0 || w == 0 || h == 0 {
         return;
     }
-    let th = (h as f32 * 0.026).clamp(16.0, (h as f32) * 0.2);
+    // Below h=80 the 16-px floor exceeds the 20% ceiling — clamp panics on min > max.
+    // (Found by the v0.2.7 panic hook's first catch: a 64×36 CLI render.)
+    let th_max = (h as f32) * 0.2;
+    let th = (h as f32 * 0.026).clamp(16.0f32.min(th_max), th_max);
     let scale = th / ov.h as f32; // < 1 (downscale)
     let tw = (ov.w as f32 * scale).round() as i32;
     let th = th.round() as i32;
@@ -533,6 +536,36 @@ impl FractadyneApp {
         fractadyne_gpu::render_export(device, queue, req, progress, cancel)
     }
 
+    /// The effective view a CLI render is about to draw, printed **un-gated** before any
+    /// one-shot render (D4.2): a batch that silently renders the wrong location (F8 rendered
+    /// the home view twenty times) announces itself on the first line. Center digits are
+    /// elided past 48 chars — enough to distinguish locations at any depth.
+    fn cli_render_manifest(&self, w: u32, h: u32, out: &std::path::Path) -> String {
+        let elide = |s: String| -> String {
+            if s.len() > 48 {
+                format!("{}…({} digits)", &s[..48], s.len())
+            } else {
+                s
+            }
+        };
+        let l2 = self.viewport.log2_magnification();
+        let l10 = l2 * std::f64::consts::LOG10_2;
+        format!(
+            "center=({}, {}) zoom={:.4}e{}x iter={}{} size={}x{} ss={} glitch_correct={} out={}",
+            elide(fractadyne_core::to_decimal_string(&self.viewport.center_x)),
+            elide(fractadyne_core::to_decimal_string(&self.viewport.center_y)),
+            10f64.powf(l10.fract().abs()),
+            l10.floor() as i64,
+            self.render_cfg.max_iter,
+            if self.render_cfg.auto_iter { " (auto-capped)" } else { " (explicit)" },
+            w,
+            h,
+            self.export.ss.max(1),
+            self.render_cfg.glitch_correct,
+            out.display(),
+        )
+    }
+
     /// Synchronously render the current view and write it to `path` (used by the
     /// headless `--render` CLI mode). Blocks until done; returns a status message.
     pub(crate) fn render_to_file(
@@ -544,7 +577,21 @@ impl FractadyneApp {
     ) -> Result<String, crate::error::AppError> {
         use std::sync::atomic::AtomicBool;
         use std::sync::atomic::AtomicU32;
-        let progress = AtomicU32::new(0);
+        crate::diag::log_line(
+            "render",
+            &self.cli_render_manifest(self.export.width, self.export_height(), path),
+        );
+        crate::diag::breadcrumb(format!(
+            "CLI render {}x{} → {}",
+            self.export.width,
+            self.export_height(),
+            path.display()
+        ));
+        let progress = std::sync::Arc::new(AtomicU32::new(0));
+        // Progress to stderr every ~2 s (D1.5): distinguishes "slow" from "hung" without
+        // killing the process, and stamps the watchdog while tiles are moving.
+        // (`&progress` deref-coerces to `&AtomicU32` at the call sites below.)
+        let _pump = crate::diag::progress_pump("render", progress.clone());
         let cancel = AtomicBool::new(false);
         let meta = self.view_metadata();
         let fmt = self.export.format;
@@ -597,6 +644,11 @@ impl FractadyneApp {
         queue: &eframe::wgpu::Queue,
         path: &std::path::Path,
     ) -> Result<String, crate::error::AppError> {
+        crate::diag::log_line(
+            "render",
+            &self.cli_render_manifest(self.export.width, self.export_height(), path),
+        );
+        crate::diag::breadcrumb(format!("CLI iter render → {}", path.display()));
         let req = self.current_export_request_for(&self.viewport, self.julia_mode);
         let r = fractadyne_gpu::render_iter(device, queue, &req)?;
         let meta = format!(
@@ -770,6 +822,7 @@ impl FractadyneApp {
         let (tx, rx) = std::sync::mpsc::channel();
         self.export.task = Some(rx);
         self.export.status = Some("Rendering…".to_string());
+        crate::diag::breadcrumb(format!("GUI export → {}", path.display()));
         std::thread::spawn(move || {
             let render = |req: &fractadyne_gpu::ExportRequest| {
                 fractadyne_gpu::render_export(&device, &queue, req, &progress, &cancel)

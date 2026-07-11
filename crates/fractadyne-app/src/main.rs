@@ -48,6 +48,7 @@ use fractadyne_gpu::{add_mandelbrot, install_renderer};
 
 mod autopilot;
 mod cli;
+mod diag;
 mod error;
 mod export;
 mod fractal;
@@ -746,6 +747,9 @@ fn main() -> eframe::Result<()> {
             std::process::exit(2);
         }
     };
+    // Crash/hang visibility (design/diagnostics.md D1): log file, panic hook, watchdog.
+    // Before run_headless so even the pre-GUI CLI modes get crash reports.
+    diag::init(&args);
     if cli::run_headless(&args) {
         return Ok(());
     }
@@ -1717,6 +1721,20 @@ impl FractadyneApp {
             }
         };
         install_renderer(render_state);
+        // D1.3: route GPU faults through the diag log. Uncaptured errors keep wgpu's
+        // fail-fast semantics (log first, then panic so the hook writes a crash report);
+        // device-lost logs the reason — it is the "hang on load" class of failure (F1).
+        render_state.device.on_uncaptured_error(Box::new(|e| {
+            diag::log_line("wgpu", &format!("uncaptured error: {e}"));
+            panic!("wgpu uncaptured error: {e}");
+        }));
+        render_state.device.set_device_lost_callback(|reason, msg| {
+            diag::log_line("wgpu", &format!("DEVICE LOST ({reason:?}): {msg}"));
+        });
+        // D1.4: hang watchdog for every update()-driven mode. update() stamps liveness each
+        // frame; long blocking phases stamp via breadcrumbs and progress pumps, so a stale
+        // stamp really does mean "the app went silent" — the log then names the phase.
+        diag::start_watchdog();
         install_fonts(&cc.egui_ctx); // brand typefaces (theme-independent); visuals applied below
         let gpu_name = render_state.adapter.get_info().name;
 
@@ -3731,6 +3749,7 @@ impl FractadyneApp {
 impl eframe::App for FractadyneApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_start = Instant::now();
+        diag::alive(); // heartbeat: a frame loop that stops arriving here is a hang (D1.4)
         // Surface a deferred startup warning (e.g. a session saved by a newer build) as a toast,
         // once, on the first frame where the UI exists.
         if let Some(msg) = self.pending_state_warning.take() {
@@ -3778,10 +3797,13 @@ impl eframe::App for FractadyneApp {
             // it; full frames and interior tiles are budget-sized by construction and carry the
             // real signal.
             if (self.perf.fe_steps_last[v] as f64) < cur as f64 * 0.7 {
-                if render::trace_enabled() {
-                    eprintln!(
-                        "[fd-gpu] view={v} gpu_iterate={ms:.1}ms IGNORED (steps={:.3e} < 0.7×budget)",
-                        self.perf.fe_steps_last[v] as f64
+                if diag::trace_on("gpu") {
+                    diag::trace(
+                        "gpu",
+                        format!(
+                            "view={v} gpu_iterate={ms:.1}ms IGNORED (steps={:.3e} < 0.7×budget)",
+                            self.perf.fe_steps_last[v] as f64
+                        ),
                     );
                 }
                 continue;
@@ -3795,10 +3817,13 @@ impl eframe::App for FractadyneApp {
             // away — the single-dispatch frames of the climb are themselves decent progressive
             // feedback (each one sharper than the last).
             self.perf.fe_budget_ok[v] = next == cur || (0.8..=1.25).contains(&factor);
-            if render::trace_enabled() {
-                eprintln!(
-                    "[fd-gpu] view={v} gpu_iterate={ms:.1}ms x{factor:.2} cur={:.3e} -> next={:.3e} ok={}",
-                    cur as f64, next as f64, self.perf.fe_budget_ok[v]
+            if diag::trace_on("gpu") {
+                diag::trace(
+                    "gpu",
+                    format!(
+                        "view={v} gpu_iterate={ms:.1}ms x{factor:.2} cur={:.3e} -> next={:.3e} ok={}",
+                        cur as f64, next as f64, self.perf.fe_budget_ok[v]
+                    ),
                 );
             }
             self.perf.fe_budget[v] = next;
@@ -3998,7 +4023,13 @@ impl eframe::App for FractadyneApp {
                 };
                 match result {
                     Ok(m) => println!("{m}  (in {})", Self::fmt_export_duration(t0.elapsed())),
-                    Err(e) => eprintln!("Render failed: {e}"),
+                    Err(e) => {
+                        // Fail with a real exit code: the Close path always exits 0, which
+                        // made scripted corpus renders unable to detect failures (D1/F8).
+                        eprintln!("Render failed: {e}");
+                        diag::log_line("render", &format!("FAILED: {e}"));
+                        std::process::exit(1);
+                    }
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -4018,7 +4049,11 @@ impl eframe::App for FractadyneApp {
                     let (prefix, overwrite, resume) = (self.tour_prefix.clone(), self.tour_overwrite, self.tour_resume);
                     match self.render_tour_to_dir(ctx, dev, q, &script, fps, w, h, ss, &out, &prefix, overwrite, resume, mp4.as_deref()) {
                         Ok(m) => println!("{m}"),
-                        Err(e) => eprintln!("Tour render failed: {e}"),
+                        Err(e) => {
+                            eprintln!("Tour render failed: {e}");
+                            diag::log_line("render", &format!("tour FAILED: {e}"));
+                            std::process::exit(1);
+                        }
                     }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
