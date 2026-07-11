@@ -142,6 +142,32 @@ pub(crate) fn trace(cat: &str, msg: String) {
     }
 }
 
+/// `FRACTADYNE_PERF=1` enables the JSONL perf log (D3.2).
+pub(crate) fn perf_on() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FRACTADYNE_PERF").is_ok_and(|v| v != "0"))
+}
+
+/// Append one JSON record to `<config>/logs/perf.jsonl` (no-op unless `FRACTADYNE_PERF=1`).
+/// Caller supplies the JSON body; timestamp/version are added here. Regression tracking
+/// across builds becomes greppable history instead of memory.
+pub(crate) fn perf_jsonl(body_fields: &str) {
+    if !perf_on() {
+        return;
+    }
+    let Some(Some(dir)) = LOG_DIR.get() else { return };
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let line = format!(
+        "{{\"ts\":{secs},\"version\":\"{}\",{body_fields}}}",
+        crate::sysinfo::version_string(),
+    );
+    if let Ok(mut f) =
+        std::fs::OpenOptions::new().create(true).append(true).open(dir.join("perf.jsonl"))
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 /// Stamp liveness (the watchdog resets its stall clock).
 pub(crate) fn alive() {
     if let Some(t) = START.get() {

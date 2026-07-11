@@ -11,8 +11,13 @@
 //! can finally be attributed on its own.
 //!
 //! The capture is a thread-local toggle (mirroring the app's existing `ProfSetup` `Cell`), so no
-//! render entry point changes signature: the profiler wraps a render in [`capture`], and the render
-//! path reads [`enabled`] / calls [`accumulate`] only on that thread while it's set.
+//! render entry point changes signature: the profiler wraps a render in [`capture`], and the
+//! render path calls [`accumulate`].
+//!
+//! Since D3.1 the export paths take timestamps **unconditionally** (results also flow out via
+//! `ExportResult.iterate_ms/color_ms`, which works across threads); this thread-local scope
+//! remains only for `--profile`'s aggregated per-region view. `accumulate` outside a capture
+//! scope writes an accumulator nobody reads — harmless, `capture` resets it on entry.
 
 use std::cell::Cell;
 
@@ -27,7 +32,6 @@ pub struct PassTimings {
 }
 
 thread_local! {
-    static ENABLED: Cell<bool> = const { Cell::new(false) };
     static ACC: Cell<PassTimings> =
         const { Cell::new(PassTimings { iterate_ms: 0.0, color_ms: 0.0, captured: false }) };
 }
@@ -36,17 +40,9 @@ thread_local! {
 /// iterate/color GPU time. Not re-entrant (profiler-only, single-threaded) — a nested call resets
 /// the accumulator.
 pub fn capture<R>(f: impl FnOnce() -> R) -> (R, PassTimings) {
-    ENABLED.with(|e| e.set(true));
     ACC.with(|a| a.set(PassTimings::default()));
     let r = f();
-    ENABLED.with(|e| e.set(false));
     (r, ACC.with(|a| a.get()))
-}
-
-/// Whether the current thread is inside a [`capture`] scope (the render path checks this before
-/// allocating any query set).
-pub(crate) fn enabled() -> bool {
-    ENABLED.with(|e| e.get())
 }
 
 /// Add one pass pair's measured GPU time to the active capture accumulator.

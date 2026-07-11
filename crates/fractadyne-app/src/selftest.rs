@@ -211,7 +211,7 @@ impl FractadyneApp {
             .map(|s| s.to_ascii_lowercase());
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "metadata", "display", "catalog", "goldens",
+            "consistency", "counters", "metadata", "display", "catalog", "goldens",
         ];
         if cli.iter().any(|a| a == "--selftest-list") {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -1639,6 +1639,113 @@ impl FractadyneApp {
                     pass: checked > 0 && koebe_viol == 0,
                 });
             }
+        }
+
+        // ---- GPU event counters: execution proof for the deep-zoom paths (D2.8/F4) ----
+        // A silently-dead shader branch renders byte-identically (the WGSL NaN-marker
+        // lesson from v0.2.6): these checks assert that the code paths the deep views
+        // claim to exercise actually FIRED, via the D3.3 shader counters.
+        if want("counters") {
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            // Deterministic setup — proven necessary: as first written these checks PASSED
+            // in the full suite but FAILED under --selftest-filter, because they leaned on
+            // reference/config state leaked from earlier groups (F13 in the flesh). Pin the
+            // reference length explicitly: auto_iter=false + max_iter=N builds the orbit to
+            // exactly N, independent of what ran before.
+            // (a) BLA skips at 1e30x: a 4000-iteration reference reaches the cap without
+            // escaping (partial), so its BLA tree is KEPT (an escaped reference drops it),
+            // and the render must take multi-step skips.
+            self.render_cfg.use_bla = true;
+            self.render_cfg.series_approx = true;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 4000;
+            {
+                let mut req = make(self, SX, SY, 1.0e30);
+                req.mode = 2;
+                match fractadyne_gpu::render_iter(device, queue, &req) {
+                    Ok(r) => {
+                        let c = &r.counters;
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Counters",
+                            name: "BLA skips fire @1e30× (execution proof)".into(),
+                            params: format!("bla_on={} iter={}", req.bla_on, req.max_iter),
+                            result: format!(
+                                "bla_skip={} rebase={} maxiter_px={}",
+                                c[fractadyne_gpu::CTR_BLA_SKIP],
+                                c[fractadyne_gpu::CTR_REBASE],
+                                c[fractadyne_gpu::CTR_MAXITER],
+                            ),
+                            threshold: "bla_on and bla_skip > 0",
+                            pass: req.bla_on == 1 && c[fractadyne_gpu::CTR_BLA_SKIP] > 0,
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (render_iter): {e}");
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Counters",
+                            name: "BLA skips fire @1e30× (execution proof)".into(),
+                            params: String::new(),
+                            result: format!("GPU error: {e}"),
+                            threshold: "render succeeds",
+                            pass: false,
+                        });
+                    }
+                }
+            }
+            // (b) Extended-range orbit samples + rebases on a dip-carrying orbit — the
+            // machinery of the v0.2.6 fix (validation corpus 14, ~1.2e148x). The reference
+            // dips to ~1e-71 every ~4383 iterations, so a 5000-sample orbit CONTAINS a dip
+            // (ext decodes must fire), and rendering 20000 iterations against it forces
+            // ~4 end-of-orbit wraps per pixel — real rebases through the extended-range
+            // compare (deterministic; dip-triggered |z|<|dz| rebases only occur at much
+            // higher iteration counts where dz has grown to dip scale). SA and BLA are off
+            // to isolate the plain perturbation recurrence.
+            self.render_cfg.use_bla = false;
+            self.render_cfg.series_approx = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 5000;
+            {
+                const C14X: &str = "-0.3158354656090698908113251908145989842764104941136552011217533774266655202463327904910559501703762081531934176786217990113494418705307973163264218287292234362119";
+                const C14Y: &str = "0.6533553743954627788289923830392687875350977003260517837408108019649970888461393846103786781501651324966145060684808980380361143296058258024081840162818693511972";
+                let mut req = make(self, C14X, C14Y, 1.0e148);
+                req.mode = 2;
+                req.max_iter = 20_000;
+                match fractadyne_gpu::render_iter(device, queue, &req) {
+                    Ok(r) => {
+                        let c = &r.counters;
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Counters",
+                            name: "extended-range samples + rebases fire on a dip orbit @1.2e148×".into(),
+                            params: format!("orbit_len={} render_iter=20000 sa=off bla=off", req.orbit_len),
+                            result: format!(
+                                "ext={} rebase={} maxiter_px={}",
+                                c[fractadyne_gpu::CTR_EXT_SAMPLE],
+                                c[fractadyne_gpu::CTR_REBASE],
+                                c[fractadyne_gpu::CTR_MAXITER],
+                            ),
+                            threshold: "ext > 0 and rebase > 0",
+                            pass: c[fractadyne_gpu::CTR_EXT_SAMPLE] > 0
+                                && c[fractadyne_gpu::CTR_REBASE] > 0,
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (render_iter): {e}");
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Counters",
+                            name: "extended-range samples + rebases fire on a dip orbit @1.2e148×".into(),
+                            params: String::new(),
+                            result: format!("GPU error: {e}"),
+                            threshold: "render succeeds",
+                            pass: false,
+                        });
+                    }
+                }
+            }
+            self.render_cfg.use_bla = true;
+            self.render_cfg.series_approx = true;
+            self.render_cfg.auto_iter = true;
+            self.render_cfg.max_iter = 4000;
         }
 
         // ---- catalog: independently verifiable locations (Phase 6.1 / 6.6) ----

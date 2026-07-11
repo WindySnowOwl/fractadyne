@@ -87,6 +87,15 @@ pub struct ExportResult {
     pub ss: u32,
     /// Linear RGBA, row-major, `width*height*4` floats.
     pub pixels: Vec<f32>,
+    /// Pure-GPU iterate-pass time summed across tiles (ms; 0.0 when TIMESTAMP_QUERY is
+    /// unavailable). Unconditional since D3.1 — the export throughput metric.
+    pub iterate_ms: f64,
+    /// Pure-GPU color-pass time summed across tiles (ms; 0.0 when unavailable).
+    pub color_ms: f64,
+    /// Shader event counters for the whole render (D3.3): indices `CTR_*` in the crate
+    /// root — rebases, extended-sample decodes, glitch flags, BLA skips, max-iter
+    /// exhaustions. All zero when the readback failed.
+    pub counters: [u32; crate::COUNTER_SLOTS],
 }
 
 /// Render `req` offscreen and read the colored image back to the CPU. Synchronous
@@ -162,7 +171,14 @@ pub fn render_export(
         let off = (req.orbit.len() * 16) as u64;
         queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
     }
-    let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf);
+    let counters_buf = crate::make_counters_buf(device);
+    let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("export.counters_read"),
+        size: (crate::COUNTER_SLOTS * 4) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
 
     // Coloring uniform is constant across tiles; step is the full-resolution step.
     let cu = ColorUniforms {
@@ -208,6 +224,7 @@ pub fn render_export(
 
     let total_tiles = (w.div_ceil(tile) * h.div_ceil(tile)).max(1);
     let mut done_tiles = 0u32;
+    let (mut sum_iterate_ms, mut sum_color_ms) = (0.0f64, 0.0f64);
 
     let mut ty0 = 0u32;
     while ty0 < h {
@@ -275,12 +292,10 @@ pub fn render_export(
                 mapped_at_creation: false,
             });
 
-            // Optional per-pass GPU timestamps (profiler-only, feature-gated). Four queries:
-            // iterate begin/end (0,1) and color begin/end (2,3), resolved to a buffer and read back
-            // after this tile's poll. Zero cost unless a `timing::capture` scope is active.
-            let ts = if crate::timing::enabled()
-                && device.features().contains(wgpu::Features::TIMESTAMP_QUERY)
-            {
+            // Per-pass GPU timestamps — unconditional since D3.1 (the tile already blocks on
+            // poll(Wait), so the extra 32-byte map is marginal). Four queries: iterate
+            // begin/end (0,1) and color begin/end (2,3), resolved and read after the poll.
+            let ts = if device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
                 let set = device.create_query_set(&wgpu::QuerySetDescriptor {
                     label: Some("export.timestamps"),
                     ty: wgpu::QueryType::Timestamp,
@@ -408,6 +423,8 @@ pub fn render_export(
                     let color_ms = t[3].saturating_sub(t[2]) as f64 * period / 1.0e6;
                     drop(mapped);
                     read.unmap();
+                    sum_iterate_ms += iterate_ms;
+                    sum_color_ms += color_ms;
                     crate::timing::accumulate(iterate_ms, color_ms);
                 }
             }
@@ -431,7 +448,45 @@ pub fn render_export(
         ty0 += th;
     }
 
-    Ok(ExportResult { width: w, height: h, ss, pixels })
+    let counters = read_counters(device, queue, &counters_buf, &counters_read);
+    Ok(ExportResult {
+        width: w,
+        height: h,
+        ss,
+        pixels,
+        iterate_ms: sum_iterate_ms,
+        color_ms: sum_color_ms,
+        counters,
+    })
+}
+
+/// Copy the event-counter atomics to a MAP_READ staging buffer and read them back
+/// (blocking; every caller is already synchronous). Zeros on any failure.
+fn read_counters(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    counters_buf: &wgpu::Buffer,
+    counters_read: &wgpu::Buffer,
+) -> [u32; crate::COUNTER_SLOTS] {
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("export.counters_copy"),
+    });
+    enc.copy_buffer_to_buffer(counters_buf, 0, counters_read, 0, (crate::COUNTER_SLOTS * 4) as u64);
+    queue.submit(std::iter::once(enc.finish()));
+    let slice = counters_read.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    let _ = device.poll(wgpu::Maintain::Wait);
+    let mut out = [0u32; crate::COUNTER_SLOTS];
+    if rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+        let mapped = slice.get_mapped_range();
+        out.copy_from_slice(bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]));
+        drop(mapped);
+        counters_read.unmap();
+    }
+    out
 }
 
 /// Render only the **iteration pass** for a single (clamped) tile and read back the raw
@@ -474,7 +529,14 @@ pub fn render_iter(
         let off = (req.orbit.len() * 16) as u64;
         queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
     }
-    let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf);
+    let counters_buf = crate::make_counters_buf(device);
+    let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("selftest.counters_read"),
+        size: (crate::COUNTER_SLOTS * 4) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
 
     let split = |v: f64| -> (f32, f32) {
         let hi = v as f32;
@@ -549,6 +611,31 @@ pub fn render_iter(
         mapped_at_creation: false,
     });
 
+    // Iterate-pass timestamps (D3.1/F14): render_iter is the primitive under the
+    // multi-reference glitch loop — the app's worst historical time sink ran on a path
+    // with zero instrumentation.
+    let ts = if device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+        let set = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("selftest.timestamps"),
+            ty: wgpu::QueryType::Timestamp,
+            count: 2,
+        });
+        let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("selftest.ts_resolve"),
+            size: 256,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("selftest.ts_read"),
+            size: 16,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Some((set, resolve, read))
+    } else {
+        None
+    };
     let mut enc =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("selftest.enc") });
     {
@@ -564,12 +651,20 @@ pub fn render_iter(
             label: Some("selftest.iter_pass"),
             color_attachments: &[attach(&main_copy_view), attach(&aux_view)],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: ts.as_ref().map(|(set, _, _)| wgpu::RenderPassTimestampWrites {
+                query_set: set,
+                beginning_of_pass_write_index: Some(0),
+                end_of_pass_write_index: Some(1),
+            }),
             occlusion_query_set: None,
         });
         pass.set_pipeline(&iter_pipeline);
         pass.set_bind_group(0, &iter_bg, &[]);
         pass.draw(0..3, 0..1);
+    }
+    if let Some((set, resolve, read)) = &ts {
+        enc.resolve_query_set(set, 0..2, resolve, 0);
+        enc.copy_buffer_to_buffer(resolve, 0, read, 0, 16);
     }
     enc.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
@@ -595,8 +690,27 @@ pub fn render_iter(
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
+    let ts_rx = ts.as_ref().map(|(_, _, read)| {
+        let (ttx, trx) = std::sync::mpsc::channel();
+        read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+            let _ = ttx.send(r);
+        });
+        trx
+    });
     let _ = device.poll(wgpu::Maintain::Wait);
     rx.recv().map_err(|e| GpuError::Readback(e.to_string()))?.map_err(|e| GpuError::Readback(e.to_string()))?;
+    let mut iterate_ms = 0.0f64;
+    if let (Some((_, _, read)), Some(ts_rx)) = (&ts, &ts_rx) {
+        if ts_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+            let mapped = read.slice(..).get_mapped_range();
+            let t: &[u64] = bytemuck::cast_slice(&mapped[..16]);
+            iterate_ms = t[1].saturating_sub(t[0]) as f64
+                * queue.get_timestamp_period() as f64
+                / 1.0e6;
+            drop(mapped);
+            read.unmap();
+        }
+    }
 
     let data = slice.get_mapped_range();
     let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
@@ -610,7 +724,8 @@ pub fn render_iter(
     drop(data);
     out_buf.unmap();
 
-    Ok(ExportResult { width: w, height: h, ss: 1, pixels })
+    let counters = read_counters(device, queue, &counters_buf, &counters_read);
+    Ok(ExportResult { width: w, height: h, ss: 1, pixels, iterate_ms, color_ms: 0.0, counters })
 }
 
 /// Color an already-computed iteration buffer (main target, `w*h*4` floats: smooth-iter, normal.x,
@@ -794,5 +909,13 @@ pub fn color_iter_buffer(
     drop(data);
     out_buf.unmap();
 
-    Ok(ExportResult { width: w, height: h, ss: 1, pixels })
+    Ok(ExportResult {
+        width: w,
+        height: h,
+        ss: 1,
+        pixels,
+        iterate_ms: 0.0,
+        color_ms: 0.0,
+        counters: [0; crate::COUNTER_SLOTS],
+    })
 }

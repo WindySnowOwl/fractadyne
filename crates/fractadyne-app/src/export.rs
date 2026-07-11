@@ -536,6 +536,62 @@ impl FractadyneApp {
         fractadyne_gpu::render_export(device, queue, req, progress, cancel)
     }
 
+    /// End-of-render perf + counter summary (D3.1/D3.2/D3.3): pure-GPU pass times, the
+    /// nominal steps/s figure the Fraktaler-3 throughput gap is measured in, and the shader
+    /// event counters (execution proof — a zero counter on a path the render claims to
+    /// exercise means dead code). Logged un-gated per export (exports are rare) and appended
+    /// to logs/perf.jsonl under FRACTADYNE_PERF=1.
+    fn log_export_perf(
+        kind: &str,
+        req: &fractadyne_gpu::ExportRequest,
+        r: &fractadyne_gpu::ExportResult,
+    ) {
+        let px = (r.width as u64 * r.height as u64).saturating_mul((r.ss as u64) * (r.ss as u64));
+        let nominal = px.saturating_mul(req.max_iter as u64);
+        let gsps = if r.iterate_ms > 0.0 {
+            nominal as f64 / (r.iterate_ms / 1000.0) / 1.0e9
+        } else {
+            0.0
+        };
+        let c = &r.counters;
+        crate::diag::log_line(
+            "perf",
+            &format!(
+                "{kind}: {}x{} ss={} mode={} iter={} gpu_iterate={:.1}ms gpu_color={:.1}ms \
+                 ~{gsps:.2} Gsteps/s (nominal) | counters: rebase={} ext={} glitch={} bla_skip={} maxiter={}",
+                r.width,
+                r.height,
+                r.ss,
+                req.mode,
+                req.max_iter,
+                r.iterate_ms,
+                r.color_ms,
+                c[fractadyne_gpu::CTR_REBASE],
+                c[fractadyne_gpu::CTR_EXT_SAMPLE],
+                c[fractadyne_gpu::CTR_GLITCH],
+                c[fractadyne_gpu::CTR_BLA_SKIP],
+                c[fractadyne_gpu::CTR_MAXITER],
+            ),
+        );
+        crate::diag::perf_jsonl(&format!(
+            "\"kind\":\"{kind}\",\"w\":{},\"h\":{},\"ss\":{},\"mode\":{},\"iter\":{},\
+             \"gpu_iterate_ms\":{:.3},\"gpu_color_ms\":{:.3},\"gsteps_nominal\":{gsps:.3},\
+             \"ctr_rebase\":{},\"ctr_ext\":{},\"ctr_glitch\":{},\"ctr_bla\":{},\"ctr_maxiter\":{}",
+            r.width,
+            r.height,
+            r.ss,
+            req.mode,
+            req.max_iter,
+            r.iterate_ms,
+            r.color_ms,
+            c[fractadyne_gpu::CTR_REBASE],
+            c[fractadyne_gpu::CTR_EXT_SAMPLE],
+            c[fractadyne_gpu::CTR_GLITCH],
+            c[fractadyne_gpu::CTR_BLA_SKIP],
+            c[fractadyne_gpu::CTR_MAXITER],
+        ));
+    }
+
     /// The effective view a CLI render is about to draw, printed **un-gated** before any
     /// one-shot render (D4.2): a batch that silently renders the wrong location (F8 rendered
     /// the home view twenty times) announces itself on the first line. Center digits are
@@ -609,6 +665,7 @@ impl FractadyneApp {
         match self.build_export_job() {
             ExportJob::Single(req) => {
                 let mut r = view(&self.viewport, self.julia_mode, &req)?;
+                Self::log_export_perf("cli-render", &req, &r);
                 if self.show_location {
                     crate::scripting::stamp_location(ctx, &mut r.pixels, r.width, r.height, &self.viewport);
                 }
@@ -618,6 +675,8 @@ impl FractadyneApp {
             ExportJob::SideBySide(a, b) => {
                 let ra = view(&self.viewport, false, &a)?;
                 let rb = view(&self.julia_viewport, true, &b)?;
+                Self::log_export_perf("cli-render-map", &a, &ra);
+                Self::log_export_perf("cli-render-julia", &b, &rb);
                 let (w, h, px) = stitch_side_by_side(&ra, &rb);
                 write(path, w, h, px)?;
                 Ok(format!("Saved {w}×{h} → {}", path.display()))
@@ -843,6 +902,7 @@ impl FractadyneApp {
                 match job {
                     ExportJob::Single(req) => {
                         let r = render(&req)?;
+                        Self::log_export_perf("gui-export", &req, &r);
                         progress.store(2000, Relaxed);
                         let (rw, rh) = (r.width, r.height);
                         write(&path, rw, rh, r.pixels)?;

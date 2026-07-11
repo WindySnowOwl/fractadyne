@@ -237,6 +237,9 @@ struct ViewResources {
     color_uniform: wgpu::Buffer,
     iter_bg: wgpu::BindGroup,
     orbit_buf: wgpu::Buffer,
+    /// Event-counter atomics (D3.3) — bound at iterate binding 2; the live path never reads
+    /// it back (export paths have their own), it exists to satisfy the shared layout.
+    counters_buf: wgpu::Buffer,
     orbit_cap: u32,
     color_bg: wgpu::BindGroup,
     tex_view: wgpu::TextureView,
@@ -297,6 +300,7 @@ pub(crate) fn make_iter_bg(
     layout: &wgpu::BindGroupLayout,
     iter_uniform: &wgpu::Buffer,
     orbit_buf: &wgpu::Buffer,
+    counters_buf: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fractadyne.iter_bg"),
@@ -304,7 +308,31 @@ pub(crate) fn make_iter_bg(
         entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: iter_uniform.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 1, resource: orbit_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: counters_buf.as_entire_binding() },
         ],
+    })
+}
+
+/// GPU event-counter slot names (design/diagnostics.md D3.3). One `array<atomic<u32>>`
+/// storage buffer bound at iterate-pass binding 2; the shader tallies per fragment in
+/// registers and commits one `atomicAdd` per slot at fragment end, so the cost is a few
+/// atomics per pixel — negligible next to the iteration loop. This is the "did the code
+/// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
+/// to exercise rebasing/extended samples/BLA must show nonzero counts.
+pub const COUNTER_SLOTS: usize = 8;
+/// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
+pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
+pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
+pub const CTR_GLITCH: usize = 2; // Pauldelbrot glitch flags raised (glitch_on=1)
+pub const CTR_BLA_SKIP: usize = 3; // BLA multi-step skips taken
+pub const CTR_MAXITER: usize = 4; // pixels that exhausted max_iter (interior/undecided)
+
+pub(crate) fn make_counters_buf(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("fractadyne.counters_buf"),
+        size: (COUNTER_SLOTS * 4) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     })
 }
 
@@ -398,7 +426,8 @@ fn uniform_bgl_entry() -> wgpu::BindGroupLayoutEntry {
 }
 
 /// Bind-group layout for the **iterate** pass: uniforms (0) + the read-only reference/BLA orbit
-/// storage buffer (1). Identical for the live view and every export path.
+/// storage buffer (1) + the event-counter atomics (2). Identical for the live view and every
+/// export path.
 pub(crate) fn iter_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("fractadyne.iter_bgl"),
@@ -409,6 +438,16 @@ pub(crate) fn iter_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLa
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -501,7 +540,8 @@ impl ViewResources {
 
         let orbit_cap = 1024u32;
         let orbit_buf = make_orbit_buffer(device, orbit_cap);
-        let iter_bg = make_iter_bg(device, iter_bgl, &iter_uniform, &orbit_buf);
+        let counters_buf = make_counters_buf(device);
+        let iter_bg = make_iter_bg(device, iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
 
         let size = [1u32, 1u32];
         let tex_view = make_iter_texture(device, size);
@@ -516,6 +556,7 @@ impl ViewResources {
             color_uniform,
             iter_bg,
             orbit_buf,
+            counters_buf,
             orbit_cap,
             color_bg,
             tex_view,
@@ -599,7 +640,8 @@ impl ViewResources {
         if samples > self.orbit_cap {
             self.orbit_cap = samples.next_power_of_two();
             self.orbit_buf = make_orbit_buffer(device, self.orbit_cap);
-            self.iter_bg = make_iter_bg(device, iter_bgl, &self.iter_uniform, &self.orbit_buf);
+            self.iter_bg =
+                make_iter_bg(device, iter_bgl, &self.iter_uniform, &self.orbit_buf, &self.counters_buf);
         }
     }
 }

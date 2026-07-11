@@ -127,6 +127,9 @@ struct Perf {
     iterate_ms: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// Nominal steps of the last frame that actually re-iterated — the cost that `iterate_ms` prices.
     fe_steps_last: [u64; 2],
+    /// Last measured live iterate GPU ms per view — a copy of the swapped `iterate_ms`
+    /// reading kept for the perf HUD (D3.5); the atomic itself is consumed by the controller.
+    last_iterate_ms: [f64; 2],
     /// True once a view's budget measurement has converged near the target — the gate for
     /// starting a tiled settle (see the controller in `update`).
     fe_budget_ok: [bool; 2],
@@ -188,6 +191,7 @@ impl Default for Perf {
             fe_budget: [0, 0],
             iterate_ms: [Default::default(), Default::default()],
             fe_steps_last: [0, 0],
+            last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],
             tile_state: [None, None],
             tile_pending: [false, false],
@@ -2918,6 +2922,19 @@ impl FractadyneApp {
         ui.monospace(format!("aa         {}x", self.render_cfg.aa));
         ui.monospace(format!("dual       {}", self.dual));
         ui.monospace(format!("zoom       {}×", fmt_zoom_log2(self.viewport.log2_magnification())));
+        // Deep-zoom budget telemetry (D3.5): the measured live iterate + the adaptive step
+        // budget it feeds. Only meaningful in floatexp mode (mode 2), where the budget runs.
+        if p.last_mode == 2 && p.last_iterate_ms[0] > 0.0 {
+            let gsps = p.fe_steps_last[0] as f64 / (p.last_iterate_ms[0] / 1000.0) / 1.0e9;
+            ui.separator();
+            ui.monospace(format!("iterate    {:6.1} ms (GPU)", p.last_iterate_ms[0]));
+            ui.monospace(format!("steps/s    {gsps:6.2} G"));
+            ui.monospace(format!(
+                "budget     {:.2e}{}",
+                p.fe_budget[0] as f64,
+                if p.fe_budget_ok[0] { " ✓" } else { " (settling)" }
+            ));
+        }
 
         // Julia parameter the Julia / dual view renders, plus how much c-space the
         // whole Mandelbrot panel covers. When "c/panel" drops far below one Julia
@@ -3808,6 +3825,7 @@ impl eframe::App for FractadyneApp {
                 }
                 continue;
             }
+            self.perf.last_iterate_ms[v] = ms;
             let factor = (render::TDR_BUDGET_MS / ms).clamp(render::TDR_SHRINK_MAX, render::TDR_GROW_MAX);
             let next = ((cur as f64 * factor) as u64)
                 .clamp(render::TDR_BOOTSTRAP_STEPS, render::TDR_STEPS_CEIL);

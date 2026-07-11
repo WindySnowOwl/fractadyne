@@ -430,6 +430,23 @@ struct IterU {
 // the BLA tree is appended right after (starting at index orbit_len): 4 vec4 per node —
 // [A mantissa], [B mantissa], [a_exp, b_exp, r_exp, r_mant], [span, -, -, -].
 @group(0) @binding(1) var<storage, read> reference: array<vec4<f32>>;
+// Event counters (diagnostics D3.3): per-fragment tallies are kept in registers and
+// committed as one atomicAdd per nonzero slot at fragment end - a few atomics per pixel,
+// negligible next to the iteration loop, and pixel output is untouched. Execution proof
+// for the deep-zoom code paths: a "fix" whose counter stays zero did not run (the WGSL
+// NaN-marker lesson). Slot order matches COUNTER_SLOTS / CTR_* in lib.rs.
+@group(0) @binding(2) var<storage, read_write> counters: array<atomic<u32>>;
+const CTR_REBASE: u32 = 0u;      // Zhuoran rebases taken
+const CTR_EXT_SAMPLE: u32 = 1u;  // extended-range orbit samples decoded (recurrence)
+const CTR_GLITCH: u32 = 2u;      // Pauldelbrot glitch flags raised (glitch_on = 1)
+const CTR_BLA_SKIP: u32 = 3u;    // BLA multi-step skips taken
+const CTR_MAXITER: u32 = 4u;     // fragments that exhausted max_iter
+
+fn ctr_commit(n_rebase: u32, n_ext: u32, n_bla: u32) {
+    if (n_rebase > 0u) { atomicAdd(&counters[CTR_REBASE], n_rebase); }
+    if (n_ext > 0u) { atomicAdd(&counters[CTR_EXT_SAMPLE], n_ext); }
+    if (n_bla > 0u) { atomicAdd(&counters[CTR_BLA_SKIP], n_bla); }
+}
 
 // Two render targets: `main` = (smooth iter, normal.x, normal.y, DE log2);
 // `aux` = (stripe average, triangle-inequality average, orbit-trap distance,
@@ -534,6 +551,10 @@ fn fs_iterate(in: VsOut) -> FragOut {
     var iter: u32 = 0u;  // true iteration count
     var zf = vec2<f32>(0.0, 0.0);
     var escaped = false;
+    // Event-counter tallies (committed once per fragment via ctr_commit).
+    var n_rebase: u32 = 0u;
+    var n_ext: u32 = 0u;
+    var n_bla: u32 = 0u;
 
     if (iu.mode == 1u) {
         // Direct df32 (no reference). Glitch-free; used while depth is within df32's
@@ -654,6 +675,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
             }
         }
         if (!escaped) {
+            atomicAdd(&counters[CTR_MAXITER], 1u);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
@@ -788,6 +810,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
                         aux.n = aux.n + f32(span);
                         aux.prev_abs = length(zf);
                     }
+                    n_bla = n_bla + 1u;
                     applied = true;
                     break;
                 }
@@ -888,6 +911,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 // Phoenix: δz' = 2Z·δz + δz² + δc − 0.5·δz_{n-1}
                 var t: Fe;
                 if (orbit_is_ext(r)) {
+                    n_ext = n_ext + 1u;
                     t = fe_two(fe_mul(dz, orbit_fe(r)));
                 } else {
                     t = fe_two(fe_mul_cdf(dz, Z));
@@ -906,6 +930,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 // code path, so existing content is bit-identical.
                 var t: Fe;
                 if (orbit_is_ext(r)) {
+                    n_ext = n_ext + 1u;
                     t = fe_two(fe_mul(dz, orbit_fe(r)));
                 } else {
                     t = fe_two(fe_mul_cdf(dz, Z));
@@ -942,11 +967,16 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 // glitches at exactly the sensitive orbit indices were never flagged.
                 let zr = fe_abs_sf(Znfe);
                 let ztol = sf_norm(vec2<f32>(zr.m.x * 1.0e-2, zr.m.y * 1.0e-2), zr.e);
-                if (sf_lt(fe_abs_sf(zfull), ztol)) { return FragOut(GLITCH_SENTINEL, AUX_NONE); }
+                if (sf_lt(fe_abs_sf(zfull), ztol)) {
+                    atomicAdd(&counters[CTR_GLITCH], 1u);
+                    ctr_commit(n_rebase, n_ext, n_bla);
+                    return FragOut(GLITCH_SENTINEL, AUX_NONE);
+                }
             }
             if (z2 > bail2) { escaped = true; break; }
 
             if (sf_lt(fe_abs_sf(zfull), fe_abs_sf(dz)) || ref_n + 1u >= iu.orbit_len) {
+                n_rebase = n_rebase + 1u;
                 // Rebase onto reference index 0: δz = (Z_{n+1} + δz) − Z₀. Z₀ = 0 for
                 // Mandelbrot, the reference point for Julia (subtraction required).
                 dz = fe_sub(zfull, orbit_fe(reference[0]));
@@ -959,7 +989,9 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 ref_n = 0u;
             }
         }
+        ctr_commit(n_rebase, n_ext, n_bla);
         if (!escaped) {
+            atomicAdd(&counters[CTR_MAXITER], 1u);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
@@ -1100,11 +1132,16 @@ fn fs_iterate(in: VsOut) -> FragOut {
             let z2 = dot(zf, zf);
             if (iu.glitch_on == 1u) {
                 let zr2 = rn.re.x * rn.re.x + rn.im.x * rn.im.x;
-                if (z2 < GLITCH_TOL2 * zr2) { return FragOut(GLITCH_SENTINEL, AUX_NONE); }
+                if (z2 < GLITCH_TOL2 * zr2) {
+                    atomicAdd(&counters[CTR_GLITCH], 1u);
+                    ctr_commit(n_rebase, n_ext, n_bla);
+                    return FragOut(GLITCH_SENTINEL, AUX_NONE);
+                }
             }
             if (z2 > bail2) { escaped = true; break; }
             let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
             if (z2 < dzmag2 || ref_n + 1u >= iu.orbit_len) {
+                n_rebase = n_rebase + 1u;
                 let r0 = orbit_cdf(reference[0]);
                 // Phoenix (two-term): rebase δz_{n-1} to Z_{-1}=0 → the full previous value
                 // z_{n-1} = Z_{ref_n-1} + δz_{n-1} (before ref_n resets to 0).
@@ -1122,7 +1159,9 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 ref_n = 0u;
             }
         }
+        ctr_commit(n_rebase, n_ext, n_bla);
         if (!escaped) {
+            atomicAdd(&counters[CTR_MAXITER], 1u);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }

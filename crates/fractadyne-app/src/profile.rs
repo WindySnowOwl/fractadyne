@@ -68,6 +68,18 @@ pub fn default_regions() -> Vec<ProfRegion> {
         m("deep-1e20", sx, sy, 20.0, 12_000, 0),
         m("deep-1e30-sa", sx, sy, 30.0, 25_000, 0), // floatexp + series approximation
         m("deep-1e30-stripe", sx, sy, 30.0, 25_000, 1), // floatexp, SA off (aux needs every iter)
+        // Deep-interior, dip-carrying orbit (validation corpus 14, ~1.2e148×): the regime of
+        // every recent pathology — extended-range samples, heavy rebasing, latency-bound
+        // dispatches, and the ~50× export-throughput gap — was previously not profiled at
+        // all (design/diagnostics.md D3.4/F16). ~800k iterations; expect seconds per rep.
+        m(
+            "deep-interior-1e148",
+            "-0.3158354656090698908113251908145989842764104941136552011217533774266655202463327904910559501703762081531934176786217990113494418705307973163264218287292234362119",
+            "0.6533553743954627788289923830392687875350977003260517837408108019649970888461393846103786781501651324966145060684808980380361143296058258024081840162818693511972",
+            148.077,
+            800_000,
+            0,
+        ),
     ]
 }
 

@@ -1,10 +1,11 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.6 (build 841)
-- **Generated:** 2026-07-11 05:56:38 UTC (unix 1783749398)
+- **Version:** 0.2.9 (build 851)
+- **Generated:** 2026-07-11 14:34:11 UTC (unix 1783780451)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
+- **Config:** fractal=Mandelbrot julia=false auto_iter=true max_iter=4000 sa=true bla=true glitch=true color=Smooth
 - **Mode:** VALIDATE
 
 All checks use exact mathematics (arbitrary-precision dwell, closed-form properties) or internal cross-checks — no external data. Anyone can reproduce a golden image with the listed command and compare it to `golden/`.
@@ -61,6 +62,8 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Consistency | render determinism (2 runs) | seahorse, 1e6× | bit-identical | bit-identical | ✅ PASS |
 | Derivative | distance-estimate self-consistency | seahorse, 1e6×, 1037 boundary px | 0 with DE>16px at boundary | <0.5% of boundary px | ✅ PASS |
 | Derivative | DE lower bound (Koebe ¼) | seahorse, 1e6×, 12 sampled exterior px | 0 disks contain interior | 0 | ✅ PASS |
+| Counters | BLA skips fire @1e30× (execution proof) | bla_on=1 iter=4000 | bla_skip=774400 rebase=0 maxiter_px=0 | bla_on and bla_skip > 0 | ✅ PASS |
+| Counters | extended-range samples + rebases fire on a dip orbit @1.2e148× | orbit_len=5001 render_iter=20000 sa=off bla=off | ext=48400 rebase=90798400 maxiter_px=48400 | ext > 0 and rebase > 0 | ✅ PASS |
 | Catalog | period-2 disk center (c = -1) | zoom 5e1 | period 2 (want 2), nucleus Δ=1.6e-23 | period + nucleus | ✅ PASS |
 | Catalog | period-3 bulb nucleus | zoom 8e1 | period 3 (want 3), nucleus Δ=3.6e-16 | period + nucleus | ✅ PASS |
 | Catalog | period-3 antenna minibrot (real axis) | zoom 3e2 | period 3 (want 3), nucleus Δ=6.0e-17 | period + nucleus | ✅ PASS |
@@ -75,7 +78,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Formatting | zoom mantissa grouped | 3.38050027227e15 | 3.38050 02722 7e15 | "3.38050 02722 7e15" | ✅ PASS |
 | Formatting | deep coordinate elides middle | 32-digit center @ ~1e30×; and -0.5 | -0.74364 38870 … 11477 40000  |  -0.5 | leading … frontier; short coord safe | ✅ PASS |
 
-**61/61 checks passed.**
+**63/63 checks passed.**
 
 ## Coverage & scope
 
@@ -92,7 +95,7 @@ What each oracle independently verifies, and its validity range:
 
 ## Golden images (320×240)
 
-Stored in `validation\golden`. Compared against; current renders written to `current/` for side-by-side review. pixel tolerance: max ≤ 10, mean ≤ 2.0 (8-bit sRGB).
+Stored in `validation/golden`. Compared against; current renders written to `current/` for side-by-side review. pixel tolerance: max ≤ 10, mean ≤ 2.0 (8-bit sRGB).
 
 | Image | Max Δ | Mean Δ | Checksum (FNV-1a) | Verdict | Reproduce |
 |---|---|---|---|---|---|
