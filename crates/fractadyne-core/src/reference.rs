@@ -15,6 +15,52 @@ fn split_df64(v: f64) -> (f32, f32) {
     (hi, lo)
 }
 
+/// Below this magnitude a sample's plain-df32 storage degrades (f32 min normal is ~1.2e-38, and
+/// GPU arithmetic flushes subnormals to zero), so it is stored in the extended form instead.
+const EXT_SAMPLE_THRESHOLD: f64 = 1.0e-36;
+
+/// Pack one orbit sample for the GPU.
+///
+/// Normal samples are the classic df32 pair-of-pairs `[re_hi, im_hi, re_lo, im_lo]`. A sample whose
+/// magnitude is below [`EXT_SAMPLE_THRESHOLD`] would flush toward zero in that form — and a
+/// deep-minibrot-family reference passes through such near-nucleus dips PERIODICALLY (validation
+/// corpus 11–15: |Z| ~ 1e-71 every 4383 iterations). Zeroing a dip drops the `2Z·δz` term of the
+/// perturbation recurrence at exactly those iterations; once the view is deeper than
+/// ~(dip magnitude ÷ per-period orbit growth), the dropped term dominates the true `δz'` and every
+/// pixel's accumulated divergence is annihilated each period — the whole frame renders as interior
+/// (corpus 14/15 went uniform past ~1e142× while 13 at 1e141× still matched Fraktaler-3). Such
+/// samples are stored EXTENDED-RANGE instead: `[NaN marker, exponent, m_re, m_im]` with mantissas
+/// scaled by 2^-exponent (the leading one normalized to [1,2)); the shader decodes via `orbit_fe`.
+/// NaN can never occur in a normal sample (the bignum pipeline yields finite values), so the marker
+/// is unambiguous.
+fn pack_sample(xv: f64, yv: f64) -> [f32; 4] {
+    let mag = xv.abs().max(yv.abs());
+    if mag != 0.0 && mag < EXT_SAMPLE_THRESHOLD {
+        // Marker layout [0.0, k, m_re + 4.0, m_im]: PROVABLY unambiguous against a legit df32
+        // sample, whose invariant is `hi == 0.0 ⇒ lo == 0.0` (lo = f32(v − hi) = f32(v) = hi),
+        // while here lane 2 is ≥ 2.0. Deliberately NOT a NaN marker: WGSL gives no NaN
+        // guarantees — shader compilers may assume finite floats and fold `x != x` to false,
+        // which silently disabled the first version of this encoding on the GPU.
+        let k = mag.log2().floor() as i32;
+        let s = (2.0f64).powi(-k);
+        return [0.0, k as f32, (xv * s) as f32 + 4.0, (yv * s) as f32];
+    }
+    let (xh, xl) = split_df64(xv);
+    let (yh, yl) = split_df64(yv);
+    [xh, yh, xl, yl]
+}
+
+/// Decode either sample form back to `(re, im)` as `f64` (whose range covers the extended form).
+/// CPU-side consumers (BLA build, aux aggregates, tests) must use this rather than summing the
+/// lanes, or an extended sample's NaN marker poisons the arithmetic.
+pub fn sample_xy(s: &[f32; 4]) -> (f64, f64) {
+    if s[0] == 0.0 && s[2].abs() >= 2.0 {
+        let sc = (2.0f64).powi(s[1] as i32);
+        return ((s[2] as f64 - 4.0) * sc, s[3] as f64 * sc);
+    }
+    (s[0] as f64 + s[2] as f64, s[1] as f64 + s[3] as f64)
+}
+
 /// Complex multiply in arbitrary precision: `(ax+i·ay)·(bx+i·by)`.
 pub(crate) fn cmul_bf(
     ax: &BigFloat,
@@ -196,9 +242,7 @@ fn run_orbit(
         }
         let xv = to_f64(&zx);
         let yv = to_f64(&zy);
-        let (xh, xl) = split_df64(xv);
-        let (yh, yl) = split_df64(yv);
-        out.push([xh, yh, xl, yl]);
+        out.push(pack_sample(xv, yv));
         n += 1;
         if xv * xv + yv * yv > 1.0e12 {
             escaped = true;
@@ -552,9 +596,8 @@ pub fn build_bla_mandel(
     let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
     let mut lvl0 = Vec::with_capacity(nstep);
     for n in 0..nstep {
-        let z = orbit[n];
-        let zr = z[0] as f64 + z[2] as f64; // Z_n real
-        let zi = z[1] as f64 + z[3] as f64; // Z_n imag
+        // `sample_xy`, not lane sums: an extended-range dip sample carries a NaN marker.
+        let (zr, zi) = sample_xy(&orbit[n]);
         let a = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
         let r = a.abs().mul_f64(eps); // |2Z|·eps : drops δz² with rel error ≤ eps
         // Aux aggregate for this node's single landing iterate Z_{n+1} (the shader accumulates the

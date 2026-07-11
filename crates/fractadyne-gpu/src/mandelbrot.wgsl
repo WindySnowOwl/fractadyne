@@ -292,6 +292,36 @@ fn fe_from_sf(re: Sf, im: Sf) -> Fe {
     );
     return fe_norm(m, e);
 }
+// ---------------- extended-range orbit samples --------------------------------------
+// The CPU stores a reference sample whose |Z| would degrade or flush in the plain df32
+// lanes (below ~1e-36: f32 min normal is ~1.2e-38 and GPU arithmetic flushes subnormals)
+// as [NaN marker, exponent, m_re, m_im], mantissas scaled to put the leading one in
+// [1,2) — see `pack_sample` in fractadyne-core. A deep minibrot-family reference passes
+// through such dips periodically; reading them as zero drops the 2Z·δz recurrence term
+// at exactly those iterations, and past ~(dip magnitude ÷ per-period growth) zoom depth
+// that annihilates every pixel's accumulated δz each period — the whole frame renders
+// interior (validation corpus 14/15 at ≳1e142×). NaN never occurs in a normal sample,
+// so the marker is unambiguous (NaN != NaN).
+// Finite marker [0.0, k, m_re+4.0, m_im]: a legit df32 sample can never have hi == 0.0
+// with |lo| ≥ 2 (hi == 0 forces lo == 0). Deliberately NOT NaN-based — WGSL gives no NaN
+// guarantees and compilers may fold `x != x` to false (which silently disabled the first
+// version of this marker on the GPU while the identical CPU code worked).
+fn orbit_is_ext(r: vec4<f32>) -> bool { return r.x == 0.0 && abs(r.z) >= 2.0; }
+// Full extended-range decode → Fe. Normal samples go through fe_from_cdf unchanged.
+fn orbit_fe(r: vec4<f32>) -> Fe {
+    if (orbit_is_ext(r)) {
+        return fe_make(cset(vec2<f32>(r.z - 4.0, 0.0), vec2<f32>(r.w, 0.0)), i32(r.y));
+    }
+    return fe_from_cdf(cset(vec2<f32>(r.x, r.z), vec2<f32>(r.y, r.w)));
+}
+// Plain-df32 view for paths that cannot carry the extended range (mode 0, aux probes,
+// derivative factors): an extended dip reads as (0,0) — the pre-encoding behavior at
+// those magnitudes, which is adequate wherever plain df32 was adequate before.
+fn orbit_cdf(r: vec4<f32>) -> Cdf {
+    if (orbit_is_ext(r)) { return cset(vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 0.0)); }
+    return cset(vec2<f32>(r.x, r.z), vec2<f32>(r.y, r.w));
+}
+
 // Plain-f32 hi value of m·2^e (for bailout / full-orbit value); → 0 when e ≪ 0.
 fn fe_lo_f32(a: Fe) -> vec2<f32> {
     let s = exp2(clamp(f32(a.e), -127.0, 127.0));
@@ -736,10 +766,11 @@ fn fs_iterate(in: VsOut) -> FragOut {
                     let B = fe_norm(cset(v1.xy, v1.zw), i32(v2.y));
                     let ndz = fe_add(fe_mul(A, dz), fe_mul(B, dc));
                     let nref = ref_n + span;
-                    let rn = reference[nref];
+                    // orbit_cdf: the landing sample may be an extended-range dip (NaN-marked).
+                    let rn = orbit_cdf(reference[nref]);
                     let ndzf = fe_lo_f32(ndz);
-                    let zx = rn.x + ndzf.x;
-                    let zy = rn.y + ndzf.y;
+                    let zx = rn.re.x + ndzf.x;
+                    let zy = rn.im.x + ndzf.y;
                     if (zx * zx + zy * zy > bail2) { continue; } // overshoot → drop a level
                     if (iu.formula <= 3u) { D = fe_add(fe_mul(A, D), B); }
                     dz = ndz;
@@ -763,19 +794,19 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 if (applied) { continue; }
             }
             let r = reference[ref_n];
-            let Z = cset(vec2<f32>(r.x, r.z), vec2<f32>(r.y, r.w)); // reference Z_n (df32)
+            let Z = orbit_cdf(r); // reference Z_n (df32; an extended dip reads (0,0) here)
 
             // Derivative update D ← f'(z_n)·D (+1 Mandelbrot) using full z_n = Z_n + δz_n.
             if (iu.formula <= 3u) {
                 let dzc = fe_lo_f32(dz);
-                let zfn = vec2<f32>(r.x + dzc.x, r.y + dzc.y);
+                let zfn = vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y);
                 let fp = deriv_factor(iu.formula, zfn);
                 D = fe_mul_c(D, fp.x, fp.y);
                 if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
             } else if (iu.formula == 8u) {
                 // Phoenix derivative: D' = 2·z_n·D + [1 if Mandelbrot] − 0.5·D_{n-1}.
                 let dzc = fe_lo_f32(dz);
-                let zfn = vec2<f32>(r.x + dzc.x, r.y + dzc.y);
+                let zfn = vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y);
                 var dn = fe_mul_c(D, 2.0 * zfn.x, 2.0 * zfn.y);
                 if (iu.julia == 0u) { dn = fe_add(dn, fe_one()); }
                 dn = fe_sub(dn, fe_scale(Dprev, 0.5));
@@ -855,15 +886,30 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 }
             } else if (iu.formula == 8u) {
                 // Phoenix: δz' = 2Z·δz + δz² + δc − 0.5·δz_{n-1}
-                var t = fe_two(fe_mul_cdf(dz, Z));
+                var t: Fe;
+                if (orbit_is_ext(r)) {
+                    t = fe_two(fe_mul(dz, orbit_fe(r)));
+                } else {
+                    t = fe_two(fe_mul_cdf(dz, Z));
+                }
                 t = fe_add(t, fe_sqr(dz));
                 t = fe_add(t, dc);
                 let dz_new = fe_sub(t, fe_scale(dz_prev, 0.5));
                 dz_prev = dz;
                 dz = dz_new;
             } else {
-                // Mandelbrot: δz' = 2Z·δz + δz² + δc
-                var t = fe_two(fe_mul_cdf(dz, Z));
+                // Mandelbrot: δz' = 2Z·δz + δz² + δc. THE LOAD-BEARING dip handling: at an
+                // extended-range sample (true |Z| ~ 1e-71, unrepresentable in the df32 lanes)
+                // the 2Z·δz term must be computed in extended range — dropping it is what
+                // re-glued every pixel to the reference each dip period and rendered whole
+                // deep views interior (corpus 14/15). Normal samples keep the exact original
+                // code path, so existing content is bit-identical.
+                var t: Fe;
+                if (orbit_is_ext(r)) {
+                    t = fe_two(fe_mul(dz, orbit_fe(r)));
+                } else {
+                    t = fe_two(fe_mul_cdf(dz, Z));
+                }
                 t = fe_add(t, fe_sqr(dz));
                 dz = fe_add(t, dc);
             }
@@ -871,34 +917,44 @@ fn fs_iterate(in: VsOut) -> FragOut {
             ref_n = ref_n + 1u;
             iter = iter + 1u;
 
-            // Full value z = Z_{n+1} + δz, used for bailout and rebasing.
+            // Full value z = Z_{n+1} + δz — carried in EXTENDED range. The old f32 shortcut
+            // (zf = rn.hi + fe_lo_f32(dz); rebase if dot(zf,zf) < fe_mag2(dz)) underflows on
+            // BOTH sides once |z| and |δz| drop below f32 range (fe_mag2's exp2 clamp is 0.0
+            // for dz.e ≤ −125; FTZ hardware zeroes it from ~−75), so the test read 0 < 0 and
+            // Zhuoran rebasing was silently DISABLED at exactly the moment it exists for
+            // (|Z+δz| < |δz| at a deep near-zero orbit pass). A missed rebase forces δz to
+            // carry a value orders below its own magnitude through fe_add's 60-bit window —
+            // per-pixel state is destroyed and the whole view collapses to a uniform early
+            // escape (validation corpus 14/15: a minibrot-family dive path breaks past
+            // ~1e142× while the same reference renders fine at 1e141×, because |δz| scales
+            // with |δc| and slid under the underflow floor). Compare in scalar floatexp
+            // instead — the exact machinery the BLA radius test above already uses.
             let rn = reference[ref_n];
-            let dzf = fe_lo_f32(dz);
-            zf = vec2<f32>(rn.x + dzf.x, rn.y + dzf.y);
+            // orbit_fe: full extended-range decode — Zn may be a NaN-marked dip sample.
+            let Znfe = orbit_fe(rn);
+            let zfull = fe_add(Znfe, dz);
+            zf = fe_lo_f32(zfull);
             if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
             let z2 = dot(zf, zf);
             if (iu.glitch_on == 1u) {
-                let zr2 = rn.x * rn.x + rn.y * rn.y;
-                if (z2 < GLITCH_TOL2 * zr2) { return FragOut(GLITCH_SENTINEL, AUX_NONE); }
+                // |z| < 1e-2·|Z_n| (≡ the old z2 < 1e-4·zr2), in extended range: the f32
+                // form underflowed to `0 < 0` at flushed/near-zero samples, so Pauldelbrot
+                // glitches at exactly the sensitive orbit indices were never flagged.
+                let zr = fe_abs_sf(Znfe);
+                let ztol = sf_norm(vec2<f32>(zr.m.x * 1.0e-2, zr.m.y * 1.0e-2), zr.e);
+                if (sf_lt(fe_abs_sf(zfull), ztol)) { return FragOut(GLITCH_SENTINEL, AUX_NONE); }
             }
             if (z2 > bail2) { escaped = true; break; }
 
-            let dzmag2 = fe_mag2(dz);
-            if (z2 < dzmag2 || ref_n + 1u >= iu.orbit_len) {
+            if (sf_lt(fe_abs_sf(zfull), fe_abs_sf(dz)) || ref_n + 1u >= iu.orbit_len) {
                 // Rebase onto reference index 0: δz = (Z_{n+1} + δz) − Z₀. Z₀ = 0 for
                 // Mandelbrot, the reference point for Julia (subtraction required).
-                let r0 = reference[0];
-                let Zn = cset(vec2<f32>(rn.x, rn.z), vec2<f32>(rn.y, rn.w));
-                let Z0 = cset(vec2<f32>(r0.x, r0.z), vec2<f32>(r0.y, r0.w));
-                let zfull = fe_add(fe_from_cdf(Zn), dz);
-                dz = fe_sub(zfull, fe_from_cdf(Z0));
+                dz = fe_sub(zfull, orbit_fe(reference[0]));
                 // Phoenix (two-term): also rebase δz_{n-1}. After rebasing to index 0 the "previous"
                 // reference is Z_{-1}=0 (the orbit's initial z_prev), so δz_{n-1} → the full previous
                 // value z_{n-1} = Z_{ref_n-1} + δz_{n-1}. Uses reference[ref_n-1] before ref_n resets.
                 if (iu.formula == 8u) {
-                    let rp = reference[ref_n - 1u];
-                    let Zp = cset(vec2<f32>(rp.x, rp.z), vec2<f32>(rp.y, rp.w));
-                    dz_prev = fe_add(fe_from_cdf(Zp), dz_prev);
+                    dz_prev = fe_add(orbit_fe(reference[ref_n - 1u]), dz_prev);
                 }
                 ref_n = 0u;
             }
@@ -964,16 +1020,17 @@ fn fs_iterate(in: VsOut) -> FragOut {
         }
         loop {
             if (iter >= iu.max_iter) { break; }
-            let r = reference[ref_n];
-            let z = cset(vec2<f32>(r.x, r.z), vec2<f32>(r.y, r.w));
+            // orbit_cdf: an extended-range dip sample (NaN-marked) reads as (0,0) here —
+            // mode 0's plain df32 math cannot carry it, matching pre-encoding behavior.
+            let z = orbit_cdf(reference[ref_n]);
             if (iu.formula <= 3u) {
-                let zfn = vec2<f32>(r.x + dz.re.x, r.y + dz.im.x); // full z_n
+                let zfn = vec2<f32>(z.re.x + dz.re.x, z.im.x + dz.im.x); // full z_n
                 let fp = deriv_factor(iu.formula, zfn);
                 D = fe_mul_c(D, fp.x, fp.y);
                 if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
             } else if (iu.formula == 8u) {
                 // Phoenix derivative: D' = 2·z_n·D + [1 if Mandelbrot] − 0.5·D_{n-1}.
-                let zfn = vec2<f32>(r.x + dz.re.x, r.y + dz.im.x); // full z_n
+                let zfn = vec2<f32>(z.re.x + dz.re.x, z.im.x + dz.im.x); // full z_n
                 var dn = fe_mul_c(D, 2.0 * zfn.x, 2.0 * zfn.y);
                 if (iu.julia == 0u) { dn = fe_add(dn, fe_one()); }
                 dn = fe_sub(dn, fe_scale(Dprev, 0.5));
@@ -1034,32 +1091,33 @@ fn fs_iterate(in: VsOut) -> FragOut {
             }
             ref_n = ref_n + 1u;
             iter = iter + 1u;
-            let rn = reference[ref_n];
-            let zr_full = df_add(vec2<f32>(rn.x, rn.z), dz.re);
-            let zi_full = df_add(vec2<f32>(rn.y, rn.w), dz.im);
+            // orbit_cdf: an extended-range dip sample (NaN-marked) reads as (0,0) here.
+            let rn = orbit_cdf(reference[ref_n]);
+            let zr_full = df_add(rn.re, dz.re);
+            let zi_full = df_add(rn.im, dz.im);
             zf = vec2<f32>(zr_full.x, zi_full.x);
             if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
             let z2 = dot(zf, zf);
             if (iu.glitch_on == 1u) {
-                let zr2 = rn.x * rn.x + rn.y * rn.y;
+                let zr2 = rn.re.x * rn.re.x + rn.im.x * rn.im.x;
                 if (z2 < GLITCH_TOL2 * zr2) { return FragOut(GLITCH_SENTINEL, AUX_NONE); }
             }
             if (z2 > bail2) { escaped = true; break; }
             let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
             if (z2 < dzmag2 || ref_n + 1u >= iu.orbit_len) {
-                let r0 = reference[0];
+                let r0 = orbit_cdf(reference[0]);
                 // Phoenix (two-term): rebase δz_{n-1} to Z_{-1}=0 → the full previous value
                 // z_{n-1} = Z_{ref_n-1} + δz_{n-1} (before ref_n resets to 0).
                 if (iu.formula == 8u) {
-                    let rp = reference[ref_n - 1u];
+                    let rp = orbit_cdf(reference[ref_n - 1u]);
                     dz_prev = cset(
-                        df_add(vec2<f32>(rp.x, rp.z), dz_prev.re),
-                        df_add(vec2<f32>(rp.y, rp.w), dz_prev.im),
+                        df_add(rp.re, dz_prev.re),
+                        df_add(rp.im, dz_prev.im),
                     );
                 }
                 dz = cset(
-                    df_sub(zr_full, vec2<f32>(r0.x, r0.z)),
-                    df_sub(zi_full, vec2<f32>(r0.y, r0.w)),
+                    df_sub(zr_full, r0.re),
+                    df_sub(zi_full, r0.im),
                 );
                 ref_n = 0u;
             }

@@ -56,6 +56,22 @@ fn img_diff(a: &[u8], b: &[u8]) -> (u32, f64) {
 }
 
 /// One row of the validation report.
+/// Stream each check result the moment it lands (design/diagnostics.md D2.3): a suite that
+/// buffers everything to the end cannot name its slow or hung check — this one names it live,
+/// with the elapsed time since the previous check (which includes this check's own setup).
+fn push_check(checks: &mut Vec<SelfCheck>, last: &mut std::time::Instant, c: SelfCheck) {
+    let ms = last.elapsed().as_millis();
+    *last = std::time::Instant::now();
+    eprintln!(
+        "[selftest {:>7}ms] {} {} — {}",
+        ms,
+        if c.pass { "PASS" } else { "FAIL" },
+        c.name,
+        c.result
+    );
+    checks.push(c);
+}
+
 struct SelfCheck {
     category: &'static str,
     name: String,
@@ -108,9 +124,27 @@ impl FractadyneApp {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        // Deterministic params: Mandelbrot, no Julia.
+        // HERMETIC BASELINE (design/diagnostics.md D2.1): reset every config field the checks
+        // read to documented values, so nothing leaks in from the live session. Three real
+        // incidents came from ad-hoc per-check pinning: a stripe session gated SA off (v0.2.1,
+        // 58/60), a staged session disabled series_approx (v0.2.6, 58/61), and a 500k-max_iter
+        // session turned the "SA seed vs full iteration" SA-off arm and the CPU bignum oracles
+        // into a 2+-hour suite once v0.2.5 stopped capping explicit counts. `--selftest` exits
+        // via process::exit without saving the session, so no restore is needed.
         self.fractal = FractalKind::Mandelbrot;
         self.julia_mode = false;
+        self.dual = false;
+        self.render_cfg.auto_iter = true; // depth-scaled counts, as every check was designed for
+        self.render_cfg.max_iter = 4000;
+        self.render_cfg.series_approx = true;
+        self.render_cfg.use_bla = true;
+        self.render_cfg.glitch_correct = true; // exports set glitch_on:0; pinned for completeness
+        self.coloring.color_method = crate::ColorMethod::Smooth;
+        self.coloring.use_custom_palette = false;
+        self.coloring.use_binary = false;
+        self.coloring.use_duotone = false;
+        self.effects.de = false;
+        self.effects.light = false;
         // Seahorse Valley — detailed at every depth tested; coordinate precise enough.
         const SX: &str = "-0.743643887037151";
         const SY: &str = "0.131825904205330";
@@ -217,6 +251,7 @@ impl FractadyneApp {
         };
 
         let mut checks: Vec<SelfCheck> = Vec::new();
+        let mut last_check_t = std::time::Instant::now();
 
         // ---- numeric & render-path checks (local closures borrow self immutably) ----
         {
@@ -246,7 +281,7 @@ impl FractadyneApp {
                     k += 7;
                 }
                 let frac = if n == 0 { 1.0 } else { big as f64 / n as f64 };
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Numeric",
                     name: "df32 perturbation vs CPU f64 dwell".into(),
                     params: format!("seahorse, 2e4×, {} iter, n={n}", req.max_iter),
@@ -254,7 +289,7 @@ impl FractadyneApp {
                     threshold: "≥90% within 1 iter",
                     pass: frac < 0.10,
                 });
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Finiteness",
                     name: "dwell finite (perturbation @2e4×)".into(),
                     params: "all sampled pixels".into(),
@@ -271,7 +306,7 @@ impl FractadyneApp {
             b.mode = 2;
             if let (Some(aa), Some(bb)) = (render(&a), render(&b)) {
                 let (mean, frac) = compare(&aa, &bb);
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Numeric",
                     name: "floatexp vs df32 perturbation".into(),
                     params: "seahorse, 1e10×".into(),
@@ -299,7 +334,7 @@ impl FractadyneApp {
                 let req = make(self, cx, cy, *mag); // mode chosen by the real depth selector
                 if let Some(px) = render(&req) {
                     let (checked, agree, boundary, mism) = oracle(cx, cy, *mag, req.max_iter, &px);
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Bignum oracle",
                         name: format!("naive bignum dwell vs GPU @{label}"),
                         params: format!("mode {}, {} iter, {checked} samples", req.mode, req.max_iter),
@@ -308,7 +343,7 @@ impl FractadyneApp {
                         pass: mism == 0 && checked > 0,
                     });
                 } else {
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Bignum oracle",
                         name: format!("naive bignum dwell vs GPU @{label}"),
                         params: "render".into(),
@@ -350,7 +385,7 @@ impl FractadyneApp {
                                 maxd = maxd.max((ra - rb).abs() as f64);
                             }
                         }
-                        checks.push(SelfCheck {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Series approximation",
                             name: "SA seed vs full iteration @1e30×".into(),
                             params: format!("Mandelbrot, 1e30×, skip {skip} of {} iter", on.max_iter),
@@ -359,7 +394,7 @@ impl FractadyneApp {
                             pass: maxd < 0.05,
                         });
                     }
-                    _ => checks.push(SelfCheck {
+                    _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Series approximation",
                         name: "SA seed vs full iteration @1e30×".into(),
                         params: "Mandelbrot, 1e30×".into(),
@@ -381,7 +416,7 @@ impl FractadyneApp {
                 let req = make(self, NX, NY, 1.0e30);
                 self.render_cfg.use_bla = saved_bla;
                 self.render_cfg.series_approx = saved_sa;
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Series approximation",
                     name: "SA gated off when BLA active @1e30×".into(),
                     params: format!("Mandelbrot mode {}, SA toggle on, BLA on", req.mode),
@@ -414,7 +449,7 @@ impl FractadyneApp {
                                 maxd = maxd.max((ra - rb).abs() as f64);
                             }
                         }
-                        checks.push(SelfCheck {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Series approximation",
                             name: "SA seed vs full iteration @1e20× (mode 0)".into(),
                             params: format!("Mandelbrot, 1e20×, mode {mode}, skip {skip} of {} iter", on.max_iter),
@@ -423,7 +458,7 @@ impl FractadyneApp {
                             pass: maxd < 0.05,
                         });
                     }
-                    _ => checks.push(SelfCheck {
+                    _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Series approximation",
                         name: "SA seed vs full iteration @1e20× (mode 0)".into(),
                         params: format!("Mandelbrot, 1e20×, mode {mode}"),
@@ -508,7 +543,7 @@ impl FractadyneApp {
                         }
                     }
                     let frac = (auto_dissent + no_majority) as f64 / smooth.max(1) as f64;
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Glitch",
                         name: "reference independence (3-ref majority)".into(),
                         params: "seahorse, 1e8×, auto vs 2 offset refs (smooth region)".into(),
@@ -532,7 +567,7 @@ impl FractadyneApp {
                 if let (Some(pa), Some(pb)) = (render(&g_auto), render(&g_bad)) {
                     let flagged = |px: &[f32]| px.iter().step_by(4).filter(|&&r| r < -1.5).count();
                     let (auto_gl, bad_gl) = (flagged(&pa), flagged(&pb));
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Glitch",
                         name: "glitch detection responds to reference quality".into(),
                         params: "seahorse, 1e8×, auto vs far-offset reference".into(),
@@ -554,7 +589,7 @@ impl FractadyneApp {
                     if let Some((_buf, refs_used, residual)) =
                         self.render_corrected_iter(device, queue, &vp, false, N, N, 40)
                     {
-                        checks.push(SelfCheck {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Glitch",
                             name: "multi-reference correction resolves glitches".into(),
                             params: "seahorse, 1e8×, auto seed + correction".into(),
@@ -583,7 +618,7 @@ impl FractadyneApp {
                         let cor_dark = (0..n).any(|i| cor.pixels[i * 4] < 0.05);
                         let cor_bright = (0..n).any(|i| cor.pixels[i * 4] > 0.2);
                         let interior_plain = (0..n).filter(|&i| plain[i * 4] < 0.0).count();
-                        checks.push(SelfCheck {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Glitch",
                             name: "corrected buffer colors to a valid image".into(),
                             params: "seahorse, 1e8×, render_export_corrected".into(),
@@ -613,7 +648,7 @@ impl FractadyneApp {
                     }
                 }
                 let mean = if n == 0 { f64::INFINITY } else { sum / n as f64 };
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Invariant",
                     name: "real-axis mirror symmetry".into(),
                     params: "home view (-0.5, 0)".into(),
@@ -623,7 +658,7 @@ impl FractadyneApp {
                 });
                 let interior = px.iter().step_by(4).any(|&r| r < 0.0);
                 let exterior = px.iter().step_by(4).any(|&r| r >= 0.0);
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Invariant",
                     name: "home has interior + exterior".into(),
                     params: "home view".into(),
@@ -694,7 +729,7 @@ impl FractadyneApp {
                             }
                         }
                     }
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Symmetry (render)",
                         name: label.into(),
                         params: format!("origin view, span 3, {total} smooth px"),
@@ -776,7 +811,7 @@ impl FractadyneApp {
                     }
                     let mean = if n == 0 { f64::INFINITY } else { sum / n as f64 };
                     let frac = if n == 0 { 1.0 } else { big as f64 / n as f64 };
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Abs-family deep zoom",
                         name: format!("{} perturbation vs direct", fractal.name()),
                         params: format!("{mag:.0e}×, mode {} vs 1, n={n}", pert.mode),
@@ -823,7 +858,7 @@ impl FractadyneApp {
                     }
                     let mean = if n == 0 { f64::INFINITY } else { sum / n as f64 };
                     let frac = if n == 0 { 1.0 } else { big as f64 / n as f64 };
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Abs-family deep zoom",
                         name: format!("{} floatexp vs df32", fractal.name()),
                         params: format!("{mid_mag:.0e}×, mode 2 vs 0, n={n}"),
@@ -859,7 +894,7 @@ impl FractadyneApp {
                         }
                     }
                     let spread = if esc > 0 { (hi - lo) as f64 } else { 0.0 };
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Abs-family deep zoom",
                         name: format!("{} deep finiteness @1e35×", fractal.name()),
                         params: format!("{deep_mag:.0e}×, mode {}", deep.mode),
@@ -925,7 +960,7 @@ impl FractadyneApp {
                 };
                 if let (Some(d), Some(p0), Some(p2)) = (ren(&direct), ren(&m0), ren(&m2)) {
                     let (mean0, frac0, n0) = cmp(&p0, &d);
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Phoenix deep zoom",
                         name: "Phoenix perturbation vs direct".into(),
                         params: format!("1e5×, mode 0 vs 1, n={n0}"),
@@ -934,7 +969,7 @@ impl FractadyneApp {
                         pass: n0 > 0 && mean0 < 0.5 && frac0 < 0.02,
                     });
                     let (mean2, frac2, n2) = cmp(&p2, &p0);
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Phoenix deep zoom",
                         name: "Phoenix floatexp vs df32".into(),
                         params: format!("1e5×, mode 2 vs 0, n={n2}"),
@@ -957,6 +992,11 @@ impl FractadyneApp {
             self.coloring.use_custom_palette = false;
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = 4000;
+            // Hermeticity (the v0.2.1 lesson, second occurrence): this check READS
+            // `render_cfg.series_approx` via `current_export_request_for` — a session saved with
+            // SA disabled (e.g. by tooling that stages the session file) made all three checks
+            // report "SA did not engage" with no code defect present. Pin it like `color_method`.
+            self.render_cfg.series_approx = true;
             for (fractal, cx, cy) in [
                 (FractalKind::Multibrot3, "0.2", "0.1"),
                 (FractalKind::Multibrot4, "0.2", "0.1"),
@@ -994,7 +1034,7 @@ impl FractadyneApp {
                                 }
                             }
                         }
-                        checks.push(SelfCheck {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Series approximation",
                             name: format!("{} SA engages + matches SA-off @1e7×", fractal.name()),
                             params: format!("mode {mode}, skip {skip} of {} iter, {esc} escaped", on.max_iter),
@@ -1003,7 +1043,7 @@ impl FractadyneApp {
                             pass: finite && mism == 0,
                         });
                     }
-                    _ => checks.push(SelfCheck {
+                    _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Series approximation",
                         name: format!("{} SA engages + matches SA-off @1e7×", fractal.name()),
                         params: format!("mode {mode}, skip {skip}"),
@@ -1084,7 +1124,7 @@ impl FractadyneApp {
                             }
                         }
                     }
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "BLA",
                         name: "BLA render == non-BLA @1e30×".into(),
                         params: format!("Mandelbrot mode 2, bla_on {bla_on}, {esc} escaped / {interior} interior"),
@@ -1093,7 +1133,7 @@ impl FractadyneApp {
                         pass: mism == 0 && (esc + interior) > 0,
                     });
                 }
-                _ => checks.push(SelfCheck {
+                _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "BLA",
                     name: "BLA render == non-BLA @1e30×".into(),
                     params: format!("bla_on {bla_on}, mode {mode}"),
@@ -1142,7 +1182,7 @@ impl FractadyneApp {
                             }
                         }
                     }
-                    checks.push(SelfCheck {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "BLA",
                         name: "BLA escape path == non-BLA @1e30× (boundary)".into(),
                         params: format!("seahorse boundary, mode {mode}, bla_on {bon}, {esc} escaped"),
@@ -1220,7 +1260,7 @@ impl FractadyneApp {
                             }
                         }
                         let chans = (nn * nn * 4) as u64;
-                        checks.push(SelfCheck {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "BLA",
                             name: format!("{label}: BLA-fold == non-BLA @1e30×"),
                             params: format!("bla_on {bla_on}, maxΔ {maxd:.4}"),
@@ -1229,7 +1269,7 @@ impl FractadyneApp {
                             pass: maxd < 0.1 && nd < chans / 100,
                         });
                     }
-                    _ => checks.push(SelfCheck {
+                    _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "BLA",
                         name: format!("{label}: BLA-fold == non-BLA @1e30×"),
                         params: format!("bla_on {bla_on}, mode {mode}"),
@@ -1306,7 +1346,7 @@ impl FractadyneApp {
                         }
                     }
                 }
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Consistency",
                     name: "resolution independence (N vs 3N)".into(),
                     params: format!("seahorse, 1e6×, {checked} smooth px"),
@@ -1331,7 +1371,7 @@ impl FractadyneApp {
                         }
                     }
                 }
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Consistency",
                     name: "max-iter monotonic stability".into(),
                     params: format!("seahorse, 1e6×, 500→3000 iter, {checked} escaped px"),
@@ -1366,7 +1406,7 @@ impl FractadyneApp {
                 }
                 // Reference differs between the two zooms, so an isolated boundary pixel may
                 // flip by 1 iteration; a true seam bug would differ over a large region.
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Consistency",
                     name: "zoom-sequence across direct→df32 seam".into(),
                     params: format!("seahorse, 4e3×↔1.2e4×, {checked} overlap px"),
@@ -1398,7 +1438,7 @@ impl FractadyneApp {
                 }
                 // Reference recomputed for the shifted center, so an isolated boundary pixel
                 // may flip by 1; a true offset bug would shift the whole overlap.
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Consistency",
                     name: "pan consistency".into(),
                     params: format!("seahorse, 1e6×, +{shift}px, {checked} overlap px"),
@@ -1414,7 +1454,7 @@ impl FractadyneApp {
             {
                 let identical = p1.len() == p2.len()
                     && p1.iter().zip(&p2).all(|(a, b)| a.to_bits() == b.to_bits());
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Consistency",
                     name: "render determinism (2 runs)".into(),
                     params: "seahorse, 1e6×".into(),
@@ -1457,7 +1497,7 @@ impl FractadyneApp {
                         }
                     }
                 }
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Derivative",
                     name: "distance-estimate self-consistency".into(),
                     params: format!("seahorse, 1e6×, {bnd} boundary px"),
@@ -1500,7 +1540,7 @@ impl FractadyneApp {
                     }
                     j += g;
                 }
-                checks.push(SelfCheck {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Derivative",
                     name: "DE lower bound (Koebe ¼)".into(),
                     params: format!("seahorse, 1e6×, {checked} sampled exterior px"),
@@ -1543,7 +1583,7 @@ impl FractadyneApp {
                                         detail = format!("{detail}, nucleus Δ={dist:.1e}");
                                     }
                                 }
-                                checks.push(SelfCheck {
+                                push_check(&mut checks, &mut last_check_t, SelfCheck {
                                     category: "Catalog",
                                     name: e.name.clone(),
                                     params: format!("zoom {:.0e}", e.zoom),
@@ -1552,7 +1592,7 @@ impl FractadyneApp {
                                     pass,
                                 });
                             }
-                            None => checks.push(SelfCheck {
+                            None => push_check(&mut checks, &mut last_check_t, SelfCheck {
                                 category: "Catalog",
                                 name: e.name.clone(),
                                 params: "find_nucleus".into(),
@@ -1576,7 +1616,7 @@ impl FractadyneApp {
                         };
                         let oracle_interior =
                             fractadyne_core::naive_dwell_bf(&cx, &cy, 200_000, 65536.0, prec).is_none();
-                        checks.push(SelfCheck {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Catalog",
                             name: e.name.clone(),
                             params: format!("interior expected {}", e.interior),
@@ -1586,7 +1626,7 @@ impl FractadyneApp {
                         });
                     }
                 }
-                Err(err) => checks.push(SelfCheck {
+                Err(err) => push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Catalog",
                     name: "parse validation/catalog.toml".into(),
                     params: "TOML".into(),
@@ -1622,7 +1662,7 @@ impl FractadyneApp {
                 && self.render_cfg.aa == 3
                 && (self.viewport.units_per_pixel.log2() + 120.0).abs() < 1.0e-6
                 && (cx + 0.743643887037151).abs() < 1.0e-12;
-            checks.push(SelfCheck {
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "View format",
                 name: "metadata round-trips a deep view".into(),
                 params: "serialize → scramble → load".into(),
@@ -1637,7 +1677,7 @@ impl FractadyneApp {
             // A newer format_version must be detected (not silently consumed).
             let newer = "app=Fractadyne\nformat_version=999\ncenter_x=-0.5\ncenter_y=0\nupp_log2=-3\n";
             let nr = self.load_view_metadata(newer);
-            checks.push(SelfCheck {
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "View format",
                 name: "newer format_version flagged".into(),
                 params: "format_version=999".into(),
@@ -1659,7 +1699,7 @@ impl FractadyneApp {
                 && self.coloring.offset.is_finite()
                 && hr.clamped.len() >= 4 // zoom depth, max_iter, aa, cycle, offset
                 && hr.unknown.iter().any(|u| u == "bogus_field");
-            checks.push(SelfCheck {
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "View format",
                 name: "hostile fields clamped + reported".into(),
                 params: "upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf, bogus_field".into(),
@@ -1677,7 +1717,7 @@ impl FractadyneApp {
         {
             // Zoom mantissa is space-grouped in 5s; exponent untouched.
             let zg = crate::group_sci_mantissa("3.38050027227e15");
-            checks.push(SelfCheck {
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "Formatting",
                 name: "zoom mantissa grouped".into(),
                 params: "3.38050027227e15".into(),
@@ -1691,7 +1731,7 @@ impl FractadyneApp {
             let ds = crate::fmt_coord_deep(&deep, 100.0);
             let short = crate::fmt_coord_deep(&fractadyne_core::parse_bf("-0.5").unwrap(), 1.0);
             let ok = ds.contains('…') && ds.starts_with("-0.74364") && short == "-0.5";
-            checks.push(SelfCheck {
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "Formatting",
                 name: "deep coordinate elides middle".into(),
                 params: "32-digit center @ ~1e30×; and -0.5".into(),

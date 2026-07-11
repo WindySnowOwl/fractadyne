@@ -153,7 +153,9 @@ fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32) -> f
     let cmag = orbit
         .get(1)
         .map(|z| {
-            let (x, y) = (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64);
+            // `sample_xy` decodes extended-range dip samples (NaN-marked); orbit[1] = c is never
+            // one in practice, but stay marker-safe.
+            let (x, y) = fractadyne_core::sample_xy(z);
             (x * x + y * y).sqrt()
         })
         .unwrap_or(0.0);
@@ -846,6 +848,17 @@ impl FractadyneApp {
         let jcyh = jcy as f32;
         let julia_c = [jcxh, jcyh, (jcx - jcxh as f64) as f32, (jcy - jcyh as f64) as f32];
         let (stops, stop_count) = self.active_stops();
+        if trace_enabled() {
+            eprintln!(
+                "[fd-req] mode={} iter={eff_iter} orbit_len={orbit_len} sa_skip={} bla_on={bla_on} \
+                 delta_exp={delta_exp} span_m=({:.6e},{:.6e}) ref_off={:?} prec={precision}",
+                mode.to_u32(),
+                sa.skip,
+                scale.span_mantissa.x,
+                scale.span_mantissa.y,
+                ref_offset,
+            );
+        }
 
         fractadyne_gpu::ExportRequest {
             width,
