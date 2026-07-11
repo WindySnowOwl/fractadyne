@@ -16,17 +16,29 @@ Mockups: [design/mockups/](design/mockups/).
   `series_approx = false` for fewest-approximations purity). Fix ideas: cap correction passes /
   cluster count at depth, reuse the primary reference's tail, or time-box the pass.
 
-- [ ] **Uniform-exterior misrender past ~1e142× on the corpus 11–15 dive path.** Corpus
-  locations 14 (1.2e148×) and 15 (3.7e163×) render as flat escaped-exterior while
-  Fraktaler-3 shows dendrites at the same center/zoom/iterations; location 13 (1e141×,
-  same dive path — shared center prefix) still matches. Bracketed: structure survives
-  `--zoom-log2 470`, gone at `475`. Ruled out: the reference (healthy full 600k
-  non-escaped orbit either side of the break — see the `[fd-ref]` trace in render.rs),
-  `--no-bla`, center precision (161-digit), iteration count (600k and 6M identical).
-  Not a depth wall: corpus 16–20 (e250→e1008, other centers) match F3. The failure is
-  in the GPU iterate consuming a healthy reference. Repro:
-  `fractadyne.exe --render --center <loc14 center> --zoom-log2 475 --iter 600000`
-  (uniform) vs the same at `--zoom-log2 470` (structured).
+- [x] **Uniform-exterior misrender past ~1e142× — FIXED in v0.2.6 (sub-f32 orbit dips).**
+  Root cause: the 11–15 dive path's reference orbit passes within ~1e-71 of zero every 4383
+  iterations; orbit samples are stored as plain df32, so those dips flushed to zero in the GPU
+  buffer, dropping the `2Z·δz` recurrence term at exactly those iterations — past
+  ~(dip ÷ per-period growth) zoom (~1e142×) that re-glued every pixel to the reference each
+  period and frames rendered all-interior (the "uniform" color was the interior color). Fix:
+  sub-1e-36 samples are stored extended-range as `[0.0, exponent, m_re+4, m_im]`
+  (`pack_sample`/`sample_xy` in fractadyne-core) and decoded by the shader (`orbit_fe`/
+  `orbit_cdf`). The marker is FINITE and provably unambiguous (a legit df32 pair with
+  hi == 0.0 always has lo == 0.0, while lane 2 here is ≥ 2) — a first attempt used NaN
+  and silently failed on the GPU: WGSL gives no NaN guarantees and compilers may fold
+  `x != x` to false; the mode-2 rebase and Pauldelbrot-glitch comparisons also moved to scalar
+  floatexp (`fe_abs_sf`/`sf_lt`) — both underflowed to `0 < 0` below dz.e ≈ −75 and were
+  silently disabled. Diagnosed with two kept probe tests (`probe_orbit.rs`, `probe_escape.rs`:
+  bignum dip profiles + CPU-perturbation escape times). Measured escape bands: loc 14
+  304k–582k (cap now 800k), loc 15 894k–1.46M (cap now 1.6M) — the .exr's 6M was exploratory.
+
+- [ ] **Deep export iterate is ~50× slower than Fraktaler-3 on the same workload.** F3 renders
+  corpus me148 (2560×1440-equivalent, ~350k mean escape iterations) in ~14 s; our export path
+  needs tens of minutes for the same location (measured ~1e9 steps/s vs F3's ~5e11 steps/s on
+  the same 3080). Candidates: per-iteration Fe overhead in mode 2 (fe_norm per op; the v0.2.6
+  extended-range bookkeeping added an fe_add + two fe_abs_sf per step), export tile sizes,
+  no early-out warp compaction. Profile with `--profile` gpu-it timestamps before touching.
 
 ## Design follow-ups (from mockup review, 2026-06-25)
 

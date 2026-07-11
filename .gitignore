@@ -44,3 +44,4 @@ Desktop.ini
 
 # Archived docs (completed/abandoned plans + stale snapshots) — kept locally, out of the tracked repo
 /archive/
+__pycache__/

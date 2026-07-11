@@ -126,8 +126,8 @@ title = "Extreme depth 1.17e148x"
 center_x = "-0.3158354656090698908113251908145989842764104941136552011217533774266655202463327904910559501703762081531934176786217990113494418705307973163264218287292234362119"
 center_y = "0.6533553743954627788289923830392687875350977003260517837408108019649970888461393846103786781501651324966145060684808980380361143296058258024081840162818693511972"
 mag_log10 = 148.0669863055
-iterations = 600000
-note = "User-saved Fraktaler-3 location (me148.exr); 161-digit center. KNOWN DISCREPANCY: Fractadyne renders uniform exterior here while F3 shows dendrites - on this dive path (shared center prefix with 11-13) structure is lost between zoom-log2 470 and 475 (~1e142x); loc 13 at 1e141x still matches. Reference is healthy (full 600k non-escaped orbit); --no-bla does not help. Under investigation."
+iterations = 800000
+note = "User-saved Fraktaler-3 location (me148.exr); 161-digit center. Escape times measured 304k-582k (CPU perturbation probe), so 800k covers the view (rendered at 1xSS: the ~0.5M-iteration escape band makes 2xSS a multi-hour render); the .exr's saved 6,000,000 was an exploration setting. This location exposed the sub-f32 reference-orbit dip bug (fixed in v0.2.6): its dive path passes within ~1e-71 of zero every 4383 iterations, and the flushed samples re-glued every pixel to the reference past ~1e142x."
 
 [[location]]
 slug = "15-deep-3.7e163"
@@ -135,8 +135,8 @@ title = "Extreme depth 3.74e163x"
 center_x = "-0.315835465609069890811325190814598984276410494113655201121753377426665520246332790491055950170376208153193417678621799011349441870530797316326421828726664170734157313698366242"
 center_y = "0.653355374395462778828992383039268787535097700326051783740810801964997088846139384610378678150165132496614506068480898038036114329605825802408184016371548087630292729424973881"
 mag_log10 = 163.5723116489
-iterations = 600000
-note = "User-saved Fraktaler-3 location (me163.exr); 175-digit center. Iterations set to 600k (saved value was a 134,217,728 F3 auto-iteration runaway). KNOWN DISCREPANCY: same uniform-exterior failure as location 14 (same dive path, deeper)."
+iterations = 1600000
+note = "User-saved Fraktaler-3 location (me163.exr); 175-digit center. Escape times measured 894k-1.46M (CPU perturbation probe), so 1.6M covers the view (rendered at 1xSS, see loc 14) (the .exr's saved 134,217,728 was an F3 auto-iteration runaway). Same dive path as 11-14; rendered wrong before the v0.2.6 sub-f32 orbit-dip fix."
 
 [[location]]
 slug = "16-deep-2.1e250"

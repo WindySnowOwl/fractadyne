@@ -7,9 +7,9 @@ width = 1280
 height = 720
 subframes = 4
 [bailout]
-iterations = 6000000
-maximum_reference_iterations = 6000000
-maximum_perturb_iterations = 6000000
+iterations = 1600000
+maximum_reference_iterations = 1600000
+maximum_perturb_iterations = 1600000
 maximum_bla_steps = 8192
 escape_radius = 256
 [transform]
