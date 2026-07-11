@@ -61,7 +61,7 @@ Two cross-cutting lessons:
 
 Phased by measured cost of the failures each phase would have prevented.
 
-### D1 — Crash & hang visibility (prevents F1, F2, F3, F9-class losses)
+### D1 — Crash & hang visibility (prevents F1, F2, F3, F9-class losses) — ✅ SHIPPED v0.2.7 (except D1.6 stretch)
 
 1. **Log file.** `env_logger` output additionally to a rotating `logs/fractadyne.log` under the
    config dir (the `directories` crate is already a dependency). Level via `FRACTADYNE_LOG`
@@ -85,7 +85,7 @@ Phased by measured cost of the failures each phase would have prevented.
    minidump writer; low priority since no such fault has occurred yet, but the hook placement
    (D1.3) should leave room for it.
 
-### D2 — Selftest hardening (prevents F6, F7)
+### D2 — Selftest hardening (prevents F6, F7) — ✅ SHIPPED (D2.1–D2.4 v0.2.6, D2.2/D2.5–D2.7 v0.2.8, D2.8 v0.2.9)
 
 1. **Whole-config snapshot + hermetic baseline.** At suite start: reset `render_cfg`,
    `coloring`, `effects`, `fractal`, `julia_mode` to a documented baseline (no restore needed —
@@ -112,7 +112,7 @@ Phased by measured cost of the failures each phase would have prevented.
    they exercise actually fired (rebases > 0 at a rebase-heavy view; extended samples decoded >
    0 on a dip-carrying orbit). A silently-dead shader branch fails loudly.
 
-### D3 — Performance observability (feeds the ~50× export-throughput investigation; prevents F5-class)
+### D3 — Performance observability (feeds the ~50× export-throughput investigation; prevents F5-class) — ✅ SHIPPED v0.2.9 (live-path counter readback deferred)
 
 1. **Export-path timestamps.** Per-tile GPU time via the existing `timing.rs` (not just under
    `--profile`): end-of-render summary `iterate: N tiles, X.Xs GPU, Y.Y Gsteps/s`. The
@@ -130,7 +130,7 @@ Phased by measured cost of the failures each phase would have prevented.
 5. **HUD additions.** Budget, measured iterate ms, steps/s, counter summary — the live view of
    D3.1–D3.3.
 
-### D4 — Trace unification & documentation (cheap, do alongside D1)
+### D4 — Trace unification & documentation (cheap, do alongside D1) — ✅ SHIPPED v0.2.7 (see DIAGNOSTICS.md)
 
 1. **Categories + timestamps.** `FRACTADYNE_TRACE=req,ref,gpu,tile` (or `1` for all); each line
    stamped `[+12.345s]`. The existing `fd-*` prefixes become the category names.
@@ -155,3 +155,11 @@ Phased by measured cost of the failures each phase would have prevented.
 
 Suggested landing: D1+D4 together (one release), then D2, then D3 alongside the export-
 throughput work that consumes it.
+
+**Outcome (2026-07-11):** landed as v0.2.7 (D1+D4), v0.2.8 (D2 remainder), v0.2.9 (D3+D2.8);
+operator manual in DIAGNOSTICS.md. Notable: the v0.2.7 panic hook's first catch was a real
+pre-existing bug (stamp_watermark clamp panic at h<80); the D2.8 counter checks initially
+passed the full suite while failing filtered — state leakage (F13) observed live and fixed
+by pinning reference length per check. Open: D1.6 minidumps (no hard fault yet observed),
+live-path counter readback (needs the non-blocking pump), F13's full fix (per-block config
+ownership), F17 per-tile attribution.
