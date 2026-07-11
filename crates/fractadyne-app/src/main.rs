@@ -1754,7 +1754,7 @@ impl FractadyneApp {
         // --burnin/--res on their own also imply it.
         let render_iter_mode = args.iter().any(|a| a == "--render-iter");
         let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode;
-        let selftest = args.iter().any(|a| a == "--selftest");
+        let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
         let profile = args.iter().any(|a| a == "--profile");
         let frametest = args.iter().any(|a| a == "--frametest");
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));

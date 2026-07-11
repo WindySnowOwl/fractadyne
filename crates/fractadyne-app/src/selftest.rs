@@ -75,6 +75,42 @@ fn push_check(checks: &mut Vec<SelfCheck>, last: &mut std::time::Instant, c: Sel
     checks.push(c);
 }
 
+/// Resolve a repo-relative data path (D2.6/F12): prefer the CWD (the normal repo-root
+/// invocation), else walk up from the executable (target/release/… → repo root) looking
+/// for the `validation/` tree. A suite run from another directory must not silently lose
+/// whole check categories — callers still fail LOUDLY if the file is absent everywhere.
+fn anchored(rel: &str) -> std::path::PathBuf {
+    let cwd = std::path::PathBuf::from(rel);
+    if cwd.exists() || std::path::Path::new("validation").exists() {
+        return cwd;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        for dir in exe.ancestors().skip(1) {
+            if dir.join("validation").exists() {
+                return dir.join(rel);
+            }
+        }
+    }
+    cwd
+}
+
+/// `render_iter` that PRINTS a GPU error instead of swallowing it (design/diagnostics.md
+/// D2.5/F11): the suite's checks skip on `None`, so without this a device-level failure
+/// silently shrank the check count instead of naming itself.
+fn st_render_iter(
+    device: &eframe::wgpu::Device,
+    queue: &eframe::wgpu::Queue,
+    req: &fractadyne_gpu::ExportRequest,
+) -> Option<Vec<f32>> {
+    match fractadyne_gpu::render_iter(device, queue, req) {
+        Ok(r) => Some(r.pixels),
+        Err(e) => {
+            eprintln!("[selftest] GPU ERROR (render_iter): {e}");
+            None
+        }
+    }
+}
+
 struct SelfCheck {
     category: &'static str,
     name: String,
@@ -148,15 +184,64 @@ impl FractadyneApp {
         self.coloring.use_duotone = false;
         self.effects.de = false;
         self.effects.light = false;
+        // D2.2: echo the effective config so any residual leak is visible in the report
+        // itself (the two hermeticity incidents were only diagnosable by guessing).
+        let cfg_echo = format!(
+            "fractal={:?} julia={} auto_iter={} max_iter={} sa={} bla={} glitch={} color={:?}",
+            self.fractal,
+            self.julia_mode,
+            self.render_cfg.auto_iter,
+            self.render_cfg.max_iter,
+            self.render_cfg.series_approx,
+            self.render_cfg.use_bla,
+            self.render_cfg.glitch_correct,
+            self.coloring.color_method,
+        );
+        eprintln!("[selftest] config: {cfg_echo}");
+
+        // D2.7: `--selftest-filter <substr>` runs only the check groups (and goldens) whose
+        // tag or name matches; `--selftest-list` prints the group tags and exits. Groups
+        // share config state at their boundaries (F13), so a filtered verdict is for
+        // ITERATION, not release gating — the summary says so when a filter is active.
+        let cli: Vec<String> = std::env::args().collect();
+        let filter: Option<String> = cli
+            .iter()
+            .position(|a| a == "--selftest-filter")
+            .and_then(|i| cli.get(i + 1))
+            .map(|s| s.to_ascii_lowercase());
+        const GROUPS: &[&str] = &[
+            "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
+            "consistency", "metadata", "display", "catalog", "goldens",
+        ];
+        if cli.iter().any(|a| a == "--selftest-list") {
+            println!("selftest groups (use with --selftest-filter <substr>):");
+            for g in GROUPS {
+                println!("  {g}");
+            }
+            std::process::exit(0);
+        }
+        let want = |tag: &str| -> bool {
+            filter.as_ref().map_or(true, |f| tag.to_ascii_lowercase().contains(f.as_str()))
+        };
+        if let Some(f) = &filter {
+            eprintln!("[selftest] FILTERED RUN (--selftest-filter {f}): group state is shared — use full runs for verdicts");
+        }
         // Seahorse Valley — detailed at every depth tested; coordinate precise enough.
         const SX: &str = "-0.743643887037151";
         const SY: &str = "0.131825904205330";
         const N: u32 = 220;
 
         // Read back the raw iteration texture (smooth_iter, normal.x, normal.y, DE) — far
-        // more sensitive than comparing final colors.
+        // more sensitive than comparing final colors. GPU errors are printed, not swallowed
+        // (D2.5): a device-level failure must name itself, not shrink the check count.
         let render = |req: &fractadyne_gpu::ExportRequest| -> Option<Vec<f32>> {
-            fractadyne_gpu::render_iter(device, queue, req).ok().map(|r| r.pixels)
+            match fractadyne_gpu::render_iter(device, queue, req) {
+                Ok(r) => Some(r.pixels),
+                Err(e) => {
+                    eprintln!("[selftest] GPU ERROR (render_iter): {e}");
+                    None
+                }
+            }
         };
         // A square request at the seahorse, then caller overrides the mode. Takes the app
         // explicitly (no captured `self` borrow) so checks can flip `render_cfg` knobs — e.g.
@@ -257,7 +342,7 @@ impl FractadyneApp {
         let mut last_check_t = std::time::Instant::now();
 
         // ---- numeric & render-path checks (local closures borrow self immutably) ----
-        {
+        if want("numeric") {
             // (A) df32 perturbation vs an independent CPU f64 dwell @2e4× (f64 exact here).
             let mag = 2.0e4;
             let req = make(self, SX, SY, mag);
@@ -677,7 +762,7 @@ impl FractadyneApp {
         // (verified in fractadyne-core) are the main correctness signal for the other
         // analytic-family shaders. Render an origin/real-axis-centered view and compare
         // each pixel to its symmetry partner, excluding ill-conditioned boundary pixels.
-        {
+        if want("symmetry") {
             let nn = N as usize;
             let steep = |px: &[f32], i: usize, j: usize| -> bool {
                 let g = px[(j * nn + i) * 4];
@@ -715,7 +800,7 @@ impl FractadyneApp {
                 req.width = N;
                 req.height = N;
                 req.ss = 1;
-                let px = fractadyne_gpu::render_iter(device, queue, &req).ok().map(|r| r.pixels);
+                let px = st_render_iter(device, queue, &req);
                 if let Some(px) = px {
                     let (mut total, mut bad) = (0u64, 0u64);
                     for j in 0..nn {
@@ -751,7 +836,7 @@ impl FractadyneApp {
         // against the trusted direct path (mode 1) at a depth where direct df32 is still
         // accurate (~1e5×). They must agree everywhere except a tiny fraction of
         // fold-crossing pixels (where a diffabs branch flip is an inherent glitch).
-        {
+        if want("abs-family") {
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::Smooth;
             self.coloring.use_custom_palette = false;
@@ -791,8 +876,8 @@ impl FractadyneApp {
                 let mut direct = pert.clone();
                 direct.mode = 1; // force the trusted direct df32 path
                 if let (Some(a), Some(b)) = (
-                    fractadyne_gpu::render_iter(device, queue, &pert).ok().map(|r| r.pixels),
-                    fractadyne_gpu::render_iter(device, queue, &direct).ok().map(|r| r.pixels),
+                    st_render_iter(device, queue, &pert),
+                    st_render_iter(device, queue, &direct),
                 ) {
                     let (mut sum, mut n, mut big) = (0.0f64, 0u64, 0u64);
                     for j in 0..nn {
@@ -838,8 +923,8 @@ impl FractadyneApp {
                 let mut m2 = m0.clone();
                 m2.mode = 2;
                 if let (Some(a), Some(b)) = (
-                    fractadyne_gpu::render_iter(device, queue, &m0).ok().map(|r| r.pixels),
-                    fractadyne_gpu::render_iter(device, queue, &m2).ok().map(|r| r.pixels),
+                    st_render_iter(device, queue, &m0),
+                    st_render_iter(device, queue, &m2),
                 ) {
                     let (mut sum, mut n, mut big) = (0.0f64, 0u64, 0u64);
                     for j in 0..nn {
@@ -883,7 +968,7 @@ impl FractadyneApp {
                 deep.width = N;
                 deep.height = N;
                 deep.ss = 1;
-                if let Some(px) = fractadyne_gpu::render_iter(device, queue, &deep).ok().map(|r| r.pixels) {
+                if let Some(px) = st_render_iter(device, queue, &deep) {
                     let dwell_finite = px.iter().step_by(4).all(|v| v.is_finite());
                     let interior = px.iter().step_by(4).filter(|&&v| v < 0.0).count();
                     // Detail = spread of escaped dwell. A uniform screen (mode breakdown)
@@ -935,9 +1020,7 @@ impl FractadyneApp {
                 m0.mode = 0;
                 let mut m2 = base.clone();
                 m2.mode = 2;
-                let ren = |req: &fractadyne_gpu::ExportRequest| {
-                    fractadyne_gpu::render_iter(device, queue, req).ok().map(|r| r.pixels)
-                };
+                let ren = |req: &fractadyne_gpu::ExportRequest| st_render_iter(device, queue, req);
                 let cmp = |a: &[f32], b: &[f32]| -> (f64, f64, u64) {
                     let (mut sum, mut n, mut big) = (0.0f64, 0u64, 0u64);
                     for j in 0..nn {
@@ -989,7 +1072,7 @@ impl FractadyneApp {
         // here we confirm the app actually selects SA for these formulas (skip > 0) and the
         // GPU render is finite and bit-consistent with an SA-off render (the seed shader code
         // is formula-agnostic, already validated for Mandelbrot in modes 0 and 2).
-        {
+        if want("multibrot-sa") {
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::Smooth;
             self.coloring.use_custom_palette = false;
@@ -1019,8 +1102,8 @@ impl FractadyneApp {
                 off.sa_skip = 0;
                 let (skip, mode) = (on.sa_skip, on.mode);
                 match (
-                    fractadyne_gpu::render_iter(device, queue, &on).ok().map(|r| r.pixels),
-                    fractadyne_gpu::render_iter(device, queue, &off).ok().map(|r| r.pixels),
+                    st_render_iter(device, queue, &on),
+                    st_render_iter(device, queue, &off),
                 ) {
                     (Some(a), Some(b)) if skip > 0 && mode == 0 => {
                         let finite = a.iter().step_by(4).all(|v| v.is_finite());
@@ -1062,7 +1145,7 @@ impl FractadyneApp {
         // Enable BLA on a deep floatexp (mode 2) Mandelbrot view and compare against the same
         // request with BLA off (SA also off, to isolate BLA). The multi-level skip + escape
         // revert must reproduce the full perturbation everywhere except rare boundary pixels.
-        {
+        if want("bla") {
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -1101,8 +1184,8 @@ impl FractadyneApp {
             off.bla_on = 0;
             let (bla_on, mode) = (on.bla_on, on.mode);
             match (
-                fractadyne_gpu::render_iter(device, queue, &on).ok().map(|r| r.pixels),
-                fractadyne_gpu::render_iter(device, queue, &off).ok().map(|r| r.pixels),
+                st_render_iter(device, queue, &on),
+                st_render_iter(device, queue, &off),
             ) {
                 (Some(a), Some(b)) if bla_on == 1 && mode == 2 => {
                     // Compare all non-boundary pixels (b = non-BLA is the ground-truth mask):
@@ -1162,8 +1245,8 @@ impl FractadyneApp {
                 off.bla_on = 0;
                 let (bon, mode) = (on.bla_on, on.mode);
                 if let (Some(a), Some(b)) = (
-                    fractadyne_gpu::render_iter(device, queue, &on).ok().map(|r| r.pixels),
-                    fractadyne_gpu::render_iter(device, queue, &off).ok().map(|r| r.pixels),
+                    st_render_iter(device, queue, &on),
+                    st_render_iter(device, queue, &off),
                 ) {
                     let (mut mism, mut esc) = (0u64, 0u64);
                     for j in 0..nn {
@@ -1206,7 +1289,7 @@ impl FractadyneApp {
         // average (Σ stripe terms). They must agree except at the rare BLA escape-boundary pixels the
         // smooth BLA test tolerates. Stripe is tested at a NON-DEFAULT frequency so the BLA aggregate
         // must have been built with the live frequency (not the old hardcoded 1.0) to match.
-        {
+        if want("aux-bla") {
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::Smooth; // Smooth so the BLA tree builds
@@ -1226,9 +1309,13 @@ impl FractadyneApp {
             let prog = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);
             let rex = |req: &fractadyne_gpu::ExportRequest| {
-                fractadyne_gpu::render_export(device, queue, req, &prog, &cancel)
-                    .ok()
-                    .map(|r| r.pixels)
+                match fractadyne_gpu::render_export(device, queue, req, &prog, &cancel) {
+                    Ok(r) => Some(r.pixels),
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                        None
+                    }
+                }
             };
             // Each case sets the live aux params BEFORE building the request, so the BLA aggregate is
             // baked for exactly the method / trap-type / frequency the render then reads (all three
@@ -1290,7 +1377,7 @@ impl FractadyneApp {
         }
 
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
-        {
+        if want("consistency") {
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -1312,7 +1399,7 @@ impl FractadyneApp {
                 req.height = size;
                 req.ss = 1;
                 req.max_iter = max;
-                fractadyne_gpu::render_iter(device, queue, &req).ok().map(|r| r.pixels)
+                st_render_iter(device, queue, &req)
             };
             let steep = |px: &[f32], sz: usize, i: usize, j: usize| -> bool {
                 let g = px[(j * sz + i) * 4];
@@ -1556,8 +1643,23 @@ impl FractadyneApp {
 
         // ---- catalog: independently verifiable locations (Phase 6.1 / 6.6) ----
         // Loads validation/catalog.toml (committed, human-readable) and checks the build
-        // against each known answer, so external validation is one command.
-        if let Ok(text) = std::fs::read_to_string("validation/catalog.toml") {
+        // against each known answer, so external validation is one command. A missing file
+        // is a FAILED check, not a silent skip (D2.6/F12): the check count must not vary
+        // with the working directory.
+        let catalog_path = anchored("validation/catalog.toml");
+        if want("catalog") && !catalog_path.exists() {
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Catalog",
+                name: "load validation/catalog.toml".into(),
+                params: format!("{}", catalog_path.display()),
+                result: "file not found (run from the repo root, or keep validation/ next to the exe tree)".into(),
+                threshold: "file present",
+                pass: false,
+            });
+        }
+        let catalog_text =
+            if want("catalog") { std::fs::read_to_string(&catalog_path).ok() } else { None };
+        if let Some(text) = catalog_text {
             match toml::from_str::<Catalog>(&text) {
                 Ok(cat) => {
                     for e in &cat.nucleus {
@@ -1644,7 +1746,7 @@ impl FractadyneApp {
         // The reloadable metadata (exports / .fdn / bookmarks) must round-trip a deep view
         // exactly, flag a newer format_version (so it can't be silently mis-read), and clamp
         // hostile/garbage fields rather than ballooning precision or the iteration count.
-        {
+        if want("metadata") {
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
             self.viewport.center_x = fractadyne_core::parse_bf("-0.743643887037151").unwrap();
@@ -1717,7 +1819,7 @@ impl FractadyneApp {
         }
 
         // ---- status-bar formatters (pure, depth-aware display) ----
-        {
+        if want("display") {
             // Zoom mantissa is space-grouped in 5s; exponent untouched.
             let zg = crate::group_sci_mantissa("3.38050027227e15");
             push_check(&mut checks, &mut last_check_t, SelfCheck {
@@ -1754,7 +1856,7 @@ impl FractadyneApp {
             .position(|a| a == "--out" || a == "-o")
             .and_then(|i| std::env::args().nth(i + 1))
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from("validation/report.md"));
+            .unwrap_or_else(|| anchored("validation/report.md"));
         let out_base = report_path
             .parent()
             .map(|p| p.to_path_buf())
@@ -1763,7 +1865,8 @@ impl FractadyneApp {
         // `validation/golden`, regardless of where --out writes the report. The old
         // `out_base/golden` derivation silently reported "no golden" (a fake maxΔ 255 fail) when
         // --out pointed away from validation/. The `current/` side-by-side renders still go by --out.
-        let golden_dir = std::path::PathBuf::from("validation").join("golden");
+        // `anchored` (D2.6) finds the repo tree when the suite runs from another directory.
+        let golden_dir = anchored("validation/golden");
         let current_dir = out_base.join("current");
         let _ = std::fs::create_dir_all(&golden_dir);
         if !bless {
@@ -1807,6 +1910,11 @@ impl FractadyneApp {
         // RENDER ERROR) so those never masquerade as a pixel-diff failure.
         let mut goldens: Vec<(String, u32, f64, u64, bool, String, &'static str)> = Vec::new();
         for &(name, fractal, cx, cy, zoom, iter, method, palette) in specs {
+            // A filter matches goldens by group tag or by individual spec name
+            // (`--selftest-filter multibrot3-1e6` re-renders one golden in seconds).
+            if !(want("goldens") || filter.as_ref().is_some_and(|f| name.contains(f.as_str()))) {
+                continue;
+            }
             self.fractal = fractal;
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::from_u32(method);
@@ -1896,6 +2004,12 @@ impl FractadyneApp {
             sys.cpu, sys.physical, sys.logical, sys.l2_kb, sys.l3_kb
         ));
         md.push_str(&format!("- **OS:** {} / {}\n", std::env::consts::OS, std::env::consts::ARCH));
+        md.push_str(&format!("- **Config:** {cfg_echo}\n"));
+        if let Some(f) = &filter {
+            md.push_str(&format!(
+                "- **⚠ FILTERED RUN** (`--selftest-filter {f}`): partial suite, groups share state — not a release verdict\n"
+            ));
+        }
         md.push_str(&format!("- **Mode:** {}\n\n", if bless { "BLESS (recording references)" } else { "VALIDATE" }));
         md.push_str(
             "All checks use exact mathematics (arbitrary-precision dwell, closed-form \

@@ -372,6 +372,8 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--refdiag --center X Y --zoom-log2 L", "Dev: sample reference orbit lengths across a view."),
         Flag("--find-minibrot", "Print the nearby minibrot's period + center and exit (--center X Y --zoom M)."),
         Flag("--selftest [--bless]", "Run the GPU validation suite; exit 0 = all passed. --bless records the goldens."),
+        Flag("--selftest-filter SUBSTR", "With --selftest: run only the check groups / goldens whose tag or name contains SUBSTR (see --selftest-list). For fast iteration on one failure; groups share state, so use a full run for the real verdict."),
+        Flag("--selftest-list", "Print the selftest group tags (for --selftest-filter) and exit."),
         Flag("--reset-state [--yes]", "Delete ALL saved state (session, bookmarks, thumbnails) and exit. Prompts for confirmation on the terminal (type 'reset'); --yes (or -y) skips the prompt."),
         Flag("--help, -h", "Print this command-line reference and exit."),
         Flag("@FILE, --args-file FILE", "Read arguments from a text file (whitespace-separated; # comments; \"quotes\" for spaces), spliced in place. Nestable — keep a whole command line in a file."),

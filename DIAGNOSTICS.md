@@ -60,7 +60,9 @@ possible-hang warnings, `[fd-wgpu]` device errors/loss, `[fd-panic]` crash repor
 
 | Flag | What |
 |------|------|
-| `--selftest [--out report.md] [--bless]` | 61 checks + 17 goldens, streamed live; hermetic (resets config at entry) |
+| `--selftest [--out report.md] [--bless]` | 61 checks + 17 goldens, streamed live; hermetic (resets config at entry, echoes it); GPU errors are printed, never silently skipped; data files resolve relative to the repo even when run elsewhere |
+| `--selftest-filter <substr>` | Run only matching check groups / goldens (fast iteration on one failure; not a release verdict — groups share state) |
+| `--selftest-list` | Print the group tags usable with `--selftest-filter` |
 | `--profile [--regions file.toml] [--reps N]` | Per-region reference/SA/BLA build ms + pure-GPU pass ms (TIMESTAMP_QUERY) |
 | `--frametest` | Stepped-dive stutter harness (build_ms stalls; its "gpu" column is CPU wall-clock — trust `--profile` for GPU numbers) |
 | `--benchmark-std` | Standardized dive benchmark with report |
