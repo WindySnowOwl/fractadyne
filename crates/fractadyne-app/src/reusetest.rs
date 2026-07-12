@@ -45,6 +45,13 @@ impl FractadyneApp {
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
     ) {
+        // Diagnostic side-door (avoids wiring a whole new CLI flag): FEDUMP=1 dumps the GPU's raw
+        // smooth-iter center row for corpus location 14, to diff against the faithful CPU sim
+        // (fractadyne-core/tests/probe_fe.rs) and localize the mode-2 speckle divergence.
+        if std::env::var("FEDUMP").is_ok() {
+            self.run_fedump(device, queue);
+            return;
+        }
         const N: u32 = 512;
         // Fixed iteration count across every render so the comparison isolates the *spatial*
         // reprojection error, not auto-iter count differences between the base and zoomed views.
@@ -197,5 +204,99 @@ impl FractadyneApp {
              is dominated by missing sub-pixel detail (only the Stage-2 during-motion refine helps).\n\
              Either way this is measured BEFORE touching the fragile live shader (design/xaos-reuse.md)."
         );
+    }
+
+    /// FEDUMP: regenerate the corpus 14/15 renders with AUTO-NORMALIZED coloring. The finding (see
+    /// TODO / probe_fe.rs): the escape values at these deep dense dendrite fields are CORRECT
+    /// (df32 == df64 == GPU), but they're huge (~3e5-8e5) and vary steeply, so the fixed palette
+    /// cycle (0.27) aliases them into speckle. Mapping the frame's escape range to the palette
+    /// reveals the true structure (matching Fraktaler-3). Renders at 2*res + 2x2 box downsample for
+    /// AA parity with the rest of the corpus, and writes validation/corpus/renders/<slug>-fractadyne.png.
+    pub(crate) fn run_fedump(&mut self, device: &eframe::wgpu::Device, queue: &eframe::wgpu::Queue) {
+        use fractadyne_core::{parse_bf, precision_for_magnification, FloatExp, Viewport};
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        self.dual = false;
+        self.render_cfg.auto_iter = false;
+        self.render_cfg.series_approx = false;
+        self.render_cfg.use_bla = true;
+        self.render_cfg.glitch_correct = false;
+        self.coloring.color_method = ColorMethod::Smooth;
+        self.coloring.palette_idx = 0; // Ember, matching the corpus
+        // (slug, cx, cy, mag_log10, iterations)
+        let locs: [(&str, &str, f64, u32); 2] = [
+            ("14-deep-1.2e148",
+             "-0.3158354656090698908113251908145989842764104941136552011217533774266655202463327904910559501703762081531934176786217990113494418705307973163264218287292234362119|0.6533553743954627788289923830392687875350977003260517837408108019649970888461393846103786781501651324966145060684808980380361143296058258024081840162818693511972",
+             148.0669863055, 800_000),
+            ("15-deep-3.7e163",
+             "-0.315835465609069890811325190814598984276410494113655201121753377426665520246332790491055950170376208153193417678621799011349441870530797316326421828726664170734157313698366242|0.653355374395462778828992383039268787535097700326051783740810801964997088846139384610378678150165132496614506068480898038036114329605825802408184016371548087630292729424973881",
+             163.5723116489, 1_600_000),
+        ];
+        let (ow, oh) = (1280u32, 720u32);
+        let (w, h) = (ow * 2, oh * 2); // 2x supersample, box-downsampled below
+        for (slug, cxy, mag_log10, iters) in locs {
+            let (cxs, cys) = cxy.split_once('|').unwrap();
+            self.render_cfg.max_iter = iters;
+            let mag = 10f64.powf(mag_log10);
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.center_x = parse_bf(cxs).unwrap();
+            vp.center_y = parse_bf(cys).unwrap();
+            vp.units_per_pixel = FloatExp::from_f64(3.0 / (h as f64 * mag));
+            vp.precision = precision_for_magnification(mag);
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = w;
+            req.height = h;
+            req.ss = 1;
+            println!("[fedump] {slug}: rendering iter buffer {w}x{h} (mode about to build)...");
+            let px = match fractadyne_gpu::render_iter(device, queue, &req) {
+                Ok(r) => r.pixels,
+                Err(e) => {
+                    println!("[fedump] {slug} render_iter error: {e}");
+                    continue;
+                }
+            };
+            // Escape range over the frame (escaped px only); map it to ~2 palette sweeps.
+            let (mut flo, mut fhi) = (f64::MAX, f64::MIN);
+            for i in 0..(w as usize * h as usize) {
+                let v = px[i * 4] as f64;
+                if v >= 0.0 {
+                    flo = flo.min(v);
+                    fhi = fhi.max(v);
+                }
+            }
+            let range = (fhi - flo).max(1.0);
+            let cyc = 2.0 / range;
+            req.cycle = cyc as f32;
+            req.offset = (-flo * cyc) as f32;
+            let colored = match fractadyne_gpu::color_iter_buffer(device, queue, &req, &px) {
+                Ok(r) => r.pixels,
+                Err(e) => {
+                    println!("[fedump] {slug} color error: {e}");
+                    continue;
+                }
+            };
+            // 2x2 box downsample -> 1280x720 (linear-ish; the sRGB values here are close enough).
+            let mut out = vec![0.0f32; (ow * oh * 4) as usize];
+            for oy in 0..oh as usize {
+                for ox in 0..ow as usize {
+                    for c in 0..4 {
+                        let mut s = 0.0f32;
+                        for dy in 0..2 {
+                            for dx in 0..2 {
+                                let sx = ox * 2 + dx;
+                                let sy = oy * 2 + dy;
+                                s += colored[(sy * w as usize + sx) * 4 + c];
+                            }
+                        }
+                        out[(oy * ow as usize + ox) * 4 + c] = s * 0.25;
+                    }
+                }
+            }
+            let p = std::path::PathBuf::from(format!("validation/corpus/renders/{slug}-fractadyne.png"));
+            match fractadyne_export::write_png(&p, ow, oh, &out, None) {
+                Ok(()) => println!("[fedump] {slug}: wrote {} (escape range [{flo:.0},{fhi:.0}], cycle={cyc:.3e})", p.display()),
+                Err(e) => println!("[fedump] {slug}: write error: {e}"),
+            }
+        }
     }
 }

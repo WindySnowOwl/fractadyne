@@ -71,37 +71,32 @@ Mockups: [design/mockups/](design/mockups/).
   time-box) are superseded. ⚠**This does NOT clean corpus 14/15** — their noise is NOT glitches (the
   corpus render logs `glitch=0` at full res), so correction has nothing to fix there; see next item.
 
-- [ ] **Corpus 14/15 (1.2e148× / 3.7e163×) render as interior SPECKLE NOISE — a mode-2
-  perturbation-accuracy bug (NOT glitches, NOT BLA).** DIAGNOSED 2026-07-12. Symptom: the interior
-  renders as per-pixel escape-time noise vs F3's clean dark dendrites. **Ruled out:** (a) glitches —
-  the render logs `glitch=0` at full res, and forcing glitch correction on flags only ~42/57600 px
-  (converges 42→4) yet the image stays noise; (b) BLA — a BLA-off render is equally noisy. Every
-  pixel escapes (`maxiter=0`) but at noisy iteration counts. **Signature points at the dip handling**
-  (the v0.2.6 extended-range-sample area): counters show `rebase≈20M` + `ext≈281M` at the reference
-  orbit's ~1e-71 dips (every 4383 iters). v0.2.6 killed the *uniform-interior* blank but left this
-  accuracy problem — the earlier "14/15 now render real structure" claim was over-stated (corrected
-  in the corpus docs). **STATUS 2026-07-12: an exhaustive elimination — the cause is a GPU-EXECUTION
-  divergence from a faithful transcription of the shader; NOT any of the usual suspects.** RULED OUT,
-  each with a tool: (a) glitches — `glitch=0` at full res; (b) BLA — BLA-off render equally noisy;
-  (c) reference coverage — a phase-3 `best_reference` hill-climb DID find an interior ref (render used
-  `len=800001, escaped=false`) yet the render stayed noisy (hill-climb reverted, 63/63 held); (d)
-  COLORING/palette aliasing — rendering with `cycle=2e-6` (so the whole ~226k escape-time range spans
-  <1 palette cycle) is STILL speckle, so the smooth-iter VALUES themselves are noisy, not the mapping;
-  (e) **df32 precision itself** — `tests/probe_fe.rs` is a FAITHFUL Rust transcription of
-  mandelbrot.wgsl's df/Cdf/Fe arithmetic (Dekker/Knuth error-free transforms, shared exponent, fe_add
-  de>60, orbit_fe dip decode, Zhuoran rebase), generic over the base float, run with the SAME
-  reference the GPU picks (`best_reference` → `reference_orbit`, verified `compute_reference` matches).
-  It renders the row SMOOTH — df32 matches df64 nearly bit-for-bit — and the df32-**FTZ** (subnormal
-  flush) and df32-**NoFMA** (non-fused fma) variants are ALSO smooth. So it is NOT df32 mantissa width,
-  NOT subnormal flush, NOT fma fusion. **⭐The faithful CPU transcription is SMOOTH but the real GPU is
-  NOISE — the GPU diverges from a faithful execution of its own kernel.** ⚠The earlier "df32 width /
-  tf32 fix" conclusion is REFUTED by probe_fe. Remaining candidates: a subtle mis-transcription, or a
-  GPU compiler/driver effect (unwanted fma-contraction in the two_sum/df_add transforms, reduced-
-  precision intermediates, transcendental accuracy) not modelled by the sim. **NEXT STEP (substantial,
-  GPU-side): dump the GPU's actual per-pixel smooth-iter row (and ideally per-iteration δz for one
-  pixel) and diff it against probe_fe.rs to localize the divergence.** Probes (`probe_escape.rs`,
-  `probe_fe.rs`) are the harness. Corpus staging keeps `glitch_correct=false` (irrelevant); the docs
-  mark 14/15 accuracy-limited.
+- [x] **Corpus 14/15 (1.2e148× / 3.7e163×) "interior SPECKLE" — RESOLVED 2026-07-12: it was COLORING
+  (palette-cycle aliasing), NOT a render bug.** The escape VALUES are correct: a FEDUMP GPU dump
+  (`reusetest.rs`, `FEDUMP=1`) of the smooth-iter row matches `tests/probe_fe.rs` — a faithful Rust
+  transcription of the exact mode-2 kernel (df/Cdf/Fe Dekker/Knuth error-free transforms, shared exp,
+  fe_add de>60, orbit_fe dip decode, Zhuoran rebase) — which is smooth (df32 == df64 == GPU). At these
+  dense dendrite fields the smooth-iter counts are huge (~3e5–9e5) and vary steeply pixel-to-pixel, so
+  `shade()`'s `palette(pv·cycle + offset)` with the fixed cycle (0.27) ALIASES a correct field into
+  speckle. Colouring the SAME buffer with the frame's escape range mapped to the palette
+  (auto-normalized: `cycle = N/range`, `offset = -min·cycle`) reveals the correct structure matching
+  F3 arm-for-arm (spiral dendrites at 14; bulb boundary at 15). Corpus 14/15 renders regenerated with
+  auto-normalized coloring (FEDUMP, 2560×1440 → 2×2 box downsample). ⚠**Three wrong diagnoses first,
+  each disproven with a TOOL not a guess: glitches (glitch=0); reference coverage (a hill-climbed
+  interior ref len=800001 still speckled — hill-climb reverted, 63/63 held); df32 precision (faithful
+  df32/FTZ/NoFMA sims all smooth).** My earlier `cycle=2e-6` "coloring ruled out" step was WRONG — I
+  sampled a smooth transition row (not the steep dendrite region) and mis-read aliased-gradient moiré as
+  random noise. LESSON: dump the raw escape VALUES before blaming the perturbation. Probes
+  (`probe_escape.rs`, `probe_fe.rs`) + FEDUMP are the harness.
+
+- [ ] **App: auto-normalize / adaptive-cycle coloring for extreme depth (the general fix behind
+  14/15).** `shade()` (mandelbrot.wgsl:1277) does `palette(pv·cycle + offset)` with `pv` = the raw
+  smooth-iter count; at deep zoom that is ~1e5–1e6 and varies steeply, so a fixed `cycle` aliases into
+  speckle — for the corpus AND any deep dense view a USER zooms to. Fix: an auto-normalize coloring
+  mode that maps the frame's escape-value range to N palette sweeps (FEDUMP prototypes it via a
+  reduction over the iter buffer, then `cycle = N/range`). It's a two-pass (iter → range → color) and a
+  design choice (auto vs manual, UI toggle). Would let `generate_corpus` render 14/15 natively instead
+  of the FEDUMP side-door, and fixes deep-zoom coloring UX generally.
 
 - [x] **Uniform-exterior misrender past ~1e142× — FIXED in v0.2.6 (sub-f32 orbit dips).**
   Root cause: the 11–15 dive path's reference orbit passes within ~1e-71 of zero every 4383

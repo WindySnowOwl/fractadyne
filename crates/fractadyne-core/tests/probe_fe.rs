@@ -264,13 +264,16 @@ fn probe_row_fe() {
         rnf.push(fe_escape::<Nf>(&orbit, len, dcx, dcy, max_iter));
         r64.push(fe_escape::<f64>(&orbit, len, dcx, dcy, max_iter));
     }
-    let jumpn = |r: &[i64]| r.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count();
+    // Jump count among ESCAPED px only (interior = -1), matching FEDUMP.
+    let jumpn = |r: &[i64]| {
+        let e: Vec<i64> = r.iter().copied().filter(|&v| v >= 0).collect();
+        e.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count()
+    };
+    let stride: Vec<i64> = r32.iter().step_by(8).copied().collect();
     println!("[fe] {label}: reference len={len}");
-    println!("[fe] {label}: df32-IEEE  escapes = {r32:?}");
-    println!("[fe] {label}: df32-FTZ   escapes = {rftz:?}");
-    println!("[fe] {label}: df32-NoFMA escapes = {rnf:?}");
+    println!("[fe] {label}: df32 every-8th: {stride:?}");
     println!(
-        "[fe] {label}: jumps>2000 -- df32-IEEE={}  df32-FTZ={}  df32-NoFMA={}  df64={}  (whichever spikes reproduces the GPU speckle => that is the cause)",
+        "[fe] {label}: jumps>2000 (escaped) -- df32-IEEE={}  df32-FTZ={}  df32-NoFMA={}  df64={}  (compare to [fedump] jumps)",
         jumpn(&r32), jumpn(&rftz), jumpn(&rnf), jumpn(&r64)
     );
 }

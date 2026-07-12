@@ -68,7 +68,7 @@ high enough for the depth (F3's reference otherwise truncates and blanks), and t
 enough digits for the depth *plus* margin** for F3's internal reference rounding, which is coarser
 than Fractadyne's full-precision bignum reference.
 
-Net: clean, arm-for-arm F3 matches at **18 of the 20 locations** — from 1× to **4.60e1105×**, over a
+Net: clean, arm-for-arm F3 matches at **all 20 locations** — from 1× to **4.60e1105×**, over a
 thousand orders of magnitude of zoom. The former gap at **07** (1e30×) is now closed: its old shared
 34-digit seahorse center was too coarse for a reproducible match there — F3 rounded it below
 Fractadyne's bignum reference onto different sub-structure — so it was **replaced by a user Fraktaler-3
@@ -78,17 +78,18 @@ still stands — the plainest proof being that 08 (83-digit center), 09 (526-dig
 all render and match *far* deeper. The `.f3.toml` / `.kfr` params are written for all twenty, and
 Fractadyne renders all twenty.
 
-**Two exceptions — 14 (1.2e148×) and 15 (3.7e163×) are ACCURACY-LIMITED.** Their interior renders as
-per-pixel escape-time **speckle noise** vs F3's clean dark dendrites — a **mode-2 perturbation-accuracy
-bug**, not a glitch or a coloring artifact. It is *not* uncorrected glitches: the render logs
-`glitch = 0` at full resolution, and forcing multi-reference correction on flags only ~42 / 57 600
-pixels (which it resolves) while the image stays noise. It is *not* BLA: a BLA-off render is equally
-noisy. Every pixel escapes (`maxiter = 0`) but at noisy iteration counts, from the heavy Zhuoran
-rebasing + extended-range orbit samples the shader runs at this dive's ~1e-71 reference-orbit dips
-(every 4383 iterations). v0.2.6's extended-range fix removed the *uniform-interior blank* here but left
-this accuracy problem — so the earlier "14/15 render real structure" claim was over-stated. Their
-overall structure and boundary placement match F3; the interior *detail* does not, pending a fix to the
-mode-2 rebasing / extended-sample accuracy (TODO.md → Open bugs).
+**14 (1.2e148×) and 15 (3.7e163×) — a coloring note.** For a long time these two rendered as
+per-pixel **speckle** and were wrongly diagnosed (in turn) as glitches, then as a perturbation-accuracy
+bug. Both were wrong. The escape **values are correct** — verified 2026-07-12 by a faithful CPU
+transcription of the exact mode-2 shader kernel (df/Cdf/Fe Dekker–Knuth arithmetic, shared exponent,
+Zhuoran rebasing; `fractadyne-core/tests/probe_fe.rs`), which reproduces the GPU's smooth-iter values
+(df32 == df64 == GPU). The problem is **coloring**: at this depth the smooth-iter counts are huge
+(~3e5–9e5) and, at these dense dendrite fields, vary steeply pixel-to-pixel, so the fixed palette
+`cycle` (0.27) turns a correct escape field into aliased speckle. These two renders therefore use
+**auto-normalized coloring** — the frame's escape range mapped to the palette — and then match F3's
+structure arm-for-arm (spiral-dendrite clusters at 14; the bulb boundary at 15). Broader lesson: the
+app's fixed-cycle smooth coloring aliases at extreme depth; an auto-normalize / adaptive-cycle coloring
+mode is the general fix (TODO.md).
 
 ## Reading the comparison
 
