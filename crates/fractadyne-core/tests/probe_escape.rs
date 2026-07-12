@@ -160,8 +160,51 @@ fn probe_escape_row() {
         }
         escapes64.push(esc);
     }
+    // THIRD row: same f64 arithmetic but each δz component rounded to a 24-bit (f32) mantissa every
+    // step — simulating the GPU mode-2 floatexp kernel (f32 mantissa + extended exponent). If THIS
+    // row is speckle where the full-f64 one is smooth, the GPU's f32 δz precision is the real cause
+    // of the 14/15 noise (an interior reference — verified in the render, len=800001 — does NOT fix
+    // it, so it is not reference coverage).
+    fn f32mant(x: f64) -> f64 {
+        if x == 0.0 || !x.is_finite() {
+            return x;
+        }
+        let e = x.abs().log2().floor();
+        let s = 2f64.powf(e);
+        ((x / s) as f32 as f64) * s
+    }
+    let mut escapes32: Vec<i64> = Vec::with_capacity(npix);
+    for i in 0..npix {
+        let off = i as f64 - (npix as f64 - 1.0) / 2.0;
+        let (dcx, dcy) = (f32mant(stepf * off), 0.0);
+        let (mut dzx, mut dzy) = (0.0f64, 0.0f64);
+        let mut n: usize = 0;
+        let mut esc: i64 = -1;
+        for it in 0..max_iter as usize {
+            let (zr, zi) = zs[n];
+            dzx = f32mant(2.0 * (zr * dzx - zi * dzy) + (dzx * dzx - dzy * dzy) + dcx);
+            dzy = f32mant(2.0 * (zr * dzy + zi * dzx) + 2.0 * dzx * dzy + dcy);
+            n += 1;
+            let (zr1, zi1) = zs[n.min(len - 1)];
+            let (zfx, zfy) = (zr1 + dzx, zi1 + dzy);
+            let zmag2 = zfx * zfx + zfy * zfy;
+            if zmag2 > 256.0 * 256.0 {
+                esc = it as i64 + 1;
+                break;
+            }
+            if zmag2 < dzx * dzx + dzy * dzy || n + 1 >= len {
+                dzx = f32mant(zfx);
+                dzy = f32mant(zfy);
+                n = 0;
+            }
+        }
+        escapes32.push(esc);
+    }
     let jumps = escapes.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count();
     let jumps64 = escapes64.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count();
+    let jumps32 = escapes32.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count();
+    println!("[row] {label}: f32-MANTISSA (GPU-like) escapes = {escapes32:?}");
+    println!("[row] {label}: jumps>2000 — f64={jumps64}  f32-mant={jumps32} (f32>>f64 over covered px => f32 δz precision is the cause)");
     println!("[row] {label}: floatexp(f32-mant) escapes = {escapes:?}");
     println!("[row] {label}: f64(53-bit-mant) escapes = {escapes64:?}");
     println!(
@@ -209,5 +252,45 @@ fn probe_best_ref() {
         "[bestref] {label}: {}",
         if rlen >= max_iter { "chosen ref is INTERIOR (covers all pixels — good)" }
         else { "chosen ref ESCAPES before max_iter — pixels escaping later than it rebase => NOISE" }
+    );
+
+    // PROTOTYPE the proposed fix: hill-climb from best_reference's pick toward a longer-surviving
+    // (ideally interior) neighbour, shrinking the step on a barren round. Report whether it reaches
+    // an interior reference and how many orbit-length scorings it cost.
+    let score = |px: &fractadyne_core::BigFloat, py: &fractadyne_core::BigFloat, cap: u32| -> u32 {
+        fractadyne_core::reference_orbit(&zero, &zero, px, py, 0, cap, prec).1
+    };
+    let mut cur = refpt.clone();
+    let mut cur_len = rlen;
+    let mut hx = span[0].mul_f64(0.01);
+    let mut hy = span[1].mul_f64(0.01);
+    let mut calls = 0u32;
+    let offs = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)];
+    'climb: for _round in 0..10 {
+        let mut improved = false;
+        for (ox, oy) in offs {
+            let px = fractadyne_core::add_f64(&cur[0], hx.mul_f64(ox).to_f64(), prec);
+            let py = fractadyne_core::add_f64(&cur[1], hy.mul_f64(oy).to_f64(), prec);
+            let len = score(&px, &py, max_iter);
+            calls += 1;
+            if len > cur_len {
+                cur = [px, py];
+                cur_len = len;
+                improved = true;
+                if cur_len >= max_iter {
+                    break 'climb;
+                }
+            }
+        }
+        if !improved {
+            hx = hx.mul_f64(0.5);
+            hy = hy.mul_f64(0.5);
+        }
+    }
+    let cdx = fractadyne_core::sub_f64(&cur[0], &center[0], prec) / step;
+    let cdy = fractadyne_core::sub_f64(&cur[1], &center[1], prec) / step;
+    println!(
+        "[climb] {label}: after {calls} scorings -> len={cur_len} (max_iter={max_iter}) offset≈({cdx:.0},{cdy:.0})px -- {}",
+        if cur_len >= max_iter { "REACHED INTERIOR (fix works!)" } else { "still escaping (need a different approach)" }
     );
 }

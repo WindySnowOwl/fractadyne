@@ -80,20 +80,24 @@ Mockups: [design/mockups/](design/mockups/).
   (the v0.2.6 extended-range-sample area): counters show `rebase≈20M` + `ext≈281M` at the reference
   orbit's ~1e-71 dips (every 4383 iters). v0.2.6 killed the *uniform-interior* blank but left this
   accuracy problem — the earlier "14/15 now render real structure" claim was over-stated (corrected
-  in the corpus docs). **LOCALIZED 2026-07-12 to REFERENCE COVERAGE (`best_reference`), NOT the
-  shader.** New CPU probes (`tests/probe_escape.rs`: `PROBE_ROW`, `PROBE_BESTREF`) show: a dense row
-  of escape times is SMOOTH for pixels escaping *before* the reference length and SPECKLE for pixels
-  escaping *after* it (capping iters below the reference escape makes the wild values vanish → become
-  interior). f32-vs-f64 δz mantissa is byte-identical, so precision is NOT it. At loc 14 the center
-  escapes at **363792**; `best_reference` improves that to **777322** but that is still < max_iter
-  (800000) — so it is NOT interior, and the view's truly-interior "dark dendrite core" pixels (F3's
-  black filaments) rebase against an *escaping* reference → spurious noisy escape times instead of
-  interior. **THE FIX = make `best_reference` find an INTERIOR (max_iter-surviving) reference here.**
-  Its 5×5-grid × 4-scale candidate set doesn't sample finely enough to land on an interior point at
-  this filament-dense spot; a hill-climb from the longest survivor toward longer-surviving neighbours
-  (or a finer local grid) should reach one. ⚠DELICATE — `best_reference` is tuned to avoid poor-ref
-  glitches at depth; gate any change on corpus 14/15 + the 17 goldens. Corpus staging keeps
-  `glitch_correct=false` (irrelevant); the docs mark 14/15 accuracy-limited.
+  in the corpus docs). **ROOT CAUSE = GPU mode-2 δz PRECISION at the heavy dip-rebasing — reference
+  coverage RULED OUT end-to-end 2026-07-12.** The trail (CPU probes in `tests/probe_escape.rs`:
+  `PROBE_ROW`, `PROBE_BESTREF`): a dense escape-time row is smooth for pixels escaping *before* the
+  reference length and speckle *after* it, so it first looked like coverage — `best_reference` picks
+  a ref escaping at **777322** (< max_iter 800000, so not interior) while the deepest view pixels
+  escape later. **A phase-3 hill-climb was implemented and it DID find an interior ref (verified: the
+  render used `len=800001, escaped=false`) — but the render was STILL noisy, disproving coverage.**
+  (That hill-climb was reverted: it added ~40 s cold-start for no benefit; 63/63 held.) The real
+  variable is δz PRECISION: the CPU oracle at full f64 (53-bit mantissa) is smooth for every covered
+  pixel, but re-running it with each δz component rounded to a **24-bit (f32) mantissa** each step —
+  simulating the GPU floatexp kernel — collapses the escape times (~4336 vs the true ~328k). So the
+  GPU mode-2 `orbit_fe` / floatexp δz loses too much precision over the millions of Zhuoran rebases
+  at the ~1e-71 dips (`rebase≈20M`), giving per-pixel noise. **THE FIX = higher-precision δz in the
+  mode-2 shader** (e.g. df-floatexp: df32/48-bit or df64 mantissa + extended exponent) — first read
+  `mandelbrot.wgsl`'s floatexp type to confirm whether it's single-f32 or df32 mantissa today, then
+  widen it. Deep shader-numerics work. NOTE the naive per-op 24-bit sim over-collapses (GPU shows a
+  noisy gradient, not uniform ~4336), so the GPU likely already carries df32; the fix widens further.
+  Corpus staging keeps `glitch_correct=false` (irrelevant); the docs mark 14/15 accuracy-limited.
 
 - [x] **Uniform-exterior misrender past ~1e142× — FIXED in v0.2.6 (sub-f32 orbit dips).**
   Root cause: the 11–15 dive path's reference orbit passes within ~1e-71 of zero every 4383
