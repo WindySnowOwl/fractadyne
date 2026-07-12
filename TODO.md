@@ -33,12 +33,25 @@ Mockups: [design/mockups/](design/mockups/).
   bignum dip profiles + CPU-perturbation escape times). Measured escape bands: loc 14
   304k–582k (cap now 800k), loc 15 894k–1.46M (cap now 1.6M) — the .exr's 6M was exploratory.
 
-- [ ] **Deep export iterate is ~50× slower than Fraktaler-3 on the same workload.** F3 renders
-  corpus me148 (2560×1440-equivalent, ~350k mean escape iterations) in ~14 s; our export path
-  needs tens of minutes for the same location (measured ~1e9 steps/s vs F3's ~5e11 steps/s on
-  the same 3080). Candidates: per-iteration Fe overhead in mode 2 (fe_norm per op; the v0.2.6
-  extended-range bookkeeping added an fe_add + two fe_abs_sf per step), export tile sizes,
-  no early-out warp compaction. Profile with `--profile` gpu-it timestamps before touching.
+- [~] **Deep export throughput vs Fraktaler-3 — PROFILED 2026-07-11 (v0.2.10 `--profile`); the
+  "~50× slower" framing is NOT reproduced and needs a controlled re-measurement before any
+  optimization.** `--profile --reps 3` on the new `deep-interior-1e148` region (512², 800k iter,
+  mode 2, SA on / BLA on, glitch off; orbit_len 650,879, sa_skip 0, 556-bit) breaks down as:
+  reference build **877 ms (49%)** + BLA build **580 ms (32%)** + **GPU iterate 313 ms (17%)** +
+  GPU color 0.07 ms = 1805 ms total. So a *cold* deep render is **~81% one-time CPU bignum
+  setup**, not GPU-bound. Nominal GPU throughput ≈ 6.7e11 steps/s (512²×800k / 0.313 s), which is
+  *competitive with* F3's ~9e10 real steps/s, not 50× behind — the old ~1e9-steps/s figure does
+  not reconcile with this (likely predated the v0.2.x reference-reuse/BLA/extended-range work, or
+  was measured with glitch correction on — see the separate >1 h glitch pathology above). **Do
+  before touching shader math:** re-measure at export resolution (2560×1440) with a pinned config
+  (SA/glitch off, matching F3's location) and compute real (not nominal) steps/s from the escape
+  histogram; only then decide if there's a gap. **If a gap is confirmed, the levers by measured
+  cost are:** (1) the CPU reference build (877 ms) — already reused across dive frames, but a cold
+  export pays it fully; (2) the CPU BLA build (580 ms) — candidate for parallelization; (3) mode-2
+  per-iteration Fe overhead (fe_norm per op; df32 mantissa doubles the work vs a single-f32-mantissa
+  floatexp; the v0.2.6 extended-range path adds an fe_add + 2 fe_abs_sf per step, and the glitch +
+  rebase checks each call fe_abs_sf twice/iter). The live-path GPU iterate is already instrumented
+  (HUD steps/s, `[fd-perf]`, `perf.jsonl`); use it to guide any change.
 
 ## Design follow-ups (from mockup review, 2026-06-25)
 
