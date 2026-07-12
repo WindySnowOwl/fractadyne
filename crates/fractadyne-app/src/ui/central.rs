@@ -686,7 +686,18 @@ impl FractadyneApp {
                 // Render the fractal at the current viewport with the chosen palette.
                 let span_fe = self.viewport.complex_span_fe();
                 let eff_iter = if self.render_cfg.auto_iter {
-                    self.viewport.recommended_max_iter(self.render_cfg.max_iter)
+                    // LIVE-preview iteration cap (the cap viewport.rs's `recommended_max_iter`
+                    // comment promises but never implemented). At extreme depth
+                    // `recommended_max_iter` saturates at 500k, and a live view rendering a
+                    // 500k-iter reference — non-escaping at a tip like c=−2, so a full 500k
+                    // orbit + a ~4M-node BLA — overloads the GPU present and FREEZES the window
+                    // on boot/settle (the ~1e2100× filament-tip session). The one-shot export
+                    // path keeps the full appetite (it renders in a single bounded pass and is
+                    // fast), so a real export still recovers the ultimate boundary detail; the
+                    // live preview trades that for staying responsive at arbitrary depth.
+                    self.viewport
+                        .recommended_max_iter(self.render_cfg.max_iter)
+                        .min(crate::LIVE_ITER_CAP)
                 } else {
                     self.render_cfg.max_iter
                 };

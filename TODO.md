@@ -5,7 +5,13 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] **App freezes on load at extreme zoom (~1e2100×, center −2.0, the Mandelbrot filament tip) —
+- [x] **App freezes on load at extreme zoom (~1e2100×, center −2.0, the Mandelbrot filament tip) —
+  FIXED v0.2.15 (`LIVE_ITER_CAP`).** The live preview now caps auto-iterations at 100k
+  (`ui/central.rs` single + `nav_and_draw` dual); the export path keeps the full appetite. Verified:
+  booting the actual e2100 session ran 45 s with NO watchdog / NO freeze (reference now builds to
+  ~108k, not 500k); selftest 63/63 + goldens 17/17 unchanged (export path untouched). Diagnosis
+  below kept for context.
+- [~] **App freezes on load at extreme zoom (~1e2100×, center −2.0, the Mandelbrot filament tip) —
   DIAGNOSED 2026-07-12; NOT the reference build.** A saved session at this arbitrary-depth view
   (`units_per_pixel_e = −6986`, ~7000-bit precision, `max_iter = 500000`, `aa = 8`) leaves the
   window unresponsive on boot. **Diagnosis (booted the actual app with the v0.2.7+ watchdog +
@@ -26,6 +32,18 @@ Mockups: [design/mockups/](design/mockups/).
   the hanging dispatch, then bound the settle/AA-ramp GPU work at extreme depth and/or fix auto-iter
   from over-provisioning where the view escapes fast. (Earlier "async-ify the cold reference"
   direction is MOOT — already async.) Higher severity than the XaoS enhancement.
+  **ROOT CAUSE CONFIRMED 2026-07-12:** the LIVE preview uses the full-quality iteration appetite at
+  extreme depth. `recommended_max_iter = (base + octaves·220).min(500_000)` (viewport.rs:244) → at
+  ~6986 octaves always returns **500_000**; `zoom_iter_cap` (~1.79M there) doesn't bite; and the
+  live path (`ui/central.rs:688`, + `nav_and_draw` for dual) uses `recommended_max_iter` DIRECTLY —
+  the "live preview caps it lower (see build_params)" note in viewport.rs is STALE, no such cap
+  exists. So the live settle + AA-ramp runs a 500k-iter reference (non-escaping at the −2.0 tip →
+  full 500k orbit + 4M-node BLA) and overloads the GPU present. **Decisive test:** booting
+  `auto_iter=false` + `max_iter=5000` (reference escapes at ~13k) → 45 s, NO watchdog, NO freeze;
+  `auto_iter=true` (→500k) → freeze every time. **Fix:** give the LIVE preview a lower iteration cap
+  than the export appetite (implement the cap the stale comment promises), targeted to bite only at
+  extreme depth and tuned + verified across depths (too-low under-renders legitimate deep-interior
+  live views). The export path keeps the full 500k and is already fast — leave it untouched.
 
 - [ ] **Glitch-correction pass goes pathological (>1 hour) at extreme depth — ROOT CAUSE
   DIAGNOSED 2026-07-11 (v0.2.11 tracing); a robust fix is a substantial change, deferred.**
