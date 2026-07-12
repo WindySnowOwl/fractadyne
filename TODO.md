@@ -5,6 +5,23 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] **App freezes on load at extreme zoom (~1e2100×, center −2.0, the Mandelbrot filament tip) —
+  DIAGNOSED 2026-07-12.** A saved session at this arbitrary-depth view (`units_per_pixel_e = −6986`,
+  ~7000-bit precision, `max_iter = 500000`) leaves the window unresponsive ("Not Responding") on
+  boot. **Confirmed cause (headless repro at `--center -2.0 0.0 --zoom-log2 6980 --iter 500000`,
+  `FRACTADYNE_TRACE=ref`): the SYNCHRONOUS cold-start reference build — only the very first cold
+  reference is built on the UI thread (render.rs) — takes ~12 s at this depth: `best_reference`
+  candidate scoring 8.6 s + bignum orbit build 1.45 s + BLA 0.2 s at 7172-bit.** The GPU render is
+  NOT the problem: a full 1920×1080 frame iterates in 22 ms (maxiter=0, BLA skips 36M steps), so no
+  pixel spin — it's purely the UI-thread freeze during the cold bignum build (dominated by the same
+  `best_reference` lever the throughput work isolated, now scaled to 7000-bit). **Fix directions:**
+  (1) make the cold-start reference build ASYNC like every subsequent one (off-thread + the existing
+  placeholder/spinner) so the window stays responsive — the direct fix; (2) cap/shortcut
+  `best_reference` scoring depth at extreme zoom (the throughput lever) to cut the 8.6 s; (3) a
+  coarse→fine progressive cold reference. Higher severity than the XaoS enhancement (a stated
+  arbitrary-zoom test case is unusable). Note it is NOT an infinite hang — it completes in ~12 s
+  headlessly; deeper zoom / larger window / slower CPU stretches the freeze.
+
 - [ ] **Glitch-correction pass goes pathological (>1 hour) at extreme depth — ROOT CAUSE
   DIAGNOSED 2026-07-11 (v0.2.11 tracing); a robust fix is a substantial change, deferred.**
   Original report: offscreen `--render` of corpus 09 (6.1e500×) hangs >1 h with
