@@ -410,6 +410,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--watermark / --no-watermark", "Force the \"Fd\" watermark on / off (overrides the saved preference)."),
         Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot."),
         Flag("--glitch / --no-glitch", "Force multi-reference glitch correction on / off for the export (default on)."),
+        Flag("--normalize", "Auto-normalize the palette cycle to the frame's escape-value range on export — prevents smooth-coloring aliasing (speckle) at extreme depth; the cycle slider then means palette sweeps. Falls back to normal coloring for aux methods / huge supersampled sizes."),
         Flag("--no-perf / --perf", "Hide / show the performance panel."),
         Section("Validation & diagnostics"),
         Flag("--render-iter -o F.exr", "Export raw iteration data (EXR) instead of a colored image."),

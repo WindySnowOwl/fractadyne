@@ -1127,6 +1127,89 @@ impl FractadyneApp {
         Some(res)
     }
 
+    /// **Auto-normalized** export: color the smooth-iter field with the palette CYCLE mapped to the
+    /// frame's actual escape-value range, instead of the fixed `cycle`. At extreme depth the
+    /// smooth-iter counts are ~1e5–1e6 and vary steeply, so a fixed cycle aliases a correct escape
+    /// field into per-pixel speckle (corpus 14/15). Two passes: the tiled iteration buffer
+    /// (`render_iter_tiled`, any size), then a CPU min/max over the escaped pixels to set
+    /// `cycle = sweeps/range`, `offset = -min·cycle`, then color; supersampled and box-downsampled.
+    /// Returns `None` (caller falls back to the normal export) for aux coloring, an all-interior
+    /// frame (nothing to normalize), or a supersampled size past the single-texture color cap.
+    pub(crate) fn render_export_normalized(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        vp: &Viewport,
+        julia: bool,
+        width: u32,
+        height: u32,
+        ss: u32,
+    ) -> Option<fractadyne_gpu::ExportResult> {
+        const MAX_PX: u64 = 40_000_000; // single-texture color pass (~6K·6K); above → fall back
+        let ss = ss.max(1);
+        let (iw, ih) = (width * ss, height * ss);
+        let max_dim = device.limits().max_texture_dimension_2d;
+        if iw > max_dim
+            || ih > max_dim
+            || (iw as u64) * (ih as u64) > MAX_PX
+            || self.coloring.color_method.needs_aux()
+        {
+            return None;
+        }
+        let mut req = self.current_export_request_for(vp, julia);
+        req.width = iw;
+        req.height = ih;
+        req.ss = 1;
+        // Pass 1 — supersampled iteration buffer (tiled → bounded dispatches, any size).
+        let iter = fractadyne_gpu::render_iter_tiled(device, queue, &req, 20_000_000_000, None).ok()?;
+        // Escape-value range over escaped pixels (channel 0 = smooth iter; < 0 = interior).
+        let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+        for px in iter.pixels.chunks_exact(4) {
+            let v = px[0];
+            if v >= 0.0 {
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+        if hi < lo {
+            return None; // all-interior frame: nothing to normalize → normal path
+        }
+        let range = (hi - lo).max(1.0);
+        // With normalize on, the `cycle` slider means palette SWEEPS across the escape range.
+        let sweeps = 0.5 + self.coloring.cycle * 6.0;
+        req.cycle = sweeps / range;
+        req.offset = -lo * req.cycle + self.coloring.offset;
+        // Pass 2 — color the buffer with the normalized cycle.
+        let mut res = fractadyne_gpu::color_iter_buffer(device, queue, &req, &iter.pixels).ok()?;
+        // Box-downsample the supersampled colored buffer to the output resolution.
+        if ss > 1 {
+            let (ow, oh) = (width as usize, height as usize);
+            let sw = iw as usize;
+            let inv = 1.0 / (ss * ss) as f32;
+            let mut out = vec![0.0f32; ow * oh * 4];
+            for oy in 0..oh {
+                for ox in 0..ow {
+                    for c in 0..4 {
+                        let mut s = 0.0f32;
+                        for dy in 0..ss as usize {
+                            for dx in 0..ss as usize {
+                                s += res.pixels[((oy * ss as usize + dy) * sw + ox * ss as usize + dx) * 4 + c];
+                            }
+                        }
+                        out[(oy * ow + ox) * 4 + c] = s * inv;
+                    }
+                }
+            }
+            res.pixels = out;
+        }
+        res.width = width;
+        res.height = height;
+        res.ss = ss;
+        res.iterate_ms = iter.iterate_ms;
+        res.counters = iter.counters;
+        Some(res)
+    }
+
     /// Advance a view's tiled settle by one tile and return its rect (base px). Grid geometry is
     /// frozen at grid start; the cursor walks the tiles CENTER-OUT, so the part of the image the
     /// user is looking at sharpens first. Returns a zero-area "hold" rect when another view already

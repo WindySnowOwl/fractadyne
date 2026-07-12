@@ -1487,6 +1487,11 @@ struct ColoringConfig {
     color_method: ColorMethod,
     stripe_freq: f32,
     trap_type: TrapType,
+    /// Auto-normalize the palette cycle to the frame's escape-value range on export (`--normalize`).
+    /// At extreme depth the smooth-iter counts are ~1e5–1e6 and a fixed `cycle` aliases a correct
+    /// escape field into speckle; normalize maps the range to `cycle`-many palette sweeps. Export
+    /// path only (transient; not persisted). See `render_export_normalized`.
+    normalize: bool,
 }
 
 /// Time-varying visual overlays advanced per-frame: the orbit racing-dot (enable / normalize /
@@ -2024,6 +2029,7 @@ impl FractadyneApp {
                 color_method: ColorMethod::from_key(&s.color_method),
                 stripe_freq: s.stripe_freq,
                 trap_type: TrapType::from_key(&s.trap_type),
+                normalize: args.iter().any(|a| a == "--normalize"),
             },
             perf: Perf {
                 // Default on; `--no-perf` disables, `--perf` forces on.

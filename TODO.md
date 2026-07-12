@@ -89,14 +89,18 @@ Mockups: [design/mockups/](design/mockups/).
   random noise. LESSON: dump the raw escape VALUES before blaming the perturbation. Probes
   (`probe_escape.rs`, `probe_fe.rs`) + FEDUMP are the harness.
 
-- [ ] **App: auto-normalize / adaptive-cycle coloring for extreme depth (the general fix behind
+- [~] **App: auto-normalize / adaptive-cycle coloring for extreme depth (the general fix behind
   14/15).** `shade()` (mandelbrot.wgsl:1277) does `palette(pv·cycle + offset)` with `pv` = the raw
   smooth-iter count; at deep zoom that is ~1e5–1e6 and varies steeply, so a fixed `cycle` aliases into
-  speckle — for the corpus AND any deep dense view a USER zooms to. Fix: an auto-normalize coloring
-  mode that maps the frame's escape-value range to N palette sweeps (FEDUMP prototypes it via a
-  reduction over the iter buffer, then `cycle = N/range`). It's a two-pass (iter → range → color) and a
-  design choice (auto vs manual, UI toggle). Would let `generate_corpus` render 14/15 natively instead
-  of the FEDUMP side-door, and fixes deep-zoom coloring UX generally.
+  speckle — for the corpus AND any deep dense view a USER zooms to. **EXPORT PATH SHIPPED v0.2.17
+  (`--normalize`):** `render_export_normalized` (render.rs) is a two-pass — tiled iteration buffer
+  (`render_iter_tiled`) → CPU min/max over escaped px → `cycle = (0.5 + slider·6)/range`,
+  `offset = -min·cycle` → color → box-downsample. Gated by `coloring.normalize` (set by `--normalize`,
+  transient); `render_export_view` routes to it; falls back for aux methods / all-interior / oversized
+  supersampled buffers. `generate_corpus` reads a per-location `normalize = true` (14/15) and passes
+  the flag, so 14/15 render natively; the FEDUMP scaffold was removed. selftest 63/63. **REMAINING:
+  (a) the LIVE view still aliases at deep zoom — needs a per-frame GPU reduction for the range (touches
+  the fragile live loop, deferred); (b) no UI toggle / session persistence yet (export/CLI only).**
 
 - [x] **Uniform-exterior misrender past ~1e142× — FIXED in v0.2.6 (sub-f32 orbit dips).**
   Root cause: the 11–15 dive path's reference orbit passes within ~1e-71 of zero every 4383

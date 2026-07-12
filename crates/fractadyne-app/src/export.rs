@@ -537,6 +537,14 @@ impl FractadyneApp {
         progress: &std::sync::atomic::AtomicU32,
         cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<fractadyne_gpu::ExportResult, fractadyne_gpu::GpuError> {
+        // Auto-normalized coloring (`--normalize`): map the palette cycle to the frame's escape-value
+        // range so extreme-depth views don't alias into speckle. Falls through to the normal path for
+        // aux coloring / all-interior frames / oversized supersampled buffers.
+        if self.coloring.normalize {
+            if let Some(res) = self.render_export_normalized(device, queue, vp, julia, req.width, req.height, req.ss) {
+                return Ok(res);
+            }
+        }
         if self.render_cfg.glitch_correct {
             let deadline = Some(std::time::Instant::now() + GLITCH_CORRECT_BUDGET);
             if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height, deadline) {

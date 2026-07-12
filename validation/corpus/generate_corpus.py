@@ -45,6 +45,10 @@ def read_locations():
             loc[key] = m.group(1) if m else ""
         loc["mag_log10"] = float(re.search(r"mag_log10 = ([\d.eE+-]+)", block).group(1))
         loc["iterations"] = int(re.search(r"iterations = (\d+)", block).group(1))
+        # Auto-normalize coloring: at extreme depth the smooth-iter counts are ~1e5-1e6 and a fixed
+        # palette cycle aliases a correct escape field into speckle (14/15). `--normalize` maps the
+        # frame's escape range to the palette instead. See the corpus README / TODO.
+        loc["normalize"] = bool(re.search(r"^normalize = true", block, re.M))
         locs.append(loc)
     return locs
 
@@ -149,6 +153,8 @@ def render_location(loc):
         "--ss", str(SS),
         "--palette", "0",  # Ember
     ]
+    if loc.get("normalize"):
+        cmd.append("--normalize")  # escape-range -> palette (deep dense fields; see read_locations)
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=3600)
     if not os.path.exists(out_png):
         sys.exit("no render for %s\nstdout: %s\nstderr: %s" % (loc["slug"], r.stdout[-2000:], r.stderr[-2000:]))
