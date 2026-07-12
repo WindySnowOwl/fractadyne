@@ -10,7 +10,15 @@ Mockups: [design/mockups/](design/mockups/).
   (`ui/central.rs` single + `nav_and_draw` dual); the export path keeps the full appetite. Verified:
   booting the actual e2100 session ran 45 s with NO watchdog / NO freeze (reference now builds to
   ~108k, not 500k); selftest 63/63 + goldens 17/17 unchanged (export path untouched). Diagnosis
-  below kept for context.
+  below kept for context. **Regression-guarded 2026-07-12** by a canonical extreme-zoom diagnostic
+  case (the same tip, now at ~1e21000× / `units_per_pixel_e = −69770`, ~69769-bit): the exact view is
+  `validation/extreme-zoom-tip-e21000.fdn` (load in-app via *Share location → Load .fdn…* to confirm
+  it boots responsive / watchdog silent), and `validation/extreme-zoom.toml` is a `--profile --regions`
+  region that exposes the cold reference cost: **measured ~250 s wall at 69828-bit** (mode 2), of which
+  `--profile`'s `ref ms` column captures only ~410 ms (the orbit compute) — the ~99% remainder is
+  `best_reference` scoring, re-confirming the throughput lever at extreme depth. NOT a golden or an F3 corpus entry — a render here
+  is minutes (bignum-bound) and ~1e21000× is ~20× beyond F3's deepest matched pair (4.6e1105×). See
+  DIAGNOSTICS.md "Canonical extreme-zoom diagnostic location".
 - [~] **App freezes on load at extreme zoom (~1e2100×, center −2.0, the Mandelbrot filament tip) —
   DIAGNOSED 2026-07-12; NOT the reference build.** A saved session at this arbitrary-depth view
   (`units_per_pixel_e = −6986`, ~7000-bit precision, `max_iter = 500000`, `aa = 8`) leaves the

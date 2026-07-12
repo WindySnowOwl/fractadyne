@@ -88,6 +88,34 @@ exercise means dead code (exactly how the v0.2.6 NaN-marker regression would hav
 | `--benchmark-std` | Standardized dive benchmark with report |
 | `--render --out X …` | One-shot render; prints manifest + progress; non-zero exit on failure |
 
+## Canonical extreme-zoom diagnostic location
+
+The Mandelbrot **real-axis tip** (`c = -2` exactly) at **~1e21000×** (`units_per_pixel_e = -69770`,
+~69769-bit working precision) is the project's canonical extreme-depth stress point — the deepest
+routinely-exercised view. Two committed forms live in `validation/`:
+
+- **`extreme-zoom-tip-e21000.fdn`** — the exact view. Load it in-app via *Share location →
+  Load .fdn…* (or paste the text and Apply) to reproduce it. Its purpose is a **responsiveness /
+  no-freeze** check: it regression-guards the v0.2.15 load-freeze fix (`LIVE_ITER_CAP`). Before
+  that fix, auto-iter over-provisioned the *live preview* to 500k iterations and the app froze on
+  load at this depth; now it boots responsive — the reference builds off-thread, so the first sharp
+  frame is delayed by the reference cost below, but the UI never wedges and the watchdog stays silent.
+- **`extreme-zoom.toml`** — a `--profile --regions` region for the same point, to quantify the cold
+  reference cost. Run `fractadyne --profile --regions validation/extreme-zoom.toml --reps 1`.
+  **Measured (3080 / 3950X): ~250 s wall for the cold build at 69828-bit precision** (mode 2 /
+  floatexp). ⚠The `--profile` table's `ref ms` column reports only **~410 ms** — it times just the
+  arbitrary-precision *orbit compute*; the ~99% remainder is `best_reference` **candidate scoring**
+  (fractadyne-core — the throughput lever), which `--profile` does *not* attribute to that column.
+  What exposes the true cost is the **watchdog breadcrumb** `building reference … [main]`, firing
+  every 30 s through ~240 s. (That is the headless *main-thread* build; in the live app the same
+  build runs off-thread, so the UI stays responsive and the watchdog stays silent — cf. the `.fdn`
+  case above. This region thus doubles as a live demonstration of the `--profile` scoring blind spot.)
+
+Deliberately **not** a selftest golden or an F3 corpus entry: a full render here is minutes
+(bignum-bound), far too slow for the byte-identical goldens; and ~1e21000× is ~20× beyond
+Fraktaler-3's demonstrated range (the deepest F3-matched corpus pair is 4.6e1105×), so there is no
+F3 image to compare against. Its value is diagnostic (responsiveness + cost), not render-comparison.
+
 ## Orbit forensics (CPU probes, no GPU)
 
 Env-gated tests in `crates/fractadyne-core/tests/`, built for the deep-zoom investigations:

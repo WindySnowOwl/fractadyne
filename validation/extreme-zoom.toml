@@ -1,0 +1,34 @@
+# Canonical extreme-zoom diagnostic region — for `fractadyne --profile --regions this.toml`.
+#
+# The Mandelbrot real-axis TIP (c = -2 exactly) at ~1e21000x (units_per_pixel_e = -69770,
+# ~69769-bit working precision). This is the deepest routinely-exercised view in the project
+# and the canonical stress point for the extreme-depth pipeline; see DIAGNOSTICS.md
+# ("Canonical extreme-zoom diagnostic location") and validation/extreme-zoom-tip-e21000.fdn
+# (the exact-view companion, loadable in-app via Share location -> Load .fdn).
+#
+# WHAT IT MEASURES: the cold reference cost at extreme depth. Keep `--reps 1`. The GPU passes are
+# timed on the (tiny) 256px frame and are incidental here.
+#   Measured (3080 / 3950X): ~250 s wall for the cold build at 69828-bit precision (mode 2).
+#   ⚠The `--profile` table's `ref ms` column reports only ~410 ms — it times just the arbitrary-
+#   precision ORBIT COMPUTE. The ~99% remainder is `best_reference` CANDIDATE SCORING
+#   (fractadyne-core — the throughput lever), which `--profile` does NOT attribute to that column.
+#   The true cost surfaces as the watchdog breadcrumb `building reference ... [main]` (every 30 s
+#   through ~240 s). In the live app this build runs off-thread (UI stays responsive); here it is
+#   on the main thread, so the watchdog fires — that is expected for the headless profile path.
+#
+# WHY NOT A GOLDEN OR AN F3 CORPUS ENTRY: a full render at this depth is minutes (bignum-bound),
+# far too slow for the byte-identical selftest goldens; and ~1e21000x is ~20x beyond Fraktaler-3's
+# demonstrated range (the deepest F3-matched corpus pair is 4.6e1105x), so there is no F3
+# reference to compare against. This location's value is diagnostic (responsiveness + cost),
+# not render-comparison.
+
+[[region]]
+name = "tip-e21000"
+fractal = "Mandelbrot"
+cx = "-2.0"
+cy = "0.0"
+zoom_log2 = 69763.374187   # log2 magnification at size=256; ~1e21000x, upp_log2 ~ -69769.79
+iter = 4000                # modest: the reference build, not iteration count, is the cost here
+size = 256                 # small frame — the GPU passes are incidental; the reference dominates
+ss = 1
+method = "smooth"
