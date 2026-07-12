@@ -69,8 +69,17 @@ harnesses, both CLI-driven (no live-loop change, deterministic):
 
 Each stage ships behind a flag (default off) until its golden passes, then flips on.
 
-- **Stage 0 — verification harness** (above). Small, safe, no pipeline change. Also yields the
-  data-driven `REFRESH_OCTAVES` tuning as a standalone win.
+- **Stage 0 — verification harness** (above) — **DONE (v0.2.12–0.2.14, `--reusetest`).** Reports
+  raw-iter + perceptual-sRGB reprojection staleness vs Δ-octaves, and nearest-vs-bilinear.
+  **Findings (measured, 3080):** (a) perceptual staleness (sRGBmean) is far below the raw-iter
+  proxy — ~12–18/255 shallow (eases on zoom-in), ~21→33 deep-1e12 (worsens with the dive) — so
+  `REFRESH_OCTAVES = 0.5` is a sound, validated cadence, no change warranted; (b) **class-guarded
+  BILINEAR reprojection is WORSE than the current nearest by 4–16%** — in fine escape-time bands
+  bilinear smears across bands and invents colors that aren't in the true image, so the "smoother
+  is better" intuition is wrong here and nearest is correctly chosen. **Conclusion: the reprojection
+  filter is not the lever; the staleness is dominated by missing sub-pixel detail, so only the
+  Stage-2 during-motion real-detail refine helps.** A safe, headless negative result that ruled out
+  a shader change that would have degraded the live view.
 - **Stage 1 — coordinate-keyed tile store.** Give the tiled-settle tiles an identity: key each
   composited tile by (complex-rect, depth-octave, ss, settings_hash) and keep them in a bounded
   per-view LRU keyed off `orbit_id`. No behavior change yet (tiles are still produced by the settle);

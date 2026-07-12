@@ -108,10 +108,10 @@ impl FractadyneApp {
              raw = smooth-iter (conservative); sRGB = the colored image the user actually sees (0–255).\n"
         );
         println!(
-            "  {:<16} {:>5}  {:>6}  {:>9}  {:>7}  {:>8}  {:>7}",
-            "view", "Δoct", "%escap", "meanΔiter", "%>2iter", "sRGBmean", "sRGBmax"
+            "  {:<16} {:>5}  {:>6}  {:>7}  {:>9}  {:>9}  {:>8}",
+            "view", "Δoct", "%escap", "raw%>2", "sRGB-near", "sRGB-bilin", "bilin-Δ"
         );
-        println!("  {}", "-".repeat(70));
+        println!("  {}", "-".repeat(72));
 
         let nn = N as usize;
         for v in &views {
@@ -122,24 +122,50 @@ impl FractadyneApp {
             for &d in &deltas {
                 let magd = v.mag * 2f64.powf(d);
                 let Some((fresh_req, fresh)) = render(self, v.cx, v.cy, magd) else { continue };
-                // Build the reprojected iteration buffer: the zoomed-view pixel (x,y) samples the base
-                // frame at the magnified coordinate (nearest, matching the shader's
-                // `pix = i32(suv * screen_dim)`); a Δ-octave zoom-in is 2^Δ magnify → uv_scale = 2^-Δ.
+                // Build two reprojected iteration buffers — the zoomed-view pixel (x,y) samples the
+                // base frame at the magnified coordinate (2^Δ magnify → uv_scale = 2^-Δ):
+                //  - `reproj_n`  NEAREST (what the shader does today, `pix = i32(suv*screen_dim)`);
+                //  - `reproj_b`  class-guarded BILINEAR (bilerp the escape channel only where all 4
+                //    neighbours escaped — else nearest, to avoid averaging interior(-1) with exterior;
+                //    normal/DE always bilerp). This is the candidate color-pass improvement, measured
+                //    before touching the fragile live shader.
                 let s = 2f64.powf(-d);
-                let mut reproj = vec![0.0f32; nn * nn * 4];
+                let mut reproj_n = vec![0.0f32; nn * nn * 4];
+                let mut reproj_b = vec![0.0f32; nn * nn * 4];
                 let (mut sum, mut n, mut big) = (0.0f64, 0u64, 0u64);
+                let samp = |bx: usize, by: usize, c: usize| base[(by * nn + bx) * 4 + c];
                 for y in 0..nn {
                     for x in 0..nn {
-                        let uvx = (x as f64 + 0.5) / N as f64;
-                        let uvy = (y as f64 + 0.5) / N as f64;
-                        let bx = ((((uvx - 0.5) * s + 0.5) * N as f64) as i64).clamp(0, N as i64 - 1) as usize;
-                        let by = ((((uvy - 0.5) * s + 0.5) * N as f64) as i64).clamp(0, N as i64 - 1) as usize;
-                        let src = (by * nn + bx) * 4;
+                        let fpx = (((x as f64 + 0.5) / N as f64 - 0.5) * s + 0.5) * N as f64 - 0.5;
+                        let fpy = (((y as f64 + 0.5) / N as f64 - 0.5) * s + 0.5) * N as f64 - 0.5;
+                        let x0 = (fpx.floor() as i64).clamp(0, N as i64 - 1) as usize;
+                        let y0 = (fpy.floor() as i64).clamp(0, N as i64 - 1) as usize;
+                        let x1 = (x0 + 1).min(nn - 1);
+                        let y1 = (y0 + 1).min(nn - 1);
+                        let (fx, fy) = (fpx - fpx.floor(), fpy - fpy.floor());
+                        // nearest (round)
+                        let nx = if fx >= 0.5 { x1 } else { x0 };
+                        let ny = if fy >= 0.5 { y1 } else { y0 };
                         let dst = (y * nn + x) * 4;
-                        reproj[dst..dst + 4].copy_from_slice(&base[src..src + 4]);
-                        let (reproj_it, truth_it) = (base[src], fresh[dst]);
-                        if reproj_it >= 0.0 && truth_it >= 0.0 {
-                            let e = (reproj_it - truth_it).abs() as f64;
+                        for c in 0..4 {
+                            reproj_n[dst + c] = samp(nx, ny, c);
+                        }
+                        // bilinear (class-guarded on channel 0 = escape)
+                        let bilerp = |c: usize| -> f32 {
+                            let a = samp(x0, y0, c) as f64 * (1.0 - fx) + samp(x1, y0, c) as f64 * fx;
+                            let b = samp(x0, y1, c) as f64 * (1.0 - fx) + samp(x1, y1, c) as f64 * fx;
+                            (a * (1.0 - fy) + b * fy) as f32
+                        };
+                        let all_esc = samp(x0, y0, 0) >= 0.0 && samp(x1, y0, 0) >= 0.0
+                            && samp(x0, y1, 0) >= 0.0 && samp(x1, y1, 0) >= 0.0;
+                        reproj_b[dst] = if all_esc { bilerp(0) } else { samp(nx, ny, 0) };
+                        reproj_b[dst + 1] = bilerp(1);
+                        reproj_b[dst + 2] = bilerp(2);
+                        reproj_b[dst + 3] = bilerp(3);
+                        // raw escape-time drift (nearest), over pixels escaped in both.
+                        let (rn, tr) = (reproj_n[dst], fresh[dst]);
+                        if rn >= 0.0 && tr >= 0.0 {
+                            let e = (rn - tr).abs() as f64;
                             sum += e;
                             n += 1;
                             if e > 2.0 {
@@ -148,27 +174,28 @@ impl FractadyneApp {
                         }
                     }
                 }
-                let mean = if n > 0 { sum / n as f64 } else { 0.0 };
+                let _ = sum;
                 let pct = if n > 0 { 100.0 * big as f64 / n as f64 } else { 0.0 };
                 let escap = 100.0 * n as f64 / (nn * nn) as f64;
-                // Perceptual: color both buffers with the SAME (zoomed-view) coloring, diff in sRGB.
-                let (smax, smean) = match (colored(&fresh_req, &fresh), colored(&fresh_req, &reproj)) {
-                    (Some(cf), Some(cr)) => img_diff(&cf, &cr),
-                    _ => (0, 0.0),
-                };
+                // Perceptual: color each reprojection with the zoomed-view coloring, diff vs the
+                // from-scratch colored frame, in sRGB.
+                let Some(cf) = colored(&fresh_req, &fresh) else { continue };
+                let near = colored(&fresh_req, &reproj_n).map(|c| img_diff(&cf, &c).1).unwrap_or(0.0);
+                let bilin = colored(&fresh_req, &reproj_b).map(|c| img_diff(&cf, &c).1).unwrap_or(0.0);
+                let improve = if near > 0.0 { 100.0 * (near - bilin) / near } else { 0.0 };
                 println!(
-                    "  {:<16} {:>5.2}  {:>5.1}%  {:>9.3}  {:>6.1}%  {:>8.2}  {:>7}",
-                    v.name, d, escap, mean, pct, smean, smax
+                    "  {:<16} {:>5.2}  {:>5.1}%  {:>6.1}%  {:>9.2}  {:>9.2}  {:>7.1}%",
+                    v.name, d, escap, pct, near, bilin, improve
                 );
             }
         }
         println!(
-            "\nRead: sRGBmean/max is the perceptual staleness (0–255) — what the held frame looks like\n\
-             vs a real render at that dive depth. A NEAREST reprojection can't preserve sub-pixel\n\
-             escape-time bands, so raw %>2iter saturates fast in fine detail; the sRGB columns show\n\
-             how much of that survives coloring. The Δ at which sRGBmean crosses a visible threshold\n\
-             (a few 8-bit levels) is the data-driven case for REFRESH_OCTAVES (0.5, render.rs) and the\n\
-             baseline the Stage-2 during-motion tile refine (design/xaos-reuse.md) must beat."
+            "\nRead: sRGB-near/bilin are perceptual staleness (mean 0–255) of the held frame vs a real\n\
+             render at that dive depth; bilin-Δ is how much class-guarded BILINEAR reprojection beats\n\
+             today's NEAREST. If bilin-Δ is large, a bilinear color-pass reproject (fs_color, reproject\n\
+             branch — goldens are reproject=0 so untouched) is worth the change; if small, the staleness\n\
+             is dominated by missing sub-pixel detail (only the Stage-2 during-motion refine helps).\n\
+             Either way this is measured BEFORE touching the fragile live shader (design/xaos-reuse.md)."
         );
     }
 }

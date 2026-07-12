@@ -160,8 +160,13 @@ cache, adaptive iterations, auto-save/restore, and the first side panels.
       per-pixel iter fidelity fast (seahorse-1e6 ~61% of escaped px differ >2 iter by Δ=0.1 oct,
       rising slowly to ~68% by 1.0), a conservative raw-iter proxy (colored/perceptual staleness is
       lower). Quantifies WHY the reproject is only a placeholder and motivates the Stage-2 refine.
-      **Next: Stage 2 is its own dedicated task** (re-iterates during motion on a fragile loop —
-      gate it with a colored reuse-vs-from-scratch golden first). *Earlier shipped (v0.1.53–57,
+      **Stage 0 findings (v0.2.13–0.2.14):** a perceptual sRGB metric shows staleness is far below
+      the raw-iter proxy (sRGBmean ~12–33/255) so REFRESH_OCTAVES=0.5 is validated; and a
+      nearest-vs-bilinear comparison found **bilinear reprojection is WORSE by 4–16%** (it smears
+      across escape-time bands) — nearest is correctly chosen, the filter is not the lever, and only
+      the Stage-2 real-detail refine can reduce staleness. **Next: Stage 2 is its own dedicated task**
+      (re-iterates during motion on a fragile loop — gate it with the `--reusetest` colored golden;
+      needs live visual verification, so best done in a focused session). *Earlier shipped (v0.1.53–57,
       0.1.66): reuse-first refresh for mode-0 zoom, deep-dive reference **reuse** (extend the cached
       orbit, ~20× faster rebuilds), frozen-frame reprojection/hold, and adaptive motion resolution
       (AIMD) — deep zoom is smooth in motion; the full coordinate-keyed tile/mip reuse in (2) below
