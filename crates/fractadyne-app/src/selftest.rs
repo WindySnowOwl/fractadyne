@@ -675,7 +675,7 @@ impl FractadyneApp {
                     vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
                     vp.precision = fractadyne_core::precision_for_magnification(mag);
                     if let Some(ci) =
-                        self.render_corrected_iter(device, queue, &vp, false, N, N, 40)
+                        self.render_corrected_iter(device, queue, &vp, false, N, N, 40, None)
                     {
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Glitch",
@@ -696,7 +696,7 @@ impl FractadyneApp {
                     let d2d_method = self.coloring.color_method;
                     self.coloring.color_method = crate::ColorMethod::Smooth;
                     if let (Some(cor), Some(plain)) = (
-                        self.render_export_corrected(device, queue, &vp, false, N, N),
+                        self.render_export_corrected(device, queue, &vp, false, N, N, None),
                         render(&make(self, SX, SY, mag)),
                     ) {
                         let n = (N * N) as usize;

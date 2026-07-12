@@ -486,6 +486,247 @@ pub fn render_export(
     })
 }
 
+/// Tiled variant of [`render_iter`]: renders the raw iteration texture in **bounded per-tile
+/// dispatches** (each ≈ `work_budget` nominal steps) and reassembles the full `width×height`
+/// RGBA32F buffer. The point is that no single GPU submission runs long enough to trip the OS
+/// watchdog or to hang uninterruptibly on the deep-interior "dark dendrite core" pixels that no
+/// acceleration (SA/BLA) can skip — the pathology that made multi-reference glitch correction run
+/// for hours. `deadline` is checked between tiles: once it passes, the render returns
+/// `GpuError::Canceled`, so the correction loop can keep whatever it has already merged and stop
+/// instead of blocking. `ss = 1` (the correction path never supersamples); emits the iteration
+/// texture (not a colored image) so the caller can find glitched pixels (`smooth_iter < -1.5`).
+#[allow(clippy::too_many_arguments)]
+pub fn render_iter_tiled(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    work_budget: u64,
+    deadline: Option<std::time::Instant>,
+) -> Result<ExportResult, GpuError> {
+    let max_dim = device.limits().max_texture_dimension_2d;
+    let max_buf = device.limits().max_buffer_size;
+    let w = req.width.max(1);
+    let h = req.height.max(1);
+
+    // Tile size (output px): bound by the texture cap, the per-tile readback buffer
+    // (tile²·16 B ≤ max_buf), and — the whole point — the ITERATION WORK per dispatch.
+    // work_per_px = max_iter (ss = 1). A `work_budget` smaller than the export path's keeps
+    // tiles small enough that even a tile full of ~50×-cost, BLA-unskippable dark-core pixels
+    // finishes well inside the TDR window, so the loop stays interruptible between tiles.
+    let by_tex = max_dim.max(1);
+    let by_buf = (((max_buf / 16) as f64).sqrt() as u32).max(256);
+    let work_per_px = req.max_iter.max(1) as u64;
+    let by_work = (((work_budget / work_per_px.max(1)) as f64).sqrt() as u32).max(16);
+    let tile = by_tex.min(by_buf).min(by_work).clamp(1, 2048);
+
+    let shader = shader_module(device);
+    let iter_bgl = iter_bind_group_layout(device);
+    let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("itertiled.layout"),
+        bind_group_layouts: &[&iter_bgl],
+        push_constant_ranges: &[],
+    });
+    let iter_pipeline = fullscreen_pipeline(
+        device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+        "itertiled.pipeline",
+    );
+
+    let iter_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("itertiled.uniform"),
+        size: std::mem::size_of::<IterUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
+    if !req.orbit.is_empty() {
+        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
+    }
+    if !req.bla.is_empty() {
+        let off = (req.orbit.len() * 16) as u64;
+        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
+    }
+    let counters_buf = crate::make_counters_buf(device);
+    let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("itertiled.counters_read"),
+        size: (crate::COUNTER_SLOTS * 4) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
+
+    let split = |v: f64| -> (f32, f32) {
+        let hi = v as f32;
+        (hi, (v - hi as f64) as f32)
+    };
+    // Step mantissa is per full-resolution pixel (ss = 1); px_offset places each tile in the
+    // full frame, exactly as `render_export` does — so no per-tile reference arithmetic.
+    let (sxh, sxl) = split(req.span_mantissa.x / w as f64);
+    let (syh, syl) = split(req.span_mantissa.y / h as f64);
+
+    let bpp = 16u32;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
+    let mut ctr_sum = [0u64; crate::COUNTER_SLOTS];
+
+    let mut ty0 = 0u32;
+    while ty0 < h {
+        let th = tile.min(h - ty0);
+        let mut tx0 = 0u32;
+        while tx0 < w {
+            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                return Err(GpuError::Canceled);
+            }
+            let tw = tile.min(w - tx0);
+            let iu = IterUniforms {
+                step: [sxh, sxl, syh, syl],
+                ref_offset: req.ref_offset.to_array(),
+                center: req.center,
+                julia_c: req.julia_c,
+                res: [w as f32, h as f32],
+                px_offset: [tx0 as f32, ty0 as f32],
+                max_iter: req.max_iter,
+                orbit_len: req.orbit_len,
+                mode: req.mode,
+                formula: req.formula,
+                julia: req.julia,
+                delta_exp: req.delta_exp,
+                color_method: 0,
+                stripe_freq: 1.0,
+                trap_type: 0,
+                aux_on: 0,
+                sa_skip: req.sa_skip,
+                glitch_on: req.glitch_on,
+                sa_a: req.sa_a,
+                sa_b: req.sa_b,
+                sa_c: req.sa_c,
+                sa_a_exp: req.sa_a_exp,
+                sa_b_exp: req.sa_b_exp,
+                sa_c_exp: req.sa_c_exp,
+                bla_on: req.bla_on,
+            };
+            queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
+
+            let mk = |label| {
+                device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: ITER_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                })
+            };
+            let main_tex = mk("itertiled.main");
+            let aux_tex = mk("itertiled.aux");
+            let main_view = main_tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let aux_view = aux_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let unpadded_bpr = tw * bpp;
+            let padded_bpr = unpadded_bpr.div_ceil(align) * align;
+            let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("itertiled.readback"),
+                size: (padded_bpr * th) as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("itertiled.enc"),
+            });
+            // Zero counters before THIS tile so per-tile u32 counts can't wrap; summed in u64.
+            enc.clear_buffer(&counters_buf, 0, None);
+            {
+                let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                });
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("itertiled.iter_pass"),
+                    color_attachments: &[attach(&main_view), attach(&aux_view)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&iter_pipeline);
+                pass.set_bind_group(0, &iter_bg, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            enc.copy_buffer_to_buffer(
+                &counters_buf, 0, &counters_read, 0, (crate::COUNTER_SLOTS * 4) as u64,
+            );
+            enc.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &main_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &out_buf,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bpr),
+                        rows_per_image: Some(th),
+                    },
+                },
+                wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
+            );
+            queue.submit(std::iter::once(enc.finish()));
+
+            let slice = out_buf.slice(..);
+            let (tx, rx) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |r| {
+                let _ = tx.send(r);
+            });
+            let (ctx_, ctr_rx) = std::sync::mpsc::channel();
+            counters_read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                let _ = ctx_.send(r);
+            });
+            let _ = device.poll(wgpu::Maintain::Wait);
+            rx.recv()
+                .map_err(|e| GpuError::Readback(e.to_string()))?
+                .map_err(|e| GpuError::Readback(e.to_string()))?;
+            if ctr_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+                let mapped = counters_read.slice(..).get_mapped_range();
+                let tile_ctr: &[u32] = bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]);
+                for (sum, &c) in ctr_sum.iter_mut().zip(tile_ctr) {
+                    *sum += c as u64;
+                }
+                drop(mapped);
+                counters_read.unmap();
+            }
+            let data = slice.get_mapped_range();
+            let row_floats = (tw * 4) as usize;
+            for r in 0..th {
+                let src = (r * padded_bpr) as usize;
+                let src_row: &[f32] =
+                    bytemuck::cast_slice(&data[src..src + unpadded_bpr as usize]);
+                let dst = (((ty0 + r) * w + tx0) * 4) as usize;
+                pixels[dst..dst + row_floats].copy_from_slice(src_row);
+            }
+            drop(data);
+            out_buf.unmap();
+            tx0 += tw;
+        }
+        ty0 += th;
+    }
+    Ok(ExportResult {
+        width: w,
+        height: h,
+        ss: 1,
+        pixels,
+        iterate_ms: 0.0, // per-tile GPU timestamps omitted here; the loop tracks wall-clock
+        color_ms: 0.0,
+        counters: ctr_sum,
+    })
+}
+
 /// Copy the event-counter atomics to a MAP_READ staging buffer and read them back
 /// (blocking; every caller is already synchronous), widened to u64. Zeros on any failure.
 /// Used by the single-pass `render_iter` (one texture, no cross-tile accumulation, so the

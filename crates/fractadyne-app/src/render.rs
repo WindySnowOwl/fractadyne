@@ -955,7 +955,15 @@ impl FractadyneApp {
         width: u32,
         height: u32,
         max_refs: usize,
+        deadline: Option<Instant>,
     ) -> Option<CorrectedIter> {
+        // Per-dispatch work budget for the tiled correction renders (nominal steps = tile²·max_iter).
+        // Smaller than the export path's (fractadyne-gpu `TILE_WORK_BUDGET` = 2e10) because
+        // correction passes run with BLA OFF, so deep-interior "dark core" pixels cost ~50× the
+        // nominal per-pixel work; small tiles keep each GPU dispatch well inside the TDR window and
+        // leave the loop interruptible (between tiles) by `deadline`. This is the fix for the
+        // >1h uninterruptible-dispatch pathology (TODO.md Open bugs).
+        const CORRECT_WORK_BUDGET: u64 = 2_000_000_000;
         let mut req = self.current_export_request_for(vp, julia);
         req.width = width;
         req.height = height;
@@ -966,7 +974,7 @@ impl FractadyneApp {
         // zeros, which is why a glitch-corrected export used to log all-zero counters).
         let mut counters = [0u64; fractadyne_gpu::COUNTER_SLOTS];
         let mut iterate_ms = 0.0f64;
-        let base = fractadyne_gpu::render_iter(device, queue, &req).ok()?;
+        let base = fractadyne_gpu::render_iter_tiled(device, queue, &req, CORRECT_WORK_BUDGET, deadline).ok()?;
         for (c, v) in counters.iter_mut().zip(base.counters) {
             *c += v;
         }
@@ -989,6 +997,16 @@ impl FractadyneApp {
         let t_glitch = Instant::now();
 
         for _ in 1..max_refs {
+            // Time-box: if the deadline has passed, stop and return the best-effort merge so far
+            // (partial correction beats an unbounded hang; the caller colors what we have).
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                crate::diag::breadcrumb(format!(
+                    "glitch correction: time-boxed after {} refs, {:.1}s",
+                    refs_used,
+                    t_glitch.elapsed().as_secs_f64()
+                ));
+                break;
+            }
             // Glitched pixels carry the -2 sentinel (r < -1.5); interior is -1, escaped ≥ 0.
             let glitch: Vec<usize> = (0..w * h).filter(|&i| merged[i * 4] < -1.5).collect();
             if glitch.is_empty() {
@@ -1035,7 +1053,13 @@ impl FractadyneApp {
             r.sa_skip = 0;
             r.bla_on = 0;
             r.bla = std::sync::Arc::new(Vec::new());
-            let pass_res = fractadyne_gpu::render_iter(device, queue, &r).ok()?;
+            // Tiled + deadline-aware: a pass over the dark cores (BLA off) is split into short
+            // dispatches; if the deadline lands mid-pass the tiled render returns Canceled and we
+            // keep the merge accumulated by earlier passes rather than blocking on one huge dispatch.
+            let pass_res = match fractadyne_gpu::render_iter_tiled(device, queue, &r, CORRECT_WORK_BUDGET, deadline) {
+                Ok(p) => p,
+                Err(_) => break,
+            };
             for (c, v) in counters.iter_mut().zip(pass_res.counters) {
                 *c += v;
             }
@@ -1075,11 +1099,13 @@ impl FractadyneApp {
         julia: bool,
         width: u32,
         height: u32,
+        deadline: Option<Instant>,
     ) -> Option<fractadyne_gpu::ExportResult> {
-        // Correction renders the whole view in one un-tiled texture set (iter + aux + color +
-        // readback ≈ 64 B/px), so it's bounded by both the GPU's max 2-D texture dimension and, to
-        // avoid OOM now that it's on by default, a conservative area cap. Above either, fall back to
-        // the tiled (uncorrected) path. ~32 MP covers 4K/5K/6K comfortably.
+        // The multi-reference ITERATION is now tiled + deadline-bounded (see render_corrected_iter),
+        // but the final COLOR pass still colors the merged buffer in one un-tiled texture set
+        // (≈ 32 B/px), so this path is still bounded by the GPU's max 2-D texture dimension and a
+        // conservative area cap to avoid OOM. Above either, fall back to the tiled (uncorrected)
+        // path. ~32 MP covers 4K/5K/6K comfortably. `deadline` time-boxes the correction loop.
         const MAX_CORRECT_PX: u64 = 32_000_000;
         let max_dim = device.limits().max_texture_dimension_2d;
         if width > max_dim
@@ -1089,7 +1115,7 @@ impl FractadyneApp {
         {
             return None;
         }
-        let ci = self.render_corrected_iter(device, queue, vp, julia, width, height, 64)?;
+        let ci = self.render_corrected_iter(device, queue, vp, julia, width, height, 64, deadline)?;
         let mut req = self.current_export_request_for(vp, julia);
         req.width = width;
         req.height = height;
