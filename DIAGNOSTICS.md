@@ -30,7 +30,7 @@ dir, logs included.
 | Category | Fires | Tells you |
 |----------|-------|-----------|
 | `req` | every export-request build | The **effective** render manifest: mode, iterations, orbit length, SA skip, BLA, span, precision, size. The record that catches "rendered the wrong view" |
-| `ref` | every reference build (fresh *and* reused/extended) | Orbit length/iterations/precision, escaped/partial, SA skip, BLA nodes |
+| `ref` | every reference build (fresh *and* reused/extended) | Orbit length/iterations/precision, escaped/partial, SA skip, BLA nodes, and the build-time split `orbit_ms`/`sa_ms`/`bla_ms` + `pick_reference` scoring ms — the cold deep-export cost lives in `pick_reference` (~9 s at me148), see TODO.md |
 | `gpu` | live floatexp budget controller | Measured iterate ms per dispatch, budget grow/shrink, convergence |
 | `tile` | live floatexp frame sizing | Per-frame resolution/ss/iterations/steps vs budget, reprojection, tiled-settle grid state |
 | `glitch` | multi-reference correction | Per-run summary: references used, residual glitched px, elapsed |

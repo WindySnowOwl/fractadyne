@@ -33,25 +33,28 @@ Mockups: [design/mockups/](design/mockups/).
   bignum dip profiles + CPU-perturbation escape times). Measured escape bands: loc 14
   304k–582k (cap now 800k), loc 15 894k–1.46M (cap now 1.6M) — the .exr's 6M was exploratory.
 
-- [~] **Deep export throughput vs Fraktaler-3 — PROFILED 2026-07-11 (v0.2.10 `--profile`); the
-  "~50× slower" framing is NOT reproduced and needs a controlled re-measurement before any
-  optimization.** `--profile --reps 3` on the new `deep-interior-1e148` region (512², 800k iter,
-  mode 2, SA on / BLA on, glitch off; orbit_len 650,879, sa_skip 0, 556-bit) breaks down as:
-  reference build **877 ms (49%)** + BLA build **580 ms (32%)** + **GPU iterate 313 ms (17%)** +
-  GPU color 0.07 ms = 1805 ms total. So a *cold* deep render is **~81% one-time CPU bignum
-  setup**, not GPU-bound. Nominal GPU throughput ≈ 6.7e11 steps/s (512²×800k / 0.313 s), which is
-  *competitive with* F3's ~9e10 real steps/s, not 50× behind — the old ~1e9-steps/s figure does
-  not reconcile with this (likely predated the v0.2.x reference-reuse/BLA/extended-range work, or
-  was measured with glitch correction on — see the separate >1 h glitch pathology above). **Do
-  before touching shader math:** re-measure at export resolution (2560×1440) with a pinned config
-  (SA/glitch off, matching F3's location) and compute real (not nominal) steps/s from the escape
-  histogram; only then decide if there's a gap. **If a gap is confirmed, the levers by measured
-  cost are:** (1) the CPU reference build (877 ms) — already reused across dive frames, but a cold
-  export pays it fully; (2) the CPU BLA build (580 ms) — candidate for parallelization; (3) mode-2
-  per-iteration Fe overhead (fe_norm per op; df32 mantissa doubles the work vs a single-f32-mantissa
-  floatexp; the v0.2.6 extended-range path adds an fe_add + 2 fe_abs_sf per step, and the glitch +
-  rebase checks each call fe_abs_sf twice/iter). The live-path GPU iterate is already instrumented
-  (HUD steps/s, `[fd-perf]`, `perf.jsonl`); use it to guide any change.
+- [x] **Deep export throughput vs Fraktaler-3 — MEASURED 2026-07-11 (v0.2.10); the "~50× slower"
+  claim is REFUTED: we are on par with F3.** A controlled render of corpus location 14 (= F3's
+  me148) at F3's **2560×1440**, SA off / glitch off (corpus staging), on the 3080: **~15 s total**
+  (render fn 14.8 s; 18 s incl. app boot) vs **F3's ~14 s** — roughly equal, not 50× (and not even
+  2×). The `[fd-perf]` split: **GPU iterate 2.71 s** (nominal ~1.09e12 steps/s), GPU color 1 ms,
+  and the remaining **~12 s is one-time CPU bignum setup** (reference orbit + BLA build, before the
+  first tile — progress sits at 0% for ~8 s of that). Consistent with the `--profile`
+  deep-interior-1e148 breakdown (~81% CPU setup). Counters confirmed the deep paths fire live:
+  ext=281.9M (extended-range dip samples — the v0.2.6 fix executing), bla_skip=3.48e9 (would have
+  wrapped u32 — validated the v0.2.10 per-tile-u64 fix), rebase=19.4M, maxiter=18,481. **Conclusion:
+  the GPU iterate is fast and competitive; there is no 50× gap.** The old ~1e9-steps/s figure was
+  stale (predated v0.2.x reference-reuse/BLA/extended-range, or was measured with glitch correction
+  on = the separate >1 h pathology). **The cold CPU bignum setup (~12 s) breaks down (v0.2.11
+  `[fd-ref]` timing split, me148 cold): `best_reference` candidate scoring ~9.3 s (79%!) + orbit
+  build ~1.2 s + BLA build ~0.8 s.** So the ONE meaningful throughput lever is **`best_reference`
+  scoring** (fractadyne-core), NOT the shader/orbit/BLA — the `--profile` path hides it because its
+  timed reps reuse the reference and skip the scoring. Candidate ideas (all delicate — the scorer
+  was tuned to avoid poor-reference glitches at depth, so any change needs a reuse-vs-quality golden
+  check): score candidates to a much shallower iteration cap (a long-lived orbit is identifiable
+  early; no need to run 800 k in bignum to rank), score fewer candidates, or reuse the boot-frame's
+  reference for the export instead of re-picking cold. Not GPU-bound; mode-2 Fe per-iter cost is not
+  the bottleneck.
 
 ## Design follow-ups (from mockup review, 2026-06-25)
 

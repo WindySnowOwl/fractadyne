@@ -190,7 +190,14 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     if let Some(res) = try_reuse_reference(&inp) {
         return res;
     }
+    // pick_reference scores candidate orbits in bignum; at extreme depth (cold, no reusable
+    // reference) this is the DOMINANT export cost — ~7 s of a ~15 s me148 render, far more
+    // than the orbit build (~1 s) or BLA build (~0.8 s). Timed here so the lever is visible.
+    let t_pick = Instant::now();
     let rp = pick_reference(&inp);
+    if crate::diag::trace_on("ref") {
+        crate::diag::trace("ref", format!("pick_reference (candidate scoring) took {:.0}ms", t_pick.elapsed().as_secs_f64() * 1000.0));
+    }
     build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, &inp)
 }
 
@@ -335,11 +342,16 @@ fn finish_reference(
     let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
     crate::diag::breadcrumb(format!("reference built: len={len} iter={orbit_iter} prec={orbit_prec}"));
     if crate::diag::trace_on("ref") {
+        // Timing is on the line now (design/diagnostics.md F14): the cold export reference
+        // build dominates a deep render (~12 s of a ~15 s 2560×1440 me148 render, vs ~2.7 s
+        // GPU), and this splits it into orbit / SA / BLA so the lever is visible. `ref_ms` is
+        // the orbit build (fresh, or the reuse/extend time on that path).
         crate::diag::trace(
             "ref",
             format!(
                 "len={len} iter={orbit_iter} prec={orbit_prec} partial={partial} \
-                 escaped={} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={}",
+                 escaped={} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={} \
+                 | orbit_ms={ref_ms:.0} sa_ms={series_ms:.0} bla_ms={bla_ms:.0}",
                 orbit_tail.is_none() && !partial,
                 sa.skip,
                 bla.len(),
