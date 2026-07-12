@@ -127,7 +127,7 @@ center_x = "-0.31583546560906989081132519081459898427641049411365520112175337742
 center_y = "0.6533553743954627788289923830392687875350977003260517837408108019649970888461393846103786781501651324966145060684808980380361143296058258024081840162818693511972"
 mag_log10 = 148.0669863055
 iterations = 800000
-note = "User-saved Fraktaler-3 location (me148.exr); 161-digit center. Escape times measured 304k-582k (CPU perturbation probe), so 800k covers the view (rendered at 1xSS: the ~0.5M-iteration escape band makes 2xSS a multi-hour render); the .exr's saved 6,000,000 was an exploration setting. This location exposed the sub-f32 reference-orbit dip bug (fixed in v0.2.6): its dive path passes within ~1e-71 of zero every 4383 iterations, and the flushed samples re-glued every pixel to the reference past ~1e142x."
+note = "User-saved Fraktaler-3 location (me148.exr); 161-digit center. Escape times measured 304k-582k (CPU perturbation probe), so 800k covers the view (rendered at 1xSS: the ~0.5M-iteration escape band makes 2xSS a multi-hour render); the .exr's saved 6,000,000 was an exploration setting. This location exposed the sub-f32 reference-orbit dip bug (fixed in v0.2.6): its dive path passes within ~1e-71 of zero every 4383 iterations, and the flushed samples re-glued every pixel to the reference past ~1e142x. GLITCH-LIMITED: rendered with glitch correction OFF (it goes >1h pathological at these deep-interior 'dark dendrite core' pixels; see TODO.md Open bugs), so the interior is corrupted by uncorrected perturbation glitches (speckle noise). The overall structure/boundary placement matches F3, but the interior is NOT a clean detail match until the glitch-correction pathology is fixed."
 
 [[location]]
 slug = "15-deep-3.7e163"
@@ -136,7 +136,7 @@ center_x = "-0.31583546560906989081132519081459898427641049411365520112175337742
 center_y = "0.653355374395462778828992383039268787535097700326051783740810801964997088846139384610378678150165132496614506068480898038036114329605825802408184016371548087630292729424973881"
 mag_log10 = 163.5723116489
 iterations = 1600000
-note = "User-saved Fraktaler-3 location (me163.exr); 175-digit center. Escape times measured 894k-1.46M (CPU perturbation probe), so 1.6M covers the view (rendered at 1xSS, see loc 14) (the .exr's saved 134,217,728 was an F3 auto-iteration runaway). Same dive path as 11-14; rendered wrong before the v0.2.6 sub-f32 orbit-dip fix."
+note = "User-saved Fraktaler-3 location (me163.exr); 175-digit center. Escape times measured 894k-1.46M (CPU perturbation probe), so 1.6M covers the view (rendered at 1xSS, see loc 14) (the .exr's saved 134,217,728 was an F3 auto-iteration runaway). Same dive path as 11-14; rendered wrong before the v0.2.6 sub-f32 orbit-dip fix. GLITCH-LIMITED like loc 14: rendered with glitch correction OFF (>1h pathological here), so the interior detail is uncorrected-glitch speckle; structure/boundary placement matches F3, interior detail does not until the glitch-correction fix lands."
 
 [[location]]
 slug = "16-deep-2.1e250"

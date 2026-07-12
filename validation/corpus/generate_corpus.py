@@ -240,13 +240,17 @@ center / magnification / iteration cap for side-by-side structural comparison. F
 twenty) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
 With <code>maximum_reference_iterations</code> set in each F3 param (see README &mdash; F3&rsquo;s batch
 default is far too low for a zoomed view and blanks silently, which long masqueraded as a ~1e13&times;
-ceiling), <strong>F3 renders deep correctly here</strong>: all twenty locations have real, arm-for-arm
-F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The former 1e30&times;
-gap (location 07, once a too-coarse 34-digit seahorse placeholder that F3 rounded onto different
-sub-structure) is now a genuine cross-app match, re-imported from a user Fraktaler-3 save with a
+ceiling), <strong>F3 renders deep correctly here</strong>: <strong>18 of the 20</strong> locations have
+clean, arm-for-arm F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The
+former 1e30&times; gap (location 07, once a too-coarse 34-digit seahorse placeholder that F3 rounded onto
+different sub-structure) is now a genuine cross-app match, re-imported from a user Fraktaler-3 save with a
 43-digit center. Locations 07 and 11&ndash;20 are user-saved Fraktaler-3 finds (7.5e29&times; to
-1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken
-verbatim.</p>
+1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken verbatim.
+<strong>Two exceptions &mdash; 14 (1.2e148&times;) and 15 (3.7e163&times;) are glitch-limited:</strong>
+rendered with multi-reference glitch correction disabled (it goes &gt;1&nbsp;h pathological at their
+deep-interior dark-core pixels &mdash; see TODO.md), so their interior detail is uncorrected-perturbation
+speckle noise. Their overall structure and boundary placement match F3; the interior detail does not,
+pending the glitch-correction fix.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a

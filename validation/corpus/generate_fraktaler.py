@@ -19,8 +19,11 @@ hold: the iteration cap must be high enough for the depth (else the reference tr
 and the center must carry enough digits for the depth PLUS margin for F3's internal reference
 rounding (coarser than Fractadyne's full bignum). The former location 07 (1e30x) gap illustrated the
 latter: a 34-digit seahorse center was too coarse there, so F3 rounded onto different sub-structure.
-It was replaced by a user F3 save (me30.exr) whose 43-digit center matches arm-for-arm — so all
-twenty locations now have a real cross-app match.
+It was replaced by a user F3 save (me30.exr) whose 43-digit center matches arm-for-arm. (F3 renders
+all twenty cleanly; the two that are NOT clean cross-app matches are 14 and 15, where Fractadyne's
+side is glitch-limited — its multi-reference glitch correction is disabled there because it goes
+pathologically slow at the deep-interior dark cores, so its interior renders as uncorrected-glitch
+speckle. See validation/corpus/README.md and TODO.md.)
 
 Run from repo root:  python validation/corpus/generate_fraktaler.py
 """

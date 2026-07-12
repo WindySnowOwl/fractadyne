@@ -68,7 +68,7 @@ high enough for the depth (F3's reference otherwise truncates and blanks), and t
 enough digits for the depth *plus* margin** for F3's internal reference rounding, which is coarser
 than Fractadyne's full-precision bignum reference.
 
-Net: real, arm-for-arm F3 matches at **all twenty locations** — from 1× to **4.60e1105×**, over a
+Net: clean, arm-for-arm F3 matches at **18 of the 20 locations** — from 1× to **4.60e1105×**, over a
 thousand orders of magnitude of zoom. The former gap at **07** (1e30×) is now closed: its old shared
 34-digit seahorse center was too coarse for a reproducible match there — F3 rounded it below
 Fractadyne's bignum reference onto different sub-structure — so it was **replaced by a user Fraktaler-3
@@ -77,6 +77,16 @@ diagonal dendrite filament with a central pinch and spiral-armed clusters). The 
 still stands — the plainest proof being that 08 (83-digit center), 09 (526-digit), and 10 (1141-digit)
 all render and match *far* deeper. The `.f3.toml` / `.kfr` params are written for all twenty, and
 Fractadyne renders all twenty.
+
+**Two exceptions — 14 (1.2e148×) and 15 (3.7e163×) are GLITCH-LIMITED.** Both are rendered with
+multi-reference glitch correction **disabled**, because it goes pathologically slow (>1 h,
+uninterruptible GPU dispatch) at their deep-interior "dark dendrite core" pixels (TODO.md → Open bugs).
+Without it, the reference-orbit dips that these dip-carrying dives pass through (~1e-71 every 4383
+iterations) leave a large fraction of interior pixels as **uncorrected perturbation glitches — speckle
+noise**. Their overall structure and boundary placement match F3, but the interior *detail* does not:
+these are structure-placement matches, not clean detail matches, pending the glitch-correction fix.
+(v0.2.6's extended-range orbit fix turned these from a uniform-interior *blank* into visible-but-glitchy
+structure — an improvement, not a clean render.)
 
 ## Reading the comparison
 
