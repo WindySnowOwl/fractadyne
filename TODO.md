@@ -150,10 +150,22 @@ cache, adaptive iterations, auto-save/restore, and the first side panels.
       Single + dual (left) at deep zoom. *(Scale reprojection now also exists — see the
       XaoS-style item below — but only as a deep-zoom stall fallback, not the primary zoom path.)*
 - [~] **XaoS-style continuous-zoom pixel reuse (reuse-first zoom)** — the headline UX gap vs.
-      XaoS. *Shipped since (v0.1.53–57, 0.1.66): reuse-first refresh for mode-0 zoom, deep-dive
-      reference **reuse** (extend the cached orbit, ~20× faster rebuilds), frozen-frame
-      reprojection/hold, and adaptive motion resolution (AIMD) — deep zoom is now smooth in motion;
-      the full coordinate-keyed tile/mip reuse in (2) below remains open.* Today every zoom frame
+      XaoS. **PLAN + STAGE 0 landed 2026-07-11 (v0.2.12):** a full read of the live pipeline is
+      written up as a concrete staged roadmap in **design/xaos-reuse.md** (Stage 0 verification →
+      Stage 1 coordinate-keyed tile store → Stage 2 during-motion tile refine [the high-value,
+      high-risk core] → Stage 3 shallow exact reuse), with the freeze/hang fragility constraints any
+      new reuse path must respect. **Stage 0 shipped: `--reusetest`** (reusetest.rs) — a headless
+      staleness harness measuring the color-pass reprojection vs a from-scratch render across
+      Δ-octave zoom-ins. Data (RTX 3080): in fine detail the NEAREST reprojection loses real
+      per-pixel iter fidelity fast (seahorse-1e6 ~61% of escaped px differ >2 iter by Δ=0.1 oct,
+      rising slowly to ~68% by 1.0), a conservative raw-iter proxy (colored/perceptual staleness is
+      lower). Quantifies WHY the reproject is only a placeholder and motivates the Stage-2 refine.
+      **Next: Stage 2 is its own dedicated task** (re-iterates during motion on a fragile loop —
+      gate it with a colored reuse-vs-from-scratch golden first). *Earlier shipped (v0.1.53–57,
+      0.1.66): reuse-first refresh for mode-0 zoom, deep-dive reference **reuse** (extend the cached
+      orbit, ~20× faster rebuilds), frozen-frame reprojection/hold, and adaptive motion resolution
+      (AIMD) — deep zoom is smooth in motion; the full coordinate-keyed tile/mip reuse in (2) below
+      remains open.* Today every zoom frame
       still re-renders from scratch on settle (GPU iterate → color), so a deep dive
       visibly pixelates/blanks until the frame settles; XaoS instead *remaps already-computed
       pixels* from the previous frame each step and only computes what's newly needed, so zooming

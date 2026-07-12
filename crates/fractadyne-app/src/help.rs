@@ -417,6 +417,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--import-kfr F.kfr", "Load a Kalles Fraktaler (.kfr) location."),
         Flag("--validate-deep", "Extreme-depth precision self-consistency battery (1e1000 … 1e1000000x)."),
         Flag("--profile [--reps N] [--regions F] [--out P]", "Dev: time render stages per benchmark region -> JSON log in logs/."),
+        Flag("--reusetest", "Dev: measure reuse-first-zoom reprojection staleness vs Δ-octaves (design/xaos-reuse.md)."),
         Flag("--crosscheck-f3 raw.exr", "Compare a Fraktaler-3 raw EXR (channel \"N\") against our CPU bignum oracle (--center X Y --zoom-f3 Z [--iter K] [--er R])."),
         Flag("--frametest [--steps N] [--hold N] [--dive R]", "Dev: deep-dive frame-timing harness."),
         Flag("--dump-tour-schema", "Print the tour-script (.toml) schema reference as Markdown and exit (generates TOURS.md)."),

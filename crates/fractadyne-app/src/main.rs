@@ -56,6 +56,7 @@ mod help;
 mod profile;
 mod refcache_persist;
 mod render;
+mod reusetest;
 mod scripting;
 mod selftest;
 mod sysinfo;
@@ -1628,6 +1629,9 @@ struct FractadyneApp {
     profile_reps: u32,
     profile_regions: Option<String>,
     profile_out: Option<std::path::PathBuf>,
+    /// CLI `--reusetest`: measure reuse-first-zoom reprojection staleness vs Δ-octaves, exit.
+    reusetest: bool,
+    reusetest_done: bool,
     /// CLI `--frametest`: run the frame-timing / stutter harness (deep-zoom dive), log, exit.
     frametest: bool,
     frametest_steps: u32,
@@ -1766,6 +1770,7 @@ impl FractadyneApp {
         let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode;
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
         let profile = args.iter().any(|a| a == "--profile");
+        let reusetest = args.iter().any(|a| a == "--reusetest");
         let frametest = args.iter().any(|a| a == "--frametest");
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
         // Selftest sub-flags from the EXPANDED args (so @response-file works — see field docs).
@@ -1950,6 +1955,8 @@ impl FractadyneApp {
             profile_reps,
             profile_regions,
             profile_out: out_path.clone(),
+            reusetest,
+            reusetest_done: false,
             frametest,
             frametest_steps,
             frametest_hold,
@@ -3952,6 +3959,14 @@ impl eframe::App for FractadyneApp {
             }
         }
 
+        if self.reusetest && !self.reusetest_done {
+            if let Some((dev, q)) = &gpu {
+                self.reusetest_done = true;
+                self.run_reusetest(dev, q);
+                std::process::exit(0);
+            }
+        }
+
         if self.frametest {
             if let Some((dev, q)) = &gpu {
                 let secs = std::time::SystemTime::now()
@@ -4231,7 +4246,7 @@ impl eframe::App for FractadyneApp {
         self.perf.frame_idx += 1;
         self.perf.last_frame = Some(frame_start);
 
-        if !self.auto_benchmark && !self.auto_stdbench && !self.auto_render && !self.selftest && !self.profile && self.render_tour.is_none() && self.std_bench.is_none() {
+        if !self.auto_benchmark && !self.auto_stdbench && !self.auto_render && !self.selftest && !self.profile && !self.reusetest && self.render_tour.is_none() && self.std_bench.is_none() {
             self.autosave(ctx); // don't let a CLI run (or a transient benchmark override) overwrite the saved session
         }
 
