@@ -5,16 +5,32 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] **Glitch-correction pass goes pathological (>1 hour) at extreme depth in the export
-  path.** An offscreen `--render` of corpus location 09 (6.1e500x, 150k iterations, ~1700-bit
-  precision) hangs for over an hour with `glitch_correct = true` and completes in ~12 s with it
-  off — single-variable confirmed (identical staged session, smooth coloring, SA off in both).
-  The multi-reference correction rebuilds bignum references per glitch cluster; at this depth
-  each rebuild is expensive and there are evidently many. Aux coloring methods (stripe/TIA/
-  trap/decomposition) skip correction entirely, which masked this for any stripe-flavored
-  session. Workaround in tooling: the corpus render staging pins `glitch_correct = false` (and
-  `series_approx = false` for fewest-approximations purity). Fix ideas: cap correction passes /
-  cluster count at depth, reuse the primary reference's tail, or time-box the pass.
+- [ ] **Glitch-correction pass goes pathological (>1 hour) at extreme depth — ROOT CAUSE
+  DIAGNOSED 2026-07-11 (v0.2.11 tracing); a robust fix is a substantial change, deferred.**
+  Original report: offscreen `--render` of corpus 09 (6.1e500×) hangs >1 h with
+  `glitch_correct=true`, ~12 s with it off. **Diagnosis (measured at corpus 14 / 1e148×, which
+  reproduces it):** the multi-reference loop (`render_corrected_iter`, render.rs) re-renders the
+  WHOLE frame per correction pass with `bla_on=0`. The per-pass reference build is cheap
+  (compute_reference ~0.4 s + build_bla), so it is NOT the cost — the **render** is: a single
+  correction pass hung >150 s for just 47 glitched px (killed on pass 1). The killer is that
+  glitch-corrected deep-INTERIOR pixels (the dark dendrite cores) must iterate the FULL 800k
+  floatexp steps that no acceleration skips — and at these cores the per-iteration cost is ~50×
+  normal (measured: a 33×33 window of cores took >100 s = seconds *per pixel*, vs a 129×129
+  window elsewhere in ~1 s). One such render is a single **uninterruptible GPU dispatch**, so a
+  wall-clock time-box checked between passes cannot bound it. **Fixes ATTEMPTED and shown
+  insufficient (do not just retry):** (a) build a BLA tree for each correction reference —
+  helped exterior/boundary passes (45–90 ms) but not the interior cores (BLA can't skip them);
+  (b) render only a bounded window around the seed via a new `render_iter_region` — bounded the
+  *pixel count* but a small window OF cores is still catastrophically slow; (c) a `span==0` BLA
+  guard (defensive, harmless, didn't fix it); (d) a wall-clock time-box — can't interrupt a
+  running dispatch. All reverted (kept the tree clean at v0.2.11). **The real fix must bound the
+  per-DISPATCH work for expensive interior pixels** — e.g. tile the correction render with a
+  work-budget *calibrated for these ~50×-cost pixels* (render_export's `TILE_WORK_BUDGET`
+  assumes normal cost, so its tiles would still be too big here) and check the time-box between
+  tiles; or cap per-pixel shader work with a hardware-measured bound; or (simplest safe stopgap)
+  detect the deep-interior-core regime and SKIP correction there (return the base render), so it
+  never hangs — same visible result as today's corpus workaround but automatic. Aux methods skip
+  correction entirely (masked this for stripe sessions). Corpus staging pins `glitch_correct=false`.
 
 - [x] **Uniform-exterior misrender past ~1e142× — FIXED in v0.2.6 (sub-f32 orbit dips).**
   Root cause: the 11–15 dive path's reference orbit passes within ~1e-71 of zero every 4383
