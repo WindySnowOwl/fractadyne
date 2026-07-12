@@ -80,10 +80,20 @@ Mockups: [design/mockups/](design/mockups/).
   (the v0.2.6 extended-range-sample area): counters show `rebase≈20M` + `ext≈281M` at the reference
   orbit's ~1e-71 dips (every 4383 iters). v0.2.6 killed the *uniform-interior* blank but left this
   accuracy problem — the earlier "14/15 now render real structure" claim was over-stated (corrected
-  in the corpus docs). **Next step:** compare GPU escape times to the `probe_escape` CPU floatexp
-  oracle at loc 14 to localize where mode-2 (Zhuoran rebasing / `orbit_fe` extended-sample decode /
-  floatexp δz iteration) diverges. Deep shader/perturbation work. Corpus staging keeps
-  `glitch_correct=false` (irrelevant here); the docs mark 14/15 as accuracy-limited.
+  in the corpus docs). **LOCALIZED 2026-07-12 to REFERENCE COVERAGE (`best_reference`), NOT the
+  shader.** New CPU probes (`tests/probe_escape.rs`: `PROBE_ROW`, `PROBE_BESTREF`) show: a dense row
+  of escape times is SMOOTH for pixels escaping *before* the reference length and SPECKLE for pixels
+  escaping *after* it (capping iters below the reference escape makes the wild values vanish → become
+  interior). f32-vs-f64 δz mantissa is byte-identical, so precision is NOT it. At loc 14 the center
+  escapes at **363792**; `best_reference` improves that to **777322** but that is still < max_iter
+  (800000) — so it is NOT interior, and the view's truly-interior "dark dendrite core" pixels (F3's
+  black filaments) rebase against an *escaping* reference → spurious noisy escape times instead of
+  interior. **THE FIX = make `best_reference` find an INTERIOR (max_iter-surviving) reference here.**
+  Its 5×5-grid × 4-scale candidate set doesn't sample finely enough to land on an interior point at
+  this filament-dense spot; a hill-climb from the longest survivor toward longer-surviving neighbours
+  (or a finer local grid) should reach one. ⚠DELICATE — `best_reference` is tuned to avoid poor-ref
+  glitches at depth; gate any change on corpus 14/15 + the 17 goldens. Corpus staging keeps
+  `glitch_correct=false` (irrelevant); the docs mark 14/15 accuracy-limited.
 
 - [x] **Uniform-exterior misrender past ~1e142× — FIXED in v0.2.6 (sub-f32 orbit dips).**
   Root cause: the 11–15 dive path's reference orbit passes within ~1e-71 of zero every 4383
