@@ -80,34 +80,28 @@ Mockups: [design/mockups/](design/mockups/).
   (the v0.2.6 extended-range-sample area): counters show `rebase≈20M` + `ext≈281M` at the reference
   orbit's ~1e-71 dips (every 4383 iters). v0.2.6 killed the *uniform-interior* blank but left this
   accuracy problem — the earlier "14/15 now render real structure" claim was over-stated (corrected
-  in the corpus docs). **ROOT CAUSE = GPU mode-2 δz PRECISION at the heavy dip-rebasing — reference
-  coverage RULED OUT end-to-end 2026-07-12.** The trail (CPU probes in `tests/probe_escape.rs`:
-  `PROBE_ROW`, `PROBE_BESTREF`): a dense escape-time row is smooth for pixels escaping *before* the
-  reference length and speckle *after* it, so it first looked like coverage — `best_reference` picks
-  a ref escaping at **777322** (< max_iter 800000, so not interior) while the deepest view pixels
-  escape later. **A phase-3 hill-climb was implemented and it DID find an interior ref (verified: the
-  render used `len=800001, escaped=false`) — but the render was STILL noisy, disproving coverage.**
-  (That hill-climb was reverted: it added ~40 s cold-start for no benefit; 63/63 held.) The real
-  variable is δz PRECISION: the CPU oracle at full f64 (53-bit mantissa) is smooth for every covered
-  pixel, but re-running it with each δz component rounded to a **24-bit (f32) mantissa** each step —
-  simulating the GPU floatexp kernel — collapses the escape times (~4336 vs the true ~328k). So the
-  GPU mode-2 `orbit_fe` / floatexp δz loses too much precision over the millions of Zhuoran rebases
-  at the ~1e-71 dips (`rebase≈20M`), giving per-pixel noise. **THE FIX = higher-precision δz in the
-  mode-2 shader** (widen the δz mantissa). **CONFIRMED the current type (`mandelbrot.wgsl:153`):
-  `struct Fe { m: Cdf, e: i32 }` = a **df32 (~48-bit) complex mantissa + one SHARED i32 exponent**
-  (the exponent only extends f32's range; each of re/im keeps full df32 precision). `fe_add` drops any
-  term >60 exponent-bits below the larger (`de > 60` guard) — but that's already past df32's ~48 real
-  bits, so widening the cutoff buys nothing; the **48-bit mantissa width is the wall**. At e148 δz
-  ~1e-148 fits f64's range, so full f64 (53-bit) would suffice — but GPUs lack f64, so the fix is a
-  WIDER emulated mantissa (tf32 ≈ 3×f32 / qf32, or a df64-style scheme) across the `fe_*` ops + the
-  hot loop (slower — worth measuring). ⚠**Prototyping caveat (learned):** a naive per-op K-bit round
-  is NOT a faithful df32 model — 24-bit AND 48-bit both crater to ~4336 (uniform collapse) while the
-  GPU df32 shows a noisy *gradient*, because df32's two-word (hi+lo) arithmetic retains small terms a
-  flat round drops. **NEXT STEP = build a faithful df32 `Fe` sim in Rust mirroring the `fe_*` funcs
-  (df32 two-sum / Dekker-mul, shared exp, fe_add de>60), reproduce the gradient noise in `PROBE_ROW`,
-  then test wider mantissas — pick the winner, port to WGSL, validate (goldens byte-identical +
-  corpus 14/15 clean + perf).** That faithful sim is the substantial core; not yet done. Corpus
-  staging keeps `glitch_correct=false` (irrelevant); the docs mark 14/15 accuracy-limited.
+  in the corpus docs). **STATUS 2026-07-12: an exhaustive elimination — the cause is a GPU-EXECUTION
+  divergence from a faithful transcription of the shader; NOT any of the usual suspects.** RULED OUT,
+  each with a tool: (a) glitches — `glitch=0` at full res; (b) BLA — BLA-off render equally noisy;
+  (c) reference coverage — a phase-3 `best_reference` hill-climb DID find an interior ref (render used
+  `len=800001, escaped=false`) yet the render stayed noisy (hill-climb reverted, 63/63 held); (d)
+  COLORING/palette aliasing — rendering with `cycle=2e-6` (so the whole ~226k escape-time range spans
+  <1 palette cycle) is STILL speckle, so the smooth-iter VALUES themselves are noisy, not the mapping;
+  (e) **df32 precision itself** — `tests/probe_fe.rs` is a FAITHFUL Rust transcription of
+  mandelbrot.wgsl's df/Cdf/Fe arithmetic (Dekker/Knuth error-free transforms, shared exponent, fe_add
+  de>60, orbit_fe dip decode, Zhuoran rebase), generic over the base float, run with the SAME
+  reference the GPU picks (`best_reference` → `reference_orbit`, verified `compute_reference` matches).
+  It renders the row SMOOTH — df32 matches df64 nearly bit-for-bit — and the df32-**FTZ** (subnormal
+  flush) and df32-**NoFMA** (non-fused fma) variants are ALSO smooth. So it is NOT df32 mantissa width,
+  NOT subnormal flush, NOT fma fusion. **⭐The faithful CPU transcription is SMOOTH but the real GPU is
+  NOISE — the GPU diverges from a faithful execution of its own kernel.** ⚠The earlier "df32 width /
+  tf32 fix" conclusion is REFUTED by probe_fe. Remaining candidates: a subtle mis-transcription, or a
+  GPU compiler/driver effect (unwanted fma-contraction in the two_sum/df_add transforms, reduced-
+  precision intermediates, transcendental accuracy) not modelled by the sim. **NEXT STEP (substantial,
+  GPU-side): dump the GPU's actual per-pixel smooth-iter row (and ideally per-iteration δz for one
+  pixel) and diff it against probe_fe.rs to localize the divergence.** Probes (`probe_escape.rs`,
+  `probe_fe.rs`) are the harness. Corpus staging keeps `glitch_correct=false` (irrelevant); the docs
+  mark 14/15 accuracy-limited.
 
 - [x] **Uniform-exterior misrender past ~1e142× — FIXED in v0.2.6 (sub-f32 orbit dips).**
   Root cause: the 11–15 dive path's reference orbit passes within ~1e-71 of zero every 4383
