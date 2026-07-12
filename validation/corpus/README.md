@@ -78,15 +78,17 @@ still stands — the plainest proof being that 08 (83-digit center), 09 (526-dig
 all render and match *far* deeper. The `.f3.toml` / `.kfr` params are written for all twenty, and
 Fractadyne renders all twenty.
 
-**Two exceptions — 14 (1.2e148×) and 15 (3.7e163×) are GLITCH-LIMITED.** Both are rendered with
-multi-reference glitch correction **disabled**, because it goes pathologically slow (>1 h,
-uninterruptible GPU dispatch) at their deep-interior "dark dendrite core" pixels (TODO.md → Open bugs).
-Without it, the reference-orbit dips that these dip-carrying dives pass through (~1e-71 every 4383
-iterations) leave a large fraction of interior pixels as **uncorrected perturbation glitches — speckle
-noise**. Their overall structure and boundary placement match F3, but the interior *detail* does not:
-these are structure-placement matches, not clean detail matches, pending the glitch-correction fix.
-(v0.2.6's extended-range orbit fix turned these from a uniform-interior *blank* into visible-but-glitchy
-structure — an improvement, not a clean render.)
+**Two exceptions — 14 (1.2e148×) and 15 (3.7e163×) are ACCURACY-LIMITED.** Their interior renders as
+per-pixel escape-time **speckle noise** vs F3's clean dark dendrites — a **mode-2 perturbation-accuracy
+bug**, not a glitch or a coloring artifact. It is *not* uncorrected glitches: the render logs
+`glitch = 0` at full resolution, and forcing multi-reference correction on flags only ~42 / 57 600
+pixels (which it resolves) while the image stays noise. It is *not* BLA: a BLA-off render is equally
+noisy. Every pixel escapes (`maxiter = 0`) but at noisy iteration counts, from the heavy Zhuoran
+rebasing + extended-range orbit samples the shader runs at this dive's ~1e-71 reference-orbit dips
+(every 4383 iterations). v0.2.6's extended-range fix removed the *uniform-interior blank* here but left
+this accuracy problem — so the earlier "14/15 render real structure" claim was over-stated. Their
+overall structure and boundary placement match F3; the interior *detail* does not, pending a fix to the
+mode-2 rebasing / extended-sample accuracy (TODO.md → Open bugs).
 
 ## Reading the comparison
 

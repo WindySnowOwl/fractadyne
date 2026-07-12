@@ -246,11 +246,12 @@ former 1e30&times; gap (location 07, once a too-coarse 34-digit seahorse placeho
 different sub-structure) is now a genuine cross-app match, re-imported from a user Fraktaler-3 save with a
 43-digit center. Locations 07 and 11&ndash;20 are user-saved Fraktaler-3 finds (7.5e29&times; to
 1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken verbatim.
-<strong>Two exceptions &mdash; 14 (1.2e148&times;) and 15 (3.7e163&times;) are glitch-limited:</strong>
-rendered with multi-reference glitch correction disabled (it goes &gt;1&nbsp;h pathological at their
-deep-interior dark-core pixels &mdash; see TODO.md), so their interior detail is uncorrected-perturbation
-speckle noise. Their overall structure and boundary placement match F3; the interior detail does not,
-pending the glitch-correction fix.</p>
+<strong>Two exceptions &mdash; 14 (1.2e148&times;) and 15 (3.7e163&times;) are accuracy-limited:</strong>
+their interior renders as per-pixel escape-time speckle noise from a mode-2 perturbation-accuracy bug
+(not glitches &mdash; the render logs <code>glitch=0</code> at full res; not BLA &mdash; a BLA-off
+render is equally noisy), traced to the heavy rebasing + extended-range orbit samples at this dive's
+~1e-71 reference dips (see TODO.md). Their overall structure and boundary placement match F3; the
+interior detail does not, pending a fix to the mode-2 rebasing / extended-sample accuracy.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a

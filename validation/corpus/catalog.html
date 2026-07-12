@@ -32,11 +32,12 @@ former 1e30&times; gap (location 07, once a too-coarse 34-digit seahorse placeho
 different sub-structure) is now a genuine cross-app match, re-imported from a user Fraktaler-3 save with a
 43-digit center. Locations 07 and 11&ndash;20 are user-saved Fraktaler-3 finds (7.5e29&times; to
 1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken verbatim.
-<strong>Two exceptions &mdash; 14 (1.2e148&times;) and 15 (3.7e163&times;) are glitch-limited:</strong>
-rendered with multi-reference glitch correction disabled (it goes &gt;1&nbsp;h pathological at their
-deep-interior dark-core pixels &mdash; see TODO.md), so their interior detail is uncorrected-perturbation
-speckle noise. Their overall structure and boundary placement match F3; the interior detail does not,
-pending the glitch-correction fix.</p>
+<strong>Two exceptions &mdash; 14 (1.2e148&times;) and 15 (3.7e163&times;) are accuracy-limited:</strong>
+their interior renders as per-pixel escape-time speckle noise from a mode-2 perturbation-accuracy bug
+(not glitches &mdash; the render logs <code>glitch=0</code> at full res; not BLA &mdash; a BLA-off
+render is equally noisy), traced to the heavy rebasing + extended-range orbit samples at this dive's
+~1e-71 reference dips (see TODO.md). Their overall structure and boundary placement match F3; the
+interior detail does not, pending a fix to the mode-2 rebasing / extended-sample accuracy.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a
@@ -364,7 +365,7 @@ Iterations: 600000</pre>
 
 <section class="card" id="14-deep-1.2e148">
   <h2>Extreme depth 1.17e148x <span class="zoom">1.166773e148&times;</span></h2>
-  <p class="note">User-saved Fraktaler-3 location (me148.exr); 161-digit center. Escape times measured 304k-582k (CPU perturbation probe), so 800k covers the view (rendered at 1xSS: the ~0.5M-iteration escape band makes 2xSS a multi-hour render); the .exr's saved 6,000,000 was an exploration setting. This location exposed the sub-f32 reference-orbit dip bug (fixed in v0.2.6): its dive path passes within ~1e-71 of zero every 4383 iterations, and the flushed samples re-glued every pixel to the reference past ~1e142x. GLITCH-LIMITED: rendered with glitch correction OFF (it goes &gt;1h pathological at these deep-interior 'dark dendrite core' pixels; see TODO.md Open bugs), so the interior is corrupted by uncorrected perturbation glitches (speckle noise). The overall structure/boundary placement matches F3, but the interior is NOT a clean detail match until the glitch-correction pathology is fixed.</p>
+  <p class="note">User-saved Fraktaler-3 location (me148.exr); 161-digit center. Escape times measured 304k-582k (CPU perturbation probe), so 800k covers the view (rendered at 1xSS: the ~0.5M-iteration escape band makes 2xSS a multi-hour render); the .exr's saved 6,000,000 was an exploration setting. This location exposed the sub-f32 reference-orbit dip bug (fixed in v0.2.6): its dive path passes within ~1e-71 of zero every 4383 iterations, and the flushed samples re-glued every pixel to the reference past ~1e142x. ACCURACY-LIMITED: the interior renders as per-pixel escape-time SPECKLE NOISE from a mode-2 perturbation-accuracy bug at this dip-carrying orbit -- NOT glitches (the render logs glitch=0 at full res; forcing correction on flags only ~42/57600 px yet the image stays noise) and NOT BLA (a BLA-off render is equally noisy). Every pixel escapes (maxiter=0) but at noisy counts, from the heavy rebasing/extended-range-sample handling at the ~1e-71 dips; v0.2.6 fixed the uniform-interior blank but left this. Overall structure/boundary placement matches F3; the interior detail does NOT, pending the perturbation-accuracy fix (TODO.md Open bugs).</p>
   <div class="pair">
     <figure>
       <img src="renders/14-deep-1.2e148-fractadyne.png" alt="Fractadyne render">
@@ -393,7 +394,7 @@ Iterations: 800000</pre>
 
 <section class="card" id="15-deep-3.7e163">
   <h2>Extreme depth 3.74e163x <span class="zoom">3.735181e163&times;</span></h2>
-  <p class="note">User-saved Fraktaler-3 location (me163.exr); 175-digit center. Escape times measured 894k-1.46M (CPU perturbation probe), so 1.6M covers the view (rendered at 1xSS, see loc 14) (the .exr's saved 134,217,728 was an F3 auto-iteration runaway). Same dive path as 11-14; rendered wrong before the v0.2.6 sub-f32 orbit-dip fix. GLITCH-LIMITED like loc 14: rendered with glitch correction OFF (&gt;1h pathological here), so the interior detail is uncorrected-glitch speckle; structure/boundary placement matches F3, interior detail does not until the glitch-correction fix lands.</p>
+  <p class="note">User-saved Fraktaler-3 location (me163.exr); 175-digit center. Escape times measured 894k-1.46M (CPU perturbation probe), so 1.6M covers the view (rendered at 1xSS, see loc 14) (the .exr's saved 134,217,728 was an F3 auto-iteration runaway). Same dive path as 11-14; rendered wrong before the v0.2.6 sub-f32 orbit-dip fix. ACCURACY-LIMITED like loc 14: the interior renders as escape-time speckle noise from the same mode-2 perturbation-accuracy bug at the dip-carrying orbit (not glitches, not BLA); structure/boundary placement matches F3, interior detail does not, pending the perturbation-accuracy fix (TODO.md Open bugs).</p>
   <div class="pair">
     <figure>
       <img src="renders/15-deep-3.7e163-fractadyne.png" alt="Fractadyne render">
