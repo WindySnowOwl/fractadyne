@@ -94,8 +94,11 @@ pub struct ExportResult {
     pub color_ms: f64,
     /// Shader event counters for the whole render (D3.3): indices `CTR_*` in the crate
     /// root — rebases, extended-sample decodes, glitch flags, BLA skips, max-iter
-    /// exhaustions. All zero when the readback failed.
-    pub counters: [u32; crate::COUNTER_SLOTS],
+    /// exhaustions. All zero when the readback failed. **u64**: the GPU-side slots are u32
+    /// atomics, but a deep multi-tile export accumulates billions of events — `render_export`
+    /// zeroes + reads them PER TILE and sums into these u64s so the whole-render total does
+    /// not wrap (a single tile stays well under u32 by the tile work budget).
+    pub counters: [u64; crate::COUNTER_SLOTS],
 }
 
 /// Render `req` offscreen and read the colored image back to the CPU. Synchronous
@@ -225,6 +228,9 @@ pub fn render_export(
     let total_tiles = (w.div_ceil(tile) * h.div_ceil(tile)).max(1);
     let mut done_tiles = 0u32;
     let (mut sum_iterate_ms, mut sum_color_ms) = (0.0f64, 0.0f64);
+    // Event counters summed across tiles in u64 (each tile is zeroed + read below, so the
+    // per-tile u32 never wraps, and the whole-render total can exceed 2^32).
+    let mut ctr_sum = [0u64; crate::COUNTER_SLOTS];
 
     let mut ty0 = 0u32;
     while ty0 < h {
@@ -321,6 +327,9 @@ pub fn render_export(
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("export.encoder"),
             });
+            // Zero the event counters before THIS tile's iterate pass, so each tile's counts
+            // are read back independently and summed in u64 (no cross-tile u32 wrap).
+            enc.clear_buffer(&counters_buf, 0, None);
             {
                 let attach = |v| Some(wgpu::RenderPassColorAttachment {
                     view: v,
@@ -376,6 +385,9 @@ pub fn render_export(
                 enc.resolve_query_set(set, 0..4, resolve, 0);
                 enc.copy_buffer_to_buffer(resolve, 0, read, 0, 32);
             }
+            enc.copy_buffer_to_buffer(
+                &counters_buf, 0, &counters_read, 0, (crate::COUNTER_SLOTS * 4) as u64,
+            );
             enc.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     texture: &color_tex,
@@ -407,10 +419,25 @@ pub fn render_export(
                 });
                 trx
             });
+            let (ctx_, ctr_rx) = std::sync::mpsc::channel();
+            counters_read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                let _ = ctx_.send(r);
+            });
             let _ = device.poll(wgpu::Maintain::Wait);
             rx.recv()
                 .map_err(|e| GpuError::Readback(e.to_string()))?
                 .map_err(|e| GpuError::Readback(e.to_string()))?;
+
+            // This tile's event counts → the u64 running totals.
+            if ctr_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+                let mapped = counters_read.slice(..).get_mapped_range();
+                let tile_ctr: &[u32] = bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]);
+                for (sum, &c) in ctr_sum.iter_mut().zip(tile_ctr) {
+                    *sum += c as u64;
+                }
+                drop(mapped);
+                counters_read.unmap();
+            }
 
             // Resolved timestamps → pure-GPU iterate/color ms (ticks × the queue's timestamp
             // period), accumulated into the active `timing::capture` scope.
@@ -448,7 +475,6 @@ pub fn render_export(
         ty0 += th;
     }
 
-    let counters = read_counters(device, queue, &counters_buf, &counters_read);
     Ok(ExportResult {
         width: w,
         height: h,
@@ -456,18 +482,20 @@ pub fn render_export(
         pixels,
         iterate_ms: sum_iterate_ms,
         color_ms: sum_color_ms,
-        counters,
+        counters: ctr_sum,
     })
 }
 
 /// Copy the event-counter atomics to a MAP_READ staging buffer and read them back
-/// (blocking; every caller is already synchronous). Zeros on any failure.
+/// (blocking; every caller is already synchronous), widened to u64. Zeros on any failure.
+/// Used by the single-pass `render_iter` (one texture, no cross-tile accumulation, so the
+/// u32 slots can't wrap); the tiled `render_export` sums per tile inline instead.
 fn read_counters(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     counters_buf: &wgpu::Buffer,
     counters_read: &wgpu::Buffer,
-) -> [u32; crate::COUNTER_SLOTS] {
+) -> [u64; crate::COUNTER_SLOTS] {
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("export.counters_copy"),
     });
@@ -479,10 +507,13 @@ fn read_counters(
         let _ = tx.send(r);
     });
     let _ = device.poll(wgpu::Maintain::Wait);
-    let mut out = [0u32; crate::COUNTER_SLOTS];
+    let mut out = [0u64; crate::COUNTER_SLOTS];
     if rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
         let mapped = slice.get_mapped_range();
-        out.copy_from_slice(bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]));
+        let raw: &[u32] = bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]);
+        for (o, &c) in out.iter_mut().zip(raw) {
+            *o = c as u64;
+        }
         drop(mapped);
         counters_read.unmap();
     }
@@ -916,6 +947,6 @@ pub fn color_iter_buffer(
         pixels,
         iterate_ms: 0.0,
         color_ms: 0.0,
-        counters: [0; crate::COUNTER_SLOTS],
+        counters: [0u64; crate::COUNTER_SLOTS],
     })
 }

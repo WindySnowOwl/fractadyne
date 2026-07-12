@@ -45,10 +45,17 @@ possible-hang warnings, `[fd-wgpu]` device errors/loss, `[fd-panic]` crash repor
 Every render reports shader event counts (in `[fd-perf]`, `perf.jsonl`, and
 `ExportResult.counters`): **rebase** (Zhuoran rebases), **ext** (extended-range orbit
 samples decoded), **glitch** (Pauldelbrot flags), **bla_skip** (BLA multi-steps),
-**maxiter** (pixels that exhausted the budget). They are execution proof: a deep render
-whose `ext`/`rebase` counters are zero is running with those paths dead (exactly how the
-v0.2.6 NaN-marker regression would have been caught in one render). The selftest
-"counters" group asserts them on known views.
+**maxiter** (pixels that exhausted the budget). Totals are accumulated in **u64** across
+all tiles (the GPU-side u32 slots are zeroed + read per tile), so a deep multi-tile export
+does not wrap.
+
+These count **main perturbation-loop events**, so they are legitimately *low* when series
+approximation and BLA cover most of the work — a deep view with a large `sa_skip` can escape
+in a handful of counted iterations (a fast `gpu_iterate` ms confirms it). To use them as
+execution proof (e.g. "did the extended-range path fire?") disable SA/BLA so the main loop
+runs, the way the selftest "counters" group does — otherwise a genuinely SA-dominated render
+and a dead code path both read near-zero. With SA/BLA off, zero on a path a deep render must
+exercise means dead code (exactly how the v0.2.6 NaN-marker regression would have shown).
 
 ## Reading common symptoms
 

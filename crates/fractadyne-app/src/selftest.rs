@@ -203,23 +203,23 @@ impl FractadyneApp {
         // tag or name matches; `--selftest-list` prints the group tags and exits. Groups
         // share config state at their boundaries (F13), so a filtered verdict is for
         // ITERATION, not release gating — the summary says so when a filter is active.
-        let cli: Vec<String> = std::env::args().collect();
-        let filter: Option<String> = cli
-            .iter()
-            .position(|a| a == "--selftest-filter")
-            .and_then(|i| cli.get(i + 1))
-            .map(|s| s.to_ascii_lowercase());
+        // The flags come from `new()` (the EXPANDED args), NOT std::env::args(), so
+        // `@response-file` expansion is honored (raw args would silently drop them).
+        let filter: Option<String> = self.selftest_filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "metadata", "display", "catalog", "goldens",
         ];
-        if cli.iter().any(|a| a == "--selftest-list") {
+        if self.selftest_list {
             println!("selftest groups (use with --selftest-filter <substr>):");
             for g in GROUPS {
                 println!("  {g}");
             }
             std::process::exit(0);
         }
+        // (A filter that runs ZERO checks is rejected AFTER the suite — see the guard just
+        // before the report is written. Doing it post-hoc matches on what actually ran, so
+        // it can't drift from the group/golden name lists the way a pre-flight check would.)
         let want = |tag: &str| -> bool {
             filter.as_ref().map_or(true, |f| tag.to_ascii_lowercase().contains(f.as_str()))
         };
@@ -674,16 +674,16 @@ impl FractadyneApp {
                     vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
                     vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
                     vp.precision = fractadyne_core::precision_for_magnification(mag);
-                    if let Some((_buf, refs_used, residual)) =
+                    if let Some(ci) =
                         self.render_corrected_iter(device, queue, &vp, false, N, N, 40)
                     {
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Glitch",
                             name: "multi-reference correction resolves glitches".into(),
                             params: "seahorse, 1e8×, auto seed + correction".into(),
-                            result: format!("{refs_used} references, {residual} residual glitches"),
+                            result: format!("{} references, {} residual glitches", ci.refs_used, ci.residual),
                             threshold: "0 residual glitches",
-                            pass: residual == 0,
+                            pass: ci.residual == 0,
                         });
                     }
 
@@ -1754,18 +1754,29 @@ impl FractadyneApp {
         // is a FAILED check, not a silent skip (D2.6/F12): the check count must not vary
         // with the working directory.
         let catalog_path = anchored("validation/catalog.toml");
-        if want("catalog") && !catalog_path.exists() {
-            push_check(&mut checks, &mut last_check_t, SelfCheck {
-                category: "Catalog",
-                name: "load validation/catalog.toml".into(),
-                params: format!("{}", catalog_path.display()),
-                result: "file not found (run from the repo root, or keep validation/ next to the exe tree)".into(),
-                threshold: "file present",
-                pass: false,
-            });
-        }
-        let catalog_text =
-            if want("catalog") { std::fs::read_to_string(&catalog_path).ok() } else { None };
+        // A read FAILURE (not just not-found) is also a FAILED check, not a silent skip
+        // (D2.6/F12): on Windows a sharing violation / ACL denial makes exists() pass while
+        // the read errors — the category must not vanish and let the suite report OK.
+        let catalog_text = if want("catalog") {
+            match std::fs::read_to_string(&catalog_path) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Catalog",
+                        name: "load validation/catalog.toml".into(),
+                        params: format!("{}", catalog_path.display()),
+                        result: format!(
+                            "{e} (run from the repo root, or keep validation/ next to the exe tree)"
+                        ),
+                        threshold: "file present and readable",
+                        pass: false,
+                    });
+                    None
+                }
+            }
+        } else {
+            None
+        };
         if let Some(text) = catalog_text {
             match toml::from_str::<Catalog>(&text) {
                 Ok(cat) => {
@@ -1958,7 +1969,7 @@ impl FractadyneApp {
         // state), so the goldens depend only on the spec and never on the loaded session / current
         // defaults. Fields gated off here (light/de/duotone/binary, orbit-trap) don't reach the
         // output, so their sub-parameters are left as-is.
-        let bless = std::env::args().any(|a| a == "--bless");
+        let bless = self.selftest_bless; // from new()'s expanded args (honors @response-file)
         let report_path = std::env::args()
             .position(|a| a == "--out" || a == "-o")
             .and_then(|i| std::env::args().nth(i + 1))
@@ -2093,6 +2104,20 @@ impl FractadyneApp {
                 }
                 Err(e) => goldens.push((name.to_string(), 0, 0.0, 0, false, format!("render failed: {e}"), "RENDER ERROR")),
             }
+        }
+
+        // A filter that matched no group and no golden runs zero checks; with the `0 == 0`
+        // pass math below that would print "ALL CHECKS PASSED", exit 0, and overwrite the
+        // committed report — a false green for any script keyed on the exit code (and it
+        // catches `--selftest-filter` with a missing value that swallowed the next flag).
+        // Fail loudly WITHOUT rewriting the report.
+        if filter.is_some() && checks.is_empty() && goldens.is_empty() {
+            eprintln!(
+                "[selftest] --selftest-filter '{}' matched no checks or goldens — nothing ran. \
+                 Use --selftest-list for the group tags.",
+                filter.as_deref().unwrap_or("")
+            );
+            std::process::exit(2);
         }
 
         // ---- build the human-readable + verifiable report ----

@@ -65,6 +65,18 @@ pub(crate) struct TileGrid {
     pub next: u32,
 }
 
+/// Result of a multi-reference glitch-corrected iteration render (`render_corrected_iter`):
+/// the merged raw iteration buffer plus per-render telemetry summed across the base pass and
+/// every correction pass (so a colored corrected export can report real GPU counters/time
+/// instead of the zeros `color_iter_buffer` alone produces).
+pub(crate) struct CorrectedIter {
+    pub pixels: Vec<f32>,
+    pub refs_used: usize,
+    pub residual: usize,
+    pub counters: [u64; fractadyne_gpu::COUNTER_SLOTS],
+    pub iterate_ms: f64,
+}
+
 // `FRACTADYNE_TRACE` tracing moved to `diag` (categories: req, ref, gpu, tile, glitch —
 // see diag::trace_on). The per-frame GPU sizing trace is the `tile` category below: deep-zoom
 // frames are sized by a feedback loop against the GPU watchdog and the UI thread, and its
@@ -931,16 +943,26 @@ impl FractadyneApp {
         width: u32,
         height: u32,
         max_refs: usize,
-    ) -> Option<(Vec<f32>, usize, usize)> {
+    ) -> Option<CorrectedIter> {
         let mut req = self.current_export_request_for(vp, julia);
         req.width = width;
         req.height = height;
         req.ss = 1;
         req.glitch_on = 1;
-        let mut merged = fractadyne_gpu::render_iter(device, queue, &req).ok()?.pixels;
+        // Accumulate GPU counters + iterate time across the base pass and every correction
+        // pass, so the colored result carries real telemetry (color_iter_buffer alone reports
+        // zeros, which is why a glitch-corrected export used to log all-zero counters).
+        let mut counters = [0u64; fractadyne_gpu::COUNTER_SLOTS];
+        let mut iterate_ms = 0.0f64;
+        let base = fractadyne_gpu::render_iter(device, queue, &req).ok()?;
+        for (c, v) in counters.iter_mut().zip(base.counters) {
+            *c += v;
+        }
+        iterate_ms += base.iterate_ms;
+        let mut merged = base.pixels;
         // Direct path never glitches; nothing to correct.
         if RenderMode::from_u32(req.mode).is_direct() {
-            return Some((merged, 1, 0));
+            return Some(CorrectedIter { pixels: merged, refs_used: 1, residual: 0, counters, iterate_ms });
         }
         let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
         let span = vp.complex_span_fe();
@@ -1001,7 +1023,12 @@ impl FractadyneApp {
             r.sa_skip = 0;
             r.bla_on = 0;
             r.bla = std::sync::Arc::new(Vec::new());
-            let pass = fractadyne_gpu::render_iter(device, queue, &r).ok()?.pixels;
+            let pass_res = fractadyne_gpu::render_iter(device, queue, &r).ok()?;
+            for (c, v) in counters.iter_mut().zip(pass_res.counters) {
+                *c += v;
+            }
+            iterate_ms += pass_res.iterate_ms;
+            let pass = pass_res.pixels;
             refs_used += 1;
             // Adopt pixels this reference resolved (no longer glitched).
             for &i in &glitch {
@@ -1021,7 +1048,7 @@ impl FractadyneApp {
                 ),
             );
         }
-        Some((merged, refs_used, residual))
+        Some(CorrectedIter { pixels: merged, refs_used, residual, counters, iterate_ms })
     }
 
     /// Full glitch-corrected offscreen render → colored image. Runs multi-reference correction on
@@ -1050,12 +1077,16 @@ impl FractadyneApp {
         {
             return None;
         }
-        let (buf, _refs, _residual) =
-            self.render_corrected_iter(device, queue, vp, julia, width, height, 64)?;
+        let ci = self.render_corrected_iter(device, queue, vp, julia, width, height, 64)?;
         let mut req = self.current_export_request_for(vp, julia);
         req.width = width;
         req.height = height;
-        fractadyne_gpu::color_iter_buffer(device, queue, &req, &buf).ok()
+        let mut res = fractadyne_gpu::color_iter_buffer(device, queue, &req, &ci.pixels).ok()?;
+        // color_iter_buffer only colors; carry the correction's accumulated counters/time so
+        // the perf line and counters reflect what the multi-reference render actually did.
+        res.counters = ci.counters;
+        res.iterate_ms = ci.iterate_ms;
+        Some(res)
     }
 
     /// Advance a view's tiled settle by one tile and return its rect (base px). Grid geometry is

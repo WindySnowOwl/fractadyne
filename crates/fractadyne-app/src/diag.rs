@@ -43,6 +43,8 @@ static MANIFEST: Mutex<String> = Mutex::new(String::new());
 static ALIVE_MS: AtomicU64 = AtomicU64::new(0);
 /// True once the watchdog thread is running (so tests/multiple inits don't double-spawn).
 static WATCHDOG_ON: AtomicBool = AtomicBool::new(false);
+/// Monotonic suffix for crash-report filenames (collision-proofs same-second panics).
+static CRASH_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Seconds since process start (0.0 before [`init`]).
 pub(crate) fn elapsed_s() -> f64 {
@@ -107,8 +109,14 @@ fn file_line(text: &str) {
 }
 
 /// A diagnostic event: stderr + log file. `cat` becomes the `[fd-cat]` prefix.
+///
+/// The stderr write is non-panicking (`writeln!` on a locked handle, error ignored): a
+/// broken pipe — e.g. `fractadyne … 2>&1 | head` closing early — must NOT panic here. This
+/// runs inside the panic hook, where an `eprintln!` that panics on EPIPE would trigger a
+/// double-panic abort and lose the crash report entirely (the exact automation scenario D1
+/// targets).
 pub(crate) fn log_line(cat: &str, msg: &str) {
-    eprintln!("[fd-{cat}] {} {msg}", stamp());
+    let _ = writeln!(std::io::stderr(), "[fd-{cat}] {} {msg}", stamp());
     file_line(&format!("[fd-{cat}] {msg}"));
 }
 
@@ -176,12 +184,22 @@ pub(crate) fn alive() {
 }
 
 /// Record what the process is doing right now. Written at phase transitions; read by the
-/// panic hook and watchdog. Also stamps liveness and (at debug volume) the log file.
+/// panic hook and watchdog. Also stamps liveness and tees to the log file.
+///
+/// This is a single process-global slot, so when phases on different threads overlap (a GUI
+/// export worker + a live recompute worker, say) the last writer wins and the panic hook /
+/// watchdog may name a *concurrent* activity rather than the failing thread's own. It is
+/// therefore tagged with the writing thread's name: the crash report also records the
+/// panicking thread separately (`thread:`), so a reader can see when the breadcrumb came
+/// from a different thread and treat it as context, not cause. Per-thread breadcrumbs (a
+/// thread-local registry snapshotted in the hook) are the full fix — deferred as a larger,
+/// deliberate change; the full-timeline `[crumb]` log lines below already disambiguate.
 pub(crate) fn breadcrumb(msg: String) {
     alive();
-    file_line(&format!("[crumb] {msg}"));
+    let thread = std::thread::current().name().unwrap_or("?").to_string();
+    file_line(&format!("[crumb] ({thread}) {msg}"));
     if let Ok(mut b) = BREADCRUMB.lock() {
-        *b = msg;
+        *b = format!("{msg} [{thread}]");
     }
 }
 
@@ -230,15 +248,21 @@ fn install_panic_hook() {
             std::thread::current().name().unwrap_or("<unnamed>"),
             std::backtrace::Backtrace::force_capture(),
         );
-        // The log line survives even if the crash file can't be written.
-        log_line("panic", &format!("{msg} at {loc} — activity: {}", current_breadcrumb()));
+        // Write the crash FILE first — it is the durable artifact, and it must survive even
+        // if stderr is broken. A process-wide counter in the name prevents two panics in the
+        // same wall-clock second (realistic on a device loss: the uncaptured-error callback
+        // panics on one thread while an export worker's next wgpu call panics on another)
+        // from clobbering each other via same-second `crash-<secs>.txt` overwrite.
         if let Some(Some(dir)) = LOG_DIR.get() {
             let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-            let path = dir.join(format!("crash-{secs}.txt"));
+            let n = CRASH_SEQ.fetch_add(1, Ordering::Relaxed);
+            let path = dir.join(format!("crash-{secs}-{n}.txt"));
             if std::fs::write(&path, &report).is_ok() {
-                eprintln!("[fd-panic] crash report written: {}", path.display());
+                let _ = writeln!(std::io::stderr(), "[fd-panic] crash report written: {}", path.display());
             }
         }
+        // Then the log line (non-panicking stderr; also teed to the log file).
+        log_line("panic", &format!("{msg} at {loc} — activity: {}", current_breadcrumb()));
         default(info);
     }));
 }
@@ -301,6 +325,7 @@ pub(crate) fn progress_pump(
         .name("fd-progress".into())
         .spawn(move || {
             let mut printed = false;
+            let mut last_p = u32::MAX;
             'outer: while !stop2.load(Ordering::Relaxed) {
                 // ~2 s cadence, but check `stop` every 100 ms so Drop never stalls.
                 for _ in 0..20 {
@@ -309,14 +334,27 @@ pub(crate) fn progress_pump(
                         break 'outer;
                     }
                 }
-                alive();
                 let p = progress.load(Ordering::Relaxed).min(1000);
-                eprint!("\r[fd-progress] {} {label} {:3}%", stamp(), p / 10);
+                // Stamp liveness ONLY when a tile actually finished. Stamping every tick
+                // (the original bug) made the watchdog blind to a wedged render: a hung
+                // render_export froze `p` but liveness kept advancing, so `possible hang`
+                // never fired. Now a frozen `p` lets the stall clock run out — the log then
+                // shows this frozen line followed by the watchdog's warnings (the exact
+                // "slow vs hung" signal DIAGNOSTICS.md tells the reader to look for). A slow
+                // single-tile render also freezes `p`; the watchdog's warning there is the
+                // documented, acceptable can't-tell-hang-from-long-compute ambiguity.
+                if p != last_p {
+                    alive();
+                    last_p = p;
+                    // Tee to the log file so a post-mortem sees progression, not just stderr.
+                    file_line(&format!("[progress] {label} {}%", p / 10));
+                }
+                let _ = write!(std::io::stderr(), "\r[fd-progress] {} {label} {:3}%", stamp(), p / 10);
                 let _ = std::io::stderr().flush();
                 printed = true;
             }
             if printed {
-                eprintln!();
+                let _ = writeln!(std::io::stderr());
             }
         })
         .ok();

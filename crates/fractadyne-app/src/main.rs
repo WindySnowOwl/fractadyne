@@ -1616,6 +1616,12 @@ struct FractadyneApp {
     /// CLI `--selftest`: run the GPU validation suite, print a report, and exit.
     selftest: bool,
     selftest_done: bool,
+    /// `--selftest-filter <substr>`, `--selftest-list`, `--bless` — parsed here from the
+    /// EXPANDED args so they honor `@response-file` / `--args-file` expansion. `run_selftest`
+    /// must read these, NOT `std::env::args()` (raw args bypass the expansion `main()` did).
+    selftest_filter: Option<String>,
+    selftest_list: bool,
+    selftest_bless: bool,
     /// CLI `--profile`: run the profiling harness (benchmark regions), log to `logs/`, exit.
     profile: bool,
     profile_done: bool,
@@ -1762,6 +1768,10 @@ impl FractadyneApp {
         let profile = args.iter().any(|a| a == "--profile");
         let frametest = args.iter().any(|a| a == "--frametest");
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+        // Selftest sub-flags from the EXPANDED args (so @response-file works — see field docs).
+        let selftest_filter = val("--selftest-filter").map(|s| s.to_ascii_lowercase());
+        let selftest_list = args.iter().any(|a| a == "--selftest-list");
+        let selftest_bless = args.iter().any(|a| a == "--bless");
         // Standardized benchmark: --benchmark-std, or implied by --res / --burnin.
         let std_res = val("--res").and_then(|s| BenchRes::from_token(s)).unwrap_or(BenchRes::P1080);
         // --burnin may carry a pass count (`--burnin 20`) or stand alone (defaults to 10).
@@ -1932,6 +1942,9 @@ impl FractadyneApp {
             tour_mp4,
             selftest,
             selftest_done: false,
+            selftest_filter,
+            selftest_list,
+            selftest_bless,
             profile,
             profile_done: false,
             profile_reps,
