@@ -87,7 +87,28 @@ Mockups: [design/mockups/](design/mockups/).
   df32/FTZ/NoFMA sims all smooth).** My earlier `cycle=2e-6` "coloring ruled out" step was WRONG — I
   sampled a smooth transition row (not the steep dendrite region) and mis-read aliased-gradient moiré as
   random noise. LESSON: dump the raw escape VALUES before blaming the perturbation. Probes
-  (`probe_escape.rs`, `probe_fe.rs`) + FEDUMP are the harness.
+  (`probe_escape.rs`, `probe_fe.rs`) + FEDUMP are the harness. ⚠**CORRECTION (2026-07-12): the
+  "F3 arm-for-arm at 15" claim above was WRONG for loc 15 — see the next bug.**
+
+- [ ] **⭐KNOWN PARTIAL: corpus 15 (3.7e163×) deep dendrites MISSING — GPU past-reference rebasing
+  (diagnosed 2026-07-12, NOT yet fixed).** Unlike 14 (pure coloring), loc 15 has a REAL render gap: the
+  smooth bulb (left) matches F3, but the right-side dendrites are absent (smooth-orange where F3 shows
+  dense dark spirals). **Root cause:** those dendrite pixels escape at 928k–1.6M — PAST the reference
+  orbit, which escapes at ~918k. On the GPU they reach the reference's END and escape prematurely there
+  (measured full-frame GPU escape range **[885961, 918967], interior px = 0** — note 918967 ≈ the ref
+  length), instead of rebasing deeper. **The faithful CPU df32 sim (`probe_fe`) reproduces the dendrites
+  up to ~1.6M using that SAME ~918k reference** (via `|z|<|dz|` rebasing that stays at low `ref_n`) — 71
+  escape-jumps, matching f64 — so the escape VALUES ARE computable in df32; this is a GPU rebasing
+  limitation at extreme depth, **not coloring and not iteration count** (`iter=1600000` is used and is
+  enough). **The `best_reference` hill-climb (find a longer/interior reference) is a DEAD END here:** it
+  finds a 1.54M-sample interior ref, but that overflows the GPU `max_buffer_binding_size` (128 MB /
+  ~932k samples at 144 B/sample) → `create_bind_group` validation panic. So a longer reference cannot
+  fit; the fix must live in the GPU's **past-reference rebasing** (a v0.2.6-class shader-numerics task —
+  reproduce the divergence by making the sim's rebase decision df32/`sf_lt`-faithful, then correct the
+  shader so the deep pixels rebase like the sim instead of escaping at the reference end). Loc 14's
+  deepest pixels escape WITHIN the reference, so 14 is unaffected. **Also latent (separate defensive
+  fix):** if `best_reference` ever returns an interior reference surviving >932k iters at export
+  (`max_iter` > that), the orbit build → bind will panic; cap the orbit at the buffer limit.
 
 - [~] **App: auto-normalize / adaptive-cycle coloring for extreme depth (the general fix behind
   14/15).** `shade()` (mandelbrot.wgsl:1277) does `palette(pv·cycle + offset)` with `pv` = the raw
