@@ -58,13 +58,13 @@ iterations = 20000
 note = "Approaching the df32 exponent limit (~1e28x)."
 
 [[location]]
-slug = "07-seahorse-1e30"
-title = "Seahorse filaments 1e30x"
-center_x = "-0.7436438870371587047521915061147707"
-center_y = "0.131825904205311970493132056385139"
-mag_log10 = 30.0000000000
-iterations = 40000
-note = "Floatexp + BLA regime in Fractadyne (40k iterations: below ~30k nothing in-frame escapes and BOTH apps render blank). F3 placeholder: this shared 34-digit seahorse center is too coarse for a reproducible 1e30x cross-app match (F3 rounds it below Fractadyne's full-bignum reference and lands on different sub-structure); a higher-precision center like locations 08-10 would render and match."
+slug = "07-deep-1e30"
+title = "Deep filaments 7.50e29x"
+center_x = "-1.178853950372678747911373866849720956148855"
+center_y = "0.1853420232408490265512092752061929308714979"
+mag_log10 = 29.8750612634
+iterations = 600008
+note = "User-saved Fraktaler-3 location (me30.exr); 43-digit center. Imported verbatim from the .exr header: F3 zoom 1e30 -> our mag 7.50e29x (the 4/3 framing convention, see crosscheck-fraktaler3.md). Replaces the former 34-digit seahorse placeholder, which was too coarse for a reproducible 1e30x cross-app match. This center carries ~13 digits of margin (cf. location 04, matched at similar margin) and DOES match arm-for-arm: both apps render the same diagonal dendrite filament with a central pinch and spiral-armed clusters, closing the corpus's lone gap."
 
 [[location]]
 slug = "08-deep-6.6e43"

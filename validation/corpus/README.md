@@ -68,13 +68,15 @@ high enough for the depth (F3's reference otherwise truncates and blanks), and t
 enough digits for the depth *plus* margin** for F3's internal reference rounding, which is coarser
 than Fractadyne's full-precision bignum reference.
 
-Net: real, arm-for-arm F3 matches at **01–06 and 08–20** — from 1× to **4.60e1105×**, over a thousand
-orders of magnitude of zoom. The single gap is **07** (1e30×): its shared 34-digit seahorse center
-(only ~3 digits past what 1-pixel placement needs) is too coarse for a reproducible match there — F3
-rounds it below Fractadyne's bignum reference and lands on different sub-structure, so 07 stays an
-honest placeholder. That is a **center-precision** limit, not a depth one — the plainest proof being
-that 08 (83-digit center), 09 (526-digit), and 10 (1141-digit) all render and match *far* deeper. The
-`.f3.toml` / `.kfr` params are written for all ten, and Fractadyne renders all ten.
+Net: real, arm-for-arm F3 matches at **all twenty locations** — from 1× to **4.60e1105×**, over a
+thousand orders of magnitude of zoom. The former gap at **07** (1e30×) is now closed: its old shared
+34-digit seahorse center was too coarse for a reproducible match there — F3 rounded it below
+Fractadyne's bignum reference onto different sub-structure — so it was **replaced by a user Fraktaler-3
+save** (`me30.exr`, center −1.1788…, 43-digit) that matches arm-for-arm (both apps render the same
+diagonal dendrite filament with a central pinch and spiral-armed clusters). The center-precision lesson
+still stands — the plainest proof being that 08 (83-digit center), 09 (526-digit), and 10 (1141-digit)
+all render and match *far* deeper. The `.f3.toml` / `.kfr` params are written for all twenty, and
+Fractadyne renders all twenty.
 
 ## Reading the comparison
 

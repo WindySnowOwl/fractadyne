@@ -17,9 +17,10 @@ maximum_perturb_iterations / maximum_bla_steps, and with those F3 renders deep c
 real, arm-for-arm matches verified out to 4.6e1105x (location 10, ~4 min). Two more things must
 hold: the iteration cap must be high enough for the depth (else the reference truncates to blank),
 and the center must carry enough digits for the depth PLUS margin for F3's internal reference
-rounding (coarser than Fractadyne's full bignum). Location 07 (1e30x) is the corpus's one gap: its
-34-digit seahorse center is too coarse there, so F3 lands on different sub-structure — 08/09/10,
-with far more center digits, match far deeper.
+rounding (coarser than Fractadyne's full bignum). The former location 07 (1e30x) gap illustrated the
+latter: a 34-digit seahorse center was too coarse there, so F3 rounded onto different sub-structure.
+It was replaced by a user F3 save (me30.exr) whose 43-digit center matches arm-for-arm — so all
+twenty locations now have a real cross-app match.
 
 Run from repo root:  python validation/corpus/generate_fraktaler.py
 """

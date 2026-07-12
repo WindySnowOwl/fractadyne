@@ -23,14 +23,14 @@
 <h1>Fractadyne vs Kalles Fraktaler &mdash; reference render corpus</h1>
 <p>Twenty locations, ordered by magnification from the full-set overview to 4.6e1105&times;, rendered by both apps from the exact same
 center / magnification / iteration cap for side-by-side structural comparison. Fractadyne renders (all
-ten) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
+twenty) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
 With <code>maximum_reference_iterations</code> set in each F3 param (see README &mdash; F3&rsquo;s batch
 default is far too low for a zoomed view and blanks silently, which long masqueraded as a ~1e13&times;
-ceiling), <strong>F3 renders deep correctly here</strong>: locations 01&ndash;06 and 08&ndash;20 have
-real, arm-for-arm F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The
-lone gap, 07 (1e30&times;), is a center-precision placeholder &mdash; its 34-digit seahorse center is
-too coarse for a reproducible cross-app match there, while every deeper location carries hundreds of
-center digits and matches. Locations 11&ndash;20 are user-saved Fraktaler-3 finds (1.7e124&times; to
+ceiling), <strong>F3 renders deep correctly here</strong>: all twenty locations have real, arm-for-arm
+F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The former 1e30&times;
+gap (location 07, once a too-coarse 34-digit seahorse placeholder that F3 rounded onto different
+sub-structure) is now a genuine cross-app match, re-imported from a user Fraktaler-3 save with a
+43-digit center. Locations 07 and 11&ndash;20 are user-saved Fraktaler-3 finds (7.5e29&times; to
 1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken
 verbatim.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
@@ -213,32 +213,32 @@ Iterations: 20000</pre>
   </details>
 </section>
 
-<section class="card" id="07-seahorse-1e30">
-  <h2>Seahorse filaments 1e30x <span class="zoom">1.000000e30&times;</span></h2>
-  <p class="note">Floatexp + BLA regime in Fractadyne (40k iterations: below ~30k nothing in-frame escapes and BOTH apps render blank). F3 placeholder: this shared 34-digit seahorse center is too coarse for a reproducible 1e30x cross-app match (F3 rounds it below Fractadyne's full-bignum reference and lands on different sub-structure); a higher-precision center like locations 08-10 would render and match.</p>
+<section class="card" id="07-deep-1e30">
+  <h2>Deep filaments 7.50e29x <span class="zoom">7.500000e29&times;</span></h2>
+  <p class="note">User-saved Fraktaler-3 location (me30.exr); 43-digit center. Imported verbatim from the .exr header: F3 zoom 1e30 -&gt; our mag 7.50e29x (the 4/3 framing convention, see crosscheck-fraktaler3.md). Replaces the former 34-digit seahorse placeholder, which was too coarse for a reproducible 1e30x cross-app match. This center carries ~13 digits of margin (cf. location 04, matched at similar margin) and DOES match arm-for-arm: both apps render the same diagonal dendrite filament with a central pinch and spiral-armed clusters, closing the corpus's lone gap.</p>
   <div class="pair">
     <figure>
-      <img src="renders/07-seahorse-1e30-fractadyne.png" alt="Fractadyne render">
+      <img src="renders/07-deep-1e30-fractadyne.png" alt="Fractadyne render">
       <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
     </figure>
     <figure>
-      <img src="renders/07-seahorse-1e30-fraktaler.png" alt="Fraktaler render"
+      <img src="renders/07-deep-1e30-fraktaler.png" alt="Fraktaler render"
            onerror="this.closest('figure').classList.add('missing')">
-      <figcaption>Fraktaler-3 &mdash; from <code>locations/07-seahorse-1e30.f3.toml</code>. Missing = no
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/07-deep-1e30.f3.toml</code>. Missing = no
         reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
     </figure>
   </div>
   <table class="meta">
-    <tr><th>Magnification</th><td>1.000000e30&times; (log10 = 30.000000)</td>
-        <th>Iterations</th><td>40,000 (fixed, both apps)</td></tr>
+    <tr><th>Magnification</th><td>7.500000e29&times; (log10 = 29.875061)</td>
+        <th>Iterations</th><td>600,008 (fixed, both apps)</td></tr>
     <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
-        <th>Precision</th><td>~163 bits (35-digit center)</td></tr>
+        <th>Precision</th><td>~163 bits (43-digit center)</td></tr>
   </table>
   <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
-    <pre>Re: -0.7436438870371587047521915061147707
-Im: 0.131825904205311970493132056385139
-Zoom: 1.000000E30
-Iterations: 40000</pre>
+    <pre>Re: -1.178853950372678747911373866849720956148855
+Im: 0.1853420232408490265512092752061929308714979
+Zoom: 7.500000E29
+Iterations: 600008</pre>
   </details>
 </section>
 

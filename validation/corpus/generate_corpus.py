@@ -237,14 +237,14 @@ def write_catalog(locs):
 <h1>Fractadyne vs Kalles Fraktaler &mdash; reference render corpus</h1>
 <p>Twenty locations, ordered by magnification from the full-set overview to 4.6e1105&times;, rendered by both apps from the exact same
 center / magnification / iteration cap for side-by-side structural comparison. Fractadyne renders (all
-ten) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
+twenty) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
 With <code>maximum_reference_iterations</code> set in each F3 param (see README &mdash; F3&rsquo;s batch
 default is far too low for a zoomed view and blanks silently, which long masqueraded as a ~1e13&times;
-ceiling), <strong>F3 renders deep correctly here</strong>: locations 01&ndash;06 and 08&ndash;20 have
-real, arm-for-arm F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The
-lone gap, 07 (1e30&times;), is a center-precision placeholder &mdash; its 34-digit seahorse center is
-too coarse for a reproducible cross-app match there, while every deeper location carries hundreds of
-center digits and matches. Locations 11&ndash;20 are user-saved Fraktaler-3 finds (1.7e124&times; to
+ceiling), <strong>F3 renders deep correctly here</strong>: all twenty locations have real, arm-for-arm
+F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The former 1e30&times;
+gap (location 07, once a too-coarse 34-digit seahorse placeholder that F3 rounded onto different
+sub-structure) is now a genuine cross-app match, re-imported from a user Fraktaler-3 save with a
+43-digit center. Locations 07 and 11&ndash;20 are user-saved Fraktaler-3 finds (7.5e29&times; to
 1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken
 verbatim.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
