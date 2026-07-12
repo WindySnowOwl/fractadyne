@@ -93,11 +93,21 @@ Mockups: [design/mockups/](design/mockups/).
   simulating the GPU floatexp kernel — collapses the escape times (~4336 vs the true ~328k). So the
   GPU mode-2 `orbit_fe` / floatexp δz loses too much precision over the millions of Zhuoran rebases
   at the ~1e-71 dips (`rebase≈20M`), giving per-pixel noise. **THE FIX = higher-precision δz in the
-  mode-2 shader** (e.g. df-floatexp: df32/48-bit or df64 mantissa + extended exponent) — first read
-  `mandelbrot.wgsl`'s floatexp type to confirm whether it's single-f32 or df32 mantissa today, then
-  widen it. Deep shader-numerics work. NOTE the naive per-op 24-bit sim over-collapses (GPU shows a
-  noisy gradient, not uniform ~4336), so the GPU likely already carries df32; the fix widens further.
-  Corpus staging keeps `glitch_correct=false` (irrelevant); the docs mark 14/15 accuracy-limited.
+  mode-2 shader** (widen the δz mantissa). **CONFIRMED the current type (`mandelbrot.wgsl:153`):
+  `struct Fe { m: Cdf, e: i32 }` = a **df32 (~48-bit) complex mantissa + one SHARED i32 exponent**
+  (the exponent only extends f32's range; each of re/im keeps full df32 precision). `fe_add` drops any
+  term >60 exponent-bits below the larger (`de > 60` guard) — but that's already past df32's ~48 real
+  bits, so widening the cutoff buys nothing; the **48-bit mantissa width is the wall**. At e148 δz
+  ~1e-148 fits f64's range, so full f64 (53-bit) would suffice — but GPUs lack f64, so the fix is a
+  WIDER emulated mantissa (tf32 ≈ 3×f32 / qf32, or a df64-style scheme) across the `fe_*` ops + the
+  hot loop (slower — worth measuring). ⚠**Prototyping caveat (learned):** a naive per-op K-bit round
+  is NOT a faithful df32 model — 24-bit AND 48-bit both crater to ~4336 (uniform collapse) while the
+  GPU df32 shows a noisy *gradient*, because df32's two-word (hi+lo) arithmetic retains small terms a
+  flat round drops. **NEXT STEP = build a faithful df32 `Fe` sim in Rust mirroring the `fe_*` funcs
+  (df32 two-sum / Dekker-mul, shared exp, fe_add de>60), reproduce the gradient noise in `PROBE_ROW`,
+  then test wider mantissas — pick the winner, port to WGSL, validate (goldens byte-identical +
+  corpus 14/15 clean + perf).** That faithful sim is the substantial core; not yet done. Corpus
+  staging keeps `glitch_correct=false` (irrelevant); the docs mark 14/15 accuracy-limited.
 
 - [x] **Uniform-exterior misrender past ~1e142× — FIXED in v0.2.6 (sub-f32 orbit dips).**
   Root cause: the 11–15 dive path's reference orbit passes within ~1e-71 of zero every 4383

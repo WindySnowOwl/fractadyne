@@ -165,52 +165,65 @@ fn probe_escape_row() {
     // row is speckle where the full-f64 one is smooth, the GPU's f32 δz precision is the real cause
     // of the 14/15 noise (an interior reference — verified in the render, len=800001 — does NOT fix
     // it, so it is not reference coverage).
-    fn f32mant(x: f64) -> f64 {
+    // Round `x` to `bits` of mantissa (keeping the f64 exponent) — a proxy for a `bits`-wide float.
+    // 24 ≈ single f32, 48 ≈ df32 (the GPU's actual Fe width), 53 = full f64.
+    let mant = |x: f64, bits: i32| -> f64 {
         if x == 0.0 || !x.is_finite() {
             return x;
         }
         let e = x.abs().log2().floor();
-        let s = 2f64.powf(e);
-        ((x / s) as f32 as f64) * s
-    }
-    let mut escapes32: Vec<i64> = Vec::with_capacity(npix);
-    for i in 0..npix {
-        let off = i as f64 - (npix as f64 - 1.0) / 2.0;
-        let (dcx, dcy) = (f32mant(stepf * off), 0.0);
-        let (mut dzx, mut dzy) = (0.0f64, 0.0f64);
-        let mut n: usize = 0;
-        let mut esc: i64 = -1;
-        for it in 0..max_iter as usize {
-            let (zr, zi) = zs[n];
-            dzx = f32mant(2.0 * (zr * dzx - zi * dzy) + (dzx * dzx - dzy * dzy) + dcx);
-            dzy = f32mant(2.0 * (zr * dzy + zi * dzx) + 2.0 * dzx * dzy + dcy);
-            n += 1;
-            let (zr1, zi1) = zs[n.min(len - 1)];
-            let (zfx, zfy) = (zr1 + dzx, zi1 + dzy);
-            let zmag2 = zfx * zfx + zfy * zfy;
-            if zmag2 > 256.0 * 256.0 {
-                esc = it as i64 + 1;
-                break;
+        let s = 2f64.powf(e - (bits as f64 - 1.0));
+        (x / s).round() * s
+    };
+    // Escape-time row at a given mantissa width, else identical to the f64 loop.
+    let row_at = |bits: i32| -> Vec<i64> {
+        let mut out = Vec::with_capacity(npix);
+        for i in 0..npix {
+            let off = i as f64 - (npix as f64 - 1.0) / 2.0;
+            let (dcx, dcy) = (mant(stepf * off, bits), 0.0);
+            let (mut dzx, mut dzy) = (0.0f64, 0.0f64);
+            let mut n: usize = 0;
+            let mut esc: i64 = -1;
+            for it in 0..max_iter as usize {
+                let (zr, zi) = zs[n];
+                dzx = mant(2.0 * (zr * dzx - zi * dzy) + (dzx * dzx - dzy * dzy) + dcx, bits);
+                dzy = mant(2.0 * (zr * dzy + zi * dzx) + 2.0 * dzx * dzy + dcy, bits);
+                n += 1;
+                let (zr1, zi1) = zs[n.min(len - 1)];
+                let (zfx, zfy) = (zr1 + dzx, zi1 + dzy);
+                let zmag2 = zfx * zfx + zfy * zfy;
+                if zmag2 > 256.0 * 256.0 {
+                    esc = it as i64 + 1;
+                    break;
+                }
+                if zmag2 < dzx * dzx + dzy * dzy || n + 1 >= len {
+                    dzx = mant(zfx, bits);
+                    dzy = mant(zfy, bits);
+                    n = 0;
+                }
             }
-            if zmag2 < dzx * dzx + dzy * dzy || n + 1 >= len {
-                dzx = f32mant(zfx);
-                dzy = f32mant(zfy);
-                n = 0;
-            }
+            out.push(esc);
         }
-        escapes32.push(esc);
-    }
-    let jumps = escapes.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count();
-    let jumps64 = escapes64.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count();
-    let jumps32 = escapes32.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count();
-    println!("[row] {label}: f32-MANTISSA (GPU-like) escapes = {escapes32:?}");
-    println!("[row] {label}: jumps>2000 — f64={jumps64}  f32-mant={jumps32} (f32>>f64 over covered px => f32 δz precision is the cause)");
-    println!("[row] {label}: floatexp(f32-mant) escapes = {escapes:?}");
-    println!("[row] {label}: f64(53-bit-mant) escapes = {escapes64:?}");
+        out
+    };
+    let esc24 = row_at(24);
+    let esc48 = row_at(48); // ≈ df32 = the GPU's actual δz width
+    let jumpn = |r: &[i64]| r.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count();
+    let _ = &escapes; // (the CFloatExp row, kept above for reference)
+    println!("[row] {label}: f64(53-bit)  escapes = {escapes64:?}");
+    println!("[row] {label}: 48-bit(df32≈GPU) escapes = {esc48:?}");
     println!(
-        "[row] {label}: adjacent-|Δ|>2000 jumps — floatexp={jumps}/{n1}  f64={jumps64}/{n1}  (f64<<floatexp => f32 mantissa is the culprit)",
-        n1 = npix - 1
+        "[row] {label}: jumps>2000 — f64={}  48-bit={}  24-bit={}",
+        jumpn(&escapes64), jumpn(&esc48), jumpn(&esc24)
     );
+    // INTERPRETATION: precision clearly matters (f64 smooth, reduced-precision breaks), but naive
+    // per-op K-bit rounding OVER-collapses — 24-bit and 48-bit both crater to ~4336 vs the true
+    // ~328k, a sharp cliff — whereas the GPU (df32 `Fe`) shows a noisy GRADIENT, not a uniform
+    // collapse. So a single K-bit round is NOT a faithful model of df32's two-word (hi+lo)
+    // arithmetic: df32 retains small terms (e.g. the tiny 2·Z·δz at a dip) that a flat round drops.
+    // To prototype the real fix, mirror mandelbrot.wgsl's fe_* (df32 two-sum/Dekker-mul, shared
+    // exponent, fe_add de>60 cutoff) faithfully, reproduce the gradient noise, then test wider
+    // mantissas (tf32/qf32). That faithful df32 sim is the next step.
 }
 
 /// What reference does `best_reference` actually pick here, and how long is its orbit vs the
