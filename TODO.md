@@ -6,21 +6,26 @@ Mockups: [design/mockups/](design/mockups/).
 ## Open bugs
 
 - [ ] **App freezes on load at extreme zoom (~1e2100×, center −2.0, the Mandelbrot filament tip) —
-  DIAGNOSED 2026-07-12.** A saved session at this arbitrary-depth view (`units_per_pixel_e = −6986`,
-  ~7000-bit precision, `max_iter = 500000`) leaves the window unresponsive ("Not Responding") on
-  boot. **Confirmed cause (headless repro at `--center -2.0 0.0 --zoom-log2 6980 --iter 500000`,
-  `FRACTADYNE_TRACE=ref`): the SYNCHRONOUS cold-start reference build — only the very first cold
-  reference is built on the UI thread (render.rs) — takes ~12 s at this depth: `best_reference`
-  candidate scoring 8.6 s + bignum orbit build 1.45 s + BLA 0.2 s at 7172-bit.** The GPU render is
-  NOT the problem: a full 1920×1080 frame iterates in 22 ms (maxiter=0, BLA skips 36M steps), so no
-  pixel spin — it's purely the UI-thread freeze during the cold bignum build (dominated by the same
-  `best_reference` lever the throughput work isolated, now scaled to 7000-bit). **Fix directions:**
-  (1) make the cold-start reference build ASYNC like every subsequent one (off-thread + the existing
-  placeholder/spinner) so the window stays responsive — the direct fix; (2) cap/shortcut
-  `best_reference` scoring depth at extreme zoom (the throughput lever) to cut the 8.6 s; (3) a
-  coarse→fine progressive cold reference. Higher severity than the XaoS enhancement (a stated
-  arbitrary-zoom test case is unusable). Note it is NOT an infinite hang — it completes in ~12 s
-  headlessly; deeper zoom / larger window / slower CPU stretches the freeze.
+  DIAGNOSED 2026-07-12; NOT the reference build.** A saved session at this arbitrary-depth view
+  (`units_per_pixel_e = −6986`, ~7000-bit precision, `max_iter = 500000`, `aa = 8`) leaves the
+  window unresponsive on boot. **Diagnosis (booted the actual app with the v0.2.7+ watchdog +
+  breadcrumbs):** the reference build is ALREADY off-thread (progressive coarse @10.6 s + full
+  @12.3 s land from a worker thread — the "only the first reference is synchronous" comment in
+  render.rs is STALE; the cold path was moved off-thread) so it does NOT freeze the UI. The main
+  thread completes `update()` frames fine until ~16 s, then **wedges in the POST-`update()` GPU
+  paint/present** — the watchdog's last activity is an end-of-`update()` breadcrumb (`update() done
+  f=1204`), and no next frame ever starts. The preceding frames run ~1 s each (GPU-bound). **The
+  isolated GPU render is HEALTHY** — a headless `--render` of this exact view is 22–117 ms at ss
+  1/2/4 (maxiter=0, BLA skips 36M steps), so no pixel spin. So the freeze is **live-orchestration /
+  GPU-queue specific**, not a render-cost or reference-build issue. **Strong hypothesis:** the
+  tiled-settle + AA ramp (to ss 8) at this depth, driven by an over-provisioned `max_iter = 500000`
+  (the view escapes at maxiter=0, so auto-iter's ~500k cap is absurd here → nominal ~8.1e11
+  steps/frame → aggressive tiling → many/large dispatches across ss 1→2→4→8 back up the GPU present),
+  same expensive-cumulative-dispatch class as the glitch-core spin. **Next step:** GPU-crate timing
+  in `lib.rs` prepare/paint/present (fractadyne-gpu can read `FRACTADYNE_TRACE` directly) to pinpoint
+  the hanging dispatch, then bound the settle/AA-ramp GPU work at extreme depth and/or fix auto-iter
+  from over-provisioning where the view escapes fast. (Earlier "async-ify the cold reference"
+  direction is MOOT — already async.) Higher severity than the XaoS enhancement.
 
 - [ ] **Glitch-correction pass goes pathological (>1 hour) at extreme depth — ROOT CAUSE
   DIAGNOSED 2026-07-11 (v0.2.11 tracing); a robust fix is a substantial change, deferred.**
