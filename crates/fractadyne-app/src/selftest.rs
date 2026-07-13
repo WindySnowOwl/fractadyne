@@ -1898,7 +1898,7 @@ impl FractadyneApp {
             });
 
             // A newer format_version must be detected (not silently consumed).
-            let newer = "app=Fractadyne\nformat_version=999\ncenter_x=-0.5\ncenter_y=0\nupp_log2=-3\n";
+            let newer = "app=Fractadyne\nformat_version=999\ncenter_re=-0.5\ncenter_im=0\nupp_log2=-3\n";
             let nr = self.load_view_metadata(newer);
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "View format",
@@ -1910,7 +1910,7 @@ impl FractadyneApp {
             });
 
             // Hostile numeric fields must be clamped (DoS / runaway work) AND reported.
-            let hostile = "app=Fractadyne\nformat_version=1\ncenter_x=-0.5\ncenter_y=0\n\
+            let hostile = "app=Fractadyne\nformat_version=1\ncenter_re=-0.5\ncenter_im=0\n\
                            upp_log2=-1e30\nmax_iter=4000000000\naa=9999\ncycle=inf\noffset=NaN\n\
                            bogus_field=42\n";
             let hr = self.load_view_metadata(hostile);

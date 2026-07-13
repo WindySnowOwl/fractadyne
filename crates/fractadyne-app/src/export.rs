@@ -238,13 +238,15 @@ impl ViewLoad {
 /// Keys the view-metadata reader understands; anything else in a file is reported as unknown.
 const KNOWN_VIEW_KEYS: &[&str] = &[
     "app", "version", "format_version", "saved_unix", "saved", "notes", "fractal", "julia",
-    "julia_c_re", "julia_c_im", "center_x", "center_y", "upp", "upp_log2", "zoom", "max_iter",
+    "julia_c_re", "julia_c_im", "center_re", "center_im", "upp", "upp_log2", "zoom", "max_iter",
     "auto_iter", "palette", "cycle", "offset", "aa",
 ];
 
 impl FractadyneApp {
     /// Reloadable view-state metadata embedded in exports. The center is stored as
-    /// full-precision decimal so deep-zoom positions round-trip exactly.
+    /// full-precision decimal so deep-zoom positions round-trip exactly. `center_re`/`center_im`
+    /// name the complex plane's real/imaginary axes (the domain convention, matching Fraktaler-3
+    /// and Kalles Fraktaler); they hold the viewport's geometric `center_x`/`center_y`.
     pub(crate) fn view_metadata(&self) -> String {
         let (jcx, jcy) = self.julia_c;
         let secs = std::time::SystemTime::now()
@@ -261,7 +263,7 @@ impl FractadyneApp {
         format!(
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
-             center_x={}\ncenter_y={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
+             center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
              palette={}\ncycle={}\noffset={}\naa={}\n",
             version_string(),
             VIEW_FORMAT_VERSION,
@@ -317,10 +319,10 @@ impl FractadyneApp {
         ) {
             self.julia_c = (re, im);
         }
-        if let Some(cx) = get("center_x").and_then(|s| fractadyne_core::parse_bf(&s)) {
+        if let Some(cx) = get("center_re").and_then(|s| fractadyne_core::parse_bf(&s)) {
             self.viewport.center_x = cx;
         }
-        if let Some(cy) = get("center_y").and_then(|s| fractadyne_core::parse_bf(&s)) {
+        if let Some(cy) = get("center_im").and_then(|s| fractadyne_core::parse_bf(&s)) {
             self.viewport.center_y = cy;
         }
         // Prefer the extended-range `upp_log2` (exact past 1e308×); fall back to the f64

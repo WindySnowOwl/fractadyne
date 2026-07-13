@@ -3502,7 +3502,7 @@ impl FractadyneApp {
             return;
         }
         // Must look like a Fractadyne location (has our app tag or a center field).
-        if meta_get(t, "app") != "Fractadyne" && meta_get(t, "center_x").is_empty() {
+        if meta_get(t, "app") != "Fractadyne" && meta_get(t, "center_re").is_empty() {
             self.share.msg = Some("Not a Fractadyne location.".into());
             return;
         }
@@ -4402,21 +4402,21 @@ mod tests {
             for _ in 0..len {
                 buf.push(charset[(next() as usize) % charset.len()] as char);
             }
-            for k in ["center_x", "center_y", "zoom", "fractal", "julia", "max_iter", "missing"] {
+            for k in ["center_re", "center_im", "zoom", "fractal", "julia", "max_iter", "missing"] {
                 let v = meta_get(&buf, k);
                 assert!(v.len() <= buf.len(), "meta_get returned oversized value");
             }
             // The real downstream parsers applied to extracted values must not panic.
-            let _ = fractadyne_core::parse_bf(&meta_get(&buf, "center_x"));
-            let _ = fractadyne_core::parse_bf(&meta_get(&buf, "center_y"));
+            let _ = fractadyne_core::parse_bf(&meta_get(&buf, "center_re"));
+            let _ = fractadyne_core::parse_bf(&meta_get(&buf, "center_im"));
             let _ = meta_get(&buf, "zoom").parse::<f64>();
             let _ = meta_get(&buf, "max_iter").parse::<u32>();
             let _ = FractalKind::from_name(&meta_get(&buf, "fractal"));
         }
         // Adversarial explicit metadata blobs.
-        for m in ["", "=", "\n\n\n", "center_x=", "=value", "zoom=NaN", "max_iter=-1",
-                  "center_x=1e999999999", "fractal=\0\0\0", "a=b=c=d", "zoom=  inf  "] {
-            let _ = fractadyne_core::parse_bf(&meta_get(m, "center_x"));
+        for m in ["", "=", "\n\n\n", "center_re=", "=value", "zoom=NaN", "max_iter=-1",
+                  "center_re=1e999999999", "fractal=\0\0\0", "a=b=c=d", "zoom=  inf  "] {
+            let _ = fractadyne_core::parse_bf(&meta_get(m, "center_re"));
             let _ = meta_get(m, "zoom").parse::<f64>();
         }
     }

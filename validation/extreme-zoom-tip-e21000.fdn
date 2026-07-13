@@ -4,8 +4,8 @@ format_version=1
 notes=Canonical extreme-zoom diagnostic: Mandelbrot real-axis tip c=-2 at ~1e21000x (see DIAGNOSTICS.md)
 fractal=Mandelbrot
 julia=0
-center_x=-2.0
-center_y=0.0
+center_re=-2.0
+center_im=0.0
 upp=0.00000000000000000e0
 upp_log2=-6.97697892243130045e4
 zoom=inf

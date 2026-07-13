@@ -18,9 +18,9 @@ impl FractadyneApp {
             .resizable(false)
             .default_width(420.0)
             .show(ctx, |ui| {
-                ui.label(egui::RichText::new("Center X").weak().small());
+                ui.label(egui::RichText::new("Center — real (Re)").weak().small());
                 ui.add(egui::TextEdit::singleline(&mut self.goto.x).desired_width(f32::INFINITY));
-                ui.label(egui::RichText::new("Center Y").weak().small());
+                ui.label(egui::RichText::new("Center — imaginary (Im)").weak().small());
                 ui.add(egui::TextEdit::singleline(&mut self.goto.y).desired_width(f32::INFINITY));
                 ui.label(egui::RichText::new("Zoom (magnification)").weak().small());
                 ui.add(egui::TextEdit::singleline(&mut self.goto.zoom).desired_width(220.0));
@@ -48,7 +48,7 @@ impl FractadyneApp {
             });
         if copy {
             ctx.copy_text(format!(
-                "center_x={}\ncenter_y={}\nzoom={}",
+                "center_re={}\ncenter_im={}\nzoom={}",
                 self.goto.x, self.goto.y, self.goto.zoom
             ));
         }
