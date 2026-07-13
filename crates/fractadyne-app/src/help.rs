@@ -305,7 +305,9 @@ pub(crate) fn help_methodology(ui: &mut egui::Ui) {
          mantissa plus a separate integer exponent (\"floatexp\"), lifting the 32-bit depth wall. \
          The engine switches automatically: direct math when shallow, perturbation when deep, and \
          floatexp when deepest. Depth is then bounded by coordinate precision and the iteration \
-         budget rather than a fixed limit (validated past 1e300×; the bundled tour reaches ~1e420×).",
+         budget rather than a fixed limit — cross-checked against Fraktaler-3 to 4.6e1105× (a \
+         20-location reference corpus), with an internal precision self-consistency battery to \
+         1e1000000×; the bundled tour reaches ~1e420×.",
     );
     help_sub(ui, "Reference choice & rebasing");
     help_p(
@@ -376,7 +378,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--selftest-list", "Print the selftest group tags (for --selftest-filter) and exit."),
         Flag("--reset-state [--yes]", "Delete ALL saved state (session, bookmarks, thumbnails) and exit. Prompts for confirmation on the terminal (type 'reset'); --yes (or -y) skips the prompt."),
         Flag("--help, -h", "Print this command-line reference and exit."),
-        Flag("@FILE, --args-file FILE", "Read arguments from a text file (whitespace-separated; # comments; \"quotes\" for spaces), spliced in place. Nestable — keep a whole command line in a file."),
+        Flag("@FILE, --args-file FILE (or --args)", "Read arguments from a text file (whitespace-separated; # comments; \"quotes\" for spaces), spliced in place. Nestable — keep a whole command line in a file."),
         Section("Output"),
         Flag("--out PATH, -o PATH", "Output file (PNG/EXR), or the output directory for --render-tour."),
         Flag("--mp4 [PATH]", "With --render-tour: assemble the frames into an H.264 mp4 via ffmpeg (must be on PATH). Defaults to <out-dir>/tour.mp4; the PNG frames are kept."),
