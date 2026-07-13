@@ -28,10 +28,12 @@ one in the app:
 - copy its text (the catalog's **Copy .fdn** button, or the `.fdn` file) and paste it into the same
   Share-location dialog.
 
-It carries the fractal, the full-precision center, the zoom (extended-range, exact past 1e308×), and the
-iteration count, so the exact view loads in one step — no retyping a 2000-digit center. The `.fdn` is
-extracted from the reload metadata that `--render` embeds in every PNG (`Fractadyne` tEXt chunk), with the
-save timestamp / build stripped so it stays stable across re-renders. Coloring loads as the corpus
+It carries the fractal, the full-precision center, the per-pixel scale (extended-range, exact past
+1e308×), and the iteration count, so the location loads in one step — no retyping a 2000-digit center.
+The scale is stored per pixel and referenced to the corpus's 720px-tall framing, so a much taller window
+frames the same center a little wider — the **center is exact** regardless, and a scroll of the wheel
+trims the zoom. The `.fdn` is extracted from the reload metadata that `--render` embeds in every PNG
+(`Fractadyne` tEXt chunk), with the save timestamp / build stripped so it stays stable across re-renders. Coloring loads as the corpus
 contract (Ember / smooth); the deep dendrite/minibrot views used `--normalize` on export (a transient
 export setting), so the live view shows the standard palette cycle at those depths.
 
