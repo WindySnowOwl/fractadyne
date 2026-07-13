@@ -32,19 +32,21 @@ former 1e30&times; gap (location 07, once a too-coarse 34-digit seahorse placeho
 different sub-structure) is now a genuine cross-app match, re-imported from a user Fraktaler-3 save with a
 43-digit center. Locations 07 and 11&ndash;20 are user-saved Fraktaler-3 finds (7.5e29&times; to
 1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken verbatim.
-<strong>Coloring note for 14 (1.2e148&times;) and 15 (3.7e163&times;):</strong> these long rendered as
-speckle and were mis-diagnosed as glitches, then a perturbation bug &mdash; both wrong. The escape
-VALUES are correct (a faithful CPU transcription of the mode-2 shader kernel reproduces them exactly);
-the problem is that their smooth-iter counts are huge (~3e5&ndash;1.6e6) and vary steeply, so the fixed
-palette cycle (0.27) aliases a correct field into speckle. Their renders use <em>auto-normalized</em>
-coloring (the frame's escape range mapped to the palette) and then match F3 arm-for-arm. The general
-fix &mdash; an adaptive-cycle coloring mode for extreme depth &mdash; is in TODO.md.
-<strong>15 also needed a rendering fix (v0.2.18):</strong> its right-side dendrites escape at
+<strong>Coloring note for the deep dendrite / minibrot views (13, 14, 15, 16&ndash;20):</strong> at these
+depths the smooth-iter counts are huge (~3e5&ndash;1.6e6+) and vary steeply pixel-to-pixel, so the fixed
+palette cycle (0.27) aliases a correct escape field into speckle (long mis-diagnosed as glitches, then a
+perturbation bug &mdash; both wrong; a faithful CPU transcription of the mode-2 shader kernel reproduces
+the escape VALUES exactly). These renders use <em>auto-normalized</em> coloring (<code>--normalize</code>:
+the frame's escape range mapped to the palette), which colours the smooth exterior cleanly and matches F3
+arm-for-arm. The spiral views (09&ndash;12) have slowly-varying exteriors that don't alias, so they keep
+the standard cycle. The general fix &mdash; an adaptive-cycle coloring mode for the live view &mdash; is in
+TODO.md. <strong>15 also needed a rendering fix (v0.2.18):</strong> its right-side dendrites escape at
 928k&ndash;1.6M &mdash; <em>past</em> the reference orbit (~918k) &mdash; so they must rebase at the
 reference&rsquo;s near-zero orbit dips. The GPU&rsquo;s BLA-skip path was skipping those dips without a
 rebase check (it assumed &delta;z stays small in the BLA regime, which fails where |Z|&asymp;0),
 marching the deep pixels to the reference end and capping them at ~919k so the dendrites vanished. A
-rebase check at the BLA landing restored the full range; goldens stayed byte-identical.</p>
+rebase check at the BLA landing restored the full range (this also sharpened the deep-centre detail of
+11&ndash;13); goldens stayed byte-identical.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a
@@ -343,7 +345,7 @@ Iterations: 600000</pre>
 
 <section class="card" id="13-deep-3.7e141">
   <h2>Extreme depth 3.69e141x <span class="zoom">3.690308e141&times;</span></h2>
-  <p class="note">User-saved Fraktaler-3 location (me141.exr); 155-digit center.</p>
+  <p class="note">User-saved Fraktaler-3 location (me141.exr); 155-digit center. Auto-normalized coloring (--normalize): the deep minibrot/dendrite field aliases the fixed palette cycle into speckle, so the escape range is mapped to the palette (see the catalog intro). Renders the central minibrot on a smooth exterior matching F3; the minibrot's deep detail sharpened in v0.2.18 (BLA-landing rebase).</p>
   <div class="pair">
     <figure>
       <img src="renders/13-deep-3.7e141-fractadyne.png" alt="Fractadyne render">
@@ -372,7 +374,7 @@ Iterations: 600000</pre>
 
 <section class="card" id="14-deep-1.2e148">
   <h2>Extreme depth 1.17e148x <span class="zoom">1.166773e148&times;</span></h2>
-  <p class="note">User-saved Fraktaler-3 location (me148.exr); 161-digit center. Escape times measured 304k-582k (CPU perturbation probe), so 800k covers the view (rendered at 1xSS: the ~0.5M-iteration escape band makes 2xSS a multi-hour render); the .exr's saved 6,000,000 was an exploration setting. This location exposed the sub-f32 reference-orbit dip bug (fixed in v0.2.6): its dive path passes within ~1e-71 of zero every 4383 iterations, and the flushed samples re-glued every pixel to the reference past ~1e142x. Renders CORRECTLY and matches F3 arm-for-arm (spiral-dendrite clusters). The earlier 'speckle' was NOT a render bug -- the escape VALUES are correct (verified 2026-07-12: GPU == a faithful CPU df32/df64 Fe transcription, tests/probe_fe.rs), but they are huge (~3e5-8e5) and vary steeply at this dense dendrite field, so the fixed palette cycle (0.27) ALIASED them into speckle. This render maps the frame's escape range to the palette (auto-normalized coloring) -- the correct structure emerges. Broader lesson: the app's fixed-cycle coloring aliases at extreme depth; auto-normalized coloring is the general fix (see TODO).</p>
+  <p class="note">User-saved Fraktaler-3 location (me148.exr); 161-digit center. Escape times measured 304k-582k (CPU perturbation probe), so 800k covers the view (rendered at 2xSS like the rest of the corpus, ~26s via the --normalize tiled path); the .exr's saved 6,000,000 was an exploration setting. This location exposed the sub-f32 reference-orbit dip bug (fixed in v0.2.6): its dive path passes within ~1e-71 of zero every 4383 iterations, and the flushed samples re-glued every pixel to the reference past ~1e142x. Renders CORRECTLY and matches F3 arm-for-arm (spiral-dendrite clusters). The earlier 'speckle' was NOT a render bug -- the escape VALUES are correct (verified 2026-07-12: GPU == a faithful CPU df32/df64 Fe transcription, tests/probe_fe.rs), but they are huge (~3e5-8e5) and vary steeply at this dense dendrite field, so the fixed palette cycle (0.27) ALIASED them into speckle. This render maps the frame's escape range to the palette (auto-normalized coloring) -- the correct structure emerges. Broader lesson: the app's fixed-cycle coloring aliases at extreme depth; auto-normalized coloring is the general fix (see TODO).</p>
   <div class="pair">
     <figure>
       <img src="renders/14-deep-1.2e148-fractadyne.png" alt="Fractadyne render">
@@ -430,7 +432,7 @@ Iterations: 1600000</pre>
 
 <section class="card" id="16-deep-2.1e250">
   <h2>Extreme depth 2.15e250x <span class="zoom">2.147911e250&times;</span></h2>
-  <p class="note">User-saved Fraktaler-3 location (me250.exr); 262-digit center.</p>
+  <p class="note">User-saved Fraktaler-3 location (me250.exr); 262-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm.</p>
   <div class="pair">
     <figure>
       <img src="renders/16-deep-2.1e250-fractadyne.png" alt="Fractadyne render">
@@ -459,7 +461,7 @@ Iterations: 600008</pre>
 
 <section class="card" id="17-deep-4.2e275">
   <h2>Extreme depth 4.15e275x <span class="zoom">4.154612e275&times;</span></h2>
-  <p class="note">User-saved Fraktaler-3 location (me275.exr); 287-digit center.</p>
+  <p class="note">User-saved Fraktaler-3 location (me275.exr); 287-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm.</p>
   <div class="pair">
     <figure>
       <img src="renders/17-deep-4.2e275-fractadyne.png" alt="Fractadyne render">
@@ -517,7 +519,7 @@ Iterations: 150000</pre>
 
 <section class="card" id="18-deep-4.1e508">
   <h2>Extreme depth 4.13e508x <span class="zoom">4.128130e508&times;</span></h2>
-  <p class="note">User-saved Fraktaler-3 location (me508.exr); 520-digit center.</p>
+  <p class="note">User-saved Fraktaler-3 location (me508.exr); 520-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm.</p>
   <div class="pair">
     <figure>
       <img src="renders/18-deep-4.1e508-fractadyne.png" alt="Fractadyne render">
@@ -546,7 +548,7 @@ Iterations: 600008</pre>
 
 <section class="card" id="19-deep-1.3e726">
   <h2>Extreme depth 1.31e726x <span class="zoom">1.313065e726&times;</span></h2>
-  <p class="note">User-saved Fraktaler-3 location (me726.exr); 738-digit center.</p>
+  <p class="note">User-saved Fraktaler-3 location (me726.exr); 738-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm.</p>
   <div class="pair">
     <figure>
       <img src="renders/19-deep-1.3e726-fractadyne.png" alt="Fractadyne render">
@@ -575,7 +577,7 @@ Iterations: 600008</pre>
 
 <section class="card" id="20-deep-1.2e1008">
   <h2>Extreme depth 1.19e1008x <span class="zoom">1.188035e1008&times;</span></h2>
-  <p class="note">User-saved Fraktaler-3 location (me1007.exr); 1020-digit center.</p>
+  <p class="note">User-saved Fraktaler-3 location (me1007.exr); 1020-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm.</p>
   <div class="pair">
     <figure>
       <img src="renders/20-deep-1.2e1008-fractadyne.png" alt="Fractadyne render">

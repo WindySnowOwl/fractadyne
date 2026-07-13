@@ -118,7 +118,8 @@ center_x = "-0.31583546560906989081132519081459898427641049411365520112175337742
 center_y = "0.6533553743954627788289923830392687875350977003260517837408108019649970888461393846103786781501651324966145060684808980380361143296058258024080050814824069"
 mag_log10 = 141.5670626088
 iterations = 600000
-note = "User-saved Fraktaler-3 location (me141.exr); 155-digit center."
+normalize = true
+note = "User-saved Fraktaler-3 location (me141.exr); 155-digit center. Auto-normalized coloring (--normalize): the deep minibrot/dendrite field aliases the fixed palette cycle into speckle, so the escape range is mapped to the palette (see the catalog intro). Renders the central minibrot on a smooth exterior matching F3; the minibrot's deep detail sharpened in v0.2.18 (BLA-landing rebase)."
 
 [[location]]
 slug = "14-deep-1.2e148"
@@ -128,7 +129,7 @@ center_y = "0.653355374395462778828992383039268787535097700326051783740810801964
 mag_log10 = 148.0669863055
 iterations = 800000
 normalize = true
-note = "User-saved Fraktaler-3 location (me148.exr); 161-digit center. Escape times measured 304k-582k (CPU perturbation probe), so 800k covers the view (rendered at 1xSS: the ~0.5M-iteration escape band makes 2xSS a multi-hour render); the .exr's saved 6,000,000 was an exploration setting. This location exposed the sub-f32 reference-orbit dip bug (fixed in v0.2.6): its dive path passes within ~1e-71 of zero every 4383 iterations, and the flushed samples re-glued every pixel to the reference past ~1e142x. Renders CORRECTLY and matches F3 arm-for-arm (spiral-dendrite clusters). The earlier 'speckle' was NOT a render bug -- the escape VALUES are correct (verified 2026-07-12: GPU == a faithful CPU df32/df64 Fe transcription, tests/probe_fe.rs), but they are huge (~3e5-8e5) and vary steeply at this dense dendrite field, so the fixed palette cycle (0.27) ALIASED them into speckle. This render maps the frame's escape range to the palette (auto-normalized coloring) -- the correct structure emerges. Broader lesson: the app's fixed-cycle coloring aliases at extreme depth; auto-normalized coloring is the general fix (see TODO)."
+note = "User-saved Fraktaler-3 location (me148.exr); 161-digit center. Escape times measured 304k-582k (CPU perturbation probe), so 800k covers the view (rendered at 2xSS like the rest of the corpus, ~26s via the --normalize tiled path); the .exr's saved 6,000,000 was an exploration setting. This location exposed the sub-f32 reference-orbit dip bug (fixed in v0.2.6): its dive path passes within ~1e-71 of zero every 4383 iterations, and the flushed samples re-glued every pixel to the reference past ~1e142x. Renders CORRECTLY and matches F3 arm-for-arm (spiral-dendrite clusters). The earlier 'speckle' was NOT a render bug -- the escape VALUES are correct (verified 2026-07-12: GPU == a faithful CPU df32/df64 Fe transcription, tests/probe_fe.rs), but they are huge (~3e5-8e5) and vary steeply at this dense dendrite field, so the fixed palette cycle (0.27) ALIASED them into speckle. This render maps the frame's escape range to the palette (auto-normalized coloring) -- the correct structure emerges. Broader lesson: the app's fixed-cycle coloring aliases at extreme depth; auto-normalized coloring is the general fix (see TODO)."
 
 [[location]]
 slug = "15-deep-3.7e163"
@@ -147,7 +148,8 @@ center_x = "-1.18756061515065352141849890766714087691905256960101754518255939161
 center_y = "-0.3018168994715732164050004075273172840679325029393300682842262338318858410502532213359650477962054605582793370126610542572612338874753498817856934268064814045429700513387473824186875229256431620198944835658069812198166053125511035505041575385615626126716977814897"
 mag_log10 = 250.3320162164
 iterations = 600008
-note = "User-saved Fraktaler-3 location (me250.exr); 262-digit center."
+normalize = true
+note = "User-saved Fraktaler-3 location (me250.exr); 262-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm."
 
 [[location]]
 slug = "17-deep-4.2e275"
@@ -156,7 +158,8 @@ center_x = "-1.18756061515065352141849890766714087691905256960101754518255939161
 center_y = "-0.30181689947157321640500040752731728406793250293933006828422623383188584105025322133596504779620546055827933701266105425726123388747534988178569342680648140454297005133874738241868752292564316201989448356580698121981660531255110355050415753856156261268681245527781807409938630471752023121"
 mag_log10 = 275.6185305051
 iterations = 600008
-note = "User-saved Fraktaler-3 location (me275.exr); 287-digit center."
+normalize = true
+note = "User-saved Fraktaler-3 location (me275.exr); 287-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm."
 
 [[location]]
 slug = "18-deep-4.1e508"
@@ -165,7 +168,8 @@ center_x = "-1.18756061515065352141849890766714087691905256960101754518255939161
 center_y = "-0.3018168994715732164050004075273172840679325029393300682842262338318858410502532213359650477962054605582793370126610542572612338874753498817856934268064814045429700513387473824186875229256431620198944835658069812198166053125511035505041575385615626126868124552778180740993863044262014113913087459725599903822941598459784406657450007359057396733264056262406873074127846686191339245859886591815375644910376364144150837334546266876349497906182180040380746038297640797250917114442605639127938242698458707954489870917533654511"
 mag_log10 = 508.6157534021
 iterations = 600008
-note = "User-saved Fraktaler-3 location (me508.exr); 520-digit center."
+normalize = true
+note = "User-saved Fraktaler-3 location (me508.exr); 520-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm."
 
 [[location]]
 slug = "19-deep-1.3e726"
@@ -174,7 +178,8 @@ center_x = "-1.18756061515065352141849890766714087691905256960101754518255939161
 center_y = "-0.30181689947157321640500040752731728406793250293933006828422623383188584105025322133596504779620546055827933701266105425726123388747534988178569342680648140454297005133874738241868752292564316201989448356580698121981660531255110355050415753856156261268681245527781807409938630442620141139130874597255999038229415984597844066574500073590573967332640562624068730741278466861913392458598865918153756449103763641441508373345462668763494979061821800403807460382976407972509171144426056391279382426984587079544898708624122547598604035947651255353920598168696580122983812920869699698234232497982628108536390344284136460265562736065759667082285268103485848667832237662371636641599523340544730455855954064867101253065023127852917246181006136872082"
 mag_log10 = 726.1182863659
 iterations = 600008
-note = "User-saved Fraktaler-3 location (me726.exr); 738-digit center."
+normalize = true
+note = "User-saved Fraktaler-3 location (me726.exr); 738-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm."
 
 [[location]]
 slug = "20-deep-1.2e1008"
@@ -183,5 +188,6 @@ center_x = "-1.18756061515065352141849890766714087691905256960101754518255939161
 center_y = "-0.301816899471573216405000407527317284067932502939330068284226233831885841050253221335965047796205460558279337012661054257261233887475349881785693426806481404542970051338747382418687522925643162019894483565806981219816605312551103550504157538561562612686812455277818074099386304426201411391308745972559990382294159845978440665745000735905739673326405626240687307412784668619133924585988659181537564491037636414415083733454626687634949790618218004038074603829764079725091711444260563912793824269845870795448987086241225475986040359476512553539205981686965801229838129208696996982342324979826281085363903442841364602655627360657596670822852681034858486678322376623716366415995233405447304558559540648671012530650231278529172461809862576022238992286514429368014350163113766632477340611977626825858883358118402916772982394777576430171912097147135335334815279678662800099224983415220185171248620477058126269874085722352337152772230421937372862398820215809341048467505631184687278399240015294842075925538737641088388542858395241"
 mag_log10 = 1008.0748293267
 iterations = 600008
-note = "User-saved Fraktaler-3 location (me1007.exr); 1020-digit center."
+normalize = true
+note = "User-saved Fraktaler-3 location (me1007.exr); 1020-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm."
 

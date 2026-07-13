@@ -9,6 +9,15 @@ renders/<slug>-fraktaler.png, produced by generate_fraktaler.py or manually).
 
 Run from the repo root:  python validation/corpus/generate_corpus.py [--skip-renders]
 
+REGRESSION GATE (run after a major change):
+    python validation/corpus/generate_corpus.py --check           # all 20 locations
+    python validation/corpus/generate_corpus.py --check --only 14,15
+  Re-renders each location to a temp file and compares it pixel-for-pixel against the committed
+  renders/<slug>-fractadyne.png (the F3-confirmed baselines). Renders are deterministic, so an
+  unchanged renderer prints "20/20 MATCH"; any CHANGED location must get a fresh visual F3
+  comparison before re-blessing (regenerate + eyeball the catalog). Exits non-zero on any change.
+  Does not modify the committed renders or catalog. See DIAGNOSTICS.md.
+
 The Fractadyne render goes through `--render` with a FULLY staged session (location,
 iterations, coloring), restored afterwards. It must NOT go through the tour renderer:
 render_tour_to_dir forces auto_iter=true, silently re-capping an explicit iteration
@@ -132,7 +141,7 @@ def stage_session(loc):
     open(SESSION, "w", encoding="utf-8", newline="\n").write(t)
 
 
-def render_location(loc):
+def render_location(loc, out_png=None):
     """Render one location via `--render`; returns the output PNG path.
 
     The location goes on the COMMAND LINE (`--center`/`--zoom-log2`/`--iter`): `--render` is a
@@ -141,9 +150,13 @@ def render_location(loc):
     the corpus as twenty copies of the full set). `--zoom-log2` carries arbitrary depth; `--iter`
     is honored verbatim (auto-iter off). The session staging above still pins what has no CLI
     flag: coloring method, DE/lighting, HUD.
+
+    `out_png` overrides the destination (the corpus check renders to a temp file so it never
+    clobbers the committed render it is comparing against).
     """
     import math
-    out_png = os.path.join(CORPUS, "renders", loc["slug"] + "-fractadyne.png")
+    if out_png is None:
+        out_png = os.path.join(CORPUS, "renders", loc["slug"] + "-fractadyne.png")
     stage_session(loc)
     cmd = [
         EXE, "--render", "--out", out_png, "--size", "%dx%d" % (WIDTH, HEIGHT),
@@ -252,19 +265,21 @@ former 1e30&times; gap (location 07, once a too-coarse 34-digit seahorse placeho
 different sub-structure) is now a genuine cross-app match, re-imported from a user Fraktaler-3 save with a
 43-digit center. Locations 07 and 11&ndash;20 are user-saved Fraktaler-3 finds (7.5e29&times; to
 1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken verbatim.
-<strong>Coloring note for 14 (1.2e148&times;) and 15 (3.7e163&times;):</strong> these long rendered as
-speckle and were mis-diagnosed as glitches, then a perturbation bug &mdash; both wrong. The escape
-VALUES are correct (a faithful CPU transcription of the mode-2 shader kernel reproduces them exactly);
-the problem is that their smooth-iter counts are huge (~3e5&ndash;1.6e6) and vary steeply, so the fixed
-palette cycle (0.27) aliases a correct field into speckle. Their renders use <em>auto-normalized</em>
-coloring (the frame's escape range mapped to the palette) and then match F3 arm-for-arm. The general
-fix &mdash; an adaptive-cycle coloring mode for extreme depth &mdash; is in TODO.md.
-<strong>15 also needed a rendering fix (v0.2.18):</strong> its right-side dendrites escape at
+<strong>Coloring note for the deep dendrite / minibrot views (13, 14, 15, 16&ndash;20):</strong> at these
+depths the smooth-iter counts are huge (~3e5&ndash;1.6e6+) and vary steeply pixel-to-pixel, so the fixed
+palette cycle (0.27) aliases a correct escape field into speckle (long mis-diagnosed as glitches, then a
+perturbation bug &mdash; both wrong; a faithful CPU transcription of the mode-2 shader kernel reproduces
+the escape VALUES exactly). These renders use <em>auto-normalized</em> coloring (<code>--normalize</code>:
+the frame's escape range mapped to the palette), which colours the smooth exterior cleanly and matches F3
+arm-for-arm. The spiral views (09&ndash;12) have slowly-varying exteriors that don't alias, so they keep
+the standard cycle. The general fix &mdash; an adaptive-cycle coloring mode for the live view &mdash; is in
+TODO.md. <strong>15 also needed a rendering fix (v0.2.18):</strong> its right-side dendrites escape at
 928k&ndash;1.6M &mdash; <em>past</em> the reference orbit (~918k) &mdash; so they must rebase at the
 reference&rsquo;s near-zero orbit dips. The GPU&rsquo;s BLA-skip path was skipping those dips without a
 rebase check (it assumed &delta;z stays small in the BLA regime, which fails where |Z|&asymp;0),
 marching the deep pixels to the reference end and capping them at ~919k so the dendrites vanished. A
-rebase check at the BLA landing restored the full range; goldens stayed byte-identical.</p>
+rebase check at the BLA landing restored the full range (this also sharpened the deep-centre detail of
+11&ndash;13); goldens stayed byte-identical.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a
@@ -275,7 +290,76 @@ zoom value slightly wider &mdash; the <em>center</em> feature and structure must
     open(os.path.join(CORPUS, "catalog.html"), "w", encoding="utf-8", newline="\n").write(html)
 
 
+def _img_rgb(path):
+    """Decode a PNG to an int32 H×W×3 array (stdlib PIL/numpy — both ship with the dev env)."""
+    from PIL import Image
+    import numpy as np
+    return np.asarray(Image.open(path).convert("RGB"), dtype=np.int32)
+
+
+def check_corpus(locs, only=None):
+    """REGRESSION GATE — run after a major change: re-render every location to a temp file and
+    compare it PIXEL-FOR-PIXEL against the committed renders/<slug>-fractadyne.png, which were
+    visually confirmed to match the Fraktaler-3 references. Renders are deterministic (same
+    pipeline ⇒ byte-identical, like the --selftest goldens), so an unchanged renderer gives
+    maxΔ 0 for every location; any CHANGED location must get a fresh visual F3 comparison before
+    re-blessing. Does NOT touch the committed renders or catalog.html.
+
+    `only` = list of slug prefixes to check a subset (e.g. ["14", "15"]). Returns True iff every
+    checked location matched. Exit code is wired from this in main()."""
+    import numpy as np
+    import tempfile
+    if only:
+        locs = [l for l in locs if any(l["slug"].startswith(o) for o in only)]
+        if not locs:
+            sys.exit("no locations match --only %s" % only)
+    if not os.path.exists(EXE):
+        sys.exit("build first: cargo build --release -p fractadyne-app")
+    backup = SESSION + ".checkbak"
+    shutil.copyfile(SESSION, backup)
+    tmpdir = tempfile.mkdtemp(prefix="fdcorpus_")
+    results = []
+    try:
+        for loc in locs:
+            slug = loc["slug"]
+            committed = os.path.join(CORPUS, "renders", slug + "-fractadyne.png")
+            if not os.path.exists(committed):
+                results.append((slug, "MISSING", "no committed render to compare against"))
+                continue
+            print("checking %s ..." % slug, flush=True)
+            tmp = os.path.join(tmpdir, slug + ".png")
+            render_location(loc, out_png=tmp)
+            a, b = _img_rgb(committed), _img_rgb(tmp)
+            if a.shape != b.shape:
+                results.append((slug, "SIZE", "shape %s vs committed %s" % (b.shape, a.shape)))
+                continue
+            d = np.abs(a - b)
+            maxd, meand, std = int(d.max()), float(d.mean()), float(b.std())
+            blank = " BLANK?" if std < 1.0 else ""  # near-uniform frame -> suspect (defensive)
+            status = "MATCH" if maxd == 0 else "CHANGED"
+            results.append((slug, status, "maxD %d meanD %.2f std %.1f%s" % (maxd, meand, std, blank)))
+    finally:
+        shutil.copyfile(backup, SESSION)
+        os.remove(backup)
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        print("session restored")
+    ok = sum(1 for _, s, _ in results if s == "MATCH")
+    print("\ncorpus check -- re-render vs committed (F3-confirmed) renders, %dx%d %dxSS:" % (WIDTH, HEIGHT, SS))
+    for slug, status, detail in results:
+        flag = "" if status == "MATCH" else "   <-- REVIEW vs F3"
+        print("  %-22s %-8s %s%s" % (slug, status, detail, flag))
+    verdict = ("unchanged (still matches F3)" if ok == len(results)
+               else "CHANGED -- review the flagged locations against their F3 reference")
+    print("\n%d/%d MATCH -- corpus %s" % (ok, len(results), verdict))
+    return ok == len(results)
+
+
 def main():
+    if "--check" in sys.argv:
+        only = None
+        if "--only" in sys.argv:
+            only = sys.argv[sys.argv.index("--only") + 1].split(",")
+        sys.exit(0 if check_corpus(read_locations(), only) else 1)
     skip_renders = "--skip-renders" in sys.argv
     locs = read_locations()
     for loc in locs:

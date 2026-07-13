@@ -26,6 +26,24 @@ python validation/corpus/generate_corpus.py            # everything
 python validation/corpus/generate_corpus.py --skip-renders   # just .kfr + catalog
 ```
 
+## Checking for regressions (`--check`)
+
+Run this after any change that could affect the renderer (a major update, a shader edit) to confirm
+the corpus still matches the committed, F3-confirmed renders:
+
+```
+python validation/corpus/generate_corpus.py --check            # all 20 locations
+python validation/corpus/generate_corpus.py --check --only 14,15
+```
+
+It re-renders each location to a temp file and compares it **pixel-for-pixel** against the committed
+`renders/<slug>-fractadyne.png`. The renderer is deterministic (same pipeline ⇒ byte-identical pixels,
+like the `--selftest` goldens), so an unchanged renderer prints `20/20 MATCH`; any `CHANGED` location
+must be eyeballed against its F3 reference (regenerate, then open `catalog.html`) before it is
+re-committed. The check exits non-zero on any change and never modifies the committed renders or
+catalog. It is intentionally **not** part of the fast `--selftest` — a full 20-location re-render takes
+minutes (the deep locations dominate), so it is an on-demand gate.
+
 Renders go through `--render` with a fully staged session per location — exact center strings +
 magnification, the location's verbatim iteration count (auto-scale off; `--render` honors an
 explicit count, unlike the tour renderer, which forces auto-iteration and silently re-caps it),
@@ -78,18 +96,26 @@ still stands — the plainest proof being that 08 (83-digit center), 09 (526-dig
 all render and match *far* deeper. The `.f3.toml` / `.kfr` params are written for all twenty, and
 Fractadyne renders all twenty.
 
-**14 (1.2e148×) and 15 (3.7e163×) — a coloring note.** For a long time these two rendered as
-per-pixel **speckle** and were wrongly diagnosed (in turn) as glitches, then as a perturbation-accuracy
-bug. Both were wrong. The escape **values are correct** — verified 2026-07-12 by a faithful CPU
-transcription of the exact mode-2 shader kernel (df/Cdf/Fe Dekker–Knuth arithmetic, shared exponent,
-Zhuoran rebasing; `fractadyne-core/tests/probe_fe.rs`), which reproduces the GPU's smooth-iter values
-(df32 == df64 == GPU). The problem is **coloring**: at this depth the smooth-iter counts are huge
-(~3e5–9e5) and, at these dense dendrite fields, vary steeply pixel-to-pixel, so the fixed palette
-`cycle` (0.27) turns a correct escape field into aliased speckle. These two renders therefore use
-**auto-normalized coloring** — the frame's escape range mapped to the palette — and then match F3's
-structure arm-for-arm (spiral-dendrite clusters at 14; the bulb boundary at 15). Broader lesson: the
-app's fixed-cycle smooth coloring aliases at extreme depth; an auto-normalize / adaptive-cycle coloring
-mode is the general fix (TODO.md).
+**Deep dendrite / minibrot views (13, 14, 15, 16–20) — a coloring note, and one render fix.** For a
+long time 14/15 rendered as per-pixel **speckle** and were wrongly diagnosed (in turn) as glitches, then
+as a perturbation-accuracy bug. Both were wrong. The escape **values are correct** — verified by a
+faithful CPU transcription of the exact mode-2 shader kernel (df/Cdf/Fe Dekker–Knuth arithmetic, shared
+exponent, Zhuoran rebasing; `fractadyne-core/tests/probe_fe.rs`), which reproduces the GPU's smooth-iter
+values (df32 == df64 == GPU). The problem is **coloring**: at these depths the smooth-iter counts are
+huge (~3e5–1.6e6) and, at dense dendrite/minibrot fields, vary steeply pixel-to-pixel, so the fixed
+palette `cycle` (0.27) turns a correct escape field into aliased speckle. All the deep views with a
+rapidly-varying exterior (**13, 14, 15, 16–20**) therefore use **auto-normalized coloring**
+(`--normalize` — the frame's escape range mapped to the palette) and then match F3 arm-for-arm; the
+spiral views **09–12** have slowly-varying exteriors that don't alias, so they keep the standard cycle.
+
+**15 additionally needed a real render fix (v0.2.18).** Its right-side dendrites escape at 928k–1.6M —
+*past* the reference orbit (~918k) — so they must rebase at the reference's near-zero orbit dips. The
+GPU's BLA iteration-skip path was skipping those dips *without* a Zhuoran rebase check (it assumed δz
+stays small in the BLA regime, which fails where |Z|≈0 ⇒ |z|≈|δz|), marching the deep pixels to the
+reference end and capping them at ~919k so the dendrites vanished. A rebase check at the BLA landing
+restored the full range (and sharpened the deep-center detail of 11–13); `--selftest` goldens stayed
+byte-identical. Broader lesson: the app's fixed-cycle smooth coloring aliases at extreme depth; an
+auto-normalize / adaptive-cycle coloring mode for the live view is the general fix (TODO.md).
 
 ## Reading the comparison
 
