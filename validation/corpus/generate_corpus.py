@@ -202,7 +202,7 @@ def write_catalog(locs):
         digits = max(len(loc["center_x"]), len(loc["center_y"])) - 2
         cards.append("""
 <section class="card" id="{slug}">
-  <h2>{title} <span class="zoom">{zoom}&times;</span></h2>
+  <h2><span class="num" title="location {num} (slug {slug}) — matches --check / logs / --only {num}">{num}</span> {title} <span class="zoom">{zoom}&times;</span></h2>
   <p class="note">{note}</p>
   <div class="pair">
     <figure>
@@ -226,7 +226,7 @@ def write_catalog(locs):
     <pre>{kfr}</pre>
   </details>
 </section>""".format(
-            slug=loc["slug"], title=esc(loc["title"]), note=esc(loc["note"]),
+            slug=loc["slug"], num=loc["slug"].split("-")[0], title=esc(loc["title"]), note=esc(loc["note"]),
             zoom=zoom_string(loc["mag_log10"]).replace("E", "e"), l10=loc["mag_log10"],
             iters=loc["iterations"], mode=fractadyne_mode(loc["mag_log10"]),
             precision=precision, digits=digits, w=WIDTH, h=HEIGHT, ss=SS,
@@ -237,6 +237,8 @@ def write_catalog(locs):
 <style>
   body {{ background:#14161a; color:#ddd; font:15px/1.5 system-ui, sans-serif; max-width:1400px; margin:2rem auto; padding:0 1rem; }}
   h1 {{ color:#E0A030; }} h2 {{ margin:0 0 .2rem; }} h2 .zoom {{ color:#E0A030; font-weight:normal; font-size:.8em; }}
+  h2 .num {{ display:inline-block; min-width:1.5em; text-align:center; color:#0d0f12; background:#E0A030;
+    border-radius:5px; padding:0 .35em; margin-right:.45em; font-size:.82em; font-weight:700; vertical-align:.08em; }}
   .card {{ border:1px solid #2a2e35; border-radius:10px; padding:1rem 1.2rem; margin:1.4rem 0; background:#191c21; }}
   .note {{ color:#9aa2ad; margin:.2rem 0 .8rem; }}
   .pair {{ display:grid; grid-template-columns:1fr 1fr; gap:.8rem; }}

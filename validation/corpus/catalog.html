@@ -4,6 +4,8 @@
 <style>
   body { background:#14161a; color:#ddd; font:15px/1.5 system-ui, sans-serif; max-width:1400px; margin:2rem auto; padding:0 1rem; }
   h1 { color:#E0A030; } h2 { margin:0 0 .2rem; } h2 .zoom { color:#E0A030; font-weight:normal; font-size:.8em; }
+  h2 .num { display:inline-block; min-width:1.5em; text-align:center; color:#0d0f12; background:#E0A030;
+    border-radius:5px; padding:0 .35em; margin-right:.45em; font-size:.82em; font-weight:700; vertical-align:.08em; }
   .card { border:1px solid #2a2e35; border-radius:10px; padding:1rem 1.2rem; margin:1.4rem 0; background:#191c21; }
   .note { color:#9aa2ad; margin:.2rem 0 .8rem; }
   .pair { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; }
@@ -54,7 +56,7 @@ minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification 
 zoom value slightly wider &mdash; the <em>center</em> feature and structure must still match exactly.</p>
 
 <section class="card" id="01-home">
-  <h2>Full set overview <span class="zoom">1&times;</span></h2>
+  <h2><span class="num" title="location 01 (slug 01-home) — matches --check / logs / --only 01">01</span> Full set overview <span class="zoom">1&times;</span></h2>
   <p class="note">Baseline sanity check: framing, orientation, palette anchor points.</p>
   <div class="pair">
     <figure>
@@ -83,7 +85,7 @@ Iterations: 512</pre>
 </section>
 
 <section class="card" id="02-seahorse-1e4">
-  <h2>Seahorse Valley 1e4x <span class="zoom">1.000000e4&times;</span></h2>
+  <h2><span class="num" title="location 02 (slug 02-seahorse-1e4) — matches --check / logs / --only 02">02</span> Seahorse Valley 1e4x <span class="zoom">1.000000e4&times;</span></h2>
   <p class="note">Shallow perturbation entry; spiral arms should match arm-for-arm.</p>
   <div class="pair">
     <figure>
@@ -112,7 +114,7 @@ Iterations: 1500</pre>
 </section>
 
 <section class="card" id="03-seahorse-1e6">
-  <h2>Seahorse Valley 1e6x <span class="zoom">1.000000e6&times;</span></h2>
+  <h2><span class="num" title="location 03 (slug 03-seahorse-1e6) — matches --check / logs / --only 03">03</span> Seahorse Valley 1e6x <span class="zoom">1.000000e6&times;</span></h2>
   <p class="note">Classic KF benchmark depth (double precision exhausted).</p>
   <div class="pair">
     <figure>
@@ -141,7 +143,7 @@ Iterations: 3000</pre>
 </section>
 
 <section class="card" id="04-seahorse-1e12">
-  <h2>Seahorse Valley 2.9e12x <span class="zoom">2.925710e12&times;</span></h2>
+  <h2><span class="num" title="location 04 (slug 04-seahorse-1e12) — matches --check / logs / --only 04">04</span> Seahorse Valley 2.9e12x <span class="zoom">2.925710e12&times;</span></h2>
   <p class="note">Deep df32-perturbation regime; a real Fraktaler-3 comparison point.</p>
   <div class="pair">
     <figure>
@@ -170,7 +172,7 @@ Iterations: 60000</pre>
 </section>
 
 <section class="card" id="05-dendrite-8e17">
-  <h2>Dendrite filaments 8.14e17x <span class="zoom">8.143631e17&times;</span></h2>
+  <h2><span class="num" title="location 05 (slug 05-dendrite-8e17) — matches --check / logs / --only 05">05</span> Dendrite filaments 8.14e17x <span class="zoom">8.143631e17&times;</span></h2>
   <p class="note">Dendritic branching filaments; deep df32-perturbation regime. Real Fraktaler-3 comparison point at 8.1e17x.</p>
   <div class="pair">
     <figure>
@@ -199,7 +201,7 @@ Iterations: 50000</pre>
 </section>
 
 <section class="card" id="06-seahorse-1e24">
-  <h2>Seahorse filaments 1e24x <span class="zoom">1.000000e24&times;</span></h2>
+  <h2><span class="num" title="location 06 (slug 06-seahorse-1e24) — matches --check / logs / --only 06">06</span> Seahorse filaments 1e24x <span class="zoom">1.000000e24&times;</span></h2>
   <p class="note">Approaching the df32 exponent limit (~1e28x).</p>
   <div class="pair">
     <figure>
@@ -228,7 +230,7 @@ Iterations: 20000</pre>
 </section>
 
 <section class="card" id="07-deep-1e30">
-  <h2>Deep filaments 7.50e29x <span class="zoom">7.500000e29&times;</span></h2>
+  <h2><span class="num" title="location 07 (slug 07-deep-1e30) — matches --check / logs / --only 07">07</span> Deep filaments 7.50e29x <span class="zoom">7.500000e29&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me30.exr); 43-digit center. Imported verbatim from the .exr header: F3 zoom 1e30 -&gt; our mag 7.50e29x (the 4/3 framing convention, see crosscheck-fraktaler3.md). Replaces the former 34-digit seahorse placeholder, which was too coarse for a reproducible 1e30x cross-app match. This center carries ~13 digits of margin (cf. location 04, matched at similar margin) and DOES match arm-for-arm: both apps render the same diagonal dendrite filament with a central pinch and spiral-armed clusters, closing the corpus's lone gap.</p>
   <div class="pair">
     <figure>
@@ -257,7 +259,7 @@ Iterations: 600008</pre>
 </section>
 
 <section class="card" id="08-deep-6.6e43">
-  <h2>Deep spiral 6.65e43x <span class="zoom">6.649409e43&times;</span></h2>
+  <h2><span class="num" title="location 08 (slug 08-deep-6.6e43) — matches --check / logs / --only 08">08</span> Deep spiral 6.65e43x <span class="zoom">6.649409e43&times;</span></h2>
   <p class="note">First extreme-depth reference (83-digit center).</p>
   <div class="pair">
     <figure>
@@ -286,7 +288,7 @@ Iterations: 60000</pre>
 </section>
 
 <section class="card" id="11-deep-1.7e124">
-  <h2>Extreme depth 1.70e124x <span class="zoom">1.703157e124&times;</span></h2>
+  <h2><span class="num" title="location 11 (slug 11-deep-1.7e124) — matches --check / logs / --only 11">11</span> Extreme depth 1.70e124x <span class="zoom">1.703157e124&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (Me124.exr); 137-digit center.</p>
   <div class="pair">
     <figure>
@@ -315,7 +317,7 @@ Iterations: 600000</pre>
 </section>
 
 <section class="card" id="12-deep-4.6e132">
-  <h2>Extreme depth 4.57e132x <span class="zoom">4.571886e132&times;</span></h2>
+  <h2><span class="num" title="location 12 (slug 12-deep-4.6e132) — matches --check / logs / --only 12">12</span> Extreme depth 4.57e132x <span class="zoom">4.571886e132&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me132.exr); 145-digit center.</p>
   <div class="pair">
     <figure>
@@ -344,7 +346,7 @@ Iterations: 600000</pre>
 </section>
 
 <section class="card" id="13-deep-3.7e141">
-  <h2>Extreme depth 3.69e141x <span class="zoom">3.690308e141&times;</span></h2>
+  <h2><span class="num" title="location 13 (slug 13-deep-3.7e141) — matches --check / logs / --only 13">13</span> Extreme depth 3.69e141x <span class="zoom">3.690308e141&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me141.exr); 155-digit center. Auto-normalized coloring (--normalize): the deep minibrot/dendrite field aliases the fixed palette cycle into speckle, so the escape range is mapped to the palette (see the catalog intro). Renders the central minibrot on a smooth exterior matching F3; the minibrot's deep detail sharpened in v0.2.18 (BLA-landing rebase).</p>
   <div class="pair">
     <figure>
@@ -373,7 +375,7 @@ Iterations: 600000</pre>
 </section>
 
 <section class="card" id="14-deep-1.2e148">
-  <h2>Extreme depth 1.17e148x <span class="zoom">1.166773e148&times;</span></h2>
+  <h2><span class="num" title="location 14 (slug 14-deep-1.2e148) — matches --check / logs / --only 14">14</span> Extreme depth 1.17e148x <span class="zoom">1.166773e148&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me148.exr); 161-digit center. Escape times measured 304k-582k (CPU perturbation probe), so 800k covers the view (rendered at 2xSS like the rest of the corpus, ~26s via the --normalize tiled path); the .exr's saved 6,000,000 was an exploration setting. This location exposed the sub-f32 reference-orbit dip bug (fixed in v0.2.6): its dive path passes within ~1e-71 of zero every 4383 iterations, and the flushed samples re-glued every pixel to the reference past ~1e142x. Renders CORRECTLY and matches F3 arm-for-arm (spiral-dendrite clusters). The earlier 'speckle' was NOT a render bug -- the escape VALUES are correct (verified 2026-07-12: GPU == a faithful CPU df32/df64 Fe transcription, tests/probe_fe.rs), but they are huge (~3e5-8e5) and vary steeply at this dense dendrite field, so the fixed palette cycle (0.27) ALIASED them into speckle. This render maps the frame's escape range to the palette (auto-normalized coloring) -- the correct structure emerges. Broader lesson: the app's fixed-cycle coloring aliases at extreme depth; auto-normalized coloring is the general fix (see TODO).</p>
   <div class="pair">
     <figure>
@@ -402,7 +404,7 @@ Iterations: 800000</pre>
 </section>
 
 <section class="card" id="15-deep-3.7e163">
-  <h2>Extreme depth 3.74e163x <span class="zoom">3.735181e163&times;</span></h2>
+  <h2><span class="num" title="location 15 (slug 15-deep-3.7e163) — matches --check / logs / --only 15">15</span> Extreme depth 3.74e163x <span class="zoom">3.735181e163&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me163.exr); 175-digit center. Renders CORRECTLY (matches F3): smooth bulb on the left, dense spiral dendrites on the right. FIXED v0.2.18 (BLA-landing rebase): the dendrite pixels escape at 928k-1.6M, PAST the reference orbit (~918k), so they must rebase at the reference's near-zero orbit dips; the GPU's BLA-skip path was skipping those dips without the Zhuoran rebase check (it assumed |delta z| stays small in the BLA regime, which fails at a dip where |Z|~=0), marching the deep pixels to the reference end and capping them at ~919k. Adding a rebase check at the BLA landing (mandelbrot.wgsl) restored the full escape range (measured 886k-1.6M, interior&gt;0). Diagnosed with a faithful CPU df32 sim (probe_fe) that reproduced the correct escape values with the same reference, isolating BLA as the divergence. Rendered with --normalize (escape range -&gt; palette). See TODO and loc 14's note.</p>
   <div class="pair">
     <figure>
@@ -431,7 +433,7 @@ Iterations: 1600000</pre>
 </section>
 
 <section class="card" id="16-deep-2.1e250">
-  <h2>Extreme depth 2.15e250x <span class="zoom">2.147911e250&times;</span></h2>
+  <h2><span class="num" title="location 16 (slug 16-deep-2.1e250) — matches --check / logs / --only 16">16</span> Extreme depth 2.15e250x <span class="zoom">2.147911e250&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me250.exr); 262-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm.</p>
   <div class="pair">
     <figure>
@@ -460,7 +462,7 @@ Iterations: 600008</pre>
 </section>
 
 <section class="card" id="17-deep-4.2e275">
-  <h2>Extreme depth 4.15e275x <span class="zoom">4.154612e275&times;</span></h2>
+  <h2><span class="num" title="location 17 (slug 17-deep-4.2e275) — matches --check / logs / --only 17">17</span> Extreme depth 4.15e275x <span class="zoom">4.154612e275&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me275.exr); 287-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm.</p>
   <div class="pair">
     <figure>
@@ -489,7 +491,7 @@ Iterations: 600008</pre>
 </section>
 
 <section class="card" id="09-deep-6.1e500">
-  <h2>Extreme depth 6.09e500x <span class="zoom">6.090000e500&times;</span></h2>
+  <h2><span class="num" title="location 09 (slug 09-deep-6.1e500) — matches --check / logs / --only 09">09</span> Extreme depth 6.09e500x <span class="zoom">6.090000e500&times;</span></h2>
   <p class="note">526-digit center; far beyond double-exponent range in both apps. Real F3 cross-check at 6.09e500x — five hundred orders of magnitude, arm-for-arm.</p>
   <div class="pair">
     <figure>
@@ -518,7 +520,7 @@ Iterations: 150000</pre>
 </section>
 
 <section class="card" id="18-deep-4.1e508">
-  <h2>Extreme depth 4.13e508x <span class="zoom">4.128130e508&times;</span></h2>
+  <h2><span class="num" title="location 18 (slug 18-deep-4.1e508) — matches --check / logs / --only 18">18</span> Extreme depth 4.13e508x <span class="zoom">4.128130e508&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me508.exr); 520-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm.</p>
   <div class="pair">
     <figure>
@@ -547,7 +549,7 @@ Iterations: 600008</pre>
 </section>
 
 <section class="card" id="19-deep-1.3e726">
-  <h2>Extreme depth 1.31e726x <span class="zoom">1.313065e726&times;</span></h2>
+  <h2><span class="num" title="location 19 (slug 19-deep-1.3e726) — matches --check / logs / --only 19">19</span> Extreme depth 1.31e726x <span class="zoom">1.313065e726&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me726.exr); 738-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm.</p>
   <div class="pair">
     <figure>
@@ -576,7 +578,7 @@ Iterations: 600008</pre>
 </section>
 
 <section class="card" id="20-deep-1.2e1008">
-  <h2>Extreme depth 1.19e1008x <span class="zoom">1.188035e1008&times;</span></h2>
+  <h2><span class="num" title="location 20 (slug 20-deep-1.2e1008) — matches --check / logs / --only 20">20</span> Extreme depth 1.19e1008x <span class="zoom">1.188035e1008&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me1007.exr); 1020-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm.</p>
   <div class="pair">
     <figure>
@@ -605,7 +607,7 @@ Iterations: 600008</pre>
 </section>
 
 <section class="card" id="10-deep-4.6e1105">
-  <h2>Extreme depth 4.60e1105x <span class="zoom">4.600000e1105&times;</span></h2>
+  <h2><span class="num" title="location 10 (slug 10-deep-4.6e1105) — matches --check / logs / --only 10">10</span> Extreme depth 4.60e1105x <span class="zoom">4.600000e1105&times;</span></h2>
   <p class="note">1141-digit center; stress test for arbitrary-precision + BLA pipelines. Real F3 cross-check at 4.6e1105x — the corpus's deepest matched pair, 1105 orders of magnitude.</p>
   <div class="pair">
     <figure>
