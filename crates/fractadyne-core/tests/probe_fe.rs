@@ -20,6 +20,7 @@ trait Flt:
     fn maxv(self, o: Self) -> Self;
     fn ldx(self, e: i32) -> Self; // self * 2^e (exact power of two)
     fn flog2v(self) -> i32; // floor(log2(|self|)); very-negative for 0
+    fn sqrtv(self) -> Self; // sqrt at this precision (mirrors the shader's f32 sqrt)
 }
 impl Flt for f32 {
     fn cv(x: f64) -> f32 { x as f32 }
@@ -28,6 +29,7 @@ impl Flt for f32 {
     fn absv(self) -> f32 { self.abs() }
     fn maxv(self, o: f32) -> f32 { self.max(o) }
     fn ldx(self, e: i32) -> f32 { self * 2f32.powi(e) }
+    fn sqrtv(self) -> f32 { self.sqrt() }
     fn flog2v(self) -> i32 {
         let m = self.abs();
         if m == 0.0 || !m.is_finite() { return -1_000_000; }
@@ -52,6 +54,7 @@ impl Flt for f64 {
         if ef == 0 { return (m * 9_007_199_254_740_992.0).flog2v() - 53; } // subnormal -> *2^53
         ef - 1023
     }
+    fn sqrtv(self) -> f64 { self.sqrt() }
 }
 
 // GPU f32 with SUBNORMAL FLUSH (FTZ): most GPUs flush |x| < 2^-126 to zero on every op. IEEE
@@ -71,6 +74,7 @@ impl Flt for Ftz {
     fn maxv(self, o: Ftz) -> Ftz { Ftz(self.0.max(o.0)) }
     fn ldx(self, e: i32) -> Ftz { Ftz(ftz(self.0 * 2f32.powi(e))) }
     fn flog2v(self) -> i32 { self.0.flog2v() }
+    fn sqrtv(self) -> Ftz { Ftz(ftz(self.0.sqrt())) }
 }
 // GPU f32 with a NON-FUSED FMA: if the driver/compiler does not fuse `a*b+c` (or contracts it
 // wrong), two_prod's error term collapses to 0 and the df32 mul loses ~24 bits. Everything else
@@ -89,6 +93,7 @@ impl Flt for Nf {
     fn maxv(self, o: Nf) -> Nf { Nf(self.0.max(o.0)) }
     fn ldx(self, e: i32) -> Nf { Nf(self.0 * 2f32.powi(e)) }
     fn flog2v(self) -> i32 { self.0.flog2v() }
+    fn sqrtv(self) -> Nf { Nf(self.0.sqrt()) }
 }
 #[derive(Clone, Copy)]
 struct Df<F: Flt>(F, F);
@@ -157,6 +162,22 @@ fn flog2_fe<F: Flt>(a: Fe<F>) -> f64 {
     if mag == 0.0 { return f64::NEG_INFINITY; }
     mag.log2() + a.e as f64
 }
+// Shader-faithful |a| (mirrors `fe_abs_sf`): sqrt(re.hi² + im.hi²) as a SINGLE F (only ~24-bit
+// precision for f32), normalized to a (mantissa∈[1,2), exp) scalar floatexp. This is the crux of the
+// GPU/sim divergence — the sim's `flog2_fe` uses f64 (~52-bit), so it resolves `|zfull| < |dz|` at the
+// near-zero orbit dips where the 24-bit f32 magnitudes tie → the shader misses the rebase (corpus 15).
+fn abs_sf<F: Flt>(a: Fe<F>) -> (F, i32) {
+    let mag = (a.m.re.0 * a.m.re.0 + a.m.im.0 * a.m.im.0).sqrtv();
+    let sh = mag.flog2v();
+    if sh <= -1_000_000 { return (mag, FZE); }
+    (mag.ldx(-sh), a.e + sh)
+}
+// `sf_lt` for two normalized magnitudes: compare exponent, then mantissa at F precision (equivalent to
+// the shader's `sf_add(a,-b).m.x < 0` for mantissas already in [1,2)).
+fn sf_lt2<F: Flt>(a: (F, i32), b: (F, i32)) -> bool {
+    if a.1 != b.1 { return a.1 < b.1; }
+    a.0 < b.0
+}
 fn flo<F: Flt>(a: Fe<F>) -> (f64, f64) {
     let s = 2f64.powi(a.e.clamp(-127, 127));
     (a.m.re.0.f64v() * s, a.m.im.0.f64v() * s)
@@ -196,7 +217,8 @@ fn orbit_cdf_sim<F: Flt>(r: &[f32; 4]) -> Cd<F> {
 
 // One pixel's escape iteration via the faithful Fe kernel (Mandelbrot, no BLA/SA — BLA-off is
 // equally noisy, so plain perturbation reproduces it). `orbit` is the raw df32/ext samples.
-fn fe_escape<F: Flt>(orbit: &[[f32; 4]], len: usize, dcx: f64, dcy: f64, max_iter: u32) -> i64 {
+// `gpu_sf`: rebase decision as the SHADER does it (24-bit `abs_sf`/`sf_lt2`) vs the sim's f64 `flog2_fe`.
+fn fe_escape<F: Flt>(orbit: &[[f32; 4]], len: usize, dcx: f64, dcy: f64, max_iter: u32, gpu_sf: bool) -> i64 {
     let dc = fe_from::<F>(dcx, dcy);
     let mut dz = fzero::<F>();
     let mut ref_n = 0usize;
@@ -216,7 +238,12 @@ fn fe_escape<F: Flt>(orbit: &[[f32; 4]], len: usize, dcx: f64, dcy: f64, max_ite
         if zfx * zfx + zfy * zfy > 256.0 * 256.0 {
             return it as i64 + 1;
         }
-        if flog2_fe(zfull) < flog2_fe(dz) || ref_n + 1 >= len {
+        let rebase = if gpu_sf {
+            sf_lt2(abs_sf(zfull), abs_sf(dz))
+        } else {
+            flog2_fe(zfull) < flog2_fe(dz)
+        };
+        if rebase || ref_n + 1 >= len {
             dz = zfull; // fe_sub(zfull, Z0=0) for Mandelbrot
             ref_n = 0;
         }
@@ -254,26 +281,30 @@ fn probe_row_fe() {
     // Reference offset from the view centre (complex units), so each row pixel's dc = (pixel_c - ref).
     let rox = fractadyne_core::sub_f64(&refpt[0], &center[0], prec);
     let roy = fractadyne_core::sub_f64(&refpt[1], &center[1], prec);
-    let (mut r32, mut rftz, mut rnf, mut r64) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    // df32 with the SHADER's 24-bit sf-rebase (= the GPU) vs df32 with the sim's f64-rebase vs df64 truth.
+    let (mut r32g, mut r32f, mut r64) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..npix {
         let off = i as f64 - (npix as f64 - 1.0) / 2.0;
         let dcx = step * off - rox;
         let dcy = -roy;
-        r32.push(fe_escape::<f32>(&orbit, len, dcx, dcy, max_iter));
-        rftz.push(fe_escape::<Ftz>(&orbit, len, dcx, dcy, max_iter));
-        rnf.push(fe_escape::<Nf>(&orbit, len, dcx, dcy, max_iter));
-        r64.push(fe_escape::<f64>(&orbit, len, dcx, dcy, max_iter));
+        r32g.push(fe_escape::<f32>(&orbit, len, dcx, dcy, max_iter, true));
+        r32f.push(fe_escape::<f32>(&orbit, len, dcx, dcy, max_iter, false));
+        r64.push(fe_escape::<f64>(&orbit, len, dcx, dcy, max_iter, false));
     }
-    // Jump count among ESCAPED px only (interior = -1), matching FEDUMP.
-    let jumpn = |r: &[i64]| {
+    // Jump count + max escape among ESCAPED px only (interior = -1), matching FEDUMP.
+    let stats = |r: &[i64]| -> (usize, i64) {
         let e: Vec<i64> = r.iter().copied().filter(|&v| v >= 0).collect();
-        e.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count()
+        let jumps = e.windows(2).filter(|w| (w[0] - w[1]).abs() > 2000).count();
+        (jumps, e.iter().copied().max().unwrap_or(-1))
     };
-    let stride: Vec<i64> = r32.iter().step_by(8).copied().collect();
+    let (jg, mg) = stats(&r32g);
+    let (jf, mf) = stats(&r32f);
+    let (j6, m6) = stats(&r64);
+    let stride: Vec<i64> = r32g.iter().step_by(8).copied().collect();
     println!("[fe] {label}: reference len={len}");
-    println!("[fe] {label}: df32 every-8th: {stride:?}");
+    println!("[fe] {label}: df32-GPUsf every-8th: {stride:?}");
     println!(
-        "[fe] {label}: jumps>2000 (escaped) -- df32-IEEE={}  df32-FTZ={}  df32-NoFMA={}  df64={}  (compare to [fedump] jumps)",
-        jumpn(&r32), jumpn(&rftz), jumpn(&rnf), jumpn(&r64)
+        "[fe] {label}: jumps>2000 / max-escape -- df32-GPUsf(24bit)={jg}/{mg}  df32-f64rebase={jf}/{mf}  df64={j6}/{m6}"
     );
+    println!("[fe] {label}: EXPECT if the 24-bit rebase is the bug: GPUsf max-escape caps near the ref len ({len}) while f64-rebase reaches ~max_iter.");
 }

@@ -811,6 +811,19 @@ fn fs_iterate(in: VsOut) -> FragOut {
                         aux.prev_abs = length(zf);
                     }
                     n_bla = n_bla + 1u;
+                    // Rebase at the BLA landing. The "δz stays small in the BLA regime ⇒ rebasing
+                    // never triggers here" assumption (above) FAILS when the landing sample is a
+                    // near-zero orbit dip: |Z_nref| ≈ 0 ⇒ |zfull| ≈ |δz|, so the Zhuoran condition
+                    // |zfull| < |δz| can hold. Corpus 15's deep dendrite pixels must rebase exactly
+                    // at these dips; without the check a valid skip lands past them and the pixel
+                    // marches to the reference END, escaping prematurely there (~orbit_len) instead
+                    // of deep — the dendrites vanish. Mirrors the full-step rebase below.
+                    let zfe = fe_add(orbit_fe(reference[nref]), dz);
+                    if (sf_lt(fe_abs_sf(zfe), fe_abs_sf(dz))) {
+                        n_rebase = n_rebase + 1u;
+                        dz = fe_sub(zfe, orbit_fe(reference[0]));
+                        ref_n = 0u;
+                    }
                     applied = true;
                     break;
                 }

@@ -26,27 +26,25 @@ center / magnification / iteration cap for side-by-side structural comparison. F
 twenty) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
 With <code>maximum_reference_iterations</code> set in each F3 param (see README &mdash; F3&rsquo;s batch
 default is far too low for a zoomed view and blanks silently, which long masqueraded as a ~1e13&times;
-ceiling), <strong>F3 renders deep correctly here</strong>: <strong>19 of 20</strong> locations have
-clean, arm-for-arm F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude)
-(location 15 is a known partial &mdash; see the note below). The
+ceiling), <strong>F3 renders deep correctly here</strong>: <strong>all 20</strong> locations have
+clean, arm-for-arm F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The
 former 1e30&times; gap (location 07, once a too-coarse 34-digit seahorse placeholder that F3 rounded onto
 different sub-structure) is now a genuine cross-app match, re-imported from a user Fraktaler-3 save with a
 43-digit center. Locations 07 and 11&ndash;20 are user-saved Fraktaler-3 finds (7.5e29&times; to
 1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken verbatim.
-<strong>Coloring note for 14 (1.2e148&times;):</strong> this long rendered as speckle and was
-mis-diagnosed as glitches, then a perturbation bug &mdash; both wrong. The escape VALUES are correct
-(a faithful CPU transcription of the mode-2 shader kernel reproduces them exactly); the problem is
-that its smooth-iter counts are huge (~3e5&ndash;8e5) and vary steeply, so the fixed palette cycle
-(0.27) aliases a correct field into speckle. Location 14&rsquo;s render uses <em>auto-normalized</em>
-coloring (the frame's escape range mapped to the palette) and then matches F3 arm-for-arm. The general
+<strong>Coloring note for 14 (1.2e148&times;) and 15 (3.7e163&times;):</strong> these long rendered as
+speckle and were mis-diagnosed as glitches, then a perturbation bug &mdash; both wrong. The escape
+VALUES are correct (a faithful CPU transcription of the mode-2 shader kernel reproduces them exactly);
+the problem is that their smooth-iter counts are huge (~3e5&ndash;1.6e6) and vary steeply, so the fixed
+palette cycle (0.27) aliases a correct field into speckle. Their renders use <em>auto-normalized</em>
+coloring (the frame's escape range mapped to the palette) and then match F3 arm-for-arm. The general
 fix &mdash; an adaptive-cycle coloring mode for extreme depth &mdash; is in TODO.md.
-<strong>Known limit at 15 (3.7e163&times;):</strong> the smooth bulb matches F3, but the right-side
-dendrites are MISSING (smooth-orange where F3 shows dense dark spirals). Those pixels escape at
-928k&ndash;1.6M &mdash; <em>past</em> the reference orbit (which escapes at ~918k) &mdash; so the GPU
-caps them at the reference&rsquo;s end (~919k) instead of rebasing deeper. The faithful CPU df32 sim
-recovers the dendrites with that same reference (by rebasing), so it is a GPU past-reference rebasing
-limitation, not coloring or iteration count; a longer reference would fix it but overflows the GPU
-128&nbsp;MB buffer-binding limit (~932k samples). Tracked in TODO.md &ldquo;Open bugs&rdquo;.</p>
+<strong>15 also needed a rendering fix (v0.2.18):</strong> its right-side dendrites escape at
+928k&ndash;1.6M &mdash; <em>past</em> the reference orbit (~918k) &mdash; so they must rebase at the
+reference&rsquo;s near-zero orbit dips. The GPU&rsquo;s BLA-skip path was skipping those dips without a
+rebase check (it assumed &delta;z stays small in the BLA regime, which fails where |Z|&asymp;0),
+marching the deep pixels to the reference end and capping them at ~919k so the dendrites vanished. A
+rebase check at the BLA landing restored the full range; goldens stayed byte-identical.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a
@@ -403,7 +401,7 @@ Iterations: 800000</pre>
 
 <section class="card" id="15-deep-3.7e163">
   <h2>Extreme depth 3.74e163x <span class="zoom">3.735181e163&times;</span></h2>
-  <p class="note">User-saved Fraktaler-3 location (me163.exr); 175-digit center. KNOWN PARTIAL at this depth: the smooth bulb (left) matches F3, but the right-side dendrites are MISSING (our render is smooth-orange where F3 shows dense dark spiral dendrites). Root cause (2026-07-12): those dendrite pixels escape at 928k-1.6M, PAST the reference orbit (which escapes at ~918k), so on the GPU they hit the reference's end and escape prematurely there (measured GPU escape range 886k-919k, interior=0) instead of rebasing deeper. The faithful CPU df32 sim reproduces the dendrites with that SAME ~918k reference (by rebasing to 1.6M), so the escape VALUES are computable in df32 -- it is a GPU past-reference rebasing limitation, NOT coloring and NOT iteration count (1.6M is enough). A longer/interior reference WOULD cover them but overflows the GPU max-buffer-binding limit (128MB / ~932k samples at 144 B/sample); the hill-climb finds a 1.54M interior ref that panics on bind. Unlike loc 14, whose deepest pixels escape WITHIN the reference and so render correctly. --normalize is still applied (helps the bulb). See TODO 'Open bugs' and loc 14's note.</p>
+  <p class="note">User-saved Fraktaler-3 location (me163.exr); 175-digit center. Renders CORRECTLY (matches F3): smooth bulb on the left, dense spiral dendrites on the right. FIXED v0.2.18 (BLA-landing rebase): the dendrite pixels escape at 928k-1.6M, PAST the reference orbit (~918k), so they must rebase at the reference's near-zero orbit dips; the GPU's BLA-skip path was skipping those dips without the Zhuoran rebase check (it assumed |delta z| stays small in the BLA regime, which fails at a dip where |Z|~=0), marching the deep pixels to the reference end and capping them at ~919k. Adding a rebase check at the BLA landing (mandelbrot.wgsl) restored the full escape range (measured 886k-1.6M, interior&gt;0). Diagnosed with a faithful CPU df32 sim (probe_fe) that reproduced the correct escape values with the same reference, isolating BLA as the divergence. Rendered with --normalize (escape range -&gt; palette). See TODO and loc 14's note.</p>
   <div class="pair">
     <figure>
       <img src="renders/15-deep-3.7e163-fractadyne.png" alt="Fractadyne render">
