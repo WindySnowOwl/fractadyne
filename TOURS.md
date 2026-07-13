@@ -37,8 +37,8 @@ A camera waypoint. The view eases from the previous keyframe to this one over `s
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `secs` | float | 0 | Seconds to glide here from the previous keyframe. |
-| `center_x` | string | (inherit) | Full-precision decimal real part of the center. Omit to inherit the previous center (pure zoom). |
-| `center_y` | string | (inherit) | Full-precision decimal imaginary part of the center. |
+| `center_re` | string | (inherit) | Full-precision decimal real part of the center. Omit to inherit the previous center (pure zoom). |
+| `center_im` | string | (inherit) | Full-precision decimal imaginary part of the center. |
 | `mag` | float | 1 | Magnification at this keyframe (up to ~1e308). |
 | `mag_log10` | float | (unset) | Magnification as log10, for depths past f64's ~1e308 ceiling (e.g. 420 = 1e420x). Takes precedence over `mag`. |
 | `fractal` | string | (inherit) | Fractal family name (e.g. "Mandelbrot", "Burning Ship"). |
@@ -72,8 +72,8 @@ A labeled marker anchored to a fractal coordinate — it tracks the point as the
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `text` | string | (required) | Label text. |
-| `center_x` | string | (required) | Anchor coordinate, real part (full-precision decimal). |
-| `center_y` | string | (required) | Anchor coordinate, imaginary part. |
+| `center_re` | string | (required) | Anchor coordinate, real part (full-precision decimal). |
+| `center_im` | string | (required) | Anchor coordinate, imaginary part. |
 | `at` | float | 0 | When it appears (seconds). |
 | `secs` | float | 0 = until end | How long it stays (seconds). |
 | `fade` | float | 0.4 | Fade in/out time (seconds). |
@@ -85,8 +85,8 @@ A vignette that dims everything outside a soft circle to draw the eye. Anchored 
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `center_x` | string | (required) | Circle center, real part (full-precision decimal). |
-| `center_y` | string | (required) | Circle center, imaginary part. |
+| `center_re` | string | (required) | Circle center, real part (full-precision decimal). |
+| `center_im` | string | (required) | Circle center, imaginary part. |
 | `radius` | float | 0.25 | Circle radius as a fraction of the frame height. |
 | `softness` | float | 0.08 | Soft-edge width as a fraction of the frame height. |
 | `dim` | float | 0.7 | How dark outside the circle (0..1). |
@@ -109,15 +109,15 @@ format_version = 1
 
 [[keyframe]]            # overview
 secs = 0
-center_x = "-0.5"
-center_y = "0.0"
+center_re = "-0.5"
+center_im = "0.0"
 mag = 1
 hold = 2
 
 [[keyframe]]            # dive into Seahorse Valley
 secs = 6
-center_x = "-0.743643887037158704752191506114774"
-center_y = "0.131825904205311970493132056385139"
+center_re = "-0.743643887037158704752191506114774"
+center_im = "0.131825904205311970493132056385139"
 mag_log10 = 6
 ease = "in"
 hold = 3
@@ -129,8 +129,8 @@ secs = 4
 pos = "bottom"
 
 [[spotlight]]
-center_x = "-0.743643887037158704752191506114774"
-center_y = "0.131825904205311970493132056385139"
+center_re = "-0.743643887037158704752191506114774"
+center_im = "0.131825904205311970493132056385139"
 radius = 0.28
 at = 8
 secs = 4

@@ -5,8 +5,9 @@ For each location in locations.toml, writes an F3 batch param file, runs the ven
 Fraktaler-3 in batch mode, and copies the resulting PNG to renders/<slug>-fraktaler.png
 (so it pairs with <slug>-fractadyne.png in catalog.html).
 
-Convention: F3 zoom = 1 shows a vertical extent of 4; Fractadyne mag = 1 shows 3. To frame
-the SAME view, f3_zoom = our_mag * 4/3 (see validation/crosscheck-fraktaler3.md).
+Zoom convention: Fractadyne's magnification now equals Fraktaler-3's zoom (both reference a
+vertical extent of 4 at zoom 1 — since v0.2.21; the old 4/3 conversion is gone). So
+f3_zoom = 10^mag_log10 directly. See validation/crosscheck-fraktaler3.md.
 
 DEPTH NOTE: Fraktaler-3's batch mode defaults maximum_reference_iterations far too low for a
 zoomed view, so without it F3 silently renders uniform/blank at ANY depth. For a long time that
@@ -56,8 +57,8 @@ def read_locations():
 
 
 def f3_zoom(mag_log10):
-    """F3 zoom string from log10(our magnification): f3_zoom = 10^mag_log10 * 4/3."""
-    l = mag_log10 + math.log10(4.0 / 3.0)
+    """F3 zoom string from log10(magnification): our magnification == F3 zoom (v0.2.21+)."""
+    l = mag_log10
     exp = int(l // 1)
     mant = 10 ** (l - exp)
     return "%.6fe%d" % (mant, exp) if exp >= 4 else "%.6g" % (10 ** l)

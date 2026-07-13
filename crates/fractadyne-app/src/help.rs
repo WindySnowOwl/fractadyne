@@ -305,9 +305,9 @@ pub(crate) fn help_methodology(ui: &mut egui::Ui) {
          mantissa plus a separate integer exponent (\"floatexp\"), lifting the 32-bit depth wall. \
          The engine switches automatically: direct math when shallow, perturbation when deep, and \
          floatexp when deepest. Depth is then bounded by coordinate precision and the iteration \
-         budget rather than a fixed limit — cross-checked against Fraktaler-3 to 4.6e1105× (a \
+         budget rather than a fixed limit — cross-checked against Fraktaler-3 to 6.13e1105× (a \
          20-location reference corpus), with an internal precision self-consistency battery to \
-         1e1000000×; the bundled tour reaches ~1e420×.",
+         1e1000000×; the bundled tour reaches ~1.3e420×.",
     );
     help_sub(ui, "Reference choice & rebasing");
     help_p(

@@ -58,7 +58,11 @@ pub struct Viewport {
 }
 
 impl Viewport {
-    pub const REFERENCE_HEIGHT: f64 = 3.0;
+    /// Complex-plane height of the home view (magnification = 1). Chosen as 4.0 so our
+    /// magnification EQUALS the Kalles Fraktaler / Fraktaler-3 "zoom" — that community references a
+    /// vertical extent of 4 at zoom 1 — removing the old 4/3 conversion (a source of cross-app
+    /// friction). `magnification = REFERENCE_HEIGHT / (height_px · units_per_pixel)`.
+    pub const REFERENCE_HEIGHT: f64 = 4.0;
 
     pub fn new(width_px: f64, height_px: f64) -> Self {
         let height_px = height_px.max(1.0);

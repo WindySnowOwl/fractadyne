@@ -32,8 +32,9 @@ to the last ULP and the two engines legitimately sample differently.
 
 ## Reproduce
 
-1. **Conventions.** F3 `zoom = 1` shows vertical extent 4; Fractadyne `mag = 1` shows
-   3 — so `our_mag = 0.75 × f3_zoom`. Match `escape_radius` (we use 256) and `iterations`.
+1. **Conventions.** Fractadyne's `magnification` equals Fraktaler-3's `zoom` (both show a
+   vertical extent of 4 at value 1; aligned in v0.2.21, dropping the old `our_mag = 0.75 × f3_zoom`
+   conversion) — so `our_mag = f3_zoom`. Match `escape_radius` (we use 256) and `iterations`.
 
 2. **Render the F3 side** (batch mode). Save the `N` channel and disable the exponential
    map; `image.subframes = 1`:

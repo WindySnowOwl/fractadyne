@@ -25,9 +25,9 @@ fn probe_escape_times() {
     let zs: Vec<(f64, f64)> = orbit.iter().take(len).map(fractadyne_core::sample_xy).collect();
     println!("[esc] {label}: reference len={len} (escaped early = shorter than max_iter)");
 
-    // View half-height = 1.5·10^-mag_log10 (3-unit-high view at mag 1). Probe pixels at a few
+    // View half-height = 2.0·10^-mag_log10 (4-unit-high view at mag 1). Probe pixels at a few
     // fractions of the half-span in 8 directions.
-    let half = FloatExp::from_f64(1.5).mul_pow2(-(mag_log10 * std::f64::consts::LN_10 / std::f64::consts::LN_2));
+    let half = FloatExp::from_f64(2.0).mul_pow2(-(mag_log10 * std::f64::consts::LN_10 / std::f64::consts::LN_2));
     let dirs: [(f64, f64); 8] = [
         (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0),
         (0.7, 0.7), (-0.7, 0.7), (0.7, -0.7), (-0.7, -0.7),
@@ -96,8 +96,8 @@ fn probe_escape_row() {
     let zs: Vec<(f64, f64)> = orbit.iter().take(len).map(fractadyne_core::sample_xy).collect();
     println!("[row] {label}: reference len={len}");
 
-    // Per-pixel c-space step = view_height / height_px; view half-height = 1.5·10^-mag_log10.
-    let half = FloatExp::from_f64(1.5)
+    // Per-pixel c-space step = view_height / height_px; view half-height = 2.0·10^-mag_log10.
+    let half = FloatExp::from_f64(2.0)
         .mul_pow2(-(mag_log10 * std::f64::consts::LN_10 / std::f64::consts::LN_2));
     let step = half.mul_f64(2.0 / height_px);
     let mut escapes: Vec<i64> = Vec::with_capacity(npix);
@@ -243,7 +243,7 @@ fn probe_best_ref() {
 
     let center = [fractadyne_core::parse_bf(cx).unwrap(), fractadyne_core::parse_bf(cy).unwrap()];
     let mag_log2 = mag_log10 * std::f64::consts::LN_10 / std::f64::consts::LN_2;
-    // Full view span (3-unit-high at mag 1), 16:9.
+    // Full view span (4-unit-high at mag 1), 16:9.
     let span = [
         FloatExp::from_f64(3.0 * 16.0 / 9.0).mul_pow2(-mag_log2),
         FloatExp::from_f64(3.0).mul_pow2(-mag_log2),

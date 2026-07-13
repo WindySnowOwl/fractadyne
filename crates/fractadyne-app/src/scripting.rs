@@ -11,7 +11,7 @@ use serde::Deserialize;
 /// build: we still play the parts we understand but warn that newer features may not apply.
 pub(crate) const SCRIPT_FORMAT_VERSION: u32 = 1;
 
-/// On-disk script format (TOML). A keyframe with no `center_x`/`center_y` inherits
+/// On-disk script format (TOML). A keyframe with no `center_re`/`center_im` inherits
 /// the previous keyframe's center (handy for pure zoom-in tours). Captions are timed
 /// independently of keyframes (so narration can span or overlap camera moves).
 #[derive(Deserialize, Default)]
@@ -45,7 +45,9 @@ struct ScriptFile {
 /// A spotlight vignette: dim everything outside a soft circle centred on a fractal coordinate.
 #[derive(Deserialize, Clone)]
 struct SpotlightFile {
+    #[serde(rename = "center_re")]
     center_x: String,
+    #[serde(rename = "center_im")]
     center_y: String,
     /// Circle radius as a fraction of the frame height (default 0.25).
     #[serde(default)]
@@ -68,7 +70,9 @@ struct SpotlightFile {
 #[derive(Deserialize, Clone)]
 struct CalloutFile {
     text: String,
+    #[serde(rename = "center_re")]
     center_x: String,
+    #[serde(rename = "center_im")]
     center_y: String,
     #[serde(default)]
     at: f64,
@@ -262,9 +266,9 @@ struct KeyframeFile {
     /// Seconds to glide here from the previous keyframe.
     #[serde(default)]
     secs: f64,
-    #[serde(default)]
+    #[serde(rename = "center_re", default)]
     center_x: Option<String>,
-    #[serde(default)]
+    #[serde(rename = "center_im", default)]
     center_y: Option<String>,
     #[serde(default = "one_f64")]
     mag: f64,
@@ -350,8 +354,8 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
         summary: "A camera waypoint. The view eases from the previous keyframe to this one over `secs`, then holds for `hold`. Discrete settings (center, fractal, julia, dual, orbits) inherit forward until changed.",
         fields: &[
             SchemaField { name: "secs", ty: "float", default: "0", doc: "Seconds to glide here from the previous keyframe." },
-            SchemaField { name: "center_x", ty: "string", default: "(inherit)", doc: "Full-precision decimal real part of the center. Omit to inherit the previous center (pure zoom)." },
-            SchemaField { name: "center_y", ty: "string", default: "(inherit)", doc: "Full-precision decimal imaginary part of the center." },
+            SchemaField { name: "center_re", ty: "string", default: "(inherit)", doc: "Full-precision decimal real part of the center. Omit to inherit the previous center (pure zoom)." },
+            SchemaField { name: "center_im", ty: "string", default: "(inherit)", doc: "Full-precision decimal imaginary part of the center." },
             SchemaField { name: "mag", ty: "float", default: "1", doc: "Magnification at this keyframe (up to ~1e308)." },
             SchemaField { name: "mag_log10", ty: "float", default: "(unset)", doc: "Magnification as log10, for depths past f64's ~1e308 ceiling (e.g. 420 = 1e420x). Takes precedence over `mag`." },
             SchemaField { name: "fractal", ty: "string", default: "(inherit)", doc: "Fractal family name (e.g. \"Mandelbrot\", \"Burning Ship\")." },
@@ -385,8 +389,8 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
         summary: "A labeled marker anchored to a fractal coordinate — it tracks the point as the view pans/zooms, with a leader line to the label.",
         fields: &[
             SchemaField { name: "text", ty: "string", default: "(required)", doc: "Label text." },
-            SchemaField { name: "center_x", ty: "string", default: "(required)", doc: "Anchor coordinate, real part (full-precision decimal)." },
-            SchemaField { name: "center_y", ty: "string", default: "(required)", doc: "Anchor coordinate, imaginary part." },
+            SchemaField { name: "center_re", ty: "string", default: "(required)", doc: "Anchor coordinate, real part (full-precision decimal)." },
+            SchemaField { name: "center_im", ty: "string", default: "(required)", doc: "Anchor coordinate, imaginary part." },
             SchemaField { name: "at", ty: "float", default: "0", doc: "When it appears (seconds)." },
             SchemaField { name: "secs", ty: "float", default: "0 = until end", doc: "How long it stays (seconds)." },
             SchemaField { name: "fade", ty: "float", default: "0.4", doc: "Fade in/out time (seconds)." },
@@ -398,8 +402,8 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
         repeatable: true,
         summary: "A vignette that dims everything outside a soft circle to draw the eye. Anchored to a coordinate so it tracks the point and stays a constant on-screen size.",
         fields: &[
-            SchemaField { name: "center_x", ty: "string", default: "(required)", doc: "Circle center, real part (full-precision decimal)." },
-            SchemaField { name: "center_y", ty: "string", default: "(required)", doc: "Circle center, imaginary part." },
+            SchemaField { name: "center_re", ty: "string", default: "(required)", doc: "Circle center, real part (full-precision decimal)." },
+            SchemaField { name: "center_im", ty: "string", default: "(required)", doc: "Circle center, imaginary part." },
             SchemaField { name: "radius", ty: "float", default: "0.25", doc: "Circle radius as a fraction of the frame height." },
             SchemaField { name: "softness", ty: "float", default: "0.08", doc: "Soft-edge width as a fraction of the frame height." },
             SchemaField { name: "dim", ty: "float", default: "0.7", doc: "How dark outside the circle (0..1)." },
@@ -469,14 +473,14 @@ pub(crate) fn tour_schema_markdown() -> String {
          format_version = 1\n\n\
          [[keyframe]]            # overview\n\
          secs = 0\n\
-         center_x = \"-0.5\"\n\
-         center_y = \"0.0\"\n\
+         center_re = \"-0.5\"\n\
+         center_im = \"0.0\"\n\
          mag = 1\n\
          hold = 2\n\n\
          [[keyframe]]            # dive into Seahorse Valley\n\
          secs = 6\n\
-         center_x = \"-0.743643887037158704752191506114774\"\n\
-         center_y = \"0.131825904205311970493132056385139\"\n\
+         center_re = \"-0.743643887037158704752191506114774\"\n\
+         center_im = \"0.131825904205311970493132056385139\"\n\
          mag_log10 = 6\n\
          ease = \"in\"\n\
          hold = 3\n\n\
@@ -486,8 +490,8 @@ pub(crate) fn tour_schema_markdown() -> String {
          secs = 4\n\
          pos = \"bottom\"\n\n\
          [[spotlight]]\n\
-         center_x = \"-0.743643887037158704752191506114774\"\n\
-         center_y = \"0.131825904205311970493132056385139\"\n\
+         center_re = \"-0.743643887037158704752191506114774\"\n\
+         center_im = \"0.131825904205311970493132056385139\"\n\
          radius = 0.28\n\
          at = 8\n\
          secs = 4\n\
@@ -952,7 +956,11 @@ fn place_callout_label(
     // Fallback: from the preferred spot (clamped into bounds), step down until clear — bounded so
     // it always terminates; wraps back to the top if it runs off the bottom.
     let mut lp = candidates[0];
-    lp.x = lp.x.clamp(bounds.min.x + pad.x + 2.0, (bounds.max.x - sz.x - pad.x - 2.0).max(bounds.min.x));
+    // Clamp x into [left margin, right margin]; the upper bound must not fall below the lower one
+    // (a label wider than the frame — e.g. a tiny preview render — would otherwise invert the
+    // clamp bounds and panic). `.max(lo)` pins it to the left margin in that degenerate case.
+    let lo_x = bounds.min.x + pad.x + 2.0;
+    lp.x = lp.x.clamp(lo_x, (bounds.max.x - sz.x - pad.x - 2.0).max(lo_x));
     lp.y = lp.y.max(bounds.min.y + pad.y + 2.0);
     let step = sz.y + pad.y * 2.0 + 4.0;
     for _ in 0..24 {

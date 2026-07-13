@@ -266,7 +266,7 @@ fn probe_row_fe() {
     let cy = fractadyne_core::parse_bf(cy).unwrap();
     let center = [cx.clone(), cy.clone()];
     let zero = fractadyne_core::BigFloat::from_f64(0.0, prec);
-    let half = 1.5f64 * 10f64.powf(-mag_log10);
+    let half = 2.0f64 * 10f64.powf(-mag_log10);
     let step = 2.0 * half / height_px;
     // Use the SAME reference the GPU picks (best_reference), not the center — the escape times are
     // reference-independent in exact arithmetic but NOT in df32, so this is the faithful comparison.

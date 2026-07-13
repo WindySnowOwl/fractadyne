@@ -12,9 +12,9 @@ palette = "Ember"
 # --- overview ---
 [[keyframe]]
 secs = 0
-center_x = "-0.5"
-center_y = "0.0"
-mag = 1
+center_re = "-0.5"
+center_im = "0.0"
+mag = 1.33333
 hold = 3
 
 # --- dual view: c glides along a path; the Julia set morphs continuously ---
@@ -53,9 +53,9 @@ hold = 2
 [[keyframe]]
 secs = 2.5
 dual = false
-center_x = "-0.5"
-center_y = "0.0"
-mag = 1
+center_re = "-0.5"
+center_im = "0.0"
+mag = 1.33333
 orbits = true
 orbit_re = -0.5
 orbit_im = 0.0

@@ -11,40 +11,40 @@ palette = "Ember"
 # --- overview (hold on the whole set) ---
 [[keyframe]]
 secs = 0
-center_x = "-0.5"
-center_y = "0.0"
-mag = 1
+center_re = "-0.5"
+center_im = "0.0"
+mag = 1.33333
 hold = 3.5
 
 # --- glide into Seahorse Valley, pause to look ---
 [[keyframe]]
 secs = 3.5
-center_x = "-7.436438870371587047521915061147723443299582954590750709038e-1"
-center_y = "1.318259042053119704931320563851357020465533657480713907209e-1"
-mag = 55
+center_re = "-7.436438870371587047521915061147723443299582954590750709038e-1"
+center_im = "1.318259042053119704931320563851357020465533657480713907209e-1"
+mag = 73.3333
 ease = "smooth"
 hold = 3
 
 # --- the dive: accelerate in, cruise at constant zoom rate, decelerate onto the minibrot ---
 [[keyframe]]
 secs = 5
-mag = 50000
+mag = 66666.7
 ease = "in"
 [[keyframe]]
 secs = 6
-mag = 1e10
+mag = 1.33333e10
 ease = "linear"
 [[keyframe]]
 secs = 6
-mag = 1e17
+mag = 1.33333e17
 ease = "linear"
 [[keyframe]]
 secs = 6
-mag = 1e24
+mag = 1.33333e24
 ease = "linear"
 [[keyframe]]
 secs = 6
-mag = 6e29
+mag = 8e29
 ease = "out"
 hold = 5
 
@@ -81,33 +81,33 @@ size = 26
 # --- overview callouts (point out landmarks while we hold on the set) ---
 [[callout]]
 text = "period-2 bulb"
-center_x = "-1.0"
-center_y = "0.0"
+center_re = "-1.0"
+center_im = "0.0"
 at = 1.0
 secs = 2.6
 [[callout]]
 text = "Seahorse Valley"
-center_x = "-0.75"
-center_y = "0.11"
+center_re = "-0.75"
+center_im = "0.11"
 at = 1.0
 secs = 2.6
 [[callout]]
 text = "Elephant Valley"
-center_x = "0.30"
-center_y = "0.0"
+center_re = "0.30"
+center_im = "0.0"
 at = 1.0
 secs = 2.6
 [[callout]]
 text = "a minibrot in the antenna"
-center_x = "-1.75"
-center_y = "0.0"
+center_re = "-1.75"
+center_im = "0.0"
 at = 1.0
 secs = 2.6
 
 # --- spotlight the minibrot at the finale ---
 [[spotlight]]
-center_x = "-7.436438870371587047521915061147723443299582954590750709038e-1"
-center_y = "1.318259042053119704931320563851357020465533657480713907209e-1"
+center_re = "-7.436438870371587047521915061147723443299582954590750709038e-1"
+center_im = "1.318259042053119704931320563851357020465533657480713907209e-1"
 radius = 0.28
 softness = 0.1
 dim = 0.7

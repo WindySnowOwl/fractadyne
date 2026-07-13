@@ -1,9 +1,9 @@
 # Fractadyne ↔ Kalles Fraktaler comparison corpus
 
-Twenty reference locations — from the full-set overview down to **1.2e1008×** (deepest matched
-pair **4.6e1105×**) — rendered by both apps from the **exact same center, magnification, and
+Twenty reference locations — from the full-set overview down to **1.58e1008×** (deepest matched
+pair **6.13e1105×**) — rendered by both apps from the **exact same center, magnification, and
 iteration count**, for side-by-side structural comparison. Locations 11–20 are user-saved
-Fraktaler-3 finds (1.7e124× → 1.2e1008×), imported verbatim from their `.exr` headers. Open **[catalog.html](catalog.html)** to view the pairs with each
+Fraktaler-3 finds (2.27e124× → 1.58e1008×), imported verbatim from their `.exr` headers. Open **[catalog.html](catalog.html)** to view the pairs with each
 location's full compute details.
 
 ## Layout
@@ -81,8 +81,8 @@ python validation/corpus/generate_fraktaler.py --max-log10 8 # only run F3 up to
 ```
 
 It writes an F3 batch param (`locations/<slug>.f3.toml`) for **every** location and renders each
-to `renders/<slug>-fraktaler.png` (1280×720, matched framing via `f3_zoom = mag × 4/3`), detecting
-and skipping blank output.
+to `renders/<slug>-fraktaler.png` (1280×720; our magnification equals F3's zoom as of v0.2.21, so
+`f3_zoom = 10^mag_log10`), detecting and skipping blank output.
 
 You can also render any location by hand: **Kalles Fraktaler 2** or **fraktaler-3** opens the
 `.kfr` (or the `.f3.toml`); set the image size to 1280×720 and save the PNG as
@@ -99,13 +99,13 @@ driver update + reboot. That reproducibility read as a hardware wall. It was a *
 
 `generate_fraktaler.py` now writes `maximum_reference_iterations`, `maximum_perturb_iterations`, and
 `maximum_bla_steps` into every `.f3.toml`. With those set, **F3 renders deep correctly here** — real,
-arm-for-arm matches verified all the way to **4.60e1105×** (location 10, a 1141-digit center; ~4 min
+arm-for-arm matches verified all the way to **6.13e1105×** (location 10, a 1141-digit center; ~4 min
 to render). Two further things have to hold for a clean cross-app match: the iteration cap must be
 high enough for the depth (F3's reference otherwise truncates and blanks), and the **center must carry
 enough digits for the depth *plus* margin** for F3's internal reference rounding, which is coarser
 than Fractadyne's full-precision bignum reference.
 
-Net: clean, arm-for-arm F3 matches at **all 20 locations** — from 1× to **4.60e1105×**, over a
+Net: clean, arm-for-arm F3 matches at **all 20 locations** — from 1× to **6.13e1105×**, over a
 thousand orders of magnitude of zoom. The former gap at **07** (1e30×) is now closed: its old shared
 34-digit seahorse center was too coarse for a reproducible match there — F3 rounded it below
 Fractadyne's bignum reference onto different sub-structure — so it was **replaced by a user Fraktaler-3
@@ -141,9 +141,9 @@ auto-normalize / adaptive-cycle coloring mode for the live view is the general f
 - **Compare structure, not color.** Palettes and smooth-coloring transfer curves differ by
   design; what must match is feature placement — spiral arm counts and chirality, escape-boundary
   shape, minibrot positions, filament topology.
-- **Framing:** Fractadyne's magnification is referenced to a 3-unit-high view; KF's zoom is
-  referenced to its own (wider) home frame. The same zoom value may therefore frame slightly
-  wider in KF — the centered feature and its structure must still correspond exactly.
+- **Zoom:** Fractadyne's magnification now **equals** the Kalles Fraktaler / Fraktaler-3 zoom (both
+  reference a 4-unit vertical extent at value 1; aligned in v0.2.21, so the same number frames the
+  same view in either app) — a single zoom scale across the two tools.
 - **Iterations are pinned** to the same value in both apps (auto-scaling off), so interior/exterior
   classification near the cap is comparable.
 - Locations 07–10 exercise Fractadyne's floatexp + BLA pipeline (KF covers the same range with

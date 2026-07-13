@@ -147,7 +147,7 @@ def stage_session(loc):
         ("center_y", "0.0"),
         ("center_x_str", '"-0.5"'),
         ("center_y_str", '"0.0"'),
-        ("units_per_pixel", repr(3.0 / HEIGHT)),
+        ("units_per_pixel", repr(4.0 / HEIGHT)),
         ("units_per_pixel_e", "0"),
         ("max_iter", "1000"),
         ("auto_iter", "true"),
@@ -311,17 +311,17 @@ def write_catalog(locs):
   .repro-hint {{ color:#8a929d; font-size:.82em; }}
 </style>
 <h1>Fractadyne vs Kalles Fraktaler &mdash; reference render corpus</h1>
-<p>Twenty locations, ordered by magnification from the full-set overview to 4.6e1105&times;, rendered by both apps from the exact same
+<p>Twenty locations, ordered by magnification from the full-set overview to 6.13e1105&times;, rendered by both apps from the exact same
 center / magnification / iteration cap for side-by-side structural comparison. Fractadyne renders (all
 twenty) come from <code>generate_corpus.py</code>; the Fraktaler-3 side from <code>generate_fraktaler.py</code>.
 With <code>maximum_reference_iterations</code> set in each F3 param (see README &mdash; F3&rsquo;s batch
 default is far too low for a zoomed view and blanks silently, which long masqueraded as a ~1e13&times;
 ceiling), <strong>F3 renders deep correctly here</strong>: <strong>all 20</strong> locations have
-clean, arm-for-arm F3 counterparts, out to 4.60e1105&times; (over a thousand orders of magnitude). The
+clean, arm-for-arm F3 counterparts, out to 6.13e1105&times; (over a thousand orders of magnitude). The
 former 1e30&times; gap (location 07, once a too-coarse 34-digit seahorse placeholder that F3 rounded onto
 different sub-structure) is now a genuine cross-app match, re-imported from a user Fraktaler-3 save with a
-43-digit center. Locations 07 and 11&ndash;20 are user-saved Fraktaler-3 finds (7.5e29&times; to
-1.2e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken verbatim.
+43-digit center. Locations 07 and 11&ndash;20 are user-saved Fraktaler-3 finds (1e30&times; to
+1.58e1008&times;), imported from their .exr headers with center, zoom, and iteration count taken verbatim.
 <strong>Coloring note for the deep dendrite / minibrot views (13, 14, 15, 16&ndash;20):</strong> at these
 depths the smooth-iter counts are huge (~3e5&ndash;1.6e6+) and vary steeply pixel-to-pixel, so the fixed
 palette cycle (0.27) aliases a correct escape field into speckle (long mis-diagnosed as glitches, then a
@@ -339,9 +339,9 @@ rebase check at the BLA landing restored the full range (this also sharpened the
 11&ndash;13); goldens stayed byte-identical.</p>
 <p><strong>Reading the comparison:</strong> palettes and smooth-coloring curves differ between the apps by
 design &mdash; compare <em>structure</em> (feature placement, spiral arm counts, escape-boundary shape,
-minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a
-3-unit-high view; KF&rsquo;s zoom is referenced to its own (wider) home frame, so KF may frame the same
-zoom value slightly wider &mdash; the <em>center</em> feature and structure must still match exactly.</p>
+minibrot positions), not colors. Zoom note: Fractadyne&rsquo;s magnification <strong>equals</strong> the
+Kalles Fraktaler / Fraktaler-3 zoom (both reference a 4-unit vertical extent at value 1; aligned in
+v0.2.21) &mdash; the same zoom number frames the same view in either app.</p>
 <p><strong>Reproduce any location in Fractadyne:</strong> each card has a <code>.fdn</code> download and a
 <em>Copy .fdn</em> button &mdash; Fractadyne&rsquo;s native &ldquo;Share location&rdquo; format. Load it via
 <b>File &#9656; Share location &#9656; Load .fdn&hellip;</b>, or paste the copied text into that dialog; the

@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.20 (build 903)
-- **Generated:** 2026-07-13 03:08:41 UTC (unix 1783912121)
+- **Version:** 0.2.21 (build 907)
+- **Generated:** 2026-07-13 04:27:18 UTC (unix 1783916838)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -14,21 +14,21 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 
 | Category | Check | Parameters | Result | Threshold | Verdict |
 |---|---|---|---|---|---|
-| Numeric | df32 perturbation vs CPU f64 dwell | seahorse, 2e4×, 5657 iter, n=6913 | 95.7% agree within 1 iter | ≥90% within 1 iter | ✅ PASS |
+| Numeric | df32 perturbation vs CPU f64 dwell | seahorse, 2e4×, 5763 iter, n=6913 | 95.7% agree within 1 iter | ≥90% within 1 iter | ✅ PASS |
 | Finiteness | dwell finite (perturbation @2e4×) | all sampled pixels | all finite | all finite | ✅ PASS |
 | Numeric | floatexp vs df32 perturbation | seahorse, 1e10× | mean Δ=0.0000 iter, >2iter 0.000% | mean<0.5, <2% differ | ✅ PASS |
-| Bignum oracle | naive bignum dwell vs GPU @1e6x | mode 0, 7102 iter, 25 samples | 14 agree, 11 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
-| Bignum oracle | naive bignum dwell vs GPU @1e12x | mode 0, 12204 iter, 25 samples | 15 agree, 10 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
-| Bignum oracle | naive bignum dwell vs GPU @1e16x | mode 0, 15606 iter, 25 samples | 25 agree, 0 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
-| Bignum oracle | naive bignum dwell vs GPU @1e24x | mode 0, 21539 iter, 25 samples | 25 agree, 0 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
-| Bignum oracle | naive bignum dwell vs GPU @1e30x | mode 2, 25924 iter, 25 samples | 25 agree, 0 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
-| Series approximation | SA seed vs full iteration @1e30× | Mandelbrot, 1e30×, skip 25923 of 25924 iter | max Δ 0.0000 smooth iter | skip>0 and max Δ < 0.05 | ✅ PASS |
+| Bignum oracle | naive bignum dwell vs GPU @1e6x | mode 0, 7208 iter, 25 samples | 14 agree, 11 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
+| Bignum oracle | naive bignum dwell vs GPU @1e12x | mode 0, 12311 iter, 25 samples | 15 agree, 10 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
+| Bignum oracle | naive bignum dwell vs GPU @1e16x | mode 0, 15712 iter, 25 samples | 25 agree, 0 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
+| Bignum oracle | naive bignum dwell vs GPU @1e24x | mode 0, 21631 iter, 25 samples | 25 agree, 0 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
+| Bignum oracle | naive bignum dwell vs GPU @1e30x | mode 2, 26016 iter, 25 samples | 25 agree, 0 boundary, 0 mismatch | 0 hard mismatches | ✅ PASS |
+| Series approximation | SA seed vs full iteration @1e30× | Mandelbrot, 1e30×, skip 26015 of 26016 iter | max Δ 0.0000 smooth iter | skip>0 and max Δ < 0.05 | ✅ PASS |
 | Series approximation | SA gated off when BLA active @1e30× | Mandelbrot mode 2, SA toggle on, BLA on | sa_skip 0, bla_on 1 | sa_skip == 0 and bla_on == 1 | ✅ PASS |
-| Series approximation | SA seed vs full iteration @1e20× (mode 0) | Mandelbrot, 1e20×, mode 0, skip 18615 of 18616 iter | max Δ 0.0000 smooth iter | mode 0, skip>0, max Δ < 0.05 | ✅ PASS |
+| Series approximation | SA seed vs full iteration @1e20× (mode 0) | Mandelbrot, 1e20×, mode 0, skip 18706 of 18707 iter | max Δ 0.0000 smooth iter | mode 0, skip>0, max Δ < 0.05 | ✅ PASS |
 | Glitch | reference independence (3-ref majority) | seahorse, 1e8×, auto vs 2 offset refs (smooth region) | 16649 smooth px: auto dissent 1, no-majority 0 (0.0060%) | <0.2% of smooth pixels | ✅ PASS |
 | Glitch | glitch detection responds to reference quality | seahorse, 1e8×, auto vs far-offset reference | auto-ref flagged 9, far-ref flagged 10 | detection fires (>0) and far-offset flags ≥ auto | ✅ PASS |
 | Glitch | multi-reference correction resolves glitches | seahorse, 1e8×, auto seed + correction | 7 references, 0 residual glitches | 0 residual glitches | ✅ PASS |
-| Glitch | corrected buffer colors to a valid image | seahorse, 1e8×, render_export_corrected | finite true, dark true, bright true, plain interior px 97 | finite + structured (interior & exterior) | ✅ PASS |
+| Glitch | corrected buffer colors to a valid image | seahorse, 1e8×, render_export_corrected | finite true, dark true, bright true, plain interior px 92 | finite + structured (interior & exterior) | ✅ PASS |
 | Invariant | real-axis mirror symmetry | home view (-0.5, 0) | mean Δ=0.00000 iter | mean<0.05 | ✅ PASS |
 | Invariant | home has interior + exterior | home view | interior=true, exterior=true | both present | ✅ PASS |
 | Symmetry (render) | Multibrot-3 180° rotation | origin view, span 3, 44944 smooth px | 0 asymmetric | 0 asymmetric | ✅ PASS |

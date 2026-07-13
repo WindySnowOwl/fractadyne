@@ -649,13 +649,13 @@ const EXPORT_ASPECTS: [(&str, f64); 8] = [
 /// Curated famous Mandelbrot locations: (name, center_x, center_y, magnification).
 /// Coordinates are full-precision strings so deep entries land exactly.
 const FAMOUS: &[(&str, &str, &str, f64)] = &[
-    ("Seahorse Valley", "-0.74364388703", "0.13182590421", 2.0e3),
-    ("Elephant Valley", "0.2925755", "-0.0149977", 1.5e3),
-    ("Triple Spiral", "-0.088643135", "0.654461185", 1.2e3),
-    ("Double Spiral", "-0.7470837", "0.1080358", 3.0e3),
-    ("Spiral Galaxy", "-0.7269", "0.1889", 2.0e3),
-    ("Mini Mandelbrot", "-1.7687788", "0.0017388", 6.0e3),
-    ("Deep Seahorse", "-0.743643887037151", "0.131825904205330", 1.0e7),
+    ("Seahorse Valley", "-0.74364388703", "0.13182590421", 2.667e3),
+    ("Elephant Valley", "0.2925755", "-0.0149977", 2.0e3),
+    ("Triple Spiral", "-0.088643135", "0.654461185", 1.6e3),
+    ("Double Spiral", "-0.7470837", "0.1080358", 4.0e3),
+    ("Spiral Galaxy", "-0.7269", "0.1889", 2.667e3),
+    ("Mini Mandelbrot", "-1.7687788", "0.0017388", 8.0e3),
+    ("Deep Seahorse", "-0.743643887037151", "0.131825904205330", 1.333e7),
 ];
 
 /// Zoom-appropriate iteration cap. A very high manual iteration count over-resolves the
