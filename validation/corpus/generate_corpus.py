@@ -82,6 +82,40 @@ def write_kfr(loc):
     return path
 
 
+def write_fdn(loc):
+    """Write locations/<slug>.fdn — Fractadyne's native "Share location" file — so the exact view
+    loads straight into the app (File -> Share location -> Load .fdn..., or paste the text).
+
+    The renderer already embeds this reloadable block in each PNG's `Fractadyne` tEXt chunk
+    (full-precision center, extended-range upp_log2, the fixed iteration count, coloring), so it is
+    the authoritative source — the app wrote it and reads it back verbatim. We only strip the
+    volatile provenance lines (version/build + save timestamp) so the committed .fdn is stable
+    across re-renders, and set a descriptive `notes`. Returns the .fdn text (or None if the render
+    or its metadata is missing). Requires the render to exist (run without --skip-renders first, or
+    keep the committed renders/)."""
+    from PIL import Image
+    png = os.path.join(CORPUS, "renders", loc["slug"] + "-fractadyne.png")
+    if not os.path.exists(png):
+        return None
+    meta = Image.open(png).info.get("Fractadyne")
+    if not meta:
+        return None
+    num = loc["slug"].split("-")[0]
+    drop = {"version", "saved", "saved_unix"}  # provenance/timestamp: noise + churn, not reload data
+    out = []
+    for line in meta.splitlines():
+        key = line.split("=", 1)[0]
+        if key in drop:
+            continue
+        if key == "notes":  # <=120 ASCII, single line (the app's tEXt constraint)
+            line = "notes=Fractadyne reference corpus %s: %s (matches Fraktaler-3; see catalog.html)" % (num, loc["title"])
+        out.append(line)
+    text = "\n".join(out) + "\n"
+    path = os.path.join(CORPUS, "locations", loc["slug"] + ".fdn")
+    open(path, "w", encoding="utf-8", newline="\n").write(text)
+    return text
+
+
 def stage_session(loc):
     """Stage the session for one corpus render: pinned coloring + a LIGHT home view.
 
@@ -187,6 +221,14 @@ def kfr_text(loc):
         loc["center_x"], loc["center_y"], zoom_string(loc["mag_log10"]), loc["iterations"])
 
 
+def fdn_text(loc):
+    """The committed locations/<slug>.fdn text (for the catalog copy button), or a hint if absent."""
+    path = os.path.join(CORPUS, "locations", loc["slug"] + ".fdn")
+    if os.path.exists(path):
+        return open(path, encoding="utf-8").read().rstrip("\n")
+    return "(.fdn not generated yet — run: python validation/corpus/generate_corpus.py)"
+
+
 def esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -222,11 +264,18 @@ def write_catalog(locs):
     <tr><th>Fractadyne path</th><td>{mode}</td>
         <th>Precision</th><td>~{precision} bits ({digits}-digit center)</td></tr>
   </table>
-  <details><summary>Exact location &mdash; Kalles Fraktaler (.kfr) and full-precision center</summary>
+  <div class="repro">
+    <a class="fdn-dl" href="locations/{slug}.fdn" download>&#x2b07;&#xfe0e; {slug}.fdn</a>
+    <button class="copybtn" type="button">&#x1f4cb;&#xfe0e; Copy .fdn</button>
+    <span class="repro-hint">Reproduce in Fractadyne: <b>File &#9656; Share location &#9656; Load .fdn&hellip;</b> (or paste the copied text into Share location).</span>
+  </div>
+  <details><summary>Exact location &mdash; .fdn reload snippet, Kalles Fraktaler (.kfr), full-precision center</summary>
+    <pre class="fdn">{fdn}</pre>
     <pre>{kfr}</pre>
   </details>
 </section>""".format(
             slug=loc["slug"], num=loc["slug"].split("-")[0], title=esc(loc["title"]), note=esc(loc["note"]),
+            fdn=esc(fdn_text(loc)),
             zoom=zoom_string(loc["mag_log10"]).replace("E", "e"), l10=loc["mag_log10"],
             iters=loc["iterations"], mode=fractadyne_mode(loc["mag_log10"]),
             precision=precision, digits=digits, w=WIDTH, h=HEIGHT, ss=SS,
@@ -254,6 +303,12 @@ def write_catalog(locs):
   details {{ margin-top:.4rem; }} summary {{ cursor:pointer; color:#E0A030; }}
   pre {{ background:#0d0f12; border:1px solid #2a2e35; border-radius:6px; padding:.7rem; overflow-x:auto;
          font-size:.78em; white-space:pre-wrap; word-break:break-all; }}
+  pre.fdn {{ color:#cfd6df; }}
+  .repro {{ display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; margin:.2rem 0 .5rem; }}
+  .repro a.fdn-dl, .repro button.copybtn {{ font:inherit; font-size:.85em; color:#E0A030; background:#20242b;
+    border:1px solid #3a404a; border-radius:6px; padding:.2rem .6rem; cursor:pointer; text-decoration:none; }}
+  .repro a.fdn-dl:hover, .repro button.copybtn:hover {{ border-color:#E0A030; }}
+  .repro-hint {{ color:#8a929d; font-size:.82em; }}
 </style>
 <h1>Fractadyne vs Kalles Fraktaler &mdash; reference render corpus</h1>
 <p>Twenty locations, ordered by magnification from the full-set overview to 4.6e1105&times;, rendered by both apps from the exact same
@@ -287,7 +342,22 @@ design &mdash; compare <em>structure</em> (feature placement, spiral arm counts,
 minibrot positions), not colors. Framing note: Fractadyne&rsquo;s magnification is referenced to a
 3-unit-high view; KF&rsquo;s zoom is referenced to its own (wider) home frame, so KF may frame the same
 zoom value slightly wider &mdash; the <em>center</em> feature and structure must still match exactly.</p>
+<p><strong>Reproduce any location in Fractadyne:</strong> each card has a <code>.fdn</code> download and a
+<em>Copy .fdn</em> button &mdash; Fractadyne&rsquo;s native &ldquo;Share location&rdquo; format. Load it via
+<b>File &#9656; Share location &#9656; Load .fdn&hellip;</b>, or paste the copied text into that dialog; the
+exact fractal, full-precision center, zoom, and iteration count come with it. The files also live at
+<code>locations/&lt;slug&gt;.fdn</code>.</p>
 {cards}
+<script>
+document.querySelectorAll('.copybtn').forEach(function (b) {{
+  b.addEventListener('click', function () {{
+    var pre = b.closest('.card').querySelector('pre.fdn');
+    navigator.clipboard.writeText(pre.textContent).then(function () {{
+      var t = b.textContent; b.textContent = '✓ Copied'; setTimeout(function () {{ b.textContent = t; }}, 1200);
+    }});
+  }});
+}});
+</script>
 """.format(w=WIDTH, h=HEIGHT, cards="\n".join(cards))
     open(os.path.join(CORPUS, "catalog.html"), "w", encoding="utf-8", newline="\n").write(html)
 
@@ -381,6 +451,9 @@ def main():
             shutil.copyfile(backup, SESSION)
             os.remove(backup)
             print("session restored")
+    # .fdn reload files (extracted from each render's embedded metadata — needs the renders to exist)
+    n_fdn = sum(1 for loc in locs if write_fdn(loc))
+    print("wrote %d .fdn files (of %d)" % (n_fdn, len(locs)))
     write_catalog(locs)
     print("catalog.html written")
 

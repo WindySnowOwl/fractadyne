@@ -12,11 +12,28 @@ location's full compute details.
 |---|---|
 | `locations.toml` | Canonical location list (full-precision centers, log10 magnification, iterations) — the single source of truth everything else derives from. |
 | `locations/*.kfr` | Kalles Fraktaler 2 location files (fraktaler-3 reads them too). |
+| `locations/*.fdn` | Fractadyne "Share location" files — load one to reproduce that exact view in the app (fractal, full-precision center, zoom, iteration count). Extracted from each render's embedded reload metadata; the catalog has a per-location download + "Copy .fdn" button. |
 | `renders/<slug>-fractadyne.png` | Fractadyne renders (1280×720, 2× supersampling, Ember palette, smooth iteration). |
 | `renders/<slug>-fraktaler.png` | Fraktaler-3 renders (1280×720; produced by `generate_fraktaler.py` where F3 works — see the limitation below). |
 | `locations/*.f3.toml` | Fraktaler-3 batch parameter files (one per location), written for **every** location. |
 | `generate_corpus.py` | Regenerates the `.kfr` files, the Fractadyne renders, and `catalog.html` from `locations.toml`. |
 | `generate_fraktaler.py` | Runs the vendored Fraktaler-3 (`diag/fraktaler/`) in batch mode to produce the F3 renders + `.f3.toml` params. |
+
+## Reproduce a location in Fractadyne
+
+Every location ships as a `locations/<slug>.fdn` — Fractadyne's native "Share location" file. To open
+one in the app:
+
+- **File ▸ Share location ▸ Load .fdn…** and pick the file, or
+- copy its text (the catalog's **Copy .fdn** button, or the `.fdn` file) and paste it into the same
+  Share-location dialog.
+
+It carries the fractal, the full-precision center, the zoom (extended-range, exact past 1e308×), and the
+iteration count, so the exact view loads in one step — no retyping a 2000-digit center. The `.fdn` is
+extracted from the reload metadata that `--render` embeds in every PNG (`Fractadyne` tEXt chunk), with the
+save timestamp / build stripped so it stays stable across re-renders. Coloring loads as the corpus
+contract (Ember / smooth); the deep dendrite/minibrot views used `--normalize` on export (a transient
+export setting), so the live view shows the standard palette cycle at those depths.
 
 ## Regenerating the Fractadyne side
 
