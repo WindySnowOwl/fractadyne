@@ -106,8 +106,18 @@ Mockups: [design/mockups/](design/mockups/).
   comparison was NOT the bug), then SA (off), glitch (off in the export path), leaving BLA as the only
   difference from the correct CPU sim → read the BLA-skip code and found the missing rebase. The
   `best_reference` hill-climb (longer reference) was a DEAD END: the 1.54M interior ref overflows the GPU
-  `max_buffer_binding_size` (128 MB / ~932k samples at 144 B/sample) → `create_bind_group` panic — that
-  latent export panic (interior ref >932k) is still worth a defensive orbit-length cap.
+  `max_buffer_binding_size` (128 MB / ~932k samples at 144 B/sample) → `create_bind_group` panic.
+  ✅**Export panic GUARDED v0.2.22:** `check_orbit_binding` (fractadyne-gpu `export.rs`) checks
+  `(orbit.len()+bla.len())·16 ≤ max_storage_buffer_binding_size` at the top of `render_export` /
+  `render_iter` / `render_iter_tiled` and returns `GpuError::OrbitTooLarge` (the app already formats
+  it as "Export failed: … reduce iterations") instead of letting `create_bind_group` panic. Uses the
+  ACTUAL orbit+BLA sizes (not an estimate — loc 15's 918516-sample ref sits right at the 128 MB edge,
+  so an estimated cap would regress it) and the device's real limit (bigger GPUs allow more). 63/63,
+  no false-positive. ⚠**RESIDUAL: the LIVE view is only capped by `LIVE_ITER_CAP` (auto-iter=100k);**
+  a loaded `.fdn` with `auto_iter=0` + a very high `max_iter` at a deep INTERIOR view could still build
+  an oversized orbit and panic in the live `make_iter_bg` (returns a `BindGroup`, not a `Result`, so it
+  needs a skip/cap not an error). All corpus `.fdn` have escaping refs (<932k) so they're safe; only a
+  crafted pathological `.fdn` triggers it. Lower priority (rarer, more-involved).
 
 - [~] **App: auto-normalize / adaptive-cycle coloring for extreme depth (the general fix behind
   14/15).** `shade()` (mandelbrot.wgsl:1277) does `palette(pv·cycle + offset)` with `pv` = the raw

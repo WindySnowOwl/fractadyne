@@ -24,6 +24,25 @@ pub enum GpuError {
     /// A GPU buffer readback failed — the mpsc channel dropped or `map_async` reported an error.
     #[error("GPU readback failed: {0}")]
     Readback(String),
+    /// The reference orbit + BLA (one storage-buffer binding) exceed this GPU's binding-size limit.
+    /// Guards a pathological export (an interior reference at a very high iteration count) from
+    /// panicking in `create_bind_group`; the caller shows this and the render is skipped.
+    #[error("reference orbit too large for this GPU: {bytes} B exceeds the {limit} B storage-buffer binding limit (reduce iterations)")]
+    OrbitTooLarge { bytes: u64, limit: u64 },
+}
+
+/// Guard the reference-orbit storage binding against the GPU's max binding size. The orbit and its
+/// BLA tree share one storage buffer — `(orbit_len + bla_len) * 16` bytes — and an interior reference
+/// at a very high `max_iter` can exceed `max_storage_buffer_binding_size` (128 MB default ⇒ ~932k
+/// orbit samples once the BLA is included), which panics in `create_bind_group`. Returning an error
+/// lets the export fail cleanly instead of crashing the app.
+fn check_orbit_binding(device: &wgpu::Device, orbit_len: usize, bla_len: usize) -> Result<(), GpuError> {
+    let bytes = (orbit_len + bla_len).max(1) as u64 * 16;
+    let limit = device.limits().max_storage_buffer_binding_size as u64;
+    if bytes > limit {
+        return Err(GpuError::OrbitTooLarge { bytes, limit });
+    }
+    Ok(())
 }
 
 /// Everything needed to render one frame offscreen at an arbitrary resolution.
@@ -165,6 +184,7 @@ pub fn render_export(
     let iter_uniform = uniform("export.iter_uniform", std::mem::size_of::<IterUniforms>() as u64);
     let color_uniform = uniform("export.color_uniform", std::mem::size_of::<ColorUniforms>() as u64);
 
+    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
     let orbit_cap = (req.orbit.len() + req.bla.len()).max(1) as u32;
     let orbit_buf = make_orbit_buffer(device, orbit_cap);
     if !req.orbit.is_empty() {
@@ -537,6 +557,7 @@ pub fn render_iter_tiled(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
     let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
     if !req.orbit.is_empty() {
         queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
@@ -793,6 +814,7 @@ pub fn render_iter(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
     let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
     if !req.orbit.is_empty() {
         queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
