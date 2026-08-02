@@ -1747,6 +1747,12 @@ impl FractadyneApp {
             }
         };
         install_renderer(render_state);
+        // Record the GPU's storage-buffer binding limit as the reference-orbit length ceiling, so
+        // the off-thread live recompute can bound a deep-interior orbit to what the buffer holds
+        // (a `.fdn` with auto-iter off + a very high max_iter at an interior view would otherwise
+        // build an oversized orbit+BLA and panic in the live bind — the export path already guards
+        // this with `OrbitTooLarge`). One-time; the limit is a device constant.
+        render::init_orbit_len_cap(render_state.device.limits().max_storage_buffer_binding_size);
         // D1.3: route GPU faults through the diag log. Uncaptured errors keep wgpu's
         // fail-fast semantics (log first, then panic so the hook writes a crash report);
         // device-lost logs the reason — it is the "hang on load" class of failure (F1).

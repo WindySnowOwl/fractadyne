@@ -173,6 +173,36 @@ fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32) -> f
     fractadyne_core::AuxAggParams { trap_type, stripe_freq, cmag, power: 2.0 }
 }
 
+/// Device-derived ceiling on the stored reference-orbit LENGTH (in samples), set once at startup
+/// from `max_storage_buffer_binding_size`. The orbit and its BLA tree upload together as one storage
+/// buffer sized ~9× the orbit (16 B/sample); past this the bind exceeds the GPU limit and the live
+/// path panics in `make_iter_bg` (the same overflow the export path returns `OrbitTooLarge` for).
+/// We cap the orbit BUILD, never the render's `max_iter`: a deep INTERIOR reference that never
+/// escapes is truncated to fit, while pixels still iterate to the full count by REBASING past the
+/// truncated orbit. An escaping reference shorter than the cap (every corpus location — loc 15's
+/// 918 516-sample orbit sits just under the ~928 k cap on a 128 MB device) is therefore untouched.
+/// Unset (tests / before device init) ⇒ `u32::MAX`, i.e. no cap.
+static ORBIT_LEN_CAP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+
+/// Record the orbit-length ceiling from the GPU's storage-buffer binding limit (bytes). Called once
+/// at startup from the render state. Orbit + BLA share one binding and total ~9× the orbit at 16 B
+/// each, so the orbit budget is `limit / 16 / 9`, less a margin for the BLA's exact ratio varying a
+/// little above 8×. First value wins (idempotent).
+pub(crate) fn init_orbit_len_cap(max_storage_buffer_binding_size: u32) {
+    let limit = max_storage_buffer_binding_size as u64;
+    let cap = (limit / 16 / 9).saturating_sub(4096).clamp(4096, u32::MAX as u64) as u32;
+    let _ = ORBIT_LEN_CAP.set(cap);
+    crate::diag::log_line(
+        "gpu",
+        &format!("reference-orbit length cap = {cap} samples (storage-binding limit {limit} B)"),
+    );
+}
+
+/// The orbit-build length ceiling — `u32::MAX` (no cap) when unset (tests / before device init).
+fn orbit_len_cap() -> u32 {
+    ORBIT_LEN_CAP.get().copied().unwrap_or(u32::MAX)
+}
+
 /// Pick a reference (once) then build its orbit + series-approximation skip + BLA tree to
 /// `inp.gpu_iter` — the slow arbitrary-precision work. Pure and `Send`, so it runs on a worker
 /// thread; mirrors the synchronous `compute_reference` + `series_skip_for` + `build_bla`. The
@@ -250,8 +280,14 @@ fn build_reference_from_point(
     } else {
         (zero.clone(), zero, rp[0].clone(), rp[1].clone())
     };
-    let (o, len, tail) =
-        fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, orbit_iter, orbit_prec);
+    // Cap the stored orbit LENGTH to what the GPU storage binding can hold (see `orbit_len_cap`);
+    // a deep interior reference that would run past it is truncated here, while `orbit_iter` (the
+    // render's iteration budget, passed unchanged to `finish_reference`) is untouched — pixels
+    // rebase past the truncated orbit to reach the full count. An escaping reference shorter than
+    // the cap builds identically (it stops at escape, below the cap).
+    let (o, len, tail) = fc::reference_orbit_t(
+        &z0x, &z0y, &cx0, &cy0, inp.formula, orbit_iter.min(orbit_len_cap()), orbit_prec,
+    );
     let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
     finish_reference(rp, o, len, tail, orbit_prec, orbit_iter, do_sa, inp, ref_ms)
 }
@@ -410,13 +446,16 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
     } else {
         (reuse.point[0].clone(), reuse.point[1].clone())
     };
+    // Same storage-binding cap as the fresh build (see `orbit_len_cap`): don't extend a reused
+    // orbit past what the GPU buffer can hold. `inp.gpu_iter` (the render budget) still flows to
+    // `finish_reference` below unchanged — only the stored orbit length is bounded.
     let (o, len, tail) = fc::extend_reference_orbit(
         &reuse.prefix,
         &reuse.tail,
         &cx0,
         &cy0,
         inp.formula,
-        inp.gpu_iter,
+        inp.gpu_iter.min(orbit_len_cap()),
         reuse.prec,
     );
     let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -2284,5 +2323,22 @@ mod reuse_tests {
         let far = [parse_bf("0.0").unwrap(), parse_bf("0.0").unwrap()];
         let drift = ReuseRef { point: far, prefix: a.orbit.clone(), tail, prec: a.prec };
         assert!(try_reuse_reference(&mk(drift)).is_none(), "a drifted point must not reuse");
+    }
+
+    // The orbit-length cap must fit the orbit + BLA (~9× the orbit at 16 B/sample) inside the GPU
+    // storage-binding limit, yet stay ABOVE every escaping corpus reference so those views build
+    // unchanged. Loc 15's 918 516-sample reference is the deepest such orbit (right at the 128 MB
+    // edge) and is the binding invariant: the cap must clear it, or the deep-dendrite corpus render
+    // regresses. (The cap only ever truncates a NON-escaping deep-interior reference.)
+    #[test]
+    fn orbit_len_cap_fits_binding_and_clears_corpus() {
+        const LIMIT_128MB: u32 = 134_217_728; // wgpu default max_storage_buffer_binding_size
+        const LOC15_ORBIT: u64 = 918_516; // deepest escaping corpus reference (v0.2.18 dendrites)
+        init_orbit_len_cap(LIMIT_128MB);
+        let cap = orbit_len_cap() as u64;
+        // Orbit + BLA (~9×) at 16 B/sample must fit the binding.
+        assert!(cap * 9 * 16 <= LIMIT_128MB as u64, "cap {cap} + BLA overruns the 128 MB binding");
+        // …and clear the deepest escaping corpus reference so it is never truncated.
+        assert!(cap > LOC15_ORBIT, "cap {cap} must exceed loc 15's {LOC15_ORBIT}-sample orbit");
     }
 }
