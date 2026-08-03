@@ -658,6 +658,33 @@ const FAMOUS: &[(&str, &str, &str, f64)] = &[
     ("Deep Seahorse", "-0.743643887037151", "0.131825904205330", 1.333e7),
 ];
 
+/// Curated well-known Misiurewicz points of interest: (name, center_re, center_im, magnification).
+/// Every center is an exact pre-periodic point (verified by Newton solve); the name carries its
+/// `(preperiod, period)`. Selecting one jumps there — and the parameterized finder re-derives any
+/// such point near the current view to arbitrary precision. Mandelbrot only.
+const MISIUREWICZ_POI: &[(&str, &str, &str, f64)] = &[
+    ("Antenna tip — Misiurewicz (2,1)", "-2.0", "0.0", 8.0),
+    ("Upper boundary c=i — Misiurewicz (2,2)", "0.0", "1.0", 8.0),
+    (
+        "Three-spar — Misiurewicz (4,1)",
+        "-0.101096363845622161025785445739",
+        "0.95628651080914150077109605773",
+        1.0e5,
+    ),
+    (
+        "Elephant spiral — Misiurewicz (7,1)",
+        "0.424512719050039642442472214172",
+        "0.207530228166745302506073482244",
+        1.0e4,
+    ),
+    (
+        "North antenna — Misiurewicz (4,3)",
+        "-0.173006716092090164776138289468",
+        "1.06275228084924256023519761268",
+        1.0e4,
+    ),
+];
+
 /// Zoom-appropriate iteration cap. A very high manual iteration count over-resolves the
 /// boundary's sub-pixel "dust" into per-pixel noise (and starves the render budget); this
 /// caps the count at a generous, zoom-scaled value so normal auto-iteration is never
@@ -1294,6 +1321,16 @@ fn aspect_zoom_box(start: egui::Pos2, end: egui::Pos2, rect: egui::Rect) -> egui
 
 /// State of the "Go to location" dialog (transient — not persisted). One of the field groups
 /// (from the completed refactor) that break up the flat `FractadyneApp` struct.
+/// Which parameterized feature the Go-to dialog's finder solves for (Mandelbrot only).
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum FeatureKind {
+    /// Pre-periodic branch/spiral center — Newton on `Z_{k+p}=Z_k` (preperiod `k`, period `p`).
+    #[default]
+    Misiurewicz,
+    /// Nearest minibrot nucleus — `Z_n=0`, period auto-detected (same as the M-key snap).
+    Minibrot,
+}
+
 #[derive(Default)]
 struct GotoDialog {
     open: bool,
@@ -1301,6 +1338,10 @@ struct GotoDialog {
     y: String,
     zoom: String,
     msg: Option<String>,
+    /// Feature-finder inputs (parameterized "go to feature").
+    feat_kind: FeatureKind,
+    feat_k: String,
+    feat_p: String,
 }
 
 /// State of the "Share location" (`.fdn`) dialog (transient).
@@ -3273,6 +3314,67 @@ impl FractadyneApp {
                 self.set_toast(format!("Snapped to period-{} minibrot center", n.period), ctx);
             }
             None => self.set_toast("No minibrot center found near the view center.", ctx),
+        }
+    }
+
+    /// Newton-solve a parameterized feature near the current view center and snap onto its exact
+    /// center (arbitrary precision): a Misiurewicz `(k,p)` branch/spiral center, or the nearest
+    /// minibrot nucleus. Seeded from where you're looking, so it finds the feature you're near.
+    /// Mandelbrot only. Driven by the Go-to dialog's feature finder.
+    fn goto_feature(&mut self, ctx: &egui::Context) {
+        if self.fractal.formula_id() != 0 {
+            self.goto.msg = Some("Feature finding is Mandelbrot-only.".into());
+            return;
+        }
+        let mag = self.viewport.magnification();
+        let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+        let (found, label) = match self.goto.feat_kind {
+            FeatureKind::Minibrot => {
+                let max_period = self
+                    .viewport
+                    .recommended_max_iter(self.render_cfg.max_iter)
+                    .clamp(1_000, 100_000);
+                match fractadyne_core::find_nucleus(&center, mag, 0, max_period) {
+                    Some(n) => (Some((n.cx, n.cy)), format!("period-{} minibrot", n.period)),
+                    None => (None, String::new()),
+                }
+            }
+            FeatureKind::Misiurewicz => {
+                let k = self.goto.feat_k.trim().parse::<u32>().ok().filter(|&v| v > 0);
+                let p = self.goto.feat_p.trim().parse::<u32>().ok().filter(|&v| v > 0);
+                let (Some(k), Some(p)) = (k, p) else {
+                    self.goto.msg = Some("Enter a preperiod and period (positive integers).".into());
+                    return;
+                };
+                match fractadyne_core::find_misiurewicz(&center, k, p, mag, 0) {
+                    Some(m) => (
+                        Some((m.cx, m.cy)),
+                        format!("Misiurewicz ({},{})", m.preperiod, m.period),
+                    ),
+                    None => (None, format!("Misiurewicz ({k},{p})")),
+                }
+            }
+        };
+        match found {
+            Some((cx, cy)) => {
+                self.viewport.set_center_mag(cx, cy, mag);
+                self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
+                self.pointer.zoom_vel = 0.0;
+                self.invalidate_refs();
+                self.record_nav();
+                self.goto.open = false;
+                self.set_toast(format!("Snapped to {label} center"), ctx);
+            }
+            None => {
+                self.goto.msg = Some(match self.goto.feat_kind {
+                    FeatureKind::Minibrot => {
+                        "No minibrot center found near the view — zoom closer to one.".to_string()
+                    }
+                    FeatureKind::Misiurewicz => {
+                        format!("No {label} point converged near the view — navigate closer, or try different k/p.")
+                    }
+                });
+            }
         }
     }
 

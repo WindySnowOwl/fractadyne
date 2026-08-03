@@ -13,6 +13,8 @@ impl FractadyneApp {
         let mut open = self.goto.open;
         let mut go = false;
         let mut copy = false;
+        let mut poi: Option<usize> = None;
+        let mut find_feat = false;
         egui::Window::new("Go to location")
             .open(&mut open)
             .resizable(false)
@@ -45,7 +47,72 @@ impl FractadyneApp {
                         .weak()
                         .small(),
                 );
+
+                ui.separator();
+                egui::CollapsingHeader::new("Go to feature (Mandelbrot)")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new("Well-known points:").weak().small());
+                        egui::ComboBox::from_id_salt("goto_poi")
+                            .selected_text("Jump to a point of interest…")
+                            .width(260.0)
+                            .show_ui(ui, |ui| {
+                                for (i, (name, ..)) in crate::MISIUREWICZ_POI.iter().enumerate() {
+                                    if ui.selectable_label(false, *name).clicked() {
+                                        poi = Some(i);
+                                    }
+                                }
+                            });
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new("Or solve for a feature near the current view:")
+                                .weak()
+                                .small(),
+                        );
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(
+                                &mut self.goto.feat_kind,
+                                crate::FeatureKind::Misiurewicz,
+                                "Misiurewicz",
+                            );
+                            ui.selectable_value(
+                                &mut self.goto.feat_kind,
+                                crate::FeatureKind::Minibrot,
+                                "Nearest minibrot",
+                            );
+                        });
+                        if self.goto.feat_kind == crate::FeatureKind::Misiurewicz {
+                            ui.horizontal(|ui| {
+                                ui.label("Preperiod k");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.goto.feat_k)
+                                        .desired_width(48.0),
+                                );
+                                ui.add_space(8.0);
+                                ui.label("Period p");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.goto.feat_p)
+                                        .desired_width(48.0),
+                                );
+                            });
+                        }
+                        find_feat = ui
+                            .button("Find near view")
+                            .on_hover_text(
+                                "Newton-solve from the current center onto the exact feature \
+                                 (arbitrary precision). Navigate near the feature first.",
+                            )
+                            .clicked();
+                    });
             });
+        if let Some(i) = poi {
+            let (name, cx, cy, mag) = crate::MISIUREWICZ_POI[i];
+            self.goto_location(cx, cy, mag, name, ctx);
+            self.goto.open = false;
+        }
+        if find_feat {
+            self.goto_feature(ctx);
+        }
         if copy {
             ctx.copy_text(format!(
                 "center_re={}\ncenter_im={}\nzoom={}",

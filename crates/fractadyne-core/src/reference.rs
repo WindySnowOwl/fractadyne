@@ -1078,6 +1078,116 @@ pub fn find_nucleus(
     Some(Nucleus { period, cx, cy })
 }
 
+/// The exact center of a Misiurewicz (pre-periodic) point found near a view center.
+pub struct Misiurewicz {
+    pub preperiod: u32,
+    pub period: u32,
+    pub cx: BigFloat,
+    pub cy: BigFloat,
+}
+
+/// Newton-solve the Misiurewicz point of pre-period `preperiod` (k) and period `period` (p) nearest
+/// the `center` seed: the `c` whose critical orbit is pre-periodic with `Z_{k+p}(c) = Z_k(c)`.
+/// Mirrors [`find_nucleus`] but on the pre-periodicity equation `F(c) = Z_{k+p} − Z_k`, with
+/// `F'(c) = D_{k+p} − D_k` (`D = dZ/dc`). Seeded from where you're looking, so it snaps onto the
+/// branch/spiral center you're near. `None` if it doesn't converge to a nearby point that is
+/// genuinely pre-periodic (a `(k,p)` mismatch or runaway).
+pub fn find_misiurewicz(
+    center: &[BigFloat; 2],
+    preperiod: u32,
+    period: u32,
+    mag: f64,
+    formula: u32,
+) -> Option<Misiurewicz> {
+    if preperiod == 0 || period == 0 {
+        return None;
+    }
+    let p = precision_for_magnification(mag);
+    let k = formula_power(formula)?;
+    let one = bf(1.0, p);
+    let kf = bf(k as f64, p);
+    let span = 3.0 / mag.max(1.0);
+    let tol = span * 1.0e-9;
+    let total = preperiod + period;
+
+    let mut cx = center[0].clone();
+    let mut cy = center[1].clone();
+    let mut converged = false;
+    for _ in 0..80 {
+        // Iterate to k+p, capturing (Z_k, D_k) at the pre-period and (Z_{k+p}, D_{k+p}) at the end.
+        let mut zx = bf(0.0, p);
+        let mut zy = bf(0.0, p);
+        let mut dx = bf(0.0, p);
+        let mut dy = bf(0.0, p);
+        let (mut zkx, mut zky, mut dkx, mut dky) = (bf(0.0, p), bf(0.0, p), bf(0.0, p), bf(0.0, p));
+        for i in 0..total {
+            // D_{n+1} = k·Z_n^{k-1}·D_n + 1 ; Z_{n+1} = Z_n^k + c  (Z_n^{k-1} uses the pre-step Z_n).
+            let (zk1x, zk1y) = if k == 2 { (zx.clone(), zy.clone()) } else { cpow_bf(&zx, &zy, k - 1, p) };
+            let (mzx, mzy) = cmul_bf(&zk1x, &zk1y, &dx, &dy, p);
+            let ndx = mzx.mul(&kf, p, RM).add(&one, p, RM);
+            let ndy = mzy.mul(&kf, p, RM);
+            let (nzx, nzy) = step_bf(&zx, &zy, &cx, &cy, formula, p);
+            zx = nzx;
+            zy = nzy;
+            dx = ndx;
+            dy = ndy;
+            if i + 1 == preperiod {
+                zkx = zx.clone();
+                zky = zy.clone();
+                dkx = dx.clone();
+                dky = dy.clone();
+            }
+        }
+        // Newton: c -= F / F' = F · conj(F') / |F'|².
+        let fx = zx.sub(&zkx, p, RM);
+        let fy = zy.sub(&zky, p, RM);
+        let dfx = dx.sub(&dkx, p, RM);
+        let dfy = dy.sub(&dky, p, RM);
+        let denom = dfx.mul(&dfx, p, RM).add(&dfy.mul(&dfy, p, RM), p, RM);
+        if to_f64(&denom) == 0.0 {
+            return None;
+        }
+        let (numx, numy) = cmul_bf(&fx, &fy, &dfx, &neg_bf(&dfy, p), p);
+        let stepx = numx.div(&denom, p, RM);
+        let stepy = numy.div(&denom, p, RM);
+        cx = cx.sub(&stepx, p, RM);
+        cy = cy.sub(&stepy, p, RM);
+        let stepm = (to_f64(&stepx).powi(2) + to_f64(&stepy).powi(2)).sqrt();
+        if stepm < tol {
+            converged = true;
+            break;
+        }
+    }
+    if !converged {
+        return None;
+    }
+    // Reject runaway: the point should sit within a few view-widths of the seed.
+    let ddx = sub_f64(&cx, &center[0], p);
+    let ddy = sub_f64(&cy, &center[1], p);
+    if (ddx * ddx + ddy * ddy).sqrt() > span * 8.0 {
+        return None;
+    }
+    // Verify genuine pre-periodicity: recompute the residual |Z_{k+p} − Z_k| (bounded orbit ⇒ O(1)
+    // values, so an absolute floor cleanly separates a real solution (≈0) from a (k,p) mismatch).
+    let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+    let (mut zkx, mut zky) = (bf(0.0, p), bf(0.0, p));
+    for i in 0..total {
+        let (nzx, nzy) = step_bf(&zx, &zy, &cx, &cy, formula, p);
+        zx = nzx;
+        zy = nzy;
+        if i + 1 == preperiod {
+            zkx = zx.clone();
+            zky = zy.clone();
+        }
+    }
+    let res =
+        (to_f64(&zx.sub(&zkx, p, RM)).powi(2) + to_f64(&zy.sub(&zky, p, RM)).powi(2)).sqrt();
+    if res > 1.0e-6 {
+        return None;
+    }
+    Some(Misiurewicz { preperiod, period, cx, cy })
+}
+
 // ============================================================================
 // Multi-reference glitch correction (phase 1: CPU reference algorithm, Mandelbrot).
 //
@@ -1599,6 +1709,31 @@ mod aux_bla_oracle {
         assert!(
             trap_worst < 0.05,
             "trap fold error {trap_worst:.3e} too large — oracle bug, not a method verdict"
+        );
+    }
+
+    // The Misiurewicz finder must Newton-snap from a nearby seed onto the exact pre-periodic point.
+    #[test]
+    fn misiurewicz_solver_snaps_to_known_points() {
+        // c = -2 is Misiurewicz (2,1): Z_1=-2, Z_2=2, Z_3=2 ⇒ Z_3=Z_2.
+        let seed = [crate::parse_bf("-1.98").unwrap(), crate::parse_bf("0.01").unwrap()];
+        let m = find_misiurewicz(&seed, 2, 1, 1.0, 0).expect("M(2,1) near c=-2");
+        assert!(
+            (to_f64(&m.cx) + 2.0).abs() < 1e-12 && to_f64(&m.cy).abs() < 1e-12,
+            "M(2,1) should be c=-2, got ({}, {})",
+            to_f64(&m.cx),
+            to_f64(&m.cy)
+        );
+
+        // The verified three-spar Misiurewicz (4,1) (see validation/misiurewicz-4-1.fdn).
+        let seed = [crate::parse_bf("-0.10110").unwrap(), crate::parse_bf("0.95629").unwrap()];
+        let m = find_misiurewicz(&seed, 4, 1, 1.0e3, 0).expect("M(4,1) three-spar");
+        assert!(
+            (to_f64(&m.cx) - (-0.10109636384562216)).abs() < 1e-12
+                && (to_f64(&m.cy) - 0.9562865108091415).abs() < 1e-12,
+            "M(4,1) off: ({}, {})",
+            to_f64(&m.cx),
+            to_f64(&m.cy)
         );
     }
 }
