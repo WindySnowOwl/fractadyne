@@ -88,6 +88,13 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     help_kv(ui, "Left-drag", "Pan the view.");
     help_kv(ui, "Mouse wheel", "Zoom in/out toward the cursor.");
     help_kv(ui, "Shift+drag", "Box zoom — drag a rectangle and it zooms to fill the view.");
+    help_kv(
+        ui,
+        "Click-to-zoom (🎯)",
+        "Toggle the target button in the toolbar (single view): a left-click then dives into the \
+         point by a set factor, right-click backs out. Drag still pans; pick the factor (2–100×) \
+         under Navigation in the right panel. Backspace undoes a click.",
+    );
     help_sub(ui, "Continuous zoom & home");
     help_kv(ui, "Hold Space", "Smoothly zoom in, anchored at the cursor.");
     help_kv(ui, "Hold Shift+Space", "Smoothly zoom out.");
@@ -469,6 +476,7 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
     help_kv(ui, "Left-drag", "Pan");
     help_kv(ui, "Wheel", "Zoom at cursor");
     help_kv(ui, "Shift+drag", "Box zoom (drag a rectangle to zoom to it)");
+    help_kv(ui, "Click (🎯 tool on)", "Dive into the point; right-click backs out");
     help_sub(ui, "Keyboard");
     help_kv(ui, "Space / Shift+Space", "Continuous zoom in / out");
     help_kv(ui, "Backspace", "Undo view");

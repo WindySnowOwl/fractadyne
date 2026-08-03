@@ -683,6 +683,32 @@ impl FractadyneApp {
                     self.pointer.box_start = None;
                 }
 
+                // Click-to-zoom tool (toggle, single view): a plain left-click dives in by the
+                // configured factor recentered on the point; right-click backs out by the same
+                // factor. `clicked()` / `secondary_clicked()` only fire when the press-release
+                // wasn't a drag, so this coexists with left-drag pan and Shift/right-drag box-zoom
+                // (both drags). Shift is reserved for box-zoom, so a Shift+click never dives. The
+                // magnifier cursor advertises the armed tool while hovering.
+                if self.click_zoom && !shift {
+                    if response.hovered() && !response.dragged() {
+                        ctx.set_cursor_icon(egui::CursorIcon::ZoomIn);
+                    }
+                    if (response.clicked() || response.secondary_clicked())
+                        && !zoom_boxing
+                    {
+                        if let Some(p) = response.interact_pointer_pos() {
+                            let l = p - rect.min;
+                            let now = ctx.input(|i| i.time);
+                            self.click_zoom_at(
+                                l.x as f64 * ppp,
+                                l.y as f64 * ppp,
+                                response.secondary_clicked(),
+                                now,
+                            );
+                        }
+                    }
+                }
+
                 // Render the fractal at the current viewport with the chosen palette.
                 let span_fe = self.viewport.complex_span_fe();
                 let eff_iter = if self.render_cfg.auto_iter {

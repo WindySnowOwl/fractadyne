@@ -49,6 +49,14 @@ pub struct SessionState {
     /// keeps older session files (written before this field) loadable.
     #[serde(default = "default_zoom_rate")]
     pub zoom_rate: f32,
+    /// Click-to-zoom tool: when on, a left-click in the single view dives in by `click_zoom_factor`
+    /// (right-click backs out), recentered on the point. Off by default; `serde(default)` = `false`
+    /// keeps older session files loadable.
+    #[serde(default)]
+    pub click_zoom: bool,
+    /// Magnification per click-to-zoom click (2–100×). `serde(default)` seeds older files at 10×.
+    #[serde(default = "default_click_zoom_factor")]
+    pub click_zoom_factor: f32,
     /// Auto-zoom (autopilot) dive limit as log2(magnification); the depth at which the hands-free
     /// dive stops. Default 900 (≈1e271×). Past the smooth regime the autopilot switches to a
     /// stepped dive to reach this depth.
@@ -222,6 +230,10 @@ fn default_zoom_rate() -> f32 {
     1.0
 }
 
+fn default_click_zoom_factor() -> f32 {
+    10.0
+}
+
 fn default_aa() -> u32 {
     2
 }
@@ -326,6 +338,8 @@ impl Default for SessionState {
             cycle: 0.27,
             offset: 0.1,
             zoom_rate: default_zoom_rate(),
+            click_zoom: false,
+            click_zoom_factor: default_click_zoom_factor(),
             autopilot_dive_log2: default_autopilot_dive_log2(),
             work_budget_scale: default_work_budget_scale(),
             aa: default_aa(),
@@ -523,6 +537,8 @@ mod tests {
             orbit_anim: true,
             orbit_anim_speed: 4.5,
             ui_scale: 1.25,
+            click_zoom: true,
+            click_zoom_factor: 50.0,
             ..SessionState::default()
         };
         let r = roundtrip(&s);
@@ -533,6 +549,8 @@ mod tests {
         assert!(r.show_orbits && r.orbit_normalize && r.orbit_anim);
         assert_eq!(r.orbit_anim_speed, 4.5);
         assert_eq!(r.ui_scale, 1.25);
+        assert!(r.click_zoom);
+        assert_eq!(r.click_zoom_factor, 50.0);
     }
 
     // A legacy file (only the original required fields) must still load, filling new fields

@@ -263,6 +263,28 @@ impl FractadyneApp {
                 )
                 .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
 
+                // Click-to-zoom tool: arm a click to dive into the point by a fixed factor. Off by
+                // default; drag still pans and Shift/right-drag still box-zoom. Single view only.
+                ui.checkbox(&mut self.click_zoom, "Click to zoom")
+                    .on_hover_text(
+                        "When on, a left-click in the view dives in by the factor below \
+                         (right-click backs out), recentered on the clicked point. Drag still pans; \
+                         Shift+drag / right-drag still box-zoom. Backspace undoes a click. \
+                         Single view only.",
+                    );
+                ui.add_enabled_ui(self.click_zoom, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("    Factor");
+                        for f in [2.0_f32, 4.0, 10.0, 50.0, 100.0] {
+                            ui.selectable_value(
+                                &mut self.render_cfg.click_zoom_factor,
+                                f,
+                                format!("{f:.0}×"),
+                            );
+                        }
+                    });
+                });
+
                 // Auto-zoom (autopilot) dive limit, edited in decimal orders (1eN×) but stored as log2.
                 let mut dive_log10 = self.autopilot.dive_log2 / std::f64::consts::LOG2_10;
                 if ui

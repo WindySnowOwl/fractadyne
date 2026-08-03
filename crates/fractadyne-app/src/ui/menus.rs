@@ -411,6 +411,21 @@ impl FractadyneApp {
                 if ui.button("🔍−").on_hover_text("Zoom out").clicked() {
                     self.zoom_center(2.0);
                 }
+                // Click-to-zoom tool (single view): arm left-click = dive into the point,
+                // right-click = back out; drag still pans. Factor set in Settings ▸ Navigation.
+                ui.add_enabled_ui(!self.dual, |ui| {
+                    if ui
+                        .selectable_label(self.click_zoom, "🎯")
+                        .on_hover_text(format!(
+                            "Click-to-zoom ({:.0}×): left-click dives into the point, \
+                             right-click backs out (drag still pans). Factor in Settings ▸ Navigation.",
+                            self.render_cfg.click_zoom_factor
+                        ))
+                        .clicked()
+                    {
+                        self.click_zoom = !self.click_zoom;
+                    }
+                });
                 // Auto-zoom (autopilot): highlighted while running; click to start/stop. Single view only.
                 ui.add_enabled_ui(!self.dual, |ui| {
                     let running = self.autopilot.active;

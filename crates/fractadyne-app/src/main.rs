@@ -1450,6 +1450,8 @@ struct RenderConfig {
     use_bla: bool,
     /// Continuous-zoom speed multiplier (1.0 = default `ZOOM_RATE`).
     zoom_rate: f32,
+    /// Magnification applied per click-to-zoom click (the `click_zoom` tool). 2–100×.
+    click_zoom_factor: f32,
     /// Live-render work-budget multiplier (× `WORK_BUDGET`); persisted. Higher = crisper live deep
     /// zoom (fuller resolution) at lower FPS / less GPU-watchdog margin. Exports are unaffected.
     work_budget_scale: f64,
@@ -1554,6 +1556,10 @@ struct FractadyneApp {
     julia_c: (f64, f64),
     /// Single-view Julia mode: show the Julia set of the current formula for `julia_c`.
     julia_mode: bool,
+    /// Click-to-zoom tool (single view): when on, a left-click dives in by
+    /// `render_cfg.click_zoom_factor` recentered on the point, right-click backs out. Off by
+    /// default; drag still pans and Shift/right-drag still box-zoom (see `click_zoom_at`).
+    click_zoom: bool,
     /// Dual view: if `Some`, the Julia `c` is pinned to this Mandelbrot point (a marker
     /// is drawn there) instead of following the cursor. Click to pin, click it to release.
     julia_pin: Option<(f64, f64)>,
@@ -1890,6 +1896,7 @@ impl FractadyneApp {
             fractal,
             julia_c: (s.julia_c_re, s.julia_c_im),
             julia_mode: s.julia_mode && fractal.supports_julia(),
+            click_zoom: s.click_zoom,
             julia_pin: None,
             dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(0.15, 0.85),
@@ -2049,6 +2056,7 @@ impl FractadyneApp {
                 glitch_correct: s.glitch_correct,
                 use_bla: s.use_bla,
                 zoom_rate: s.zoom_rate,
+                click_zoom_factor: s.click_zoom_factor.clamp(1.5, 1000.0),
                 work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
                 aa: s.aa,
             },
@@ -2275,6 +2283,8 @@ impl FractadyneApp {
             cycle: self.coloring.cycle,
             offset: self.coloring.offset,
             zoom_rate: self.render_cfg.zoom_rate,
+            click_zoom: self.click_zoom,
+            click_zoom_factor: self.render_cfg.click_zoom_factor,
             autopilot_dive_log2: self.autopilot.dive_log2,
             work_budget_scale: self.render_cfg.work_budget_scale,
             aa: self.render_cfg.aa,
@@ -3780,6 +3790,22 @@ impl FractadyneApp {
     fn zoom_center(&mut self, factor: f64) {
         let (cx, cy) = (self.viewport.width_px * 0.5, self.viewport.height_px * 0.5);
         self.viewport.zoom_at(cx, cy, factor);
+    }
+
+    /// Click-to-zoom action (single view): recenter on a canvas point (`px`/`py` in device pixels)
+    /// and dive in by `render_cfg.click_zoom_factor`, or back out by it when `out`. Reuses the
+    /// box-zoom recenter idiom (pan the point to center, then scale via the bignum viewport, so it
+    /// stays deep-zoom-correct). Records a nav step so each click is Backspace-undoable, and marks
+    /// the view interacting so it settles to full quality afterward. `now` = `ctx.input(|i| i.time)`.
+    fn click_zoom_at(&mut self, px: f64, py: f64, out: bool, now: f64) {
+        let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
+        let factor = if out { f } else { 1.0 / f }; // zoom_at: factor < 1 ⇒ zoom in
+        let (w, h) = (self.viewport.width_px, self.viewport.height_px);
+        self.viewport.pan_pixels(w * 0.5 - px, h * 0.5 - py);
+        self.viewport.zoom_at(w * 0.5, h * 0.5, factor);
+        self.pointer.zoom_vel = 0.0; // cancel any continuous-zoom glide so the jump lands clean
+        self.pointer.settle_t[0] = now;
+        self.record_nav();
     }
 
     /// Toggle the dual linked view, framing the Julia panel when turning it on.
