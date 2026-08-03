@@ -669,12 +669,14 @@ pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
     (2000.0 + o * 256.0).min(u32::MAX as f64) as u32
 }
 
-/// Upper bound on the auto iteration count for the LIVE preview only (the one-shot export path
-/// keeps the full `recommended_max_iter` appetite). At extreme depth the appetite saturates at
-/// 500k, and a live view rendering a 500k-iter reference (a non-escaping tip yields a full 500k
-/// orbit + a ~4M-node BLA) overloads the GPU present and freezes the window on boot/settle. This
-/// bounds the live reference/BLA size + per-frame work; a real export still recovers full detail.
-pub(crate) const LIVE_ITER_CAP: u32 = 100_000;
+/// Ceiling on the LIVE preview's reference-orbit LENGTH (samples). At extreme depth a non-escaping
+/// tip yields a full 500k-iter reference — a ~4M-node BLA that overloads the GPU present and freezes
+/// the window on boot/settle. Capping the REFERENCE (not the pixel iteration) keeps that buffer small
+/// and freeze-safe, while pixels still iterate to the full depth-appropriate count (`zoom_iter_cap`)
+/// by REBASING past the short reference — so the preview border resolves to the same detail the
+/// export shows (an export at ~1e205× resolves the whole frame from a ~100k-sample reference). The
+/// one-shot export path keeps the full appetite (`orbit_len_cap = u32::MAX`).
+pub(crate) const LIVE_REF_CAP: u32 = 100_000;
 
 // Self-test helpers + run_selftest moved to selftest.rs.
 
@@ -2837,9 +2839,9 @@ impl FractadyneApp {
         let interacting = now - self.pointer.settle_t[view] < SETTLE_DELAY;
 
         let eff_iter = if self.render_cfg.auto_iter {
-            // Live-preview iteration cap (see LIVE_ITER_CAP / draw_central): keep the dual live
-            // views responsive at extreme depth; the export path keeps the full appetite.
-            vp.recommended_max_iter(self.render_cfg.max_iter).min(LIVE_ITER_CAP)
+            // Full depth-appropriate pixel appetite; freeze safety comes from the reference-length
+            // cap (LIVE_REF_CAP via build_params), not the pixel count (see draw_central).
+            vp.recommended_max_iter(self.render_cfg.max_iter)
         } else {
             self.render_cfg.max_iter
         };

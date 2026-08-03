@@ -134,6 +134,12 @@ struct RecomputeInputs {
     span_mantissa: fractadyne_core::SpanMantissa,
     delta_exp: i32,
     gpu_iter: u32,
+    /// Ceiling on the reference-orbit LENGTH (samples) for THIS build, on top of the global
+    /// device-buffer cap. The LIVE path sets it to `LIVE_REF_CAP` so the reference + BLA stay
+    /// small (freeze-safe) while pixels iterate PAST it to `gpu_iter` by rebasing — decoupling the
+    /// preview's iteration depth from the reference size. Export sets `u32::MAX` (full appetite;
+    /// only the device buffer bounds it). See `build_reference_from_point`.
+    orbit_len_cap: u32,
     precision: usize,
     julia: bool,
     formula: u32,
@@ -280,13 +286,15 @@ fn build_reference_from_point(
     } else {
         (zero.clone(), zero, rp[0].clone(), rp[1].clone())
     };
-    // Cap the stored orbit LENGTH to what the GPU storage binding can hold (see `orbit_len_cap`);
-    // a deep interior reference that would run past it is truncated here, while `orbit_iter` (the
-    // render's iteration budget, passed unchanged to `finish_reference`) is untouched — pixels
-    // rebase past the truncated orbit to reach the full count. An escaping reference shorter than
-    // the cap builds identically (it stops at escape, below the cap).
+    // Cap the stored orbit LENGTH to the smaller of this build's cap (`inp.orbit_len_cap` — the
+    // LIVE path keeps the reference small for freeze safety) and the GPU storage-binding limit
+    // (`orbit_len_cap()`). `orbit_iter` (the render's iteration budget, passed unchanged to
+    // `finish_reference`) is untouched — pixels rebase past the truncated orbit to reach the full
+    // count. An escaping reference shorter than the cap builds identically (it stops at escape).
     let (o, len, tail) = fc::reference_orbit_t(
-        &z0x, &z0y, &cx0, &cy0, inp.formula, orbit_iter.min(orbit_len_cap()), orbit_prec,
+        &z0x, &z0y, &cx0, &cy0, inp.formula,
+        orbit_iter.min(inp.orbit_len_cap).min(orbit_len_cap()),
+        orbit_prec,
     );
     let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
     finish_reference(rp, o, len, tail, orbit_prec, orbit_iter, do_sa, inp, ref_ms)
@@ -446,16 +454,16 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
     } else {
         (reuse.point[0].clone(), reuse.point[1].clone())
     };
-    // Same storage-binding cap as the fresh build (see `orbit_len_cap`): don't extend a reused
-    // orbit past what the GPU buffer can hold. `inp.gpu_iter` (the render budget) still flows to
-    // `finish_reference` below unchanged — only the stored orbit length is bounded.
+    // Same caps as the fresh build (see `orbit_len_cap`): don't extend a reused orbit past this
+    // build's length cap (LIVE freeze safety) or the GPU buffer. `inp.gpu_iter` (the render
+    // budget) still flows to `finish_reference` below unchanged — only the stored length is bounded.
     let (o, len, tail) = fc::extend_reference_orbit(
         &reuse.prefix,
         &reuse.tail,
         &cx0,
         &cy0,
         inp.formula,
-        inp.gpu_iter.min(orbit_len_cap()),
+        inp.gpu_iter.min(inp.orbit_len_cap).min(orbit_len_cap()),
         reuse.prec,
     );
     let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -726,6 +734,7 @@ impl FractadyneApp {
             span_mantissa,
             delta_exp,
             gpu_iter: eff_iter,
+            orbit_len_cap: u32::MAX, // export: full appetite (only the device buffer bounds it)
             precision,
             julia,
             formula: self.fractal.formula_id(),
@@ -1940,6 +1949,12 @@ impl FractadyneApp {
                     span_mantissa,
                     delta_exp,
                     gpu_iter: ref_build_iter,
+                    // LIVE freeze safety: keep the reference orbit + BLA small (the ~4M-node BLA of
+                    // a full-appetite reference at a deep tip overloads the GPU present — the old
+                    // freeze). Pixels iterate to the full `gpu_iter` by rebasing past this short
+                    // reference (an export at this depth resolves the same detail from a ~100k
+                    // reference), so the preview loses no border detail — only the reference is bounded.
+                    orbit_len_cap: crate::LIVE_REF_CAP,
                     precision,
                     julia,
                     formula: self.fractal.formula_id(),
@@ -2267,6 +2282,7 @@ mod reuse_tests {
             span_mantissa: scale.span_mantissa,
             delta_exp: scale.delta_exp,
             gpu_iter,
+            orbit_len_cap: u32::MAX,
             precision: vp.precision,
             julia: false,
             formula: 0,
@@ -2309,11 +2325,14 @@ mod reuse_tests {
         let ok = ReuseRef { point: a.rp.clone(), prefix: a.orbit.clone(), tail: tail.clone(), prec: a.prec };
         assert!(try_reuse_reference(&mk(ok)).is_some(), "a valid in-view reference must reuse");
 
-        // Escaped (complete) orbit → nothing to extend.
+        // Escaped (complete) orbit → reused AS-IS, not extended: there's nothing past the escape,
+        // but keeping the same reference avoids a re-pick "jump" on rebuild (deep-dive reuse policy
+        // since v0.1.64/65). So reuse fires (Some) and the orbit length is unchanged.
         let mut esc_tail = tail.clone();
         esc_tail.escaped = true;
         let esc = ReuseRef { point: a.rp.clone(), prefix: a.orbit.clone(), tail: esc_tail, prec: a.prec };
-        assert!(try_reuse_reference(&mk(esc)).is_none(), "an escaped orbit must not reuse");
+        let re = try_reuse_reference(&mk(esc)).expect("an escaped orbit is reused as-is");
+        assert_eq!(re.orbit_len, a.orbit_len, "an escaped orbit is reused unchanged, not extended");
 
         // Cached precision below this depth's need → headroom exhausted.
         let lowp = ReuseRef { point: a.rp.clone(), prefix: a.orbit.clone(), tail: tail.clone(), prec: 8 };
