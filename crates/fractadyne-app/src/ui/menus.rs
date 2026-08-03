@@ -328,6 +328,14 @@ impl FractadyneApp {
                             self.dialogs.help_open = true;
                             ui.close_menu();
                         }
+                        if ui
+                            .button("Report an issue…")
+                            .on_hover_text("Send a crash report, log, and location with a description")
+                            .clicked()
+                        {
+                            self.report.open = true;
+                            ui.close_menu();
+                        }
                         ui.separator();
                         ui.label(format!("Fractadyne v{}", version_string()));
                         ui.label(egui::RichText::new("Native fractal explorer").weak().small());

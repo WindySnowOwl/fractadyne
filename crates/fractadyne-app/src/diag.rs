@@ -156,6 +156,46 @@ pub(crate) fn perf_on() -> bool {
     *ON.get_or_init(|| std::env::var("FRACTADYNE_PERF").is_ok_and(|v| v != "0"))
 }
 
+/// The resolved logs directory (`<config>/logs`), or `None` if file logging is off/unavailable.
+/// Used by the issue reporter to pull the log + crash reports.
+pub(crate) fn logs_dir() -> Option<PathBuf> {
+    LOG_DIR.get().and_then(|o| o.clone())
+}
+
+/// The tail of the current log file (up to `max_bytes`, trimmed to a line boundary), for issue
+/// reports. `None` if logging is off or the file can't be read.
+pub(crate) fn recent_log(max_bytes: usize) -> Option<String> {
+    let data = std::fs::read(logs_dir()?.join("fractadyne.log")).ok()?;
+    let start = data.len().saturating_sub(max_bytes);
+    let s = String::from_utf8_lossy(&data[start..]).into_owned();
+    // If truncated mid-file, drop the partial first line.
+    Some(if start > 0 {
+        s.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or(s)
+    } else {
+        s
+    })
+}
+
+/// The newest `crash-*.txt` report (filename, contents), if any exists.
+pub(crate) fn latest_crash() -> Option<(String, String)> {
+    let dir = logs_dir()?;
+    let mut best: Option<(SystemTime, PathBuf)> = None;
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("crash-") && name.ends_with(".txt") {
+            if let Ok(t) = entry.metadata().and_then(|m| m.modified()) {
+                if best.as_ref().is_none_or(|(bt, _)| t > *bt) {
+                    best = Some((t, entry.path()));
+                }
+            }
+        }
+    }
+    let (_, path) = best?;
+    let body = std::fs::read_to_string(&path).ok()?;
+    Some((path.file_name()?.to_string_lossy().into_owned(), body))
+}
+
 /// Append one JSON record to `<config>/logs/perf.jsonl` (no-op unless `FRACTADYNE_PERF=1`).
 /// Caller supplies the JSON body; timestamp/version are added here. Regression tracking
 /// across builds becomes greppable history instead of memory.

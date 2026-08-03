@@ -1535,6 +1535,48 @@ struct AnimationState {
 
 /// Scattered window/panel open-flags plus two small chrome selections — pure UI-visibility state the
 /// egui layer reads. Only `right_panel_open` & `minimap` persist; the rest are transient. (Phase 2a.)
+/// Where the issue reporter sends to (Help → Report an issue…).
+pub(crate) const REPORT_EMAIL: &str = "fractadyne@rithea.com";
+
+/// Minimal percent-encoding for a `mailto:` subject/body component (keeps RFC 3986 unreserved).
+pub(crate) fn mailto_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// State for the "Report an issue" dialog: the user's description, which artifacts to include, and
+/// the last status line. The report is assembled on demand from these + live diagnostics
+/// ([`FractadyneApp::build_report`]); nothing is sent until the user acts.
+struct ReportState {
+    open: bool,
+    description: String,
+    include_sysinfo: bool,
+    include_location: bool,
+    include_log: bool,
+    include_crash: bool,
+    msg: Option<String>,
+}
+impl Default for ReportState {
+    fn default() -> Self {
+        // Include everything by default (crash auto-drops when there's none); system info is opt-out.
+        Self {
+            open: false,
+            description: String::new(),
+            include_sysinfo: true,
+            include_location: true,
+            include_log: true,
+            include_crash: true,
+            msg: None,
+        }
+    }
+}
+
 /// (`palette_editor_open` stays in [`ColoringConfig`]; the minimap *cache* — `minimap_tex` /
 /// `minimap_key` — stays flat; only the minimap enable *toggle* joins here.)
 #[derive(Default)]
@@ -1698,6 +1740,8 @@ struct FractadyneApp {
     pending_toast: Option<String>,
     /// Window/panel open-flags + the right-panel & minimap toggles (see [`DialogState`]).
     dialogs: DialogState,
+    /// "Report an issue" dialog state (Help → Report an issue…).
+    report: ReportState,
     /// Set after a reset: stop autosaving so we don't recreate the just-deleted state file.
     suppress_autosave: bool,
     /// A one-shot warning to show as a toast on the first frame (e.g. a newer-version session).
@@ -1962,6 +2006,7 @@ impl FractadyneApp {
             std_depth,
             gpu_name,
             sysinfo: gather_system_info(),
+            report: ReportState::default(),
             auto_benchmark,
             auto_benchmark_out,
             auto_benchmark_done: false,
@@ -3546,6 +3591,67 @@ impl FractadyneApp {
         }
     }
 
+    /// Compact, PII-free system-info block for issue reports (version, OS, CPU, GPU, VRAM).
+    fn system_info_block(&self) -> String {
+        let si = &self.sysinfo;
+        let cache = match (si.l2_kb, si.l3_kb) {
+            (0, 0) => "—".to_string(),
+            (l2, 0) => format!("L2 {l2} KB"),
+            (l2, l3) => format!("L2 {l2} KB / L3 {l3} KB"),
+        };
+        let vram = if si.vram_mb > 0 { format!("{} MB", si.vram_mb) } else { "unknown".to_string() };
+        format!(
+            "Fractadyne v{}\n{}\nOS:   {} / {}\nCPU:  {} ({} physical / {} logical, {})\nGPU:  {}\nVRAM: {}\n",
+            version_string(),
+            now_utc_string(),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            if si.cpu.is_empty() { "unknown" } else { si.cpu.as_str() },
+            si.physical,
+            si.logical,
+            cache,
+            self.gpu_name,
+            vram,
+        )
+    }
+
+    /// Assemble the full issue-report text from the dialog state + live diagnostics — exactly what
+    /// the preview shows and what Copy/Save/Email use. Nothing is transmitted here.
+    fn build_report(&self) -> String {
+        let mut s = String::new();
+        s.push_str("Fractadyne issue report\n");
+        s.push_str(&format!("To: {REPORT_EMAIL}\n\n"));
+        s.push_str("== Description ==\n");
+        let d = self.report.description.trim();
+        s.push_str(if d.is_empty() { "(none provided)" } else { d });
+        s.push_str("\n\n");
+        if self.report.include_sysinfo {
+            s.push_str("== System ==\n");
+            s.push_str(&self.system_info_block());
+            s.push('\n');
+        }
+        if self.report.include_location {
+            s.push_str("== Current location (.fdn) ==\n");
+            s.push_str(&self.view_metadata());
+            s.push('\n');
+        }
+        if self.report.include_crash {
+            if let Some((name, body)) = crate::diag::latest_crash() {
+                s.push_str(&format!("== Latest crash report ({name}) ==\n"));
+                s.push_str(body.trim_end());
+                s.push_str("\n\n");
+            }
+        }
+        if self.report.include_log {
+            if let Some(log) = crate::diag::recent_log(48 * 1024) {
+                s.push_str("== Recent log (tail) ==\n");
+                s.push_str(log.trim_end());
+                s.push('\n');
+            }
+        }
+        s
+    }
+
     /// Save the Share dialog's text to a `.fdn` file.
     fn save_share_file(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
@@ -4323,6 +4429,7 @@ impl eframe::App for FractadyneApp {
         self.draw_toast(ctx);
         self.draw_goto_dialog(ctx);
         self.draw_share_dialog(ctx);
+        self.draw_report_dialog(ctx);
         self.draw_reset_dialog(ctx);
         self.draw_bookmarks_dialog(ctx);
 

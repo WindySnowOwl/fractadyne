@@ -119,6 +119,118 @@ impl FractadyneApp {
         self.share.open = open && self.share.open;
     }
 
+    /// "Report an issue" dialog (Help → Report an issue…): a description + selectable artifacts
+    /// (system info, current location, recent log, latest crash report), a full preview of exactly
+    /// what will be sent, then Copy / Save / Email to [`crate::REPORT_EMAIL`]. Nothing is
+    /// transmitted until the user acts, and system info is one checkbox to exclude.
+    pub(crate) fn draw_report_dialog(&mut self, ctx: &egui::Context) {
+        if !self.report.open {
+            return;
+        }
+        let mut open = self.report.open;
+        let has_crash = crate::diag::latest_crash().is_some();
+        let (mut copy, mut save, mut email) = (false, false, false);
+        egui::Window::new("Report an issue")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(560.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Sends to {}. Review everything below first — nothing leaves your machine \
+                         until you Copy, Save, or Email.",
+                        crate::REPORT_EMAIL
+                    ))
+                    .weak()
+                    .small(),
+                );
+                ui.add_space(6.0);
+                ui.label("Describe what happened:");
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.report.description)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(4)
+                        .hint_text("What were you doing, and what went wrong?"),
+                );
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Include:").weak().small());
+                ui.checkbox(&mut self.report.include_sysinfo, "System info (version, OS, CPU, GPU, VRAM)");
+                ui.checkbox(&mut self.report.include_location, "Current location (.fdn)");
+                ui.checkbox(&mut self.report.include_log, "Recent log");
+                ui.add_enabled_ui(has_crash, |ui| {
+                    ui.checkbox(
+                        &mut self.report.include_crash,
+                        if has_crash { "Latest crash report" } else { "Latest crash report (none found)" },
+                    );
+                });
+
+                let report = self.build_report();
+                ui.add_space(4.0);
+                egui::CollapsingHeader::new(format!("Preview what will be sent  ({} KB)", report.len() / 1024))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(260.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut report.as_str())
+                                        .desired_width(f32::INFINITY)
+                                        .font(egui::TextStyle::Monospace),
+                                );
+                            });
+                    });
+
+                if let Some(m) = &self.report.msg {
+                    ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA0, 0x30), m);
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    email = ui
+                        .button("Email…")
+                        .on_hover_text(format!(
+                            "Open your mail app to {} with the report copied ready to paste",
+                            crate::REPORT_EMAIL
+                        ))
+                        .clicked();
+                    copy = ui.button("Copy report").clicked();
+                    save = ui.button("Save report…").clicked();
+                });
+            });
+        if copy {
+            ctx.copy_text(self.build_report());
+            self.report.msg = Some("Report copied to the clipboard.".into());
+        }
+        if save {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name("fractadyne-report.txt")
+                .add_filter("Text", &["txt"])
+                .save_file()
+            {
+                match std::fs::write(&path, self.build_report().as_bytes()) {
+                    Ok(()) => self.report.msg = Some(format!("Saved to {}", path.display())),
+                    Err(e) => self.report.msg = Some(format!("Save failed: {e}")),
+                }
+            }
+        }
+        if email {
+            ctx.copy_text(self.build_report());
+            let url = format!(
+                "mailto:{}?subject={}&body={}",
+                crate::REPORT_EMAIL,
+                crate::mailto_encode("Fractadyne issue report"),
+                crate::mailto_encode(
+                    "The full report has been copied to your clipboard — paste it here (Ctrl+V). \
+                     You can also attach a saved report file.\n\n"
+                ),
+            );
+            ctx.open_url(egui::OpenUrl::same_tab(url));
+            self.report.msg =
+                Some("Opened your email app — the report is on the clipboard; paste it in.".into());
+        }
+        self.report.open = open && self.report.open;
+    }
+
     /// "Reset application state" confirmation dialog — permanently deletes all saved data.
     pub(crate) fn draw_reset_dialog(&mut self, ctx: &egui::Context) {
         if !self.dialogs.reset_confirm_open {
