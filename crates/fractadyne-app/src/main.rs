@@ -669,14 +669,21 @@ pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
     (2000.0 + o * 256.0).min(u32::MAX as f64) as u32
 }
 
-/// Ceiling on the LIVE preview's reference-orbit LENGTH (samples). At extreme depth a non-escaping
-/// tip yields a full 500k-iter reference — a ~4M-node BLA that overloads the GPU present and freezes
-/// the window on boot/settle. Capping the REFERENCE (not the pixel iteration) keeps that buffer small
-/// and freeze-safe, while pixels still iterate to the full depth-appropriate count (`zoom_iter_cap`)
-/// by REBASING past the short reference — so the preview border resolves to the same detail the
-/// export shows (an export at ~1e205× resolves the whole frame from a ~100k-sample reference). The
-/// one-shot export path keeps the full appetite (`orbit_len_cap = u32::MAX`).
-pub(crate) const LIVE_REF_CAP: u32 = 100_000;
+/// Freeze-ceiling on the LIVE preview's reference-orbit LENGTH (samples). At extreme depth a
+/// non-escaping tip yields a full ~500k-iter reference — a ~4M-node BLA that overloads the GPU
+/// present and freezes the window on boot/settle. Capping the REFERENCE (not the pixel iteration)
+/// keeps that buffer small there.
+///
+/// CRUCIAL: it must sit ABOVE the moderate-depth reference build (`ref_build_iter` ≈ `gpu_iter` +
+/// headroom, ≈184k at ~1e205×). A reference that ESCAPES below the cap builds complete
+/// (`partial=false`), so pixels iterate to the full `gpu_iter` by REBASING past it and the border
+/// resolves. But truncating a reference that would have escaped just above the cap flips it to
+/// `partial=true`, and the render then clamps `max_iter` to the (short) orbit length — leaving a
+/// smooth, unresolved border (the ~1e205× session point escaped at 100002 and a 100k cap truncated
+/// it 2 iterations early). So the cap only bites at EXTREME depth (past ~1e290×, where the reference
+/// genuinely doesn't escape); shallower deep views resolve their borders live. 256k stays well under
+/// the ~500k freeze size. Export keeps the full appetite (`orbit_len_cap = u32::MAX`).
+pub(crate) const LIVE_REF_CAP: u32 = 256_000;
 
 // Self-test helpers + run_selftest moved to selftest.rs.
 
