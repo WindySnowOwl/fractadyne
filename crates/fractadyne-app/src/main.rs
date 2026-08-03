@@ -1550,11 +1550,96 @@ pub(crate) fn mailto_encode(s: &str) -> String {
     out
 }
 
-/// State for the "Report an issue" dialog: the user's description, which artifacts to include, and
-/// the last status line. The report is assembled on demand from these + live diagnostics
-/// ([`FractadyneApp::build_report`]); nothing is sent until the user acts.
+/// What kind of issue is being reported (drives the report header + email subject).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IssueKind {
+    Crash,
+    Rendering,
+    Performance,
+    Ui,
+    Feature,
+    Other,
+}
+impl IssueKind {
+    pub(crate) const ALL: [IssueKind; 6] = [
+        IssueKind::Crash,
+        IssueKind::Rendering,
+        IssueKind::Performance,
+        IssueKind::Ui,
+        IssueKind::Feature,
+        IssueKind::Other,
+    ];
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            IssueKind::Crash => "Application crash / freeze",
+            IssueKind::Rendering => "Incorrect rendering",
+            IssueKind::Performance => "Performance issue",
+            IssueKind::Ui => "UI / usability issue",
+            IssueKind::Feature => "Feature request",
+            IssueKind::Other => "Other",
+        }
+    }
+}
+
+/// Optional severity for triage (`Unspecified` = omitted from the report).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Severity {
+    Unspecified,
+    Low,
+    Medium,
+    High,
+    Blocking,
+}
+impl Severity {
+    pub(crate) const ALL: [Severity; 5] = [
+        Severity::Unspecified,
+        Severity::Low,
+        Severity::Medium,
+        Severity::High,
+        Severity::Blocking,
+    ];
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Severity::Unspecified => "—",
+            Severity::Low => "Low",
+            Severity::Medium => "Medium",
+            Severity::High => "High",
+            Severity::Blocking => "Blocking",
+        }
+    }
+}
+
+/// How reproducible the issue is (`Unspecified` = omitted from the report).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Repro {
+    Unspecified,
+    Always,
+    Sometimes,
+    Once,
+    Cannot,
+}
+impl Repro {
+    pub(crate) const ALL: [Repro; 5] =
+        [Repro::Unspecified, Repro::Always, Repro::Sometimes, Repro::Once, Repro::Cannot];
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Repro::Unspecified => "—",
+            Repro::Always => "Always",
+            Repro::Sometimes => "Sometimes",
+            Repro::Once => "Happened once",
+            Repro::Cannot => "Can't reproduce",
+        }
+    }
+}
+
+/// State for the "Report an issue" dialog: the classification, description, which artifacts to
+/// include, and the last status line. The report is assembled on demand from these + live
+/// diagnostics ([`FractadyneApp::build_report`]); nothing is sent until the user acts.
 struct ReportState {
     open: bool,
+    kind: IssueKind,
+    severity: Severity,
+    repro: Repro,
     description: String,
     include_sysinfo: bool,
     include_location: bool,
@@ -1567,6 +1652,9 @@ impl Default for ReportState {
         // Include everything by default (crash auto-drops when there's none); system info is opt-out.
         Self {
             open: false,
+            kind: IssueKind::Other,
+            severity: Severity::Unspecified,
+            repro: Repro::Unspecified,
             description: String::new(),
             include_sysinfo: true,
             include_location: true,
@@ -3615,12 +3703,25 @@ impl FractadyneApp {
         )
     }
 
+    /// Email subject line for the issue report — the issue type, so it triages in the inbox.
+    fn report_subject(&self) -> String {
+        format!("Fractadyne issue: {}", self.report.kind.label())
+    }
+
     /// Assemble the full issue-report text from the dialog state + live diagnostics — exactly what
     /// the preview shows and what Copy/Save/Email use. Nothing is transmitted here.
     fn build_report(&self) -> String {
         let mut s = String::new();
         s.push_str("Fractadyne issue report\n");
-        s.push_str(&format!("To: {REPORT_EMAIL}\n\n"));
+        s.push_str(&format!("To: {REPORT_EMAIL}\n"));
+        s.push_str(&format!("Type: {}\n", self.report.kind.label()));
+        if self.report.severity != Severity::Unspecified {
+            s.push_str(&format!("Severity: {}\n", self.report.severity.label()));
+        }
+        if self.report.repro != Repro::Unspecified {
+            s.push_str(&format!("Reproducibility: {}\n", self.report.repro.label()));
+        }
+        s.push('\n');
         s.push_str("== Description ==\n");
         let d = self.report.description.trim();
         s.push_str(if d.is_empty() { "(none provided)" } else { d });

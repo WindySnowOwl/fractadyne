@@ -145,12 +145,49 @@ impl FractadyneApp {
                     .small(),
                 );
                 ui.add_space(6.0);
+                egui::Grid::new("report_classify")
+                    .num_columns(2)
+                    .spacing([8.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("Type:");
+                        egui::ComboBox::from_id_salt("report_kind")
+                            .selected_text(self.report.kind.label())
+                            .show_ui(ui, |ui| {
+                                for k in crate::IssueKind::ALL {
+                                    ui.selectable_value(&mut self.report.kind, k, k.label());
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("Severity:");
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_salt("report_sev")
+                                .selected_text(self.report.severity.label())
+                                .show_ui(ui, |ui| {
+                                    for s in crate::Severity::ALL {
+                                        ui.selectable_value(&mut self.report.severity, s, s.label());
+                                    }
+                                });
+                            ui.add_space(16.0);
+                            ui.label("Reproducible:");
+                            egui::ComboBox::from_id_salt("report_repro")
+                                .selected_text(self.report.repro.label())
+                                .show_ui(ui, |ui| {
+                                    for r in crate::Repro::ALL {
+                                        ui.selectable_value(&mut self.report.repro, r, r.label());
+                                    }
+                                });
+                        });
+                        ui.end_row();
+                    });
+                ui.add_space(6.0);
                 ui.label("Describe what happened:");
                 ui.add(
                     egui::TextEdit::multiline(&mut self.report.description)
                         .desired_width(f32::INFINITY)
-                        .desired_rows(4)
-                        .hint_text("What were you doing, and what went wrong?"),
+                        .desired_rows(5)
+                        .hint_text(
+                            "What happened, the steps to reproduce it, and what you expected instead.",
+                        ),
                 );
                 ui.add_space(6.0);
                 ui.label(egui::RichText::new("Include:").weak().small());
@@ -233,7 +270,7 @@ impl FractadyneApp {
             let url = format!(
                 "mailto:{}?subject={}&body={}",
                 crate::REPORT_EMAIL,
-                crate::mailto_encode("Fractadyne issue report"),
+                crate::mailto_encode(&self.report_subject()),
                 crate::mailto_encode(
                     "The full report has been copied to your clipboard — paste it here (Ctrl+V). \
                      You can also attach a saved report file.\n\n"
@@ -250,7 +287,7 @@ impl FractadyneApp {
             let url = format!(
                 "https://mail.google.com/mail/?view=cm&fs=1&to={}&su={}",
                 crate::mailto_encode(crate::REPORT_EMAIL),
-                crate::mailto_encode("Fractadyne issue report"),
+                crate::mailto_encode(&self.report_subject()),
             );
             ctx.open_url(egui::OpenUrl::new_tab(url));
             self.report.msg =
