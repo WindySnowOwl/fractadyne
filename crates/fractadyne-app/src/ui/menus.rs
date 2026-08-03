@@ -18,8 +18,8 @@ impl FractadyneApp {
                     brand_wordmark(ui);
                     ui.separator();
                     ui.menu_button("File", |ui| {
-                        if ui.button("📂  Open view…").clicked() {
-                            self.open_view();
+                        if ui.button("📂  Open view or location…").clicked() {
+                            self.open_view(ctx);
                             ui.close_menu();
                         }
                         if ui.button("🖼  Gallery…").clicked() {
@@ -384,8 +384,8 @@ impl FractadyneApp {
                 });
                 ui.separator();
                 // ── File / I-O: open & browse, then save ──────────────────────────────
-                if ui.button("📂").on_hover_text("Open view…").clicked() {
-                    self.open_view();
+                if ui.button("📂").on_hover_text("Open a view or location (PNG / EXR, .fdn, .kfr)").clicked() {
+                    self.open_view(ctx);
                 }
                 if ui.button("🖼").on_hover_text("Gallery").clicked() {
                     self.gallery.open = true;

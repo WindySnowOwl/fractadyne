@@ -420,36 +420,80 @@ impl FractadyneApp {
         report
     }
 
-    /// Open a previously-exported PNG/EXR and restore its view (via a native dialog).
-    pub(crate) fn open_view(&mut self) {
+    /// Open any Fractadyne view or shared location and jump to it (native dialog). Accepts an
+    /// exported **PNG/EXR** (view restored from its embedded metadata), a **`.fdn`** share-location
+    /// file, or a Kalles Fraktaler **`.kfr`** location — dispatched by extension. This is the single
+    /// discoverable entry point; `.fdn` no longer needs the Share-location dialog.
+    pub(crate) fn open_view(&mut self, ctx: &egui::Context) {
         let path = rfd::FileDialog::new()
-            .add_filter("Fractadyne image", &["png", "exr"])
+            .add_filter("Fractadyne view or location", &["png", "exr", "fdn", "kfr"])
+            .add_filter("Image (PNG / EXR)", &["png", "exr"])
+            .add_filter("Location (.fdn / .kfr)", &["fdn", "kfr"])
             .set_directory(Self::pictures_dir())
             .pick_file();
         let Some(path) = path else { return };
-        let is_exr = path
+        let ext = path
             .extension()
-            .map(|e| e.eq_ignore_ascii_case("exr"))
-            .unwrap_or(false);
-        let meta = if is_exr {
-            fractadyne_export::read_exr_metadata(&path)
-        } else {
-            fractadyne_export::read_png_metadata(&path)
-        };
-        match meta {
-            Ok(Some(m)) => {
-                let report = self.load_view_metadata(&m);
-                self.export.status = Some(match report.note() {
-                    None => format!("Loaded view from {}", path.display()),
-                    Some(n) => format!("Loaded view from {} — {n}", path.display()),
-                });
-            }
-            Ok(None) => {
-                self.export.status =
-                    Some("That file has no embedded Fractadyne view metadata.".to_string());
-            }
-            Err(e) => {
-                self.export.status = Some(format!("Couldn't read {}: {e}", path.display()));
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        match ext.as_str() {
+            // Shared location: a plain-text view-metadata blob (same format embedded in exports).
+            "fdn" => match std::fs::read(&path) {
+                Ok(bytes) if bytes.len() <= crate::SHARE_MAX => match String::from_utf8(bytes) {
+                    Ok(t)
+                        if crate::meta_get(&t, "app") == "Fractadyne"
+                            || !crate::meta_get(&t, "center_re").is_empty() =>
+                    {
+                        let report = self.load_view_metadata(&t); // jump + record history
+                        let zoom = crate::fmt_zoom_log2(self.viewport.log2_magnification());
+                        self.set_toast(
+                            match report.note() {
+                                None => format!("Loaded location @ {zoom}×"),
+                                Some(n) => format!("Loaded @ {zoom}× — {n}"),
+                            },
+                            ctx,
+                        );
+                    }
+                    _ => self.set_toast(
+                        format!("{} isn't a Fractadyne location.", path.display()),
+                        ctx,
+                    ),
+                },
+                Ok(_) => self.set_toast("File too large (not a .fdn location?).", ctx),
+                Err(e) => self.set_toast(format!("Couldn't read {}: {e}", path.display()), ctx),
+            },
+            // Kalles Fraktaler location import.
+            "kfr" => match self.load_kfr_file(&path) {
+                Ok(m) => self.set_toast(m, ctx),
+                Err(e) => self.set_toast(format!("Import failed: {e}"), ctx),
+            },
+            // Exported image: restore the view from its embedded metadata (EXR or PNG).
+            _ => {
+                let meta = if ext == "exr" {
+                    fractadyne_export::read_exr_metadata(&path)
+                } else {
+                    fractadyne_export::read_png_metadata(&path)
+                };
+                match meta {
+                    Ok(Some(m)) => {
+                        let report = self.load_view_metadata(&m);
+                        self.set_toast(
+                            match report.note() {
+                                None => format!("Loaded view from {}", path.display()),
+                                Some(n) => format!("Loaded view from {} — {n}", path.display()),
+                            },
+                            ctx,
+                        );
+                    }
+                    Ok(None) => self.set_toast(
+                        "That file has no embedded Fractadyne view metadata.".to_string(),
+                        ctx,
+                    ),
+                    Err(e) => {
+                        self.set_toast(format!("Couldn't read {}: {e}", path.display()), ctx)
+                    }
+                }
             }
         }
     }

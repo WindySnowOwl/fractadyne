@@ -125,6 +125,11 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
          and coloring — as a compact \".fdn\" snippet you can Copy, paste back and Apply, or \
          Save/Load as a file, to reproduce a spot exactly (or send it to someone).",
     );
+    help_p(
+        ui,
+        "File → \"Open view or location…\" opens any of these directly: an exported PNG/EXR (its \
+         embedded view is restored), a \".fdn\" location file, or a Kalles Fraktaler \".kfr\".",
+    );
     help_sub(ui, "Finding detail");
     help_p(
         ui,
