@@ -129,7 +129,7 @@ impl FractadyneApp {
         }
         let mut open = self.report.open;
         let has_crash = crate::diag::latest_crash().is_some();
-        let (mut copy, mut save, mut email) = (false, false, false);
+        let (mut copy, mut save, mut email, mut gmail) = (false, false, false, false);
         egui::Window::new("Report an issue")
             .open(&mut open)
             .resizable(true)
@@ -186,16 +186,31 @@ impl FractadyneApp {
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    email = ui
-                        .button("Email…")
+                    copy = ui
+                        .button("Copy report")
                         .on_hover_text(format!(
-                            "Open your mail app to {} with the report copied ready to paste",
+                            "Copy everything to the clipboard, then paste it into an email to {}",
                             crate::REPORT_EMAIL
                         ))
                         .clicked();
-                    copy = ui.button("Copy report").clicked();
-                    save = ui.button("Save report…").clicked();
+                    save = ui.button("Save report…").on_hover_text("Save as a .txt to attach").clicked();
+                    gmail = ui
+                        .button("Compose in Gmail")
+                        .on_hover_text("Open a Gmail compose window addressed + subject filled; paste the copied report")
+                        .clicked();
+                    email = ui
+                        .button("Email app…")
+                        .on_hover_text("Open your default mail app (mailto) — needs an email handler configured")
+                        .clicked();
                 });
+                ui.label(
+                    egui::RichText::new(
+                        "Tip: the report is copied to your clipboard on any of these — paste it into \
+                         the message body (Ctrl+V).",
+                    )
+                    .weak()
+                    .small(),
+                );
             });
         if copy {
             ctx.copy_text(self.build_report());
@@ -227,6 +242,19 @@ impl FractadyneApp {
             ctx.open_url(egui::OpenUrl::same_tab(url));
             self.report.msg =
                 Some("Opened your email app — the report is on the clipboard; paste it in.".into());
+        }
+        if gmail {
+            ctx.copy_text(self.build_report());
+            // Gmail web compose — reliable for webmail users without an OS mailto handler. The body
+            // can't hold the report (URL length), so it's on the clipboard to paste.
+            let url = format!(
+                "https://mail.google.com/mail/?view=cm&fs=1&to={}&su={}",
+                crate::mailto_encode(crate::REPORT_EMAIL),
+                crate::mailto_encode("Fractadyne issue report"),
+            );
+            ctx.open_url(egui::OpenUrl::new_tab(url));
+            self.report.msg =
+                Some("Opened Gmail compose — paste the copied report into the body (Ctrl+V).".into());
         }
         self.report.open = open && self.report.open;
     }
