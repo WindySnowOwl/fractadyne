@@ -243,7 +243,9 @@ impl FractadyneApp {
                 ui.label(
                     egui::RichText::new(
                         "Tip: the report is copied to your clipboard on any of these — paste it into \
-                         the message body (Ctrl+V).",
+                         the message body (Ctrl+V). Please also attach a screenshot or sample image \
+                         of the issue if you can (drag it into the email); it helps a lot for \
+                         rendering and UI problems.",
                     )
                     .weak()
                     .small(),
