@@ -150,7 +150,8 @@ impl FractadyneApp {
                 {
                     self.anim.random_palette.reshuffle();
                 }
-                ui.separator();
+                });
+                egui::CollapsingHeader::new("Effects").default_open(false).show(ui, |ui| {
                 ui.checkbox(&mut self.effects.light, "3D relief lighting")
                     .on_hover_text(
                         "Shade the surface using the distance-estimate slope — an \
@@ -188,7 +189,8 @@ impl FractadyneApp {
                     ui.checkbox(&mut self.effects.de_anim, "Animate glow")
                         .on_hover_text("Flow the glow bands over time (uses the Speed slider).");
                 });
-                ui.separator();
+                });
+                egui::CollapsingHeader::new("Rendering").default_open(true).show(ui, |ui| {
                 ui.checkbox(&mut self.render_cfg.auto_iter, "Auto-scale iterations with zoom");
                 let label = if self.render_cfg.auto_iter { "Iterations (base)" } else { "Iterations" };
                 ui.add(
@@ -251,6 +253,28 @@ impl FractadyneApp {
                     .on_hover_text(
                         "Supersampling for still images (applied when the view settles). \
                          Higher tames the fine exterior 'dust' at the cost of render time.",
+                    );
+                ui.separator();
+                ui.label(egui::RichText::new("Accelerators (advanced)").weak().small());
+                ui.checkbox(&mut self.render_cfg.use_bla, "BLA acceleration (deep zoom)")
+                    .on_hover_text(
+                        "Bilinear approximation: skip iterations throughout the orbit at extreme \
+                         depth (floatexp Mandelbrot, ≥1e28×) — ~5× faster GPU render, identical \
+                         output (verified by the self-test). On by default; turn off to compare \
+                         or if you hit an artifact.",
+                    );
+                ui.checkbox(&mut self.render_cfg.series_approx, "Series approximation")
+                    .on_hover_text(
+                        "Seed the perturbation from a polynomial to skip early iterations, where \
+                         BLA isn't active (df32 depths, Multibrot, BLA off). Identical output; \
+                         turn off to compare.",
+                    );
+                ui.checkbox(&mut self.render_cfg.glitch_correct, "Glitch correction (export)")
+                    .on_hover_text(
+                        "Multi-reference glitch correction for exported images: detects \
+                         perturbation glitches and re-renders those pixels against extra \
+                         references until clean. On by default. Exports up to ~32 MP (non-aux \
+                         coloring); larger images and the live view use the plain path.",
                     );
 
                 });

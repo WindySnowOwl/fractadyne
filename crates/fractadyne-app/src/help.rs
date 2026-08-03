@@ -106,7 +106,7 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     help_sub(ui, "Autopilot");
     help_p(
         ui,
-        "Press A (or View → \"Auto-zoom (autopilot)\") for a hands-free dive: every fraction of a \
+        "Press A (or Tools → \"Auto-zoom (autopilot)\") for a hands-free dive: every fraction of a \
          second it finds the most detailed region in view and zooms smoothly toward it, re-steering \
          as new structure appears. Any navigation input — or Esc — stops it.",
     );
@@ -115,7 +115,7 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     help_kv(ui, "Shift+Backspace / Ctrl+Y", "Redo.");
     help_p(
         ui,
-        "View → \"Go to location…\" lets you read, type, paste, or copy the exact center and zoom \
+        "Locations → \"Go to location…\" lets you read, type, paste, or copy the exact center and zoom \
          (full precision, any depth) — handy for revisiting a spot. The Bookmarks menu saves and \
          recalls locations.",
     );
@@ -134,7 +134,7 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     help_p(
         ui,
         "Minibrots are tiny copies of the whole set hidden along the boundary. Center one roughly \
-         and press M (or View → \"Find minibrot center\") to Newton-snap exactly onto its center \
+         and press M (or Locations → \"Find minibrot center\") to Newton-snap exactly onto its center \
          and read its period.",
     );
     help_p(

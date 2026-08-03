@@ -32,6 +32,16 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui
+                            .button("📷  Snapshot  (Ctrl+S)")
+                            .on_hover_text("Quick-export to the last-used folder, no dialog")
+                            .clicked()
+                        {
+                            if let Some((dev, q)) = gpu {
+                                self.quick_export(ctx, dev.clone(), q.clone());
+                            }
+                            ui.close_menu();
+                        }
+                        if ui
                             .button("🔗  Share location…")
                             .on_hover_text(
                                 "Copy / paste / save / load a self-contained location \
@@ -83,8 +93,21 @@ impl FractadyneApp {
                         });
                     });
                     ui.menu_button("View", |ui| {
-                        if ui.button("Go to location…").clicked() {
-                            self.open_goto();
+                        let now = ui.ctx().input(|i| i.time);
+                        if ui
+                            .button("🏠  Home view")
+                            .on_hover_text("Zoom out to the full home view (animated)")
+                            .clicked()
+                        {
+                            self.zoom_home(now);
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button("🔄  Reset view")
+                            .on_hover_text("Reset to the fractal's default view (instant)")
+                            .clicked()
+                        {
+                            self.reset_view();
                             ui.close_menu();
                         }
                         ui.add_enabled_ui(self.nav.undo.len() > 1, |ui| {
@@ -99,40 +122,6 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         });
-                        ui.add_enabled_ui(matches!(self.fractal.formula_id(), 0..=3), |ui| {
-                            if ui
-                                .button("Find minibrot center  (M)")
-                                .on_hover_text(
-                                    "Newton-snap the view center to the nearby minibrot's \
-                                     exact center and report its period.",
-                                )
-                                .clicked()
-                            {
-                                let ctx = ui.ctx().clone();
-                                self.find_minibrot(&ctx);
-                                ui.close_menu();
-                            }
-                        });
-                        ui.add_enabled_ui(!self.dual, |ui| {
-                            let label = if self.autopilot.active {
-                                "Stop autopilot  (A)"
-                            } else {
-                                "Auto-zoom (autopilot)  (A)"
-                            };
-                            if ui
-                                .button(label)
-                                .on_hover_text(
-                                    "Hands-free continuous deep zoom: dives toward the \
-                                     detail-richest region, re-steering as it goes. Any \
-                                     navigation input stops it.",
-                                )
-                                .clicked()
-                            {
-                                let ctx = ui.ctx().clone();
-                                self.toggle_autopilot(&ctx);
-                                ui.close_menu();
-                            }
-                        });
                         ui.separator();
                         ui.checkbox(&mut self.dialogs.right_panel_open, "Control panel")
                             .on_hover_text("Show/hide the right-hand control panel.");
@@ -140,29 +129,6 @@ impl FractadyneApp {
                             .on_hover_text(
                                 "Show a small home-view overview with a \"you are here\" \
                                  marker and the zoom depth. Click it to jump to a region.",
-                            );
-                        ui.checkbox(&mut self.render_cfg.series_approx, "Series approximation")
-                            .on_hover_text(
-                                "Speed up deep renders by seeding the perturbation from a \
-                                 polynomial and skipping early iterations. Applies where BLA \
-                                 isn't available (df32 depths, Multibrot, BLA off) — with BLA \
-                                 active the same skip comes from the BLA tree, so the costly \
-                                 series pass is skipped. Identical output; turn off to compare.",
-                            );
-                        ui.checkbox(&mut self.render_cfg.glitch_correct, "Glitch correction (export)")
-                            .on_hover_text(
-                                "Multi-reference glitch correction for exported images: detects \
-                                 perturbation glitches and re-renders those pixels against extra \
-                                 references until clean. On by default. Applies to exports up to \
-                                 ~32 MP / the GPU texture limit (non-aux coloring); larger images \
-                                 and the live view fall back to the plain path.",
-                            );
-                        ui.checkbox(&mut self.render_cfg.use_bla, "BLA acceleration (deep zoom)")
-                            .on_hover_text(
-                                "Bilinear approximation: skip iterations throughout the orbit at \
-                                 extreme depth (floatexp Mandelbrot, ≥1e28×) — ~5× faster GPU \
-                                 render, identical output (verified by the self-test). On by \
-                                 default; turn off to compare or if you hit an artifact.",
                             );
                         ui.checkbox(&mut self.watermark, "Fd watermark")
                             .on_hover_text(
@@ -204,42 +170,44 @@ impl FractadyneApp {
                             );
                         });
                         ui.separator();
-                        ui.label("Frame-rate cap");
-                        for (label, val) in [
-                            ("Uncapped", None),
-                            ("30 FPS", Some(30.0)),
-                            ("60 FPS", Some(60.0)),
-                            ("120 FPS", Some(120.0)),
-                        ] {
-                            if ui.selectable_label(self.fps_cap == val, label).clicked() {
-                                self.fps_cap = val;
+                        ui.menu_button("Settings", |ui| {
+                            ui.label("Frame-rate cap");
+                            for (label, val) in [
+                                ("Uncapped", None),
+                                ("30 FPS", Some(30.0)),
+                                ("60 FPS", Some(60.0)),
+                                ("120 FPS", Some(120.0)),
+                            ] {
+                                if ui.selectable_label(self.fps_cap == val, label).clicked() {
+                                    self.fps_cap = val;
+                                }
                             }
-                        }
-                        ui.separator();
-                        ui.label("UI scale (font size)");
-                        for (label, val) in [
-                            ("80%", 0.8_f32),
-                            ("90%", 0.9),
-                            ("100%", 1.0),
-                            ("110%", 1.1),
-                            ("125%", 1.25),
-                            ("150%", 1.5),
-                        ] {
-                            if ui
-                                .selectable_label((self.ui_scale - val).abs() < 0.01, label)
-                                .clicked()
-                            {
-                                self.ui_scale = val;
+                            ui.separator();
+                            ui.label("UI scale (font size)");
+                            for (label, val) in [
+                                ("80%", 0.8_f32),
+                                ("90%", 0.9),
+                                ("100%", 1.0),
+                                ("110%", 1.1),
+                                ("125%", 1.25),
+                                ("150%", 1.5),
+                            ] {
+                                if ui
+                                    .selectable_label((self.ui_scale - val).abs() < 0.01, label)
+                                    .clicked()
+                                {
+                                    self.ui_scale = val;
+                                }
                             }
-                        }
-                        ui.separator();
-                        ui.label("Theme");
-                        for m in [ThemeMode::Dark, ThemeMode::Light] {
-                            if ui.selectable_label(self.theme == m, m.label()).clicked() {
-                                self.theme = m;
-                                apply_theme(ui.ctx(), m);
+                            ui.separator();
+                            ui.label("Theme");
+                            for m in [ThemeMode::Dark, ThemeMode::Light] {
+                                if ui.selectable_label(self.theme == m, m.label()).clicked() {
+                                    self.theme = m;
+                                    apply_theme(ui.ctx(), m);
+                                }
                             }
-                        }
+                        });
                     });
                     ui.menu_button("Tools", |ui| {
                         if ui
@@ -258,6 +226,26 @@ impl FractadyneApp {
                             self.load_script();
                             ui.close_menu();
                         }
+                        ui.add_enabled_ui(!self.dual, |ui| {
+                            let label = if self.autopilot.active {
+                                "Stop autopilot  (A)"
+                            } else {
+                                "Auto-zoom (autopilot)  (A)"
+                            };
+                            if ui
+                                .button(label)
+                                .on_hover_text(
+                                    "Hands-free continuous deep zoom: dives toward the \
+                                     detail-richest region, re-steering as it goes. Any \
+                                     navigation input stops it.",
+                                )
+                                .clicked()
+                            {
+                                let ctx = ui.ctx().clone();
+                                self.toggle_autopilot(&ctx);
+                                ui.close_menu();
+                            }
+                        });
                         if self.bench_report.is_some()
                             && ui.button("Show last benchmark").clicked()
                         {
@@ -298,6 +286,31 @@ impl FractadyneApp {
                     });
                     ui.menu_button("Locations", |ui| {
                         let ctx = ui.ctx().clone();
+                        if ui
+                            .button("Go to location…")
+                            .on_hover_text(
+                                "Enter a center/zoom, jump to a well-known point, or Newton-solve \
+                                 a Misiurewicz / minibrot feature near the view.",
+                            )
+                            .clicked()
+                        {
+                            self.open_goto();
+                            ui.close_menu();
+                        }
+                        ui.add_enabled_ui(matches!(self.fractal.formula_id(), 0..=3), |ui| {
+                            if ui
+                                .button("Find minibrot center  (M)")
+                                .on_hover_text(
+                                    "Newton-snap the view center to the nearby minibrot's \
+                                     exact center and report its period.",
+                                )
+                                .clicked()
+                            {
+                                self.find_minibrot(&ctx);
+                                ui.close_menu();
+                            }
+                        });
+                        ui.separator();
                         for (name, cx, cy, mag) in FAMOUS {
                             if ui.button(*name).clicked() {
                                 self.goto_location(cx, cy, *mag, name, &ctx);
