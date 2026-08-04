@@ -67,6 +67,11 @@ pub struct SessionState {
     /// does not affect exports. Default 1.0.
     #[serde(default = "default_work_budget_scale")]
     pub work_budget_scale: f64,
+    /// Floor on the adaptive motion resolution (0.30–1.0): the lowest fraction of native a moving
+    /// deep-zoom frame shrinks to. Higher = sharper (less pixelated) motion, lower frame rate.
+    /// Default 0.30. `serde(default)` keeps older session files loadable.
+    #[serde(default = "default_min_motion_res")]
+    pub min_motion_res: f32,
     /// Supersampling / anti-alias factor (1 = off, 2/3/4/8 = N×N).
     #[serde(default = "default_aa")]
     pub aa: u32,
@@ -222,6 +227,10 @@ fn default_autopilot_dive_log2() -> f64 {
     900.0 // ≈ 1e271×
 }
 
+fn default_min_motion_res() -> f32 {
+    0.30
+}
+
 fn default_work_budget_scale() -> f64 {
     1.0
 }
@@ -342,6 +351,7 @@ impl Default for SessionState {
             click_zoom_factor: default_click_zoom_factor(),
             autopilot_dive_log2: default_autopilot_dive_log2(),
             work_budget_scale: default_work_budget_scale(),
+            min_motion_res: default_min_motion_res(),
             aa: default_aa(),
             fps_cap: default_fps_cap(), // 60 (0 = uncapped)
             export_width: default_export_width(),

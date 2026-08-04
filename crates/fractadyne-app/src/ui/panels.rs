@@ -341,6 +341,24 @@ impl FractadyneApp {
                      always full resolution regardless of this.",
                 );
 
+                // Motion sharpness floor: cap how pixelated a continuous deep zoom is allowed to get.
+                ui.add(
+                    egui::Slider::new(&mut self.render_cfg.min_motion_res, 0.30..=1.0)
+                        .text("Min motion resolution")
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+                        .custom_parser(|s| {
+                            s.trim().trim_end_matches('%').parse::<f64>().ok().map(|v| {
+                                if v > 1.0 { v / 100.0 } else { v }
+                            })
+                        }),
+                )
+                .on_hover_text(
+                    "The lowest resolution the live view may drop to while continuously zooming or \
+                     panning at deep zoom. Higher stops a fast dive from getting blocky/pixelated \
+                     (sharper) at the cost of frame-rate. Default 30%; doesn't affect the settled \
+                     image or exports.",
+                );
+
                 });
                 // Performance section, docked at the bottom of this same panel
                 // (toggle via the Perf button or the View menu).

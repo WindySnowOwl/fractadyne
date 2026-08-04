@@ -1445,7 +1445,11 @@ impl FractadyneApp {
             if view_id == 0 {
                 let fm = self.perf.frame_ms;
                 if fm > 26.0 {
-                    self.perf.motion_res = (self.perf.motion_res * 0.82).max(0.30);
+                    // Floor is user-configurable (`min_motion_res`): raising it caps how far the
+                    // moving/frozen frame may shrink — so a deep continuous zoom stays sharper
+                    // (smaller upsampled blocks) at the cost of frame rate. Default 0.30.
+                    self.perf.motion_res =
+                        (self.perf.motion_res * 0.82).max(self.render_cfg.min_motion_res as f64);
                 } else if fm > 0.0 && fm < 19.0 {
                     self.perf.motion_res = (self.perf.motion_res + 0.03).min(1.0);
                 }
