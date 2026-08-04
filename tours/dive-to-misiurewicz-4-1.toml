@@ -40,39 +40,61 @@ secs = 6
 mag_log10 = 40.0
 ease = "in"
 [[keyframe]]
-secs = 13
+secs = 130
 mag_log10 = 300.0
 ease = "linear"
 [[keyframe]]
-secs = 13
+secs = 130
 mag_log10 = 560.0
 ease = "linear"
 [[keyframe]]
-secs = 14
+secs = 600
 mag_log10 = 838.713
 ease = "out"
 hold = 6
 
-# --- narration ---
+# --- narration (timed to the ~879s / 14.6-min timeline: full-set hold to ~2.5s,
+#     swoop to ~7.5s, accelerate to 10^40x by ~13.5s, cruise 40->300 to ~143s and
+#     300->560 to ~273s, then a long decelerating tail onto 10^838.7x by ~873s) ---
 [[caption]]
 text = "The Mandelbrot Set"
 at = 0.3
-secs = 2.0
+secs = 2.2
 pos = "center"
 size = 34
 [[caption]]
 text = "Diving to a Misiurewicz point — an exact branch center"
 at = 8.0
-secs = 4.0
+secs = 6.0
 pos = "bottom"
 [[caption]]
-text = "The same three-spar repeats at every scale"
-at = 22.0
-secs = 5.0
+text = "The same three-spar, at every scale"
+at = 55.0
+secs = 8.0
+pos = "bottom"
+[[caption]]
+text = "Self-similar without end"
+at = 180.0
+secs = 8.0
+pos = "bottom"
+[[caption]]
+text = "Past 10^500x — and the shape holds"
+at = 300.0
+secs = 8.0
+pos = "bottom"
+[[caption]]
+text = "The zoom eases as it nears the exact center"
+at = 520.0
+secs = 9.0
+pos = "bottom"
+[[caption]]
+text = "A pre-periodic branch center — not a minibrot"
+at = 720.0
+secs = 9.0
 pos = "bottom"
 [[caption]]
 text = "Misiurewicz (4,1)  ·  5.17 x 10^838 x"
-at = 54.0
-secs = 5.0
+at = 866.0
+secs = 10.0
 pos = "bottom"
 size = 26
