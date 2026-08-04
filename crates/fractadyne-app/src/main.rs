@@ -935,8 +935,9 @@ pub(crate) fn fmt_zoom_log2(log2mag: f64) -> String {
 }
 
 /// Magnification as a plain scientific string (no grouping), parseable by
-/// [`parse_zoom_to_log2`] and valid past f64 range — used to pre-fill the go-to field.
-fn fmt_zoom_field(log2mag: f64) -> String {
+/// [`parse_zoom_to_log2`] and valid past f64 range — used to pre-fill the go-to field and to write
+/// the `.fdn` / bookmark `zoom=` field (`magnification()` saturates to `inf` past ~1e308×).
+pub(crate) fn fmt_zoom_field(log2mag: f64) -> String {
     if log2mag <= 1020.0 {
         format!("{:e}", 2f64.powf(log2mag.max(0.0)))
     } else {

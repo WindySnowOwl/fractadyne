@@ -280,7 +280,10 @@ impl FractadyneApp {
             // Extended-range scale (log2 of units_per_pixel) so deep (>1e308×) views reload
             // exactly; `upp` above is the saturating f64 (back-compat + human-readable).
             self.viewport.units_per_pixel.log2(),
-            self.viewport.magnification(),
+            // Scientific string valid past f64 range — `magnification()` saturates to `inf` past
+            // ~1e308×, which showed as `zoom=inf` in deep `.fdn`/bookmarks. Informational only
+            // (loads use `upp_log2`); readers get a real value like `4.84e838`.
+            crate::fmt_zoom_field(self.viewport.log2_magnification()),
             self.render_cfg.max_iter,
             self.render_cfg.auto_iter as u32,
             self.coloring.palette_idx,
