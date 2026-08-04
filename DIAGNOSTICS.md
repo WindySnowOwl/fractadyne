@@ -80,10 +80,11 @@ exercise means dead code (exactly how the v0.2.6 NaN-marker regression would hav
 
 | Flag | What |
 |------|------|
-| `--selftest [--out report.md] [--bless]` | 61 checks + 17 goldens, streamed live; hermetic (resets config at entry, echoes it); GPU errors are printed, never silently skipped; data files resolve relative to the repo even when run elsewhere |
+| `--selftest [--out report.md] [--bless]` | 83 checks + 17 goldens, streamed live; hermetic (resets config at entry, echoes it); GPU errors are printed, never silently skipped; data files resolve relative to the repo even when run elsewhere. The last 20 checks are the `bench-matrix` group — deterministic path-signature tripwires (see `--bench-matrix`) |
 | `--selftest-filter <substr>` | Run only matching check groups / goldens (fast iteration on one failure; not a release verdict — groups share state) |
 | `--selftest-list` | Print the group tags usable with `--selftest-filter` |
 | `--profile [--regions file.toml] [--reps N]` | Per-region reference/SA/BLA build ms + pure-GPU pass ms (TIMESTAMP_QUERY); includes a corpus-14-class `deep-interior-1e148` region (dip orbit, 800k iters — the export-throughput-gap regime) |
+| `--bench-matrix [--bless] [--reps N]` | Path-coverage perf + regression suite (zoom bands, fractals, coloring). Per-segment CPU-build vs GPU split + deterministic GPU event counters, compared against `benchmarks/bench-matrix-baseline.json`. Algorithmic drift → exit 2; timing regression → warn. `--bless` records the baseline. See [design/bench-matrix.md](design/bench-matrix.md) |
 | `--frametest` | Stepped-dive stutter harness (build_ms stalls; its "gpu" column is CPU wall-clock — trust `--profile` for GPU numbers) |
 | `--benchmark-std` | Standardized dive benchmark with report |
 | `--render --out X …` | One-shot render; prints manifest + progress; non-zero exit on failure |

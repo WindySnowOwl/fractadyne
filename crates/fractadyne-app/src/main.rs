@@ -51,6 +51,7 @@ mod cli;
 mod diag;
 mod error;
 mod export;
+mod bench_matrix;
 mod fractal;
 mod help;
 mod profile;
@@ -1833,6 +1834,10 @@ struct FractadyneApp {
     profile_reps: u32,
     profile_regions: Option<String>,
     profile_out: Option<std::path::PathBuf>,
+    /// CLI `--bench-matrix [--bless] [--reps N]`: run the path-coverage perf + regression suite,
+    /// compare against (or bless) the baseline, and exit.
+    bench_matrix: bool,
+    bench_matrix_done: bool,
     /// CLI `--reusetest`: measure reuse-first-zoom reprojection staleness vs Δ-octaves, exit.
     reusetest: bool,
     reusetest_done: bool,
@@ -1996,6 +2001,7 @@ impl FractadyneApp {
         let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode;
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
         let profile = args.iter().any(|a| a == "--profile");
+        let bench_matrix = args.iter().any(|a| a == "--bench-matrix");
         let reusetest = args.iter().any(|a| a == "--reusetest");
         let frametest = args.iter().any(|a| a == "--frametest");
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
@@ -2183,6 +2189,8 @@ impl FractadyneApp {
             profile_reps,
             profile_regions,
             profile_out: out_path.clone(),
+            bench_matrix,
+            bench_matrix_done: false,
             reusetest,
             reusetest_done: false,
             frametest,
@@ -4470,6 +4478,18 @@ impl eframe::App for FractadyneApp {
                 let reps = self.profile_reps;
                 self.run_profile(dev, q, &regions, reps, &out);
                 std::process::exit(0);
+            }
+        }
+
+        // CLI path-matrix benchmark: exercise every rendering path, compare (or bless) the
+        // baseline, and flag regressions. `--bless` records; `--reps N` sets timed reps.
+        if self.bench_matrix && !self.bench_matrix_done {
+            if let Some((dev, q)) = &gpu {
+                self.bench_matrix_done = true;
+                let bless = self.selftest_bless; // shared `--bless` flag
+                let reps = self.profile_reps; // shared `--reps N` flag (default 5)
+                let code = self.run_bench_matrix(dev, q, bless, reps, false);
+                std::process::exit(code);
             }
         }
 

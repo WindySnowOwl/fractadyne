@@ -209,6 +209,7 @@ impl FractadyneApp {
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "metadata", "display", "catalog", "goldens",
+            "bench-matrix",
         ];
         if self.selftest_list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -2103,6 +2104,26 @@ impl FractadyneApp {
                     }
                 }
                 Err(e) => goldens.push((name.to_string(), 0, 0.0, 0, false, format!("render failed: {e}"), "RENDER ERROR")),
+            }
+        }
+
+        // bench-matrix rendering-pipeline sanity check (design/bench-matrix.md): assert each
+        // deterministic path's EXACT signature (mode / skip / orbit-len / eff-iter / GPU event
+        // counters) matches the blessed baseline. This is the machine-independent algorithmic-
+        // regression tripwire — any build touching the rendering pipeline that changes a path's
+        // executed work trips it here. Runs LAST: it dirties render config (fractal / coloring /
+        // deep zoom) and nothing after needs the clean hermetic state.
+        if want("bench-matrix") {
+            let base = anchored("benchmarks/bench-matrix-baseline.json");
+            for mc in self.bench_matrix_selftest_checks(device, queue, &base) {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "bench-matrix",
+                    name: mc.name,
+                    params: "path signature vs baseline".to_string(),
+                    result: mc.detail,
+                    threshold: "exact",
+                    pass: mc.pass,
+                });
             }
         }
 

@@ -1,0 +1,337 @@
+{
+  "version": "0.2.40-beta.3 (build 969)",
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "utc": "2026-08-04 17:53:46 UTC",
+  "segments": {
+    "color-decomposition": {
+      "mode": 0,
+      "sa_skip": 0,
+      "orbit_len": 15001,
+      "eff_iter": 15000,
+      "counters": [
+        1199455,
+        0,
+        0,
+        0,
+        69
+      ],
+      "ref_ms": 13.7883,
+      "gpu_ms": 53.5857
+    },
+    "color-smooth": {
+      "mode": 0,
+      "sa_skip": 7954,
+      "orbit_len": 15001,
+      "eff_iter": 15000,
+      "counters": [
+        1200237,
+        0,
+        0,
+        0,
+        68
+      ],
+      "ref_ms": 14.0325,
+      "gpu_ms": 23.9559
+    },
+    "color-stripe": {
+      "mode": 0,
+      "sa_skip": 0,
+      "orbit_len": 15001,
+      "eff_iter": 15000,
+      "counters": [
+        1199455,
+        0,
+        0,
+        0,
+        69
+      ],
+      "ref_ms": 13.7989,
+      "gpu_ms": 60.2785
+    },
+    "color-trap": {
+      "mode": 0,
+      "sa_skip": 0,
+      "orbit_len": 15001,
+      "eff_iter": 15000,
+      "counters": [
+        1199455,
+        0,
+        0,
+        0,
+        69
+      ],
+      "ref_ms": 14.1797,
+      "gpu_ms": 57.498
+    },
+    "deep-interior-1e148": {
+      "mode": 2,
+      "sa_skip": 0,
+      "orbit_len": 720892,
+      "eff_iter": 800000,
+      "counters": [
+        1286079,
+        10617017,
+        0,
+        139996042,
+        620
+      ],
+      "ref_ms": 952.7559,
+      "gpu_ms": 332.1521
+    },
+    "df32-1e20": {
+      "mode": 0,
+      "sa_skip": 7954,
+      "orbit_len": 15001,
+      "eff_iter": 15000,
+      "counters": [
+        1200237,
+        0,
+        0,
+        0,
+        68
+      ],
+      "ref_ms": 13.2657,
+      "gpu_ms": 24.2189
+    },
+    "df32-1e8": {
+      "mode": 0,
+      "sa_skip": 78,
+      "orbit_len": 3001,
+      "eff_iter": 3000,
+      "counters": [
+        1038501,
+        0,
+        0,
+        0,
+        11005
+      ],
+      "ref_ms": 2.4722,
+      "gpu_ms": 17.7107
+    },
+    "direct-1e2": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 512,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        58130
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 10.1526
+    },
+    "floatexp-1e30-nobla": {
+      "mode": 2,
+      "sa_skip": 16014,
+      "orbit_len": 30001,
+      "eff_iter": 30000,
+      "counters": [
+        887150,
+        0,
+        0,
+        0,
+        35602
+      ],
+      "ref_ms": 27.2793,
+      "gpu_ms": 160.47729999999999
+    },
+    "floatexp-1e30-nosa": {
+      "mode": 2,
+      "sa_skip": 0,
+      "orbit_len": 30001,
+      "eff_iter": 30000,
+      "counters": [
+        1016049,
+        0,
+        0,
+        39672400,
+        35603
+      ],
+      "ref_ms": 28.3276,
+      "gpu_ms": 101.6724
+    },
+    "floatexp-1e30-sa": {
+      "mode": 2,
+      "sa_skip": 0,
+      "orbit_len": 30001,
+      "eff_iter": 30000,
+      "counters": [
+        1016049,
+        0,
+        0,
+        39672400,
+        35603
+      ],
+      "ref_ms": 28.5897,
+      "gpu_ms": 103.3552
+    },
+    "floatexp-1e300": {
+      "mode": 2,
+      "sa_skip": 2411,
+      "orbit_len": 2766,
+      "eff_iter": 200000,
+      "counters": [
+        359146,
+        0,
+        0,
+        0,
+        0
+      ],
+      "ref_ms": 5.7598,
+      "gpu_ms": 14.9724
+    },
+    "fractal-buffalo": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 12.1784
+    },
+    "fractal-burningship": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        141587
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 12.4411
+    },
+    "fractal-celtic": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        146862
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 11.7506
+    },
+    "fractal-mandelbrot": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        142798
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 11.992700000000001
+    },
+    "fractal-multibrot3": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 12.6449
+    },
+    "fractal-multibrot4": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 13.206900000000001
+    },
+    "fractal-multibrot5": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 13.379999999999999
+    },
+    "fractal-newton": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 10.8047
+    },
+    "fractal-phoenix": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 12.8754
+    },
+    "fractal-tricorn": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        135828
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 12.3226
+    }
+  }
+}

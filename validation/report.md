@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.2 (build 963)
-- **Generated:** 2026-08-04 12:22:55 UTC (unix 1785846175)
+- **Version:** 0.2.40-beta.3 (build 969)
+- **Generated:** 2026-08-04 17:53:48 UTC (unix 1785866028)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -77,8 +77,28 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | View format | hostile fields clamped + reported | upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf, bogus_field | iter 10000000 aa 16 upp_log2 -3.40e7; clamped [zoom depth, max_iter, cycle, offset, anti-aliasing]; unknown [bogus_field] | clamped & finite; report lists clamped + unknown | ✅ PASS |
 | Formatting | zoom mantissa grouped | 3.38050027227e15 | 3.38050 02722 7e15 | "3.38050 02722 7e15" | ✅ PASS |
 | Formatting | deep coordinate elides middle | 32-digit center @ ~1e30×; and -0.5 | -0.74364 38870 … 11477 40000  |  -0.5 | leading … frontier; short coord safe | ✅ PASS |
+| bench-matrix | direct-1e2 | path signature vs baseline | mode 1 eff-it 512 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | df32-1e8 | path signature vs baseline | mode 0 eff-it 3000 sa-skip 78 counters ok | exact | ✅ PASS |
+| bench-matrix | df32-1e20 | path signature vs baseline | mode 0 eff-it 15000 sa-skip 7954 counters ok | exact | ✅ PASS |
+| bench-matrix | floatexp-1e30-sa | path signature vs baseline | mode 2 eff-it 30000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | floatexp-1e30-nosa | path signature vs baseline | mode 2 eff-it 30000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | floatexp-1e30-nobla | path signature vs baseline | mode 2 eff-it 30000 sa-skip 16014 counters ok | exact | ✅ PASS |
+| bench-matrix | color-smooth | path signature vs baseline | mode 0 eff-it 15000 sa-skip 7954 counters ok | exact | ✅ PASS |
+| bench-matrix | color-stripe | path signature vs baseline | mode 0 eff-it 15000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | color-trap | path signature vs baseline | mode 0 eff-it 15000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | color-decomposition | path signature vs baseline | mode 0 eff-it 15000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | fractal-mandelbrot | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | fractal-multibrot3 | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | fractal-multibrot4 | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | fractal-multibrot5 | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | fractal-tricorn | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | fractal-burningship | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | fractal-celtic | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | fractal-buffalo | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**63/63 checks passed.**
+**83/83 checks passed.**
 
 ## Coverage & scope
 
