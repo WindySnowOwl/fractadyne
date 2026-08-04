@@ -51,6 +51,35 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         print!("{}", crate::scripting::tour_schema_markdown());
         return true;
     }
+    // Check GitHub for a newer release, print the result, and exit (validates the in-app update
+    // check headlessly; handy for automation). Optional track: `--check-updates beta` or
+    // `--check-updates=beta` (default stable). Set FRACTADYNE_FAKE_VERSION to pretend the running
+    // build is an older/newer version — the only way to exercise the "update available" branch
+    // while the dev build is ahead of the latest release.
+    if let Some(pos) = args.iter().position(|a| a == "--check-updates" || a.starts_with("--check-updates=")) {
+        let track_arg = args[pos]
+            .split_once('=')
+            .map(|(_, v)| v.to_string())
+            .or_else(|| args.get(pos + 1).filter(|a| !a.starts_with('-')).cloned())
+            .unwrap_or_default();
+        let track = crate::update::UpdateTrack::from_str(&track_arg);
+        let cur = std::env::var("FRACTADYNE_FAKE_VERSION")
+            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+        println!("Checking {} track (running {cur})…", track.as_str());
+        match crate::update::check(track, &cur) {
+            crate::update::UpdateStatus::Available { version, url } => {
+                println!("Update available: {version}\n{url}");
+            }
+            crate::update::UpdateStatus::UpToDate => {
+                println!("Up to date (no newer {} release than {cur}).", track.as_str());
+            }
+            crate::update::UpdateStatus::Error(e) => {
+                eprintln!("Update check failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        return true;
+    }
     // An unrecognized option shouldn't silently launch the GUI — report it and print the reference
     // to stderr, then exit non-zero (like a conventional CLI).
     if let Some(bad) = first_unknown_flag(args) {

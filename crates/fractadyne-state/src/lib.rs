@@ -195,6 +195,12 @@ pub struct SessionState {
     /// UI theme: `"dark"` (default) or `"light"`.
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Update-check track: `"stable"` (default) or `"beta"` (include pre-releases).
+    #[serde(default = "default_update_track")]
+    pub update_track: String,
+    /// Automatically check for updates on launch (off by default — no network calls unless enabled).
+    #[serde(default)]
+    pub update_check_on_launch: bool,
     /// Interactive orbit overlay: shown, normalized-to-view, animated (racing dot), and its
     /// animation speed.
     #[serde(default)]
@@ -225,6 +231,10 @@ fn default_dual_split() -> f32 {
 
 fn default_autopilot_dive_log2() -> f64 {
     900.0 // ≈ 1e271×
+}
+
+fn default_update_track() -> String {
+    "stable".to_string()
 }
 
 fn default_min_motion_res() -> f32 {
@@ -394,6 +404,8 @@ impl Default for SessionState {
             watermark: true,
             ui_scale: default_ui_scale(),
             theme: default_theme(),
+            update_track: default_update_track(),
+            update_check_on_launch: false,
             show_orbits: false,
             orbit_normalize: false,
             orbit_anim: false,

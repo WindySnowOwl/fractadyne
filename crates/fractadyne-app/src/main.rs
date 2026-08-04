@@ -57,6 +57,7 @@ mod profile;
 mod refcache_persist;
 mod render;
 mod reusetest;
+mod update;
 mod scripting;
 mod selftest;
 mod sysinfo;
@@ -1896,6 +1897,17 @@ struct FractadyneApp {
     ui_scale: f32,
     /// Active UI theme (dark / light); persisted. Applied via `theme::apply_theme`.
     theme: ThemeMode,
+    /// Update-check track (Stable / Beta) + whether to check on launch; both persisted.
+    update_track: update::UpdateTrack,
+    update_check_on_launch: bool,
+    /// In-flight update check (worker → UI) and its last result, and whether the launch check has
+    /// fired this session. Not persisted.
+    update_rx: Option<std::sync::mpsc::Receiver<update::UpdateStatus>>,
+    update_status: Option<update::UpdateStatus>,
+    update_launch_checked: bool,
+    /// Whether the in-flight check was user-initiated (toast every outcome) vs the silent launch
+    /// check (toast only when an update is found).
+    update_manual: bool,
     /// Minimap overview cache: home-view thumbnail + the key (formula, palette, method) it was
     /// rendered for (re-render on change). The enable *toggle* lives in [`DialogState`].
     minimap_tex: Option<egui::TextureHandle>,
@@ -2266,6 +2278,12 @@ impl FractadyneApp {
             watermark_overlay: None,
             ui_scale: s.ui_scale.clamp(0.6, 2.5),
             theme,
+            update_track: update::UpdateTrack::from_str(&s.update_track),
+            update_check_on_launch: s.update_check_on_launch,
+            update_rx: None,
+            update_status: None,
+            update_launch_checked: false,
+            update_manual: false,
             ref_cache: [RefCache::default(), RefCache::default()],
             last_saved_ref_id: None,
             ref_save_pending: None,
@@ -2529,6 +2547,8 @@ impl FractadyneApp {
             watermark: self.watermark,
             ui_scale: self.ui_scale,
             theme: self.theme.key().to_string(),
+            update_track: self.update_track.as_str().to_string(),
+            update_check_on_launch: self.update_check_on_launch,
             show_orbits: self.anim.show_orbits,
             orbit_normalize: self.anim.orbit_normalize,
             orbit_anim: self.anim.orbit_anim,
@@ -3298,6 +3318,48 @@ impl FractadyneApp {
     /// "Zoom to center": find the nearby minibrot's exact nucleus (Newton-Raphson in
     /// arbitrary precision) and snap the view center to it, keeping the current zoom.
     /// Reports the period. Holomorphic families only (Mandelbrot / Multibrot).
+    /// Kick off an update check on a background thread (non-blocking). `manual` = user-initiated
+    /// (toast every outcome); the launch check passes `false` (toast only when an update exists).
+    /// No-op if a check is already running.
+    fn start_update_check(&mut self, manual: bool) {
+        if self.update_rx.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let track = self.update_track;
+        std::thread::spawn(move || {
+            let _ = tx.send(update::check(track, env!("CARGO_PKG_VERSION")));
+        });
+        self.update_rx = Some(rx);
+        self.update_status = None;
+        self.update_manual = manual;
+    }
+
+    /// Poll the in-flight update check; on completion keep the status (for the Help menu) and toast
+    /// the outcome — a manual check reports all outcomes, the silent launch check only an update.
+    fn poll_update_check(&mut self, ctx: &egui::Context) {
+        let done = self.update_rx.as_ref().and_then(|rx| rx.try_recv().ok());
+        if let Some(status) = done {
+            self.update_rx = None;
+            match &status {
+                update::UpdateStatus::Available { version, .. } => {
+                    self.set_toast(
+                        format!("Update available: {version} — Help \u{2192} Check for updates"),
+                        ctx,
+                    );
+                }
+                update::UpdateStatus::UpToDate if self.update_manual => {
+                    self.set_toast("You're on the latest version.", ctx);
+                }
+                update::UpdateStatus::Error(e) if self.update_manual => {
+                    self.set_toast(format!("Update check failed: {e}"), ctx);
+                }
+                _ => {}
+            }
+            self.update_status = Some(status);
+        }
+    }
+
     fn find_minibrot(&mut self, ctx: &egui::Context) {
         if !matches!(self.fractal.formula_id(), 0..=3) {
             self.set_toast(
@@ -4637,6 +4699,14 @@ impl eframe::App for FractadyneApp {
         self.draw_central(ctx);
 
         self.draw_toast(ctx);
+        // Update check: fire the silent launch check once (if enabled), then poll any in-flight one.
+        if !self.update_launch_checked {
+            self.update_launch_checked = true;
+            if self.update_check_on_launch {
+                self.start_update_check(false);
+            }
+        }
+        self.poll_update_check(ctx);
         self.draw_goto_dialog(ctx);
         self.draw_share_dialog(ctx);
         self.draw_report_dialog(ctx);

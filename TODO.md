@@ -620,14 +620,13 @@ perturbation + series approximation + glitch correction. The headline feature.
       `vX.Y.Z` tag as a stable release marked *latest* (release track), and a `vX.Y.Z-beta.N` /
       `-rc.N` / `-alpha.N` tag as a GitHub *pre-release* (beta track). An update checker can then
       read `/releases/latest` for stable or the newest of `/releases` (incl. pre-releases) for beta.
-- [ ] **In-app update check (release / beta track selector)** — a "Check for updates" action
-      (Help menu) + optional auto-check on launch, with a persisted **Stable / Beta** track setting
-      (View → Settings). Query the GitHub Releases API (stable = `/releases/latest`; beta = newest of
-      `/releases`), semver-compare against the running version, and toast a "vX.Y.Z available →
-      Download" link (opens the release page; no auto-install). **BLOCKER:** the repo is currently
-      **private**, so the Releases API needs auth — this needs the repo public (or a public version
-      manifest the release job writes). Also adds a lightweight blocking HTTP client (e.g. `ureq` +
-      rustls) on a background thread. (Requested 2026-08-04.)
+- [x] **In-app update check (release / beta track selector)** — DONE (v0.2.39, 2026-08-04): the
+      repo was made **public**, so `update.rs` queries the GitHub Releases API (`ureq` + rustls) on a
+      background thread — Stable = `/releases/latest`, Beta = newest of `/releases` — semver-compares
+      (incl. prerelease ordering) against the running version, and offers a "vX.Y.Z available →
+      Download" link (opens the release page; no auto-install). Persisted **Stable / Beta** track +
+      "check on launch" (off by default) in View → Settings; Help → "Check for updates"; CLI
+      `--check-updates`. Validated end-to-end against the live API.
 - [x] **Scripting (camera tours)** — Tools → "Play script…" loads a TOML of keyframes
       (`secs`, `center_x/y`, `mag`, `fractal`, `julia`; centers inherit if omitted) and
       glides center (BigFloat lerp) + log-magnification (eased) along the timeline.

@@ -207,6 +207,22 @@ impl FractadyneApp {
                                     apply_theme(ui.ctx(), m);
                                 }
                             }
+                            ui.separator();
+                            ui.label("Updates");
+                            ui.horizontal(|ui| {
+                                for t in crate::update::UpdateTrack::ALL {
+                                    ui.selectable_value(&mut self.update_track, t, t.label())
+                                        .on_hover_text(match t {
+                                            crate::update::UpdateTrack::Stable => "Latest stable release",
+                                            crate::update::UpdateTrack::Beta => "Latest build including pre-releases",
+                                        });
+                                }
+                            });
+                            ui.checkbox(
+                                &mut self.update_check_on_launch,
+                                "Check for updates on launch",
+                            )
+                            .on_hover_text("Otherwise, check manually via Help → Check for updates.");
                         });
                     });
                     ui.menu_button("Tools", |ui| {
@@ -373,6 +389,36 @@ impl FractadyneApp {
                         {
                             self.report.open = true;
                             ui.close_menu();
+                        }
+                        if ui
+                            .button("Check for updates")
+                            .on_hover_text(format!(
+                                "Check GitHub for a newer {} build",
+                                self.update_track.label()
+                            ))
+                            .clicked()
+                        {
+                            self.start_update_check(true);
+                            ui.close_menu();
+                        }
+                        match &self.update_status {
+                            Some(crate::update::UpdateStatus::Available { version, url }) => {
+                                let url = url.clone();
+                                if ui
+                                    .button(
+                                        egui::RichText::new(format!("\u{2B06} {version} available — download"))
+                                            .color(egui::Color32::from_rgb(0x5C, 0xC0, 0x6C)),
+                                    )
+                                    .clicked()
+                                {
+                                    ctx.open_url(egui::OpenUrl::new_tab(url));
+                                    ui.close_menu();
+                                }
+                            }
+                            Some(crate::update::UpdateStatus::UpToDate) => {
+                                ui.label(egui::RichText::new("Up to date").weak().small());
+                            }
+                            _ => {}
                         }
                         ui.separator();
                         ui.label(format!("Fractadyne v{}", version_string()));
