@@ -12,9 +12,9 @@ zoom** and performance.
   direct df32 → df32 perturbation → **floatexp** perturbation (df32 mantissa + i32
   exponent), so the deviation never runs out of `f32` exponent range. Zhuoran rebasing;
   depth is bounded by coordinate precision and the iteration budget, not a fixed wall —
-  renders are cross-checked pixel-for-pixel against Fraktaler-3 up to ~1e13× (F3's range on the
-  test GPU) and self-consistency-validated far deeper, and the bundled tour dives to
-  ~1e420×. **Series
+  renders match **Fraktaler-3** across a 20-location reference corpus up to **~1e1105×**
+  (pixel-exact against F3's raw iteration counts where directly comparable) and are
+  self-consistency-validated far deeper (to 1e1000000×); a bundled tour dives to **~1e838×**. **Series
   approximation** (order-3) skips the early iterations of deep Mandelbrot renders by seeding
   the perturbation from a polynomial — validated to reproduce full iteration exactly.
 - **Fractal variety** — Mandelbrot, Multibrot 3/4/5, Tricorn, Burning Ship, Celtic,
@@ -24,6 +24,11 @@ zoom** and performance.
   randomized morphing gradients.
 - **Interactive orbit overlay** — draws the iteration path under the cursor (high
   precision at depth), with an optional racing-dot animation and normalized view.
+- **Exact feature navigation** — Newton-snap onto the precise center of a **minibrot
+  nucleus** (period auto-detected) or a **Misiurewicz point** (parameterized by preperiod
+  `k` + period `p`) near the current view, in bignum — then dive arbitrarily deep with zero
+  drift. A curated list of well-known Misiurewicz points is one click away
+  (Locations → "Go to location…"; nearest minibrot also on **M**).
 - **High-res export** — tiled PNG / OpenEXR with reloadable view metadata, a gallery
   browser, background rendering with progress + cancel.
 - **Bookmarks** — save and instantly return to favorite (deep) locations.
@@ -177,10 +182,11 @@ or internal cross-checks):
 
 ## Controls
 
-- **Pan** left-drag · **Zoom** wheel (cursor-centered) · **Box-zoom** right-drag
-- **Continuous zoom** hold Space (in) / Shift+Space (out) · **Auto-zoom** A (autopilot dives toward detail)
-- **A** auto-zoom · **Ctrl+S** quick-save · **★** bookmark · **🏠** animated zoom-home · **Esc** stop auto-zoom / exit fullscreen
-- Toolbar + menus for fractal, Julia/dual, coloring, export, bookmarks, tools.
+- **Pan** left-drag · **Zoom** wheel (cursor-centered) · **Box-zoom** right-drag or Shift+drag
+- **Continuous zoom** hold Space (in) / Shift+Space (out) · **Click-to-zoom** optional 🎯 tool (left-click dives into the point by a set factor, right-click backs out; drag still pans)
+- **A** auto-zoom (autopilot) · **M** find nearest minibrot · **Ctrl+S** quick-save · **★** bookmark · **🏠** zoom-home · **Backspace** undo view · **Esc** stop / exit fullscreen
+- **Go to a feature** — Locations → "Go to location…": jump to a well-known point, or Newton-snap onto an exact **Misiurewicz** (preperiod, period) / **minibrot** center near the view.
+- Menus grouped by intent: **File** (open/export/share/snapshot), **View** (display + Settings), **Locations** (go-to / famous / find), **Tools** (benchmark / autopilot / scripts), **Bookmarks**, **Help** (help / report an issue). Right panel: **Coloring · Effects · Rendering · Navigation · Performance**.
 
 ## Layout
 

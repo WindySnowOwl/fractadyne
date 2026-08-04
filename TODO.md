@@ -653,6 +653,15 @@ perturbation + series approximation + glitch correction. The headline feature.
       Pairs with the existing live playback + `--render-tour` movie export (annotations should
       render in exported frames too). *(Design the schema additively — new keys, old scripts still
       play — and reuse the hardened `meta_get`/version-check machinery for untrusted script files.)*
+- [ ] **Tour editor (visual timeline)** — an in-app editor for camera tours: a scrubbing timeline
+      with draggable **keyframes** (center/zoom/ease/hold) and separate lanes for **narration**
+      (captions) + callouts/spotlights, live preview, and save back to the `.toml` script format.
+      Today tours are hand-authored TOML ([TOURS.md](TOURS.md)); this makes authoring WYSIWYG. Builds
+      on the existing `Playback` engine + `ScriptFile` schema. (Requested 2026-08-04.)
+- [ ] **Start an offline render from the UI** — a dialog/button to kick off a headless
+      `--render-tour`-style frame render (a chosen script → PNG sequence + optional mp4) as a
+      **background job** inside the app, with progress + cancel, instead of the CLI. Pairs with the
+      tour editor (render the tour you just authored). (Requested 2026-08-04.)
 - [x] **Benchmark** — Tools → "Run benchmark" plays a fixed deep-zoom tour and samples
       FPS (avg/min/max), CPU ms, GPU ms (frame−cpu), and RAM (working set + peak via
       `K32GetProcessMemoryInfo`), reporting aggregates + score in a copy/save-able window.
