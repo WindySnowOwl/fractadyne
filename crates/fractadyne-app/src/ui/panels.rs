@@ -19,6 +19,8 @@ impl FractadyneApp {
                     ui.label(egui::RichText::new("Controls").strong());
                 });
                 ui.separator();
+                // Scroll the sections when they don't fit the window height (header stays pinned).
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 // Per-fractal info: formula, background, reference link.
                 let info = self.fractal.info();
                 egui::CollapsingHeader::new(self.fractal.name())
@@ -369,6 +371,7 @@ impl FractadyneApp {
                             self.perf_section(ui);
                         });
                 }
+                });
             });
         }
 
