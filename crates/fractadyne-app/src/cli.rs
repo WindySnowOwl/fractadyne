@@ -63,8 +63,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
             .or_else(|| args.get(pos + 1).filter(|a| !a.starts_with('-')).cloned())
             .unwrap_or_default();
         let track = crate::update::UpdateTrack::from_str(&track_arg);
-        let cur = std::env::var("FRACTADYNE_FAKE_VERSION")
-            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+        let cur = crate::update::running_version();
         println!("Checking {} track (running {cur})…", track.as_str());
         match crate::update::check(track, &cur) {
             crate::update::UpdateStatus::Available { version, url } => {

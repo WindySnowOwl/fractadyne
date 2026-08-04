@@ -1908,6 +1908,9 @@ struct FractadyneApp {
     /// Whether the in-flight check was user-initiated (toast every outcome) vs the silent launch
     /// check (toast only when an update is found).
     update_manual: bool,
+    /// Whether the "Update available" prompt (with the GitHub download link) is showing. Opened
+    /// when a check finds a newer build; dismissable. Not persisted.
+    update_prompt_open: bool,
     /// Minimap overview cache: home-view thumbnail + the key (formula, palette, method) it was
     /// rendered for (re-render on change). The enable *toggle* lives in [`DialogState`].
     minimap_tex: Option<egui::TextureHandle>,
@@ -2284,6 +2287,7 @@ impl FractadyneApp {
             update_status: None,
             update_launch_checked: false,
             update_manual: false,
+            update_prompt_open: false,
             ref_cache: [RefCache::default(), RefCache::default()],
             last_saved_ref_id: None,
             ref_save_pending: None,
@@ -3327,8 +3331,9 @@ impl FractadyneApp {
         }
         let (tx, rx) = std::sync::mpsc::channel();
         let track = self.update_track;
+        let cur = update::running_version();
         std::thread::spawn(move || {
-            let _ = tx.send(update::check(track, env!("CARGO_PKG_VERSION")));
+            let _ = tx.send(update::check(track, &cur));
         });
         self.update_rx = Some(rx);
         self.update_status = None;
@@ -3342,11 +3347,10 @@ impl FractadyneApp {
         if let Some(status) = done {
             self.update_rx = None;
             match &status {
-                update::UpdateStatus::Available { version, .. } => {
-                    self.set_toast(
-                        format!("Update available: {version} — Help \u{2192} Check for updates"),
-                        ctx,
-                    );
+                // Surface the download link directly via the update prompt (below), not a
+                // dead-end toast that just points at the Help menu.
+                update::UpdateStatus::Available { .. } => {
+                    self.update_prompt_open = true;
                 }
                 update::UpdateStatus::UpToDate if self.update_manual => {
                     self.set_toast("You're on the latest version.", ctx);
@@ -3357,6 +3361,82 @@ impl FractadyneApp {
                 _ => {}
             }
             self.update_status = Some(status);
+        }
+    }
+
+    /// The "Update available" prompt: shows the new version + a direct **Download from GitHub**
+    /// link (opens the release page). Dismissable ("Remind me later"); the Help menu keeps the
+    /// same link afterwards. No auto-install.
+    fn draw_update_dialog(&mut self, ctx: &egui::Context) {
+        if !self.update_prompt_open {
+            return;
+        }
+        // Only meaningful while an update is actually pending.
+        let Some(update::UpdateStatus::Available { version, url }) = &self.update_status else {
+            self.update_prompt_open = false;
+            return;
+        };
+        let (version, url) = (version.clone(), url.clone());
+        let track = self.update_track.label();
+        let current = update::running_version();
+        let green = egui::Color32::from_rgb(0x5C, 0xC0, 0x6C);
+        let mut open = true;
+        let (mut download, mut later) = (false, false);
+        egui::Window::new("Update available")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(430.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("\u{2B06}").size(22.0).color(green));
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("Fractadyne {version} is available"))
+                                .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "You're running {current}  ·  {track}"
+                            ))
+                            .weak()
+                            .small(),
+                        );
+                    });
+                });
+                ui.add_space(10.0);
+                ui.label("Download the latest release from GitHub:");
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("\u{2B07}  Download from GitHub")
+                                    .color(egui::Color32::WHITE),
+                            )
+                            .fill(green),
+                        )
+                        .clicked()
+                    {
+                        download = true;
+                    }
+                    if ui.button("Remind me later").clicked() {
+                        later = true;
+                    }
+                });
+                ui.add_space(6.0);
+                ui.hyperlink_to(
+                    egui::RichText::new(format!("{url} \u{2197}")).small(),
+                    &url,
+                );
+            });
+        if download {
+            ctx.open_url(egui::OpenUrl::new_tab(url));
+        }
+        if download || later || !open {
+            self.update_prompt_open = false;
         }
     }
 
@@ -4707,6 +4787,7 @@ impl eframe::App for FractadyneApp {
             }
         }
         self.poll_update_check(ctx);
+        self.draw_update_dialog(ctx);
         self.draw_goto_dialog(ctx);
         self.draw_share_dialog(ctx);
         self.draw_report_dialog(ctx);

@@ -46,6 +46,13 @@ pub(crate) enum UpdateStatus {
     Error(String),
 }
 
+/// The version to compare against releases — normally the compiled version, but overridable via
+/// the `FRACTADYNE_FAKE_VERSION` env var so the "update available" path (CLI and the in-app
+/// prompt) can be exercised while the running build is already current.
+pub(crate) fn running_version() -> String {
+    std::env::var("FRACTADYNE_FAKE_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())
+}
+
 /// Blocking update check. `current` is the running semver (e.g. `env!("CARGO_PKG_VERSION")`).
 pub(crate) fn check(track: UpdateTrack, current: &str) -> UpdateStatus {
     match fetch_latest(track) {
