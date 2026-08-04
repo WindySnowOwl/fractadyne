@@ -270,10 +270,35 @@ impl FractadyneApp {
                         }
                         if !self.bookmarks.is_empty() {
                             ui.separator();
-                            // Click to jump (most recent first).
+                            // Recent bookmarks (most recent first), each with its thumbnail so you
+                            // can pick by look without opening Manage. Preload the textures (mutable)
+                            // into owned handles first, then draw (borrow-free in the loop).
+                            let recent: Vec<usize> = (0..self.bookmarks.len()).rev().take(12).collect();
+                            let thumbs: Vec<Option<egui::TextureHandle>> = recent
+                                .iter()
+                                .map(|&i| {
+                                    let id = self.bookmarks[i].thumb.clone();
+                                    self.bookmark_thumb_texture(ctx, &id)
+                                })
+                                .collect();
                             let mut jump: Option<usize> = None;
-                            for (i, b) in self.bookmarks.iter().enumerate().rev().take(12) {
-                                if ui.button(&b.name).clicked() {
+                            for (slot, &i) in recent.iter().enumerate() {
+                                let name = self.bookmarks[i].name.as_str();
+                                let clicked = if let Some(tex) = &thumbs[slot] {
+                                    let sz = tex.size_vec2();
+                                    let w = 64.0_f32;
+                                    ui.add(egui::Button::image_and_text(
+                                        egui::Image::new(egui::load::SizedTexture::new(
+                                            tex.id(),
+                                            egui::vec2(w, w * sz.y / sz.x.max(1.0)),
+                                        )),
+                                        name,
+                                    ))
+                                    .clicked()
+                                } else {
+                                    ui.button(name).clicked() // older bookmark without a thumbnail
+                                };
+                                if clicked {
                                     jump = Some(i);
                                 }
                             }
