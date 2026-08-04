@@ -616,6 +616,18 @@ perturbation + series approximation + glitch correction. The headline feature.
 - [x] **Versioning + changelog** — workspace at **0.1.0**; `build.rs` auto-increments a
       per-build counter (`FRACT_BUILD`) shown as `v0.1.0 (build N)` in the title bar,
       Help menu, and export metadata. [CHANGELOG.md](CHANGELOG.md) tracks changes.
+- [x] **Release / beta tracks (GitHub)** — DONE (2026-08-04): `release.yml` publishes a plain
+      `vX.Y.Z` tag as a stable release marked *latest* (release track), and a `vX.Y.Z-beta.N` /
+      `-rc.N` / `-alpha.N` tag as a GitHub *pre-release* (beta track). An update checker can then
+      read `/releases/latest` for stable or the newest of `/releases` (incl. pre-releases) for beta.
+- [ ] **In-app update check (release / beta track selector)** — a "Check for updates" action
+      (Help menu) + optional auto-check on launch, with a persisted **Stable / Beta** track setting
+      (View → Settings). Query the GitHub Releases API (stable = `/releases/latest`; beta = newest of
+      `/releases`), semver-compare against the running version, and toast a "vX.Y.Z available →
+      Download" link (opens the release page; no auto-install). **BLOCKER:** the repo is currently
+      **private**, so the Releases API needs auth — this needs the repo public (or a public version
+      manifest the release job writes). Also adds a lightweight blocking HTTP client (e.g. `ureq` +
+      rustls) on a background thread. (Requested 2026-08-04.)
 - [x] **Scripting (camera tours)** — Tools → "Play script…" loads a TOML of keyframes
       (`secs`, `center_x/y`, `mag`, `fractal`, `julia`; centers inherit if omitted) and
       glides center (BigFloat lerp) + log-magnification (eased) along the timeline.

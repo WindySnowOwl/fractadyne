@@ -62,11 +62,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
-        run: >
-          gh release create "${{ github.ref_name }}"
-          "$env:ASSET" "$env:ASSET.sha256"
-          --title "Fractadyne ${{ github.ref_name }}"
-          --generate-notes
+        run: |
+          $tag = "${{ github.ref_name }}"
+          # Track selection by tag shape: a pre-release suffix (v0.3.0-beta.1 / -rc.1 / -alpha.1)
+          # publishes as a GitHub *pre-release* (the "beta" track); a plain vX.Y.Z tag publishes as
+          # a stable release and is marked "latest" (the "release" track). An update checker can then
+          # query /releases/latest for stable, or the newest of /releases (incl. pre-releases) for beta.
+          $args = @("$tag", "$env:ASSET", "$env:ASSET.sha256",
+                    "--title", "Fractadyne $tag", "--generate-notes")
+          if ($tag -match '-') { $args += "--prerelease" } else { $args += "--latest" }
+          gh release create @args
 
       - name: Upload artifact (manual/test runs)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
