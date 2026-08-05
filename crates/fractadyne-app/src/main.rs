@@ -1235,6 +1235,9 @@ struct RefCache {
     /// fresh reference lands (see `build_params`). `None` until the first real render.
     frozen_center: Option<[fractadyne_core::BigFloat; 2]>,
     frozen_l2: f64,
+    /// When the frozen frame was rendered — ages the reuse-hold so a SLOW dive still refreshes
+    /// real detail on a time floor (`REFRESH_MAX_SECS`), not just every `REFRESH_OCTAVES` of zoom.
+    frozen_at: Option<Instant>,
     /// Octaves the view has zoomed IN past the cached BLA's validity (recomputed each frame in
     /// `build_params`; 0 when not in the deep floatexp regime). This is the "reference pipeline is
     /// behind the dive" signal — script playback reads it to DILATE the tour clock (slow the dive)
@@ -1263,6 +1266,7 @@ impl Default for RefCache {
             bla_trap_type: u32::MAX,
             frozen_center: None,
             frozen_l2: 0.0,
+            frozen_at: None,
             last_depth_lag: 0.0,
         }
     }

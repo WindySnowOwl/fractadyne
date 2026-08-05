@@ -1673,9 +1673,24 @@ impl FractadyneApp {
         // reprojects instead — so a refresh never renders on a too-short reference (the old ~5 s-spin
         // hazard). Net: floatexp streams real detail every REFRESH_OCTAVES of a continuous dive.
         const REFRESH_OCTAVES: f64 = 0.5;
-        let frozen_drift = (self.ref_cache[view_id as usize].frozen_l2 - log2mag).abs();
-        let reuse_hold =
-            is_pert && interacting && !self.autopilot.stepping && frozen_drift < REFRESH_OCTAVES;
+        // Time floor on the hold: the octave gate alone starves a SLOW deep dive of real frames —
+        // an ease-out tour decelerating through ~2 oct/s drops below ~4 real updates/s (0.5 oct
+        // apart in ZOOM is seconds apart in TIME), which reads as visible stepping ("jerkiness
+        // from ~e590", onset tracking the RATE, not the depth). Refresh whenever the held frame is
+        // older than this, even if it hasn't drifted an octave yet; a fast dive still refreshes on
+        // the octave gate first. Real refresh frames are res-scaled + TDR-bounded, so ~7/s is
+        // affordable at any depth the live view reaches.
+        const REFRESH_MAX_SECS: f64 = 0.15;
+        let vc = &self.ref_cache[view_id as usize];
+        let frozen_drift = (vc.frozen_l2 - log2mag).abs();
+        let frozen_fresh = vc
+            .frozen_at
+            .is_none_or(|t| t.elapsed().as_secs_f64() < REFRESH_MAX_SECS);
+        let reuse_hold = is_pert
+            && interacting
+            && !self.autopilot.stepping
+            && frozen_drift < REFRESH_OCTAVES
+            && frozen_fresh;
         // A reprojection/freeze frame runs NO iterate (it re-samples the frozen texture), so the
         // motion res_scale saves nothing on it — and worse, it shrinks the frame's base below the
         // frozen texture's settle-time resolution, so the color-pass aspect-fit `fit = out_res /
@@ -2287,10 +2302,12 @@ impl FractadyneApp {
                 }
             }
             // When this frame will actually re-iterate (not a freeze/pan reprojection), remember the
-            // view it renders — the next freeze reprojects the resulting texture relative to it.
+            // view it renders — the next freeze reprojects the resulting texture relative to it —
+            // and WHEN, so the reuse-hold's time floor can age it (see `REFRESH_MAX_SECS`).
             if reproject.is_none() {
                 self.ref_cache[vi].frozen_center = Some(center_bf.clone());
                 self.ref_cache[vi].frozen_l2 = log2mag;
+                self.ref_cache[vi].frozen_at = Some(Instant::now());
             }
             // δ = center − reference, carried as a mantissa scaled by 2^-delta_exp (O(1) in df32 at
             // any depth; the GPU re-applies the exponent). Skipped during a cold-start hold — no
