@@ -28,14 +28,15 @@ exactness, not resolution.
 working depth range on this hardware (1e6× – 1e12×), and interior/exterior membership matches
 exactly.**
 
-> **F3 depth ceiling — why this cross-renderer ladder stops at ~1e13×.** Fraktaler-3's
-> extended-exponent kernels render **blank (all-interior) past ~1e13× on this RTX 3080** — a
-> driver/kernel-level limit, not a batch-config issue (tested F3 3.0 + 3.1; see
-> [`../../validation/corpus/README.md`](../../validation/corpus/README.md)). So the *cross-renderer*
-> comparison is bounded to where F3 actually renders here. Correctness **deeper than that** is
-> carried by Fractadyne's own arbitrary-precision self-consistency battery — `--validate-deep`,
-> validated to **1e1000000×** ([`validate-deep.md`](validate-deep.md)) — which needs no second
-> renderer.
+> **CORRECTED (2026-07): the "F3 ceiling" was our configuration error.** This ladder originally
+> stopped at ~1e13× because F3 appeared to render blank past it — that was F3's batch-mode
+> `maximum_reference_iterations` defaulting far too low, **not** a driver/kernel limit (see
+> [`../../validation/corpus/README.md`](../../validation/corpus/README.md) for the full account).
+> With it raised, F3 renders arbitrarily deep, and the cross-renderer comparison now extends to a
+> **20-location corpus matched up to ~4.6e1105×** (`validation/corpus/`), which supersedes this
+> ladder. Correctness beyond any second renderer is still carried by Fractadyne's own
+> arbitrary-precision self-consistency battery — `--validate-deep`, validated to **1e1000000×**
+> ([`validate-deep.md`](validate-deep.md)).
 
 ## Reproduce
 

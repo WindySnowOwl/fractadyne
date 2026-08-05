@@ -10,6 +10,80 @@ new functional enhancement; a **minor** bump (e.g. 0.2.0) marks a milestone that
 run of patch releases. The `0.2.0` entry summarizes **0.1.29 – 0.1.68** by theme — per-version
 detail is in the git history.
 
+## 0.2.40-beta (in progress)
+
+The post-0.2.36 series (**0.2.37 – 0.2.40-beta.15**, published as `v0.2.40-beta.N`
+pre-releases on the Beta update track). Per-version detail is in the git history.
+
+- **Live deep-dive pipeline** — a scripted dive now stays smooth to extreme depth:
+  - `best_reference` candidate scoring **parallelized across all cores** (result-identical;
+    ~12–14× — 796→55 ms at 1e400×, 7.6 s→0.6 s at 1e1216×), removing the stall that blurred
+    live dives past ~1e400× into a monocolor reprojection (beta.7).
+  - **Reference lookahead** — during script playback a queue of workers pre-builds the
+    references the dive is about to need (targets bisected onto the script's future path,
+    0.5-octave spacing tuned so the active reference's lag never clips the pacer/freeze
+    thresholds), installing each as the dive arrives (beta.8–12).
+  - **Pipeline pacing** — the tour clock dilates (and interactive zoom-in damps) when the
+    reference pipeline lags: the dive slows instead of blurring (beta.7).
+  - **Time-floored detail refresh** — the reuse-hold now also expires on time (~150 ms), so
+    slow deep dives stream real frames instead of one per 0.5 octaves of zoom (beta.13).
+  - **Motion-resolution controller redesign** — adapts only on intervals following a real
+    re-iterate frame (reprojection frames carry no iterate-cost signal), proportionally from
+    the raw interval; divetest-verified: 54–201 hitches/12 s → 0–4 at 1e100–1e400× (beta.15).
+- **Updates & release tracks** — in-app update check against GitHub Releases (Help → Check
+  for updates, optional on-launch check, `--check-updates`), persisted **Stable/Beta** track
+  where Beta always offers the newest of either channel, an "Update available" dialog with a
+  direct download link, and `release.yml` publishing `-beta` tags as pre-releases (0.2.39,
+  beta.2, beta.4). The repository went **public** to enable the Releases API.
+- **Tours** — **Tools → "Script to current view…"**: one-click dive-tour generator (notation
+  caption, depth-scaled duration; deep targets use the pan-shallow-then-dive structure that
+  keeps every frame centered on the target) (beta.5–6).
+- **Dev tooling** — `--bench-matrix`: a 22-segment path-coverage perf + regression suite
+  (deterministic GPU-counter signatures vs a blessed baseline; its 20 fast segments joined
+  `--selftest`, growing it 63 → **83 checks**) (beta.3); `--divetest`: a headless live-dive
+  perf harness playing real-time tour windows per depth band through the actual playback
+  machinery (beta.14); `--frametest --center`; per-frame live perf capture
+  (`FRACTADYNE_PERF=1`).
+- **UI** — bookmark thumbnails inline in the Bookmarks menu (0.2.37); the Controls panel
+  scrolls when it doesn't fit the window (0.2.38); `Min motion resolution` tooltip documents
+  the sharpness-vs-smoothness trade.
+
+## 0.2.36
+
+Released 2026-08-04 — the first stable release since v0.1.11, rolling up **0.2.1 – 0.2.36**.
+Per-version detail is in the git history.
+
+- **Validation corpus fully resolved — all 20 locations genuinely match Fraktaler-3, to
+  4.6e1105×.** The chain of deep fixes: extended-range orbit samples (dips below f32's
+  flush-to-zero no longer break rebasing, 0.2.6); palette-cycle aliasing at dense deep fields
+  diagnosed as coloring, not rendering — fixed generally by `--normalize` auto-normalized
+  export coloring (0.2.17); a missed rebase check at BLA-skip landings on near-zero orbit
+  dips (0.2.18); KF/F3 zoom-definition alignment (`REFERENCE_HEIGHT` 3→4 — our magnification
+  now equals F3's zoom, 0.2.21); location 07 replaced with a true F3 save (me30). Corpus
+  regression gate (`generate_corpus.py --check`) + per-location `.fdn` repro files.
+- **Diagnostics shipped end-to-end** (design/diagnostics.md D1–D4): log file, crash reports
+  with breadcrumbs/manifest/backtrace, a liveness watchdog, `FRACTADYNE_TRACE` categories,
+  perf JSONL, GPU event counters (per-tile u64 sums), hermetic streaming selftest
+  (61 → 63 checks + 17 goldens; config reset at entry), `--selftest-filter/-list`, CLI exit
+  codes on failure, and the DIAGNOSTICS.md operator manual (0.2.7–0.2.11).
+- **Extreme-zoom stability** — the ~1e2100× freeze-on-load fixed by capping the LIVE
+  reference-orbit length (`LIVE_REF_CAP`, 0.2.15 → 0.2.23/0.2.25/0.2.26 — pixels iterate past
+  the short reference by rebasing, so borders still resolve); tiled settle sharpens settled
+  deep views to native (0.2.4); export `OrbitTooLarge` guard (0.2.22); canonical e21000
+  diagnostic location. Export throughput measured **on par with Fraktaler-3** (the old "50×
+  slower" figure refuted; the cold cost is `best_reference` scoring — later parallelized in
+  0.2.40-beta).
+- **Features** — exact **feature finder** (Newton-snap to parameterized Misiurewicz points and
+  minibrot nuclei + curated POI list, 0.2.32); click-to-zoom tool (0.2.24); File → Open
+  handles `.fdn`/`.kfr` (0.2.27); **Report an issue** (pre-filled email + Gmail compose, type
+  picker, optional system info, 0.2.28–0.2.31); Re/Im axis naming (0.2.20); UI placement
+  reorg by intent (0.2.33); `min_motion_res` floor slider (0.2.34); `zoom=inf` fixed in deep
+  `.fdn`/bookmarks (0.2.35); help contents + corpus share files (0.2.19); the
+  M(4,1) three-spar guided tour.
+- **Zoom-reuse groundwork** — `--reusetest` measured reprojection staleness (perceptual sRGB
+  metric; nearest beats bilinear — the filter isn't the lever), staging the future
+  during-motion refine (design/xaos-reuse.md, 0.2.12–0.2.14).
+
 ## 0.2.0
 
 Minor-version milestone rolling up **0.1.29 – 0.1.68**: the deep-zoom stability +

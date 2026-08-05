@@ -24,9 +24,10 @@ A native **Windows** desktop fractal explorer (Rust + `wgpu`/`egui`/`eframe` 0.3
 `fractadyne` (crate `fractadyne-app`).
 
 Deep zoom is bounded by coordinate precision + iteration/compute budget, not a fixed wall:
-cross-checked pixel-for-pixel against Fraktaler-3 where F3 renders (~1e13× on the RTX 3080 test
-GPU; F3's extended-exponent kernels blank past that), renders far deeper offline (a ~1e1108×
-sample), and the arbitrary-precision core is self-consistency-validated to 1e1000000×.
+renders match **Fraktaler-3** across a 20-location reference corpus up to **~4.6e1105×**
+(pixel-exact against F3's raw iteration counts where directly comparable), a bundled tour dives
+live to ~1e838× (and generated dives beyond 1e1200×), and the arbitrary-precision core is
+self-consistency-validated to 1e1000000×.
 
 ---
 
@@ -50,8 +51,11 @@ select + reference recompute / reuse / freeze-reproject + export requests), `aut
 (auto-zoom), `scripting.rs` (tours + `render_tour_to_dir`), `help.rs` (`CLI_REFERENCE` + Help
 window), `cli.rs` (headless modes), `export.rs` (view-metadata / `.fdn`), `fractal.rs`
 (`FractalKind`), `refcache_persist.rs` (persist/restore the deep-zoom reference), `error.rs`
-(`AppError`), `selftest.rs` (GPU validation), `theme.rs`, `profile.rs`, `sysinfo.rs`, and a `ui/`
-submodule tree (`central.rs`, `menus.rs`, `panels.rs`, `dialogs.rs`) from the intra-crate UI split.
+(`AppError`), `selftest.rs` (GPU validation), `theme.rs`, `profile.rs` (profiling + the
+`--frametest`/`--divetest` harnesses), `sysinfo.rs`, `diag.rs` (log/crash/watchdog/trace),
+`update.rs` (GitHub-Releases update check, Stable/Beta tracks), `bench_matrix.rs` (the
+`--bench-matrix` path-coverage perf/regression suite), `reusetest.rs`, and a `ui/` submodule tree
+(`central.rs`, `menus.rs`, `panels.rs`, `dialogs.rs`) from the intra-crate UI split.
 
 ---
 
@@ -117,24 +121,36 @@ Layered on top:
   "BLA subsumes SA" leaves an early-iteration perturbation glitch exposed and the view tiles.
 - **Zhuoran rebasing:** single-reference glitch handling (rebase to `δz = z_full − reference[0]`;
   the `−reference[0]` term is required for Julia, a no-op for Mandelbrot).
-- **Reference selection:** `best_reference` picks a long/interior reference (scored in bignum).
+- **Reference selection:** `best_reference` picks a long/interior reference (scored in bignum);
+  the candidate scoring — the dominant cold-recompute cost at depth — fans out across **all CPU
+  cores** via scoped threads (result-identical to the sequential scan; ~12–14× at 1e400–1e1216×).
 - **Precision** auto-scales with zoom octaves (`precision_for_octaves`), +64 guard bits.
 
-**Reference recompute is off the render thread.** The bignum reference + SA + BLA bundle
-(`recompute_worker`) is the deep-zoom stall, so it runs on a spawned `std::thread`; the render keeps
-drawing with the cached reference and installs the fresh one when it lands. Only the very first
-(cold) reference is synchronous. A deeper rebuild **reuses** the cached orbit — it *extends* the
-stored bignum prefix from a saved tail (byte-identical) instead of recomputing every step, since the
-orbit build is ~90% of a deep frame (~20× faster dive-rebuilds). The last deep view's reference also
-persists across sessions (`refcache_persist.rs`) so it resumes instantly.
+**Reference recompute is off the render thread** — including the cold start (progressive
+coarse-then-full). The bignum reference + SA + BLA bundle (`recompute_worker`) is the deep-zoom
+stall, so it runs on a spawned `std::thread`; the render keeps drawing with the cached reference
+and installs the fresh one when it lands. A deeper rebuild **reuses** the cached orbit — it
+*extends* the stored bignum prefix from a saved tail (byte-identical) instead of recomputing every
+step, since the orbit build is ~90% of a deep frame (~20× faster dive-rebuilds). The last deep
+view's reference also persists across sessions (`refcache_persist.rs`) so it resumes instantly.
+
+**Script-playback reference lookahead + pacing.** A tour knows its future camera path, so during
+playback a small queue of workers pre-builds the references the dive is about to need
+(`playback_ref_prefetch` in `render.rs`: targets bisected onto the script's future zoom curve,
+0.5-octave spacing so the active reference's lag never clips the pacer/freeze thresholds), and each
+installs seamlessly as the dive reaches its validity window. When the pipeline still lags
+(`last_depth_lag`), the tour clock **dilates** and interactive zoom-in velocity damps
+(`PACE_LAG_LO..HI`) — the dive slows rather than blurring into stale reprojection.
 
 **Freeze / reproject on motion.** While the reference is stale for the current depth (`depth_lag`)
 or a fast dive would spin the mode-2 shader, `render.rs` holds the last good iteration texture and
 **reprojects** it (scale + translate in the color pass, `uv_scale`/`uv_off`) so the view keeps
 moving smoothly until the fresh reference snaps in. This replaced the "Not Responding" hang; it is
-frame-level, not tile-level. Moving-frame resolution is **adaptive** (AIMD, `perf.motion_res`): it
-follows the measured frame time — raised while frames stay near vsync (the BLA is skipping), backed
-off when they run long — so deep motion sharpens without stalling.
+frame-level, not tile-level. The reuse-hold expires on **0.5 octaves of zoom or ~150 ms, whichever
+first** — so slow deep dives still stream real detail. Moving-frame resolution is **adaptive**
+(`perf.motion_res`): it adapts only on the raw interval following a **real re-iterate** frame
+(reprojection frames carry no iterate-cost signal), cutting proportionally toward a ~vsync budget
+and growing gently when real frames run cheap, floored at the user's `min_motion_res`.
 
 ---
 
@@ -202,7 +218,10 @@ exported frames. `--render-tour` renders a tour to a numbered PNG sequence (refe
 pipelined across frames), optionally assembled to an **mp4** via ffmpeg (`--mp4`), with an optional
 zoom/coordinate HUD (`--show-location`). Interrupted renders resume with **`--resume`** (keep frames
 on disk, render only the missing ones). Helper scripts: `scripts/{render-spiral-dive,render-deepest,
-setup}.ps1`.
+setup}.ps1`. **Tools → "Script to current view…"** generates a dive tour to the current view (deep
+targets get a pan-shallow-then-dive structure so every deep frame stays centered on the target).
+Live playback is **pipeline-paced** (clock dilation on reference lag) and feeds the reference
+**lookahead queue** — see §4.
 
 ---
 
@@ -227,7 +246,10 @@ confirm) removes the whole config dir.
 `fractadyne --help` prints the always-current reference (generated from `CLI_REFERENCE` in
 `help.rs`). Headless modes include: `--render` (one image), `--render-tour` (movie frames),
 `--benchmark` / `--benchmark-std`, `--selftest`, `--validate-deep`, `--crosscheck-f3`, `--compare`,
-`--render-iter`, `--find-minibrot`, `--import-kfr`, `--reset-state`, `@args-file`.
+`--render-iter`, `--find-minibrot`, `--import-kfr`, `--check-updates`, `--reset-state`,
+`@args-file`; dev harnesses: `--profile`, `--bench-matrix` (path-coverage perf/regression suite vs
+a blessed baseline), `--frametest`, `--divetest` (headless live-dive windows per depth band),
+`--reusetest`, `--refdiag`.
 
 ---
 
@@ -237,11 +259,16 @@ Layered, mostly external-data-free:
 
 - **Core exact-math tests** (`cargo test -p fractadyne-core`) — perturbation/SA/BLA reproduce the
   exact bignum recurrence; nuclei Newton-solve to known constants; coordinate round-trips.
-- **`--selftest`** — GPU pipeline compared pixel-for-pixel against an independent arbitrary-precision
-  **CPU dwell oracle** (shares nothing with the GPU path), plus **golden images** (17: a direct-mode
-  overview per family + a deep df32-perturbation, 1e6×, golden per polynomial family — so per-formula
-  dispatch and the deep reference-orbit path are both guarded; bit-identical, read from the canonical
-  `validation/golden/`; all render-affecting state pinned so they're deterministic). `--bless` records.
+- **`--selftest`** (**83 checks + 17 goldens**) — GPU pipeline compared pixel-for-pixel against an
+  independent arbitrary-precision **CPU dwell oracle** (shares nothing with the GPU path), plus
+  **golden images** (17: a direct-mode overview per family + a deep df32-perturbation, 1e6×, golden
+  per polynomial family — so per-formula dispatch and the deep reference-orbit path are both
+  guarded; bit-identical, read from the canonical `validation/golden/`; all render-affecting state
+  pinned so they're deterministic; `--bless` records), plus the **bench-matrix** group: 20
+  deterministic rendering-path signatures (mode / SA-skip / orbit length / GPU event counters)
+  asserted exactly against `benchmarks/bench-matrix-baseline.json` — an algorithmic-regression
+  tripwire for any change touching the rendering pipeline (see
+  [design/bench-matrix.md](design/bench-matrix.md)).
 - **`--validate-deep`** — precision self-consistency of the bignum core from 1e1000× to 1e1000000×.
 - **`--crosscheck-f3`** — F3's exact integer escape counts vs. the same oracle (transitively:
   GPU≈oracle and F3≈oracle ⇒ GPU≈F3).
@@ -258,9 +285,15 @@ CI (`.github/workflows/ci.yml`) runs the core tests on Linux + a workspace build
 - **UI thread:** the `egui`/`eframe` `update()` loop; owns display and input.
 - **Off-thread reference recompute:** a spawned `std::thread` per view (gated to one in flight via a
   channel `recompute_rx`), so the deep-zoom bignum stall never blocks the UI.
+- **Parallel reference-candidate scoring:** inside any recompute, `best_reference` fans its
+  candidate orbits across all cores with `std::thread::scope` (deterministic reduction).
+- **Playback lookahead workers:** during a tour, up to 6 additional worker threads pre-build
+  future references (`ref_prefetch` queue).
 - **Background export worker:** a thread for cancelable high-res export.
+- **Update check:** a short-lived background thread for the GitHub Releases HTTP call.
 
-There is **no `rayon` pool** and no async task scheduler (DESIGN.md §3.1 describes both aspirationally).
+There is **no `rayon` pool** and no async task scheduler (DESIGN.md §3.1 describes both
+aspirationally) — the scoped-thread fan-outs above are plain `std::thread`.
 
 ---
 

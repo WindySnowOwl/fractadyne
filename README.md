@@ -17,6 +17,12 @@ zoom** and performance.
   self-consistency-validated far deeper (to 1e1000000×); a bundled tour dives to **~1e838×**. **Series
   approximation** (order-3) skips the early iterations of deep Mandelbrot renders by seeding
   the perturbation from a polynomial — validated to reproduce full iteration exactly.
+- **Smooth live deep dives** — scripted dives stay fluid to extreme depth: reference-candidate
+  scoring fans out across **all CPU cores** (~12–14× faster picks), a **lookahead queue**
+  pre-builds the references a tour is about to need on idle cores, the playback clock
+  **self-paces** when the pipeline lags (the dive slows instead of blurring), and an adaptive
+  motion-resolution controller keeps detail refreshes within a vsync (floor configurable —
+  Rendering → *Min motion resolution*).
 - **Fractal variety** — Mandelbrot, Multibrot 3/4/5, Tricorn, Burning Ship, Celtic,
   Buffalo, Phoenix, Newton — each with an info panel; Julia mode for any family.
 - **Dual linked view** — Mandelbrot ↔ Julia, with click-to-pin Julia `c`.
@@ -38,7 +44,9 @@ zoom** and performance.
   captions, coordinate-anchored callouts, and spotlight vignettes (full field reference:
   [TOURS.md](TOURS.md)). Play them live, or render a tour headless to a PNG frame sequence and
   (with ffmpeg) straight to an **mp4**. Deep dives overlap the bignum reference, GPU render, and
-  PNG encode across frames for throughput.
+  PNG encode across frames for throughput. **Tools → "Script to current view…"** generates a
+  ready-to-play dive tour from the full set down to wherever you are (deep targets get the
+  proven pan-shallow-then-dive structure; duration defaults from the zoom depth).
 - **Watermark & location HUD** — a subtle "Fd" watermark (on by default, toggleable) and an
   optional burned-in zoom/coordinate HUD (`--show-location`) on live view and renders.
 - **Tooling** — a built-in benchmark (FPS / CPU / GPU / RAM + system info), with a **standardized**
@@ -54,6 +62,11 @@ zoom** and performance.
   where state is stored (portable / sandboxed installs).
 - **Restartable renders** — a long `--render-tour` can be resumed with `--resume` (re-renders only
   the missing frames); `scripts/render-spiral-dive.ps1` detects a prior run and offers Resume / Over.
+- **Updates & issue reporting** — an in-app update check (Help → "Check for updates", or on
+  launch if enabled) against GitHub Releases, with a persisted **Stable / Beta** track choice
+  (View → Settings → Updates; a Beta user is always offered the newest of either channel) and a
+  direct download link — no auto-install. **Help → "Report an issue…"** pre-fills an email
+  (type picker, optional system info, log/`.fdn`/screenshot attach notes).
 - **Open-source notices** — the bundled dependency licenses are reproduced in
   `THIRD-PARTY-NOTICES.md` (shipped with each release) and in-app under **Help → Licenses**.
 
@@ -63,7 +76,8 @@ Prebuilt Windows (x64) binaries are attached to each [GitHub
 Release](../../releases) — grab the latest `fractadyne-vX.Y.Z-windows-x64.zip`, verify it
 against the accompanying `.sha256` if you like, unzip, and run `fractadyne.exe` (no install,
 no toolchain needed). Releases are built automatically from a tagged commit by
-[`.github/workflows/release.yml`](.github/workflows/release.yml).
+[`.github/workflows/release.yml`](.github/workflows/release.yml); tags with a `-` suffix
+(e.g. `v0.2.40-beta.1`) publish as **pre-releases** — the app's Beta update track.
 
 ## Build & run
 
@@ -113,9 +127,14 @@ fractadyne --crosscheck-f3 raw.exr --center X Y --zoom-f3 Z [--iter K] [--er R]
                                                     # iteration counts to our CPU bignum oracle
 fractadyne --validate-deep [--out report.md]        # extreme-depth precision self-consistency
                                                     # battery (1e1000 … 1e1000000×)
+fractadyne --check-updates [stable|beta]            # check GitHub for a newer release on a track; print + exit
 fractadyne --profile [--reps N --regions f.toml --out logs/p.json]
                                                     # dev: time render stages per benchmark
                                                     # region → JSON log (see scripts/profile*.ps1)
+fractadyne --bench-matrix [--bless] [--reps N]      # dev: 22-segment path-coverage perf + regression
+                                                    # suite vs a blessed baseline (design/bench-matrix.md)
+fractadyne --divetest tour.toml [--out log.json]    # dev: headless live-dive perf harness — real-time
+                                                    # tour windows per depth band (fps/hitches/refresh)
 fractadyne @render.args                             # read the whole command line from a response file
 ```
 
@@ -186,7 +205,7 @@ or internal cross-checks):
 - **Continuous zoom** hold Space (in) / Shift+Space (out) · **Click-to-zoom** optional 🎯 tool (left-click dives into the point by a set factor, right-click backs out; drag still pans)
 - **A** auto-zoom (autopilot) · **M** find nearest minibrot · **Ctrl+S** quick-save · **★** bookmark · **🏠** zoom-home · **Backspace** undo view · **Esc** stop / exit fullscreen
 - **Go to a feature** — Locations → "Go to location…": jump to a well-known point, or Newton-snap onto an exact **Misiurewicz** (preperiod, period) / **minibrot** center near the view.
-- Menus grouped by intent: **File** (open/export/share/snapshot), **View** (display + Settings), **Locations** (go-to / famous / find), **Tools** (benchmark / autopilot / scripts), **Bookmarks**, **Help** (help / report an issue). Right panel: **Coloring · Effects · Rendering · Navigation · Performance**.
+- Menus grouped by intent: **File** (open/export/share/snapshot), **View** (display + Settings incl. update track), **Locations** (go-to / famous / find), **Tools** (benchmark / autopilot / play script / script to current view), **Bookmarks** (with inline thumbnails), **Help** (help / report an issue / check for updates). Right panel: **Coloring · Effects · Rendering · Navigation · Performance**.
 
 ## Layout
 

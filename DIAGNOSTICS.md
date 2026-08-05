@@ -21,8 +21,11 @@ dir, logs included.
 |-----|--------|--------|
 | `FRACTADYNE_TRACE` | `1` (all) or `req,ref,gpu,tile,glitch` | Stderr + log-file tracing by category (below) |
 | `FRACTADYNE_LOG` | `0` | Disables the log file (stderr unchanged) |
-| `FRACTADYNE_PERF` | `1` | Appends per-render perf records to `logs/perf.jsonl` (regression tracking across builds) |
+| `FRACTADYNE_PERF` | `1` | Appends per-render perf records to `logs/perf.jsonl` (regression tracking across builds) — plus, during script playback, one `kind:"live"` record per frame (tour time, depth, frame/cpu ms, pipeline lag) for live-judder analysis |
 | `FRACTADYNE_CONFIG_DIR` | path | Relocates config dir (and therefore `logs/`) |
+| `FRACTADYNE_DIVETEST_WINDOWS` | `"300,700"` | `--divetest`: override the default every-100-decades window sweep (targeted bands) |
+| `FRACTADYNE_DIVETEST_SESSION_RES` | `1` | `--divetest`: keep the session's `min_motion_res` instead of pinning the 0.30 default (user-repro runs) |
+| `FRACTADYNE_FAKE_VERSION` | semver | Pretend the running build is that version — exercises the "update available" path (CLI + the in-app prompt) while current |
 | `RUST_LOG` | env_logger spec | wgpu/naga internal logging (stderr) |
 
 ### Trace categories (`[fd-<cat>]` prefixes)
@@ -30,8 +33,8 @@ dir, logs included.
 | Category | Fires | Tells you |
 |----------|-------|-----------|
 | `req` | every export-request build | The **effective** render manifest: mode, iterations, orbit length, SA skip, BLA, span, precision, size. The record that catches "rendered the wrong view" |
-| `ref` | every reference build (fresh *and* reused/extended) | Orbit length/iterations/precision, escaped/partial, SA skip, BLA nodes, and the build-time split `orbit_ms`/`sa_ms`/`bla_ms` + `pick_reference` scoring ms — the cold deep-export cost lives in `pick_reference` (~9 s at me148), see TODO.md |
-| `gpu` | live floatexp budget controller | Measured iterate ms per dispatch, budget grow/shrink, convergence |
+| `ref` | every reference build (fresh *and* reused/extended) | Orbit length/iterations/precision, escaped/partial, SA skip, BLA nodes, and the build-time split `orbit_ms`/`sa_ms`/`bla_ms` + `pick_reference` scoring ms (scoring is parallel across all cores since 0.2.40-beta.7 — ~0.6 s at 1e1216× where it was ~7.6 s); also `lookahead install:` lines when a playback-prefetched reference installs |
+| `gpu` | live floatexp budget controller | Measured iterate ms per dispatch, budget grow/shrink, convergence; `aimd:` lines show the motion-res controller's real-frame cost signal + resolution decisions |
 | `tile` | live floatexp frame sizing | Per-frame resolution/ss/iterations/steps vs budget, reprojection, tiled-settle grid state |
 | `glitch` | multi-reference correction | Per-run summary: references used, residual glitched px, elapsed |
 
@@ -85,7 +88,8 @@ exercise means dead code (exactly how the v0.2.6 NaN-marker regression would hav
 | `--selftest-list` | Print the group tags usable with `--selftest-filter` |
 | `--profile [--regions file.toml] [--reps N]` | Per-region reference/SA/BLA build ms + pure-GPU pass ms (TIMESTAMP_QUERY); includes a corpus-14-class `deep-interior-1e148` region (dip orbit, 800k iters — the export-throughput-gap regime) |
 | `--bench-matrix [--bless] [--reps N]` | Path-coverage perf + regression suite (zoom bands, fractals, coloring). Per-segment CPU-build vs GPU split + deterministic GPU event counters, compared against `benchmarks/bench-matrix-baseline.json`. Algorithmic drift → exit 2; timing regression → warn. `--bless` records the baseline. See [design/bench-matrix.md](design/bench-matrix.md) |
-| `--frametest` | Stepped-dive stutter harness (build_ms stalls; its "gpu" column is CPU wall-clock — trust `--profile` for GPU numbers) |
+| `--divetest tour.toml [--out log.json]` | Headless live-dive perf harness: plays real-time 18 s windows of a tour at every 100 decades of depth through the ACTUAL playback machinery (pacer, lookahead, reuse-hold, motion-res controller) with real GPU iterates, vsync-paced. Per band: fps, p50/p95/max frame ms, >33 ms hitches, real-refresh rate/cost (CPU vs pure-GPU), reference installs, pacer engagement, achieved oct/s. The dive-smoothness regression harness — diff the JSON across builds |
+| `--frametest [--center X Y]` | Stepped-dive stutter harness (build_ms stalls; its "gpu" column is CPU wall-clock — trust `--profile`/`--divetest` for GPU numbers). `--center` dives a real deep line instead of the 34-digit seahorse (precision-noise past ~1e34×) |
 | `--benchmark-std` | Standardized dive benchmark with report |
 | `--render --out X …` | One-shot render; prints manifest + progress; non-zero exit on failure |
 
