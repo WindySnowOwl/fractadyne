@@ -1958,6 +1958,14 @@ struct FractadyneApp {
     /// bignum recompute off the render thread: the frame keeps using the cached reference until the
     /// worker's result arrives (see `build_params`).
     recompute_rx: [Option<std::sync::mpsc::Receiver<crate::render::RecomputeResult>>; 2],
+    /// Script-playback reference LOOKAHEAD (view 0): a tour knows its future camera path, so while
+    /// the current reference serves the view a worker builds the one the dive is ABOUT to need
+    /// (~2 octaves ahead, sampled from the script). `_rx` = the in-flight build; `_ready` = a
+    /// finished result held until the dive reaches its depth-validity window, then installed
+    /// directly (see `playback_ref_prefetch`). Purely additive — a missed window is dropped and
+    /// the reactive rebuild path covers it. Cleared on tour start/end and `invalidate_refs`.
+    ref_prefetch_rx: Option<std::sync::mpsc::Receiver<crate::render::RecomputeResult>>,
+    ref_prefetch_ready: Option<crate::render::RecomputeResult>,
     /// Last snapshot used for change detection (debounced auto-save).
     last_state: fractadyne_state::SessionState,
     /// App-time (s) of the last change while unsaved; `None` when clean.
@@ -2322,6 +2330,8 @@ impl FractadyneApp {
             last_saved_ref_id: None,
             ref_save_pending: None,
             recompute_rx: [None, None],
+            ref_prefetch_rx: None,
+            ref_prefetch_ready: None,
             last_state: s,
             dirty_since: None,
         };
@@ -2667,6 +2677,10 @@ impl FractadyneApp {
         // Drop any in-flight recompute — its result is for the old fractal/mode and must not
         // install (would render the wrong formula until the next recompute).
         self.recompute_rx = [None, None];
+        // Same for the playback lookahead: a prefetched reference for the old fractal/params
+        // must never install after a change.
+        self.ref_prefetch_rx = None;
+        self.ref_prefetch_ready = None;
     }
 
     /// Request the next animation frame. Frame pacing (the cap) is enforced at the end

@@ -1706,6 +1706,11 @@ impl FractadyneApp {
             return false;
         };
         let now = ctx.input(|i| i.time);
+        // Fresh tour → no leftover lookahead state from a previous run may install into it.
+        if pb.t0.is_none() {
+            self.ref_prefetch_rx = None;
+            self.ref_prefetch_ready = None;
+        }
         // Pipeline-paced clock: at extreme depth the async reference rebuild can fall behind a fast
         // dive (a fresh `best_reference` costs seconds past ~1e400×) — the screen then reprojects an
         // ever-staler frame, which magnifies into a monocolor blur. `last_depth_lag` (octaves the
@@ -1758,6 +1763,9 @@ impl FractadyneApp {
         // log2 path so playback stays exact past f64's 1e308× ceiling.
         self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
         self.pointer.settle_t = [now; 2]; // glide → cheap (interacting) render path
+        // Reference LOOKAHEAD: the script knows where the camera is going — build the reference the
+        // dive is about to need on idle cores, and install it as the dive arrives (render.rs).
+        self.playback_ref_prefetch(&pb, e);
 
         // Benchmark sampling (skip warm-up frames).
         if let Some(b) = pb.bench.as_mut() {
