@@ -3380,11 +3380,13 @@ impl FractadyneApp {
             return;
         }
         // Only meaningful while an update is actually pending.
-        let Some(update::UpdateStatus::Available { version, url }) = &self.update_status else {
+        let Some(update::UpdateStatus::Available { version, url, prerelease }) = &self.update_status
+        else {
             self.update_prompt_open = false;
             return;
         };
-        let (version, url) = (version.clone(), url.clone());
+        let (version, url, prerelease) = (version.clone(), url.clone(), *prerelease);
+        let channel = update::channel_word(prerelease);
         let track = self.update_track.label();
         let current = update::running_version();
         let green = egui::Color32::from_rgb(0x5C, 0xC0, 0x6C);
@@ -3402,8 +3404,10 @@ impl FractadyneApp {
                     ui.label(egui::RichText::new("\u{2B06}").size(22.0).color(green));
                     ui.vertical(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("Fractadyne {version} is available"))
-                                .strong(),
+                            egui::RichText::new(format!(
+                                "Fractadyne {version} ({channel}) is available"
+                            ))
+                            .strong(),
                         );
                         ui.label(
                             egui::RichText::new(format!(

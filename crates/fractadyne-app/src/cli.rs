@@ -66,8 +66,9 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         let cur = crate::update::running_version();
         println!("Checking {} track (running {cur})…", track.as_str());
         match crate::update::check(track, &cur) {
-            crate::update::UpdateStatus::Available { version, url } => {
-                println!("Update available: {version}\n{url}");
+            crate::update::UpdateStatus::Available { version, url, prerelease } => {
+                let channel = crate::update::channel_word(prerelease);
+                println!("Update available: {version} ({channel})\n{url}");
             }
             crate::update::UpdateStatus::UpToDate => {
                 println!("Up to date (no newer {} release than {cur}).", track.as_str());

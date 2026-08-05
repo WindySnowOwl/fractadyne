@@ -402,11 +402,12 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         match &self.update_status {
-                            Some(crate::update::UpdateStatus::Available { version, url }) => {
+                            Some(crate::update::UpdateStatus::Available { version, url, prerelease }) => {
                                 let url = url.clone();
+                                let channel = crate::update::channel_word(*prerelease);
                                 if ui
                                     .button(
-                                        egui::RichText::new(format!("\u{2B06} {version} available — download"))
+                                        egui::RichText::new(format!("\u{2B06} {version} ({channel}) available — download"))
                                             .color(egui::Color32::from_rgb(0x5C, 0xC0, 0x6C)),
                                     )
                                     .clicked()
