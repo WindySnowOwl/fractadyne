@@ -1879,6 +1879,10 @@ impl FractadyneApp {
             } else {
                 0.0
             };
+            // Published for the playback pacer: script playback dilates the tour clock when this
+            // lag says the async reference pipeline is falling behind the dive (see
+            // `advance_playback`), so the screen keeps a fresh reference instead of a stale blur.
+            self.ref_cache[vi].last_depth_lag = depth_lag;
             // While moving, tolerate the reference lagging in precision (it has 64 guard bits, good
             // for ~40 more octaves) so we don't rebuild the slow bignum orbit every octave — that
             // was the "zoom, pause, zoom" stepping on a deep dive. On settle we rebuild at the first

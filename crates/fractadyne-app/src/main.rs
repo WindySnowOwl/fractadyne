@@ -714,6 +714,14 @@ pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
 /// the ~500k freeze size. Export keeps the full appetite (`orbit_len_cap = u32::MAX`).
 pub(crate) const LIVE_REF_CAP: u32 = 256_000;
 
+/// Deep-dive pipeline pacing window (octaves of `last_depth_lag`): below `LO` the dive runs at
+/// full speed; above `HI` it's fully held (just under the mode-2 stale-reference spin/freeze
+/// threshold ≈ 3 octaves); in between it proportionally slows. Shared by the script-playback
+/// clock dilation (`advance_playback`) and the interactive zoom-velocity damping
+/// (`paced_zoom_vel`) so both degrade the same way: the image stays sharp, the dive slows.
+pub(crate) const PACE_LAG_LO: f64 = 1.5;
+pub(crate) const PACE_LAG_HI: f64 = 2.8;
+
 // Self-test helpers + run_selftest moved to selftest.rs.
 
 /// Plain-f64 Mandelbrot escape test: `Some(iter)` if it escapes within `max`, else
@@ -1227,6 +1235,11 @@ struct RefCache {
     /// fresh reference lands (see `build_params`). `None` until the first real render.
     frozen_center: Option<[fractadyne_core::BigFloat; 2]>,
     frozen_l2: f64,
+    /// Octaves the view has zoomed IN past the cached BLA's validity (recomputed each frame in
+    /// `build_params`; 0 when not in the deep floatexp regime). This is the "reference pipeline is
+    /// behind the dive" signal — script playback reads it to DILATE the tour clock (slow the dive)
+    /// instead of zooming into an ever-staler reprojection (the deep-dive monocolor blur).
+    last_depth_lag: f64,
 }
 
 impl Default for RefCache {
@@ -1250,6 +1263,7 @@ impl Default for RefCache {
             bla_trap_type: u32::MAX,
             frozen_center: None,
             frozen_l2: 0.0,
+            last_depth_lag: 0.0,
         }
     }
 }

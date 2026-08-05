@@ -611,6 +611,9 @@ pub(crate) struct Playback {
     pub(crate) spotlights: Vec<Spotlight>,
     /// Current tour time (seconds), updated each frame — so the caption overlay knows what to show.
     pub(crate) cur_t: f64,
+    /// Wall-clock of the previous `advance_playback` frame — gives the per-frame `dt` the
+    /// pipeline pacer needs to dilate the tour clock (see `advance_playback`). `None` = first frame.
+    pub(crate) last_now: Option<f64>,
 }
 
 impl Playback {
@@ -1201,6 +1204,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
         callouts,
         spotlights,
         cur_t: 0.0,
+        last_now: None,
     })
 }
 
@@ -1702,6 +1706,26 @@ impl FractadyneApp {
             return false;
         };
         let now = ctx.input(|i| i.time);
+        // Pipeline-paced clock: at extreme depth the async reference rebuild can fall behind a fast
+        // dive (a fresh `best_reference` costs seconds past ~1e400×) — the screen then reprojects an
+        // ever-staler frame, which magnifies into a monocolor blur. `last_depth_lag` (octaves the
+        // view has zoomed past the cached BLA's validity, from `build_params`) is exactly that
+        // "pipeline is behind" signal, so DILATE the tour clock by it: lag ≤ LO plays real-time,
+        // ≥ HI fully holds (just under the mode-2 stale-reference spin/freeze threshold ≈ 3), and
+        // in between the dive proportionally slows. The image stays sharp; the dive takes longer.
+        // Shallow tours (and the built-in benchmark, ≤ 1e12×) sit at lag ≈ 0–1.1 → untouched.
+        {
+            let dt = pb.last_now.map_or(0.0, |t| (now - t).max(0.0));
+            pb.last_now = Some(now);
+            let lag = self.ref_cache.iter().map(|c| c.last_depth_lag).fold(0.0, f64::max);
+            let hold = ((lag - crate::PACE_LAG_LO) / (crate::PACE_LAG_HI - crate::PACE_LAG_LO))
+                .clamp(0.0, 1.0);
+            if hold > 0.0 && dt > 0.0 {
+                if let Some(t0) = pb.t0.as_mut() {
+                    *t0 += dt * hold; // shift the start forward = the tour clock stands still
+                }
+            }
+        }
         let t0 = *pb.t0.get_or_insert(now);
         let mut elapsed = now - t0;
         if pb.loop_ && pb.total > 0.0 && elapsed >= pb.total {

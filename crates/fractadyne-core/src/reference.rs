@@ -838,12 +838,16 @@ pub fn best_reference(
             }
         }
     }
-    // Phase 1 — cheap rank to `quick`. A candidate reaching the cap is a "survivor" worth a deep
-    // look; otherwise track the longest-escaping as the fallback.
+    // Phase 1 — cheap rank to `quick`, scored across ALL CORES (each candidate's bignum orbit is
+    // independent; the selection below reads the in-candidate-order score array, so the chosen
+    // reference is IDENTICAL to the old sequential scan — threading changes wall-clock only). This
+    // scan is the dominant cold-recompute cost at depth (~0.8 s at 1e400×, ~7.6 s at 1e1216×
+    // sequential — the live-dive "monocolor" stall), and it parallelizes near-linearly.
+    let idxs: Vec<usize> = (0..cands.len()).collect();
+    let scores = par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p);
     let mut survivors: Vec<usize> = Vec::new();
     let (mut esc_i, mut esc_len) = (0usize, 0u32);
-    for (idx, c) in cands.iter().enumerate() {
-        let len = score(&c[0], &c[1], quick);
+    for (idx, &len) in scores.iter().enumerate() {
         if len >= quick {
             survivors.push(idx);
         } else if len > esc_len {
@@ -855,12 +859,20 @@ pub fn best_reference(
         return cands[esc_i].clone(); // deep exterior — take the longest-escaping point
     }
     // Phase 2 — deep-rank survivors to the full render length; take the longest-surviving. The centre
-    // (cands[0], usually best on the boundary) is scanned first with an early break, so a boundary
-    // dive stays cheap; a near-filament dive spends a little more but ends on the least-rebasing
-    // reference. `dl >= max_iter` ⇒ a reference that survives the whole render (no rebasing at all).
-    let (mut best_i, mut best_len) = (survivors[0], 0u32);
-    for &idx in survivors.iter().take(REF_DEEP_MAX) {
-        let dl = score(&cands[idx][0], &cands[idx][1], max_iter);
+    // (cands[0], usually best on the boundary) is scanned first — alone, so the common boundary case
+    // stays a single deep orbit — and only if it does NOT survive the whole render do the remaining
+    // survivors get a parallel deep scan. The selection loop then replicates the old sequential
+    // early-break semantics over the in-order results, so the pick is identical.
+    // `dl >= max_iter` ⇒ a reference that survives the whole render (no rebasing at all).
+    let first = survivors[0];
+    let dl0 = score(&cands[first][0], &cands[first][1], max_iter);
+    if dl0 >= max_iter {
+        return cands[first].clone();
+    }
+    let rest: Vec<usize> = survivors.iter().skip(1).take(REF_DEEP_MAX - 1).copied().collect();
+    let deep = par_orbit_scores(&cands, &rest, max_iter, julia, &jcx, &jcy, formula, p);
+    let (mut best_i, mut best_len) = (first, dl0);
+    for (&idx, &dl) in rest.iter().zip(deep.iter()) {
         if dl > best_len {
             best_len = dl;
             best_i = idx;
@@ -870,6 +882,49 @@ pub fn best_reference(
         }
     }
     cands[best_i].clone()
+}
+
+/// Score `idxs`-selected candidates' orbit lengths (up to `cap`) in parallel across the machine's
+/// cores, returning the scores in `idxs` order. Each candidate is an independent bignum orbit, and
+/// bignum arithmetic is deterministic, so the scores — and any selection made from them — are
+/// byte-identical to a sequential scan; only the wall-clock changes. Threads get their own clones
+/// of the shared scoring constants, so this needs `BigFloat: Send` only.
+#[allow(clippy::too_many_arguments)]
+fn par_orbit_scores(
+    cands: &[[BigFloat; 2]],
+    idxs: &[usize],
+    cap: u32,
+    julia: bool,
+    jcx: &BigFloat,
+    jcy: &BigFloat,
+    formula: u32,
+    p: usize,
+) -> Vec<u32> {
+    let score_one = |c: &[BigFloat; 2], jcx: &BigFloat, jcy: &BigFloat, zero: &BigFloat| -> u32 {
+        if julia {
+            orbit_length_bf(&c[0], &c[1], jcx, jcy, formula, cap, p)
+        } else {
+            orbit_length_bf(zero, zero, &c[0], &c[1], formula, cap, p)
+        }
+    };
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(idxs.len());
+    if threads <= 1 {
+        let zero = bf(0.0, p);
+        return idxs.iter().map(|&i| score_one(&cands[i], jcx, jcy, &zero)).collect();
+    }
+    let mut out = vec![0u32; idxs.len()];
+    let chunk = idxs.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        for (idx_chunk, out_chunk) in idxs.chunks(chunk).zip(out.chunks_mut(chunk)) {
+            s.spawn(|| {
+                let (jcx, jcy, zero) = (jcx.clone(), jcy.clone(), bf(0.0, p));
+                for (&i, o) in idx_chunk.iter().zip(out_chunk.iter_mut()) {
+                    *o = score_one(&cands[i], &jcx, &jcy, &zero);
+                }
+            });
+        }
+    });
+    out
 }
 
 /// Real difference `a - b` as `f64` (used for the small reference offset).

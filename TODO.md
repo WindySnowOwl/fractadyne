@@ -949,6 +949,23 @@ for fun, informative value, and ease of use.
 
 ## Performance & throughput (M7)
 
+- [x] **Deep-dive live "monocolor" past ~1e400× — FIXED v0.2.40-beta.7 (parallel `best_reference` +
+  pipeline pacing).** Diagnosis: on a centered dive the picked reference (a nearby nucleus, a
+  fraction of a span off-center) leaves the 0.7-span drift window every ~1 octave → a full
+  `pick_reference` re-fires; its **sequential** candidate scoring crossed ~1 s at e400 (796 ms; 7.6 s
+  at e1216), the async worker fell permanently behind the ~5–10 oct/s dive, and the screen reprojected
+  an ever-staler frame into a monocolor blur. Fix 1: `best_reference` phase-1/phase-2 scoring now runs
+  across ALL CORES (result-identical — bench-matrix 0 drift, goldens 17/17): **796→55 ms @e400,
+  3.3 s→272 ms @e800, 7.6 s→609 ms @e1216 (~12–14×)**. Fix 2: `last_depth_lag` (octaves the view
+  outran the cached BLA) now paces both the script-playback clock (dilates in the `PACE_LAG_LO=1.5 →
+  HI=2.8` window) and the interactive zoom velocity (`paced_zoom_vel`) — the dive slows instead of
+  blurring, so the screen always shows a fresh reference. Remaining ideas (not yet done): reduce
+  re-pick frequency structurally (bias the pick toward near-center candidates so references survive
+  more octaves; or pipeline the NEXT pick concurrently with serving the current one); make the pacer
+  visible (status-bar "paced" tag); SA coefficient pass at depth (~1 s at e1216) is the next cold-path
+  cost after the pick; live per-frame palette normalization at extreme depth (the deferred LIVE
+  `--normalize` analogue) for coloring-compression cases the pacer can't help.
+
 - [ ] **Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference.**
   *Update (v0.1.57–0.1.68): interactive MOTION is now smooth — reference-orbit reuse (~20× faster
   rebuilds), frozen-frame reprojection/hold, and adaptive motion resolution (AIMD) replaced the old

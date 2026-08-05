@@ -4,6 +4,22 @@
 use crate::*;
 
 impl FractadyneApp {
+    /// The zoom velocity to APPLY this frame: `pointer.zoom_vel` damped by the deep-zoom pipeline
+    /// lag (the `PACE_LAG_LO..HI` window shared with the script-playback pacer). When the async
+    /// reference rebuild is behind a fast dive, slowing the zoom keeps a fresh reference under the
+    /// view instead of outrunning it into a stale-reprojection blur — the image stays sharp, the
+    /// dive just takes longer. Zoom-out (vel < 0) is never damped (it relieves the lag), and the
+    /// damping bottoms out at 10% so input never feels dead. Shallow views sit at lag 0 → untouched.
+    fn paced_zoom_vel(&self) -> f64 {
+        let v = self.pointer.zoom_vel;
+        if v <= 0.0 {
+            return v;
+        }
+        let lag = self.ref_cache.iter().map(|c| c.last_depth_lag).fold(0.0, f64::max);
+        let hold = ((lag - crate::PACE_LAG_LO) / (crate::PACE_LAG_HI - crate::PACE_LAG_LO)).clamp(0.0, 1.0);
+        v * (1.0 - 0.9 * hold)
+    }
+
     /// Dual linked view: Mandelbrot (left) ↔ Julia (right). Hovering the Mandelbrot
     /// sets the Julia parameter `c`.
     pub(crate) fn draw_dual(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -49,7 +65,7 @@ impl FractadyneApp {
         if self.pointer.zoom_vel.abs() > 1e-3 {
             if let Some((p, r, is_julia)) = panel {
                 let l = p - r.min;
-                let factor = (-self.pointer.zoom_vel * dt).exp();
+                let factor = (-self.paced_zoom_vel() * dt).exp();
                 let vp = if is_julia {
                     &mut self.julia_viewport
                 } else {
@@ -655,7 +671,7 @@ impl FractadyneApp {
                 if self.pointer.zoom_vel.abs() > 1e-3 {
                     let anchor = self.pointer.last_cursor.unwrap_or_else(|| rect.center());
                     let local = anchor - rect.min;
-                    let factor = (-self.pointer.zoom_vel * dt).exp(); // vel>0 → factor<1 → zoom in
+                    let factor = (-self.paced_zoom_vel() * dt).exp(); // vel>0 → factor<1 → zoom in
                     self.viewport
                         .zoom_at(local.x as f64 * ppp, local.y as f64 * ppp, factor);
                 }
