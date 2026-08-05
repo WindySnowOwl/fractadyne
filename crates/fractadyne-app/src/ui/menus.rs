@@ -242,6 +242,17 @@ impl FractadyneApp {
                             self.load_script();
                             ui.close_menu();
                         }
+                        if ui
+                            .button("Script to current view…")
+                            .on_hover_text(
+                                "Create a tour script that zooms from the full view down to the \
+                                 current view — add a caption and set the dive duration.",
+                            )
+                            .clicked()
+                        {
+                            self.open_script_export();
+                            ui.close_menu();
+                        }
                         ui.add_enabled_ui(!self.dual, |ui| {
                             let label = if self.autopilot.active {
                                 "Stop autopilot  (A)"

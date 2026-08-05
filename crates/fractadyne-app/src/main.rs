@@ -1733,6 +1733,11 @@ struct DialogState {
     right_panel_open: bool,
     /// Minimap overview enabled (persisted).
     minimap: bool,
+    /// "Script to current view" export dialog open, plus its inputs (a notation caption and the
+    /// dive duration in seconds — defaulted from the zoom depth when the dialog opens).
+    script_export_open: bool,
+    script_export_note: String,
+    script_export_secs: f64,
 }
 
 struct FractadyneApp {
@@ -2151,6 +2156,9 @@ impl FractadyneApp {
                 help_section: 0,
                 right_panel_open: s.right_panel_open,
                 minimap: s.minimap,
+                script_export_open: false,
+                script_export_note: String::new(),
+                script_export_secs: 30.0,
             },
             bench_cfg: BenchConfig::default(),
             std_bench: None,
@@ -4816,6 +4824,7 @@ impl eframe::App for FractadyneApp {
         self.draw_share_dialog(ctx);
         self.draw_report_dialog(ctx);
         self.draw_reset_dialog(ctx);
+        self.draw_script_export_dialog(ctx);
         self.draw_bookmarks_dialog(ctx);
 
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current

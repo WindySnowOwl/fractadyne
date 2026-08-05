@@ -4,6 +4,13 @@
 
 use crate::*;
 
+/// Depth-based default dive duration (seconds) for "Script to current view": a base plus ~1.5 s per
+/// order of magnitude, so a deep dive lasts long enough to stay watchable (fast dives flash
+/// single-color frames at extreme zoom). Rounded to whole seconds; clamped to a sane range.
+fn default_dive_secs(log10mag: f64) -> f64 {
+    (8.0 + 1.5 * log10mag.max(0.0)).round().clamp(8.0, 3600.0)
+}
+
 impl FractadyneApp {
     /// "Go to location" dialog — jump to a pasted center/zoom, or copy the current one to share.
     pub(crate) fn draw_goto_dialog(&mut self, ctx: &egui::Context) {
@@ -434,6 +441,185 @@ impl FractadyneApp {
         } else {
             self.dialogs.reset_confirm_open = open && self.dialogs.reset_confirm_open;
         }
+    }
+
+    /// Open the "Script to current view" dialog, seeding the dive duration from the current zoom
+    /// depth (deeper ⇒ longer, so the dive isn't a blur) and clearing the notation.
+    pub(crate) fn open_script_export(&mut self) {
+        let log10mag = self.viewport.log2_magnification() / std::f64::consts::LOG2_10;
+        self.dialogs.script_export_secs = default_dive_secs(log10mag);
+        self.dialogs.script_export_note.clear();
+        self.dialogs.script_export_open = true;
+    }
+
+    /// "Script to current view" dialog — build a tour that zooms from the full view down to the
+    /// current view, with an optional caption and a chosen duration, and save it as a `.toml`.
+    pub(crate) fn draw_script_export_dialog(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.script_export_open {
+            return;
+        }
+        let log2mag = self.viewport.log2_magnification();
+        let log10mag = log2mag / std::f64::consts::LOG2_10;
+        let mut open = self.dialogs.script_export_open;
+        let mut save = false;
+        egui::Window::new("Script to current view")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(440.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "Creates a tour that zooms from the full view down to where you are now.",
+                    )
+                    .weak(),
+                );
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Destination").weak().small());
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} · {}×",
+                            self.fractal.name(),
+                            crate::fmt_zoom_field(log2mag)
+                        ))
+                        .monospace()
+                        .small(),
+                    );
+                });
+                ui.add_space(8.0);
+
+                ui.label("Notation (optional caption shown during the dive)");
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.dialogs.script_export_note)
+                        .desired_rows(2)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("e.g. Diving to the Misiurewicz three-spar…"),
+                );
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    ui.label("Zoom duration");
+                    ui.add(
+                        egui::DragValue::new(&mut self.dialogs.script_export_secs)
+                            .speed(0.5)
+                            .range(1.0..=7200.0)
+                            .suffix(" s"),
+                    );
+                    let rate = if self.dialogs.script_export_secs > 0.0 {
+                        log10mag / self.dialogs.script_export_secs
+                    } else {
+                        0.0
+                    };
+                    ui.label(
+                        egui::RichText::new(format!("≈ {rate:.1} decades/s"))
+                            .weak()
+                            .small(),
+                    );
+                    if ui
+                        .small_button("Reset")
+                        .on_hover_text("Depth-based default")
+                        .clicked()
+                    {
+                        self.dialogs.script_export_secs = default_dive_secs(log10mag);
+                    }
+                });
+                ui.label(
+                    egui::RichText::new(
+                        "Default scales with depth so the dive stays watchable. Faster dives can \
+                         flash single-color frames at extreme zoom.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save script…").clicked() {
+                        save = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.dialogs.script_export_open = false;
+                    }
+                });
+            });
+        self.dialogs.script_export_open = open && self.dialogs.script_export_open;
+        if save {
+            self.save_dive_script();
+        }
+    }
+
+    /// Build the tour TOML and write it via a save-file dialog.
+    fn save_dive_script(&mut self) {
+        let secs = self.dialogs.script_export_secs.clamp(1.0, 7200.0);
+        let note = self.dialogs.script_export_note.trim().to_string();
+        let toml = self.build_dive_script(&note, secs);
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Fractadyne script (TOML)", &["toml"])
+            .set_file_name("dive-to-view.toml")
+            .save_file()
+        {
+            let ctx_msg = match std::fs::write(&path, toml.as_bytes()) {
+                Ok(()) => format!(
+                    "Saved script → {}. Play it via Tools → Play script, or render with \
+                     --render-tour.",
+                    path.file_name().and_then(|n| n.to_str()).unwrap_or("script.toml")
+                ),
+                Err(e) => format!("Save failed: {e}"),
+            };
+            self.pending_toast = Some(ctx_msg);
+            self.dialogs.script_export_open = false;
+        }
+    }
+
+    /// Compose the tour script: an overview keyframe at the fractal's full view, then a timed dive
+    /// to the current center/zoom, plus the notation as a caption spanning the dive.
+    fn build_dive_script(&self, note: &str, secs: f64) -> String {
+        let log2mag = self.viewport.log2_magnification();
+        let log10mag = log2mag / std::f64::consts::LOG2_10;
+        let cx = fractadyne_core::to_decimal_string(&self.viewport.center_x);
+        let cy = fractadyne_core::to_decimal_string(&self.viewport.center_y);
+        let (hx, hy) = self.fractal.default_center();
+        // Magnification past f64's ~1e308 ceiling must go through `mag_log10`.
+        let target_mag_line = if log10mag < 300.0 {
+            format!("mag = {}", self.viewport.magnification())
+        } else {
+            format!("mag_log10 = {log10mag:.6}")
+        };
+        let mut s = String::new();
+        s.push_str("# Fractadyne tour — generated by \"Script to current view\".\n");
+        s.push_str("# Zooms from the full view to a saved location. Play: Tools → Play script;\n");
+        s.push_str("# render: fractadyne --render-tour <this file> --size 1920x1080 --mp4.\n");
+        s.push_str("name = \"Dive to view\"\n");
+        s.push_str("format_version = 1\n\n");
+        s.push_str("[[keyframe]]            # full view\n");
+        s.push_str(&format!("fractal = \"{}\"\n", self.fractal.name()));
+        if self.julia_mode {
+            s.push_str("julia = true\n");
+        }
+        s.push_str(&format!("center_re = \"{hx}\"\n"));
+        s.push_str(&format!("center_im = \"{hy}\"\n"));
+        s.push_str("mag = 1.0\n");
+        s.push_str("secs = 0.0\n");
+        s.push_str("hold = 1.0\n\n");
+        s.push_str("[[keyframe]]            # dive to the current view\n");
+        s.push_str(&format!("center_re = \"{cx}\"\n"));
+        s.push_str(&format!("center_im = \"{cy}\"\n"));
+        s.push_str(&format!("{target_mag_line}\n"));
+        s.push_str(&format!("secs = {secs}\n"));
+        s.push_str("ease = \"out\"        # decelerate into the destination\n");
+        s.push_str("hold = 2.0\n");
+        if !note.is_empty() {
+            s.push('\n');
+            s.push_str("[[caption]]\n");
+            // Escape backslashes and quotes so the TOML basic string round-trips.
+            let esc = note.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+            s.push_str(&format!("text = \"{esc}\"\n"));
+            s.push_str("at = 0.0\n");
+            s.push_str(&format!("secs = {}\n", secs + 3.0)); // through the dive + the hold
+            s.push_str("pos = \"bottom\"\n");
+        }
+        s
     }
 
     /// Transient status toast (fades out over ~4.5s), e.g. the minibrot-finder result.
