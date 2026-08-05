@@ -127,6 +127,15 @@ struct ReuseRef {
     prec: usize,
 }
 
+/// One script-playback lookahead slot: an in-flight (or finished, held) future-reference build,
+/// tagged with the log2 magnification it targets so the queue spaces targets without duplicates.
+/// See [`FractadyneApp::playback_ref_prefetch`].
+pub(crate) struct RefPrefetchSlot {
+    rx: Option<std::sync::mpsc::Receiver<RecomputeResult>>,
+    ready: Option<RecomputeResult>,
+    target_l2: f64,
+}
+
 /// Owned, `Send` inputs for an off-thread reference recompute.
 struct RecomputeInputs {
     center_bf: [fractadyne_core::BigFloat; 2],
@@ -588,124 +597,156 @@ impl FractadyneApp {
     }
 
     /// Script-playback reference LOOKAHEAD: a tour knows its whole future camera path, so build the
-    /// reference the dive is ABOUT to need on otherwise-idle cores while the current one serves the
-    /// view. Each pump: (1) collect a finished build, (2) install it the moment the dive reaches its
-    /// depth-validity window (the same `0.85..1.1` BLA-lag window `build_params` steers by, so the
-    /// installed reference reads as freshly built), (3) if nothing is in flight, sample the script
-    /// `PREFETCH_OCT` octaves ahead and start building that frame's reference exactly as
-    /// `build_params` would (same inputs, same `LIVE_REF_CAP`, same reuse/extend gates).
+    /// references the dive is ABOUT to need on otherwise-idle cores while the current one serves the
+    /// view. A small QUEUE of slots covers the next `PREFETCH_SLOTS × PREFETCH_OCT` octaves
+    /// concurrently, so even the fastest dive phase always has the next reference finished before it
+    /// arrives. Each pump: (1) collect finished builds, (2) install the one whose depth-validity
+    /// window the dive has reached (the same `0.85..1.1` BLA-lag window `build_params` steers by, so
+    /// it reads as freshly built), (3) top the queue back up, each new slot `PREFETCH_OCT` octaves
+    /// past the deepest queued target, built exactly as `build_params` would build it there.
     ///
     /// Purely ADDITIVE to the reactive rebuild path: a build that misses its window (or a tour that
     /// pans/changes fractal) is simply dropped and the reactive path covers it as before. Cleared on
     /// tour start/end and `invalidate_refs` so a stale prefetch can never install.
     pub(crate) fn playback_ref_prefetch(&mut self, pb: &crate::scripting::Playback, e: f64) {
         const PREFETCH_OCT: f64 = 2.0;
+        /// Lookahead depth (slots × PREFETCH_OCT octaves). 3 covers ~6 octaves — at the measured
+        /// ~10 oct/s fastest dive phase that's ~0.6 s of runway vs. ~0.1–0.6 s per build, so the
+        /// pipeline stays ahead. Each build's candidate scoring already fans out across all cores,
+        /// so concurrent slots briefly oversubscribe threads — harmless for compute-bound bursts.
+        const PREFETCH_SLOTS: usize = 3;
         const LN_2: f64 = std::f64::consts::LN_2;
-        // 1) Collect a finished build.
-        if let Some(rx) = self.ref_prefetch_rx.take() {
-            match rx.try_recv() {
-                Ok(res) => self.ref_prefetch_ready = Some(res),
-                Err(std::sync::mpsc::TryRecvError::Empty) => self.ref_prefetch_rx = Some(rx),
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+        // 1) Collect finished builds into their slots.
+        for slot in &mut self.ref_prefetch {
+            if let Some(rx) = slot.rx.take() {
+                match rx.try_recv() {
+                    Ok(res) => slot.ready = Some(res),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => slot.rx = Some(rx),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {} // worker died → culled
+                }
             }
         }
-        // 2) Install a ready result once the dive reaches its validity window; drop it if the dive
-        //    already zoomed past (lag below the window ⇒ its BLA would read as out-of-range).
-        if let Some(res) = self.ref_prefetch_ready.take() {
-            let scale = self.viewport.gpu_scale();
-            let lag = res.bla_dc_max_log2
-                - Self::bla_dc_max(scale.span_mantissa, scale.delta_exp).log2();
-            if lag.is_finite() && lag > 1.09 {
-                self.ref_prefetch_ready = Some(res); // early — hold until the dive arrives
-            } else if lag.is_finite() && lag >= 0.86 && res.prec >= self.viewport.precision {
+        // 2) Install the slot whose validity window the dive has reached; cull slots the dive
+        //    already zoomed past (lag below the window ⇒ their BLA would read as out-of-range)
+        //    and dead workers. Early slots (lag above the window) are held.
+        let scale = self.viewport.gpu_scale();
+        let needed = Self::bla_dc_max(scale.span_mantissa, scale.delta_exp).log2();
+        let mut install: Option<RecomputeResult> = None;
+        self.ref_prefetch.retain_mut(|slot| {
+            if slot.rx.is_none() && slot.ready.is_none() {
+                return false; // worker died without a result
+            }
+            let Some(res) = &slot.ready else { return true }; // still building
+            let lag = res.bla_dc_max_log2 - needed;
+            if !lag.is_finite() || lag < 0.86 {
+                return false; // window missed / no BLA — reactive path covers it
+            }
+            if lag <= 1.09 {
+                if install.is_none() {
+                    install = slot.ready.take();
+                }
+                return false;
+            }
+            true // early — hold until the dive arrives
+        });
+        if let Some(res) = install {
+            if res.prec >= self.viewport.precision {
                 self.install_recompute(0, res); // seamless swap — no reactive stall
-            } // else: window missed / no BLA — discard; the reactive path covers it
+            }
         }
-        // 3) Start the next lookahead build (single main view only; a future fractal/julia/dual
-        //    switch means the prefetched reference wouldn't match — skip those segments).
-        if self.ref_prefetch_rx.is_some() || self.ref_prefetch_ready.is_some() {
-            return;
-        }
+        // 3) Top the queue back up (single main view only; a future fractal/julia/dual switch
+        //    means a prefetched reference wouldn't match — stop at those segments).
         if self.dual || self.julia_mode {
             return;
         }
         let cur_l2 = pb.sample(e).logmag / LN_2;
-        // First probe time ≥ PREFETCH_OCT octaves deeper along the script (probes are cheap keyframe
-        // interpolation). None ⇒ the tour is slow/at rest/zooming out — nothing worth prefetching.
-        let mut target = None;
-        for tau in [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0] {
-            let s = pb.sample((e + tau).min(pb.total));
-            if s.logmag / LN_2 - cur_l2 >= PREFETCH_OCT {
-                target = Some(s);
+        while self.ref_prefetch.len() < PREFETCH_SLOTS {
+            // Next target: PREFETCH_OCT octaves past the deepest queued target (or the current
+            // depth). Find the first script time that reaches it (probes are cheap keyframe
+            // interpolation); none ⇒ the tour is slow/at rest/zooming out — nothing to prefetch.
+            let deepest = self
+                .ref_prefetch
+                .iter()
+                .map(|s| s.target_l2)
+                .fold(cur_l2, f64::max);
+            let next_l2 = deepest + PREFETCH_OCT;
+            let mut target = None;
+            for tau in [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0] {
+                let s = pb.sample((e + tau).min(pb.total));
+                if s.logmag / LN_2 >= next_l2 {
+                    target = Some(s);
+                    break;
+                }
+            }
+            let Some(s) = target else { break };
+            if s.fractal != self.fractal || s.julia || s.dual {
                 break;
             }
+            // Build the FUTURE frame's recompute inputs exactly as `build_params` will when the
+            // dive gets there (same precision/iter/caps/BLA dc_max), so the installed result is
+            // indistinguishable from a reactive rebuild at that depth.
+            let target_l2 = s.logmag / LN_2;
+            let mut vp =
+                fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
+            vp.set_center_log2mag(s.cx, s.cy, target_l2);
+            let mag = vp.magnification();
+            let mode = RenderMode::select(self.fractal.supports_perturbation(), mag);
+            if mode.is_direct() {
+                break; // shallow frames rebuild in microseconds — nothing to prefetch
+            }
+            let l2 = vp.log2_magnification();
+            let precision = fractadyne_core::precision_for_octaves(l2.max(0.0).ceil() as u64);
+            let eff_iter = if self.render_cfg.auto_iter {
+                vp.recommended_max_iter(self.render_cfg.max_iter)
+            } else {
+                self.render_cfg.max_iter
+            };
+            let gpu_iter = eff_iter.min(500_000).min(crate::zoom_iter_cap(l2).max(256));
+            let ref_build_iter = gpu_iter.saturating_add(32 * 256).min(500_000);
+            let span = vp.complex_span_fe();
+            let scale = vp.gpu_scale();
+            let (span_mantissa, delta_exp) = (scale.span_mantissa, scale.delta_exp);
+            let bla_will_build = self.bla_eligible(mode, false);
+            let do_sa = self.fractal.formula_id() <= 3
+                && !self.coloring.color_method.blocks_iter_skip()
+                && self.render_cfg.series_approx
+                && !bla_will_build;
+            // Hand the worker the cached orbit for extend/as-is reuse — `try_reuse_reference`
+            // re-validates drift/precision against the FUTURE frame and falls back to a fresh pick.
+            let vc = &self.ref_cache[0];
+            let reuse = match (vc.ref_pt.clone(), vc.orbit_tail.clone()) {
+                (Some(point), Some(tail)) if !vc.orbit.is_empty() => Some(ReuseRef {
+                    point,
+                    prefix: vc.orbit.clone(),
+                    tail,
+                    prec: vc.orbit_prec,
+                }),
+                _ => None,
+            };
+            let inputs = RecomputeInputs {
+                center_bf: [vp.center_x.clone(), vp.center_y.clone()],
+                span,
+                span_mantissa,
+                delta_exp,
+                gpu_iter: ref_build_iter,
+                orbit_len_cap: crate::LIVE_REF_CAP,
+                precision,
+                julia: false,
+                formula: self.fractal.formula_id(),
+                julia_c: self.julia_c,
+                do_sa,
+                bla_dc_max: bla_will_build
+                    .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
+                stripe_freq: self.coloring.stripe_freq as f64,
+                trap_type: self.coloring.trap_type as u32,
+                reuse,
+            };
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(recompute_worker(inputs));
+            });
+            self.ref_prefetch.push(RefPrefetchSlot { rx: Some(rx), ready: None, target_l2 });
         }
-        let Some(s) = target else { return };
-        if s.fractal != self.fractal || s.julia || s.dual {
-            return;
-        }
-        // Build the FUTURE frame's recompute inputs exactly as `build_params` will when the dive
-        // gets there (same precision/iter/caps/BLA dc_max), so the installed result is
-        // indistinguishable from a reactive rebuild at that depth.
-        let mut vp = fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
-        vp.set_center_log2mag(s.cx, s.cy, s.logmag / LN_2);
-        let mag = vp.magnification();
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), mag);
-        if mode.is_direct() {
-            return; // shallow frames rebuild in microseconds — nothing to prefetch
-        }
-        let l2 = vp.log2_magnification();
-        let precision = fractadyne_core::precision_for_octaves(l2.max(0.0).ceil() as u64);
-        let eff_iter = if self.render_cfg.auto_iter {
-            vp.recommended_max_iter(self.render_cfg.max_iter)
-        } else {
-            self.render_cfg.max_iter
-        };
-        let gpu_iter = eff_iter.min(500_000).min(crate::zoom_iter_cap(l2).max(256));
-        let ref_build_iter = gpu_iter.saturating_add(32 * 256).min(500_000);
-        let span = vp.complex_span_fe();
-        let scale = vp.gpu_scale();
-        let (span_mantissa, delta_exp) = (scale.span_mantissa, scale.delta_exp);
-        let bla_will_build = self.bla_eligible(mode, false);
-        let do_sa = self.fractal.formula_id() <= 3
-            && !self.coloring.color_method.blocks_iter_skip()
-            && self.render_cfg.series_approx
-            && !bla_will_build;
-        // Hand the worker the cached orbit for extend/as-is reuse — `try_reuse_reference`
-        // re-validates drift/precision against the FUTURE frame and falls back to a fresh pick.
-        let vc = &self.ref_cache[0];
-        let reuse = match (vc.ref_pt.clone(), vc.orbit_tail.clone()) {
-            (Some(point), Some(tail)) if !vc.orbit.is_empty() => Some(ReuseRef {
-                point,
-                prefix: vc.orbit.clone(),
-                tail,
-                prec: vc.orbit_prec,
-            }),
-            _ => None,
-        };
-        let inputs = RecomputeInputs {
-            center_bf: [vp.center_x.clone(), vp.center_y.clone()],
-            span,
-            span_mantissa,
-            delta_exp,
-            gpu_iter: ref_build_iter,
-            orbit_len_cap: crate::LIVE_REF_CAP,
-            precision,
-            julia: false,
-            formula: self.fractal.formula_id(),
-            julia_c: self.julia_c,
-            do_sa,
-            bla_dc_max: bla_will_build
-                .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
-            stripe_freq: self.coloring.stripe_freq as f64,
-            trap_type: self.coloring.trap_type as u32,
-            reuse,
-        };
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(recompute_worker(inputs));
-        });
-        self.ref_prefetch_rx = Some(rx);
     }
 
     /// Snapshot view 0's FULL reference for on-disk persistence (see `refcache_persist`), or `None`

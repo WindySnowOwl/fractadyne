@@ -949,6 +949,21 @@ for fun, informative value, and ease of use.
 
 ## Performance & throughput (M7)
 
+- [ ] **GPU-assisted reference-candidate scoring (the practical "bignum on GPU").** Full GPU bignum
+  is a poor fit for the reference ORBIT itself — `z_{n+1} = z_n² + c` is inherently sequential, and
+  WGSL lacks 64-bit ints / add-with-carry / extended-mul (16-bit-limb schoolbook arithmetic is
+  possible but a single dependent chain runs at GPU-scalar speed, no faster than the CPU bignum we
+  have; this is why KF / Fraktaler-3 / Imagina all keep references on CPU too). What DOES map to the
+  GPU: the **parallel** bignum workload — `best_reference` scoring. Idea: score the ~101 candidates
+  as a tiny GPU "render" — iterate each candidate's δ against the EXISTING reference orbit with the
+  same floatexp perturbation kernel the pixels use (a candidate is just a point; its escape
+  iteration IS its score). Needs a valid covering reference (fine during a dive; CPU bootstraps the
+  cold start), and the scorer only needs coarse "who survives longest", so perturbation accuracy
+  suffices. Would make re-picks ~instant at any depth (vs ~0.6 s CPU-parallel at e1216). Moderate
+  complexity: a small compute pass + readback, reusing the existing iterate kernel. Alternative
+  considered and rejected: limb-parallel bignum multiplication per orbit step on GPU (workgroup-wide
+  carry propagation each iteration — latency-bound, not competitive).
+
 - [x] **Deep-dive live "monocolor" past ~1e400× — FIXED v0.2.40-beta.7 (parallel `best_reference` +
   pipeline pacing).** Diagnosis: on a centered dive the picked reference (a nearby nucleus, a
   fraction of a span off-center) leaves the 0.7-span drift window every ~1 octave → a full

@@ -1708,8 +1708,7 @@ impl FractadyneApp {
         let now = ctx.input(|i| i.time);
         // Fresh tour → no leftover lookahead state from a previous run may install into it.
         if pb.t0.is_none() {
-            self.ref_prefetch_rx = None;
-            self.ref_prefetch_ready = None;
+            self.ref_prefetch.clear();
         }
         // Pipeline-paced clock: at extreme depth the async reference rebuild can fall behind a fast
         // dive (a fresh `best_reference` costs seconds past ~1e400×) — the screen then reprojects an
