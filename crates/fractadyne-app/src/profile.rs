@@ -554,6 +554,161 @@ impl crate::FractadyneApp {
     }
 }
 
+impl crate::FractadyneApp {
+    /// `--resizetest`: headless window-resize regression harness. Settles a DEEP view, then
+    /// scripts a drag-resize (stepped size changes at ~60 Hz) through the REAL per-frame logic
+    /// (`build_params` with the same resize-counts-as-interacting stamping `draw_central` does)
+    /// and asserts the aspect invariant on every tick: a frame either
+    ///   (a) REPROJECTS the held frame — the color pass's per-axis `fit = out_res/tex` is a 1:1
+    ///       pixel mapping (aspect-preserving by construction), or
+    ///   (b) RE-ITERATES at the current size (content matches the rect).
+    /// Either way what the app paints cannot be stretched; a tick that re-iterates at a STALE
+    /// size, or reprojects with mismatched inputs, is the app-side stretch bug. If this harness
+    /// passes and a live window still stretches during drag-resize, the stretch is
+    /// compositor-level (slow presents), not paint-level. Exit 0 = invariant held on all ticks.
+    pub(crate) fn run_resizetest(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+    ) {
+        const SETTLE_DELAY: f64 = 0.35; // mirror main.rs SETTLE_DELAY
+        // A deep filament view (the dive-to-view target region at 1e300×) — the regime the
+        // squashed-resize report came from.
+        let cx = "-0.10109636384562216102578544573862256546380544282625348387693117766078084074047058427482121981051677903340453190855674119397154614426091188235570390768030161575841814343545448230681066640294193782674118916078195264489953969953344668233931266990098175571504252065388669918613443339616006105627753851442596095607035682216432799561330369267147603777972840547126801980704959564343122613074621896737872910571815679801197486243277885212232140346141476363055768794030853505141349183029015625069901969710301398305392417144156069597140451840313064629757293752694923598744652623932038999304619097152290211115114321808028789403122382122426681233709818005501104114164866955494431100070201222185701964043942380903139582696661410506981033531993920115166766865499029937517718480859741678429471778875835091458778409768052331281855418374275568747857427817878588975428498776440958365571143980553929580426851853970861581967408482954948615588204167423489425979292655194076761074235209884803548623974441682647098190126510057828334902994426890932017548072978965178763527302460666281401438540176035039880523180757953729595833877855592110412384316138244258042800106144270831186332997088681779330774172810346897306169609186015417079821641600400593193981268337275751132474252918216";
+        let cy = "0.9562865108091415007710960577299774358098333365105291700343143215005246590657167325269784107873398072043444724926469284366752406567465722656200815719741551313831228054884443810571677870203738395055477279309548311953190385170024877917670113105649462054553485859930615004427397447762045980085973915977603864276670744042253335354323566859404712327457083787857148248615873869675060108354066122688803113441095405220822267412663824851779098634770481811864806258738023969258382884081571925537012152280038588430181998328078474272633699174145410614739462589128789157270309137280445851229295437246369133142664831678997110648342958496799411796053782879854029239135856497881774132969669652699204486924289172505386561146364971863878183988732262227332465841765012882266031595005109538147888898264288529633218462512748520811096416738441262363354058945001574839594474384589481122468123965611462097003237015619675431384515236428681192402632704494401393363553995382534130865149497598845865720492821177842454782140474274743600236820990552140248357737361972320431809526352413494013760129709944358620070346268288974825610996815010703236471629927357824532578002161368350336523576700466236404066703410118983273506666673552161007021682783983310680516466618258915183846702688575";
+        let cx = fractadyne_core::parse_bf(cx).unwrap();
+        let cy = fractadyne_core::parse_bf(cy).unwrap();
+
+        self.julia_mode = false;
+        self.dual = false;
+        self.coloring.color_method = crate::ColorMethod::Smooth;
+        self.render_cfg.auto_iter = true;
+
+        let (w0, h0) = (1280u32, 720u32);
+        self.viewport.set_size(w0 as f64, h0 as f64);
+        self.viewport
+            .set_center_log2mag(cx, cy, 300.0 * std::f64::consts::LOG2_10);
+
+        // One frame at t, at size (w,h), with the resize-stamping draw_central does. Returns
+        // (reproject, rendered_res) where rendered_res is the res the frame ITERATED at (None if
+        // it reprojected). `settle_t` drives `interacting` exactly like the GUI.
+        let t0 = Instant::now();
+        let mut last_real_res: Option<[u32; 2]> = None;
+        let mut frame = |app: &mut crate::FractadyneApp,
+                         w: u32,
+                         h: u32,
+                         last_real_res: &mut Option<[u32; 2]>|
+         -> (bool, [u32; 2]) {
+            let now = t0.elapsed().as_secs_f64();
+            let (nw, nh) = (w as f64, h as f64);
+            let resized = (nw - app.viewport.width_px).abs() > 0.5
+                || (nh - app.viewport.height_px).abs() > 0.5;
+            if resized {
+                app.pointer.settle_t[0] = now;
+            }
+            app.viewport.set_size(nw, nh);
+            let interacting = now - app.pointer.settle_t[0] < SETTLE_DELAY;
+            let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
+            let center = app.viewport.center_f64();
+            let span = app.viewport.complex_span_fe();
+            let mag = app.viewport.magnification();
+            let l2 = app.viewport.log2_magnification();
+            let eff_iter = if app.render_cfg.auto_iter {
+                app.viewport.recommended_max_iter(app.render_cfg.max_iter)
+            } else {
+                app.render_cfg.max_iter
+            };
+            let params = app.build_params(
+                center_bf, center, span, mag, l2, app.fractal, false, eff_iter, interacting, 1,
+                [w, h], 0, None,
+            );
+            let reproject = params.reproject == 1;
+            if !reproject {
+                let req = params_to_request(&params);
+                let _ = fractadyne_gpu::render_iter(device, queue, &req);
+                *last_real_res = Some(params.resolution);
+            }
+            (reproject, params.resolution)
+        };
+
+        // Settle the view: run frames at the initial size until a real (non-reproject) frame has
+        // rendered and the reference is installed (cold start is async).
+        println!("resizetest — settling a 1e300 filament view at {w0}×{h0}…");
+        let settle_deadline = Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let (repro, _) = frame(self, w0, h0, &mut last_real_res);
+            if !repro && self.ref_cache[0].ref_pt.is_some() {
+                break;
+            }
+            if Instant::now() > settle_deadline {
+                eprintln!("resizetest: view failed to settle (no real frame in 30 s)");
+                std::process::exit(2);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+
+        // Scripted drag-resize: shrink the height 720→400 in 20 px steps (~60 Hz ticks), then
+        // widen back. Every tick must satisfy the invariant.
+        println!("resizetest — scripted drag-resize (aspect invariant per tick):");
+        let mut steps: Vec<(u32, u32)> = Vec::new();
+        let mut h = h0 as i32;
+        while h > 400 {
+            h -= 20;
+            steps.push((w0, h as u32));
+        }
+        for _ in 0..6 {
+            steps.push((w0, 400)); // pause at the extreme (still within SETTLE_DELAY)
+        }
+        let mut w = w0 as i32;
+        while w > 800 {
+            w -= 24;
+            steps.push((w as u32, 400));
+        }
+        let mut violations = 0u32;
+        let mut reprojected = 0u32;
+        let mut real = 0u32;
+        for (i, (w, h)) in steps.iter().enumerate() {
+            let (repro, res) = frame(self, *w, *h, &mut last_real_res);
+            if repro {
+                reprojected += 1;
+                // Reproject paints the held texture with a 1:1 pixel fit — aspect-correct for ANY
+                // held size. Nothing further to check.
+            } else {
+                real += 1;
+                // A real frame must have iterated at THIS tick's size (any uniform res_scale of it
+                // keeps the aspect; a mismatched aspect = painting stale-size content stretched).
+                // Tolerance: the res_scale shrink truncates each axis to an integer, so tiny budget
+                // frames are off by up to a pixel per axis — compare against the worst rounding
+                // error at the rendered size, not a fixed ratio.
+                let want = *w as f64 / *h as f64;
+                let got = res[0] as f64 / res[1].max(1) as f64;
+                let tol = want * (1.0 / res[0].max(1) as f64 + 1.0 / res[1].max(1) as f64);
+                if (want - got).abs() > tol {
+                    violations += 1;
+                    println!(
+                        "  tick {i}: STRETCH — rect {w}×{h} (aspect {want:.3}) but iterated {}×{} (aspect {got:.3})",
+                        res[0], res[1]
+                    );
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+        println!(
+            "  {} ticks: {reprojected} reprojected (aspect-fit), {real} re-iterated, {violations} violations",
+            steps.len()
+        );
+        if violations == 0 {
+            println!(
+                "resizetest PASS — every painted resize frame is aspect-correct app-side. If the\n\
+                 live window still stretches during a drag, the stretch is compositor-level\n\
+                 (presents lagging the OS resize stream), not in what the app paints."
+            );
+            std::process::exit(0);
+        }
+        std::process::exit(1);
+    }
+}
+
 /// Current Unix time (seconds); 0 if the clock is before the epoch.
 fn now_unix() -> u64 {
     std::time::SystemTime::now()

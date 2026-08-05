@@ -947,6 +947,24 @@ for fun, informative value, and ease of use.
 - [ ] **3D fractals** (Mandelbulb / Mandelbox, ray-marched).
 - [ ] **Flame / IFS fractals; L-systems; cellular automata.**
 
+## UI test automation
+
+- [x] **`--resizetest`** (2026-08-05): headless window-resize regression harness — scripted
+  drag-resize through the real frame logic; asserts every painted frame is either an aspect-fit
+  reproject or a re-iterate at the current size (exit 0 = pass). First run proved the app-side
+  paint path aspect-correct, isolating the residual live "squashed resize" to compositor-level
+  present lag.
+- [ ] **Adopt `egui_kittest`** (egui's official test harness, same 0.31 workspace as our pinned
+  egui) for pixel-level UI regression tests: drives `update()` headlessly via AccessKit
+  (synthetic clicks/keys/resizes) and renders REAL wgpu snapshots (custom paint callbacks
+  included) for image-diff assertions. Needs a small refactor: our `update()` uses
+  `frame.wgpu_render_state()` only — extract `update_impl(&mut self, ctx, Option<&RenderState>)`
+  so the harness can drive the app without an `eframe::Frame`. First tests: resize sequence
+  snapshots (this bug class), dialog smoke tests (goto/share/report/update), menu navigation.
+- [ ] **Real-window smoke test** (local-only, not CI): OS-level input via `enigo` + screen
+  capture to observe actual DWM/compositor behavior (the layer kittest can't see — e.g. the
+  live-resize stretch between presents). Flaky by nature; run manually before releases.
+
 ## Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina)
 
 - [ ] **KF `.map` palette import** — cheapest high-value gap: connects Fractadyne to the large

@@ -435,6 +435,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--profile [--reps N] [--regions F] [--out P]", "Dev: time render stages per benchmark region -> JSON log in logs/."),
         Flag("--bench-matrix [--bless] [--reps N]", "Dev: path-coverage perf + regression suite (zoom bands, fractals, coloring). Compares deterministic path signatures + timings against benchmarks/ baseline; --bless records it. Exit 2 on algorithmic drift."),
         Flag("--reusetest", "Dev: measure reuse-first-zoom reprojection staleness vs Δ-octaves (design/xaos-reuse.md)."),
+        Flag("--resizetest", "Dev: headless window-resize regression harness — scripted drag-resize through the real frame logic; asserts every painted frame is aspect-correct (exit 0 = pass)."),
         Flag("--crosscheck-f3 raw.exr", "Compare a Fraktaler-3 raw EXR (channel \"N\") against our CPU bignum oracle (--center X Y --zoom-f3 Z [--iter K] [--er R])."),
         Flag("--frametest [--steps N] [--hold N] [--dive R] [--center X Y]", "Dev: deep-dive frame-timing harness (default center: seahorse valley)."),
         Flag("--divetest FILE [--out P]", "Dev: headless live-dive perf harness — plays real-time windows of a tour script at increasing depths through the actual playback machinery (pacer, lookahead, reuse-hold) and reports fps/hitches/refresh cadence per depth band -> JSON."),

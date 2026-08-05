@@ -1879,6 +1879,8 @@ struct FractadyneApp {
     /// CLI `--reusetest`: measure reuse-first-zoom reprojection staleness vs Δ-octaves, exit.
     reusetest: bool,
     reusetest_done: bool,
+    /// CLI `--resizetest`: headless window-resize aspect-invariant regression harness, exit.
+    resizetest: bool,
     /// CLI `--divetest FILE`: headless live-dive performance harness (real-time tour windows at
     /// increasing depths through the ACTUAL playback machinery), report + JSON, exit.
     divetest: Option<std::path::PathBuf>,
@@ -2053,6 +2055,7 @@ impl FractadyneApp {
         let profile = args.iter().any(|a| a == "--profile");
         let bench_matrix = args.iter().any(|a| a == "--bench-matrix");
         let reusetest = args.iter().any(|a| a == "--reusetest");
+        let resizetest = args.iter().any(|a| a == "--resizetest");
         let frametest = args.iter().any(|a| a == "--frametest");
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
         // Selftest sub-flags from the EXPANDED args (so @response-file works — see field docs).
@@ -2258,6 +2261,7 @@ impl FractadyneApp {
             bench_matrix_done: false,
             reusetest,
             reusetest_done: false,
+            resizetest,
             divetest,
             frametest,
             frametest_center,
@@ -4565,6 +4569,15 @@ impl eframe::App for FractadyneApp {
                 let reps = self.profile_reps; // shared `--reps N` flag (default 5)
                 let code = self.run_bench_matrix(dev, q, bless, reps, false);
                 std::process::exit(code);
+            }
+        }
+
+        // CLI resize regression harness: scripted drag-resize through the real frame logic,
+        // asserting every painted frame is aspect-correct (exit 0 = invariant held).
+        if self.resizetest {
+            if let Some((dev, q)) = &gpu {
+                self.resizetest = false;
+                self.run_resizetest(dev, q); // exits
             }
         }
 
