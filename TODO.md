@@ -947,6 +947,29 @@ for fun, informative value, and ease of use.
 - [ ] **3D fractals** (Mandelbulb / Mandelbox, ray-marched).
 - [ ] **Flame / IFS fractals; L-systems; cellular automata.**
 
+## Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina)
+
+- [ ] **KF `.map` palette import** — cheapest high-value gap: connects Fractadyne to the large
+  existing KF palette culture (plain 256-entry RGB text files). Import into the custom-gradient
+  editor; offer as a palette source alongside presets.
+- [ ] **Custom formula / coloring scripting** — Ultra Fractal's killer feature (user-written
+  formulas, layered coloring, transform stacks, community formula DB). Ours: 10 fixed families +
+  6 coloring methods. A big lift (needs a shader-codegen or interpreter story for the deep-zoom
+  perturbation path, not just direct mode) — scope carefully; maybe start with direct-mode-only
+  user formulas.
+- [ ] **Huge tiled exports** — KF renders wall-sized images by tiling; we cap at the GPU texture
+  limit (~8–16k). The tiled-iterate machinery exists (`render_iter_tiled`) — an export path that
+  stitches tiles to disk (PNG rows / EXR scanline blocks) would lift the ceiling to RAM/disk.
+- [ ] **Acceleration breadth** — SA covers Mandelbrot + Multibrot 3–5 only; Fraktaler-3's
+  bilinear/bivariate approximation family is broader and better tuned. Evaluate extending BLA
+  variants to the abs-family (Burning Ship etc.) deep paths.
+- [ ] **Glitch correction robustness at depth** — KF's Pauldelbrot correction is mature; ours has
+  the >1 h deep-interior pathology (see Open bugs) and the corpus renders with correction off.
+- [ ] **Ecosystem/platform** — no plugin system; Windows-only release builds (code is portable
+  wgpu/egui — a Linux/macOS CI target is mostly release.yml work); KF interop partial (.kfr
+  import yes, .kfb map files no).
+- Out of scope (named deliberately): 3D fractals (Mandelbulber's domain).
+
 ## Performance & throughput (M7)
 
 - [ ] **GPU-assisted reference-candidate scoring (the practical "bignum on GPU").** Full GPU bignum

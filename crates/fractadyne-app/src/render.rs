@@ -1640,17 +1640,33 @@ impl FractadyneApp {
         // runs once per frame (view 0); both views read the shared scale.
         let res_scale = if interacting && is_pert {
             if view_id == 0 {
-                let fm = self.perf.frame_ms;
-                if fm > 26.0 {
-                    // Floor is user-configurable (`min_motion_res`): raising it caps how far the
-                    // moving/frozen frame may shrink — so a deep continuous zoom stays sharper
-                    // (smaller upsampled blocks) at the cost of frame rate. Default 0.30.
-                    self.perf.motion_res =
-                        (self.perf.motion_res * 0.82).max(self.render_cfg.min_motion_res as f64);
-                } else if fm > 0.0 && fm < 19.0 {
-                    self.perf.motion_res = (self.perf.motion_res + 0.03).min(1.0);
+                // Adapt ONLY on the interval following a REAL re-iterate frame. During a dive most
+                // frames are ~free reprojections; adapting on those (the old behaviour) pushed the
+                // res toward native (+0.03/frame), so every rare real refresh rendered near-native
+                // at 33–64 ms — 2–4 dropped vsyncs each, the divetest-measured "stepped zooming".
+                // A reprojection interval says nothing about iterate cost → hold. The raw interval
+                // (`last_dt_ms`, not the EMA `frame_ms` — the EMA smooths exactly the spikes this
+                // must react to) after a real frame IS that frame's cost signal:
+                //   > 24 ms → proportional cut toward a ~20 ms interval (cost ∝ res², so scale by
+                //             sqrt(target/dt) — one step, not a hunt), floored at `min_motion_res`
+                //             (user-configurable sharpness floor, default 0.30).
+                //   < 17 ms → the real frame fit a vsync: grow gently toward native.
+                let dt = self.perf.last_dt_ms;
+                if self.perf.prev_real[0] && dt > 0.0 {
+                    if crate::diag::trace_on("gpu") {
+                        crate::diag::trace(
+                            "gpu",
+                            format!("aimd: real-frame dt={dt:.1}ms res={:.2}", self.perf.motion_res),
+                        );
+                    }
+                    if dt > 24.0 {
+                        self.perf.motion_res = (self.perf.motion_res * (20.0 / dt).sqrt())
+                            .max(self.render_cfg.min_motion_res as f64);
+                    } else if dt < 17.0 {
+                        self.perf.motion_res = (self.perf.motion_res + 0.02).min(1.0);
+                    }
+                    // 17..=24 ms: deadband — hold, so it settles instead of hunting.
                 }
-                // 19..=26 ms (≈38–53 fps): deadband — hold, so it settles instead of hunting.
             }
             self.perf.motion_res
         } else {
@@ -2425,7 +2441,7 @@ impl FractadyneApp {
         }
         let iterate_ms = is_fe.then(|| self.perf.iterate_ms[vs].clone());
 
-        MandelbrotParams {
+        let params = MandelbrotParams {
             iterate_ms,
             tile,
             orbit: self.ref_cache[vi].orbit.clone(),
@@ -2480,7 +2496,13 @@ impl FractadyneApp {
                 Default::default()
             },
             view_id,
-        }
+        };
+        // Record whether THIS frame really re-iterates (vs reprojecting a held frame) — the
+        // motion-res controller adapts only on the interval that FOLLOWS a real frame, since
+        // reprojection frames are ~free and carry no signal about the iterate cost (adapting on
+        // them was the mixed-signal bug that pushed motion res to native between refreshes).
+        self.perf.prev_real[vi.min(1)] = params.reproject == 0;
+        params
     }
 }
 

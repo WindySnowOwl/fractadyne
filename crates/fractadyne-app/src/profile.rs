@@ -324,6 +324,9 @@ impl FractadyneApp {
 struct DiveFrame {
     l2: f64,
     frame_ms: f64,
+    build_ms: f64,
+    gpu_ms: f64,
+    motion_res: f64,
     real: bool,
     lag: f64,
     orbit_id: u64,
@@ -350,11 +353,17 @@ impl crate::FractadyneApp {
         const VSYNC: f64 = 1.0 / 60.0;
         let resolution = [1280u32, 720u32];
 
-        // Pin a deterministic live-ish config (mirrors the GUI dive defaults).
+        // Pin a deterministic live-ish config (mirrors the GUI dive DEFAULTS — notably
+        // `min_motion_res` 0.30: a session floor of 1.0 forbids the motion-res controller from
+        // trading resolution for smoothness, pinning refresh frames at native cost — set
+        // FRACTADYNE_DIVETEST_SESSION_RES=1 to keep the session's floor for user-repro runs).
         self.julia_mode = false;
         self.dual = false;
         self.coloring.color_method = crate::ColorMethod::Smooth;
         self.render_cfg.auto_iter = true;
+        if std::env::var("FRACTADYNE_DIVETEST_SESSION_RES").is_err() {
+            self.render_cfg.min_motion_res = 0.30;
+        }
         self.viewport.set_size(resolution[0] as f64, resolution[1] as f64);
 
         // Probe the tour's depth range and choose windows every 100 decades.
@@ -366,8 +375,12 @@ impl crate::FractadyneApp {
             }
         };
         let max_l10 = probe.sample(probe.total).logmag / std::f64::consts::LN_10;
-        let windows: Vec<f64> =
-            (1..=12).map(|k| k as f64 * 100.0).filter(|d| *d < max_l10 - 5.0).collect();
+        // FRACTADYNE_DIVETEST_WINDOWS="300,700" overrides the default every-100-decades sweep —
+        // fast targeted iteration on one band.
+        let windows: Vec<f64> = match std::env::var("FRACTADYNE_DIVETEST_WINDOWS") {
+            Ok(list) => list.split(',').filter_map(|s| s.trim().parse::<f64>().ok()).collect(),
+            Err(_) => (1..=12).map(|k| k as f64 * 100.0).filter(|d| *d < max_l10 - 5.0).collect(),
+        };
         // Tour time at which the zoom first reaches `d` decades (bisection; sample() is cheap).
         let time_at = |pb: &crate::scripting::Playback, d: f64| -> Option<f64> {
             let l10 = |t: f64| pb.sample(t).logmag / std::f64::consts::LN_10;
@@ -441,15 +454,33 @@ impl crate::FractadyneApp {
                     resolution, 0, None,
                 );
                 let real = params.reproject == 0;
+                let build_ms = ft.elapsed().as_secs_f64() * 1000.0;
+                let mut gpu_ms = 0.0;
                 if real {
                     let req = params_to_request(&params);
-                    let _ = fractadyne_gpu::render_iter(device, queue, &req);
+                    // Pure-GPU pass time via TIMESTAMP_QUERY — `render_iter`'s wall time includes
+                    // a full iterate-texture readback (~15 MB at 720p) the GUI never pays; using
+                    // it as the cost signal would overfeed the motion-res controller.
+                    let (_, ts) = fractadyne_gpu::timing::capture(|| {
+                        fractadyne_gpu::render_iter(device, queue, &req)
+                    });
+                    gpu_ms = if ts.captured { ts.iterate_ms + ts.color_ms } else {
+                        ft.elapsed().as_secs_f64() * 1000.0 - build_ms
+                    };
                 }
-                let frame_ms = ft.elapsed().as_secs_f64() * 1000.0;
+                let frame_ms = build_ms + gpu_ms;
+                // Mirror the GUI's frame-interval capture (stamped at the next frame's start
+                // there): the interval after a frame = max(its cost, vsync). The motion-res
+                // controller reads these, so the harness adapts identically to the live app.
+                self.perf.last_dt_ms = frame_ms.max(VSYNC * 1000.0);
+                self.perf.frame_ms = frame_ms.max(VSYNC * 1000.0);
                 if now - w_start > WARMUP_SECS {
                     frames.push(DiveFrame {
                         l2,
                         frame_ms,
+                        build_ms,
+                        gpu_ms,
+                        motion_res: self.perf.motion_res,
                         real,
                         lag: self.ref_cache[0].last_depth_lag,
                         orbit_id: self.ref_cache[0].orbit_id,
@@ -487,9 +518,19 @@ impl crate::FractadyneApp {
             let paced =
                 frames.iter().filter(|f| f.lag > crate::PACE_LAG_LO).count() as f64 / n * 100.0;
             let oct_s = (frames.last().unwrap().l2 - frames[0].l2) / wall_secs;
+            // Split the real frames' cost (CPU build vs pure-GPU) + the controller's res range —
+            // pins WHERE an over-budget real frame spends its time.
+            let mut rb: Vec<f64> = frames.iter().filter(|f| f.real).map(|f| f.build_ms).collect();
+            let mut rg: Vec<f64> = frames.iter().filter(|f| f.real).map(|f| f.gpu_ms).collect();
+            rb.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            rg.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let (rb95, rg95) = if rb.is_empty() { (0.0, 0.0) } else { (pct(&rb, 0.95), pct(&rg, 0.95)) };
+            let res_lo = frames.iter().map(|f| f.motion_res).fold(1.0f64, f64::min);
+            let res_hi = frames.iter().map(|f| f.motion_res).fold(0.0f64, f64::max);
             println!(
-                "  1e{:<4} {:>6.1} {:>8.1} {:>8.1} {:>8.1} {:>7} {:>8.1} {:>8.1} {:>9} {:>7.0}% {:>8.2}",
-                *d as u64, fps, p50, p95, pmax, hitches, real_per_s, real_p95, installs, paced, oct_s
+                "  1e{:<4} {:>6.1} {:>8.1} {:>8.1} {:>8.1} {:>7} {:>8.1} {:>8.1} {:>9} {:>7.0}% {:>8.2}  build95 {:>6.1} gpu95 {:>6.1} res {:.2}-{:.2}",
+                *d as u64, fps, p50, p95, pmax, hitches, real_per_s, real_p95, installs, paced, oct_s,
+                rb95, rg95, res_lo, res_hi
             );
             json_rows.push_str(&format!(
                 "{}{{\"depth\":{d},\"fps\":{fps:.2},\"p50\":{p50:.2},\"p95\":{p95:.2},\"max\":{pmax:.2},\

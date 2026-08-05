@@ -357,7 +357,9 @@ impl FractadyneApp {
                 .on_hover_text(
                     "The lowest resolution the live view may drop to while continuously zooming or \
                      panning at deep zoom. Higher stops a fast dive from getting blocky/pixelated \
-                     (sharper) at the cost of frame-rate. Default 30%; doesn't affect the settled \
+                     (sharper) at the cost of frame-rate — at 100% deep-dive detail refreshes must \
+                     render at full cost, which can make deep zooming visibly step/stutter. If a \
+                     deep dive feels jerky, lower this. Default 30%; doesn't affect the settled \
                      image or exports.",
                 );
 

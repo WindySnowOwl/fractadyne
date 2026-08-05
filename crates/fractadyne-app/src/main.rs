@@ -162,6 +162,13 @@ struct Perf {
     /// Iterate-key `(ss, resolution, orbit_id)` submitted last frame per view — change detection
     /// for probe arming (a probe is only valid on a frame that actually re-iterates).
     aa_last_key: [(u32, [u32; 2], u64); 2],
+    /// Raw (un-smoothed) last frame interval in ms — the motion-res controller needs the actual
+    /// spike a real re-iterate frame caused, which the EMA `frame_ms` smooths away.
+    last_dt_ms: f64,
+    /// Whether each view's LAST built frame really re-iterated (vs reprojected a held frame) —
+    /// stamped at the end of `build_params`; the motion-res controller adapts only on the
+    /// interval that follows a real frame.
+    prev_real: [bool; 2],
     /// Adaptive deep-motion resolution scale (AIMD), driven by `frame_ms` in `build_params`. The
     /// WORK_BUDGET `res_scale` sizes moving frames from the *no-BLA-skip* cost and over-shrinks them
     /// where the BLA skips; this measured scale grows toward native while frames stay near vsync and
@@ -203,6 +210,8 @@ impl Default for Perf {
             fe_iter_frame: [0, 0],
             view_gen: [0, 0],
             frozen_budget: [0, 0],
+            last_dt_ms: 0.0,
+            prev_real: [false, false],
             motion_res: 0.6,
         }
     }
@@ -4820,6 +4829,7 @@ impl eframe::App for FractadyneApp {
         }
         if let Some(prev) = self.perf.last_frame {
             let dt = frame_start.duration_since(prev).as_secs_f64() * 1000.0;
+            self.perf.last_dt_ms = dt; // raw — the motion-res controller reads the actual spike
             self.perf.frame_ms = ema(self.perf.frame_ms, dt);
             // Resolve adaptive-AA probes (see `Perf::aa_probe`): a stage armed on frame F is
             // costed as the max frame interval over F+1..=F+2 — with frame latency 1 a heavy GPU
