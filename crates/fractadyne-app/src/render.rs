@@ -609,18 +609,20 @@ impl FractadyneApp {
     /// pans/changes fractal) is simply dropped and the reactive path covers it as before. Cleared on
     /// tour start/end and `invalidate_refs` so a stale prefetch can never install.
     pub(crate) fn playback_ref_prefetch(&mut self, pb: &crate::scripting::Playback, e: f64) {
-        /// Slot spacing (octaves). MUST be ≈ a reference's dive-validity span: a fresh install sits
-        /// at depth_lag ≈ 1.0 and expires at 1.1–1.8, i.e. ~1 octave of further diving — so slots
-        /// 1 octave apart mean the next prefetched reference enters its install window right as the
-        /// previous one expires and the REACTIVE path (build stall → freeze/reproject → snap = the
-        /// "jerky" dive cadence seen at ~e600 with 2.0 spacing) never has to fire mid-dive.
-        const PREFETCH_OCT: f64 = 1.0;
-        /// Lookahead depth (slots × PREFETCH_OCT octaves). 4 covers ~4 octaves — at the measured
-        /// ~10 oct/s fastest dive phase that's ~0.4 s of runway vs. ~0.1–0.6 s per build, and the
-        /// deeper (slower, ease-out) phases have far more. Each build's candidate scoring already
-        /// fans out across all cores, so concurrent slots briefly oversubscribe threads — harmless
-        /// for compute-bound bursts.
-        const PREFETCH_SLOTS: usize = 4;
+        /// Slot spacing (octaves). Sets the ACTIVE reference's peak lag between installs: an
+        /// install restores lag ≈ 1.0, and the next slot becomes installable when the view reaches
+        /// its window ⇒ peak active lag = 1.0 + spacing − 0.14. That peak MUST stay below
+        /// `PACE_LAG_LO` (1.5) and `DEEP_LAG_HOLD` (1.8), or the tail of every inter-install
+        /// interval rhythmically clips the pacer / freeze-reproject zones — the residual "visible
+        /// jerkiness from ~e400" with 1.0 spacing (peak 1.86: below ~e400 the reactive path patched
+        /// the tail in ~10–30 ms, past it builds cost 70–130 ms and lose the race at the fast dive
+        /// phase). 0.5 ⇒ peak lag ≈ 1.36 — clear of both thresholds.
+        const PREFETCH_OCT: f64 = 0.5;
+        /// Lookahead depth (slots × PREFETCH_OCT octaves = ~3 octaves, ~0.3 s of runway at the
+        /// fastest ~10 oct/s phase vs 0.1–0.6 s per build; consumption 2 installs/octave). Each
+        /// build's candidate scoring already fans out across all cores, so concurrent slots briefly
+        /// oversubscribe threads — harmless for compute-bound bursts.
+        const PREFETCH_SLOTS: usize = 6;
         const LN_2: f64 = std::f64::consts::LN_2;
         // 1) Collect finished builds into their slots.
         for slot in &mut self.ref_prefetch {
