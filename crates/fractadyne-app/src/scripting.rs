@@ -1765,6 +1765,19 @@ impl FractadyneApp {
         // Reference LOOKAHEAD: the script knows where the camera is going — build the reference the
         // dive is about to need on idle cores, and install it as the dive arrives (render.rs).
         self.playback_ref_prefetch(&pb, e);
+        // FRACTADYNE_PERF=1: one JSONL record per playback frame — tour time, depth, and the
+        // PREVIOUS frame's cost (what `Perf` maintains). Offline analysis of the frame-time
+        // distribution/periodicity pins live judder mechanisms (e.g. "every ~150 ms a 2-3 vsync
+        // spike" = the real-refresh hitch) that aggregate stats hide.
+        if crate::diag::perf_on() {
+            crate::diag::perf_jsonl(&format!(
+                "\"kind\":\"live\",\"e\":{e:.3},\"l2\":{:.1},\"frame_ms\":{:.2},\"cpu_ms\":{:.2},\"lag\":{:.2}",
+                s.logmag / std::f64::consts::LN_2,
+                self.perf.frame_ms,
+                self.perf.cpu_ms,
+                self.ref_cache[0].last_depth_lag,
+            ));
+        }
 
         // Benchmark sampling (skip warm-up frames).
         if let Some(b) = pb.bench.as_mut() {
