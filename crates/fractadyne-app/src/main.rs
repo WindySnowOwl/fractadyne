@@ -1247,6 +1247,11 @@ struct RefCache {
     /// When the frozen frame was rendered — ages the reuse-hold so a SLOW dive still refreshes
     /// real detail on a time floor (`REFRESH_MAX_SECS`), not just every `REFRESH_OCTAVES` of zoom.
     frozen_at: Option<Instant>,
+    /// log2(units-per-pixel) of the frozen frame — the resize-invariant ZOOM signal the time
+    /// floor gates on (`log2mag` follows the window height, so a resize drifts it without any
+    /// zoom; re-iterating an un-zoomed held frame on every resize tick caused the "squashed
+    /// resize" judder).
+    frozen_upp_l2: f64,
     /// Octaves the view has zoomed IN past the cached BLA's validity (recomputed each frame in
     /// `build_params`; 0 when not in the deep floatexp regime). This is the "reference pipeline is
     /// behind the dive" signal — script playback reads it to DILATE the tour clock (slow the dive)
@@ -1276,6 +1281,7 @@ impl Default for RefCache {
             frozen_center: None,
             frozen_l2: 0.0,
             frozen_at: None,
+            frozen_upp_l2: 0.0,
             last_depth_lag: 0.0,
         }
     }

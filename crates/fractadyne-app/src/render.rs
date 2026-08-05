@@ -1697,8 +1697,19 @@ impl FractadyneApp {
         // the octave gate first. Real refresh frames are res-scaled + TDR-bounded, so ~7/s is
         // affordable at any depth the live view reaches.
         const REFRESH_MAX_SECS: f64 = 0.15;
+        // …but the time floor only applies once the view has actually ZOOMED since the held frame.
+        // Zoom is measured on units-per-pixel (`zoom_drift`), NOT on `log2mag` — magnification
+        // follows the window height, so a WINDOW RESIZE drifts `frozen_drift` without any zoom.
+        // Before this gate the floor forced a full deep re-iterate on every resize tick (a resize
+        // interacts, and a settled frame is always "old"); those slow presents let the OS
+        // compositor stretch the stale frame — the "briefly squashed" resize. With zero zoom the
+        // hold's reproject path serves the frame aspect-fit and cheap (the pre-floor behaviour);
+        // the `frozen_drift < REFRESH_OCTAVES` gate still forces a real frame on a BIG resize.
+        const REFRESH_MIN_DRIFT: f64 = 0.02;
+        let upp_l2 = span.0.log2() - (resolution[0].max(1) as f64).log2();
         let vc = &self.ref_cache[view_id as usize];
         let frozen_drift = (vc.frozen_l2 - log2mag).abs();
+        let zoom_drift = (vc.frozen_upp_l2 - upp_l2).abs();
         let frozen_fresh = vc
             .frozen_at
             .is_none_or(|t| t.elapsed().as_secs_f64() < REFRESH_MAX_SECS);
@@ -1706,7 +1717,7 @@ impl FractadyneApp {
             && interacting
             && !self.autopilot.stepping
             && frozen_drift < REFRESH_OCTAVES
-            && frozen_fresh;
+            && (frozen_fresh || zoom_drift < REFRESH_MIN_DRIFT);
         // A reprojection/freeze frame runs NO iterate (it re-samples the frozen texture), so the
         // motion res_scale saves nothing on it — and worse, it shrinks the frame's base below the
         // frozen texture's settle-time resolution, so the color-pass aspect-fit `fit = out_res /
@@ -2323,6 +2334,7 @@ impl FractadyneApp {
             if reproject.is_none() {
                 self.ref_cache[vi].frozen_center = Some(center_bf.clone());
                 self.ref_cache[vi].frozen_l2 = log2mag;
+                self.ref_cache[vi].frozen_upp_l2 = upp_l2;
                 self.ref_cache[vi].frozen_at = Some(Instant::now());
             }
             // δ = center − reference, carried as a mantissa scaled by 2^-delta_exp (O(1) in df32 at
