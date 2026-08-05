@@ -437,6 +437,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--reusetest", "Dev: measure reuse-first-zoom reprojection staleness vs Δ-octaves (design/xaos-reuse.md)."),
         Flag("--crosscheck-f3 raw.exr", "Compare a Fraktaler-3 raw EXR (channel \"N\") against our CPU bignum oracle (--center X Y --zoom-f3 Z [--iter K] [--er R])."),
         Flag("--frametest [--steps N] [--hold N] [--dive R] [--center X Y]", "Dev: deep-dive frame-timing harness (default center: seahorse valley)."),
+        Flag("--divetest FILE [--out P]", "Dev: headless live-dive perf harness — plays real-time windows of a tour script at increasing depths through the actual playback machinery (pacer, lookahead, reuse-hold) and reports fps/hitches/refresh cadence per depth band -> JSON."),
         Flag("--dump-tour-schema", "Print the tour-script (.toml) schema reference as Markdown and exit (generates TOURS.md)."),
         Section("Examples"),
         Example("fractadyne --render -o out.png --fractal Mandelbrot --center -0.743644 0.131826 --zoom 2e7 --iter 6000 --method stripe --ss 3"),

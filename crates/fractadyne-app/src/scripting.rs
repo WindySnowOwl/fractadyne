@@ -556,6 +556,25 @@ struct Kf {
 
 /// The fully-resolved tour state at a moment in time: interpolated camera + the active keyframe's
 /// discrete overlays (dual view, Julia pin, orbits).
+/// One tick of the playback clock (see [`FractadyneApp::advance_playback_core`]).
+pub(crate) enum PlaybackTick {
+    /// No playback active.
+    Idle,
+    /// Still playing (the viewport was advanced).
+    Playing,
+    /// The tour just ended: `Some(name)` = surface a "finished" toast; `None` = a benchmark run
+    /// whose report dialog was already queued.
+    Finished(Option<String>),
+}
+
+/// Load + resolve a tour script file into a ready [`Playback`] (no palette side effects, no
+/// dialogs) — shared by the `--divetest` harness; `load_script` remains the interactive path.
+pub(crate) fn parse_tour_file(path: &std::path::Path) -> Result<Playback, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let sf: ScriptFile = toml::from_str(&text).map_err(|e| e.to_string())?;
+    resolve_script(sf, None).ok_or_else(|| "script has no usable keyframes".to_string())
+}
+
 pub(crate) struct Sampled {
     pub(crate) cx: fractadyne_core::BigFloat,
     pub(crate) cy: fractadyne_core::BigFloat,
@@ -1702,10 +1721,25 @@ impl FractadyneApp {
     /// Advance the active camera tour by one frame; drives the view and, for a
     /// benchmark, samples performance. Returns true while still playing.
     pub(crate) fn advance_playback(&mut self, ctx: &egui::Context) -> bool {
-        let Some(mut pb) = self.playback.take() else {
-            return false;
-        };
         let now = ctx.input(|i| i.time);
+        match self.advance_playback_core(now) {
+            PlaybackTick::Idle => false,
+            PlaybackTick::Playing => true,
+            PlaybackTick::Finished(Some(name)) => {
+                self.set_toast(format!("Script finished — \"{name}\""), ctx);
+                false
+            }
+            PlaybackTick::Finished(None) => false, // benchmark → report dialog already queued
+        }
+    }
+
+    /// Ctx-free core of [`advance_playback`] — also driven headless (real wall-clock `now`) by the
+    /// `--divetest` harness, so the harness exercises the IDENTICAL playback machinery (pipeline
+    /// pacer, camera sampling, reference lookahead, perf capture) the GUI runs.
+    pub(crate) fn advance_playback_core(&mut self, now: f64) -> PlaybackTick {
+        let Some(mut pb) = self.playback.take() else {
+            return PlaybackTick::Idle;
+        };
         // Fresh tour → no leftover lookahead state from a previous run may install into it.
         if pb.t0.is_none() {
             self.ref_prefetch.clear();
@@ -1800,13 +1834,12 @@ impl FractadyneApp {
             if let Some(b) = pb.bench.take() {
                 self.bench_report = Some(self.format_bench(&pb, &b));
                 self.dialogs.bench_open = true;
-            } else {
-                self.set_toast(format!("Script finished — \"{}\"", pb.name), ctx);
+                return PlaybackTick::Finished(None); // report dialog carries the outcome
             }
-            return false; // pb dropped → playback stops at the final keyframe
+            return PlaybackTick::Finished(Some(pb.name.clone())); // pb dropped → stops at final keyframe
         }
         self.playback = Some(pb);
-        true
+        PlaybackTick::Playing
     }
 
     /// Build a human-readable benchmark report.

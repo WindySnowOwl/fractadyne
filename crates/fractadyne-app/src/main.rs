@@ -1864,6 +1864,9 @@ struct FractadyneApp {
     /// CLI `--reusetest`: measure reuse-first-zoom reprojection staleness vs Δ-octaves, exit.
     reusetest: bool,
     reusetest_done: bool,
+    /// CLI `--divetest FILE`: headless live-dive performance harness (real-time tour windows at
+    /// increasing depths through the ACTUAL playback machinery), report + JSON, exit.
+    divetest: Option<std::path::PathBuf>,
     /// CLI `--frametest`: run the frame-timing / stutter harness (deep-zoom dive), log, exit.
     frametest: bool,
     /// `--frametest --center X Y` (full-precision decimals; default seahorse).
@@ -2097,6 +2100,7 @@ impl FractadyneApp {
         });
         let profile_reps = val("--reps").and_then(|s| s.parse().ok()).unwrap_or(5u32);
         let profile_regions = val("--regions").cloned();
+        let divetest = val("--divetest").map(std::path::PathBuf::from);
         let frametest_steps = val("--steps").and_then(|s| s.parse().ok()).unwrap_or(40u32);
         let frametest_hold = val("--hold").and_then(|s| s.parse().ok()).unwrap_or(4u32);
         let frametest_dive = val("--dive").and_then(|s| s.parse::<f64>().ok()).unwrap_or(30.0);
@@ -2239,6 +2243,7 @@ impl FractadyneApp {
             bench_matrix_done: false,
             reusetest,
             reusetest_done: false,
+            divetest,
             frametest,
             frametest_center,
             frametest_steps,
@@ -4552,6 +4557,22 @@ impl eframe::App for FractadyneApp {
             if let Some((dev, q)) = &gpu {
                 self.reusetest_done = true;
                 self.run_reusetest(dev, q);
+                std::process::exit(0);
+            }
+        }
+
+        // CLI headless live-dive harness: real-time tour windows at increasing depths through the
+        // actual playback machinery (pacer + lookahead + reuse-hold), stats per depth band, exit.
+        if let Some(tour) = self.divetest.clone() {
+            if let Some((dev, q)) = &gpu {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let out = self.profile_out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from(format!("logs/divetest-{}.json", Self::file_stamp(secs)))
+                });
+                self.run_divetest(dev, q, &tour, &out);
                 std::process::exit(0);
             }
         }

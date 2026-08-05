@@ -320,6 +320,199 @@ impl FractadyneApp {
     }
 }
 
+/// Per-frame record of the `--divetest` harness.
+struct DiveFrame {
+    l2: f64,
+    frame_ms: f64,
+    real: bool,
+    lag: f64,
+    orbit_id: u64,
+}
+
+impl crate::FractadyneApp {
+    /// `--divetest FILE`: headless live-dive performance harness. Plays REAL-TIME windows of a tour
+    /// at a series of depths (default every 100 decades to the tour's max), driving the IDENTICAL
+    /// live machinery the GUI runs — `advance_playback_core` (pipeline pacer + camera sampling +
+    /// reference lookahead) and `build_params` (reuse-hold / freeze / motion budget) — and, when a
+    /// frame really re-iterates, the GPU iterate itself. Frames are vsync-paced (16.7 ms), so
+    /// wall-clock dynamics (build races, install cadence, pacing) match the live app; per-window
+    /// stats expose exactly what a user would see: fps, hitch counts, real-refresh cadence/cost,
+    /// pacer engagement, reference installs.
+    pub(crate) fn run_divetest(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        tour: &std::path::Path,
+        out: &std::path::Path,
+    ) {
+        const WARMUP_SECS: f64 = 6.0;
+        const MEASURE_SECS: f64 = 12.0;
+        const VSYNC: f64 = 1.0 / 60.0;
+        let resolution = [1280u32, 720u32];
+
+        // Pin a deterministic live-ish config (mirrors the GUI dive defaults).
+        self.julia_mode = false;
+        self.dual = false;
+        self.coloring.color_method = crate::ColorMethod::Smooth;
+        self.render_cfg.auto_iter = true;
+        self.viewport.set_size(resolution[0] as f64, resolution[1] as f64);
+
+        // Probe the tour's depth range and choose windows every 100 decades.
+        let probe = match crate::scripting::parse_tour_file(tour) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("divetest: cannot load {}: {e}", tour.display());
+                std::process::exit(2);
+            }
+        };
+        let max_l10 = probe.sample(probe.total).logmag / std::f64::consts::LN_10;
+        let windows: Vec<f64> =
+            (1..=12).map(|k| k as f64 * 100.0).filter(|d| *d < max_l10 - 5.0).collect();
+        // Tour time at which the zoom first reaches `d` decades (bisection; sample() is cheap).
+        let time_at = |pb: &crate::scripting::Playback, d: f64| -> Option<f64> {
+            let l10 = |t: f64| pb.sample(t).logmag / std::f64::consts::LN_10;
+            if l10(pb.total) < d {
+                return None;
+            }
+            let (mut lo, mut hi) = (0.0, pb.total);
+            for _ in 0..48 {
+                let mid = 0.5 * (lo + hi);
+                if l10(mid) >= d {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            Some(hi)
+        };
+
+        println!(
+            "Fractadyne divetest — {} · {} windows ({WARMUP_SECS:.0}s warmup + {MEASURE_SECS:.0}s measured each) · {}×{} vsync-paced",
+            tour.display(),
+            windows.len(),
+            resolution[0],
+            resolution[1]
+        );
+        println!(
+            "  {:>6} {:>6} {:>8} {:>8} {:>8} {:>7} {:>8} {:>8} {:>9} {:>8} {:>8}",
+            "depth", "fps", "p50 ms", "p95 ms", "max ms", ">33ms", "real/s", "real p95", "installs", "paced%", "oct/s"
+        );
+
+        let t_base = Instant::now();
+        let mut json_rows = String::new();
+        for (wi, d) in windows.iter().enumerate() {
+            let mut pb = match crate::scripting::parse_tour_file(tour) {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+            let Some(e_start) = time_at(&pb, *d) else { continue };
+            // Cold reference state per window, then seed the tour clock at the window start.
+            self.invalidate_refs();
+            let now0 = t_base.elapsed().as_secs_f64();
+            pb.t0 = Some(now0 - e_start);
+            pb.last_now = None;
+            self.playback = Some(pb);
+
+            let mut frames: Vec<DiveFrame> = Vec::with_capacity(2048);
+            let w_start = t_base.elapsed().as_secs_f64();
+            loop {
+                let now = t_base.elapsed().as_secs_f64();
+                if now - w_start > WARMUP_SECS + MEASURE_SECS {
+                    break;
+                }
+                match self.advance_playback_core(now) {
+                    crate::scripting::PlaybackTick::Playing => {}
+                    _ => break, // tour ended inside the window
+                }
+                let ft = Instant::now();
+                // Mirror `draw_central`'s per-frame build exactly (single view, mid-dive).
+                let center_bf = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+                let center = self.viewport.center_f64();
+                let span = self.viewport.complex_span_fe();
+                let mag = self.viewport.magnification();
+                let l2 = self.viewport.log2_magnification();
+                let eff_iter = if self.render_cfg.auto_iter {
+                    self.viewport.recommended_max_iter(self.render_cfg.max_iter)
+                } else {
+                    self.render_cfg.max_iter
+                };
+                let params = self.build_params(
+                    center_bf, center, span, mag, l2, self.fractal, false, eff_iter, true, 1,
+                    resolution, 0, None,
+                );
+                let real = params.reproject == 0;
+                if real {
+                    let req = params_to_request(&params);
+                    let _ = fractadyne_gpu::render_iter(device, queue, &req);
+                }
+                let frame_ms = ft.elapsed().as_secs_f64() * 1000.0;
+                if now - w_start > WARMUP_SECS {
+                    frames.push(DiveFrame {
+                        l2,
+                        frame_ms,
+                        real,
+                        lag: self.ref_cache[0].last_depth_lag,
+                        orbit_id: self.ref_cache[0].orbit_id,
+                    });
+                }
+                // Vsync pacing: the live app can't run faster than the display.
+                let spare = VSYNC - ft.elapsed().as_secs_f64();
+                if spare > 0.0 {
+                    std::thread::sleep(std::time::Duration::from_secs_f64(spare));
+                }
+            }
+            self.playback = None;
+            if frames.len() < 30 {
+                println!("  1e{:<4} (window too short — skipped)", *d as u64);
+                continue;
+            }
+
+            // Stats.
+            let n = frames.len() as f64;
+            let secs = n * 0.0; // recomputed below from times: frames are vsync-paced or longer
+            let _ = secs;
+            let mut all: Vec<f64> = frames.iter().map(|f| f.frame_ms).collect();
+            all.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let pct = |v: &[f64], q: f64| v[((v.len() as f64 * q) as usize).min(v.len() - 1)];
+            let (p50, p95, pmax) = (pct(&all, 0.5), pct(&all, 0.95), *all.last().unwrap());
+            let wall_secs: f64 = all.iter().map(|ms| (ms / 1000.0).max(VSYNC)).sum();
+            let fps = n / wall_secs;
+            let hitches = all.iter().filter(|ms| **ms > 33.0).count();
+            let mut reals: Vec<f64> =
+                frames.iter().filter(|f| f.real).map(|f| f.frame_ms).collect();
+            reals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let real_per_s = reals.len() as f64 / wall_secs;
+            let real_p95 = if reals.is_empty() { 0.0 } else { pct(&reals, 0.95) };
+            let installs = frames.last().unwrap().orbit_id.saturating_sub(frames[0].orbit_id);
+            let paced =
+                frames.iter().filter(|f| f.lag > crate::PACE_LAG_LO).count() as f64 / n * 100.0;
+            let oct_s = (frames.last().unwrap().l2 - frames[0].l2) / wall_secs;
+            println!(
+                "  1e{:<4} {:>6.1} {:>8.1} {:>8.1} {:>8.1} {:>7} {:>8.1} {:>8.1} {:>9} {:>7.0}% {:>8.2}",
+                *d as u64, fps, p50, p95, pmax, hitches, real_per_s, real_p95, installs, paced, oct_s
+            );
+            json_rows.push_str(&format!(
+                "{}{{\"depth\":{d},\"fps\":{fps:.2},\"p50\":{p50:.2},\"p95\":{p95:.2},\"max\":{pmax:.2},\
+                 \"hitches\":{hitches},\"real_per_s\":{real_per_s:.2},\"real_p95\":{real_p95:.2},\
+                 \"installs\":{installs},\"paced_pct\":{paced:.1},\"oct_s\":{oct_s:.3}}}",
+                if wi == 0 { "" } else { ",\n" }
+            ));
+        }
+        let json = format!(
+            "{{\n\"tool\": \"fractadyne --divetest\",\n\"version\": {},\n\"tour\": {},\n\"windows\": [\n{json_rows}\n]\n}}\n",
+            js(&crate::version_string()),
+            js(&tour.display().to_string()),
+        );
+        if let Some(dir) = out.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match std::fs::write(out, &json) {
+            Ok(()) => println!("\ndivetest log → {}", out.display()),
+            Err(e) => eprintln!("\ndivetest log write failed: {e}"),
+        }
+    }
+}
+
 /// Current Unix time (seconds); 0 if the clock is before the epoch.
 fn now_unix() -> u64 {
     std::time::SystemTime::now()
