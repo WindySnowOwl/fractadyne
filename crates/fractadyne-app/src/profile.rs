@@ -403,10 +403,19 @@ impl FractadyneApp {
         size: u32,
         out: &std::path::Path,
     ) {
-        // A point with structure all the way down (seahorse valley).
-        let cx = fractadyne_core::parse_bf("-0.7436438870371587047521915061147707")
+        // Dive point: `--center X Y` when given (measure a REAL deep-dive line), else the seahorse
+        // (structure all the way down, but only 34 digits — precision-noise past ~1e34×).
+        let (def_x, def_y) = (
+            "-0.7436438870371587047521915061147707",
+            "0.131825904205311970493132056385139",
+        );
+        let (sx, sy) = self
+            .frametest_center
+            .clone()
+            .unwrap_or_else(|| (def_x.to_string(), def_y.to_string()));
+        let cx = fractadyne_core::parse_bf(&sx)
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(-0.5, 64));
-        let cy = fractadyne_core::parse_bf("0.131825904205311970493132056385139")
+        let cy = fractadyne_core::parse_bf(&sy)
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, 64));
         self.set_fractal(FractalKind::Mandelbrot);
         self.julia_mode = false;

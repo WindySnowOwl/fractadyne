@@ -1862,6 +1862,8 @@ struct FractadyneApp {
     reusetest_done: bool,
     /// CLI `--frametest`: run the frame-timing / stutter harness (deep-zoom dive), log, exit.
     frametest: bool,
+    /// `--frametest --center X Y` (full-precision decimals; default seahorse).
+    frametest_center: Option<(String, String)>,
     frametest_steps: u32,
     frametest_hold: u32,
     frametest_dive: f64,
@@ -2094,6 +2096,17 @@ impl FractadyneApp {
         let frametest_steps = val("--steps").and_then(|s| s.parse().ok()).unwrap_or(40u32);
         let frametest_hold = val("--hold").and_then(|s| s.parse().ok()).unwrap_or(4u32);
         let frametest_dive = val("--dive").and_then(|s| s.parse::<f64>().ok()).unwrap_or(30.0);
+        // --frametest --center X Y: dive at a custom point (default: the seahorse). Lets the
+        // harness measure per-frame live-path costs along a REAL deep-dive line (a 34-digit
+        // seahorse is precision-noise past ~1e34×, whose escaped-early references behave nothing
+        // like a genuine filament dive's).
+        let frametest_center = args
+            .iter()
+            .position(|a| a == "--center")
+            .and_then(|i| match (args.get(i + 1), args.get(i + 2)) {
+                (Some(x), Some(y)) => Some((x.clone(), y.clone())),
+                _ => None,
+            });
         let auto_benchmark_out = out_path.clone();
         let auto_render_out = out_path.clone();
 
@@ -2223,6 +2236,7 @@ impl FractadyneApp {
             reusetest,
             reusetest_done: false,
             frametest,
+            frametest_center,
             frametest_steps,
             frametest_hold,
             frametest_dive,
