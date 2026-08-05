@@ -672,25 +672,46 @@ impl FractadyneApp {
             return;
         }
         let cur_l2 = pb.sample(e).logmag / LN_2;
+        // Cull overshot slots: a slot targeting far past the queue's span can only exist if the
+        // tour was re-timed or a target overshot — it would sit "held" for minutes, wasting its
+        // queue position while the reactive path fills the gap (exactly the beta.9 field failure:
+        // coarse probe steps on an easing tour built slots +46…+293 octaves ahead).
+        let max_ahead = cur_l2 + PREFETCH_OCT * (PREFETCH_SLOTS as f64 + 1.0) + 1.0;
+        self.ref_prefetch.retain(|s| s.target_l2 <= max_ahead);
         while self.ref_prefetch.len() < PREFETCH_SLOTS {
             // Next target: PREFETCH_OCT octaves past the deepest queued target (or the current
-            // depth). Find the first script time that reaches it (probes are cheap keyframe
-            // interpolation); none ⇒ the tour is slow/at rest/zooming out — nothing to prefetch.
+            // depth). Find the first script time that reaches it — a coarse scan for a bracket,
+            // then BISECTION to the crossing (samples are cheap keyframe interpolation), so the
+            // built target sits AT next_l2 rather than wherever a coarse probe step lands (on an
+            // easing tour those overshoot by orders of magnitude → far-future dead slots). No
+            // bracket ⇒ the tour is slow/at rest/zooming out — nothing to prefetch.
             let deepest = self
                 .ref_prefetch
                 .iter()
                 .map(|s| s.target_l2)
                 .fold(cur_l2, f64::max);
             let next_l2 = deepest + PREFETCH_OCT;
-            let mut target = None;
+            let reaches = |tau: f64| pb.sample((e + tau).min(pb.total)).logmag / LN_2 >= next_l2;
+            let (mut lo, mut hi) = (0.0_f64, f64::NAN);
             for tau in [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0] {
-                let s = pb.sample((e + tau).min(pb.total));
-                if s.logmag / LN_2 >= next_l2 {
-                    target = Some(s);
+                if reaches(tau) {
+                    hi = tau;
                     break;
                 }
+                lo = tau;
             }
-            let Some(s) = target else { break };
+            if !hi.is_finite() {
+                break;
+            }
+            for _ in 0..24 {
+                let mid = 0.5 * (lo + hi);
+                if reaches(mid) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            let s = pb.sample((e + hi).min(pb.total));
             if s.fractal != self.fractal || s.julia || s.dual {
                 break;
             }
