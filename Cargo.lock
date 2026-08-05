@@ -1375,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-app"
-version = "0.2.40-beta.9"
+version = "0.2.40-beta.10"
 dependencies = [
  "directories",
  "eframe",
@@ -1397,18 +1397,18 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-color"
-version = "0.2.40-beta.9"
+version = "0.2.40-beta.10"
 
 [[package]]
 name = "fractadyne-core"
-version = "0.2.40-beta.9"
+version = "0.2.40-beta.10"
 dependencies = [
  "astro-float",
 ]
 
 [[package]]
 name = "fractadyne-export"
-version = "0.2.40-beta.9"
+version = "0.2.40-beta.10"
 dependencies = [
  "exr",
  "png 0.17.16",
@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-gpu"
-version = "0.2.40-beta.9"
+version = "0.2.40-beta.10"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1428,11 +1428,11 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-render"
-version = "0.2.40-beta.9"
+version = "0.2.40-beta.10"
 
 [[package]]
 name = "fractadyne-state"
-version = "0.2.40-beta.9"
+version = "0.2.40-beta.10"
 dependencies = [
  "directories",
  "serde",
