@@ -575,6 +575,16 @@ impl FractadyneApp {
                 let (nw, nh) = (rect.width() as f64 * ppp, rect.height() as f64 * ppp);
                 if (nw - self.viewport.width_px).abs() > 0.5 || (nh - self.viewport.height_px).abs() > 0.5 {
                     self.pointer.settle_t[0] = ctx.input(|i| i.time);
+                    // FRACTADYNE_PERF=1: one record per RESIZE frame — the raw interval since the
+                    // previous frame is the present cadence the OS resize stream sees. If these sit
+                    // at ~vsync, the live-resize "stretch" is the endemic compositor scale of the
+                    // one-frame-old present; if they're long, the app is starving presents.
+                    if crate::diag::perf_on() {
+                        crate::diag::perf_jsonl(&format!(
+                            "\"kind\":\"resize\",\"dt_ms\":{:.2},\"w\":{nw:.0},\"h\":{nh:.0}",
+                            self.perf.last_dt_ms
+                        ));
+                    }
                 }
                 self.viewport.set_size(nw, nh);
 

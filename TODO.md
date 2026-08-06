@@ -961,9 +961,18 @@ for fun, informative value, and ease of use.
   `frame.wgpu_render_state()` only — extract `update_impl(&mut self, ctx, Option<&RenderState>)`
   so the harness can drive the app without an `eframe::Frame`. First tests: resize sequence
   snapshots (this bug class), dialog smoke tests (goto/share/report/update), menu navigation.
-- [ ] **Real-window smoke test** (local-only, not CI): OS-level input via `enigo` + screen
-  capture to observe actual DWM/compositor behavior (the layer kittest can't see — e.g. the
-  live-resize stretch between presents). Flaky by nature; run manually before releases.
+- [x] **Real-window smoke test** — `scripts/resize-smoke.ps1` (2026-08-05): launches the app
+  sandboxed (`FRACTADYNE_CONFIG_DIR`), drags the window corner with OS-level synthetic input,
+  and analyzes the per-resize-frame present cadence the app records (`FRACTADYNE_PERF=1` →
+  `kind:"resize"` JSONL). Verdict thresholds built in; `-Session` measures at a real deep view.
+  First results: deep session median **18 ms** (~vsync — presents keep pace; residual visible
+  stretch is the endemic wgpu/DWM one-frame compositor scale), shallow default median **32 ms**
+  (lags — per-tick re-iterate + texture realloc; see next item).
+- [ ] **Shallow-view resize pacing** — the direct-mode path re-iterates + reallocates the
+  iteration texture at every resize tick (~32 ms median present cadence vs 18 ms deep). Options:
+  extend the hold/reproject-with-aspect-fit path to direct mode during resize bursts, or debounce
+  texture reallocation (reproject between reallocs). Cosmetic polish; the deep case (the original
+  report) is already at parity.
 
 ## Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina)
 
