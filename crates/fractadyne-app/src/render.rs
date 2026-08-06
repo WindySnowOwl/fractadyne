@@ -1681,12 +1681,30 @@ impl FractadyneApp {
                 self.perf.iter_plateau[vb] = false;
             }
             let v = self.perf.maxiter_sink[vb].swap(u64::MAX, SeqCst);
-            // Adapt only while settled (a mid-motion reading was measured at the unboosted motion
-            // cap — not the probe's signal) and only when the zoom cap is the binding constraint
+            // The reading is `(frac_f32_bits << 32) | armed_max_iter`. Only adapt on readings
+            // measured AT the current boost's budget: the readback lands ~2 frames late, and a
+            // stale pre-raise reading ("still 100% capped") right after a raise falsely reads as
+            // "the raise didn't help" → the interior plateau latches and the view sticks black at
+            // fully-starved views (observed live at a 100%-capped spar session).
+            let boost_now = self.perf.iter_boost[vb];
+            let budget_now = eff_iter
+                .min(500_000)
+                .min(((zoom_iter_cap(log2mag).max(256) as f64) * boost_now) as u32);
+            let (v, frac_bits) = match v {
+                u64::MAX => (u64::MAX, 0u32),
+                packed => {
+                    let armed_iter = packed as u32;
+                    if armed_iter == budget_now {
+                        (packed, (packed >> 32) as u32)
+                    } else {
+                        (u64::MAX, 0) // stale budget — discard
+                    }
+                }
+            };
+            // Adapt only while settled and only when the zoom cap is the binding constraint
             // (a frame already at the full appetite can't be helped by raising it).
-            let boost = self.perf.iter_boost[vb];
-            let cap_bound = (((zoom_iter_cap(log2mag).max(256) as f64) * boost) as u32)
-                < eff_iter.min(500_000);
+            let boost = boost_now;
+            let cap_bound = budget_now < eff_iter.min(500_000);
             // Drain the escape-range reading (live auto-normalization input) and EMA it — the
             // range moves smoothly with the view, and the EMA keeps the derived palette mapping
             // from flickering frame to frame.
@@ -1700,11 +1718,18 @@ impl FractadyneApp {
                             Some((emn, emx)) => (emn + 0.3 * (mn - emn), emx + 0.3 * (mx - emx)),
                             None => (mn, mx),
                         });
+                        crate::diag::trace(
+                            "gpu",
+                            format!(
+                                "norm range: frame [{mn:.0},{mx:.0}] ema {:?}",
+                                self.perf.norm_range[vb]
+                            ),
+                        );
                     }
                 }
             }
             if v != u64::MAX && !interacting && cap_bound && !self.perf.iter_plateau[vb] {
-                let frac = f64::from_bits(v);
+                let frac = f32::from_bits(frac_bits) as f64;
                 // 0.05%: low enough to chase a thin Misiurewicz-spar core (the 1.7e55× case
                 // converges 43% → 0.12% → 0.001% over two raises), high enough to ignore stray
                 // undecided pixels; the plateau probe still stops true interiors regardless.
@@ -1736,9 +1761,13 @@ impl FractadyneApp {
                 }
             }
         }
-        let boosted_cap = if interacting {
-            zoom_iter_cap(log2mag).max(256)
-        } else {
+        // The boost applies to ALL frames, motion included: gating it to settled frames made every
+        // MOTION refresh frame render at the unboosted cap — at a starved view (43–96% capped)
+        // that frame is nearly all-interior, so zooming painted BLACK over the good reprojection
+        // until settle re-boosted ("screen goes black until it repaints"). A boosted motion frame
+        // costs up to boost× more, which the motion-res controller absorbs as resolution — softer
+        // beats black. (ADAPTATION stays settled-only; this is only the budget's application.)
+        let boosted_cap = {
             let vb = (view_id as usize).min(1);
             ((zoom_iter_cap(log2mag).max(256) as f64) * self.perf.iter_boost[vb]) as u32
         };

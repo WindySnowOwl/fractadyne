@@ -238,6 +238,10 @@ struct CounterRead {
     /// Iterated pixel count (texture px incl. ss) of the armed frame — the fraction denominator,
     /// recorded at copy time so it always matches the copied counters.
     px: u64,
+    /// `max_iter` of the armed frame — published with the reading so the app can discard STALE
+    /// readings measured at a superseded budget (the readback lands ~2 frames late; adapting on a
+    /// pre-raise reading falsely reads "the raise didn't help" and latches the interior plateau).
+    max_iter: u32,
 }
 
 impl CounterRead {
@@ -252,11 +256,13 @@ impl CounterRead {
             state: TimingState::Idle,
             done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             px: 0,
+            max_iter: 0,
         }
     }
 
     /// Advance the readback; publishes the last completed full-frame iterate's MAXITER FRACTION
-    /// (capped pixels / iterated pixels, as `f64::to_bits`) into `out`, and the frame's escaped
+    /// into `out` as `(frac_f32_bits << 32) | armed_max_iter` (the budget tag lets the app discard
+    /// stale readings), and the frame's escaped
     /// smooth-iteration RANGE into `norm_out` as `(min_bits << 32) | max_bits` (f32 bit patterns;
     /// `min_bits == 0xFFFFFFFF` = no escaped pixels). The app drains both with `swap(u64::MAX)`;
     /// `u64::MAX` = no fresh reading.
@@ -286,8 +292,11 @@ impl CounterRead {
                         let slots: [u32; COUNTER_SLOTS] =
                             bytemuck::pod_read_unaligned(&data[..COUNTER_SLOTS * 4]);
                         if let Some(o) = out {
-                            let frac = slots[CTR_MAXITER] as f64 / self.px.max(1) as f64;
-                            o.store(frac.to_bits(), SeqCst);
+                            let frac = (slots[CTR_MAXITER] as f64 / self.px.max(1) as f64) as f32;
+                            // (frac f32 bits << 32) | armed max_iter — the app checks the budget
+                            // tag against the CURRENT budget and discards stale readings.
+                            let packed = ((frac.to_bits() as u64) << 32) | self.max_iter as u64;
+                            o.store(packed, SeqCst);
                         }
                         if let Some(o) = norm_out {
                             let packed = ((slots[CTR_ESC_MIN] as u64) << 32)
@@ -1175,6 +1184,7 @@ impl CallbackTrait for MandelbrotParams {
                     (COUNTER_SLOTS * 4) as u64,
                 );
                 view.counter_read.px = (size[0] as u64) * (size[1] as u64);
+                view.counter_read.max_iter = self.max_iter;
                 view.counter_read.state = TimingState::Recorded;
             }
             view.last_iter_key = Some(key);
