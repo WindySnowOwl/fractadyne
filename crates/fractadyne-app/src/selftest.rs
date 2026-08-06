@@ -208,7 +208,7 @@ impl FractadyneApp {
         let filter: Option<String> = self.selftest_filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "metadata", "display", "catalog", "goldens",
+            "consistency", "counters", "coords", "metadata", "display", "catalog", "goldens",
             "bench-matrix",
         ];
         if self.selftest_list {
@@ -1862,6 +1862,90 @@ impl FractadyneApp {
         }
 
         // ---- view-state format: versioning + untrusted-input hardening ----
+        // ---- coordinate entry: exact rationals and complex values ----
+        // The Go-to dialog's parser. Several mathematically significant landmarks are exactly
+        // rational and NOT representable as terminating decimals, so accepting `p/q` is what
+        // makes them enterable at all; the precision floor is what makes them usable at depth.
+        if want("coords") {
+            // Exact dyadic rationals — the parabolic valley entrances.
+            let exact: &[(&str, f64)] =
+                &[("-3/4", -0.75), ("1/4", 0.25), ("-5/4", -1.25), ("(1+i)*(1-i)/2", 1.0)];
+            let mut bad = Vec::new();
+            for (src, want_v) in exact {
+                match fractadyne_core::parse_bf(src) {
+                    Some(v) if fractadyne_core::to_f64(&v) == *want_v => {}
+                    Some(v) => bad.push(format!("{src} → {}", fractadyne_core::to_f64(&v))),
+                    None => bad.push(format!("{src} → rejected")),
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Coords",
+                name: "exact rational entry".into(),
+                params: format!("{} expressions", exact.len()),
+                result: if bad.is_empty() { "all exact".into() } else { bad.join("; ") },
+                threshold: "bit-exact",
+                pass: bad.is_empty(),
+            });
+
+            // The Pythagorean boundary point (37+16i)/100 — exactly on ∂M, both coordinates
+            // non-terminating in binary. Parsed at a 1e60×-class precision floor, it must agree
+            // with its decimal form far past f64, or it would be unusable at the depth it's for.
+            let prec = fractadyne_core::precision_for_octaves(200);
+            let (rok, iok, agree) =
+                match fractadyne_core::parse_complex_prec("(37+16i)/100", prec) {
+                    Some((re, im)) => {
+                        let dec = fractadyne_core::parse_bf_prec("0.37", prec);
+                        let d = dec.map(|d| fractadyne_core::sub_f64(&re, &d, prec).abs());
+                        (
+                            (fractadyne_core::to_f64(&re) - 0.37).abs() < 1.0e-15,
+                            (fractadyne_core::to_f64(&im) - 0.16).abs() < 1.0e-15,
+                            d.unwrap_or(1.0),
+                        )
+                    }
+                    None => (false, false, 1.0),
+                };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Coords",
+                name: "complex rational (37+16i)/100".into(),
+                params: format!("{prec}-bit floor"),
+                result: format!("re/im ok={rok}/{iok}, Δ vs decimal={agree:.1e}"),
+                threshold: "both coords, Δ<1e-30",
+                pass: rok && iok && agree < 1.0e-30,
+            });
+
+            // Malformed input must be REJECTED, never half-read into a wrong coordinate —
+            // astro-float's own FromStr accepts "1 2" as 1, which is exactly the trap here.
+            let malformed = ["1/0", "(37+16i/100", "1 2", "3/4x", "abc", "1e", "", "()"];
+            let leaked: Vec<&str> = malformed
+                .iter()
+                .copied()
+                .filter(|s| fractadyne_core::parse_bf(s).is_some())
+                .collect();
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Coords",
+                name: "malformed coordinates rejected".into(),
+                params: format!("{} inputs", malformed.len()),
+                result: if leaked.is_empty() {
+                    "all rejected".into()
+                } else {
+                    format!("ACCEPTED: {leaked:?}")
+                },
+                threshold: "all rejected",
+                pass: leaked.is_empty(),
+            });
+
+            // Full-precision decimal round-trip must be untouched by the expression path.
+            let deep = fractadyne_core::deep_roundtrip_bits(4096);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Coords",
+                name: "deep decimal round-trip intact".into(),
+                params: "4096-bit coordinate".into(),
+                result: format!("{deep} bits agree"),
+                threshold: "≥4000 bits",
+                pass: deep >= 4000,
+            });
+        }
+
         // The reloadable metadata (exports / .fdn / bookmarks) must round-trip a deep view
         // exactly, flag a newer format_version (so it can't be silently mis-read), and clamp
         // hostile/garbage fields rather than ballooning precision or the iteration count.

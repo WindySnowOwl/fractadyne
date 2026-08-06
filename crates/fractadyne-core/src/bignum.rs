@@ -2,7 +2,7 @@
 //! parsing, precision-for-zoom, and the small bignum arithmetic used by the reference orbit and
 //! viewport. The numeric leaf of the crate — depends only on `astro_float`.
 
-use astro_float::{BigFloat, RoundingMode, Sign};
+use astro_float::{BigFloat, Consts, Radix, RoundingMode, Sign};
 
 pub(crate) const RM: RoundingMode = RoundingMode::None;
 
@@ -61,14 +61,304 @@ pub fn to_decimal_string(bf: &BigFloat) -> String {
     bf.to_string()
 }
 
-/// Parse a decimal string back to a `BigFloat` (round-trips `to_decimal_string`). Rejects
-/// non-finite results (NaN / ±∞) so a malformed or out-of-range coordinate can't slip
-/// through — callers treat `None` as "invalid input".
+/// Parse a decimal string back to a `BigFloat` (round-trips `to_decimal_string`), or an exact
+/// rational expression like `-3/4`. Rejects non-finite results (NaN / ±∞) so a malformed or
+/// out-of-range coordinate can't slip through — callers treat `None` as "invalid input".
+///
+/// Uses the default working precision for rational arithmetic; a caller that knows the target
+/// zoom should use [`parse_bf_prec`] so an inexact rational (e.g. `37/100`) carries enough
+/// digits for the depth it's about to be viewed at.
 pub fn parse_bf(s: &str) -> Option<BigFloat> {
-    s.trim()
-        .parse::<BigFloat>()
-        .ok()
-        .filter(|b| !b.is_nan() && !b.is_inf())
+    parse_bf_prec(s, 0)
+}
+
+/// Is the whole string a well-formed decimal literal (`[+-]?digits[.digits][eE[+-]digits]`)?
+///
+/// Two jobs. It routes plain coordinates down the verbatim `FromStr` path, which preserves every
+/// digit of a pasted deep-zoom center (see `deep_roundtrip_bits`) — and it is the *validation*
+/// `FromStr` doesn't do: astro-float happily parses `"1 2"` as `1`, silently dropping the rest of
+/// what the user typed. A coordinate must never be half-read.
+fn is_decimal_literal(t: &str) -> bool {
+    let b = t.as_bytes();
+    let mut i = 0;
+    if matches!(b.get(i), Some(b'+') | Some(b'-')) {
+        i += 1;
+    }
+    let mut saw_digit = false;
+    while matches!(b.get(i), Some(c) if c.is_ascii_digit()) {
+        saw_digit = true;
+        i += 1;
+    }
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        while matches!(b.get(i), Some(c) if c.is_ascii_digit()) {
+            saw_digit = true;
+            i += 1;
+        }
+    }
+    if !saw_digit {
+        return false;
+    }
+    if matches!(b.get(i), Some(c) if c | 32 == b'e') {
+        i += 1;
+        if matches!(b.get(i), Some(b'+') | Some(b'-')) {
+            i += 1;
+        }
+        let ds = i;
+        while matches!(b.get(i), Some(c) if c.is_ascii_digit()) {
+            i += 1;
+        }
+        if i == ds {
+            return false; // "1e" — an exponent marker with no exponent
+        }
+    }
+    i == b.len()
+}
+
+/// Working precision for expression arithmetic: enough bits to hold every digit typed, with
+/// headroom for division rounding, but never below `floor` (a caller passing the target zoom's
+/// precision keeps an inexact rational usable at that depth).
+fn expr_precision(s: &str, floor: usize) -> usize {
+    let digits = s.bytes().filter(u8::is_ascii_digit).count();
+    // ~3.33 bits per decimal digit; ×4 leaves comfortable headroom, +64 guard bits.
+    floor.max(64).max(digits.saturating_mul(4).saturating_add(64))
+}
+
+/// Parse a **real** coordinate: a plain decimal, or an exact rational expression (`-3/4`,
+/// `(1+2)/8`). Rational arithmetic runs at `min_prec` bits or higher (see [`expr_precision`]).
+/// An expression with a nonzero imaginary part is rejected — use [`parse_complex_prec`] for
+/// those.
+pub fn parse_bf_prec(s: &str, min_prec: usize) -> Option<BigFloat> {
+    let t = s.trim();
+    if is_decimal_literal(t) {
+        let mut cc = Consts::new().ok()?;
+        return parse_literal(t, min_prec, &mut cc);
+    }
+    let (re, im) = parse_complex_prec(t, min_prec)?;
+    im.is_zero().then_some(re)
+}
+
+/// Parse a **complex** coordinate expression into `(re, im)`: decimals, an `i` suffix, the four
+/// arithmetic operators and parentheses. Written for exact-rational landmark entry — the
+/// canonical case is `(37+16i)/100`, a point that is *exactly* on ∂M and cannot be typed as a
+/// terminating decimal. Arithmetic runs at `min_prec` bits or higher.
+///
+/// Grammar (total, no recursion depth beyond the input's own nesting):
+/// `sum := product (('+'|'-') product)*` · `product := unary (('*'|'/') unary)*` ·
+/// `unary := ('+'|'-')* atom` · `atom := '(' sum ')' | 'i' | number ['i']`
+pub fn parse_complex_prec(s: &str, min_prec: usize) -> Option<(BigFloat, BigFloat)> {
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let p = expr_precision(t, min_prec);
+    let mut e = Expr { b: t.as_bytes(), i: 0, p, depth: 0, cc: Consts::new().ok()? };
+    let v = e.sum()?;
+    e.ws();
+    if e.i != e.b.len() {
+        return None; // trailing garbage — never silently ignore part of a coordinate
+    }
+    let bad = |b: &BigFloat| b.is_nan() || b.is_inf();
+    (!bad(&v.0) && !bad(&v.1)).then_some(v)
+}
+
+/// A complex value mid-evaluation.
+type Cx = (BigFloat, BigFloat);
+
+fn cx_zero(p: usize) -> BigFloat {
+    BigFloat::from_f64(0.0, p)
+}
+fn cx_add(a: &Cx, b: &Cx, p: usize) -> Cx {
+    (a.0.add(&b.0, p, RM), a.1.add(&b.1, p, RM))
+}
+fn cx_sub(a: &Cx, b: &Cx, p: usize) -> Cx {
+    (a.0.sub(&b.0, p, RM), a.1.sub(&b.1, p, RM))
+}
+fn cx_neg(a: &Cx, p: usize) -> Cx {
+    (cx_zero(p).sub(&a.0, p, RM), cx_zero(p).sub(&a.1, p, RM))
+}
+fn cx_mul(a: &Cx, b: &Cx, p: usize) -> Cx {
+    (
+        a.0.mul(&b.0, p, RM).sub(&a.1.mul(&b.1, p, RM), p, RM),
+        a.0.mul(&b.1, p, RM).add(&a.1.mul(&b.0, p, RM), p, RM),
+    )
+}
+/// `(a+bi)/(c+di) = ((ac+bd) + (bc−ad)i) / (c²+d²)`. `None` on a zero (or non-finite) divisor.
+fn cx_div(a: &Cx, b: &Cx, p: usize) -> Option<Cx> {
+    let den = b.0.mul(&b.0, p, RM).add(&b.1.mul(&b.1, p, RM), p, RM);
+    if den.is_zero() || den.is_nan() || den.is_inf() {
+        return None;
+    }
+    let re = a.0.mul(&b.0, p, RM).add(&a.1.mul(&b.1, p, RM), p, RM);
+    let im = a.1.mul(&b.0, p, RM).sub(&a.0.mul(&b.1, p, RM), p, RM);
+    Some((re.div(&den, p, RM), im.div(&den, p, RM)))
+}
+
+/// Parse one decimal literal at **at least** `min_prec` bits.
+///
+/// astro-float's `FromStr` sizes precision from the input's own digit count, so `0.37` lands at
+/// the minimum width — fine for round-tripping a pasted coordinate, useless at 1e50× where that
+/// same point needs hundreds of bits. When the caller's floor exceeds the literal's natural
+/// width we re-parse from the decimal text at the floor, which yields correctly-rounded extra
+/// digits (widening the low-precision value would only pad it with zeros).
+fn parse_literal(lit: &str, min_prec: usize, cc: &mut Consts) -> Option<BigFloat> {
+    let finite = |b: &BigFloat| !b.is_nan() && !b.is_inf();
+    let auto = lit.parse::<BigFloat>().ok().filter(finite)?;
+    let natural = auto.mantissa_digits().map(|d| d.len() * 64).unwrap_or(0);
+    if min_prec <= natural {
+        return Some(auto);
+    }
+    let v = BigFloat::parse(lit, Radix::Dec, min_prec, RoundingMode::ToEven, cc);
+    finite(&v).then_some(v)
+}
+
+/// Recursive-descent state. `depth` bounds nesting so a pasted `((((…` can't blow the stack:
+/// coordinate entry is untrusted input (same threat model as the `.kfr` parser).
+struct Expr<'a> {
+    b: &'a [u8],
+    i: usize,
+    p: usize,
+    depth: u32,
+    cc: Consts,
+}
+
+const EXPR_MAX_DEPTH: u32 = 32;
+
+impl Expr<'_> {
+    fn ws(&mut self) {
+        while matches!(self.b.get(self.i), Some(c) if c.is_ascii_whitespace()) {
+            self.i += 1;
+        }
+    }
+    fn peek(&mut self) -> Option<u8> {
+        self.ws();
+        self.b.get(self.i).copied()
+    }
+
+    fn sum(&mut self) -> Option<Cx> {
+        let mut acc = self.product()?;
+        loop {
+            match self.peek() {
+                Some(b'+') => {
+                    self.i += 1;
+                    let r = self.product()?;
+                    acc = cx_add(&acc, &r, self.p);
+                }
+                Some(b'-') => {
+                    self.i += 1;
+                    let r = self.product()?;
+                    acc = cx_sub(&acc, &r, self.p);
+                }
+                _ => return Some(acc),
+            }
+        }
+    }
+
+    fn product(&mut self) -> Option<Cx> {
+        let mut acc = self.unary()?;
+        loop {
+            match self.peek() {
+                Some(b'*') => {
+                    self.i += 1;
+                    let r = self.unary()?;
+                    acc = cx_mul(&acc, &r, self.p);
+                }
+                Some(b'/') => {
+                    self.i += 1;
+                    let r = self.unary()?;
+                    acc = cx_div(&acc, &r, self.p)?;
+                }
+                _ => return Some(acc),
+            }
+        }
+    }
+
+    fn unary(&mut self) -> Option<Cx> {
+        match self.peek() {
+            Some(b'-') => {
+                self.i += 1;
+                let v = self.unary()?;
+                Some(cx_neg(&v, self.p))
+            }
+            Some(b'+') => {
+                self.i += 1;
+                self.unary()
+            }
+            _ => self.atom(),
+        }
+    }
+
+    fn atom(&mut self) -> Option<Cx> {
+        match self.peek()? {
+            b'(' => {
+                if self.depth >= EXPR_MAX_DEPTH {
+                    return None;
+                }
+                self.i += 1;
+                self.depth += 1;
+                let v = self.sum()?;
+                self.depth -= 1;
+                self.ws();
+                if self.b.get(self.i) != Some(&b')') {
+                    return None;
+                }
+                self.i += 1;
+                Some(v)
+            }
+            b'i' | b'I' => {
+                self.i += 1;
+                Some((cx_zero(self.p), BigFloat::from_f64(1.0, self.p)))
+            }
+            _ => self.number(),
+        }
+    }
+
+    /// A decimal literal (with optional fraction and exponent) and an optional `i` suffix.
+    fn number(&mut self) -> Option<Cx> {
+        self.ws();
+        let start = self.i;
+        let mut saw_digit = false;
+        while matches!(self.b.get(self.i), Some(c) if c.is_ascii_digit()) {
+            saw_digit = true;
+            self.i += 1;
+        }
+        if self.b.get(self.i) == Some(&b'.') {
+            self.i += 1;
+            while matches!(self.b.get(self.i), Some(c) if c.is_ascii_digit()) {
+                saw_digit = true;
+                self.i += 1;
+            }
+        }
+        if !saw_digit {
+            return None;
+        }
+        // Exponent — only if it's actually well-formed, so the `e` of a stray token doesn't
+        // swallow input (and `1e` alone stays a parse error rather than becoming `1`).
+        if matches!(self.b.get(self.i), Some(c) if c | 32 == b'e') {
+            let save = self.i;
+            self.i += 1;
+            if matches!(self.b.get(self.i), Some(b'+') | Some(b'-')) {
+                self.i += 1;
+            }
+            let ds = self.i;
+            while matches!(self.b.get(self.i), Some(c) if c.is_ascii_digit()) {
+                self.i += 1;
+            }
+            if self.i == ds {
+                self.i = save;
+            }
+        }
+        let text = self.b; // copy the slice ref out so `self.cc` can be borrowed mutably below
+        let lit = std::str::from_utf8(text.get(start..self.i)?).ok()?;
+        let p = self.p;
+        let v = parse_literal(lit, p, &mut self.cc)?;
+        if matches!(self.b.get(self.i), Some(b'i') | Some(b'I')) {
+            self.i += 1;
+            Some((cx_zero(self.p), v))
+        } else {
+            Some((v, cx_zero(self.p)))
+        }
+    }
 }
 
 /// A location parsed from a Kalles Fraktaler `.kfr` file: full-precision center, zoom

@@ -1118,4 +1118,118 @@ mod tests {
             let _ = parse_kfr(m);
         }
     }
+
+    // ---- Exact rational / complex coordinate entry ----
+
+    /// `p/q` must be evaluated as a division, not truncated at the slash, and dyadic rationals
+    /// must come out bit-exact (these are the parabolic landmark entrances: −3/4 and 1/4).
+    #[test]
+    fn parse_bf_exact_rationals() {
+        for (src, want) in [
+            ("-3/4", -0.75),
+            ("1/4", 0.25),
+            ("-5/4", -1.25),
+            ("(1+2)/8", 0.375),
+            ("-1/2 - 1/4", -0.75),
+            ("2*3/8", 0.75),
+            ("+7/8", 0.875),
+            ("1e2/8", 12.5),
+        ] {
+            let v = parse_bf(src).unwrap_or_else(|| panic!("rejected {src:?}"));
+            assert_eq!(to_f64(&v), want, "{src:?} evaluated wrong");
+        }
+        // A plain decimal still parses (and must not regress to the expression path).
+        assert_eq!(to_f64(&parse_bf("-0.75").unwrap()), -0.75);
+        assert_eq!(to_f64(&parse_bf("1.5e-2").unwrap()), 0.015);
+    }
+
+    /// 37/100 is not representable in binary, so the rational form must carry enough digits for
+    /// the depth it will be viewed at — that's what the `min_prec` floor is for.
+    #[test]
+    fn parse_bf_inexact_rational_precision() {
+        // At a 1e50×-class depth the parsed value must agree with the decimal form far past f64.
+        let prec = precision_for_octaves(200);
+        let a = parse_bf_prec("37/100", prec).expect("37/100 rejected");
+        let b = parse_bf_prec("0.37", prec).expect("0.37 rejected");
+        let diff = a.sub(&b, prec, astro_float::RoundingMode::None);
+        // |a − b| must be below 2^-180 — i.e. correct to ~54 decimal digits, not just f64's 16.
+        let ok = diff.is_zero() || diff.exponent().map(|e| (e as i64) < -180).unwrap_or(true);
+        assert!(ok, "37/100 lost precision vs 0.37 (diff exponent {:?})", diff.exponent());
+    }
+
+    /// The canonical exactly-rational boundary point: (37+16i)/100 lies exactly on ∂M via the
+    /// multiplier μ = (3+4i)/5, and cannot be typed as a terminating decimal in either coordinate.
+    #[test]
+    fn parse_complex_pythagorean_boundary_point() {
+        let prec = precision_for_octaves(200);
+        let (re, im) = parse_complex_prec("(37+16i)/100", prec).expect("rejected");
+        assert!((to_f64(&re) - 0.37).abs() < 1e-15, "re = {}", to_f64(&re));
+        assert!((to_f64(&im) - 0.16).abs() < 1e-15, "im = {}", to_f64(&im));
+
+        // Complex division by a complex denominator: (3+4i)/5 has |μ| = 1 exactly.
+        let (mr, mi) = parse_complex_prec("(3+4i)/5", prec).unwrap();
+        let m2 = to_f64(&mr) * to_f64(&mr) + to_f64(&mi) * to_f64(&mi);
+        assert!((m2 - 1.0).abs() < 1e-15, "|mu|^2 = {m2}");
+
+        // i·i = −1 exercises the complex multiply.
+        let (r, i) = parse_complex_prec("i*i", prec).unwrap();
+        assert_eq!(to_f64(&r), -1.0);
+        assert_eq!(to_f64(&i), 0.0);
+
+        // Bare and suffixed imaginaries; a real-only parse must reject a complex value.
+        assert_eq!(to_f64(&parse_complex_prec("i", 64).unwrap().1), 1.0);
+        assert_eq!(to_f64(&parse_complex_prec("-2.5i", 64).unwrap().1), -2.5);
+        assert!(parse_bf("(37+16i)/100").is_none(), "real parse accepted a complex value");
+        // …but a complex expression whose imaginary part cancels is a legitimate real.
+        assert_eq!(to_f64(&parse_bf("(1+i)*(1-i)/2").unwrap()), 1.0);
+    }
+
+    /// Malformed input must be rejected, never silently half-parsed into a wrong coordinate.
+    #[test]
+    fn parse_bf_rejects_malformed() {
+        for bad in [
+            "1/0",        // division by zero
+            "(37+16i/100", // unbalanced
+            "37+16i)/100",
+            "3//4",
+            "/4",
+            "4/",
+            "1 2",     // trailing garbage
+            "3/4x",
+            "abc",
+            "",
+            " ",
+            "()",
+            "1e",
+            ".",
+            "--",
+        ] {
+            assert!(parse_bf(bad).is_none(), "accepted malformed {bad:?}");
+            assert!(parse_complex_prec(bad, 64).is_none(), "complex accepted malformed {bad:?}");
+        }
+        // Deep nesting is bounded rather than blowing the stack.
+        let deep = format!("{}1{}", "(".repeat(5_000), ")".repeat(5_000));
+        assert!(parse_bf(&deep).is_none(), "unbounded nesting accepted");
+    }
+
+    #[test]
+    fn fuzz_parse_complex_panic_free() {
+        let mut s = 0x0bad_f00d_dead_beefu64;
+        let mut next = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        let charset = b"0123456789.eE+-*/()iI \t\0xyz";
+        for _ in 0..20_000 {
+            let len = (next() % 64) as usize;
+            let mut buf = String::with_capacity(len);
+            for _ in 0..len {
+                buf.push(charset[(next() as usize) % charset.len()] as char);
+            }
+            let _ = parse_bf(&buf); // must not panic
+            let _ = parse_complex_prec(&buf, 64);
+        }
+    }
 }

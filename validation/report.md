@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.22 (build 1039)
-- **Generated:** 2026-08-06 03:48:14 UTC (unix 1785988094)
+- **Version:** 0.2.40-beta.22 (build 1041)
+- **Generated:** 2026-08-06 04:41:45 UTC (unix 1785991305)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -72,6 +72,10 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Catalog | main-cardioid interior (c = -0.5) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
 | Catalog | exterior point (c = 1) | interior expected false | oracle says interior=false | matches catalog | ✅ PASS |
 | Catalog | deep minibrot nucleus interior (full precision) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
+| Coords | exact rational entry | 4 expressions | all exact | bit-exact | ✅ PASS |
+| Coords | complex rational (37+16i)/100 | 264-bit floor | re/im ok=true/true, Δ vs decimal=0.0e0 | both coords, Δ<1e-30 | ✅ PASS |
+| Coords | malformed coordinates rejected | 8 inputs | all rejected | all rejected | ✅ PASS |
+| Coords | deep decimal round-trip intact | 4096-bit coordinate | 4100 bits agree | ≥4000 bits | ✅ PASS |
 | View format | metadata round-trips a deep view | serialize → scramble → load | iter 1234 aa 3 upp_log2 -120.000 cx -0.743643887037151 | clean load; fractal/iter/aa/zoom/center preserved | ✅ PASS |
 | View format | newer format_version flagged | format_version=999 | saved by a newer Fractadyne (format v999); some settings may not apply — consider updating | newer == Some(999) | ✅ PASS |
 | View format | hostile fields clamped + reported | upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf, bogus_field | iter 10000000 aa 16 upp_log2 -3.40e7; clamped [zoom depth, max_iter, cycle, offset, anti-aliasing]; unknown [bogus_field] | clamped & finite; report lists clamped + unknown | ✅ PASS |
@@ -98,7 +102,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**83/83 checks passed.**
+**87/87 checks passed.**
 
 ## Coverage & scope
 

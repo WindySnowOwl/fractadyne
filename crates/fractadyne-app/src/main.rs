@@ -3420,14 +3420,30 @@ impl FractadyneApp {
 
     /// Apply the go-to-location dialog: parse + validate, then jump (recording history).
     fn apply_goto(&mut self) {
-        let cx = fractadyne_core::parse_bf(self.goto.x.trim());
-        let cy = fractadyne_core::parse_bf(self.goto.y.trim());
-        let log2mag = parse_zoom_to_log2(&self.goto.zoom);
+        // Zoom first: it sets the precision the coordinates are parsed at, so an inexact
+        // rational like 37/100 carries enough digits to be viewed at the requested depth.
+        // Clamp to a sane octave bound so a pasted absurd zoom can't request runaway precision.
+        let log2mag = parse_zoom_to_log2(&self.goto.zoom)
+            .filter(|l| l.is_finite())
+            .map(|l| l.clamp(0.0, 1.0e6));
+        let prec = fractadyne_core::precision_for_octaves(log2mag.unwrap_or(0.0) as u64);
+        // The real field also accepts a whole complex expression — `(37+16i)/100` fills both
+        // coordinates at once. Both fields are rewritten to the resolved decimals so what was
+        // applied is visible rather than implied.
+        let (cx, cy) = match fractadyne_core::parse_complex_prec(self.goto.x.trim(), prec) {
+            Some((re, im)) if !im.is_zero() => {
+                self.goto.x = fractadyne_core::to_decimal_string(&re);
+                self.goto.y = fractadyne_core::to_decimal_string(&im);
+                (Some(re), Some(im))
+            }
+            _ => (
+                fractadyne_core::parse_bf_prec(self.goto.x.trim(), prec),
+                fractadyne_core::parse_bf_prec(self.goto.y.trim(), prec),
+            ),
+        };
         match (cx, cy, log2mag) {
-            (Some(cx), Some(cy), Some(l)) if l.is_finite() => {
-                // Clamp to a sane octave bound so a pasted absurd zoom can't request
-                // runaway precision; well beyond any practical depth.
-                self.viewport.set_center_log2mag(cx, cy, l.clamp(0.0, 1.0e6));
+            (Some(cx), Some(cy), Some(l)) => {
+                self.viewport.set_center_log2mag(cx, cy, l);
                 self.pointer.zoom_vel = 0.0;
                 self.invalidate_refs();
                 self.record_nav();

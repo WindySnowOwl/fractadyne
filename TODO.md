@@ -997,6 +997,145 @@ for fun, informative value, and ease of use.
   import yes, .kfb map files no).
 - Out of scope (named deliberately): 3D fractals (Mandelbulber's domain).
 
+## Proposed feature set — reconciled backlog (2026-08-06)
+
+Source: `local/fractadyne-proposed-features-2026-08-05.md` (competitive synthesis), reconciled
+against the implementation in `local/fractadyne-proposals-reconciliation-2026-08-06.md` — that
+document carries file:line evidence for every status below. 44 proposed items: 3 already done,
+17 partial, 24 absent. Priorities are the proposal's own tiers (**P0** core differentiator,
+**P1** high-value follow-on, **P2** niche/research).
+
+Two derivations block a disproportionate share of the list and are therefore sequenced first:
+the **atom-size estimate** (unlocks Newton-Raphson zoom, nucleus size/orientation reporting,
+embedded-Julia estimates) and the **multiplier λ** at a Misiurewicz point (unlocks λ-guided
+descent and the Tan Lei self-checking test).
+
+### Sequenced first — small, high-value, hard to get wrong
+
+- [x] **Exact rational / complex coordinate entry** (P0, §4.1) — v0.2.40-beta.23. `parse_bf` now
+  evaluates rational expressions (`-3/4`, `(1+2)/8`), and `parse_complex_prec` parses complex ones
+  (`(37+16i)/100`) — the Go-to dialog's real field accepts a whole complex value and fills both
+  coordinates. Both entry forms honour a caller-supplied precision floor taken from the target
+  zoom, so an inexact rational carries enough digits for the depth it's viewed at (astro-float's
+  `FromStr` sizes precision from the input's digit count, which left `0.37` at ~64 bits). Also
+  closed a latent hazard: `FromStr` accepts `"1 2"` as `1`, so coordinates are now shape-validated
+  before parsing. Verification: 5 core unit tests (exact values, precision floor, complex division,
+  malformed rejection, 20k-case fuzz) + selftest group `coords` (4 checks; suite 83 → 87).
+- [ ] **Atom size + orientation at a nucleus** (P0, §3.2 gap) — derivative product along the
+  periodic orbit. Verification: known minibrot sizes; selftest nucleus catalog gains size columns.
+- [ ] **Newton-Raphson zooming** (P0, §3.3 absent) — the proposal's single biggest crossover
+  feature and the smallest remaining delta: `find_nucleus` already lands the center in arbitrary
+  precision, but both call sites keep the current magnification. Needs only the atom size above,
+  plus a "zoom fraction" control. Verification: after a jump the minibrot fills a predictable
+  fraction of the view (assert on the resulting `units_per_pixel`).
+- [ ] **Multiplier λ at Misiurewicz points** (P1, §3.4 gap) — report |λ| (zoom period) and arg λ
+  (spiral twist) beside the existing (k,p) solve. Verification: exact known values — c = −2 gives
+  λ = 4 exactly; c = i gives λ = 4(1+i) over the {−1+i, −i} cycle.
+- [ ] **Landmark library expansion** (P1, §4.3 partial) — we ship 12 curated points; add the
+  parabolic entrances (1/4, −3/4 as exact rationals), Feigenbaum point, Douady rabbit, Basilica,
+  airplane minibrot, golden Siegel point, and the Pythagorean boundary point (37+16i)/100. Also
+  wanted: search/filter, and animated fly-to (the zoom-home button already animates a fly-back).
+  Verification: a self-checking test that each landmark *is* what it claims — nuclei re-converge
+  under `find_nucleus` at their stated period, Misiurewicz points under `find_misiurewicz` at
+  their stated (k,p).
+- [ ] **KF `.map` palette import** (P1, §2.6 gap) — see the peer-renderer section above; plain
+  256-entry RGB text. Verification: parser tests + a golden render through an imported palette.
+
+### Rendering data architecture
+
+- [ ] **Complete the G-buffer** (P0, §1.1 partial) — the iterate target already carries smooth
+  iteration + slope normal + DE, with an aux target for orbit statistics; but the accumulators are
+  *method-selected at iterate time* (`aux_on` / `color_method`), so only the active statistic
+  exists. Emit all of them unconditionally, plus |z| and arg(z) at escape and a period/atom-domain
+  ID. Cost: aux bandwidth. Payoff: the next item falls out for free.
+- [ ] **Method switching without re-iterating** (P0, §1.2 partial) — palette, cycle, offset and
+  lighting already recolor from the cached iterate texture; `color_method`, `stripe_freq` and
+  `trap_type` are still in `IterKey`, so switching method or trap shape forces a full re-iterate.
+  Drops out of the completed G-buffer above. Verification: assert the iterate pass does not run
+  across a method change (GPU event counters / IterKey identity).
+- [ ] **Raw-channel EXR export** (P1, §1.3 partial) — we write a linear *color* EXR with embedded
+  view-state metadata, and can already *read* F3's named raw channels for cross-checks. Writing
+  named raw channels (KF/zoomasm layout) would also upgrade the F3 corpus comparison from the
+  image domain to per-channel tolerance (§5.4).
+- [ ] **Exponential-map render mode** (P1, §1.4 absent) — zoomasm-compatible zoom-video assembly.
+- [ ] **Resumable/checkpointed tiled export** (P2, §1.5 partial) — tiled iterate exists; see
+  "Huge tiled exports" above for the disk-stitching half.
+
+### Coloring & post-processing
+
+- [ ] **Dithered 8-bit export** (P0, §2.1 gap) — banding is the #1 newcomer complaint; smooth
+  coloring itself ships. Verification: histogram/banding metric on a shallow gradient render.
+- [ ] **Interior distance-estimation coloring** (P0, §2.2 gap) — exterior DE ships and is stable
+  past e300; interior is a flat color today.
+- [ ] **Log-scaled + histogram/percentile palette mapping** (P0, §2.4 partial) — `--normalize` and
+  the live "Normalize deep colors" toggle do *linear* min/max range mapping from GPU escape
+  min/max. Log and histogram mapping are what keep color perceptually stable across a zoom video.
+- [ ] **Curvature-average coloring** (P1, §2.5 gap) — stripe, triangle-inequality and orbit traps
+  ship; curvature is the missing fourth. Also: line/stalk trap shapes (we have point/cross/circle).
+- [ ] **Gradient editor depth** (P1, §2.6 partial) — curve-based stops, HSL editing, alpha. The
+  editor, duotone/binary, random-palette generation and cycling animation already ship.
+- [ ] **Layer compositing** (P1, §2.7 absent) — multiple colorings over one G-buffer with masks and
+  blend modes (the Ultra Fractal moat; cheap once the G-buffer is complete since data is resident).
+- [ ] **DE-adaptive anti-aliasing** (P1, §2.8 absent) — supersample only where DE says the boundary
+  is dense, plus a proper downsampling filter. AA today is a fixed 1/2/3 supersample factor.
+- [ ] **User-scriptable coloring** (P2, §2.9 absent) — a WGSL snippet slot over the G-buffer; see
+  "Custom formula / coloring scripting" above for the shared codegen story.
+- [ ] **Interior colorings** (P2, §2.10 absent) — period coloring, atom domains, interior-coordinate
+  (multiplier map) shading.
+
+### Structural mathematics
+
+- [ ] **Live period readout in the HUD** (P0, §3.1 partial) — period is computed by the nucleus
+  finder and shown in a transient toast; the proposal wants it ambient. Note detection is argmin
+  of |Z_n| over the critical orbit, not box-period/ball arithmetic.
+- [ ] **Misiurewicz (k,p) discovery** (P1, §3.4 partial) — the Newton solve ships but the user must
+  supply k and p; derive them from the view instead.
+- [ ] **Embedded-Julia size/orientation estimates** (P1, §3.5 absent) — shape-stacking navigation;
+  depends on the atom-size derivation.
+- [ ] **Orbit cycle detection + multipliers** (P1, §3.6 partial) — the cursor-point orbit plot,
+  inset normalize and animated racing dot ship; periodic-cycle highlighting and multiplier
+  reporting do not.
+- [ ] **Critical-orbit overlay in the Julia panel** (P2, §3.7 gap) — the dual linked view otherwise
+  matches the proposal: Julia c is driven live by the Mandelbrot cursor, pinnable, per-panel
+  reference caches.
+- [ ] **Guided descent modes** (P1, §4.4 partial) — approach-nucleus, λ-stepped Misiurewicz
+  orbiting, minibrot skirting. Autopilot and scripted tours cover automated descent; these are the
+  math-driven variants, gated on atom size and λ.
+- [ ] **External angles and rays** (P2, §3.8 absent) — landing angles, parameter rays, equipotentials.
+- [ ] **Internal addresses and tuning navigation** (P2, §3.9 absent) — "go to p/q bulb", display the
+  current minibrot's internal address.
+- [ ] **Verified computation mode** (P2, §3.10 absent) — interval/ball arithmetic for certified
+  escape/membership and DE error bounds. Turns images into evidence for computer-assisted work.
+- [ ] **Numeric egress** (P2, §3.11 absent) — iteration grids, orbits, ray data as CSV/NumPy via the
+  headless CLI (which today emits images plus JSON perf/bench logs).
+
+### Navigation
+
+- [ ] **Auto-stretch** (P2, §4.5 absent) — unskew sheared deep locations from iteration histograms
+  (F3-style). Prerequisite: no skew/rotate/stretch transform exists in the view model at all.
+- [ ] **`.kfr` export / `.kfb` support** (§4.2 gap) — `.kfr` import ships (hardened + fuzzed);
+  writing them back, and `.kfb` map files, do not.
+
+### Testing & verification
+
+- [ ] **Tan Lei invariant goldens** (P0, §5.1 absent) — at a Misiurewicz landmark, render at
+  magnification m and at m·|λ| rotated by arg λ, and assert the two images converge. A
+  self-checking correctness invariant needing **no stored reference render** — all 17 goldens
+  today are blessed-image comparisons. Gated on λ (above) *and* on view rotation, which the
+  viewport does not support (shares the prerequisite with auto-stretch).
+- [ ] **Landmark benchmark regimes** (P1, §5.2 partial) — `--bench-matrix` covers zoom bands,
+  coloring and per-fractal paths including a deep Misiurewicz (4,1) segment. Missing regimes:
+  minibrot approach (period detection / rebasing / iteration blowup), parabolic valleys (quadratic
+  iteration growth at 1/4 and −3/4), Siegel points (near-neutral dynamics).
+- [ ] **λ-scaling zoom-loop test** (P1, §5.3 absent) — a Misiurewicz-centered zoom must become
+  periodic; automated frame-difference check across one |λ| cycle.
+- [ ] **Per-channel cross-tool differential testing** (P2, §5.4 partial) — the F3 corpus (20
+  locations to 4.6e1105×, `generate_corpus.py --check` gate) compares in the image domain; raw
+  EXR channel export would allow numeric per-channel tolerance.
+
+Non-goals restated from the proposal: 3D/DE fractals, flame fractals, built-in video encoding
+(export exponential-map EXR and let zoomasm own assembly).
+
 ## Performance & throughput (M7)
 
 - [ ] **GPU-assisted reference-candidate scoring (the practical "bignum on GPU").** Full GPU bignum

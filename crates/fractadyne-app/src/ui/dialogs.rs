@@ -50,9 +50,13 @@ impl FractadyneApp {
                     }
                 });
                 ui.label(
-                    egui::RichText::new("Paste a center/zoom from someone else, or Copy to share.")
-                        .weak()
-                        .small(),
+                    egui::RichText::new(
+                        "Paste a center/zoom from someone else, or Copy to share. Coordinates \
+                         accept exact fractions (-3/4) and the real field accepts a whole \
+                         complex value ((37+16i)/100), which fills both.",
+                    )
+                    .weak()
+                    .small(),
                 );
 
                 ui.separator();
