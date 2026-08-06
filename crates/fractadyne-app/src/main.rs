@@ -747,10 +747,10 @@ pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
     (2000.0 + o * 256.0).min(u32::MAX as f64) as u32
 }
 
-/// Freeze-ceiling on the LIVE preview's reference-orbit LENGTH (samples). At extreme depth a
-/// non-escaping tip yields a full ~500k-iter reference — a ~4M-node BLA that overloads the GPU
-/// present and freezes the window on boot/settle. Capping the REFERENCE (not the pixel iteration)
-/// keeps that buffer small there.
+/// Ceiling on the LIVE preview's reference-orbit LENGTH (samples) **while interacting**. At
+/// extreme depth a non-escaping tip yields a full ~500k-iter reference — a ~4M-node BLA whose
+/// build/upload per dive-refresh is what froze the window on boot/settle historically. Capping the
+/// REFERENCE (not the pixel iteration) keeps every motion-path build cheap.
 ///
 /// CRUCIAL: it must sit ABOVE the moderate-depth reference build (`ref_build_iter` ≈ `gpu_iter` +
 /// headroom, ≈184k at ~1e205×). A reference that ESCAPES below the cap builds complete
@@ -758,9 +758,15 @@ pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
 /// resolves. But truncating a reference that would have escaped just above the cap flips it to
 /// `partial=true`, and the render then clamps `max_iter` to the (short) orbit length — leaving a
 /// smooth, unresolved border (the ~1e205× session point escaped at 100002 and a 100k cap truncated
-/// it 2 iterations early). So the cap only bites at EXTREME depth (past ~1e290×, where the reference
-/// genuinely doesn't escape); shallower deep views resolve their borders live. 256k stays well under
-/// the ~500k freeze size. Export keeps the full appetite (`orbit_len_cap = u32::MAX`).
+/// it 2 iterations early).
+///
+/// **SETTLED views are no longer bound by this** (`live_orbit_cap`, since the 6.3e63× spar blobs):
+/// the adaptive iteration boost raises settled budgets past 256k at Misiurewicz spar fields, whose
+/// near-neutral references are long-lived at ANY depth — the old "only bites past ~1e290×"
+/// assumption was wrong there — and a partial reference shorter than the budget clamps pixels
+/// into blobs. A settled build follows its budget instead; the device storage-binding cap
+/// (`init_orbit_len_cap`, orbit + BLA sized together) is the remaining bound, so GPU memory stays
+/// safe. Export keeps the full appetite (`orbit_len_cap = u32::MAX`).
 pub(crate) const LIVE_REF_CAP: u32 = 256_000;
 
 /// Deep-dive pipeline pacing window (octaves of `last_depth_lag`): below `LO` the dive runs at
@@ -1304,6 +1310,11 @@ struct RefCache {
     /// behind the dive" signal — script playback reads it to DILATE the tour clock (slow the dive)
     /// instead of zooming into an ever-staler reprojection (the deep-dive monocolor blur).
     last_depth_lag: f64,
+    /// A settled reference EXTENSION past `LIVE_REF_CAP` came back still-partial (non-escaping) and
+    /// was refused by the install freeze guard — don't request the same doomed build again for this
+    /// view (see `install_recompute`). Cleared with the view (`invalidate_refs`) and by any
+    /// successful install.
+    ref_ext_futile: bool,
 }
 
 impl Default for RefCache {
@@ -1330,6 +1341,7 @@ impl Default for RefCache {
             frozen_at: None,
             frozen_upp_l2: 0.0,
             last_depth_lag: 0.0,
+            ref_ext_futile: false,
         }
     }
 }
@@ -2769,6 +2781,9 @@ impl FractadyneApp {
     fn invalidate_refs(&mut self) {
         self.ref_cache[0].ref_pt = None;
         self.ref_cache[1].ref_pt = None;
+        // A new view's reference may escape where the old one didn't — retry extensions there.
+        self.ref_cache[0].ref_ext_futile = false;
+        self.ref_cache[1].ref_ext_futile = false;
         // Drop any in-flight recompute — its result is for the old fractal/mode and must not
         // install (would render the wrong formula until the next recompute).
         self.recompute_rx = [None, None];

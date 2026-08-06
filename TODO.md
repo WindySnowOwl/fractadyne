@@ -5,30 +5,24 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] **LIVE_REF_CAP truncates the reference below the live iteration budget → smooth "blobs"**
-  (reported 2026-08-06 at the 6.3e63× three-spar, `center_re=-1.0109636384562213181006238475735192993836101418531854095957676939020204159448e-1`,
-  `center_im=9.5628651080914147131604703998237075557983304380930462483482733221121105783655e-1`).
-  Live trace: `len=256001 iter=359798 prec=404 partial=true escaped=false`. The adaptive
-  iteration probe (beta.19+) now routinely raises the live budget past `LIVE_REF_CAP` (256k);
-  when the reference does NOT escape within the cap it comes back `partial=true`, and the render
-  clamps `max_iter` to the short orbit length — the smooth unresolved border this very constant's
-  doc comment describes. **Not iteration starvation** (beta.26's bug): an iteration ladder at this
-  location shows `maxiter=25600/25600` at the 58,320 base cap but `maxiter=1` at 351,606 and `0`
-  at 500,000 — a headless render at the live view's own budget resolves fully, because the CLI
-  path uses `orbit_len_cap = u32::MAX`. So the pixel budget is fine and the REFERENCE is short.
-  - The doc comment's assumption — "the cap only bites at EXTREME depth (past ~1e290×)" — is
-    wrong for Misiurewicz spar fields, whose references are long-lived at any depth. Same
-    near-neutral dynamics that make these views starve the iteration budget.
-  - Fix direction: let the live orbit cap follow the live budget (`LIVE_REF_CAP.max(gpu_iter)`),
-    bounded by the device buffer cap (the GPU already reports ~928k samples at the storage-binding
-    limit). ⚠**This is exactly the freeze-safety mechanism**: the comment notes 256k "stays well
-    under the ~500k freeze size", and a full-appetite reference's ~4M-node BLA at a deep tip is
-    what overloaded the GPU present originally. So any raise MUST be regression-tested against
-    `validation/extreme-zoom-tip-e21000.fdn` by BOOTING the app and watching for
-    `[fd-watch] possible hang` — `--render` hides live-only freezes.
-  - Likely shape: extend only when SETTLED (motion keeps the cheap short reference, since blobs
-    during a dive are transient), so the trade is a slower first settle at extreme depth rather
-    than a laggy dive.
+- [x] **LIVE_REF_CAP truncates the reference below the live iteration budget → smooth "blobs"**
+  — FIXED v0.2.40-beta.27 (reported 2026-08-06 at the 6.3e63× three-spar). The reference there
+  naturally escapes at 256,753 iterations — 753 past the cap — so `LIVE_REF_CAP=256k` flipped it
+  `partial`, clamping pixels to the short orbit (v0.2.26's pathology at the next scale up; the
+  boost raising budgets past 256k is what re-exposed it). Fix (`live_orbit_cap` + install freeze
+  guard): a SETTLED build's orbit cap follows the iteration budget so the orbit can run to its
+  natural escape; motion keeps the cheap 256k cap; and `install_recompute` REFUSES a still-partial
+  result longer than the cap (`ref_ext_futile` stops re-requests). That refusal is load-bearing:
+  booting the e21000 tip and installing the extended 500k non-escaping reference (4M-node BLA)
+  froze the window within one frame — the historical v0.2.15 freeze, reproduced live — while the
+  refusal path stayed responsive for the whole run (0 non-responding samples, no watchdog).
+  Verified: spar boots to full dendrite detail (escape-complete reference, no clamp); e21000
+  boots, attempts the extension once off-thread, drops it, keeps the safe 256k clamp. Suite
+  91/91, goldens 17/17, bench-matrix 0 drift. Residual accepted trade: non-escaping extreme views
+  keep the 256k pixel clamp (exactly the pre-fix behavior) and pay one wasted ~27 s off-thread
+  extension attempt per view; removing the clamp there requires fixing the present-wedge itself
+  (root cause still unknown — it is NOT the build, it is the first frame against the long
+  non-escaping reference).
 
 - [x] **App freezes on load at extreme zoom (~1e2100×, center −2.0, the Mandelbrot filament tip) —
   FIXED v0.2.15 (`LIVE_ITER_CAP`).** The live preview now caps auto-iterations at 100k

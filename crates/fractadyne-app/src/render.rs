@@ -218,6 +218,26 @@ fn orbit_len_cap() -> u32 {
     ORBIT_LEN_CAP.get().copied().unwrap_or(u32::MAX)
 }
 
+/// Reference-orbit length cap for a LIVE build.
+///
+/// While interacting, `LIVE_REF_CAP` — a short reference keeps every dive-refresh build cheap, and
+/// any truncation blobs are transient motion frames. Settled, the cap follows the build's
+/// iteration budget: the adaptive iteration boost now routinely raises the settled budget past
+/// `LIVE_REF_CAP`, and a NON-ESCAPING reference truncated below the budget comes back
+/// `partial=true`, which clamps pixels to the short orbit (`shader_iter` in `build_params`) — the
+/// 6.3e63× Misiurewicz-spar "blobs": pixels had budget 351k against a 256k reference. Rebasing
+/// past a partial reference is NOT an option (the pixel's δ would be absorbed into the O(1)
+/// reference value at sample precision — only escaped-end rebases are sound), so the reference
+/// itself must reach the budget. The device binding cap still bounds the build downstream
+/// (`orbit_len_cap()`, orbit + BLA sized together), so GPU memory is safe at any value here.
+pub(crate) fn live_orbit_cap(interacting: bool, ref_build_iter: u32) -> u32 {
+    if interacting {
+        crate::LIVE_REF_CAP
+    } else {
+        crate::LIVE_REF_CAP.max(ref_build_iter)
+    }
+}
+
 /// Pick a reference (once) then build its orbit + series-approximation skip + BLA tree to
 /// `inp.gpu_iter` — the slow arbitrary-precision work. Pure and `Send`, so it runs on a worker
 /// thread; mirrors the synchronous `compute_reference` + `series_skip_for` + `build_bla`. The
@@ -596,8 +616,35 @@ impl FractadyneApp {
     /// Install a finished recompute into view `vi`'s reference cache (bumps `orbit_id`, refreshes
     /// SA + BLA), and record the recompute cost. Called on the main thread for both the sync
     /// (cold-start) path and completed async jobs.
+    ///
+    /// FREEZE GUARD: a `partial` result LONGER than `LIVE_REF_CAP` is REFUSED. The settled
+    /// extension (`live_orbit_cap`) builds past the cap hoping the orbit ESCAPES just above it
+    /// (the 6.3e63× spar: escape at 256,753 → complete reference → blobs fixed). But when the
+    /// orbit is genuinely non-escaping (the e21000 tip), installing the long partial lifts the
+    /// pixel clamp with it — and a full-budget frame against a long non-escaping reference wedges
+    /// the GPU present. MEASURED here, not hypothetical: at the tip, the 256k reference presents
+    /// fine, and installing the extended 500k one (4M-node BLA) hung the window within one frame
+    /// (watchdog: "no activity — last activity: reference built: len=500001"). Dropping it keeps
+    /// the previous safe reference on screen; `ref_ext_futile` remembers the verdict so the
+    /// quality gate doesn't re-request the same doomed build every settle (cleared with the view).
     fn install_recompute(&mut self, vi: usize, res: RecomputeResult) {
+        // `orbit_len` counts SAMPLES (`iters + 1`): a build capped at exactly `LIVE_REF_CAP`
+        // iterations stores `LIVE_REF_CAP + 1` samples and must install normally.
+        if res.partial && res.orbit_len > crate::LIVE_REF_CAP.saturating_add(1) {
+            self.ref_cache[vi].ref_ext_futile = true;
+            crate::diag::trace(
+                "ref",
+                format!(
+                    "extension futile: len={} still partial past LIVE_REF_CAP — dropped \
+                     (non-escaping reference; keeping the {}-sample clamp)",
+                    res.orbit_len,
+                    self.ref_cache[vi].orbit_len
+                ),
+            );
+            return;
+        }
         let vc = &mut self.ref_cache[vi];
+        vc.ref_ext_futile = false;
         vc.ref_pt = Some(res.rp);
         vc.orbit = res.orbit;
         vc.orbit_len = res.orbit_len;
@@ -787,7 +834,10 @@ impl FractadyneApp {
                 span_mantissa,
                 delta_exp,
                 gpu_iter: ref_build_iter,
-                orbit_len_cap: crate::LIVE_REF_CAP,
+                // Playback prefetch is by definition mid-motion: keep the short cap so lookahead
+                // builds stay cheap and the queue keeps pace with the dive (`live_orbit_cap`'s
+                // settled extension happens on the main build once the dive pauses).
+                orbit_len_cap: live_orbit_cap(true, ref_build_iter),
                 precision,
                 julia: false,
                 formula: self.fractal.formula_id(),
@@ -849,6 +899,7 @@ impl FractadyneApp {
             return false;
         };
         let vc = &mut self.ref_cache[vi];
+        vc.ref_ext_futile = false; // fresh cache state — mirrors install_recompute's clear
         vc.ref_pt = Some([rx, ry]);
         vc.orbit = s.orbit;
         vc.orbit_len = s.orbit_len;
@@ -2319,13 +2370,25 @@ impl FractadyneApp {
             // bit of lag so the still frame is at full precision. The orbit's iteration headroom
             // (`ref_build_iter`) covers the matching depth range, so iters rarely force a rebuild.
             let prec_headroom = if interacting { 32 } else { 0 };
-            // `gpu_iter > orbit_iter` grows a TRUNCATED reference so it serves deeper pixels. A
-            // COMPLETE (escaped) reference is already final — pixels past its escape rebase — so a
-            // rebuild would just re-pick the same-length escaped orbit; gating on `partial` stops it
-            // firing EVERY frame (which, at a location whose reference always escapes, re-picked a
-            // fresh reference each frame → the deep-zoom "jumping").
+            // Grow a TRUNCATED reference so it serves deeper pixels. A COMPLETE (escaped)
+            // reference is already final — pixels past its escape rebase — so a rebuild would just
+            // re-pick the same-length escaped orbit; gating on `partial` stops it firing EVERY
+            // frame (which, at a location whose reference always escapes, re-picked a fresh
+            // reference each frame → the deep-zoom "jumping").
+            //
+            // The comparison is against the stored LENGTH (what the orbit can actually serve), not
+            // `orbit_iter` (the budget the build was FOR): a build truncated by the motion-time
+            // `live_orbit_cap` records the full budget in `orbit_iter`, which made the truncation
+            // invisible here — the cold-start reference at the e21000 tip built at 256k during the
+            // brief boot "interacting" window and then never extended, clamping settled pixels
+            // forever. Bounding by the CURRENT cap keeps it loop-free: while interacting at such a
+            // view, `min(gpu_iter, cap) == orbit_len` and the gate stays quiet; on settle the cap
+            // lifts, the gate fires once, and the extended build re-quiets it.
+            let cap_now = live_orbit_cap(interacting, ref_build_iter);
             let needs_quality = precision > self.ref_cache[vi].orbit_prec + prec_headroom
-                || (self.ref_cache[vi].partial && gpu_iter > self.ref_cache[vi].orbit_iter);
+                || (self.ref_cache[vi].partial
+                    && !self.ref_cache[vi].ref_ext_futile
+                    && gpu_iter.min(cap_now) > self.ref_cache[vi].orbit_len);
             // Refresh whenever the reference has left the view or the depth/iters outgrew it. The
             // old motion throttle is gone: the recompute is now off-thread and gated to one job per
             // view (`recompute_rx`), so spawns are naturally paced by the compute itself — no need
@@ -2387,12 +2450,11 @@ impl FractadyneApp {
                     span_mantissa,
                     delta_exp,
                     gpu_iter: ref_build_iter,
-                    // LIVE freeze safety: keep the reference orbit + BLA small (the ~4M-node BLA of
-                    // a full-appetite reference at a deep tip overloads the GPU present — the old
-                    // freeze). Pixels iterate to the full `gpu_iter` by rebasing past this short
-                    // reference (an export at this depth resolves the same detail from a ~100k
-                    // reference), so the preview loses no border detail — only the reference is bounded.
-                    orbit_len_cap: crate::LIVE_REF_CAP,
+                    // Motion: the short `LIVE_REF_CAP` reference (cheap refresh builds keep the
+                    // dive responsive). Settled: follow the budget, so a non-escaping reference
+                    // can serve the boosted iteration count instead of clamping pixels to a short
+                    // orbit (the spar "blobs") — see `live_orbit_cap` and the gate above.
+                    orbit_len_cap: cap_now,
                     precision,
                     julia,
                     formula: self.fractal.formula_id(),
@@ -2820,5 +2882,20 @@ mod reuse_tests {
         assert!(cap * 9 * 16 <= LIMIT_128MB as u64, "cap {cap} + BLA overruns the 128 MB binding");
         // …and clear the deepest escaping corpus reference so it is never truncated.
         assert!(cap > LOC15_ORBIT, "cap {cap} must exceed loc 15's {LOC15_ORBIT}-sample orbit");
+    }
+
+    /// The 6.3e63× spar "blobs" contract: a SETTLED live build's orbit cap must follow the
+    /// (boosted) iteration budget, or a non-escaping reference comes back `partial` below the
+    /// budget and pixels clamp to the short orbit. Motion keeps the cheap `LIVE_REF_CAP`.
+    #[test]
+    fn live_orbit_cap_follows_settled_budget() {
+        // The reported failure: settled budget 351,606 + headroom > 256k must lift the cap.
+        let boosted = 351_606u32 + 32 * 256;
+        assert_eq!(live_orbit_cap(false, boosted), boosted);
+        // Below the cap, the cap still floors (escaped-short truncation guard, v0.2.26).
+        assert_eq!(live_orbit_cap(false, 100_000), crate::LIVE_REF_CAP);
+        // Interacting: always the short cap, regardless of budget (dive builds stay cheap).
+        assert_eq!(live_orbit_cap(true, boosted), crate::LIVE_REF_CAP);
+        assert_eq!(live_orbit_cap(true, 100_000), crate::LIVE_REF_CAP);
     }
 }
