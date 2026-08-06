@@ -570,6 +570,29 @@ fn assemble_ref_fields(vp: &Viewport, precision: usize, delta_exp: i32, res: Rec
 }
 
 impl FractadyneApp {
+    /// The live auto-normalized `(cycle, offset)` for view `vi`, when active: "Normalize deep
+    /// colors" on, Smooth method, and a live-measured escaped smooth-iter range wider than the
+    /// threshold. Maps the range to `0.5 + cycle·6` palette sweeps (the `--normalize` export
+    /// formula) with the user's offset as a phase shift. `None` = classic coloring. Also consulted
+    /// when building EXPORT requests so a GUI export matches the screen (WYSIWYG); headless CLI
+    /// runs never render live frames, so `norm_range` stays `None` there and CLI/corpus renders
+    /// keep their explicit `--normalize`-only semantics.
+    pub(crate) fn live_norm_cycle_offset(&self, vi: usize) -> Option<(f32, f32)> {
+        const NORM_RANGE_MIN: f32 = 20_000.0;
+        match self.perf.norm_range[vi.min(1)] {
+            Some((mn, mx))
+                if self.coloring.normalize_live
+                    && self.coloring.color_method == crate::ColorMethod::Smooth
+                    && mx - mn > NORM_RANGE_MIN =>
+            {
+                let sweeps = 0.5 + self.coloring.cycle * 6.0;
+                let c = sweeps / (mx - mn);
+                Some((c, self.coloring.offset - mn * c))
+            }
+            _ => None,
+        }
+    }
+
     /// Install a finished recompute into view `vi`'s reference cache (bumps `orbit_id`, refreshes
     /// SA + BLA), and record the recompute cost. Called on the main thread for both the sync
     /// (cold-start) path and completed async jobs.
@@ -1002,6 +1025,17 @@ impl FractadyneApp {
 
     /// The reference-recompute inputs for an export view, or `None` for the direct path (`mode == 1`,
     /// no reference). Computes `mode` / `eff_iter` / `precision` / scale exactly as
+    /// The auto-iter zoom cap for exports, scaled by the view's live adaptive `iter_boost`: a GUI
+    /// export of a view whose live budget was raised (near-Misiurewicz dense fields escape past
+    /// the cap's 256/octave slope — a capped export renders them interior-black, the "black
+    /// export" of the 1.7e55× spar view) gets at least the iterations the SCREEN resolved.
+    /// Headless CLI runs never adapt (boost stays 1.0), so `--render`/tour/corpus semantics are
+    /// unchanged; still bounded by `recommended_max_iter`'s appetite at the call sites.
+    fn export_auto_iter_cap(&self, log2mag: f64, julia: bool) -> u32 {
+        let vi = (self.dual && julia) as usize;
+        ((zoom_iter_cap(log2mag).max(256) as f64) * self.perf.iter_boost[vi]) as u32
+    }
+
     /// [`current_export_request_with_ref`], so a result built from these inputs matches that frame's
     /// synchronous reference. Used by the tour pipeline to precompute the next frame's reference.
     fn export_reference_inputs_for(&self, vp: &Viewport, julia: bool) -> Option<RecomputeInputs> {
@@ -1013,7 +1047,7 @@ impl FractadyneApp {
         }
         let eff_iter = if self.render_cfg.auto_iter {
             vp.recommended_max_iter(self.render_cfg.max_iter)
-                .min(zoom_iter_cap(log2mag).max(256))
+                .min(self.export_auto_iter_cap(log2mag, julia))
         } else {
             // Auto-iter OFF is an explicit instruction — honor the count verbatim. The cap is an
             // auto-mode nicety; applied here it silently rendered deep validation-corpus locations
@@ -1073,10 +1107,11 @@ impl FractadyneApp {
         let height = ((width as f64) * vp.height_px / vp.width_px).round().max(1.0) as u32;
         let mag = vp.magnification(); // saturates to ∞ past 1e308×; fine for the mode compares
         let eff_iter = if self.render_cfg.auto_iter {
-            // Cap at the zoom-appropriate count: avoids noise from over-resolving sub-pixel dust,
-            // and keeps the export fast/responsive.
+            // Cap at the zoom-appropriate count (boosted by the live adaptive budget — see
+            // `export_auto_iter_cap`): avoids noise from over-resolving sub-pixel dust, and keeps
+            // the export fast/responsive.
             vp.recommended_max_iter(self.render_cfg.max_iter)
-                .min(zoom_iter_cap(log2mag).max(256))
+                .min(self.export_auto_iter_cap(log2mag, julia))
         } else {
             // Auto-iter OFF is an explicit instruction — honor the count verbatim (must stay in
             // lock-step with `export_reference_inputs_for` above). Capping it silently rendered
@@ -1165,8 +1200,17 @@ impl FractadyneApp {
             mode: mode.to_u32(),
             formula: self.fractal.formula_id(),
             julia: julia as u32,
-            cycle: self.color_cycle(),
-            offset: self.coloring.offset,
+            // WYSIWYG: a GUI export bakes in the live view's auto-normalized palette mapping when
+            // it's active (headless CLI runs have no live range → always classic; `--normalize`
+            // keeps its own exact two-pass path).
+            cycle: {
+                let vi = (self.dual && julia) as usize;
+                self.live_norm_cycle_offset(vi).map_or_else(|| self.color_cycle(), |(c, _)| c)
+            },
+            offset: {
+                let vi = (self.dual && julia) as usize;
+                self.live_norm_cycle_offset(vi).map_or(self.coloring.offset, |(_, o)| o)
+            },
             stop_count,
             stops,
             light: self.effects.light as u32,
@@ -2541,26 +2585,14 @@ impl FractadyneApp {
         // fraction itself (count and pixel denominator always from the same frame).
         let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
         let norm_range = Some(self.perf.norm_sink[vs.min(1)].clone());
-        // LIVE palette auto-normalization: when the frame's escaped smooth-iter range is huge, a
-        // fixed cycle wraps the palette thousands of times between adjacent pixels and a CORRECT
-        // dense escape field reads as speckle "noise pools" (the corpus-14/15 aliasing, now
-        // surfacing live since the adaptive budget resolves these fields). Map the range to
-        // `0.5 + cycle·6` palette sweeps (the `--normalize` export formula, so live matches a
-        // normalized export) with the user's offset preserved as a phase shift. Smooth method
-        // only; gated on a range threshold so every ordinary view keeps classic coloring.
-        const NORM_RANGE_MIN: f32 = 20_000.0;
-        let (cycle_eff, offset_eff) = match self.perf.norm_range[vs.min(1)] {
-            Some((mn, mx))
-                if self.coloring.normalize_live
-                    && self.coloring.color_method == crate::ColorMethod::Smooth
-                    && mx - mn > NORM_RANGE_MIN =>
-            {
-                let sweeps = 0.5 + self.coloring.cycle * 6.0;
-                let c = sweeps / (mx - mn);
-                (c, self.coloring.offset - mn * c)
-            }
-            _ => (self.color_cycle(), self.coloring.offset),
-        };
+        // LIVE palette auto-normalization (see `live_norm_cycle_offset`): when the frame's escaped
+        // smooth-iter range is huge, a fixed cycle wraps the palette thousands of times between
+        // adjacent pixels and a CORRECT dense escape field reads as speckle "noise pools" (the
+        // corpus-14/15 aliasing, now surfacing live since the adaptive budget resolves these
+        // fields). Smooth method only; range-thresholded so ordinary views keep classic coloring.
+        let (cycle_eff, offset_eff) = self
+            .live_norm_cycle_offset(vs)
+            .unwrap_or_else(|| (self.color_cycle(), self.coloring.offset));
 
         let params = MandelbrotParams {
             iterate_ms,
