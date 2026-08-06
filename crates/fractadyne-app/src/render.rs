@@ -1613,7 +1613,76 @@ impl FractadyneApp {
         } else {
             (wb.saturating_mul(6), 500_000)
         };
-        let gpu_iter = eff_iter.min(iter_cap).min(zoom_iter_cap(log2mag).max(256));
+        // ADAPTIVE LIVE ITERATION BUDGET (settled frames only). `zoom_iter_cap`'s 256/octave slope
+        // under-budgets dense near-Misiurewicz fields (escape counts run ~226–300/octave there), so
+        // a settled deep view can show smooth "capped blobs" where the export shows dendrites — at
+        // the reported 1.7e55× spar view, 40% of pixels hit the cap (maxiter counter) while the
+        // full appetite escapes every one. The GPU's MAXITER event counter (read back per settled
+        // full-frame iterate) drives a probe: raise the cap multiplier while raising measurably
+        // reduces the capped fraction; a raise that doesn't help means TRUE interior in view (a
+        // minibrot) → revert it and stop (`iter_plateau`), so interior views never pay a runaway
+        // budget. Motion frames keep the unboosted cap — their content is transient and the real
+        // refresh cost must stay within the motion budget (dive smoothness is untouched).
+        {
+            use std::sync::atomic::Ordering::SeqCst;
+            let vb = (view_id as usize).min(1);
+            // The probe baseline and the interior plateau are properties of ONE settled view: any
+            // motion invalidates both (comparing a new view's capped fraction against another
+            // view's baseline falsely reads "the raise didn't help" and latches the plateau —
+            // navigating to a starved view then stuck at boost 1.0 forever). The boost itself is
+            // kept: it's a multiplier on the depth-scaled cap, so it carries sensibly and the
+            // probe re-converges from wherever it is.
+            if interacting {
+                self.perf.iter_probe[vb] = None;
+                self.perf.iter_plateau[vb] = false;
+            }
+            let v = self.perf.maxiter_sink[vb].swap(u64::MAX, SeqCst);
+            // Adapt only while settled (a mid-motion reading was measured at the unboosted motion
+            // cap — not the probe's signal) and only when the zoom cap is the binding constraint
+            // (a frame already at the full appetite can't be helped by raising it).
+            let boost = self.perf.iter_boost[vb];
+            let cap_bound = (((zoom_iter_cap(log2mag).max(256) as f64) * boost) as u32)
+                < eff_iter.min(500_000);
+            if v != u64::MAX && !interacting && cap_bound && !self.perf.iter_plateau[vb] {
+                let frac = f64::from_bits(v);
+                // 0.05%: low enough to chase a thin Misiurewicz-spar core (the 1.7e55× case
+                // converges 43% → 0.12% → 0.001% over two raises), high enough to ignore stray
+                // undecided pixels; the plateau probe still stops true interiors regardless.
+                if frac.is_finite() && frac > 0.0005 {
+                    let unhelpful = self.perf.iter_probe[vb]
+                        .is_some_and(|(pb, pf)| boost > pb && frac > pf * 0.8);
+                    if unhelpful {
+                        let (pb, _) = self.perf.iter_probe[vb].unwrap();
+                        self.perf.iter_plateau[vb] = true;
+                        self.perf.iter_boost[vb] = pb; // revert the raise that bought nothing
+                        crate::diag::trace(
+                            "gpu",
+                            format!("adaptive iter: plateau (interior) — boost back to {pb:.1}"),
+                        );
+                    } else {
+                        self.perf.iter_probe[vb] = Some((boost, frac));
+                        self.perf.iter_boost[vb] = (boost * 1.6).min(16.0);
+                        crate::diag::trace(
+                            "gpu",
+                            format!(
+                                "adaptive iter: {:.1}% capped — boost {boost:.1}→{:.1}",
+                                frac * 100.0,
+                                self.perf.iter_boost[vb]
+                            ),
+                        );
+                    }
+                } else if frac.is_finite() {
+                    self.perf.iter_probe[vb] = Some((boost, frac));
+                }
+            }
+        }
+        let boosted_cap = if interacting {
+            zoom_iter_cap(log2mag).max(256)
+        } else {
+            let vb = (view_id as usize).min(1);
+            ((zoom_iter_cap(log2mag).max(256) as f64) * self.perf.iter_boost[vb]) as u32
+        };
+        let gpu_iter = eff_iter.min(iter_cap).min(boosted_cap);
         // Build the reference orbit a bit longer than the pixels need (`zoom_iter_cap` grows 256
         // iters/octave). The spare length lets one reference serve ~32 more octaves of zoom before
         // its orbit is too short — so a continuous dive doesn't rebuild the (slow, bignum) orbit
@@ -2452,9 +2521,13 @@ impl FractadyneApp {
             self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
         }
         let iterate_ms = is_fe.then(|| self.perf.iterate_ms[vs].clone());
+        // The GPU self-arms the maxiter-fraction readback on full-frame iterates and computes the
+        // fraction itself (count and pixel denominator always from the same frame).
+        let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
 
         let params = MandelbrotParams {
             iterate_ms,
+            maxiter_count,
             tile,
             orbit: self.ref_cache[vi].orbit.clone(),
             orbit_id: self.ref_cache[vi].orbit_id,

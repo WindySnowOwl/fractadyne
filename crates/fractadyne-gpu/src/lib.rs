@@ -224,6 +224,78 @@ impl IterTiming {
     }
 }
 
+/// Async readback of the LIVE iterate pass's event counters — feeds the app's adaptive
+/// iteration budget (the `maxiter` slot says how many pixels exhausted the budget, i.e. how
+/// starved the live view is). Mirrors [`IterTiming`]'s three-state machine exactly: armed by
+/// `prepare` when a FULL-frame iterate is recorded (the counters buffer is zeroed before the
+/// pass and copied into `read` after it), mapped on a later frame, published into the sink the
+/// app passes via [`MandelbrotParams::maxiter_count`]. No device features required.
+struct CounterRead {
+    /// MAP_READ staging copy of the whole counters buffer.
+    read: wgpu::Buffer,
+    state: TimingState,
+    done: Arc<std::sync::atomic::AtomicBool>,
+    /// Iterated pixel count (texture px incl. ss) of the armed frame — the fraction denominator,
+    /// recorded at copy time so it always matches the copied counters.
+    px: u64,
+}
+
+impl CounterRead {
+    fn new(device: &wgpu::Device) -> Self {
+        Self {
+            read: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("fractadyne.counters.read"),
+                size: (COUNTER_SLOTS * 4) as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            state: TimingState::Idle,
+            done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            px: 0,
+        }
+    }
+
+    /// Advance the readback; publishes the last completed full-frame iterate's MAXITER FRACTION
+    /// (capped pixels / iterated pixels, as `f64::to_bits`) into `out`. The app drains with
+    /// `swap(u64::MAX)`; `u64::MAX` = no fresh reading (never a finite f64's bits).
+    fn pump(
+        &mut self,
+        device: &wgpu::Device,
+        out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+    ) {
+        use std::sync::atomic::Ordering::SeqCst;
+        match self.state {
+            TimingState::Recorded => {
+                self.done.store(false, SeqCst);
+                let done = self.done.clone();
+                self.read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    if r.is_ok() {
+                        done.store(true, SeqCst);
+                    }
+                });
+                self.state = TimingState::Mapping;
+            }
+            TimingState::Mapping => {
+                let _ = device.poll(wgpu::Maintain::Poll);
+                if self.done.load(SeqCst) {
+                    {
+                        let data = self.read.slice(..).get_mapped_range();
+                        let slots: [u32; COUNTER_SLOTS] =
+                            bytemuck::pod_read_unaligned(&data[..COUNTER_SLOTS * 4]);
+                        if let Some(o) = out {
+                            let frac = slots[CTR_MAXITER] as f64 / self.px.max(1) as f64;
+                            o.store(frac.to_bits(), SeqCst);
+                        }
+                    }
+                    self.read.unmap();
+                    self.state = TimingState::Idle;
+                }
+            }
+            TimingState::Idle => {}
+        }
+    }
+}
+
 /// Per-view GPU resources (one set per on-screen panel, keyed by `view_id`). Each
 /// view owns its offscreen iteration texture, uniforms, orbit buffer, and caching
 /// state so two panels (e.g. Mandelbrot + Julia) can render without clobbering.
@@ -237,9 +309,12 @@ struct ViewResources {
     color_uniform: wgpu::Buffer,
     iter_bg: wgpu::BindGroup,
     orbit_buf: wgpu::Buffer,
-    /// Event-counter atomics (D3.3) — bound at iterate binding 2; the live path never reads
-    /// it back (export paths have their own), it exists to satisfy the shared layout.
+    /// Event-counter atomics (D3.3) — bound at iterate binding 2. The live path zeroes it
+    /// before each FULL-frame iterate and reads the MAXITER slot back asynchronously
+    /// (`counter_read`) to feed the app's adaptive iteration budget; export paths have their own.
     counters_buf: wgpu::Buffer,
+    /// Async counters readback state (see [`CounterRead`]).
+    counter_read: CounterRead,
     orbit_cap: u32,
     color_bg: wgpu::BindGroup,
     tex_view: wgpu::TextureView,
@@ -551,6 +626,7 @@ impl ViewResources {
 
         Self {
             timing: IterTiming::new(device),
+            counter_read: CounterRead::new(device),
             last_tile: None,
             iter_uniform,
             color_uniform,
@@ -699,6 +775,11 @@ pub struct MandelbrotParams {
     /// sizes deep floatexp frames against it; see [`IterTiming`]. `None` disables capture. Written a
     /// couple of frames after the pass it describes, and only for frames that actually re-iterate.
     pub iterate_ms: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the live iterate pass's MAXITER FRACTION (capped pixels / iterated pixels, as
+    /// `f64::to_bits`), published a couple of frames after a FULL-frame iterate. The app drains
+    /// with `swap(u64::MAX)` (`u64::MAX` = no fresh reading). Feeds the adaptive iteration
+    /// budget. `None` disables capture.
+    pub maxiter_count: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Tiled settle: `Some([x, y, w, h])` in BASE pixels renders only that sub-rect of the iteration
     /// texture this frame (scissored, `LoadOp::Load`), leaving the rest intact. The uniforms are
     /// identical to a full-frame render and the fragment coordinates are absolute in the texture, so
@@ -819,6 +900,8 @@ impl CallbackTrait for MandelbrotParams {
         if let Some(t) = view.timing.as_mut() {
             t.pump(device, queue, self.iterate_ms.as_ref());
         }
+        // Same for the event-counter readback (adaptive iteration budget feedback).
+        view.counter_read.pump(device, self.maxiter_count.as_ref());
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed
         // the device's max 2D texture dimension (e.g. 8192) or wgpu fatally errors —
@@ -987,6 +1070,14 @@ impl CallbackTrait for MandelbrotParams {
                 .timing
                 .as_ref()
                 .is_some_and(|t| t.state == TimingState::Idle);
+            // Arm the event-counter readback for FULL-frame iterates only (a scissored settle tile
+            // covers part of the frame, so its counts aren't a frame fraction) when the app wants
+            // it and nothing is in flight. Zero the counters so this pass's tallies stand alone;
+            // the zero is harmless on tile frames (their counts are never copied).
+            let arm_ctr = self.maxiter_count.is_some()
+                && self.tile.is_none()
+                && view.counter_read.state == TimingState::Idle;
+            encoder.clear_buffer(&view.counters_buf, 0, None);
             // Tile rect in TEXTURE pixels (base px × ss), clamped inside the target. Fragment
             // coordinates are absolute in the texture, so a scissored draw fills exactly this
             // sub-rect with the values a full-frame draw would have put there.
@@ -1035,6 +1126,17 @@ impl CallbackTrait for MandelbrotParams {
                 encoder.resolve_query_set(&t.qs, 0..2, &t.resolve, 0);
                 encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.read, 0, 16);
                 t.state = TimingState::Recorded;
+            }
+            if arm_ctr {
+                encoder.copy_buffer_to_buffer(
+                    &view.counters_buf,
+                    0,
+                    &view.counter_read.read,
+                    0,
+                    (COUNTER_SLOTS * 4) as u64,
+                );
+                view.counter_read.px = (size[0] as u64) * (size[1] as u64);
+                view.counter_read.state = TimingState::Recorded;
             }
             view.last_iter_key = Some(key);
             view.last_tile = self.tile;

@@ -169,6 +169,19 @@ struct Perf {
     /// stamped at the end of `build_params`; the motion-res controller adapts only on the
     /// interval that follows a real frame.
     prev_real: [bool; 2],
+    /// Live MAXITER-counter sink per view (GPU → app, see `MandelbrotParams::maxiter_count`):
+    /// written `count + 1` a couple frames after a full-frame iterate; drained with `swap(0)`.
+    maxiter_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// ADAPTIVE LIVE ITERATION BUDGET per view: multiplier on `zoom_iter_cap` for SETTLED frames.
+    /// Near Misiurewicz spars the local escape counts exceed the live cap's 256/octave slope, so
+    /// the settled view shows smooth "capped blobs" where an export shows dendrites; the probe
+    /// controller below raises this while raising measurably reduces the capped-pixel fraction.
+    iter_boost: [f64; 2],
+    /// Last `(boost, capped fraction)` measurement — the probe's "did the raise help?" baseline.
+    iter_probe: [Option<(f64, f64)>; 2],
+    /// True once a raise failed to reduce the capped fraction (true interior in view — e.g. a
+    /// minibrot): stop probing, revert the useless raise. Cleared with the view.
+    iter_plateau: [bool; 2],
     /// Adaptive deep-motion resolution scale (AIMD), driven by `frame_ms` in `build_params`. The
     /// WORK_BUDGET `res_scale` sizes moving frames from the *no-BLA-skip* cost and over-shrinks them
     /// where the BLA skips; this measured scale grows toward native while frames stay near vsync and
@@ -212,6 +225,13 @@ impl Default for Perf {
             frozen_budget: [0, 0],
             last_dt_ms: 0.0,
             prev_real: [false, false],
+            maxiter_sink: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            ],
+            iter_boost: [1.0, 1.0],
+            iter_probe: [None, None],
+            iter_plateau: [false, false],
             motion_res: 0.6,
         }
     }
@@ -2720,6 +2740,10 @@ impl FractadyneApp {
         // Same for the playback lookahead: a prefetched reference for the old fractal/params
         // must never install after a change.
         self.ref_prefetch.clear();
+        // A new view's iteration needs are unrelated — restart the adaptive budget probe.
+        self.perf.iter_boost = [1.0, 1.0];
+        self.perf.iter_probe = [None, None];
+        self.perf.iter_plateau = [false, false];
     }
 
     /// Request the next animation frame. Frame pacing (the cap) is enforced at the end
