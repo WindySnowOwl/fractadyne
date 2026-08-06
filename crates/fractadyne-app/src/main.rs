@@ -3737,10 +3737,30 @@ impl FractadyneApp {
                     return;
                 };
                 match fractadyne_core::find_misiurewicz(&center, k, p, mag, 0) {
-                    Some(m) => (
-                        Some((m.cx, m.cy)),
-                        format!("Misiurewicz ({},{})", m.preperiod, m.period),
-                    ),
+                    Some(m) => {
+                        // The multiplier λ of the cycle the point lands on: |λ| is the ZOOM
+                        // PERIOD (the view repeats every log₂|λ| octaves) and arg λ the twist
+                        // per repeat. The numbers that say what diving here will look like.
+                        let lam = fractadyne_core::misiurewicz_multiplier(
+                            &m.cx,
+                            &m.cy,
+                            m.preperiod,
+                            m.period,
+                            0,
+                            self.viewport.precision,
+                        );
+                        let label = match lam {
+                            Some(l) => format!(
+                                "Misiurewicz ({},{}) — repeats every {:.2} octaves, twist {:.1}°",
+                                m.preperiod,
+                                m.period,
+                                l.log2_abs,
+                                l.arg.to_degrees()
+                            ),
+                            None => format!("Misiurewicz ({},{})", m.preperiod, m.period),
+                        };
+                        (Some((m.cx, m.cy)), label)
+                    }
                     None => (None, format!("Misiurewicz ({k},{p})")),
                 }
             }

@@ -1959,6 +1959,43 @@ impl FractadyneApp {
             }
         }
 
+        // The two Misiurewicz points whose multiplier has a closed form. λ is the number that
+        // says what a dive here looks like: |λ| is the zoom period, arg λ the twist per repeat.
+        // c = −2 gives exactly 4, real — which is *why* the antenna tip repeats without
+        // spiralling. c = i gives 4(1+i) over the {−1+i, −i} cycle: 45° of twist per period.
+        if want("nr-zoom") {
+            let cases: &[(&str, f64, f64, u32, u32, f64, f64)] = &[
+                ("antenna tip c=-2", -2.0, 0.0, 2, 1, 2.0, 0.0),
+                ("dendrite c=i", 0.0, 1.0, 2, 2, 2.5, 45.0),
+            ];
+            let mut bad = Vec::new();
+            for (name, cx, cy, k, p, want_l2, want_deg) in cases {
+                let (bx, by) = (
+                    fractadyne_core::BigFloat::from_f64(*cx, 256),
+                    fractadyne_core::BigFloat::from_f64(*cy, 256),
+                );
+                match fractadyne_core::misiurewicz_multiplier(&bx, &by, *k, *p, 0, 256) {
+                    Some(l)
+                        if (l.log2_abs - want_l2).abs() < 1.0e-9
+                            && (l.arg.to_degrees() - want_deg).abs() < 1.0e-7 => {}
+                    Some(l) => bad.push(format!(
+                        "{name}: 2^{:.6} @{:.4}° (want 2^{want_l2} @{want_deg}°)",
+                        l.log2_abs,
+                        l.arg.to_degrees()
+                    )),
+                    None => bad.push(format!("{name}: no multiplier")),
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "NR-zoom",
+                name: "Misiurewicz multiplier vs closed forms".into(),
+                params: "c=-2 (lambda=4), c=i (lambda=4(1+i))".into(),
+                result: if bad.is_empty() { "both exact".into() } else { bad.join("; ") },
+                threshold: "exact to 1e-9",
+                pass: bad.is_empty(),
+            });
+        }
+
         // ---- coordinate entry: exact rationals and complex values ----
         // The Go-to dialog's parser. Several mathematically significant landmarks are exactly
         // rational and NOT representable as terminating decimals, so accepting `p/q` is what

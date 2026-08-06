@@ -1173,6 +1173,35 @@ mod tests {
         assert!(lo.orientation.is_finite() && lo.orientation.abs() <= std::f64::consts::PI);
     }
 
+    /// The multiplier at the two Misiurewicz points with closed-form answers.
+    ///
+    /// `c = −2` (antenna tip, k=2 p=1): the orbit reaches the fixed point 2, so λ = 4 exactly and
+    /// real — the tip repeats under zoom without spiralling, the classic non-spiral self-similar
+    /// case. `c = i` (k=2 p=2): the cycle is {−1+i, −i}, so λ = 4(1+i), |λ| = 4√2, arg = 45°.
+    #[test]
+    fn misiurewicz_multiplier_exact_cases() {
+        let p = 256;
+        let tip = misiurewicz_multiplier(&bf(-2.0, p), &bf(0.0, p), 2, 1, 0, p).unwrap();
+        assert!((tip.log2_abs - 2.0).abs() < 1e-12, "|lambda| = 2^{}", tip.log2_abs);
+        assert!(tip.arg.abs() < 1e-12, "tip must not spiral, arg = {}", tip.arg);
+
+        let dendrite = misiurewicz_multiplier(&bf(0.0, p), &bf(1.0, p), 2, 2, 0, p).unwrap();
+        // |4(1+i)| = 4*sqrt(2) → log2 = 2 + 0.5
+        assert!(
+            (dendrite.log2_abs - 2.5).abs() < 1e-12,
+            "|lambda| = 2^{}",
+            dendrite.log2_abs
+        );
+        assert!(
+            (dendrite.arg - std::f64::consts::FRAC_PI_4).abs() < 1e-12,
+            "arg = {} rad, want pi/4",
+            dendrite.arg
+        );
+        // Degenerate arguments decline.
+        assert!(misiurewicz_multiplier(&bf(-2.0, p), &bf(0.0, p), 0, 1, 0, p).is_none());
+        assert!(misiurewicz_multiplier(&bf(-2.0, p), &bf(0.0, p), 2, 0, 0, p).is_none());
+    }
+
     /// The property a Newton-Raphson zoom actually rests on: after refinement, the center error
     /// must be far smaller than the atom it is about to frame, or the jump lands on empty space.
     ///

@@ -1039,9 +1039,13 @@ descent and the Tan Lei self-checking test).
   several thousand bits will block the UI thread the way the reference build used to. (b) Expose
   the framing fraction (`ATOM_FILL`, currently 0.25) or a "fraction of the way there" control, as
   the proposal's §4.4 guided descent wants. (c) Extend the size estimate to Multibrot.
-- [ ] **Multiplier λ at Misiurewicz points** (P1, §3.4 gap) — report |λ| (zoom period) and arg λ
-  (spiral twist) beside the existing (k,p) solve. Verification: exact known values — c = −2 gives
-  λ = 4 exactly; c = i gives λ = 4(1+i) over the {−1+i, −i} cycle.
+- [x] **Multiplier λ at Misiurewicz points** (P1, §3.4) — v0.2.40-beta.25. `misiurewicz_multiplier`
+  runs the critical orbit to the cycle then accumulates the derivative around it, reporting
+  `log2|λ|` (the zoom period — the view repeats every that-many octaves) and `arg λ` (the twist per
+  repeat). The Go-to dialog reports both after a solve. Verification: both closed-form cases exact
+  to 1e-9 — c = −2 gives λ = 4 real (which is *why* the antenna tip repeats without spiralling),
+  c = i gives 4(1+i) = 45° twist. Core unit test + selftest (suite 89 → 90). This unblocks the Tan
+  Lei invariant test and λ-guided descent, which both need λ.
 - [ ] **Landmark library expansion** (P1, §4.3 partial) — we ship 12 curated points; add the
   parabolic entrances (1/4, −3/4 as exact rationals), Feigenbaum point, Douady rabbit, Basilica,
   airplane minibrot, golden Siegel point, and the Pythagorean boundary point (37+16i)/100. Also

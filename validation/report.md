@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.24 (build 1049)
-- **Generated:** 2026-08-06 05:04:41 UTC (unix 1785992681)
+- **Version:** 0.2.40-beta.24 (build 1050)
+- **Generated:** 2026-08-06 05:08:57 UTC (unix 1785992937)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -74,6 +74,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Catalog | deep minibrot nucleus interior (full precision) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
 | NR-zoom | atom size vs exactly-known components | period 1, 2 + home-view identity | all exact | exact to 1e-9 | ✅ PASS |
 | NR-zoom | deep minibrot: size, framing, center accuracy | seahorse 1e6× → period 998 | size 2^-50.505, frame 2^50.505, center err 2^-194, moved 7.0e-31 | period 998, size 2^-50.5, err < size/2^100 | ✅ PASS |
+| NR-zoom | Misiurewicz multiplier vs closed forms | c=-2 (lambda=4), c=i (lambda=4(1+i)) | both exact | exact to 1e-9 | ✅ PASS |
 | Coords | exact rational entry | 4 expressions | all exact | bit-exact | ✅ PASS |
 | Coords | complex rational (37+16i)/100 | 264-bit floor | re/im ok=true/true, Δ vs decimal=0.0e0 | both coords, Δ<1e-30 | ✅ PASS |
 | Coords | malformed coordinates rejected | 8 inputs | all rejected | all rejected | ✅ PASS |
@@ -104,7 +105,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**89/89 checks passed.**
+**90/90 checks passed.**
 
 ## Coverage & scope
 

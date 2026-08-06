@@ -1222,7 +1222,7 @@ pub fn refine_nucleus(
     formula: u32,
     p: usize,
 ) -> Option<(BigFloat, BigFloat)> {
-    let k = formula_power(formula)?;
+    formula_power(formula)?; // reject the non-holomorphic families up front
     if period == 0 {
         return None;
     }
@@ -1308,6 +1308,65 @@ pub struct Misiurewicz {
     pub period: u32,
     pub cx: BigFloat,
     pub cy: BigFloat,
+}
+
+/// The multiplier `λ = (f^p)′` of the repelling cycle a Misiurewicz point lands on.
+pub struct Multiplier {
+    /// `log₂|λ|` — the **zoom period**: the view self-repeats every `log₂|λ|` octaves of zoom, so
+    /// a dive centered here is periodic at that scale. A log because at high period `|λ|` is
+    /// astronomically large.
+    pub log2_abs: f64,
+    /// `arg λ` in radians — the **spiral twist**: how far the structure rotates over one zoom
+    /// period. Zero means the repetition is straight (self-similar without spiralling).
+    pub arg: f64,
+}
+
+/// Multiplier of the repelling cycle at the Misiurewicz point `c` with pre-period `k` and period
+/// `p`: iterate the critical orbit `k` steps to reach the cycle, then accumulate the derivative
+/// `∏ k·z^(k−1)` around the `p` cycle points.
+///
+/// Two exact cases pin it. At `c = −2` (the antenna tip, k=2 p=1) the orbit reaches the fixed
+/// point 2 and `λ = 4` exactly and real — which is why the tip repeats without spiralling. At
+/// `c = i` (k=2 p=2) the cycle is `{−1+i, −i}` and `λ = 4(1+i)`, so `|λ| = 4√2` and the structure
+/// twists 45° per zoom period.
+pub fn misiurewicz_multiplier(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    preperiod: u32,
+    period: u32,
+    formula: u32,
+    p: usize,
+) -> Option<Multiplier> {
+    let k = formula_power(formula)?;
+    if preperiod == 0 || period == 0 {
+        return None;
+    }
+    let kf = bf(k as f64, p);
+    // Run the critical orbit up to the entry point of the cycle.
+    let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+    for _ in 0..preperiod {
+        let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
+        zx = nx;
+        zy = ny;
+    }
+    // λ = ∏ over the cycle of d/dz (z^k + c) = k·z^(k−1).
+    let (mut lx, mut ly) = (bf(1.0, p), bf(0.0, p));
+    for _ in 0..period {
+        let (dx, dy) =
+            if k == 2 { (zx.clone(), zy.clone()) } else { cpow_bf(&zx, &zy, k - 1, p) };
+        let (tx, ty) = cmul_bf(&lx, &ly, &dx, &dy, p);
+        lx = tx.mul(&kf, p, RM);
+        ly = ty.mul(&kf, p, RM);
+        let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
+        zx = nx;
+        zy = ny;
+    }
+    let m2 = lx.mul(&lx, p, RM).add(&ly.mul(&ly, p, RM), p, RM);
+    if m2.is_zero() || m2.is_nan() || m2.is_inf() {
+        return None;
+    }
+    let log2_abs = 0.5 * log2_abs(&m2);
+    log2_abs.is_finite().then(|| Multiplier { log2_abs, arg: arg_bf(&lx, &ly, p) })
 }
 
 /// Newton-solve the Misiurewicz point of pre-period `preperiod` (k) and period `period` (p) nearest
