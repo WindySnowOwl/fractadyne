@@ -1880,7 +1880,7 @@ impl FractadyneApp {
             for _ in 0..crate::ITER_STALL_LIMIT {
                 boost = (boost * 2.5).min(16.0);
             }
-            let reach = (((base as f64) * boost) as u32).min(500_000);
+            let reach = (((base as f64) * boost) as u32).min(crate::MAX_ITER_LIMIT);
             // Fraction of pixels with no escape value: the shader's interior/capped sentinel.
             let flat = |px: &[f32]| -> f64 {
                 let n = px.len() / 4;

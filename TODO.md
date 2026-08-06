@@ -5,6 +5,15 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] **Live pixel clamp for long-non-escaping references vs CLI** — residual of the beta.27/28
+  freeze-guard design, accepted for now. A reference still partial past `LIVE_REF_CAP` is refused
+  (present-wedge safety, reproduced at e21000), leaving live pixels clamped at the last installed
+  orbit (≤256k) while a CLI render of the same view clamps at the device cap (~928k) — so live can
+  under-resolve where an export succeeds. Only bites when the picked reference's escape exceeds
+  the ~928k device cap or genuinely never escapes. Real fix = root-cause the present-wedge (it is
+  the FIRST FRAME against a long non-escaping reference, not the build) so long partials can
+  install safely, or tile/pace that frame.
+
 - [x] **LIVE_REF_CAP truncates the reference below the live iteration budget → smooth "blobs"**
   — FIXED v0.2.40-beta.27 (reported 2026-08-06 at the 6.3e63× three-spar). The reference there
   naturally escapes at 256,753 iterations — 753 past the cap — so `LIVE_REF_CAP=256k` flipped it
@@ -1078,8 +1087,8 @@ descent and the Tan Lei self-checking test).
   points of interest AND the locations that have historically broken us, serving as both the demo
   reel and a regression test. Candidates from this repo's own scar tissue: the Misiurewicz spar
   fields where the iteration cap starves and the view goes flat/black (the 1.7e55× / 5.17e55× /
-  3.3e61× three-spar family — three separate bugs so far, beta.19/22/26), the e1216 dive the
-  pacer/lookahead work targeted,
+  3.3e61× / 6.3e63× / 2.6e72× three-spar family — FIVE separate bugs, beta.19/22/26/27/28),
+  the e1216 dive the pacer/lookahead work targeted,
   the corpus-14/15 glitch-and-aliasing locations, the deep interior minibrots whose cores cost
   ~50× (the glitch-correct pathology), and the extreme-zoom tip at e21000. Wanted: a `--render-tour`
   pass that must complete without a black/flat frame, so "it went black at depth" becomes a

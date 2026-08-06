@@ -631,20 +631,32 @@ impl FractadyneApp {
         // `orbit_len` counts SAMPLES (`iters + 1`): a build capped at exactly `LIVE_REF_CAP`
         // iterations stores `LIVE_REF_CAP + 1` samples and must install normally.
         if res.partial && res.orbit_len > crate::LIVE_REF_CAP.saturating_add(1) {
-            self.ref_cache[vi].ref_ext_futile = true;
+            // Record the refused length: the quality gate only re-requests when it can ask for
+            // STRICTLY MORE, so this refusal quiets it until the (boost-driven) budget outgrows
+            // the failed attempt. A refusal at the device cap is terminal by construction. A
+            // partial at a smaller mid-climb budget proves nothing about escape — the 2.6e72×
+            // spar's reference is still partial at a 405k attempt yet escapes within the final
+            // budget — so a bigger attempt stays possible.
+            let vc = &mut self.ref_cache[vi];
+            vc.ref_ext_refused = vc.ref_ext_refused.max(res.orbit_len);
             crate::diag::trace(
                 "ref",
                 format!(
-                    "extension futile: len={} still partial past LIVE_REF_CAP — dropped \
-                     (non-escaping reference; keeping the {}-sample clamp)",
+                    "extension refused: len={} still partial past LIVE_REF_CAP — dropped \
+                     (keeping the {}-sample clamp){}",
                     res.orbit_len,
-                    self.ref_cache[vi].orbit_len
+                    vc.orbit_len,
+                    if res.orbit_len >= orbit_len_cap() {
+                        "; at the device cap — terminal"
+                    } else {
+                        ""
+                    }
                 ),
             );
             return;
         }
         let vc = &mut self.ref_cache[vi];
-        vc.ref_ext_futile = false;
+        vc.ref_ext_refused = 0;
         vc.ref_pt = Some(res.rp);
         vc.orbit = res.orbit;
         vc.orbit_len = res.orbit_len;
@@ -806,8 +818,8 @@ impl FractadyneApp {
             } else {
                 self.render_cfg.max_iter
             };
-            let gpu_iter = eff_iter.min(500_000).min(crate::zoom_iter_cap(l2).max(256));
-            let ref_build_iter = gpu_iter.saturating_add(32 * 256).min(500_000);
+            let gpu_iter = eff_iter.min(crate::MAX_ITER_LIMIT).min(crate::zoom_iter_cap(l2).max(256));
+            let ref_build_iter = gpu_iter.saturating_add(32 * 256).min(crate::MAX_ITER_LIMIT);
             let span = vp.complex_span_fe();
             let scale = vp.gpu_scale();
             let (span_mantissa, delta_exp) = (scale.span_mantissa, scale.delta_exp);
@@ -899,7 +911,7 @@ impl FractadyneApp {
             return false;
         };
         let vc = &mut self.ref_cache[vi];
-        vc.ref_ext_futile = false; // fresh cache state — mirrors install_recompute's clear
+        vc.ref_ext_refused = 0; // fresh cache state — mirrors install_recompute's clear
         vc.ref_pt = Some([rx, ry]);
         vc.orbit = s.orbit;
         vc.orbit_len = s.orbit_len;
@@ -1704,9 +1716,9 @@ impl FractadyneApp {
             } else {
                 wb // direct/shallow: already cheap
             };
-            (moving, 500_000)
+            (moving, crate::MAX_ITER_LIMIT)
         } else {
-            (wb.saturating_mul(6), 500_000)
+            (wb.saturating_mul(6), crate::MAX_ITER_LIMIT)
         };
         // ADAPTIVE LIVE ITERATION BUDGET (settled frames only). `zoom_iter_cap`'s 256/octave slope
         // under-budgets dense near-Misiurewicz fields (escape counts run ~226–300/octave there), so
@@ -1745,7 +1757,7 @@ impl FractadyneApp {
             // fully-starved views (observed live at a 100%-capped spar session).
             let boost_now = self.perf.iter_boost[vb];
             let budget_now = eff_iter
-                .min(500_000)
+                .min(crate::MAX_ITER_LIMIT)
                 .min(((zoom_iter_cap(log2mag).max(256) as f64) * boost_now) as u32);
             let (v, frac_bits) = match v {
                 u64::MAX => (u64::MAX, 0u32),
@@ -1761,7 +1773,7 @@ impl FractadyneApp {
             // Adapt only while settled and only when the zoom cap is the binding constraint
             // (a frame already at the full appetite can't be helped by raising it).
             let boost = boost_now;
-            let cap_bound = budget_now < eff_iter.min(500_000);
+            let cap_bound = budget_now < eff_iter.min(crate::MAX_ITER_LIMIT);
             // Drain the escape-range reading (live auto-normalization input) and EMA it — the
             // range moves smoothly with the view, and the EMA keeps the derived palette mapping
             // from flickering frame to frame.
@@ -1860,7 +1872,17 @@ impl FractadyneApp {
         // iters/octave). The spare length lets one reference serve ~32 more octaves of zoom before
         // its orbit is too short — so a continuous dive doesn't rebuild the (slow, bignum) orbit
         // every single octave. Pixels still only iterate to `gpu_iter`; the tail is pure headroom.
-        let ref_build_iter = gpu_iter.saturating_add(32 * 256).min(iter_cap);
+        //
+        // SETTLED builds target the full appetite (`eff_iter`), not the boost-paced `gpu_iter`.
+        // At a partial-CLAMPED view the two deadlock otherwise: pixels are clamped to the short
+        // orbit, so the armed counter never matches the boosted budget, every reading is discarded
+        // as stale, the boost freezes, and the reference ask (boost-driven) can never grow past
+        // the clamp — the 2.6e72× spar sat at a 167k clamp under a 1M appetite forever. The orbit
+        // build stops at escape anyway, so the bigger target only lengthens genuinely
+        // long-escaping references (bounded by the device cap and the install freeze guard).
+        let ref_build_iter = if interacting { gpu_iter } else { gpu_iter.max(eff_iter) }
+            .saturating_add(32 * 256)
+            .min(iter_cap);
         // GPU-watchdog safety: if even the capped work won't fit the budget, reduce the
         // iteration-texture resolution (the color pass box-filters the upscale).
         let want = px.saturating_mul(gpu_iter.max(1) as u64);
@@ -2385,10 +2407,17 @@ impl FractadyneApp {
             // view, `min(gpu_iter, cap) == orbit_len` and the gate stays quiet; on settle the cap
             // lifts, the gate fires once, and the extended build re-quiets it.
             let cap_now = live_orbit_cap(interacting, ref_build_iter);
+            // The device cap bounds what any build can store: without it in the comparison, a
+            // budget above the hardware limit (e.g. 2M at extreme depth vs the ~928k binding cap)
+            // re-fires forever against an orbit that can never get longer. `ref_ext_refused`
+            // likewise floors the ask: re-fire only for strictly more than a refused attempt.
+            // The extension ask uses `ref_build_iter` (the settled build target, appetite-based),
+            // not `gpu_iter`: at a clamped view the budget is pinned by the clamp itself, and an
+            // ask that waits for the budget can never grow (see `ref_build_iter`).
             let needs_quality = precision > self.ref_cache[vi].orbit_prec + prec_headroom
                 || (self.ref_cache[vi].partial
-                    && !self.ref_cache[vi].ref_ext_futile
-                    && gpu_iter.min(cap_now) > self.ref_cache[vi].orbit_len);
+                    && ref_build_iter.min(cap_now).min(orbit_len_cap())
+                        > self.ref_cache[vi].orbit_len.max(self.ref_cache[vi].ref_ext_refused));
             // Refresh whenever the reference has left the view or the depth/iters outgrew it. The
             // old motion throttle is gone: the recompute is now off-thread and gated to one job per
             // view (`recompute_rx`), so spawns are naturally paced by the compute itself — no need

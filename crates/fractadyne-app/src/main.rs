@@ -784,6 +784,17 @@ pub(crate) const PACE_LAG_HI: f64 = 2.8;
 /// pays a few extra settle frames before reverting.
 pub(crate) const ITER_STALL_LIMIT: u8 = 3;
 
+/// Hard ceiling on the user-settable iteration count (the Iterations slider max and the live
+/// budget clamps). Was 500,000 — which the 2.6e72× Misiurewicz spar outgrew (measured: 33% of
+/// samples still capped at 500k, ZERO at 1M — the view was fully resolvable, the app just refused
+/// to try). Peer deep-zoomers (KF / Fraktaler-3 / Imagina) treat iterations as effectively
+/// unbounded and users routinely run millions; 10M covers the depths our reference/precision
+/// stack actually reaches. Live-path safety does NOT come from this number: per-frame cost is
+/// bounded by the work budget / tiled settle / motion-res machinery, and non-escaping references
+/// keep the `LIVE_REF_CAP` clamp (freeze guard). The AUTO appetite has its own tighter ceiling in
+/// `recommended_max_iter`.
+pub(crate) const MAX_ITER_LIMIT: u32 = 10_000_000;
+
 // Self-test helpers + run_selftest moved to selftest.rs.
 
 /// Plain-f64 Mandelbrot escape test: `Some(iter)` if it escapes within `max`, else
@@ -1310,11 +1321,14 @@ struct RefCache {
     /// behind the dive" signal — script playback reads it to DILATE the tour clock (slow the dive)
     /// instead of zooming into an ever-staler reprojection (the deep-dive monocolor blur).
     last_depth_lag: f64,
-    /// A settled reference EXTENSION past `LIVE_REF_CAP` came back still-partial (non-escaping) and
-    /// was refused by the install freeze guard — don't request the same doomed build again for this
-    /// view (see `install_recompute`). Cleared with the view (`invalidate_refs`) and by any
-    /// successful install.
-    ref_ext_futile: bool,
+    /// Longest settled-extension length (samples) the install freeze guard has REFUSED for this
+    /// view (still-partial past `LIVE_REF_CAP`; 0 = none). The quality gate only re-requests an
+    /// extension when it can ask for STRICTLY MORE than this — so each refusal quiets the gate
+    /// until the budget outgrows the failed attempt (no refusal loop), a bigger attempt is never
+    /// blocked (the 2.6e72× spar escapes past a refused 405k attempt), and a refusal AT the
+    /// device cap is terminal by construction (nothing can ever ask for more). Cleared with the
+    /// view (`invalidate_refs`) and by any successful install.
+    ref_ext_refused: u32,
 }
 
 impl Default for RefCache {
@@ -1341,7 +1355,7 @@ impl Default for RefCache {
             frozen_at: None,
             frozen_upp_l2: 0.0,
             last_depth_lag: 0.0,
-            ref_ext_futile: false,
+            ref_ext_refused: 0,
         }
     }
 }
@@ -2782,8 +2796,8 @@ impl FractadyneApp {
         self.ref_cache[0].ref_pt = None;
         self.ref_cache[1].ref_pt = None;
         // A new view's reference may escape where the old one didn't — retry extensions there.
-        self.ref_cache[0].ref_ext_futile = false;
-        self.ref_cache[1].ref_ext_futile = false;
+        self.ref_cache[0].ref_ext_refused = 0;
+        self.ref_cache[1].ref_ext_refused = 0;
         // Drop any in-flight recompute — its result is for the old fractal/mode and must not
         // install (would render the wrong formula until the next recompute).
         self.recompute_rx = [None, None];

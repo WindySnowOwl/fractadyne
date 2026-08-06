@@ -205,7 +205,7 @@ impl FractadyneApp {
                 ui.checkbox(&mut self.render_cfg.auto_iter, "Auto-scale iterations with zoom");
                 let label = if self.render_cfg.auto_iter { "Iterations (base)" } else { "Iterations" };
                 ui.add(
-                    egui::Slider::new(&mut self.render_cfg.max_iter, 64..=500_000)
+                    egui::Slider::new(&mut self.render_cfg.max_iter, 64..=crate::MAX_ITER_LIMIT)
                         .logarithmic(true)
                         .text(label),
                 )
@@ -227,7 +227,8 @@ impl FractadyneApp {
                 } else {
                     self.render_cfg.max_iter
                 };
-                let settled_iter = want_iter.min(500_000).min(zoom_iter_cap(log2mag).max(256));
+                let settled_iter =
+                    want_iter.min(crate::MAX_ITER_LIMIT).min(zoom_iter_cap(log2mag).max(256));
                 let px = (self.viewport.width_px * self.viewport.height_px).max(1.0) as u64;
                 let res_limited = px.saturating_mul(settled_iter.max(1) as u64)
                     > self.effective_work_budget().saturating_mul(6);

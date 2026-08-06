@@ -245,7 +245,13 @@ impl Viewport {
         // The iteration count a given depth genuinely wants (~220 per octave). This is the
         // *export* / full-quality appetite; the live preview caps it lower (see `build_params`)
         // for responsiveness, so deep views can look smoother on screen than in an export.
-        (base + (octaves * 220.0) as u32).min(500_000)
+        //
+        // The 2M ceiling bounds AUTO mode only (a manual slider value passes through as `base`,
+        // up to the app's `MAX_ITER_LIMIT`): it keeps an auto-iter export at extreme depth
+        // (e21000-class, where the formula asks for ~15M) from a runaway reference build, while
+        // no longer starving deep dense fields the way the old 500k ceiling did (the 2.6e72×
+        // spar needs ~1M to resolve; measured 33% capped at 500k, 0% at 1M).
+        (base + (octaves * 220.0) as u32).min(2_000_000)
     }
 
     /// Center as `f64` (for display / coarse use).
