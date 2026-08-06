@@ -256,6 +256,47 @@ pub(crate) fn set_manifest(msg: String) {
     }
 }
 
+/// Compose and persist a crash report (the durable artifact — written even if stderr is
+/// broken). A process-wide counter in the name prevents two reports in the same wall-clock
+/// second (realistic on a device loss: the uncaptured-error callback reports on one thread
+/// while an export worker's next wgpu call panics on another) from clobbering each other via
+/// same-second `crash-<secs>.txt` overwrite. `loc` is the code location when known ("" = none).
+/// Used by the panic hook AND by the device-lost handler, which restarts instead of panicking
+/// but must leave the same forensic trail.
+pub(crate) fn write_crash_report(msg: &str) {
+    write_crash_report_at(msg, "<device-lost handler>");
+}
+
+fn write_crash_report_at(msg: &str, loc: &str) {
+    let report = format!(
+        "fractadyne crash report\n\
+         version : {}\n\
+         time    : {}\n\
+         uptime  : {:.1}s\n\
+         panic   : {msg}\n\
+         at      : {loc}\n\
+         activity: {}\n\
+         manifest: {}\n\
+         thread  : {}\n\n\
+         backtrace (debug symbols are disabled in this build; addresses only):\n{}\n",
+        crate::sysinfo::version_string(),
+        crate::sysinfo::now_utc_string(),
+        elapsed_s(),
+        current_breadcrumb(),
+        MANIFEST.lock().map(|m| m.clone()).unwrap_or_default(),
+        std::thread::current().name().unwrap_or("<unnamed>"),
+        std::backtrace::Backtrace::force_capture(),
+    );
+    if let Some(Some(dir)) = LOG_DIR.get() {
+        let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let n = CRASH_SEQ.fetch_add(1, Ordering::Relaxed);
+        let path = dir.join(format!("crash-{secs}-{n}.txt"));
+        if std::fs::write(&path, &report).is_ok() {
+            let _ = writeln!(std::io::stderr(), "[fd-panic] crash report written: {}", path.display());
+        }
+    }
+}
+
 fn install_panic_hook() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -269,38 +310,8 @@ fn install_panic_hook() {
             .location()
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "<unknown>".into());
-        let report = format!(
-            "fractadyne crash report\n\
-             version : {}\n\
-             time    : {}\n\
-             uptime  : {:.1}s\n\
-             panic   : {msg}\n\
-             at      : {loc}\n\
-             activity: {}\n\
-             manifest: {}\n\
-             thread  : {}\n\n\
-             backtrace (debug symbols are disabled in this build; addresses only):\n{}\n",
-            crate::sysinfo::version_string(),
-            crate::sysinfo::now_utc_string(),
-            elapsed_s(),
-            current_breadcrumb(),
-            MANIFEST.lock().map(|m| m.clone()).unwrap_or_default(),
-            std::thread::current().name().unwrap_or("<unnamed>"),
-            std::backtrace::Backtrace::force_capture(),
-        );
-        // Write the crash FILE first — it is the durable artifact, and it must survive even
-        // if stderr is broken. A process-wide counter in the name prevents two panics in the
-        // same wall-clock second (realistic on a device loss: the uncaptured-error callback
-        // panics on one thread while an export worker's next wgpu call panics on another)
-        // from clobbering each other via same-second `crash-<secs>.txt` overwrite.
-        if let Some(Some(dir)) = LOG_DIR.get() {
-            let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-            let n = CRASH_SEQ.fetch_add(1, Ordering::Relaxed);
-            let path = dir.join(format!("crash-{secs}-{n}.txt"));
-            if std::fs::write(&path, &report).is_ok() {
-                let _ = writeln!(std::io::stderr(), "[fd-panic] crash report written: {}", path.display());
-            }
-        }
+        // Write the crash FILE first — see `write_crash_report_at`.
+        write_crash_report_at(&msg, &loc);
         // Then the log line (non-panicking stderr; also teed to the log file).
         log_line("panic", &format!("{msg} at {loc} — activity: {}", current_breadcrumb()));
         default(info);

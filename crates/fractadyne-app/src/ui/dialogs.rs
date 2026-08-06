@@ -199,7 +199,8 @@ impl FractadyneApp {
 
     /// "Report an issue" dialog (Help → Report an issue…): a description + selectable artifacts
     /// (system info, current location, recent log, latest crash report), a full preview of exactly
-    /// what will be sent, then Copy / Save / Email to [`crate::REPORT_EMAIL`]. Nothing is
+    /// what will be sent, then GitHub issue (primary, [`crate::ISSUES_URL`]) / Copy / Save /
+    /// Email to [`crate::REPORT_EMAIL`]. Nothing is
     /// transmitted until the user acts, and system info is one checkbox to exclude.
     pub(crate) fn draw_report_dialog(&mut self, ctx: &egui::Context) {
         if !self.report.open {
@@ -207,18 +208,19 @@ impl FractadyneApp {
         }
         let mut open = self.report.open;
         let has_crash = crate::diag::latest_crash().is_some();
-        let (mut copy, mut save, mut email, mut gmail) = (false, false, false, false);
+        let (mut copy, mut save, mut email, mut gmail, mut github) =
+            (false, false, false, false, false);
         egui::Window::new("Report an issue")
             .open(&mut open)
             .resizable(true)
             .default_width(560.0)
             .show(ctx, |ui| {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "Sends to {}. Review everything below first — nothing leaves your machine \
-                         until you Copy, Save, or Email.",
-                        crate::REPORT_EMAIL
-                    ))
+                    egui::RichText::new(
+                        "The best place to report is a GitHub issue — it's public and searchable, \
+                         and you'll see when it's fixed. Email works too. Review everything below \
+                         first: nothing leaves your machine until you act.",
+                    )
                     .weak()
                     .small(),
                 );
@@ -301,17 +303,27 @@ impl FractadyneApp {
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
+                    github = ui
+                        .button(egui::RichText::new("Open a GitHub issue").strong())
+                        .on_hover_text(
+                            "Open a new-issue page with the title filled in; the report is copied \
+                             to your clipboard — paste it into the issue body (Ctrl+V).",
+                        )
+                        .clicked();
                     copy = ui
                         .button("Copy report")
-                        .on_hover_text(format!(
-                            "Copy everything to the clipboard, then paste it into an email to {}",
-                            crate::REPORT_EMAIL
-                        ))
+                        .on_hover_text("Copy everything to the clipboard")
                         .clicked();
                     save = ui.button("Save report…").on_hover_text("Save as a .txt to attach").clicked();
+                });
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Or by email:").weak().small());
                     gmail = ui
                         .button("Compose in Gmail")
-                        .on_hover_text("Open a Gmail compose window addressed + subject filled; paste the copied report")
+                        .on_hover_text(format!(
+                            "Open a Gmail compose window to {} with the subject filled; paste the copied report",
+                            crate::REPORT_EMAIL
+                        ))
                         .clicked();
                     email = ui
                         .button("Email app…")
@@ -321,14 +333,31 @@ impl FractadyneApp {
                 ui.label(
                     egui::RichText::new(
                         "Tip: the report is copied to your clipboard on any of these — paste it into \
-                         the message body (Ctrl+V). Please also attach a screenshot or sample image \
-                         of the issue if you can (drag it into the email); it helps a lot for \
-                         rendering and UI problems.",
+                         the issue or message body (Ctrl+V). Please also attach a screenshot or \
+                         sample image if you can (drag it in); it helps a lot for rendering and UI \
+                         problems.",
                     )
                     .weak()
                     .small(),
                 );
             });
+        if github {
+            ctx.copy_text(self.build_report());
+            // The report itself can't ride the URL (length limits) — it's on the clipboard; the
+            // new-issue page opens with the title prefilled and a paste hint as the body.
+            let url = format!(
+                "{}/new?title={}&body={}",
+                crate::ISSUES_URL,
+                crate::mailto_encode(&self.report_subject()),
+                crate::mailto_encode(
+                    "<!-- The full report is on your clipboard — paste it here (Ctrl+V). \
+                     Screenshots can be dragged in. -->\n\n"
+                ),
+            );
+            ctx.open_url(egui::OpenUrl::new_tab(url));
+            self.report.msg =
+                Some("Opened GitHub — the report is on the clipboard; paste it into the issue.".into());
+        }
         if copy {
             ctx.copy_text(self.build_report());
             self.report.msg = Some("Report copied to the clipboard.".into());

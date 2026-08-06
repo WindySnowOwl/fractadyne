@@ -1698,6 +1698,10 @@ struct AnimationState {
 /// Where the issue reporter sends to (Help → Report an issue…).
 pub(crate) const REPORT_EMAIL: &str = "fractadyne@rithea.com";
 
+/// GitHub issue tracker — the PRIMARY reporting channel (public, searchable, and other users can
+/// confirm/subscribe); email stays as the private fallback.
+pub(crate) const ISSUES_URL: &str = "https://github.com/WindySnowOwl/fractadyne/issues";
+
 /// Minimal percent-encoding for a `mailto:` subject/body component (keeps RFC 3986 unreserved).
 pub(crate) fn mailto_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -2098,10 +2102,34 @@ impl FractadyneApp {
         // this with `OrbitTooLarge`). One-time; the limit is a device constant.
         render::init_orbit_len_cap(render_state.device.limits().max_storage_buffer_binding_size);
         // D1.3: route GPU faults through the diag log. Uncaptured errors keep wgpu's
-        // fail-fast semantics (log first, then panic so the hook writes a crash report);
-        // device-lost logs the reason — it is the "hang on load" class of failure (F1).
+        // fail-fast semantics (log first, then panic so the hook writes a crash report) —
+        // EXCEPT device loss, which gets a graceful auto-restart instead of a hard crash.
+        //
+        // A lost device (Windows TDR — our own oversized dispatch, a driver reset, sleep/resume,
+        // another app wedging the GPU) is unrecoverable in-place under eframe, but it is NOT an
+        // app bug the user should experience as a crash: the session file already persists the
+        // exact view, so a fresh process resumes almost seamlessly. Both crash reports on this
+        // machine (2026-08-02 shallow view, 2026-08-06 deep spar) are this exact class. The
+        // panic hook still writes the crash report first (durable artifact), then we relaunch —
+        // guarded to uptime > 60 s so a boot-time device loss can't restart-loop.
         render_state.device.on_uncaptured_error(Box::new(|e| {
             diag::log_line("wgpu", &format!("uncaptured error: {e}"));
+            let msg = e.to_string();
+            if msg.contains("device is lost") || msg.contains("Device is lost") || msg.contains("DeviceLost") {
+                diag::write_crash_report(&format!("wgpu device lost: {msg}"));
+                if diag::elapsed_s() > 60.0 {
+                    if let Ok(exe) = std::env::current_exe() {
+                        diag::log_line("wgpu", "device lost — restarting");
+                        let _ = std::process::Command::new(exe)
+                            .args(std::env::args().skip(1))
+                            .env("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS", "1")
+                            .spawn();
+                    }
+                } else {
+                    diag::log_line("wgpu", "device lost within 60s of boot — not restarting (loop guard)");
+                }
+                std::process::exit(2);
+            }
             panic!("wgpu uncaptured error: {e}");
         }));
         render_state.device.set_device_lost_callback(|reason, msg| {
@@ -2383,7 +2411,12 @@ impl FractadyneApp {
             goto: GotoDialog::default(),
             share: ShareDialog::default(),
             toast: None,
-            pending_toast: None,
+            // Booted by the device-loss handler's relaunch? Tell the user why the window blinked
+            // (the session file restored their exact view; without this the restart is a mystery).
+            pending_toast: (std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some())
+                .then(|| {
+                    "Recovered from a graphics device reset — your view was restored.".to_string()
+                }),
             suppress_autosave: false,
             pending_state_warning,
             minimap_tex: None,
@@ -3711,6 +3744,12 @@ impl FractadyneApp {
         period: u32,
         formula: u32,
     ) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat, Option<f64>) {
+        // Ceiling on `period × precision-bits` for the synchronous deep refine. The refine runs a
+        // few Newton steps of `period` bignum iterations each ON THE UI THREAD; past this budget
+        // (roughly a second of blocking on a fast core) the jump is declined in favor of a plain
+        // center snap, rather than freezing the window for a period-100k atom at thousands of
+        // bits. (The right long-term fix is an off-thread refine with a spinner — TODO'd.)
+        const NR_REFINE_MAX_BIT_ITERS: u64 = 400_000_000;
         let mut cx = cx0;
         let mut cy = cy0;
         let mut prec = self.viewport.precision;
@@ -3723,19 +3762,24 @@ impl FractadyneApp {
             if !t.is_finite() || t <= 0.0 {
                 break;
             }
-            target = Some(t);
             // Guard bits above the destination depth so the center is exact *within* the frame.
             let need = fractadyne_core::precision_for_octaves(t as u64) + 64;
             if need <= prec {
+                target = Some(t); // already precise enough for this depth — jump is safe
                 break;
+            }
+            if (period as u64).saturating_mul(need as u64) > NR_REFINE_MAX_BIT_ITERS {
+                break; // refine too costly for a synchronous call — recenter only, keep the depth
             }
             prec = need;
             let Some((rx, ry)) = fractadyne_core::refine_nucleus(&cx, &cy, period, formula, prec)
             else {
-                break;
+                break; // no refined center → no jump: an unrefined center at the atom's own
+                       // scale would land the view on empty space
             };
             cx = rx;
             cy = ry;
+            target = Some(t); // center now refined for this depth — jump is safe
         }
         (cx, cy, target)
     }

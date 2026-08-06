@@ -397,7 +397,10 @@ impl FractadyneApp {
                         }
                         if ui
                             .button("Report an issue…")
-                            .on_hover_text("Send a crash report, log, and location with a description")
+                            .on_hover_text(
+                                "File a GitHub issue (or email) with a crash report, log, and \
+                                 location attached",
+                            )
                             .clicked()
                         {
                             self.report.open = true;

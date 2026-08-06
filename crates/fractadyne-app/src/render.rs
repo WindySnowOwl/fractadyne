@@ -655,6 +655,43 @@ impl FractadyneApp {
             );
             return;
         }
+        // A reference install that changes the pixel COST MODEL discontinuously invalidates the
+        // measured frame budget. The budget controller sizes dispatches in NOMINAL steps against
+        // measured GPU time; BLA/SA skip-effectiveness and the partial-clamp make real cost per
+        // nominal step data-dependent, and the controller's measurement lands ~2 frames late with
+        // growth clamped — it handles drift, not steps. When a big reference lifts the clamp
+        // (pixels jump from `orbit_len` to the full budget) the first full-res frame renders at a
+        // stale calibration: measured 2026-08-06 as a REAL CRASH — a 499,493-sample complete
+        // reference installed at the 2.6e72× spar, the next 3840×3042 ss2 frame at 500k iters blew
+        // the Windows GPU watchdog, the device was lost, and the app panicked. Derate to a safe
+        // size and let the controller re-climb (its climb path is overshoot-safe by design); the
+        // cost is one or two coarser frames right after such an install. Gradual dive installs
+        // (lookahead's 0.5-octave spacing) don't trip either trigger, so dive quality is untouched.
+        {
+            let vb = vi.min(1);
+            let old = &self.ref_cache[vi];
+            let clamp_lifted = old.partial && !res.partial && res.orbit_len > old.orbit_len;
+            let big_jump = old.orbit_len > 0 && res.orbit_len > old.orbit_len.saturating_mul(2);
+            if clamp_lifted || big_jump {
+                let cur = self.perf.fe_budget[vb];
+                let derated = (cur / 8).max(TDR_BOOTSTRAP_STEPS);
+                if cur == 0 || derated < cur {
+                    self.perf.fe_budget[vb] = derated;
+                    self.perf.fe_budget_ok[vb] = false; // tiling re-arms once re-converged
+                    crate::diag::trace(
+                        "gpu",
+                        format!(
+                            "install derate: orbit {}→{} ({}) — budget {:.2e}→{:.2e}, re-converging",
+                            old.orbit_len,
+                            res.orbit_len,
+                            if clamp_lifted { "clamp lifted" } else { "length jump" },
+                            cur as f64,
+                            derated as f64
+                        ),
+                    );
+                }
+            }
+        }
         let vc = &mut self.ref_cache[vi];
         vc.ref_ext_refused = 0;
         vc.ref_pt = Some(res.rp);

@@ -5,6 +5,21 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] **wgpu device loss (TDR) crashes the app — FIXED v0.2.40-beta.29 (both halves).** Two crash
+  reports on record, both `Surface::get_current_texture_view: Parent device is lost` → panic:
+  2026-08-02 (v0.2.27, shallow view — external cause class) and 2026-08-06 (beta.27, the 2.6e72×
+  spar — our own oversized dispatch: a 499,493-sample complete reference installed, lifting the
+  pixel clamp while the frame budget was still calibrated on cheap clamped frames; the next
+  3840×3042 ss2 frame at 500k iters blew the Windows GPU watchdog). Fixes: (1) `install_recompute`
+  DERATES the measured frame budget (÷8, floor bootstrap) when an install changes the pixel cost
+  model discontinuously — clamp lift or >2× orbit-length jump — so the controller re-climbs from
+  safe sizes (its climb is overshoot-safe by design; gradual dive installs trip neither trigger);
+  (2) device loss no longer panics: the handler writes the crash report, then AUTO-RESTARTS the
+  app (session file preserves the exact view; "Recovered from a graphics device reset" toast via
+  `FRACTADYNE_RESTARTED_AFTER_GPU_LOSS`), guarded to uptime > 60 s so a boot-time loss can't
+  restart-loop. Verified live at the spar: derate fires on the big install, budget re-climbs to
+  ceiling, 0 non-responding samples.
+
 - [ ] **Live pixel clamp for long-non-escaping references vs CLI** — residual of the beta.27/28
   freeze-guard design, accepted for now. A reference still partial past `LIVE_REF_CAP` is refused
   (present-wedge safety, reproduced at e21000), leaving live pixels clamped at the last installed
