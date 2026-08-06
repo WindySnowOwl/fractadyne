@@ -3586,8 +3586,25 @@ impl FractadyneApp {
         }
     }
 
+    /// Newton-Raphson zoom framing: the minibrot's own width occupies this fraction of the view
+    /// height after the jump.
+    ///
+    /// Chosen by measurement, not taste. The visible copy — cardioid, bulbs, and the embedded
+    /// Julia decoration that reads as part of it — runs about 1.6× the bare size estimate at high
+    /// period, so 0.25 puts roughly 40% of the frame on the minibrot and leaves the rest as
+    /// context. It also makes the degenerate case exact: period 1 (the whole set, size 1) frames
+    /// at magnification 1 — precisely the home view.
+    const ATOM_FILL: f64 = 0.25;
+
+    /// Depth that frames a minibrot of the given `log₂` size — the destination of a
+    /// Newton-Raphson zoom.
+    fn atom_frame_log2mag(log2_size: f64) -> f64 {
+        Viewport::REFERENCE_HEIGHT.log2() + Self::ATOM_FILL.log2() - log2_size
+    }
+
     fn find_minibrot(&mut self, ctx: &egui::Context) {
-        if !matches!(self.fractal.formula_id(), 0..=3) {
+        let formula = self.fractal.formula_id();
+        if !matches!(formula, 0..=3) {
             self.set_toast(
                 "Minibrot finder needs a holomorphic family (Mandelbrot / Multibrot).",
                 ctx,
@@ -3598,18 +3615,88 @@ impl FractadyneApp {
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
         let max_period =
             self.viewport.recommended_max_iter(self.render_cfg.max_iter).clamp(1_000, 100_000);
-        match fractadyne_core::find_nucleus(&center, mag, self.fractal.formula_id(), max_period) {
+        match fractadyne_core::find_nucleus(&center, mag, formula, max_period) {
             Some(n) => {
-                self.viewport.set_center_mag(n.cx, n.cy, mag);
-                self.viewport.precision =
-                    fractadyne_core::precision_for_magnification(mag);
-                self.pointer.zoom_vel = 0.0;
-                self.invalidate_refs();
-                self.record_nav();
-                self.set_toast(format!("Snapped to period-{} minibrot center", n.period), ctx);
+                let cur_l2 = self.viewport.log2_magnification();
+                let (cx, cy, target) = self.newton_raphson_target(n.cx, n.cy, n.period, formula);
+                match target.filter(|t| *t > cur_l2) {
+                    Some(t) => {
+                        self.viewport.set_center_log2mag(cx, cy, t);
+                        self.finish_nav_jump();
+                        self.set_toast(
+                            format!(
+                                "Zoomed to the period-{} minibrot — {}×",
+                                n.period,
+                                fmt_zoom_field(t)
+                            ),
+                            ctx,
+                        );
+                    }
+                    // No size estimate (non-quadratic family), or the view is already deeper
+                    // than the minibrot's own scale — keep the depth, just fix the center.
+                    None => {
+                        self.viewport.set_center_log2mag(cx, cy, cur_l2);
+                        self.finish_nav_jump();
+                        self.set_toast(
+                            format!("Snapped to period-{} minibrot center", n.period),
+                            ctx,
+                        );
+                    }
+                }
             }
             None => self.set_toast("No minibrot center found near the view center.", ctx),
         }
+    }
+
+    /// Size up a located minibrot and refine its center to the precision that depth demands.
+    ///
+    /// Two passes, because the two quantities define each other: the size estimate needs an
+    /// accurate center, and how accurate the center must be is set by the depth the size implies.
+    /// The first pass sizes the atom from the (shallow) center Newton just produced, which is
+    /// plenty to pick the destination depth; the second re-solves the center at that depth's
+    /// precision and re-sizes from it. Returns the refined center and the framing depth (`None`
+    /// when the family has no size estimate).
+    fn newton_raphson_target(
+        &self,
+        cx0: fractadyne_core::BigFloat,
+        cy0: fractadyne_core::BigFloat,
+        period: u32,
+        formula: u32,
+    ) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat, Option<f64>) {
+        let mut cx = cx0;
+        let mut cy = cy0;
+        let mut prec = self.viewport.precision;
+        let mut target = None;
+        for _ in 0..2 {
+            let Some(atom) = fractadyne_core::nucleus_size(&cx, &cy, period, formula, prec) else {
+                break;
+            };
+            let t = Self::atom_frame_log2mag(atom.log2_size);
+            if !t.is_finite() || t <= 0.0 {
+                break;
+            }
+            target = Some(t);
+            // Guard bits above the destination depth so the center is exact *within* the frame.
+            let need = fractadyne_core::precision_for_octaves(t as u64) + 64;
+            if need <= prec {
+                break;
+            }
+            prec = need;
+            let Some((rx, ry)) = fractadyne_core::refine_nucleus(&cx, &cy, period, formula, prec)
+            else {
+                break;
+            };
+            cx = rx;
+            cy = ry;
+        }
+        (cx, cy, target)
+    }
+
+    /// Shared tail of a navigation jump: stop any glide, drop cached references, push history.
+    fn finish_nav_jump(&mut self) {
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
     }
 
     /// Newton-solve a parameterized feature near the current view center and snap onto its exact
@@ -3622,7 +3709,10 @@ impl FractadyneApp {
             return;
         }
         let mag = self.viewport.magnification();
+        let cur_l2 = self.viewport.log2_magnification();
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+        // A Newton-Raphson zoom target, when one is derivable (quadratic families only).
+        let mut zoom_to: Option<f64> = None;
         let (found, label) = match self.goto.feat_kind {
             FeatureKind::Minibrot => {
                 let max_period = self
@@ -3630,7 +3720,12 @@ impl FractadyneApp {
                     .recommended_max_iter(self.render_cfg.max_iter)
                     .clamp(1_000, 100_000);
                 match fractadyne_core::find_nucleus(&center, mag, 0, max_period) {
-                    Some(n) => (Some((n.cx, n.cy)), format!("period-{} minibrot", n.period)),
+                    Some(n) => {
+                        let period = n.period;
+                        let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, 0);
+                        zoom_to = t.filter(|t| *t > cur_l2);
+                        (Some((cx, cy)), format!("period-{period} minibrot"))
+                    }
                     None => (None, String::new()),
                 }
             }
@@ -3652,13 +3747,17 @@ impl FractadyneApp {
         };
         match found {
             Some((cx, cy)) => {
-                self.viewport.set_center_mag(cx, cy, mag);
-                self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
-                self.pointer.zoom_vel = 0.0;
-                self.invalidate_refs();
-                self.record_nav();
+                let l2 = zoom_to.unwrap_or(cur_l2);
+                self.viewport.set_center_log2mag(cx, cy, l2);
+                self.finish_nav_jump();
                 self.goto.open = false;
-                self.set_toast(format!("Snapped to {label} center"), ctx);
+                self.set_toast(
+                    match zoom_to {
+                        Some(t) => format!("Zoomed to the {label} — {}×", fmt_zoom_field(t)),
+                        None => format!("Snapped to {label} center"),
+                    },
+                    ctx,
+                );
             }
             None => {
                 self.goto.msg = Some(match self.goto.feat_kind {

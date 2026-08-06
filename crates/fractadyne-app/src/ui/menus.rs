@@ -351,10 +351,12 @@ impl FractadyneApp {
                         }
                         ui.add_enabled_ui(matches!(self.fractal.formula_id(), 0..=3), |ui| {
                             if ui
-                                .button("Find minibrot center  (M)")
+                                .button("Find minibrot + zoom to it  (M)")
                                 .on_hover_text(
-                                    "Newton-snap the view center to the nearby minibrot's \
-                                     exact center and report its period.",
+                                    "Newton-snap the view center to the nearby minibrot's exact \
+                                     center, report its period, and zoom to the minibrot's own \
+                                     scale — often many orders of magnitude in one step. Already \
+                                     deeper than it? Only the center moves.",
                                 )
                                 .clicked()
                             {

@@ -1021,13 +1021,24 @@ descent and the Tan Lei self-checking test).
   closed a latent hazard: `FromStr` accepts `"1 2"` as `1`, so coordinates are now shape-validated
   before parsing. Verification: 5 core unit tests (exact values, precision floor, complex division,
   malformed rejection, 20k-case fuzz) + selftest group `coords` (4 checks; suite 83 → 87).
-- [ ] **Atom size + orientation at a nucleus** (P0, §3.2 gap) — derivative product along the
-  periodic orbit. Verification: known minibrot sizes; selftest nucleus catalog gains size columns.
-- [ ] **Newton-Raphson zooming** (P0, §3.3 absent) — the proposal's single biggest crossover
-  feature and the smallest remaining delta: `find_nucleus` already lands the center in arbitrary
-  precision, but both call sites keep the current magnification. Needs only the atom size above,
-  plus a "zoom fraction" control. Verification: after a jump the minibrot fills a predictable
-  fraction of the view (assert on the resulting `units_per_pixel`).
+- [x] **Atom size + orientation at a nucleus** (P0, §3.2) — v0.2.40-beta.24. `nucleus_size`
+  implements Munafo's estimate (`Λ = ∏2z_i`, `B = 1 + Σ1/Λ_i`, `size = 1/(BΛ²)`), returning
+  `log2_size` (a log, so a 1e-1000-scale atom can't underflow) and `orientation`. Quadratic only —
+  the Multibrot families need a different derivative recurrence and return `None` rather than a
+  plausible wrong number. Also added `log2_abs` / `arg_bf` (exact past f64's range) and
+  `refine_nucleus` / `nucleus_residual_log2`.
+- [x] **Newton-Raphson zooming** (P0, §3.3) — v0.2.40-beta.24. "Find minibrot center" (M) and the
+  Go-to feature finder now jump to the minibrot's own scale, not just its center: one click took a
+  1e6× view to 3.2e15× onto a period-998 minibrot. The subtlety that made this more than a
+  one-liner: `find_nucleus` stops when the Newton step falls below a tolerance derived from the
+  *current view span*, and works at that view's precision, so its center is only view-accurate —
+  useless for a destination whose whole span is 1e-16 or smaller. `newton_raphson_target` runs two
+  passes (size → refine at the destination's precision → re-size), and the zoom never goes
+  backwards. Verification: selftest group `nr-zoom` (2 checks) + 3 core unit tests; suite 87 → 89.
+- [ ] **Newton-Raphson zoom follow-ups** — (a) run the refine off-thread; a period-100k atom at
+  several thousand bits will block the UI thread the way the reference build used to. (b) Expose
+  the framing fraction (`ATOM_FILL`, currently 0.25) or a "fraction of the way there" control, as
+  the proposal's §4.4 guided descent wants. (c) Extend the size estimate to Multibrot.
 - [ ] **Multiplier λ at Misiurewicz points** (P1, §3.4 gap) — report |λ| (zoom period) and arg λ
   (spiral twist) beside the existing (k,p) solve. Verification: exact known values — c = −2 gives
   λ = 4 exactly; c = i gives λ = 4(1+i) over the {−1+i, −i} cycle.

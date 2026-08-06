@@ -208,8 +208,8 @@ impl FractadyneApp {
         let filter: Option<String> = self.selftest_filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "coords", "metadata", "display", "catalog", "goldens",
-            "bench-matrix",
+            "consistency", "counters", "nr-zoom", "coords", "metadata", "display", "catalog",
+            "goldens", "bench-matrix",
         ];
         if self.selftest_list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -1862,6 +1862,103 @@ impl FractadyneApp {
         }
 
         // ---- view-state format: versioning + untrusted-input hardening ----
+        // ---- Newton-Raphson zoom: atom size, framing depth, center refinement ----
+        // Each check is self-validating: the size estimate is pinned by components whose width is
+        // known exactly, and the center accuracy is measured against the atom it must land inside
+        // — no stored reference coordinate is involved.
+        if want("nr-zoom") {
+            // Exact anchors. The whole set (period 1) has size 1 — the main cardioid spans
+            // −0.75…0.25 — and frames at magnification 1, which IS the home view. The period-2
+            // disk at c = −1 spans −1.25…−0.75, so size 1/2.
+            let anchors: &[(&str, f64, f64, u32, f64)] =
+                &[("whole set", 0.0, 0.0, 1, 0.0), ("period-2 disk", -1.0, 0.0, 2, -1.0)];
+            let mut bad = Vec::new();
+            for (name, cx, cy, period, want_l2) in anchors {
+                let (bx, by) = (
+                    fractadyne_core::BigFloat::from_f64(*cx, 256),
+                    fractadyne_core::BigFloat::from_f64(*cy, 256),
+                );
+                match fractadyne_core::nucleus_size(&bx, &by, *period, 0, 256) {
+                    Some(a) if (a.log2_size - want_l2).abs() < 1.0e-9 => {}
+                    Some(a) => bad.push(format!("{name}: 2^{:.6} (want 2^{want_l2})", a.log2_size)),
+                    None => bad.push(format!("{name}: no estimate")),
+                }
+            }
+            // Home-view identity: framing the whole set must land exactly at magnification 1.
+            let home = Self::atom_frame_log2mag(0.0);
+            if home.abs() > 1.0e-9 {
+                bad.push(format!("period-1 frames at 2^{home:.6}, want 2^0"));
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "NR-zoom",
+                name: "atom size vs exactly-known components".into(),
+                params: "period 1, 2 + home-view identity".into(),
+                result: if bad.is_empty() { "all exact".into() } else { bad.join("; ") },
+                threshold: "exact to 1e-9",
+                pass: bad.is_empty(),
+            });
+
+            // A real jump: a period-998 minibrot in deep Seahorse Valley. Its size sets a
+            // destination ~9 orders of magnitude below the view that found it — the case the
+            // whole feature exists for, and the case where a view-accurate center is not enough.
+            let seed = [
+                fractadyne_core::parse_bf(SX).unwrap(),
+                fractadyne_core::parse_bf(SY).unwrap(),
+            ];
+            match fractadyne_core::find_nucleus(&seed, 1.0e6, 0, 100_000) {
+                Some(n) => {
+                    let size = fractadyne_core::nucleus_size(&n.cx, &n.cy, n.period, 0, 128)
+                        .map(|a| a.log2_size);
+                    let target = size.map(Self::atom_frame_log2mag);
+                    let (residual, moved) = match target {
+                        Some(t) => {
+                            let prec =
+                                fractadyne_core::precision_for_octaves(t.max(0.0) as u64) + 64;
+                            match fractadyne_core::refine_nucleus(&n.cx, &n.cy, n.period, 0, prec) {
+                                Some((rx, ry)) => (
+                                    fractadyne_core::nucleus_residual_log2(
+                                        &rx, &ry, n.period, 0, prec,
+                                    ),
+                                    (fractadyne_core::sub_f64(&rx, &n.cx, prec).powi(2)
+                                        + fractadyne_core::sub_f64(&ry, &n.cy, prec).powi(2))
+                                    .sqrt(),
+                                ),
+                                None => (None, f64::NAN),
+                            }
+                        }
+                        None => (None, f64::NAN),
+                    };
+                    let sz = size.unwrap_or(f64::NAN);
+                    // The center must be accurate far below the atom's own width (else the jump
+                    // lands on empty space), and refinement must not wander off the atom.
+                    let pass = n.period == 998
+                        && (sz + 50.5).abs() < 0.5
+                        && residual.is_some_and(|r| r < sz - 100.0)
+                        && moved < sz.exp2() * 1.0e-3;
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "NR-zoom",
+                        name: "deep minibrot: size, framing, center accuracy".into(),
+                        params: format!("seahorse 1e6× → period {}", n.period),
+                        result: format!(
+                            "size 2^{sz:.3}, frame 2^{:.3}, center err 2^{:.0}, moved {moved:.1e}",
+                            target.unwrap_or(f64::NAN),
+                            residual.unwrap_or(f64::NAN)
+                        ),
+                        threshold: "period 998, size 2^-50.5, err < size/2^100",
+                        pass,
+                    });
+                }
+                None => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "NR-zoom",
+                    name: "deep minibrot: size, framing, center accuracy".into(),
+                    params: "seahorse 1e6×".into(),
+                    result: "no nucleus found".into(),
+                    threshold: "period 998",
+                    pass: false,
+                }),
+            }
+        }
+
         // ---- coordinate entry: exact rationals and complex values ----
         // The Go-to dialog's parser. Several mathematically significant landmarks are exactly
         // rational and NOT representable as terminating decimals, so accepting `p/q` is what

@@ -1133,6 +1133,175 @@ pub fn find_nucleus(
     Some(Nucleus { period, cx, cy })
 }
 
+/// The linear scale and orientation of the minibrot ("atom") at a nucleus.
+pub struct AtomSize {
+    /// `log₂` of the atom's linear size — approximately the WIDTH of the embedded copy in the
+    /// complex plane. Held as a log because a deep minibrot's size (`~2^-3322` at 1e1000×, and
+    /// far smaller past that) has no `f64` representation at all.
+    pub log2_size: f64,
+    /// Orientation of the embedded copy in radians: the argument of the complex size estimate.
+    /// `0` means the copy sits the same way up as the whole set; `±π` means inverted.
+    pub orientation: f64,
+}
+
+/// Complex reciprocal `1/(x+iy)`; `None` on a zero (or non-finite) argument.
+fn cinv_bf(x: &BigFloat, y: &BigFloat, p: usize) -> Option<(BigFloat, BigFloat)> {
+    let d = x.mul(x, p, RM).add(&y.mul(y, p, RM), p, RM);
+    if d.is_zero() || d.is_nan() || d.is_inf() {
+        return None;
+    }
+    Some((x.div(&d, p, RM), neg_bf(y, p).div(&d, p, RM)))
+}
+
+/// Size and orientation of the minibrot whose nucleus is `c` and whose period is `period`
+/// (Munafo's size estimate).
+///
+/// Iterating the critical orbit and accumulating `Λ = ∏ 2·z_i` and `B = 1 + Σ 1/Λ_i` gives
+/// `size = 1/(B·Λ²)` — a complex quantity whose magnitude is the copy's linear scale and whose
+/// argument is its orientation. Two exact anchors fix the convention: the whole set (period 1)
+/// returns 1, matching the main cardioid's width from −0.75 to 0.25; and the period-2 disk
+/// returns 0.5, matching its span from −1.25 to −0.75.
+///
+/// **Quadratic only.** The estimate is derived from `z² + c`; the Multibrot families need a
+/// different derivative recurrence, so they return `None` rather than a plausible wrong number.
+/// Cost is one `period`-step arbitrary-precision pass — the same order as the Newton solve that
+/// produced the nucleus.
+pub fn nucleus_size(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    period: u32,
+    formula: u32,
+    p: usize,
+) -> Option<AtomSize> {
+    if formula != formula::MANDELBROT || period == 0 {
+        return None;
+    }
+    let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+    let (mut lx, mut ly) = (bf(1.0, p), bf(0.0, p)); // Λ — running derivative product
+    let (mut bx, mut by) = (bf(1.0, p), bf(0.0, p)); // B — running 1 + Σ 1/Λ
+    for _ in 1..period {
+        let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
+        zx = nx;
+        zy = ny;
+        let (mx, my) = cmul_bf(&zx, &zy, &lx, &ly, p);
+        lx = mx.add(&mx, p, RM); // Λ ← 2·z·Λ
+        ly = my.add(&my, p, RM);
+        let (ix, iy) = cinv_bf(&lx, &ly, p)?;
+        bx = bx.add(&ix, p, RM);
+        by = by.add(&iy, p, RM);
+    }
+    // size = 1/(B·Λ²) — taken as a log so the deep case can't underflow.
+    let (l2x, l2y) = cmul_bf(&lx, &ly, &lx, &ly, p);
+    let (dx, dy) = cmul_bf(&bx, &by, &l2x, &l2y, p);
+    let denom2 = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
+    if denom2.is_zero() || denom2.is_nan() || denom2.is_inf() {
+        return None;
+    }
+    let log2_size = -0.5 * log2_abs(&denom2);
+    if !log2_size.is_finite() {
+        return None;
+    }
+    Some(AtomSize { log2_size, orientation: -arg_bf(&dx, &dy, p) })
+}
+
+/// Re-solve a **known** nucleus to `p` bits, Newton-iterating from an already-close seed.
+///
+/// [`find_nucleus`] stops once the Newton step falls below a tolerance derived from the *current
+/// view span*, so its answer is only as accurate as the view that asked for it — about 1e-12 at
+/// a 1e3× view. That is useless for a zoom onto the minibrot itself, whose own span may be 1e-45
+/// or 1e-1000: the center would be wrong by many view widths. This continues the same Newton
+/// solve at the working precision the destination needs, which costs only a handful of steps
+/// because Newton doubles the correct digits each time.
+///
+/// Convergence is measured with [`log2_abs`], not `to_f64`, so the step magnitude stays
+/// meaningful once it drops below `f64`'s smallest normal.
+pub fn refine_nucleus(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    period: u32,
+    formula: u32,
+    p: usize,
+) -> Option<(BigFloat, BigFloat)> {
+    let k = formula_power(formula)?;
+    if period == 0 {
+        return None;
+    }
+    let mut cx = cx.clone();
+    let mut cy = cy.clone();
+    let mut prev_l2 = f64::INFINITY;
+    for _ in 0..32 {
+        let (stepx, stepy) = nucleus_newton_step(&cx, &cy, period, formula, p)?;
+        cx = cx.sub(&stepx, p, RM);
+        cy = cy.sub(&stepy, p, RM);
+        // |step| as a log — the whole point of this routine is steps far below f64's range.
+        let step_l2 =
+            0.5 * log2_abs(&stepx.mul(&stepx, p, RM).add(&stepy.mul(&stepy, p, RM), p, RM));
+        if step_l2 < -(p as f64) + 8.0 {
+            break; // converged to the working precision
+        }
+        if step_l2 >= prev_l2 {
+            break; // stalled (or diverging) — take what we have rather than churn
+        }
+        prev_l2 = step_l2;
+    }
+    Some((cx, cy))
+}
+
+/// One Newton step of the nucleus equation `Z_period(c) = 0`: returns `Z_period / (dZ_period/dc)`,
+/// the correction to subtract from `c`.
+fn nucleus_newton_step(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    period: u32,
+    formula: u32,
+    p: usize,
+) -> Option<(BigFloat, BigFloat)> {
+    let k = formula_power(formula)?;
+    let one = bf(1.0, p);
+    let kf = bf(k as f64, p);
+    let mut zx = bf(0.0, p);
+    let mut zy = bf(0.0, p);
+    let mut dx = bf(0.0, p);
+    let mut dy = bf(0.0, p);
+    for _ in 0..period {
+        // D_{n+1} = k·Z_n^{k-1}·D_n + 1 ;  Z_{n+1} = Z_n^k + c
+        let (zk1x, zk1y) =
+            if k == 2 { (zx.clone(), zy.clone()) } else { cpow_bf(&zx, &zy, k - 1, p) };
+        let (mzx, mzy) = cmul_bf(&zk1x, &zk1y, &dx, &dy, p);
+        let ndx = mzx.mul(&kf, p, RM).add(&one, p, RM);
+        let ndy = mzy.mul(&kf, p, RM);
+        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
+        zx = nzx;
+        zy = nzy;
+        dx = ndx;
+        dy = ndy;
+    }
+    let denom = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
+    if denom.is_zero() || denom.is_nan() || denom.is_inf() {
+        return None;
+    }
+    let (numx, numy) = cmul_bf(&zx, &zy, &dx, &neg_bf(&dy, p), p);
+    Some((numx.div(&denom, p, RM), numy.div(&denom, p, RM)))
+}
+
+/// `log₂` of how far a claimed nucleus sits from the true one: the magnitude of the residual
+/// Newton step `Z_period / (dZ_period/dc)`, which to first order *is* the center error.
+///
+/// This is the check a Newton-Raphson zoom rests on. The destination view spans roughly the
+/// atom's own size, so the center must be accurate to far better than that or the jump lands on
+/// empty space. Comparing this against [`AtomSize::log2_size`] is a self-validating test — it
+/// needs no reference coordinate, just the defining property of a nucleus. `-∞` = exact.
+pub fn nucleus_residual_log2(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    period: u32,
+    formula: u32,
+    p: usize,
+) -> Option<f64> {
+    let (sx, sy) = nucleus_newton_step(cx, cy, period, formula, p)?;
+    Some(0.5 * log2_abs(&sx.mul(&sx, p, RM).add(&sy.mul(&sy, p, RM), p, RM)))
+}
+
 /// The exact center of a Misiurewicz (pre-periodic) point found near a view center.
 pub struct Misiurewicz {
     pub preperiod: u32,

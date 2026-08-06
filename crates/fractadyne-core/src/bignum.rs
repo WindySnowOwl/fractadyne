@@ -61,6 +61,49 @@ pub fn to_decimal_string(bf: &BigFloat) -> String {
     bf.to_string()
 }
 
+/// `log₂|v|`, valid across the whole `BigFloat` exponent range — where [`to_f64`] would
+/// saturate to `0` or `∞`. `-∞` for zero.
+///
+/// astro-float stores `v = mantissa · 2^exponent` with the mantissa normalized to `[0.5, 1)`,
+/// so the most-significant word alone fixes the fractional part of the log to well past `f64`
+/// resolution. Needed wherever a quantity is astronomically large or small by construction —
+/// the minibrot size estimate, whose value at depth is ~`2^-3322` and beyond.
+pub fn log2_abs(v: &BigFloat) -> f64 {
+    let (Some(e), Some(d)) = (v.exponent(), v.mantissa_digits()) else {
+        return f64::NEG_INFINITY;
+    };
+    let Some(&msw) = d.last() else {
+        return f64::NEG_INFINITY;
+    };
+    if msw == 0 {
+        return f64::NEG_INFINITY;
+    }
+    let word_bits = (core::mem::size_of_val(&msw) * 8) as i32;
+    e as f64 + ((msw as f64) / 2f64.powi(word_bits)).log2()
+}
+
+/// `arg(x + iy)` in radians, across the whole exponent range. Uses the ratio `y/x` (safe at any
+/// scale — `BigFloat` division can't overflow the way squaring the components could), then fixes
+/// the quadrant from the signs.
+pub fn arg_bf(x: &BigFloat, y: &BigFloat, p: usize) -> f64 {
+    use core::f64::consts::{FRAC_PI_2, PI};
+    let y_neg = matches!(y.sign(), Some(Sign::Neg));
+    if x.is_zero() {
+        return if y_neg { -FRAC_PI_2 } else { FRAC_PI_2 };
+    }
+    // |y/x| may overflow f64 → atan(±∞) = ±π/2, which is the right answer anyway.
+    let t = to_f64(&y.div(x, p, RM)).atan();
+    if matches!(x.sign(), Some(Sign::Neg)) {
+        if y_neg {
+            t - PI
+        } else {
+            t + PI
+        }
+    } else {
+        t
+    }
+}
+
 /// Parse a decimal string back to a `BigFloat` (round-trips `to_decimal_string`), or an exact
 /// rational expression like `-3/4`. Rejects non-finite results (NaN / ±∞) so a malformed or
 /// out-of-range coordinate can't slip through — callers treat `None` as "invalid input".

@@ -134,8 +134,9 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     help_p(
         ui,
         "Minibrots are tiny copies of the whole set hidden along the boundary. Center one roughly \
-         and press M (or Locations → \"Find minibrot center\") to Newton-snap exactly onto its center \
-         and read its period.",
+         and press M (or Locations → \"Find minibrot center\") to Newton-snap exactly onto its center, \
+         read its period, and zoom straight to its own scale — often many orders of magnitude in \
+         one step. If you are already deeper than the minibrot, only the center moves.",
     );
     help_p(
         ui,
@@ -490,7 +491,7 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
     help_kv(ui, "Space / Shift+Space", "Continuous zoom in / out");
     help_kv(ui, "Backspace", "Undo view");
     help_kv(ui, "Shift+Backspace / Ctrl+Y", "Redo view");
-    help_kv(ui, "M", "Find minibrot center");
+    help_kv(ui, "M", "Find minibrot + zoom to it (Newton-Raphson)");
     help_kv(ui, "A", "Auto-zoom autopilot (dive toward detail; any input stops)");
     help_kv(ui, "Esc", "Stop autopilot / a playing tour, or exit fullscreen");
     help_kv(ui, "Ctrl+S", "Quick export to the last folder");

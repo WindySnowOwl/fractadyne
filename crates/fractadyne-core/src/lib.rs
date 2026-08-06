@@ -1119,6 +1119,108 @@ mod tests {
         }
     }
 
+    // ---- Minibrot atom size (Munafo size estimate) ----
+
+    /// Two exact anchors pin the convention, and a third case pins the general recurrence.
+    /// The estimate returns the embedded copy's WIDTH, so:
+    ///   period 1 (the whole set)   → 1.0   — the main cardioid spans −0.75 … 0.25
+    ///   period 2 (the disk at −1)  → 0.5   — that disk spans −1.25 … −0.75
+    ///   period 4 (real axis)       → ≈0.118 — the component spans ≈ −1.3681 … −1.25
+    #[test]
+    fn nucleus_size_known_components() {
+        let p = 256;
+        let at = |cx: f64, cy: f64, period: u32| {
+            nucleus_size(&bf(cx, p), &bf(cy, p), period, 0, p)
+                .unwrap_or_else(|| panic!("no size for period {period}"))
+        };
+        // Whole set: nucleus c = 0, period 1 → size exactly 1 (log2 = 0).
+        let a = at(0.0, 0.0, 1);
+        assert!(a.log2_size.abs() < 1e-12, "period-1 size 2^{}", a.log2_size);
+        // Period-2 disk: nucleus c = −1 → size exactly 1/2 (log2 = −1).
+        let b = at(-1.0, 0.0, 2);
+        assert!((b.log2_size + 1.0).abs() < 1e-12, "period-2 size 2^{}", b.log2_size);
+        // Period-4 nucleus on the real axis: width of its component ≈ 0.1181.
+        let c = at(-1.3107026413368326, 0.0, 4);
+        let w = c.log2_size.exp2();
+        assert!((w - 0.1181).abs() < 2.0e-3, "period-4 size {w}");
+        // Non-quadratic families must decline rather than return a wrong number.
+        assert!(nucleus_size(&bf(0.0, p), &bf(0.0, p), 1, 1, p).is_none());
+        assert!(nucleus_size(&bf(0.0, p), &bf(0.0, p), 0, 0, p).is_none());
+    }
+
+    /// The size estimate must stay meaningful where `f64` has no representation for it: run it
+    /// on a genuinely deep nucleus and check it lands in the depth band the view sits at, and
+    /// that the value is stable under a precision increase (the codebase's oracle-free idiom).
+    #[test]
+    fn nucleus_size_deep_and_precision_stable() {
+        // A period-3 minibrot found from a modest view — small enough to check by hand.
+        let p = 256;
+        let n = find_nucleus(&[bf(-1.7548, p), bf(0.0, p)], 1.0e3, 0, 100)
+            .expect("period-3 minibrot");
+        assert_eq!(n.period, 3);
+        let lo = nucleus_size(&n.cx, &n.cy, n.period, 0, 128).unwrap();
+        let hi = nucleus_size(&n.cx, &n.cy, n.period, 0, 512).unwrap();
+        assert!(
+            (lo.log2_size - hi.log2_size).abs() < 1e-9,
+            "size unstable under precision doubling: {} vs {}",
+            lo.log2_size,
+            hi.log2_size
+        );
+        // The airplane minibrot is ~1e-3 across; assert the order of magnitude, not a fit.
+        let w = lo.log2_size.exp2();
+        assert!(w > 1.0e-5 && w < 1.0e-1, "airplane minibrot width {w}");
+        // Orientation is a finite angle.
+        assert!(lo.orientation.is_finite() && lo.orientation.abs() <= std::f64::consts::PI);
+    }
+
+    /// The property a Newton-Raphson zoom actually rests on: after refinement, the center error
+    /// must be far smaller than the atom it is about to frame, or the jump lands on empty space.
+    ///
+    /// Self-validating — it compares the residual Newton step (which to first order *is* the
+    /// center error) against the atom's own size, needing no reference coordinate. It also proves
+    /// the refinement is doing something: the center `find_nucleus` returns for a 1e3× view is
+    /// deliberately only view-accurate, and must NOT already pass at 512-bit tolerance.
+    #[test]
+    fn refine_nucleus_beats_atom_size() {
+        let seed_p = 256;
+        let n = find_nucleus(&[bf(-1.7548, seed_p), bf(0.0, seed_p)], 1.0e3, 0, 100)
+            .expect("period-3 minibrot");
+        let size = nucleus_size(&n.cx, &n.cy, n.period, 0, seed_p).unwrap().log2_size;
+
+        let deep = 1024;
+        let before = nucleus_residual_log2(&n.cx, &n.cy, n.period, 0, deep).unwrap();
+        let (rx, ry) = refine_nucleus(&n.cx, &n.cy, n.period, 0, deep).expect("refine failed");
+        let after = nucleus_residual_log2(&rx, &ry, n.period, 0, deep).unwrap();
+
+        assert!(after < before - 100.0, "refinement gained too little: {before} → {after}");
+        assert!(
+            after < size - 200.0,
+            "center error 2^{after} is not far below the atom size 2^{size}"
+        );
+        // The refined center must still BE the same nucleus, not a neighbouring one.
+        let moved = (sub_f64(&rx, &n.cx, deep).powi(2) + sub_f64(&ry, &n.cy, deep).powi(2)).sqrt();
+        assert!(moved < size.exp2() * 1e-3, "refinement moved off the atom: {moved}");
+    }
+
+    /// `log2_abs` must stay exact where `to_f64` saturates — the property the deep size estimate
+    /// depends on.
+    #[test]
+    fn log2_abs_beyond_f64_range() {
+        let p = 128;
+        assert!((log2_abs(&bf(1.0, p)) - 0.0).abs() < 1e-12);
+        assert!((log2_abs(&bf(0.5, p)) + 1.0).abs() < 1e-12);
+        assert!((log2_abs(&bf(-8.0, p)) - 3.0).abs() < 1e-12);
+        // 2^5000 — far past f64's ~1.8e308 ceiling, where to_f64 gives +inf.
+        let mut v = bf(1.0, p);
+        let two = bf(2.0, p);
+        for _ in 0..5000 {
+            v = v.mul(&two, p, astro_float::RoundingMode::None);
+        }
+        assert!(to_f64(&v).is_infinite(), "expected f64 overflow for 2^5000");
+        assert!((log2_abs(&v) - 5000.0).abs() < 1e-9, "log2_abs(2^5000) = {}", log2_abs(&v));
+        assert_eq!(log2_abs(&bf(0.0, p)), f64::NEG_INFINITY);
+    }
+
     // ---- Exact rational / complex coordinate entry ----
 
     /// `p/q` must be evaluated as a division, not truncated at the slash, and dyadic rationals

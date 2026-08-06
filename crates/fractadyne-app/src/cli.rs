@@ -195,12 +195,45 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
             ]);
         let mag = val("--zoom").and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
         match fractadyne_core::find_nucleus(&center, mag, formula, 100_000) {
-            Some(n) => println!(
-                "period {}\ncenter_x {}\ncenter_y {}",
-                n.period,
-                fractadyne_core::to_decimal_string(&n.cx),
-                fractadyne_core::to_decimal_string(&n.cy),
-            ),
+            Some(n) => {
+                println!(
+                    "period {}\ncenter_x {}\ncenter_y {}",
+                    n.period,
+                    fractadyne_core::to_decimal_string(&n.cx),
+                    fractadyne_core::to_decimal_string(&n.cy),
+                );
+                // Atom size / orientation and the depth a Newton-Raphson zoom would frame it at
+                // — the same numbers the in-app "Find minibrot center" jump uses.
+                let prec = fractadyne_core::precision_for_magnification(mag);
+                if let Some(a) =
+                    fractadyne_core::nucleus_size(&n.cx, &n.cy, n.period, formula, prec)
+                {
+                    let zoom_l2 = crate::FractadyneApp::atom_frame_log2mag(a.log2_size);
+                    println!(
+                        "size_log2 {:.6}\nsize {:.6e}\norientation_deg {:.3}\nzoom_log2 {:.6}",
+                        a.log2_size,
+                        a.log2_size.exp2(),
+                        a.orientation.to_degrees(),
+                        zoom_l2,
+                    );
+                    // The center re-solved at the destination's precision — what the in-app jump
+                    // actually navigates to. `find_nucleus` alone is only view-accurate.
+                    let deep = fractadyne_core::precision_for_octaves(zoom_l2.max(0.0) as u64) + 64;
+                    if let Some((rx, ry)) =
+                        fractadyne_core::refine_nucleus(&n.cx, &n.cy, n.period, formula, deep)
+                    {
+                        let res =
+                            fractadyne_core::nucleus_residual_log2(&rx, &ry, n.period, formula, deep)
+                                .unwrap_or(f64::NAN);
+                        println!(
+                            "refined_x {}\nrefined_y {}\nresidual_log2 {:.1}",
+                            fractadyne_core::to_decimal_string(&rx),
+                            fractadyne_core::to_decimal_string(&ry),
+                            res,
+                        );
+                    }
+                }
+            }
             None => println!("no minibrot center found"),
         }
         return true;
