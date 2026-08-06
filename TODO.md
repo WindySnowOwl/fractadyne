@@ -1055,6 +1055,19 @@ descent and the Tan Lei self-checking test).
   their stated (k,p).
 - [ ] **KF `.map` palette import** (P1, §2.6 gap) — see the peer-renderer section above; plain
   256-entry RGB text. Verification: parser tests + a golden render through an imported palette.
+- [ ] **Grand-tour script: landmarks + pathological locations** — one tour that visits the known
+  points of interest AND the locations that have historically broken us, serving as both the demo
+  reel and a regression test. Candidates from this repo's own scar tissue: the Misiurewicz spar
+  fields where the iteration cap starves and the view goes flat/black (the 1.7e55× / 5.17e55× /
+  3.3e61× three-spar family — three separate bugs so far, beta.19/22/26), the e1216 dive the
+  pacer/lookahead work targeted,
+  the corpus-14/15 glitch-and-aliasing locations, the deep interior minibrots whose cores cost
+  ~50× (the glitch-correct pathology), and the extreme-zoom tip at e21000. Wanted: a `--render-tour`
+  pass that must complete without a black/flat frame, so "it went black at depth" becomes a
+  failing check rather than a user report. Pairs naturally with the landmark-library expansion and
+  with `--divetest` (which already plays real windows at every 100 decades but judges *timing*,
+  not image content). Verification: per-keyframe frame statistics — escaped-pixel fraction and
+  capped fraction — asserted against thresholds, so starvation and flatness both trip it.
 
 ### Rendering data architecture
 

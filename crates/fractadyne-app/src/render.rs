@@ -1664,9 +1664,14 @@ impl FractadyneApp {
         // full appetite escapes every one. The GPU's MAXITER event counter (read back per settled
         // full-frame iterate) drives a probe: raise the cap multiplier while raising measurably
         // reduces the capped fraction; a raise that doesn't help means TRUE interior in view (a
-        // minibrot) → revert it and stop (`iter_plateau`), so interior views never pay a runaway
-        // budget. Motion frames keep the unboosted cap — their content is transient and the real
-        // refresh cost must stay within the motion budget (dive smoothness is untouched).
+        // minibrot) → revert and stop (`iter_plateau`), so interior views never pay a runaway
+        // budget.
+        //
+        // "Doesn't help" needs EVIDENCE, not one flat step. Measured at the 3.3e61× three-spar:
+        // the capped fraction is exactly 100% at ×1.0, ×1.6 AND ×2.6, then collapses to 12% at
+        // ×4.1 and 0.6% at ×6.6. Latching on the first flat step reverted to boost 1.0 and left
+        // the view permanently BLACK — every pixel capped, painted as interior. So the probe must
+        // see `crate::ITER_STALL_LIMIT` flat steps in a row before concluding there is nothing to find.
         {
             use std::sync::atomic::Ordering::SeqCst;
             let vb = (view_id as usize).min(1);
@@ -1679,6 +1684,7 @@ impl FractadyneApp {
             if interacting {
                 self.perf.iter_probe[vb] = None;
                 self.perf.iter_plateau[vb] = false;
+                self.perf.iter_stall[vb] = 0;
             }
             let v = self.perf.maxiter_sink[vb].swap(u64::MAX, SeqCst);
             // The reading is `(frac_f32_bits << 32) | armed_max_iter`. Only adapt on readings
@@ -1736,28 +1742,55 @@ impl FractadyneApp {
                 if frac.is_finite() && frac > 0.0005 {
                     let unhelpful = self.perf.iter_probe[vb]
                         .is_some_and(|(pb, pf)| boost > pb && frac > pf * 0.8);
-                    if unhelpful {
-                        let (pb, _) = self.perf.iter_probe[vb].unwrap();
+                    // Step size scales with how far from resolved we are. A nearly all-capped
+                    // frame is a flat/black screen and may need several times the budget, so
+                    // walking up in 1.6× steps spends many settle cycles showing the user
+                    // nothing; once mostly resolved, fine steps avoid overshooting the cost.
+                    let step = if frac > 0.9 { 2.5 } else { 1.6 };
+                    if unhelpful && self.perf.iter_stall[vb] + 1 >= crate::ITER_STALL_LIMIT {
+                        // Several raises in a row bought nothing — genuinely interior. Revert to
+                        // where the fruitless run began, not just the last step.
+                        let back = self.perf.iter_stall_base[vb];
                         self.perf.iter_plateau[vb] = true;
-                        self.perf.iter_boost[vb] = pb; // revert the raise that bought nothing
+                        self.perf.iter_boost[vb] = back;
                         crate::diag::trace(
                             "gpu",
-                            format!("adaptive iter: plateau (interior) — boost back to {pb:.1}"),
+                            format!("adaptive iter: plateau (interior) — boost back to {back:.1}"),
                         );
                     } else {
+                        if unhelpful {
+                            if self.perf.iter_stall[vb] == 0 {
+                                // Remember where to fall back to if this run stays fruitless.
+                                self.perf.iter_stall_base[vb] =
+                                    self.perf.iter_probe[vb].map_or(boost, |(pb, _)| pb);
+                            }
+                            self.perf.iter_stall[vb] += 1;
+                        } else {
+                            self.perf.iter_stall[vb] = 0;
+                        }
                         self.perf.iter_probe[vb] = Some((boost, frac));
-                        self.perf.iter_boost[vb] = (boost * 1.6).min(16.0);
+                        self.perf.iter_boost[vb] = (boost * step).min(16.0);
                         crate::diag::trace(
                             "gpu",
                             format!(
-                                "adaptive iter: {:.1}% capped — boost {boost:.1}→{:.1}",
+                                "adaptive iter: {:.1}% capped — boost {boost:.1}→{:.1}{}",
                                 frac * 100.0,
-                                self.perf.iter_boost[vb]
+                                self.perf.iter_boost[vb],
+                                if unhelpful {
+                                    format!(
+                                        " (flat {}/{})",
+                                        self.perf.iter_stall[vb],
+                                        crate::ITER_STALL_LIMIT
+                                    )
+                                } else {
+                                    String::new()
+                                }
                             ),
                         );
                     }
                 } else if frac.is_finite() {
                     self.perf.iter_probe[vb] = Some((boost, frac));
+                    self.perf.iter_stall[vb] = 0;
                 }
             }
         }

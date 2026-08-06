@@ -179,9 +179,17 @@ struct Perf {
     iter_boost: [f64; 2],
     /// Last `(boost, capped fraction)` measurement — the probe's "did the raise help?" baseline.
     iter_probe: [Option<(f64, f64)>; 2],
-    /// True once a raise failed to reduce the capped fraction (true interior in view — e.g. a
-    /// minibrot): stop probing, revert the useless raise. Cleared with the view.
+    /// True once raising has been shown not to help (true interior in view — e.g. inside a
+    /// minibrot): stop probing, revert to where the fruitless run began. Cleared with the view.
     iter_plateau: [bool; 2],
+    /// Consecutive raises that bought nothing, and the boost the run started from.
+    ///
+    /// A single unhelpful raise does NOT mean "interior". Measured at the 3.3e61× three-spar: the
+    /// capped fraction sits at exactly 100% through ×1.6 AND ×2.6, then collapses to 12% at ×4.1.
+    /// Latching after one flat step reverted straight back to a black screen, so the probe now
+    /// has to see several flat steps in a row before concluding there is nothing to find.
+    iter_stall: [u8; 2],
+    iter_stall_base: [f64; 2],
     /// Escape-range sink per view (GPU → app: packed `(min_bits << 32) | max_bits` f32 bits of the
     /// frame's escaped smooth-iter range; drained with `swap(u64::MAX)`).
     norm_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
@@ -237,6 +245,8 @@ impl Default for Perf {
             iter_boost: [1.0, 1.0],
             iter_probe: [None, None],
             iter_plateau: [false, false],
+            iter_stall: [0, 0],
+            iter_stall_base: [1.0, 1.0],
             norm_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
@@ -760,6 +770,13 @@ pub(crate) const LIVE_REF_CAP: u32 = 256_000;
 /// (`paced_zoom_vel`) so both degrade the same way: the image stays sharp, the dive slows.
 pub(crate) const PACE_LAG_LO: f64 = 1.5;
 pub(crate) const PACE_LAG_HI: f64 = 2.8;
+
+/// Consecutive fruitless raises the adaptive iteration probe must see before it concludes the
+/// view is genuinely interior and stops (see `build_params`). Three, because the measured worst
+/// case — the 3.3e61× three-spar — stays at 100% capped through two raises before resolving on
+/// the third. Too low and a starved view latches to a black screen; too high and a true interior
+/// pays a few extra settle frames before reverting.
+pub(crate) const ITER_STALL_LIMIT: u8 = 3;
 
 // Self-test helpers + run_selftest moved to selftest.rs.
 
@@ -2762,6 +2779,8 @@ impl FractadyneApp {
         self.perf.iter_boost = [1.0, 1.0];
         self.perf.iter_probe = [None, None];
         self.perf.iter_plateau = [false, false];
+        self.perf.iter_stall = [0, 0];
+        self.perf.iter_stall_base = [1.0, 1.0];
         self.perf.norm_range = [None, None];
     }
 

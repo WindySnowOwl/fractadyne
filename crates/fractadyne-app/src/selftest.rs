@@ -208,8 +208,8 @@ impl FractadyneApp {
         let filter: Option<String> = self.selftest_filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "nr-zoom", "coords", "metadata", "display", "catalog",
-            "goldens", "bench-matrix",
+            "consistency", "counters", "iter-budget", "nr-zoom", "coords", "metadata", "display",
+            "catalog", "goldens", "bench-matrix",
         ];
         if self.selftest_list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -1862,6 +1862,66 @@ impl FractadyneApp {
         }
 
         // ---- view-state format: versioning + untrusted-input hardening ----
+        // ---- adaptive iteration budget: reach at a known-starved location ----
+        // The 3.3e61× Misiurewicz three-spar renders ENTIRELY interior at the depth-scaled cap —
+        // a black screen — and needs several times that budget before any pixel escapes. This
+        // pins the two facts the live probe depends on: the base cap really is starved here (so
+        // the check can't silently pass on an easy view), and the budget the probe can reach in
+        // `ITER_STALL_LIMIT` raises really does resolve it. Lower the limit or the step and this
+        // fails, which is the point: the controller reverted too early and the view went black.
+        if want("iter-budget") {
+            const SPAR_X: &str = "-1.0109636384562213181006238475735192993836101418531854095957676149333034794266e-1";
+            const SPAR_Y: &str = "9.5628651080914147131604703998237075557983304380930462483482733394361292090816e-1";
+            const SPAR_MAG: f64 = 3.2950838546818387e61;
+            let log2mag = SPAR_MAG.log2();
+            let base = crate::zoom_iter_cap(log2mag).max(256);
+            // Where the probe can climb to within its stall allowance (step 2.5 while >90% capped).
+            let mut boost = 1.0f64;
+            for _ in 0..crate::ITER_STALL_LIMIT {
+                boost = (boost * 2.5).min(16.0);
+            }
+            let reach = (((base as f64) * boost) as u32).min(500_000);
+            // Fraction of pixels with no escape value: the shader's interior/capped sentinel.
+            let flat = |px: &[f32]| -> f64 {
+                let n = px.len() / 4;
+                if n == 0 {
+                    return 1.0;
+                }
+                px.chunks_exact(4).filter(|c| c[0] < 0.0).count() as f64 / n as f64
+            };
+            // The budget has to be set BEFORE the request is built: the reference orbit is sized
+            // with it, so raising `req.max_iter` afterwards leaves the orbit short and the render
+            // starved for a completely different reason than the one under test.
+            let (saved_iter, saved_auto) =
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter);
+            self.render_cfg.auto_iter = false;
+            let mut at_budget = |app: &mut Self, iter: u32| -> Option<f64> {
+                app.render_cfg.max_iter = iter;
+                let mut req = make(app, SPAR_X, SPAR_Y, SPAR_MAG);
+                req.width = 96;
+                req.height = 96;
+                req.ss = 1;
+                render(&req).map(|p| flat(&p))
+            };
+            let starved = at_budget(self, base);
+            let resolved = at_budget(self, reach);
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            let pass = starved.is_some_and(|s| s > 0.99) && resolved.is_some_and(|r| r < 0.10);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Iter-budget",
+                name: "probe reach resolves a starved spar".into(),
+                params: format!("3.3e61× three-spar, cap {base} → reach {reach}"),
+                result: format!(
+                    "flat {:.1}% at cap → {:.1}% at reach",
+                    starved.unwrap_or(f64::NAN) * 100.0,
+                    resolved.unwrap_or(f64::NAN) * 100.0
+                ),
+                threshold: ">99% flat at cap, <10% at reach",
+                pass,
+            });
+        }
+
         // ---- Newton-Raphson zoom: atom size, framing depth, center refinement ----
         // Each check is self-validating: the size estimate is pinned by components whose width is
         // known exactly, and the center accuracy is measured against the atom it must land inside
