@@ -182,6 +182,11 @@ struct Perf {
     /// True once a raise failed to reduce the capped fraction (true interior in view — e.g. a
     /// minibrot): stop probing, revert the useless raise. Cleared with the view.
     iter_plateau: [bool; 2],
+    /// Escape-range sink per view (GPU → app: packed `(min_bits << 32) | max_bits` f32 bits of the
+    /// frame's escaped smooth-iter range; drained with `swap(u64::MAX)`).
+    norm_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
+    norm_range: [Option<(f32, f32)>; 2],
     /// Adaptive deep-motion resolution scale (AIMD), driven by `frame_ms` in `build_params`. The
     /// WORK_BUDGET `res_scale` sizes moving frames from the *no-BLA-skip* cost and over-shrinks them
     /// where the BLA skips; this measured scale grows toward native while frames stay near vsync and
@@ -232,6 +237,11 @@ impl Default for Perf {
             iter_boost: [1.0, 1.0],
             iter_probe: [None, None],
             iter_plateau: [false, false],
+            norm_sink: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            ],
+            norm_range: [None, None],
             motion_res: 0.6,
         }
     }
@@ -1604,6 +1614,12 @@ struct ColoringConfig {
     /// escape field into speckle; normalize maps the range to `cycle`-many palette sweeps. Export
     /// path only (transient; not persisted). See `render_export_normalized`.
     normalize: bool,
+    /// LIVE auto-normalization: when a settled deep frame's escaped smooth-iter RANGE (read back
+    /// from the GPU escape-range counters) is huge, remap the palette so the range spans
+    /// `0.5 + cycle·6` sweeps — the live analogue of `--normalize`, killing the "noise pools"
+    /// a fixed cycle makes of dense 1e5-scale escape fields. Only active for the Smooth method
+    /// and only past a range threshold, so ordinary views keep classic coloring. Persisted.
+    normalize_live: bool,
 }
 
 /// Time-varying visual overlays advanced per-frame: the orbit racing-dot (enable / normalize /
@@ -2345,6 +2361,7 @@ impl FractadyneApp {
                 stripe_freq: s.stripe_freq,
                 trap_type: TrapType::from_key(&s.trap_type),
                 normalize: args.iter().any(|a| a == "--normalize"),
+                normalize_live: s.normalize_live,
             },
             perf: Perf {
                 // Default on; `--no-perf` disables, `--perf` forces on.
@@ -2593,6 +2610,7 @@ impl FractadyneApp {
             palette_idx: self.coloring.palette_idx,
             cycle: self.coloring.cycle,
             offset: self.coloring.offset,
+            normalize_live: self.coloring.normalize_live,
             zoom_rate: self.render_cfg.zoom_rate,
             click_zoom: self.click_zoom,
             click_zoom_factor: self.render_cfg.click_zoom_factor,
@@ -2744,6 +2762,7 @@ impl FractadyneApp {
         self.perf.iter_boost = [1.0, 1.0];
         self.perf.iter_probe = [None, None];
         self.perf.iter_plateau = [false, false];
+        self.perf.norm_range = [None, None];
     }
 
     /// Request the next animation frame. Frame pacing (the cap) is enforced at the end

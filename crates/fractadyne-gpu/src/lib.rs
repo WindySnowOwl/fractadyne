@@ -256,12 +256,15 @@ impl CounterRead {
     }
 
     /// Advance the readback; publishes the last completed full-frame iterate's MAXITER FRACTION
-    /// (capped pixels / iterated pixels, as `f64::to_bits`) into `out`. The app drains with
-    /// `swap(u64::MAX)`; `u64::MAX` = no fresh reading (never a finite f64's bits).
+    /// (capped pixels / iterated pixels, as `f64::to_bits`) into `out`, and the frame's escaped
+    /// smooth-iteration RANGE into `norm_out` as `(min_bits << 32) | max_bits` (f32 bit patterns;
+    /// `min_bits == 0xFFFFFFFF` = no escaped pixels). The app drains both with `swap(u64::MAX)`;
+    /// `u64::MAX` = no fresh reading.
     fn pump(
         &mut self,
         device: &wgpu::Device,
         out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        norm_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -285,6 +288,11 @@ impl CounterRead {
                         if let Some(o) = out {
                             let frac = slots[CTR_MAXITER] as f64 / self.px.max(1) as f64;
                             o.store(frac.to_bits(), SeqCst);
+                        }
+                        if let Some(o) = norm_out {
+                            let packed = ((slots[CTR_ESC_MIN] as u64) << 32)
+                                | slots[CTR_ESC_MAX] as u64;
+                            o.store(packed, SeqCst);
                         }
                     }
                     self.read.unmap();
@@ -340,6 +348,8 @@ struct Renderer {
     seed_pipeline: wgpu::RenderPipeline,
     iter_bgl: wgpu::BindGroupLayout,
     color_bgl: wgpu::BindGroupLayout,
+    /// 4-byte u32::MAX source for seeding the escape-range MIN counter slot per frame.
+    esc_min_seed: wgpu::Buffer,
     views: std::collections::HashMap<u32, ViewResources>,
 }
 
@@ -401,6 +411,8 @@ pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mo
 pub const CTR_GLITCH: usize = 2; // Pauldelbrot glitch flags raised (glitch_on=1)
 pub const CTR_BLA_SKIP: usize = 3; // BLA multi-step skips taken
 pub const CTR_MAXITER: usize = 4; // pixels that exhausted max_iter (interior/undecided)
+pub const CTR_ESC_MIN: usize = 5; // min escaped smooth-iter (f32 bits; seeded 0xFFFFFFFF per frame)
+pub const CTR_ESC_MAX: usize = 6; // max escaped smooth-iter (f32 bits)
 
 pub(crate) fn make_counters_buf(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
@@ -552,7 +564,7 @@ pub(crate) fn color_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupL
 }
 
 impl Renderer {
-    fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, target_format: wgpu::TextureFormat) -> Self {
         let shader = shader_module(device);
         let iter_bgl = iter_bind_group_layout(device);
         let color_bgl = color_bind_group_layout(device);
@@ -583,12 +595,24 @@ impl Renderer {
             "fractadyne.seed_pipeline",
         );
 
+        // 4-byte constant source used to seed the escape-range MIN counter slot to u32::MAX via an
+        // in-encoder copy each frame (the per-frame clear zeroes it, and a zero floor would make
+        // the shader's atomicMin a no-op).
+        let esc_min_seed = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fractadyne.esc_min_seed"),
+            size: 4,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&esc_min_seed, 0, &u32::MAX.to_le_bytes());
+
         Self {
             iter_pipeline,
             color_pipeline,
             seed_pipeline,
             iter_bgl,
             color_bgl,
+            esc_min_seed,
             views: std::collections::HashMap::new(),
         }
     }
@@ -780,6 +804,10 @@ pub struct MandelbrotParams {
     /// with `swap(u64::MAX)` (`u64::MAX` = no fresh reading). Feeds the adaptive iteration
     /// budget. `None` disables capture.
     pub maxiter_count: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the frame's escaped smooth-iteration RANGE: `(min_bits << 32) | max_bits` (f32
+    /// bit patterns; `min_bits == 0xFFFFFFFF` = no escaped pixels). Drained with `swap(u64::MAX)`.
+    /// Feeds the live palette auto-normalization. `None` disables capture.
+    pub norm_range: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Tiled settle: `Some([x, y, w, h])` in BASE pixels renders only that sub-rect of the iteration
     /// texture this frame (scissored, `LoadOp::Load`), leaving the rest intact. The uniforms are
     /// identical to a full-frame render and the fragment coordinates are absolute in the texture, so
@@ -894,14 +922,15 @@ impl CallbackTrait for MandelbrotParams {
         let color_bgl = &r.color_bgl;
         let iter_pipeline = &r.iter_pipeline;
         let seed_pipeline = &r.seed_pipeline;
+        let esc_min_seed = &r.esc_min_seed;
         let view = r.views.get_mut(&self.view_id).unwrap();
 
         // Drain any timestamp readback armed on an earlier frame before this frame may re-arm it.
         if let Some(t) = view.timing.as_mut() {
             t.pump(device, queue, self.iterate_ms.as_ref());
         }
-        // Same for the event-counter readback (adaptive iteration budget feedback).
-        view.counter_read.pump(device, self.maxiter_count.as_ref());
+        // Same for the event-counter readback (adaptive iteration budget + live-normalize feedback).
+        view.counter_read.pump(device, self.maxiter_count.as_ref(), self.norm_range.as_ref());
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed
         // the device's max 2D texture dimension (e.g. 8192) or wgpu fatally errors —
@@ -1078,6 +1107,16 @@ impl CallbackTrait for MandelbrotParams {
                 && self.tile.is_none()
                 && view.counter_read.state == TimingState::Idle;
             encoder.clear_buffer(&view.counters_buf, 0, None);
+            // Seed the escape-range MIN slot to u32::MAX (the clear zeroed it; a zero floor would
+            // make atomicMin a no-op). Queued writes execute before this encoder's passes… but the
+            // clear above is IN the encoder and would run after — so write via the encoder too.
+            encoder.copy_buffer_to_buffer(
+                esc_min_seed,
+                0,
+                &view.counters_buf,
+                (CTR_ESC_MIN * 4) as u64,
+                4,
+            );
             // Tile rect in TEXTURE pixels (base px × ss), clamped inside the target. Fragment
             // coordinates are absolute in the texture, so a scissored draw fills exactly this
             // sub-rect with the values a full-frame draw would have put there.
@@ -1164,7 +1203,7 @@ impl CallbackTrait for MandelbrotParams {
 }
 
 pub fn install_renderer(render_state: &egui_wgpu::RenderState) {
-    let renderer = Renderer::new(&render_state.device, render_state.target_format);
+    let renderer = Renderer::new(&render_state.device, &render_state.queue, render_state.target_format);
     render_state
         .renderer
         .write()

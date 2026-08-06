@@ -1643,6 +1643,22 @@ impl FractadyneApp {
             let boost = self.perf.iter_boost[vb];
             let cap_bound = (((zoom_iter_cap(log2mag).max(256) as f64) * boost) as u32)
                 < eff_iter.min(500_000);
+            // Drain the escape-range reading (live auto-normalization input) and EMA it — the
+            // range moves smoothly with the view, and the EMA keeps the derived palette mapping
+            // from flickering frame to frame.
+            let nr = self.perf.norm_sink[vb].swap(u64::MAX, SeqCst);
+            if nr != u64::MAX {
+                let (min_b, max_b) = ((nr >> 32) as u32, nr as u32);
+                if min_b != u32::MAX && max_b >= min_b {
+                    let (mn, mx) = (f32::from_bits(min_b), f32::from_bits(max_b));
+                    if mn.is_finite() && mx.is_finite() && mx >= mn {
+                        self.perf.norm_range[vb] = Some(match self.perf.norm_range[vb] {
+                            Some((emn, emx)) => (emn + 0.3 * (mn - emn), emx + 0.3 * (mx - emx)),
+                            None => (mn, mx),
+                        });
+                    }
+                }
+            }
             if v != u64::MAX && !interacting && cap_bound && !self.perf.iter_plateau[vb] {
                 let frac = f64::from_bits(v);
                 // 0.05%: low enough to chase a thin Misiurewicz-spar core (the 1.7e55× case
@@ -2524,10 +2540,32 @@ impl FractadyneApp {
         // The GPU self-arms the maxiter-fraction readback on full-frame iterates and computes the
         // fraction itself (count and pixel denominator always from the same frame).
         let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
+        let norm_range = Some(self.perf.norm_sink[vs.min(1)].clone());
+        // LIVE palette auto-normalization: when the frame's escaped smooth-iter range is huge, a
+        // fixed cycle wraps the palette thousands of times between adjacent pixels and a CORRECT
+        // dense escape field reads as speckle "noise pools" (the corpus-14/15 aliasing, now
+        // surfacing live since the adaptive budget resolves these fields). Map the range to
+        // `0.5 + cycle·6` palette sweeps (the `--normalize` export formula, so live matches a
+        // normalized export) with the user's offset preserved as a phase shift. Smooth method
+        // only; gated on a range threshold so every ordinary view keeps classic coloring.
+        const NORM_RANGE_MIN: f32 = 20_000.0;
+        let (cycle_eff, offset_eff) = match self.perf.norm_range[vs.min(1)] {
+            Some((mn, mx))
+                if self.coloring.normalize_live
+                    && self.coloring.color_method == crate::ColorMethod::Smooth
+                    && mx - mn > NORM_RANGE_MIN =>
+            {
+                let sweeps = 0.5 + self.coloring.cycle * 6.0;
+                let c = sweeps / (mx - mn);
+                (c, self.coloring.offset - mn * c)
+            }
+            _ => (self.color_cycle(), self.coloring.offset),
+        };
 
         let params = MandelbrotParams {
             iterate_ms,
             maxiter_count,
+            norm_range,
             tile,
             orbit: self.ref_cache[vi].orbit.clone(),
             orbit_id: self.ref_cache[vi].orbit_id,
@@ -2550,8 +2588,8 @@ impl FractadyneApp {
             julia: julia as u32,
             span_mantissa,
             max_iter: shader_iter,
-            cycle: self.color_cycle(),
-            offset: self.coloring.offset,
+            cycle: cycle_eff,
+            offset: offset_eff,
             stop_count,
             stops,
             light: self.effects.light as u32,

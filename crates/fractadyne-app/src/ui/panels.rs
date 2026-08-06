@@ -130,6 +130,15 @@ impl FractadyneApp {
                 }
                 ui.add(egui::Slider::new(&mut self.coloring.cycle, 0.0..=1.0).text("Cycle"));
                 ui.add(egui::Slider::new(&mut self.coloring.offset, 0.0..=1.0).text("Offset"));
+                ui.checkbox(&mut self.coloring.normalize_live, "Normalize deep colors")
+                    .on_hover_text(
+                        "At extreme depth, escape counts span hundreds of thousands and a fixed \
+                         Cycle wraps the palette thousands of times between neighboring pixels — a \
+                         correct dense field reads as speckle noise. This remaps the palette to the \
+                         view's measured escape range (Cycle then sets how many palette sweeps span \
+                         it). Smooth method only; ordinary views are unaffected. Matches the \
+                         --normalize export option.",
+                    );
                 egui::ComboBox::from_label("Animate")
                     .selected_text(self.anim.palette_anim.name())
                     .show_ui(ui, |ui| {

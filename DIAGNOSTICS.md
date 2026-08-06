@@ -48,7 +48,10 @@ possible-hang warnings, `[fd-wgpu]` device errors/loss, `[fd-panic]` crash repor
 Every render reports shader event counts (in `[fd-perf]`, `perf.jsonl`, and
 `ExportResult.counters`): **rebase** (Zhuoran rebases), **ext** (extended-range orbit
 samples decoded), **glitch** (Pauldelbrot flags), **bla_skip** (BLA multi-steps),
-**maxiter** (pixels that exhausted the budget). Totals are accumulated in **u64** across
+**maxiter** (pixels that exhausted the budget). Slots 5/6 carry the frame's escaped
+smooth-iter **min/max** (f32 bits) — the LIVE path reads maxiter + range back per
+settled full frame to drive the **adaptive iteration budget** (`[fd-gpu] adaptive
+iter:` trace) and **live palette normalization** (the "Normalize deep colors" toggle). Totals are accumulated in **u64** across
 all tiles (the GPU-side u32 slots are zeroed + read per tile), so a deep multi-tile export
 does not wrap.
 

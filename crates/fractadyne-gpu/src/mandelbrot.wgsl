@@ -441,11 +441,26 @@ const CTR_EXT_SAMPLE: u32 = 1u;  // extended-range orbit samples decoded (recurr
 const CTR_GLITCH: u32 = 2u;      // Pauldelbrot glitch flags raised (glitch_on = 1)
 const CTR_BLA_SKIP: u32 = 3u;    // BLA multi-step skips taken
 const CTR_MAXITER: u32 = 4u;     // fragments that exhausted max_iter
+const CTR_ESC_MIN: u32 = 5u;     // min escaped smooth-iter (f32 bits; positive floats sort as u32)
+const CTR_ESC_MAX: u32 = 6u;     // max escaped smooth-iter (f32 bits)
 
 fn ctr_commit(n_rebase: u32, n_ext: u32, n_bla: u32) {
     if (n_rebase > 0u) { atomicAdd(&counters[CTR_REBASE], n_rebase); }
     if (n_ext > 0u) { atomicAdd(&counters[CTR_EXT_SAMPLE], n_ext); }
     if (n_bla > 0u) { atomicAdd(&counters[CTR_BLA_SKIP], n_bla); }
+}
+
+// Track the frame's escaped smooth-iteration RANGE (min/max) — positive IEEE f32s compare
+// identically as unsigned ints, so plain u32 atomics work on the bit patterns. Feeds the app's
+// live palette auto-normalization (a dense deep field spans huge escape ranges that alias a
+// fixed palette cycle into speckle). The min slot is seeded to 0xFFFFFFFF host-side after the
+// per-frame clear. Two atomics per escaped fragment — same cost class as ctr_commit.
+fn esc_range_commit(sm: f32) {
+    if (sm >= 0.0) {
+        let b = bitcast<u32>(sm);
+        atomicMin(&counters[CTR_ESC_MIN], b);
+        atomicMax(&counters[CTR_ESC_MAX], b);
+    }
 }
 
 // Two render targets: `main` = (smooth iter, normal.x, normal.y, DE log2);
@@ -681,6 +696,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
         }
         if (newton) {
             // Color by convergence speed (iteration count).
+            esc_range_commit(f32(iter));
             return FragOut(vec4<f32>(f32(iter), 0.0, 0.0, 1.0e30), AUX_NONE);
         }
         let mag2 = dot(zf, zf);
@@ -693,6 +709,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
             de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        esc_range_commit(smit);
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
@@ -1018,6 +1035,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        esc_range_commit(smit);
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else {
         // df32 perturbation (mode 0): the fast path for the common deep range. Valid
@@ -1188,6 +1206,7 @@ fn fs_iterate(in: VsOut) -> FragOut {
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        esc_range_commit(smit);
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
 }

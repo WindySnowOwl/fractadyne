@@ -45,6 +45,9 @@ pub struct SessionState {
     pub palette_idx: usize,
     pub cycle: f32,
     pub offset: f32,
+    /// Live deep-palette auto-normalization (default on). `serde(default)` keeps older files loadable.
+    #[serde(default = "default_true")]
+    pub normalize_live: bool,
     /// Continuous-zoom speed multiplier (1.0 = default ~2× per 1.5 s). `serde(default)`
     /// keeps older session files (written before this field) loadable.
     #[serde(default = "default_zoom_rate")]
@@ -355,6 +358,7 @@ impl Default for SessionState {
             auto_iter: true,
             palette_idx: 0,
             cycle: 0.27,
+            normalize_live: true,
             offset: 0.1,
             zoom_rate: default_zoom_rate(),
             click_zoom: false,
