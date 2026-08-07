@@ -1815,6 +1815,40 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
     }
 
     // --- keyframes ---
+    // PRE-PASS: the deepest zoom anywhere in the tour. Every centre is then parsed at THAT
+    // precision, not at its own keyframe's.
+    //
+    // Parsing each centre at its own depth looks right and is badly wrong: the camera interpolates
+    // BETWEEN keyframes, so a glide from 1e30× to 1e55× is limited by the 1e30× endpoint's
+    // precision. The spar coordinate carries 120 digits; parsed at 1e30×'s ~140 bits it loses the
+    // rest, and by 1e55× the resulting centre error is larger than the whole view span — the camera
+    // is pointed somewhere else entirely. Measured live: every reference along that glide escaped
+    // after 626 samples (a point nowhere near the set boundary), the prefetch queue rebuilt one
+    // 13,529 times in six minutes, and the run ended in a lost GPU device. The lookahead makes it
+    // worse still, since it targets depths ahead of the current view.
+    let deepest_octaves = {
+        let (mut zoom, mut deepest) = (None::<String>, 0.0f64);
+        for k in &sf.keyframe {
+            if let Some(z) = &k.zoom {
+                zoom = Some(z.as_string());
+            } else if let Some(z) = k
+                .location
+                .as_ref()
+                .and_then(|n| locs.get(n.as_str()))
+                .and_then(|l| l.zoom.as_ref())
+            {
+                zoom = Some(z.as_string());
+            }
+            if let Some(z) = &zoom {
+                // A malformed zoom is reported by the main pass, with the keyframe's id attached.
+                if let Ok(l10) = parse_zoom_log10(z) {
+                    deepest = deepest.max(l10.max(0.0) * std::f64::consts::LN_10);
+                }
+            }
+        }
+        (deepest / std::f64::consts::LN_2).max(0.0).ceil() as u64
+    };
+    let center_prec = fractadyne_core::precision_for_octaves(deepest_octaves);
     let mut kfs: Vec<Kf> = Vec::with_capacity(sf.keyframe.len());
     let mut prev_end = 0.0f64; // when the previous keyframe finishes holding
     let mut center: Option<(String, String)> = None;
@@ -1873,10 +1907,12 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             }
             None => 0.0,
         };
-        // Parse the center at the precision this depth needs: an exact rational like (37+16i)/100
-        // is only as good as the bits it's evaluated to, and a deep keyframe wants all of them.
-        let octaves = (logmag / std::f64::consts::LN_2).max(0.0).ceil() as u64;
-        let prec = fractadyne_core::precision_for_octaves(octaves);
+        // Parse the centre at the DEEPEST depth the tour reaches (see `center_prec` above), not at
+        // this keyframe's — the camera interpolates between keyframes and the lookahead builds
+        // references for depths ahead of the current one, so a shallow keyframe's centre still has
+        // to carry the digits a deep neighbour needs. An exact rational like (37+16i)/100 is only
+        // as good as the bits it is evaluated to, which is the same argument.
+        let prec = center_prec;
         let (re, im) = center
             .clone()
             .unwrap_or_else(|| ("-0.5".to_string(), "0.0".to_string()));
@@ -1941,12 +1977,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
     let total = kfs.last().map(|k| k.at + k.hold).unwrap_or(0.0);
     // Annotation anchors are viewed at whatever depth the camera reaches, so parse them at the
     // deepest keyframe's precision — a callout on a 1e94× dendrite is useless at 64 bits.
-    let anchor_prec = kfs
-        .iter()
-        .map(|k| (k.logmag / std::f64::consts::LN_2).max(0.0).ceil() as u64)
-        .max()
-        .map(fractadyne_core::precision_for_octaves)
-        .unwrap_or(64);
+    let anchor_prec = center_prec;
 
     // --- annotations (one array, tagged by kind) ---
     let (mut captions, mut callouts, mut spotlights) = (Vec::new(), Vec::new(), Vec::new());

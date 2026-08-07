@@ -2389,6 +2389,51 @@ impl FractadyneApp {
                 });
             }
 
+            // A keyframe's centre is parsed at the DEEPEST depth the tour reaches, not its own.
+            //
+            // This only bites EXACT RATIONAL coordinates — a plain decimal literal is parsed from
+            // its own digit count, so `1e8× keyframe, 119-digit centre` was never truncated (a
+            // hypothesis this check was written to prove and promptly disproved). A rational is
+            // different: it is EVALUATED, at whatever precision it is given, so `re = "-1/3"` on a
+            // keyframe at 1e8× is worth ~19 digits unless the floor comes from the tour's deepest
+            // view. The camera interpolates between keyframes and the lookahead builds references
+            // for depths ahead of the current one, so a shallow keyframe's centre still has to
+            // carry the digits its deep neighbours need.
+            const RATIONAL_PREC: &str = concat!(
+                "format_version = 2
+",
+                "[[keyframe]]
+id = \"shallow\"
+t = 0
+re = \"-1/3\"
+im = \"1/7\"
+zoom = 8
+",
+                "[[keyframe]]
+id = \"deep\"
+t = 10
+zoom = \"1e94\"
+",
+            );
+            let prec = fractadyne_core::precision_for_octaves(400);
+            let want = fractadyne_core::parse_bf_prec("-1/3", prec);
+            let (drift, prec_ok) = match (crate::scripting::parse_tour_text(RATIONAL_PREC), want) {
+                (Ok(pb), Some(w)) => {
+                    // Sampled at the SHALLOW keyframe, which is where the naive parse loses digits.
+                    let d = fractadyne_core::sub_f64(&pb.sample(0.0).cx, &w, prec).abs();
+                    (d, d < 1.0e-110)
+                }
+                _ => (1.0, false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "shallow keyframe keeps deep-neighbour precision".into(),
+                params: "rational centre on a 1e8× keyframe, tour reaches 1e94×".into(),
+                result: format!("centre drift {drift:.2e}"),
+                threshold: "< 1e-110 (the 1e94× view span is ~1e-95)",
+                pass: prec_ok,
+            });
+
             // `--segment` resolution: chapters close at the next chapter's start, and a name can
             // be given as an id, a unique prefix, or a 1-based index.
             // Asserted against the script's OWN total rather than a literal: the tour's timeline

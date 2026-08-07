@@ -34,6 +34,37 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] **Live playback loses the GPU device a few minutes in — UNRESOLVED, cause not established.**
+  Three crashes on 2026-08-07 (beta.36 builds 1134/1149) at 261 s, 392 s and 470 s of live tour
+  playback. The signature is NOTHING like the beta.36 crash that was fixed — this frame is far
+  UNDER budget and tiny:
+
+      LIVE view=0 mode=2 429x340 ss=1 iter=27697 (gpu_iter=27697, eff=60750, boost=1.00)
+      steps=4.040e9 budget=7.785e10 tile=false orbit_len=626 partial=false settled=false
+
+  4.04e9 nominal steps against a 7.785e10 budget — 5% — at 429x340, while MOVING, and it still
+  lost the device. One of the three died at `steps=3.998e8` against `budget=4.000e8`, i.e. sitting
+  exactly on the `TDR_BOOTSTRAP_STEPS` floor at 135x107: the controller had already shrunk as far
+  as it can and that was still fatal. So the cost model is wrong here by one to two orders of
+  magnitude, not by a little.
+  - **`orbit_len=626` is the thread to pull.** The reference escapes after 626 samples while pixels
+    iterate to 27,697, so each pixel traverses the reference ~44 times and the BLA table (626
+    entries) can skip almost nothing — nominal steps stop predicting real cost. The budget is
+    MEASURED, but it is measured on BLA-effective frames, so it is stale-high exactly when a
+    degenerate reference appears. `install_recompute` already derates on a cost-discontinuous
+    install, but only on orbit GROWTH (`res.orbit_len * 2 > old.orbit_len * 3`); a collapse to 626
+    is just as discontinuous and does not trigger it.
+  - **The prefetch thrashes on it.** In the 392 s run, 13,529 of 14,311 reference builds returned
+    `len=626` — ~35 rebuilds a second for six minutes. `playback_ref_prefetch` culls a slot whose
+    result has no usable BLA (`lag < 0.86`) and the queue immediately refills the same target, with
+    no backoff and no memory of a futile target (unlike `ref_ext_futile` on the extension path).
+  - **Ruled out:** coordinate precision. Keyframe centres were parsed at each keyframe's own depth
+    (fixed in beta.37 for RATIONAL coordinates, with a selftest that fails at 9.8e-40 drift without
+    it) — but a plain decimal literal is parsed from its own digit count, so the shipped tours were
+    never truncated and this was not the cause.
+  - The build carrying the beta.37 fix survived 500 s of the same tour, past all three crash points,
+    but that is not attributable — the tour's own timing changed in the same window.
+
 - [x] **Live tour playback lost the GPU device — FIXED v0.2.40-beta.36.** Reported by the user
   ("it crashed in the live view of the tour"); reproduced in 29 s with the new `--play` flag. A
   regression from beta.35's settling change plus a latent bug it exposed. The crash report's new
