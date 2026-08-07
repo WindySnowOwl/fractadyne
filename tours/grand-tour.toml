@@ -21,7 +21,7 @@
 #   Regression:   render at low fps/size (e.g. --fps 2 --size 640x360) and inspect
 #                 the hold frames; the deep chapter is where the cost is.
 #
-# Timeline is 316 s. Every `t` is ABSOLUTE seconds from the start — keyframes and
+# Timeline is 331 s. Every `t` is ABSOLUTE seconds from the start — keyframes and
 # narration can be edited independently without recomputing anything downstream.
 #
 # The deep chapter descends at roughly half a decade per second. It used to run at one
@@ -119,17 +119,17 @@ t = 5
 [[segment]]
 id = "exact-points"
 title = "3. Points known exactly"
-t = 40
+t = 55
 
 [[segment]]
 id = "features"
 title = "4. Features"
-t = 80
+t = 95
 
 [[segment]]
 id = "gauntlet"
 title = "5. The deep gauntlet"
-t = 117
+t = 132
 
 # ============================================================ 1. The whole set
 [[keyframe]]
@@ -142,44 +142,83 @@ max_iter = 2000
 hold = 5
 
 # ============================================================ 2. Famous landmarks
+#
+# Every landmark is approached the same way: PAN at the home zoom, where the whole set is on
+# screen, and only then zoom in. Moving the centre while still zoomed in flies the camera through
+# the set's INTERIOR — the straight line from Seahorse Valley to Elephant Valley passes through
+# the middle of the cardioid, so at 1e5x every frame between them is solid black. (This is the
+# same reason the deep chapter swoops onto its centre at zoom 8 before descending.) The general
+# fix is a Van Wijk-Nuij path, which derives "zoom out, pan, zoom in" in closed form instead of
+# making every author remember it — see the autopilot section of TODO.md.
+
 # Seahorse Valley — the classic first destination.
 [[keyframe]]
-id = "seahorse-1"
-t = 11
+id = "approach-seahorse"
+t = 9
 location = "seahorse"
+zoom = 1.33333
+max_iter = 2000
+[[keyframe]]
+id = "seahorse-1"
+t = 14
 zoom = 2667
 max_iter = 4000
 hold = 3
 [[keyframe]]
 id = "seahorse-2"
-t = 19
+t = 22
 zoom = 13330000
 max_iter = 12000
 hold = 3
 
-# Elephant Valley — the procession off the cardioid's cusp.
+# Elephant Valley — the procession off the cardioid's cusp. Back out in place first, then pan.
+[[keyframe]]
+id = "back-out-seahorse"
+t = 29
+zoom = 1.33333
+max_iter = 2000
+[[keyframe]]
+id = "approach-elephant"
+t = 33
+location = "elephant"
+zoom = 1.33333
 [[keyframe]]
 id = "elephant"
-t = 28
-location = "elephant"
+t = 37
 zoom = 2000
 max_iter = 4000
 hold = 3
 
 # Triple Spiral Valley — three-fold symmetry off the period-3 bulb.
 [[keyframe]]
-id = "triple-spiral"
-t = 37
+id = "back-out-elephant"
+t = 44
+zoom = 1.33333
+max_iter = 2000
+[[keyframe]]
+id = "approach-triple-spiral"
+t = 48
 location = "triple-spiral"
+zoom = 1.33333
+[[keyframe]]
+id = "triple-spiral"
+t = 52
 zoom = 1600
 max_iter = 4000
 hold = 3
 
 # ============================================================ 3. Exact points
-# Back out, then visit two points whose mathematics is exactly known.
+# Back out, then visit two points whose mathematics is exactly known. Note the two steps: zoom
+# out IN PLACE, then pan. One keyframe doing both would interpolate them together and fly the
+# camera across the cardioid's interior while still at 1e2x — solid black frames.
+[[keyframe]]
+id = "back-out-triple-spiral"
+t = 57
+zoom = 1.33333
+max_iter = 2000
 [[keyframe]]
 id = "back-out-1"
-t = 44
+t = 59
 location = "home"
 max_iter = 2000
 hold = 1
@@ -189,14 +228,14 @@ hold = 1
 # repeats under zoom WITHOUT spiralling. The cleanest self-similarity in the set.
 [[keyframe]]
 id = "antenna-tip"
-t = 50
+t = 65
 location = "antenna-tip"
 zoom = 8
 max_iter = 3000
 hold = 4
 [[keyframe]]
 id = "antenna-tip-deep"
-t = 59
+t = 74
 zoom = 5000
 max_iter = 6000
 hold = 3
@@ -205,23 +244,30 @@ hold = 3
 # multiplier is 4(1+i) — argument 45 degrees, so this one twists as it repeats.
 [[keyframe]]
 id = "c-equals-i"
-t = 68
+t = 83
 location = "c-equals-i"
 zoom = 8
 max_iter = 3000
 hold = 4
 [[keyframe]]
 id = "c-equals-i-deep"
-t = 77
+t = 92
 zoom = 3000
 max_iter = 6000
 hold = 3
 
 # ============================================================ 4. Features
+# Zoom out in place before leaving c = i (see chapter 3), then pan at the home zoom.
+[[keyframe]]
+id = "back-out-c-equals-i"
+t = 97
+zoom = 1.33333
+max_iter = 2000
+
 # Dual view: the Mandelbrot set beside the Julia set of the point under the cursor.
 [[keyframe]]
 id = "dual-open"
-t = 85
+t = 100
 location = "home"
 max_iter = 2000
 dual = true
@@ -232,7 +278,7 @@ hold = 5
 # Slide c along the boundary — the Julia set morphs continuously with it.
 [[keyframe]]
 id = "dual-slide"
-t = 96
+t = 111
 julia_re = -0.743643
 julia_im = 0.131825
 ease = "linear"
@@ -241,7 +287,7 @@ hold = 4
 # Orbit overlay: the actual path of z under iteration, drawn over the set.
 [[keyframe]]
 id = "orbit-overlay"
-t = 104
+t = 119
 dual = false
 orbits = true
 orbit_re = -0.743643
@@ -251,7 +297,7 @@ hold = 5
 # A different family entirely — the escape-time engine is not Mandelbrot-only.
 [[keyframe]]
 id = "burning-ship"
-t = 113
+t = 128
 fractal = "Burning Ship"
 re = "-1.7"
 im = "-0.03"
@@ -263,7 +309,7 @@ hold = 4
 # Back to the Mandelbrot set and onto the three-spar center for the deep dive.
 [[keyframe]]
 id = "back-out-2"
-t = 121
+t = 136
 fractal = "Mandelbrot"
 location = "home"
 max_iter = 2000
@@ -274,7 +320,7 @@ hold = 2
 # for the whole descent.
 [[keyframe]]
 id = "dive-start"
-t = 128
+t = 143
 location = "three-spar"
 zoom = 8
 max_iter = 3000
@@ -282,13 +328,13 @@ hold = 2
 
 [[keyframe]]
 id = "dive-e10"
-t = 138
+t = 153
 zoom = "1e10"
 max_iter = 20000
 ease = "in"
 [[keyframe]]
 id = "dive-e30"
-t = 166
+t = 181
 zoom = "1e30"
 max_iter = 60000
 ease = "linear"
@@ -298,7 +344,7 @@ ease = "linear"
 # blobs" where the export showed dendrites), and its stale-baseline plateau.
 [[keyframe]]
 id = "hold-e55"
-t = 200
+t = 215
 zoom = "1e55"
 max_iter = 250000
 ease = "linear"
@@ -307,7 +353,7 @@ hold = 6
 # fraction sits at exactly 100% through x1.6 and x2.6 before collapsing at x4.1.
 [[keyframe]]
 id = "hold-e61"
-t = 218
+t = 233
 zoom = "1e61"
 max_iter = 400000
 ease = "linear"
@@ -316,7 +362,7 @@ hold = 6
 # 753 iterations past the cap -> partial -> pixel clamp -> blobs.
 [[keyframe]]
 id = "hold-e63"
-t = 230
+t = 245
 zoom = "1e63"
 max_iter = 500000
 ease = "linear"
@@ -325,7 +371,7 @@ hold = 6
 # clamped-budget deadlock it exposed in the reference extension.
 [[keyframe]]
 id = "hold-e72"
-t = 252
+t = 267
 zoom = "1e72"
 max_iter = 1200000
 ease = "linear"
@@ -334,7 +380,7 @@ hold = 6
 # 928,084 samples — 112 past the old ~928k device cap.
 [[keyframe]]
 id = "hold-e82"
-t = 276
+t = 291
 zoom = "1e82"
 max_iter = 2000000
 ease = "linear"
@@ -344,7 +390,7 @@ hold = 6
 # to a black screen.
 [[keyframe]]
 id = "hold-e94"
-t = 306
+t = 321
 zoom = "6.46e94"
 max_iter = 4000000
 ease = "out"
@@ -367,107 +413,107 @@ secs = 3.2
 [[annotation]]
 kind = "caption"
 text = "Seahorse Valley"
-t = 11.5
+t = 14.5
 secs = 3.0
 [[annotation]]
 kind = "caption"
 text = "The same seahorses, ten thousand times smaller"
-t = 19.5
+t = 22.5
 secs = 3.0
 [[annotation]]
 kind = "caption"
 text = "Elephant Valley"
-t = 28.5
+t = 37.5
 secs = 3.0
 [[annotation]]
 kind = "caption"
 text = "Triple Spiral Valley"
-t = 37.5
+t = 52.5
 secs = 3.0
 
 [[annotation]]
 kind = "caption"
 text = "Some points are known exactly"
-t = 45.5
+t = 60.5
 secs = 4.0
 [[annotation]]
 kind = "caption"
 text = "c = -2 exactly  ·  Misiurewicz (2,1)\nmultiplier 4, real — it repeats without spiralling"
-t = 50.5
+t = 65.5
 secs = 4.0
 [[annotation]]
 kind = "caption"
 text = "c = i exactly  ·  Misiurewicz (2,2)\nmultiplier 4(1+i) — 45 degrees of twist per repeat"
-t = 68.5
+t = 83.5
 secs = 4.0
 [[annotation]]
 kind = "caption"
 text = "Type either one straight in — coordinates accept exact fractions"
-t = 77.5
+t = 92.5
 secs = 3.0
 
 [[annotation]]
 kind = "caption"
 text = "Dual view: the Julia set of the point you point at"
-t = 85.5
+t = 100.5
 secs = 4.5
 [[annotation]]
 kind = "caption"
 text = "Move c along the boundary and the Julia set follows"
-t = 90.5
+t = 105.5
 secs = 5.0
 [[annotation]]
 kind = "caption"
 text = "Orbit overlay — the path of z under iteration"
-t = 104.5
+t = 119.5
 secs = 4.5
 [[annotation]]
 kind = "caption"
 text = "Ten fractal families share the same deep-zoom engine"
-t = 113.5
+t = 128.5
 secs = 3.5
 
 [[annotation]]
 kind = "caption"
 text = "Now the deep end"
-t = 123.5
+t = 138.5
 secs = 3.5
 pos = "center"
 size = 30
 [[annotation]]
 kind = "caption"
 text = "A Misiurewicz three-spar — the hardest field we know of"
-t = 130.5
+t = 145.5
 secs = 5.0
 [[annotation]]
 kind = "caption"
 text = "Perturbation + series approximation + bilinear approximation"
-t = 150.0
+t = 165
 secs = 5.0
 [[annotation]]
 kind = "caption"
 text = "10^55x — past here the iteration budget adapts itself"
-t = 200.5
+t = 215.5
 secs = 3.5
 [[annotation]]
 kind = "caption"
 text = "10^63x — the reference orbit is rebuilt as the view descends"
-t = 230.5
+t = 245.5
 secs = 3.0
 [[annotation]]
 kind = "caption"
 text = "10^72x — a million iterations per pixel"
-t = 252.5
+t = 267.5
 secs = 3.0
 [[annotation]]
 kind = "caption"
 text = "10^82x — 380-digit arithmetic, seven million reference samples"
-t = 276.5
+t = 291.5
 secs = 3.0
 [[annotation]]
 kind = "caption"
 text = "6.5 x 10^94 x"
-t = 307.0
+t = 322
 secs = 7.0
 size = 28
 
@@ -477,19 +523,19 @@ size = 28
 kind = "callout"
 text = "Seahorse Valley"
 location = "seahorse"
-t = 7.0
+t = 9.5
 secs = 4.0
 [[annotation]]
 kind = "callout"
 text = "c = -2  (antenna tip)"
 location = "antenna-tip"
-t = 50.0
+t = 65
 secs = 4.0
 [[annotation]]
 kind = "callout"
 text = "c = i"
 location = "c-equals-i"
-t = 68.0
+t = 83
 secs = 4.0
 
 # A spotlight to draw the eye onto the dive target before the descent starts.
@@ -499,5 +545,5 @@ location = "three-spar"
 radius = 0.18
 softness = 0.10
 dim = 0.55
-t = 128.0
+t = 143
 secs = 4.0

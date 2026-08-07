@@ -709,16 +709,17 @@ impl FractadyneApp {
         None
     }
 
+    /// Bottom status bar: view readouts only. Anything CLICKABLE belongs elsewhere — this bar is
+    /// sized by its content, and the centre coordinates gain and lose digits as the view moves, so
+    /// a control placed here slides horizontally under the cursor. The playback transport lives in
+    /// `draw_playback_transport` for exactly that reason.
     pub(crate) fn draw_status_bar(&mut self, ctx: &egui::Context) {
-        // Transport intents, applied after the panel closure — the buttons live inside a closure
-        // that already borrows `self`, and `stop_playback` needs it mutably.
-        let (mut seek, mut toggle_pause, mut stop, mut cycle_speed, mut toggle_loop) =
-            (None::<f64>, false, false, false, false);
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            // WRAPPED, not a single row: the deep-zoom coordinates alone can be most of the width,
-            // and a plain `horizontal` silently CLIPS whatever doesn't fit — which put the playback
-            // transport off the right edge on any window narrower than ~1600 px, i.e. invisible
-            // controls. Wrapping costs a second line only when it is actually needed.
+            // WRAPPED, not a single row: at depth the centre coordinates alone can be most of the
+            // width, and a plain `horizontal` silently CLIPS whatever doesn't fit — the limit
+            // diagnostics on the right would vanish on a narrow window, which is precisely when a
+            // user needs to be told why the view is black. Wrapping costs a second line only when
+            // it is actually needed.
             ui.horizontal_wrapped(|ui| {
                 let l2 = self.viewport.log2_magnification();
                 ui.monospace(format!(
@@ -784,102 +785,132 @@ impl FractadyneApp {
                     ui.colored_label(color, egui::RichText::new(label).monospace())
                         .on_hover_text(detail);
                 }
-                // Playback indicator. A spinner, because the honest failure mode here is not
-                // knowing whether anything is happening: a deep hold can legitimately sit on one
-                // frame for many seconds, and the pacer deliberately STOPS the tour clock while
-                // the renderer catches up — so a frozen percentage is expected behaviour that
-                // looks exactly like a hang. The spinner animates regardless (it proves the UI
-                // thread is alive), the clock reads mm:ss / mm:ss, and a held clock says why.
-                if let Some(pb) = &self.playback {
-                    let (name, cur_t, total, paused, speed, looping, is_bench, held) = (
-                        pb.name.clone(),
-                        pb.cur_t,
-                        pb.total,
-                        pb.paused,
-                        pb.speed,
-                        pb.loop_,
-                        pb.bench.is_some(),
-                        pb.paced_hold > 0.5,
-                    );
-                    ui.separator();
-                    // The spinner only animates while the tour clock is actually moving: a paused
-                    // tour should LOOK paused. It stays spinning while the pacer holds the clock,
-                    // because the renderer is working then — that is the case that was mistaken
-                    // for a hang.
-                    if !paused {
-                        ui.add(egui::Spinner::new().size(12.0));
-                    } else {
-                        ui.monospace("⏸");
-                    }
-                    let mmss = |t: f64| {
-                        let t = t.max(0.0) as u64;
-                        format!("{}:{:02}", t / 60, t % 60)
-                    };
-                    let pct = if total > 0.0 { (cur_t / total * 100.0).clamp(0.0, 100.0) } else { 100.0 };
-                    let tag = if is_bench { "benchmark" } else { "script" };
-                    ui.monospace(format!("{name} {tag} {} / {} ({pct:.0}%)", mmss(cur_t), mmss(total)));
-
-                    // --- transport ---
-                    // A tour is a timeline, so it gets timeline controls. Seeks move the clock
-                    // directly (see `Playback::cur_t`); nothing here touches the renderer, so
-                    // scrubbing to a deep keyframe simply asks the live path for that view.
-                    // Media glyphs, NOT monospace: the transport symbols live in egui's bundled
-                    // emoji font, and forcing the monospace family would drop them to tofu boxes.
-                    let btn = |ui: &mut egui::Ui, glyph: &str, tip: &str| -> bool {
-                        ui.add(egui::Button::new(egui::RichText::new(glyph).size(13.0)).small())
-                            .on_hover_text(tip)
-                            .clicked()
-                    };
-                    if btn(ui, "⏮", "Restart from the beginning") {
-                        seek = Some(0.0);
-                    }
-                    if btn(ui, "⏪", "Back 10 seconds") {
-                        seek = Some((cur_t - 10.0).max(0.0));
-                    }
-                    if btn(ui, if paused { "▶" } else { "⏸" }, if paused { "Resume" } else { "Pause" }) {
-                        toggle_pause = true;
-                    }
-                    if btn(ui, "⏹", "Stop playback and restore your own view settings") {
-                        stop = true;
-                    }
-                    if btn(ui, "⏩", "Forward 10 seconds") {
-                        seek = Some((cur_t + 10.0).min(total));
-                    }
-                    // Speed cycles rather than opening a menu: one control, one glance, and the
-                    // label doubles as the readout.
-                    if ui
-                        .add(egui::Button::new(egui::RichText::new(format!("{}x", crate::fmt_speed(speed))).monospace()).small())
-                        .on_hover_text("Playback speed (click to cycle 0.5x / 1x / 2x / 4x)")
-                        .clicked()
-                    {
-                        cycle_speed = true;
-                    }
-                    let loop_btn = ui.add(
-                        egui::Button::new(egui::RichText::new("🔁").size(13.0))
-                            .small()
-                            .fill(if looping {
-                                crate::theme::BRAND_ACCENT.gamma_multiply(0.35)
-                            } else {
-                                ui.visuals().widgets.inactive.bg_fill
-                            }),
-                    );
-                    if loop_btn.on_hover_text("Repeat the tour when it reaches the end").clicked() {
-                        toggle_loop = true;
-                    }
-                    if held {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(0xE0, 0xA0, 0x30),
-                            egui::RichText::new("waiting for detail").monospace(),
-                        )
-                        .on_hover_text(
-                            "The tour clock is paused while the renderer resolves this view \
-                             (reference build / iteration budget climbing). Playback resumes by \
-                             itself; see [playback] pace in the script.",
-                        );
-                    }
-                }
             });
         });
+    }
+
+    /// Floating playback transport — restart / back / pause / stop / forward / speed / loop —
+    /// anchored over the top-centre of the VIEW while a script runs.
+    ///
+    /// It lives here rather than in the status bar because that bar is sized by its content: the
+    /// centre coordinates alone gain and lose digits as the view moves, so anything to their right
+    /// slides horizontally under the cursor while you are trying to click it. A fixed anchor over
+    /// the view is the only stable position — and it is where a video player puts a transport.
+    pub(crate) fn draw_playback_transport(&mut self, ctx: &egui::Context) {
+        let Some(pb) = &self.playback else { return };
+        let (name, cur_t, total, paused, speed, looping, is_bench, held) = (
+            pb.name.clone(),
+            pb.cur_t,
+            pb.total,
+            pb.paused,
+            pb.speed,
+            pb.loop_,
+            pb.bench.is_some(),
+            pb.paced_hold > 0.5,
+        );
+        // Transport intents, applied after the closure: the widgets borrow `self` immutably and
+        // `stop_playback` needs it mutably.
+        let (mut seek, mut toggle_pause, mut stop, mut cycle_speed, mut toggle_loop) =
+            (None::<f64>, false, false, false, false);
+        // `available_rect` is what the panels left over — the fractal view, below the menu bar and
+        // inside the right panel — so the transport centres on the VIEW, not on the window.
+        let view = ctx.available_rect();
+        egui::Area::new(egui::Id::new("playback_transport"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(view.center().x, view.top() + 10.0))
+            .pivot(egui::Align2::CENTER_TOP)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .fill(egui::Color32::from_black_alpha(190))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(40)))
+                    .corner_radius(6)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            // The spinner animates only while the clock actually moves, so a
+                            // paused tour looks paused. It keeps spinning while the PACER holds the
+                            // clock, because the renderer is working then — that is the state that
+                            // was mistaken for a hang.
+                            if paused {
+                                ui.label(egui::RichText::new("⏸").size(13.0));
+                            } else {
+                                ui.add(egui::Spinner::new().size(12.0));
+                            }
+                            let mmss = |t: f64| {
+                                let t = t.max(0.0) as u64;
+                                format!("{}:{:02}", t / 60, t % 60)
+                            };
+                            let tag = if is_bench { "benchmark" } else { "script" };
+                            ui.label(
+                                egui::RichText::new(format!("{name}  {} / {}", mmss(cur_t), mmss(total)))
+                                    .monospace(),
+                            )
+                            .on_hover_text(format!("Playing {tag}"));
+                            ui.separator();
+                            // Media glyphs, NOT monospace: they live in egui's bundled emoji font,
+                            // and forcing the monospace family drops them to tofu boxes.
+                            let btn = |ui: &mut egui::Ui, glyph: &str, tip: &str| -> bool {
+                                ui.add(egui::Button::new(egui::RichText::new(glyph).size(14.0)).small())
+                                    .on_hover_text(tip)
+                                    .clicked()
+                            };
+                            if btn(ui, "⏮", "Restart from the beginning") {
+                                seek = Some(0.0);
+                            }
+                            if btn(ui, "⏪", "Back 10 seconds") {
+                                seek = Some((cur_t - 10.0).max(0.0));
+                            }
+                            if btn(ui, if paused { "▶" } else { "⏸" },
+                                   if paused { "Resume" } else { "Pause" }) {
+                                toggle_pause = true;
+                            }
+                            if btn(ui, "⏹", "Stop playback and restore your own view settings") {
+                                stop = true;
+                            }
+                            if btn(ui, "⏩", "Forward 10 seconds") {
+                                seek = Some((cur_t + 10.0).min(total));
+                            }
+                            // Speed cycles rather than opening a menu: one control, one glance,
+                            // and the label doubles as the readout.
+                            if ui
+                                .add(egui::Button::new(
+                                    egui::RichText::new(format!("{}×", crate::fmt_speed(speed))).monospace(),
+                                ).small())
+                                .on_hover_text("Playback speed (click to cycle 0.5× / 1× / 2× / 4×)")
+                                .clicked()
+                            {
+                                cycle_speed = true;
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new(egui::RichText::new("🔁").size(14.0))
+                                        .small()
+                                        .fill(if looping {
+                                            crate::theme::BRAND_ACCENT.gamma_multiply(0.35)
+                                        } else {
+                                            ui.visuals().widgets.inactive.bg_fill
+                                        }),
+                                )
+                                .on_hover_text("Repeat the tour when it reaches the end")
+                                .clicked()
+                            {
+                                toggle_loop = true;
+                            }
+                            if held {
+                                ui.separator();
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(0xE0, 0xA0, 0x30),
+                                    egui::RichText::new("waiting for detail").monospace(),
+                                )
+                                .on_hover_text(
+                                    "The tour clock is paused while the renderer resolves this \
+                                     view (reference build / iteration budget climbing). Playback \
+                                     resumes by itself; see [playback] pace in the script.",
+                                );
+                            }
+                        });
+                    });
+            });
+
         // Apply the transport. A seek moves the clock only: the camera follows on the next tick
         // through the normal sampling path, so scrubbing needs no special case anywhere else.
         if stop {

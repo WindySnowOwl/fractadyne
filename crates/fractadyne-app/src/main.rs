@@ -5291,6 +5291,11 @@ impl eframe::App for FractadyneApp {
 
         self.draw_status_bar(ctx);
 
+        // Playback transport, over the view. Drawn after the panels so `available_rect` is the
+        // fractal area (below the menu bar, inside the right panel) — the transport anchors to
+        // the VIEW, not the window.
+        self.draw_playback_transport(ctx);
+
         // Right-hand control panel: fractal info, coloring, navigation, and the
         // optional performance section. Hidden entirely while in fullscreen.
         self.draw_right_panel(ctx);

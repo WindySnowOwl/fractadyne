@@ -49,6 +49,21 @@ limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — s
   follows through the normal sampling path, so scrubbing needs no special case anywhere else. The
   status bar also WRAPS now: it was a fixed row that silently clipped, which put the whole
   transport off the right edge on any window narrower than ~1600 px.
+- **Playback transport** (beta.36) — restart / back 10 s / pause / stop / forward 10 s / speed
+  (0.5–4×) / loop, in a floating bar over the top-centre of the view. It is not in the status bar
+  because that bar is sized by its content: the centre coordinates gain and lose digits as the view
+  moves, so controls placed there slide horizontally under the cursor. Seeking moves the tour clock
+  only — the camera follows through the normal sampling path — which required converting playback
+  from a wall-clock origin (`now - t0`) to an accumulating clock, since a derived time cannot
+  express pause, seek or speed.
+- **The tour no longer flies through black** (beta.36) — a keyframe that changes both centre and
+  zoom interpolates them together, so leaving Seahorse Valley for Elephant Valley crossed the
+  cardioid's interior while still at ~1e5×: every frame between them was solid black, and the
+  status-bar screenshot that caught it showed an entirely black view. Landmarks are now approached
+  and left the same way the deep dive already did it — zoom out in place, pan at the home zoom
+  where the whole set is visible, then zoom in. Measured over the three affected chapters: frames
+  more than 90% black went from 3 to 0. The general fix is a Van Wijk–Nuij path, which derives
+  this in closed form rather than asking every author to remember it (TODO).
 - **Script playback is visible in the status bar** (beta.36) — a spinner, `mm:ss / mm:ss (N%)`,
   and an explicit "waiting for detail" when the pacer has stopped the tour clock. A deep hold can
   legitimately sit on one frame for many seconds and the pacer deliberately freezes the clock while
