@@ -10,7 +10,7 @@ A **tour** is a TOML script describing an eased camera path — plus optional ca
 fractadyne --render-tour my-tour.toml --size 1920x1080 --fps 30 --ss 2 --out frames --mp4
 ```
 
-Frames are written `<prefix>_00000.png` (prefix defaults to the script's file name; override with `--prefix`). Ready-made examples live in [`tours/`](tours/); run `fractadyne --help` for the full CLI.
+Frames are written `<prefix>_00000.png` (prefix defaults to the script's file name; override with `--prefix`). A script's `[render]` block supplies all of those settings, so a tour that declares them renders correctly from `--render-tour x.toml` alone and CLI flags merely override. `--segment NAME` renders just one `[[segment]]` chapter, keeping the global frame numbering so the frames drop back into the full sequence. Ready-made examples live in [`tours/`](tours/); run `fractadyne --help` for the full CLI.
 
 ## Schema
 
@@ -20,120 +20,166 @@ Script-wide settings.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
+| `format_version` | int | (required) | Schema version the script targets. Must be 2 — v1 scripts (cumulative `secs`, `mag`, separate caption/callout/spotlight arrays) are rejected with a migration message rather than mis-played. A version newer than this build warns that some annotations may not render. |
 | `name` | string | "" | Display name (shown in render progress and the end-of-script toast). |
-| `format_version` | int | 0 | Schema version the script targets. A version newer than this build warns that some annotations may not render. |
-| `palette` | string | (session) | Coloring palette preset name (e.g. "Ember") or index, applied on load so the tour looks the same regardless of the current palette. |
 | `loop` | bool | false | Loop the tour during live playback (Tools -> Play script). |
-| `show_location` | bool | false | Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag). |
-| `max_iter` | int | (session, min 500000) | Iteration budget for the render. Deep tours SHOULD set this: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat. |
-| `auto_iter` | bool | true | Whether `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false). |
+| `render` | [render] | {} | How the tour is meant to be rendered — see below. |
+| `location` | [[location]] | [] | Named coordinates, referenced by `location = "id"`. |
+| `palette` | [[palette]] | [] | Named palettes, referenced by a keyframe's `palette = "id"`. |
+| `segment` | [[segment]] | [] | Chapters, so one can be rendered in isolation (`--segment`). |
 | `keyframe` | [[keyframe]] | [] | The camera path (at least one required) — see below. |
-| `caption` | [[caption]] | [] | Timed narration overlays — see below. |
-| `callout` | [[callout]] | [] | Labeled markers anchored to a coordinate — see below. |
-| `spotlight` | [[spotlight]] | [] | Dim-outside-a-circle vignettes — see below. |
+| `annotation` | [[annotation]] | [] | Timed overlays of every kind (caption / callout / spotlight) — see below. |
+| `editor` | table | (unset) | Reserved for editor-only state (selection, timeline zoom). Parsed and ignored by the player. |
+
+### `[render]`
+
+Output settings, so `--render-tour x.toml` with no flags reproduces the intended render. Every field is overridden by the matching CLI flag when one is given.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `size` | string | (CLI, else 1280x720) | Frame size, "WIDTHxHEIGHT" or a bare width (16:9 height). |
+| `fps` | float | (CLI, else 30) | Frames per second of the rendered sequence. |
+| `ss` | int | (CLI, else 1) | Supersampling factor (2 = 2x2 samples per pixel). |
+| `prefix` | string | (script file stem) | Frame-name prefix: frames are written <prefix>_00000.png. |
+| `out` | string | (CLI, else "frames") | Output directory for the frame sequence, relative to the working directory. |
+| `mp4` | bool | string | false | Assemble the frames into an H.264 mp4 with ffmpeg afterwards; a string names the file. |
+| `max_iter` | int | (session, min 500000) | Iteration budget for frames whose keyframes don't state their own. Deep tours SHOULD set a per-keyframe budget instead: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat. |
+| `auto_iter` | bool | true | Whether this `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false). Per-keyframe budgets are always exact. |
+| `show_location` | bool | false | Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag). |
+
+### `[[location]]` — repeatable
+
+A named coordinate. Referenced by keyframes and annotations via `location = "id"`, so a 120-digit dive center is written once.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `id` | string | (required) | Unique name used to reference this location. |
+| `re` | string | (required) | Real part — full-precision decimal or an exact rational expression like (37+16i)/100. |
+| `im` | string | (required) | Imaginary part. |
+| `zoom` | float | string | (unset) | Default magnification for keyframes that name this location without their own `zoom`. |
+| `thumb` | string | (unset) | Preview image path relative to the script (reserved for editors; not read by the player). |
+| `note` | string | (unset) | Free-text note for the author (ignored). |
+
+### `[[palette]]` — repeatable
+
+A named palette. A keyframe's `palette = "id"` selects it, and the coloring interpolates between keyframes — one mechanism covering static palettes, morphs, and cycling.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `id` | string | (required) | Unique name used to reference this palette. |
+| `preset` | string | (unset) | Built-in preset name (e.g. "Ember") or index. Either this or `stops` is required. |
+| `stops` | [{at, color}] | [] | Explicit gradient stops ascending by `at` (0..1), colors as #rrggbb; up to 8. |
+
+### `[[segment]]` — repeatable
+
+A chapter of the timeline. `--segment NAME` renders (or plays) only that range, keeping the global frame numbering — so ten seconds of narration can be re-rendered without redoing the whole tour.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `id` | string | (title) | Short name matched by --segment (case-insensitive; the 1-based index also works). |
+| `title` | string | (id) | Human-readable chapter title. |
+| `t` | float | 0 | Absolute start time (seconds). The chapter runs to the next segment's `t`, or the end of the tour. |
 
 ### `[[keyframe]]` — repeatable
 
-A camera waypoint. The view eases from the previous keyframe to this one over `secs`, then holds for `hold`. Discrete settings (center, fractal, julia, dual, orbits) inherit forward until changed.
+A camera waypoint. The view eases from the previous keyframe to this one, ARRIVING at absolute time `t`, then holds for `hold`. Everything except `t`/`hold`/`ease` inherits forward until changed, so a pure zoom-in needs only `t` and `zoom`.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `secs` | float | 0 | Seconds to glide here from the previous keyframe. |
-| `center_re` | string | (inherit) | Full-precision decimal real part of the center. Omit to inherit the previous center (pure zoom). |
-| `center_im` | string | (inherit) | Full-precision decimal imaginary part of the center. |
-| `mag` | float | 1 | Magnification at this keyframe (up to ~1e308). |
-| `mag_log10` | float | (unset) | Magnification as log10, for depths past f64's ~1e308 ceiling (e.g. 420 = 1e420x). Takes precedence over `mag`. |
-| `fractal` | string | (inherit) | Fractal family name (e.g. "Mandelbrot", "Burning Ship"). |
-| `julia` | bool | false | Julia mode for the family. |
+| `id` | string | (index) | Stable identity for reordering, cross-references, and error messages. |
+| `t` | float | 0 (first) / (required) | ABSOLUTE second the camera arrives here. Must be >= the previous keyframe's t + hold. Absolute times mean inserting a keyframe can't desync downstream narration. |
+| `hold` | float | 0 | Seconds to pause here before the next glide begins. |
 | `ease` | string | smooth | Easing for the glide arriving here: smooth, linear, smoother, in (accelerate), or out (decelerate). |
-| `hold` | float | 0 | Seconds to pause at this keyframe before the next glide. |
-| `dual` | bool | false | Show the linked dual view (Mandelbrot + its Julia set side by side). |
-| `julia_re` | float | (unset) | Pin the Julia parameter c (real part). Both julia_re and julia_im are required; interpolated between keyframes. |
-| `julia_im` | float | (unset) | Julia parameter c (imaginary part). |
-| `orbits` | bool | false | Overlay the escape-time orbit (the path of z under iteration). |
-| `orbit_re` | float | (unset) | The point whose orbit to draw, real part (both components required; interpolated). |
-| `orbit_im` | float | (unset) | Orbit point imaginary part. |
+| `location` | string | (inherit) | Named coordinate to sit on (see [[location]]), instead of inline re/im. |
+| `re` | string | (inherit) | Center, real part: full-precision decimal or an exact rational. Omit to inherit (pure zoom). |
+| `im` | string | (inherit) | Center, imaginary part. |
+| `zoom` | float | string | (inherit, else 1) | Magnification here, e.g. 2667 or "6.5e94". Strings carry depths past f64's ~1e308 ceiling. |
+| `max_iter` | int | (inherit, else [render]) | Exact iteration budget at this keyframe, interpolated geometrically along the glide. One script-wide number cannot serve both a 1.33x home view and a 1e94x dive. |
+| `palette` | string | (inherit) | Palette id, preset name, or preset index; interpolated between keyframes. |
+| `fractal` | string | (inherit) | Fractal family name (e.g. "Mandelbrot", "Burning Ship"). |
+| `julia` | bool | (inherit) | Julia mode for the family. |
+| `dual` | bool | (inherit) | Show the linked dual view (Mandelbrot + its Julia set side by side). |
+| `julia_re` | float | (inherit) | Pin the Julia parameter c (real part). Both julia_re and julia_im are required; interpolated between keyframes. |
+| `julia_im` | float | (inherit) | Julia parameter c (imaginary part). |
+| `orbits` | bool | (inherit) | Overlay the escape-time orbit (the path of z under iteration). |
+| `orbit_re` | float | (inherit) | The point whose orbit to draw, real part (both components required; interpolated). |
+| `orbit_im` | float | (inherit) | Orbit point imaginary part. |
 
-### `[[caption]]` — repeatable
+### `[[annotation]]` — repeatable
 
-A timed on-screen caption (narration), independent of the camera path.
+A timed overlay, independent of the camera path. One array for every kind: an editor sees a single track list, and new kinds are additive.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `text` | string | (required) | The text to show (supports \n for multiple lines). |
-| `at` | float | 0 | When it appears on the timeline (seconds from the start). |
+| `kind` | string | (required) | caption (narration text), callout (label anchored to a coordinate, tracking it as the view moves), or spotlight (dim everything outside a soft circle). |
+| `id` | string | (index) | Stable identity for editors and cross-references. |
+| `t` | float | 0 | When it appears (absolute seconds). |
 | `secs` | float | 0 = until end | How long it stays (seconds); 0/omitted keeps it until the tour ends. |
-| `pos` | string | bottom | Screen anchor: top, center, or bottom. |
 | `fade` | float | 0.4 | Fade in/out time (seconds) at each end. |
-| `size` | float | 22 | Font size in points (scaled to the frame height). |
-
-### `[[callout]]` — repeatable
-
-A labeled marker anchored to a fractal coordinate — it tracks the point as the view pans/zooms, with a leader line to the label.
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `text` | string | (required) | Label text. |
-| `center_re` | string | (required) | Anchor coordinate, real part (full-precision decimal). |
-| `center_im` | string | (required) | Anchor coordinate, imaginary part. |
-| `at` | float | 0 | When it appears (seconds). |
-| `secs` | float | 0 = until end | How long it stays (seconds). |
-| `fade` | float | 0.4 | Fade in/out time (seconds). |
-| `size` | float | 18 | Label font size in points. |
-
-### `[[spotlight]]` — repeatable
-
-A vignette that dims everything outside a soft circle to draw the eye. Anchored to a coordinate so it tracks the point and stays a constant on-screen size.
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `center_re` | string | (required) | Circle center, real part (full-precision decimal). |
-| `center_im` | string | (required) | Circle center, imaginary part. |
-| `radius` | float | 0.25 | Circle radius as a fraction of the frame height. |
-| `softness` | float | 0.08 | Soft-edge width as a fraction of the frame height. |
-| `dim` | float | 0.7 | How dark outside the circle (0..1). |
-| `at` | float | 0 | When it appears (seconds). |
-| `secs` | float | 0 = until end | How long it stays (seconds). |
-| `fade` | float | 0.4 | Fade in/out time (seconds). |
+| `text` | string | (caption/callout) | The text to show (supports \n for multiple lines). Required for caption and callout. |
+| `pos` | string | bottom | caption: screen anchor — top, center, or bottom. |
+| `size` | float | 22 / 18 | Font size in points, scaled to the frame height (caption 22, callout 18). |
+| `location` | string | (unset) | callout/spotlight: named coordinate to anchor to, instead of re/im. |
+| `re` | string | (unset) | callout/spotlight: anchor coordinate, real part. |
+| `im` | string | (unset) | callout/spotlight: anchor coordinate, imaginary part. |
+| `radius` | float | 0.25 | spotlight: circle radius as a fraction of the frame height. |
+| `softness` | float | 0.08 | spotlight: soft-edge width as a fraction of the frame height. |
+| `dim` | float | 0.7 | spotlight: how dark outside the circle (0..1). |
 
 ## Timeline
 
-Keyframe timing is cumulative: each `[[keyframe]]` adds `secs` of glide from the previous keyframe's hold-end, then `hold` seconds of pause. The first keyframe starts at t=0. Caption / callout / spotlight `at` times are absolute seconds from the start, and `secs = 0` means "until the tour ends". At `--fps N` the tour renders `round(total * N) + 1` frames.
+**Every time in a script is absolute seconds from the start.** A `[[keyframe]]`'s `t` is when the camera *arrives* there; it then sits still for `hold` before easing toward the next one, which must arrive no earlier than `t + hold`. Annotation `t` is when the overlay appears, and `secs = 0` means "until the tour ends". At `--fps N` the tour renders `round(total * N) + 1` frames.
 
-For deep dives, keep `secs` generous, use `ease = "in"` / `"out"` at the ends with `linear` for the cruise, and express magnifications past f64 range with `mag_log10`. Pan at low zoom *before* diving so the camera doesn't zoom through the set's black interior.
+Absolute times are what make a script editable: inserting or lengthening a keyframe leaves every other element exactly where it was, instead of silently sliding all downstream narration out of sync.
+
+For deep dives, give the descent generous time, use `ease = "in"` / `"out"` at the ends with `linear` for the cruise, and write magnifications past f64 range as strings (`zoom = "6.5e94"`). Pan at low zoom *before* diving so the camera doesn't zoom through the set's black interior. Give the deep keyframes their own `max_iter`: one script-wide budget cannot serve both a 1.33x home view and a 1e94x dive.
 
 ## Example
 
 ```toml
+format_version = 2
 name = "Mini tour"
-palette = "Ember"
-format_version = 1
 
-[[keyframe]]            # overview
-secs = 0
-center_re = "-0.5"
-center_im = "0.0"
-mag = 1
+[render]
+size = "1920x1080"
+fps = 30
+ss = 2
+
+[[location]]
+id = "seahorse"
+re = "-0.743643887037158704752191506114774"
+im = "0.131825904205311970493132056385139"
+
+[[keyframe]]            # overview — arrives at t=0, sits for 2s
+id = "home"
+t = 0
+re = "-0.5"
+im = "0.0"
+zoom = 1
+palette = "Ember"
+max_iter = 2000
 hold = 2
 
-[[keyframe]]            # dive into Seahorse Valley
-secs = 6
-center_re = "-0.743643887037158704752191506114774"
-center_im = "0.131825904205311970493132056385139"
-mag_log10 = 6
+[[keyframe]]            # dive into Seahorse Valley, arriving at t=8
+id = "dive"
+t = 8
+location = "seahorse"
+zoom = "1e6"
+max_iter = 20000
 ease = "in"
 hold = 3
 
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Seahorse Valley"
-at = 8
+t = 8
 secs = 4
 pos = "bottom"
 
-[[spotlight]]
-center_re = "-0.743643887037158704752191506114774"
-center_im = "0.131825904205311970493132056385139"
+[[annotation]]
+kind = "spotlight"
+location = "seahorse"
 radius = 0.28
-at = 8
+t = 8
 secs = 4
 ```

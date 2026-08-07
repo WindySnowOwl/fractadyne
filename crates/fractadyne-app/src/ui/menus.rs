@@ -281,7 +281,7 @@ impl FractadyneApp {
                         }
                         ui.add_enabled_ui(self.playback.is_some(), |ui| {
                             if ui.button("Stop playback").clicked() {
-                                self.playback = None;
+                                self.stop_playback();
                                 ui.close_menu();
                             }
                         });

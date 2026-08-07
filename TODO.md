@@ -2,14 +2,14 @@
 
 ## ▶ Announce readiness (fractalforums) — status 2026-08-07
 
-Goal: a stable `v0.2.40` suitable for announcing. Current head is **v0.2.40-beta.33**; the latest
-*published* prerelease is still beta.27 (beta.28–33 are pushed commits, deliberately untagged —
+Goal: a stable `v0.2.40` suitable for announcing. Current head is **v0.2.40-beta.34**; the latest
+*published* prerelease is still beta.27 (beta.28–34 are pushed commits, deliberately untagged —
 GitHub builds only fire on explicit request).
 
 **Done:** the crash ledger is clean (both recorded device-loss crashes fixed, plus auto-restart
 recovery); seven spar-family rendering bugs fixed; status-bar diagnostics now explain rendering
 limits instead of leaving a black screen unexplained; the iteration ceiling is 10M; the grand
-tour exists.
+tour exists and now renders end to end (script format v2, beta.34).
 
 **Blockers before tagging:**
 1. **CHANGELOG is stale** — its `0.2.40-beta` entry stops at beta.15, so ~18 betas of work are
@@ -26,72 +26,67 @@ GPU feedback), **Newton-Raphson zoom**, the cursor-driven **dual Julia at depth*
 **F3-matched corpus** as evidence rather than a boast.
 
 **Explicitly deferred, not blockers:** the 1e95 depth wall (documented and now self-reporting),
-the glitch-correction pathology, the tour-render TDR, and the proposals backlog.
+the glitch-correction pathology, the unbounded per-frame cost/memory of the offline tour path,
+and the proposals backlog.
 
 Living backlog. Specs: [DESIGN.md](DESIGN.md), [UI-DESIGN.md](UI-DESIGN.md).
 Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] **Tour/offline render can TDR the GPU at a high iteration budget — no per-frame cost bound.**
-  Found 2026-08-07 rendering `tours/grand-tour.toml` with `max_iter = 2000000`: at frame 16 a
-  2,000,001-sample (non-escaping) reference installed and the next frame lost the device
-  (`DEVICE LOST (Unknown)`), even at 240x135. beta.29's loop guard correctly declined to
-  restart (22 s uptime), so the failure is clean — but the render dies. The LIVE path bounds
-  per-frame cost (`fe_budget` + tiled settle + motion-res); the tour path has none of that, and
-  `render_export`'s `TILE_WORK_BUDGET` evidently isn't bounding this dispatch (240·135·2e6 =
-  6.5e10 nominal steps vs a 2e10 tile budget — check whether the tour render path actually goes
-  through the tiled export). Fix direction: route tour frames through the tiled export path with
-  a budget calibrated like the live one, so iteration budget and frame cost are decoupled.
-  Until then a deep tour must be rendered at a modest `max_iter`, which under-resolves the
-  deepest frames — see the note in `tours/grand-tour.toml`.
-- [ ] **Per-keyframe `max_iter` (script format).** One script-wide iteration budget cannot serve
-  both a 1.33x home view and a 1e94x dive: an exact count makes shallow frames cost minutes
-  each (measured — the render never finished), while a depth-scaled base that keeps shallow
-  frames cheap leaves the deepest holds a few percent capped (they want ~8M). Per-keyframe
-  budget is the fix, and it folds into the v2 format restructure.
+- [ ] **Tour/offline render has no per-frame cost bound** — the TDR no longer reproduces, but the
+  hole is still there. Found 2026-08-07 rendering `tours/grand-tour.toml` with a script-wide
+  `max_iter = 2000000`: at frame 16 a 2,000,001-sample (non-escaping) reference installed and the
+  next frame lost the device (`DEVICE LOST (Unknown)`), even at 240x135. beta.34's per-keyframe
+  budgets removed the trigger — that frame is a 1.33x home view and now asks for 2 000 iterations,
+  and the full tour renders end to end — but nothing *bounds* a tour frame's cost, so a script
+  that asks for millions at a shallow view can still do it. The LIVE path bounds per-frame cost
+  (`fe_budget` + tiled settle + motion-res); the tour path has none of that, and `render_export`'s
+  `TILE_WORK_BUDGET` evidently wasn't bounding that dispatch (240·135·2e6 = 6.5e10 nominal steps
+  vs a 2e10 tile budget — check whether the tour render path actually goes through the tiled
+  export). Fix direction unchanged: route tour frames through the tiled export path with a budget
+  calibrated like the live one.
+- [ ] **A deep tour frame's memory is unbounded too** (measured 2026-08-07). The offline path
+  builds frame N+1's reference while frame N renders, so the peak is two references at once: at
+  the 6.5e94x spar an 8M-sample reference is ~2.3 GB at 379-bit precision plus its BLA tables, and
+  the pair OOM-killed the render mid-dive on a 32 GB machine (`memory allocation of 6520976 bytes
+  failed`, after 221 of 233 frames). The grand tour's deepest hold is set to 4M as a result, which
+  leaves it a few percent capped. Worth bounding the lookahead by available memory, or at least
+  failing with a diagnosis instead of an allocator abort.
 
-## Script format v2 — agreed design, not yet started (2026-08-07)
+## Script format v2 — SHIPPED v0.2.40-beta.34 (2026-08-07)
 
-Breaking change, explicitly sanctioned: the app has no users yet, so **no compatibility branch
-and no v1 reader** — migrate the five shipped tours in the same pass and delete the old shape.
-Rationale for each item is in the session that designed it; the short form:
+Breaking change, explicitly sanctioned: no compatibility branch and no v1 reader — a v1 script is
+rejected with a migration message (`check_format_version`), and all six shipped tours were
+migrated in the same pass. Schema reference: [TOURS.md](TOURS.md), generated from `TOUR_SCHEMA`.
 
-- **Absolute keyframe times** (`t` = arrival, plus `hold`), replacing cumulative `secs`. Today a
-  keyframe's position is the sum of everything before it, so inserting one silently desyncs all
-  downstream narration — hit while authoring `grand-tour.toml`, where the caption times had to be
-  hand-computed. Editors drag keyframes to times; this is the single highest-value change.
-- **Stable `id` on every element** — reorder, undo, selection and cross-references all need
-  identity that isn't positional.
-- **One `[[annotation]]` array with `kind = "caption" | "callout" | "spotlight" | …`**, replacing
-  the three parallel arrays. An editor merges them into one track list anyway, and new annotation
-  kinds become additive rather than a new top-level array each time.
-- **`[render]` block** — size, fps, ss, prefix, mp4 flags, `max_iter` / `auto_iter` (top-level
-  versions shipped in beta.33; fold them in here), so `--render-tour x.toml` with no flags
-  reproduces the intended output and CLI flags merely override.
-- **Per-keyframe `max_iter`** — see the Open bugs item above; the deep chapter needs it.
-- **`[[location]]`** — named coordinates with an optional `thumb`. Kills the 120-digit
-  duplication (the grand tour's dive center appears three times) and doubles as the home for the
-  shipped landmark library and an editor's location picker.
-- **`zoom = "6.5e94"` string**, replacing `mag` + `mag_log10` and their precedence rule.
-- **`[[segment]]`** — chapters, so one can be rendered or scrubbed in isolation
-  (`--segment "Chapter 3"`). With full renders in the thousands of frames, re-rendering
-  everything to fix ten seconds of narration is the real workflow killer.
-- **`[[palette]]` definitions + per-keyframe palette reference**, interpolated between keyframes
-  — this one mechanism covers static palettes, palette morphs and cycling animation. Sources:
-  preset name, inline gradient stops, or a KF `.map` file once that import lands.
-- **Thumbnails by reference, not embedded** — `thumb = "thumbs/x.png"` relative to the script,
-  plus a generated cache the app can populate (it already renders bookmark/minimap thumbnails).
-  Base64 in TOML would bloat diffs and make hand-editing miserable.
-- **Stubs worth reserving now**: an `[[audio]]` track (music/narration timing is the usual next
-  ask for video), per-property easing (camera and palette want different curves — borrow glTF's
-  channel/sampler model), and an `editor` table for editor-only state so it needs no sidecar.
+Delivered: **absolute keyframe times** (`t` = arrival, plus `hold`) · **stable `id`s** ·
+**one `[[annotation]]` array** tagged by `kind` · **`[render]` block** (CLI flags override, so
+`--render-tour x.toml` alone reproduces the intended render) · **per-keyframe `max_iter`**,
+interpolated geometrically along each glide · **`[[location]]`** named coordinates (with a
+reserved `thumb`) · **`zoom = "6.5e94"`** strings · **`[[segment]]` chapters + `--segment NAME`**
+(global frame numbering kept) · **`[[palette]]` definitions** with a per-keyframe reference,
+cross-faded between keyframes · **`editor` table** reserved and ignored. New `script` selftest
+group (7 checks, suite 91 → 98) covers all of it, including that "Script to current view" still
+generates a script this build can read — which is how the generator's v1 output was caught.
+
+Effect on the grand tour: shallow chapters render at a few thousand iterations a frame (121
+frames in 2.7 s at 480x270) while the spar holds get 250k–4M; the whole tour renders without the
+TDR that killed it at frame 16.
+
+Still open from the original design:
+- **`[[audio]]` track** (music/narration timing is the usual next ask for video) and
+  **per-property easing** (camera and palette want different curves — borrow glTF's
+  channel/sampler model). Neither is reserved in the schema yet.
+- **Thumbnail generation** — `thumb` parses but nothing writes or reads the cache. The app
+  already renders bookmark/minimap thumbnails, so it's plumbing, not new machinery.
+- **KF `.map` palette source** for `[[palette]]` — blocked on the `.map` import itself.
 
 Not a compatibility target: there is no de-facto fractal tour-script format worth conforming to
 (KF drives zoom videos from folders of numbered `.kfr` files; Ultra Fractal's `.upr` timeline is
 proprietary and tangled with its formula system). The interop that matters for zoom video is
-**exponential-map EXR for zoomasm** (listed above) — spend the effort there. OpenTimelineIO is a
-plausible future *export* if anyone wants to cut frames in an NLE, never the native format.
+**exponential-map EXR for zoomasm** — spend the effort there. OpenTimelineIO is a plausible
+future *export* if anyone wants to cut frames in an NLE, never the native format.
 
 - [x] **wgpu device loss (TDR) crashes the app — FIXED v0.2.40-beta.29 (both halves).** Two crash
   reports on record, both `Surface::get_current_texture_view: Parent device is lost` → panic:

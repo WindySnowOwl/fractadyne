@@ -5,116 +5,209 @@
 use crate::{now_utc_string, process_memory, version_string, FractadyneApp, FractalKind};
 use serde::Deserialize;
 
-/// Script schema version. Bump on a breaking change to an existing key's meaning; purely
-/// additive new keys don't need it (unknown keys are ignored, missing ones default — so old
-/// and new builds interoperate). A script whose `format_version` exceeds this is from a newer
+/// Script schema version. **v2 is a breaking restructure of v1** — absolute keyframe times, one
+/// `[[annotation]]` array, `[render]`, `[[location]]`, `zoom` strings, per-keyframe budgets — and
+/// there is deliberately no v1 reader: a v1 script is rejected with a migration message rather
+/// than silently mis-played (its `secs`/`mag` keys simply don't exist in v2, so every keyframe
+/// would land at t=0, zoom 1). Purely additive new keys don't need a bump (unknown keys are
+/// ignored, missing ones default). A script whose `format_version` exceeds this is from a newer
 /// build: we still play the parts we understand but warn that newer features may not apply.
-pub(crate) const SCRIPT_FORMAT_VERSION: u32 = 1;
+pub(crate) const SCRIPT_FORMAT_VERSION: u32 = 2;
 
-/// On-disk script format (TOML). A keyframe with no `center_re`/`center_im` inherits
-/// the previous keyframe's center (handy for pure zoom-in tours). Captions are timed
-/// independently of keyframes (so narration can span or overlap camera moves).
+/// On-disk script format v2 (TOML). Keyframe `t` is the ABSOLUTE second the camera arrives (so
+/// inserting a keyframe can't desync downstream narration), every element takes a stable `id`,
+/// annotations share one array tagged by `kind`, and output settings live in `[render]`.
 #[derive(Deserialize, Default)]
 struct ScriptFile {
     #[serde(default)]
     name: String,
-    /// Schema version the script was authored for (see `SCRIPT_FORMAT_VERSION`).
+    /// Schema version the script was authored for. Gated by `check_format_version` *before*
+    /// deserializing (a v1 file must not reach serde at all), so it's declared here only to
+    /// document the key and keep the struct a faithful picture of the format.
     #[serde(default)]
+    #[allow(dead_code)]
     format_version: Option<u32>,
-    /// Coloring palette for the tour: a preset name (e.g. "Ember") or index. Applied on load so a
-    /// tour looks the same regardless of the session palette (e.g. a binary palette would render
-    /// deep exterior-only views as one flat color). Omit to keep the current palette.
-    #[serde(default)]
-    palette: Option<String>,
     #[serde(default, rename = "loop")]
     loop_: bool,
-    /// Burn a small zoom/coordinate HUD into the top-left of every frame. Overridden on by the
-    /// `--show-location` CLI flag. Omit / false to leave frames clean.
+    /// Output settings, so `--render-tour x.toml` with no flags reproduces the intended render
+    /// and CLI flags merely override.
     #[serde(default)]
-    show_location: Option<bool>,
-    /// Iteration budget for the tour, overriding the session's. Without this a deep tour is at
-    /// the mercy of whatever the viewer happens to have set, and auto-iter's depth formula
-    /// (~220/octave) under-budgets hard fields badly: the Misiurewicz three-spar gets ~46k at
-    /// 1e61× and ~71k at 1e95× where it measurably needs 222k and millions — every deep frame
-    /// renders FLAT. A tour that dives somewhere hard must be able to say what it needs.
+    render: RenderFile,
+    /// Named coordinates, referenced by `location = "id"` from keyframes and annotations.
     #[serde(default)]
-    max_iter: Option<u32>,
-    /// Whether the tour's `max_iter` is a BASE that still scales with depth (`true`, the session
-    /// default) or an exact count to use as-is (`false`). Deep tours normally want `false`.
+    location: Vec<LocationFile>,
+    /// Named palettes, referenced by `palette = "id"` from keyframes.
     #[serde(default)]
-    auto_iter: Option<bool>,
+    palette: Vec<PaletteFile>,
+    /// Chapters, so one can be rendered or scrubbed in isolation (`--segment`).
+    #[serde(default)]
+    segment: Vec<SegmentFile>,
     #[serde(default)]
     keyframe: Vec<KeyframeFile>,
     #[serde(default)]
-    caption: Vec<CaptionFile>,
+    annotation: Vec<AnnotationFile>,
+    /// Reserved for editor-only state (selection, timeline zoom …) so an editor needs no sidecar
+    /// file. Parsed and ignored by the player.
     #[serde(default)]
-    callout: Vec<CalloutFile>,
-    #[serde(default)]
-    spotlight: Vec<SpotlightFile>,
+    #[allow(dead_code)]
+    editor: Option<toml::Value>,
 }
 
-/// A spotlight vignette: dim everything outside a soft circle centred on a fractal coordinate.
+/// A number that may be written as a TOML number or a string — `zoom = 8` and `zoom = "6.5e94"`
+/// both work, and only the string form survives past f64's ~1e308 ceiling.
 #[derive(Deserialize, Clone)]
-struct SpotlightFile {
-    #[serde(rename = "center_re")]
-    center_x: String,
-    #[serde(rename = "center_im")]
-    center_y: String,
-    /// Circle radius as a fraction of the frame height (default 0.25).
-    #[serde(default)]
-    radius: Option<f64>,
-    #[serde(default)]
-    at: f64,
-    #[serde(default)]
-    secs: f64,
-    #[serde(default)]
-    fade: Option<f64>,
-    /// How dark outside the circle, 0..1 (default 0.7).
-    #[serde(default)]
-    dim: Option<f64>,
-    /// Soft-edge width as a fraction of the frame height (default 0.08).
-    #[serde(default)]
-    softness: Option<f64>,
+#[serde(untagged)]
+enum NumOrStr {
+    Num(f64),
+    Str(String),
 }
 
-/// A labeled marker anchored to a complex coordinate (tracks the point as the view moves).
-#[derive(Deserialize, Clone)]
-struct CalloutFile {
-    text: String,
-    #[serde(rename = "center_re")]
-    center_x: String,
-    #[serde(rename = "center_im")]
-    center_y: String,
-    #[serde(default)]
-    at: f64,
-    #[serde(default)]
-    secs: f64,
-    #[serde(default)]
-    fade: Option<f64>,
-    #[serde(default)]
-    size: Option<f64>,
+impl NumOrStr {
+    fn as_string(&self) -> String {
+        match self {
+            NumOrStr::Num(n) => format!("{n}"),
+            NumOrStr::Str(s) => s.clone(),
+        }
+    }
 }
 
-/// A timed on-screen caption (narration overlay). Additive to the camera path.
+/// `mp4 = true` (default path next to the frames) or `mp4 = "movie.mp4"`.
 #[derive(Deserialize, Clone)]
-struct CaptionFile {
-    /// The text to show (supports `\n` for multiple lines).
-    text: String,
-    /// When it appears on the timeline (seconds from the start).
+#[serde(untagged)]
+enum Mp4Spec {
+    Flag(bool),
+    Path(String),
+}
+
+/// The `[render]` table: how this tour is meant to be rendered.
+#[derive(Deserialize, Default, Clone)]
+struct RenderFile {
+    /// `"1920x1080"` or a bare width (`"1920"`).
     #[serde(default)]
+    size: Option<String>,
+    #[serde(default)]
+    fps: Option<f64>,
+    #[serde(default)]
+    ss: Option<u32>,
+    #[serde(default)]
+    prefix: Option<String>,
+    #[serde(default)]
+    out: Option<String>,
+    #[serde(default)]
+    mp4: Option<Mp4Spec>,
+    /// Iteration budget when a keyframe doesn't state its own. Without this a deep tour is at the
+    /// mercy of whatever the viewer happens to have set, and auto-iter's depth formula
+    /// (~220/octave) under-budgets hard fields badly: the Misiurewicz three-spar gets ~46k at
+    /// 1e61× and ~71k at 1e95× where it measurably needs 222k and millions — every deep frame
+    /// renders FLAT.
+    #[serde(default)]
+    max_iter: Option<u32>,
+    /// Whether `max_iter` is a BASE that still scales with depth (`true`) or an exact count
+    /// (`false`). Per-keyframe `max_iter` is always exact.
+    #[serde(default)]
+    auto_iter: Option<bool>,
+    /// Burn a small zoom/coordinate HUD into the top-left of every frame (also `--show-location`).
+    #[serde(default)]
+    show_location: Option<bool>,
+}
+
+/// A named coordinate — kills the 120-digit duplication when several keyframes and annotations
+/// share a dive center, and doubles as an editor's location picker.
+#[derive(Deserialize, Clone)]
+struct LocationFile {
+    id: String,
+    re: String,
+    im: String,
+    /// Default magnification for keyframes that name this location without their own `zoom`.
+    #[serde(default)]
+    zoom: Option<NumOrStr>,
+    /// Preview image path, relative to the script (reserved: generated by the app's thumbnail
+    /// cache; not read by the player).
+    #[serde(default)]
+    #[allow(dead_code)]
+    thumb: Option<String>,
+    /// Free-text note for the author (ignored).
+    #[serde(default)]
+    #[allow(dead_code)]
+    note: Option<String>,
+}
+
+/// A named palette: a built-in preset by name/index, or explicit gradient stops.
+#[derive(Deserialize, Clone)]
+struct PaletteFile {
+    id: String,
+    /// Built-in preset name (e.g. "Ember") or index.
+    #[serde(default)]
+    preset: Option<String>,
+    /// Explicit gradient stops, ascending by `at` (0..1).
+    #[serde(default)]
+    stops: Vec<StopFile>,
+}
+
+/// One gradient stop: `{ at = 0.4, color = "#e04c0a" }`.
+#[derive(Deserialize, Clone)]
+struct StopFile {
     at: f64,
-    /// How long it stays (seconds). 0 or omitted ⇒ until the tour ends.
+    color: String,
+}
+
+/// A chapter of the timeline.
+#[derive(Deserialize, Clone)]
+struct SegmentFile {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    /// Absolute start time (seconds); the chapter runs to the next segment's `t` (or the end).
+    #[serde(default)]
+    t: f64,
+}
+
+/// A timed overlay. One array for all kinds so an editor sees a single track list and new kinds
+/// are additive rather than a new top-level array each time.
+#[derive(Deserialize, Clone)]
+struct AnnotationFile {
+    /// `caption`, `callout`, or `spotlight`.
+    kind: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    id: Option<String>,
+    /// When it appears (absolute seconds).
+    #[serde(default)]
+    t: f64,
+    /// How long it stays; 0 or omitted ⇒ until the tour ends.
     #[serde(default)]
     secs: f64,
-    /// Screen anchor: `top`, `center`, or `bottom` (default).
-    #[serde(default)]
-    pos: Option<String>,
     /// Fade in/out time (seconds) at each end. Default 0.4.
     #[serde(default)]
     fade: Option<f64>,
-    /// Font size in points. Default 22.
+    // --- caption / callout ---
+    /// The text to show (supports `\n` for multiple lines). Required for captions and callouts.
+    #[serde(default)]
+    text: Option<String>,
+    /// Caption screen anchor: `top`, `center`, or `bottom` (default).
+    #[serde(default)]
+    pos: Option<String>,
+    /// Font size in points.
     #[serde(default)]
     size: Option<f64>,
+    // --- callout / spotlight anchor ---
+    #[serde(default)]
+    location: Option<String>,
+    #[serde(default)]
+    re: Option<String>,
+    #[serde(default)]
+    im: Option<String>,
+    // --- spotlight ---
+    /// Circle radius as a fraction of the frame height (default 0.25).
+    #[serde(default)]
+    radius: Option<f64>,
+    /// Soft-edge width as a fraction of the frame height (default 0.08).
+    #[serde(default)]
+    softness: Option<f64>,
+    /// How dark outside the circle, 0..1 (default 0.7).
+    #[serde(default)]
+    dim: Option<f64>,
 }
 
 /// Where a caption sits on screen.
@@ -272,21 +365,36 @@ pub(crate) fn vignette_for(spots: &[Spotlight], vp: &fractadyne_core::Viewport, 
     fractadyne_gpu::Vignette::default()
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Default)]
 struct KeyframeFile {
-    /// Seconds to glide here from the previous keyframe.
+    /// Stable identity — reorder, undo, selection and cross-references all need one that isn't
+    /// positional. Also what error messages name.
     #[serde(default)]
-    secs: f64,
-    #[serde(rename = "center_re", default)]
-    center_x: Option<String>,
-    #[serde(rename = "center_im", default)]
-    center_y: Option<String>,
-    #[serde(default = "one_f64")]
-    mag: f64,
-    /// Magnification as log10 (so deep zooms past f64's ~1e308 ceiling are expressible, e.g.
-    /// `mag_log10 = 420` for 1e420×). Takes precedence over `mag` when present.
+    id: Option<String>,
+    /// **Absolute** time the camera arrives here (seconds from the start). The first keyframe
+    /// defaults to 0; later ones must not arrive before the previous one's hold ends.
     #[serde(default)]
-    mag_log10: Option<f64>,
+    t: Option<f64>,
+    /// Named coordinate to sit on (see `[[location]]`), instead of inline `re`/`im`.
+    #[serde(default)]
+    location: Option<String>,
+    /// Center, full-precision decimal or an exact rational (`-3/4`). Omit to inherit.
+    #[serde(default)]
+    re: Option<String>,
+    #[serde(default)]
+    im: Option<String>,
+    /// Magnification, e.g. `2667` or `"6.5e94"`. Omit to inherit the previous keyframe's.
+    #[serde(default)]
+    zoom: Option<NumOrStr>,
+    /// Exact iteration budget for frames at this keyframe (interpolated geometrically along the
+    /// glide from the previous one). One script-wide number cannot serve both a 1.33× home view
+    /// and a 1e94× dive; this is how a deep chapter asks for what it needs without making the
+    /// shallow frames cost minutes each. Inherited forward until changed.
+    #[serde(default)]
+    max_iter: Option<u32>,
+    /// Palette id (see `[[palette]]`), a preset name, or a preset index. Inherited forward.
+    #[serde(default)]
+    palette: Option<String>,
     #[serde(default)]
     fractal: Option<String>,
     #[serde(default)]
@@ -348,81 +456,111 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
         repeatable: false,
         summary: "Script-wide settings.",
         fields: &[
+            SchemaField { name: "format_version", ty: "int", default: "(required)", doc: "Schema version the script targets. Must be 2 — v1 scripts (cumulative `secs`, `mag`, separate caption/callout/spotlight arrays) are rejected with a migration message rather than mis-played. A version newer than this build warns that some annotations may not render." },
             SchemaField { name: "name", ty: "string", default: "\"\"", doc: "Display name (shown in render progress and the end-of-script toast)." },
-            SchemaField { name: "format_version", ty: "int", default: "0", doc: "Schema version the script targets. A version newer than this build warns that some annotations may not render." },
-            SchemaField { name: "palette", ty: "string", default: "(session)", doc: "Coloring palette preset name (e.g. \"Ember\") or index, applied on load so the tour looks the same regardless of the current palette." },
             SchemaField { name: "loop", ty: "bool", default: "false", doc: "Loop the tour during live playback (Tools -> Play script)." },
-            SchemaField { name: "show_location", ty: "bool", default: "false", doc: "Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag)." },
-            SchemaField { name: "max_iter", ty: "int", default: "(session, min 500000)", doc: "Iteration budget for the render. Deep tours SHOULD set this: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat." },
-            SchemaField { name: "auto_iter", ty: "bool", default: "true", doc: "Whether `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false)." },
+            SchemaField { name: "render", ty: "[render]", default: "{}", doc: "How the tour is meant to be rendered — see below." },
+            SchemaField { name: "location", ty: "[[location]]", default: "[]", doc: "Named coordinates, referenced by `location = \"id\"`." },
+            SchemaField { name: "palette", ty: "[[palette]]", default: "[]", doc: "Named palettes, referenced by a keyframe's `palette = \"id\"`." },
+            SchemaField { name: "segment", ty: "[[segment]]", default: "[]", doc: "Chapters, so one can be rendered in isolation (`--segment`)." },
             SchemaField { name: "keyframe", ty: "[[keyframe]]", default: "[]", doc: "The camera path (at least one required) — see below." },
-            SchemaField { name: "caption", ty: "[[caption]]", default: "[]", doc: "Timed narration overlays — see below." },
-            SchemaField { name: "callout", ty: "[[callout]]", default: "[]", doc: "Labeled markers anchored to a coordinate — see below." },
-            SchemaField { name: "spotlight", ty: "[[spotlight]]", default: "[]", doc: "Dim-outside-a-circle vignettes — see below." },
+            SchemaField { name: "annotation", ty: "[[annotation]]", default: "[]", doc: "Timed overlays of every kind (caption / callout / spotlight) — see below." },
+            SchemaField { name: "editor", ty: "table", default: "(unset)", doc: "Reserved for editor-only state (selection, timeline zoom). Parsed and ignored by the player." },
+        ],
+    },
+    SchemaTable {
+        toml: "[render]",
+        repeatable: false,
+        summary: "Output settings, so `--render-tour x.toml` with no flags reproduces the intended render. Every field is overridden by the matching CLI flag when one is given.",
+        fields: &[
+            SchemaField { name: "size", ty: "string", default: "(CLI, else 1280x720)", doc: "Frame size, \"WIDTHxHEIGHT\" or a bare width (16:9 height)." },
+            SchemaField { name: "fps", ty: "float", default: "(CLI, else 30)", doc: "Frames per second of the rendered sequence." },
+            SchemaField { name: "ss", ty: "int", default: "(CLI, else 1)", doc: "Supersampling factor (2 = 2x2 samples per pixel)." },
+            SchemaField { name: "prefix", ty: "string", default: "(script file stem)", doc: "Frame-name prefix: frames are written <prefix>_00000.png." },
+            SchemaField { name: "out", ty: "string", default: "(CLI, else \"frames\")", doc: "Output directory for the frame sequence, relative to the working directory." },
+            SchemaField { name: "mp4", ty: "bool | string", default: "false", doc: "Assemble the frames into an H.264 mp4 with ffmpeg afterwards; a string names the file." },
+            SchemaField { name: "max_iter", ty: "int", default: "(session, min 500000)", doc: "Iteration budget for frames whose keyframes don't state their own. Deep tours SHOULD set a per-keyframe budget instead: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat." },
+            SchemaField { name: "auto_iter", ty: "bool", default: "true", doc: "Whether this `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false). Per-keyframe budgets are always exact." },
+            SchemaField { name: "show_location", ty: "bool", default: "false", doc: "Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag)." },
+        ],
+    },
+    SchemaTable {
+        toml: "[[location]]",
+        repeatable: true,
+        summary: "A named coordinate. Referenced by keyframes and annotations via `location = \"id\"`, so a 120-digit dive center is written once.",
+        fields: &[
+            SchemaField { name: "id", ty: "string", default: "(required)", doc: "Unique name used to reference this location." },
+            SchemaField { name: "re", ty: "string", default: "(required)", doc: "Real part — full-precision decimal or an exact rational expression like (37+16i)/100." },
+            SchemaField { name: "im", ty: "string", default: "(required)", doc: "Imaginary part." },
+            SchemaField { name: "zoom", ty: "float | string", default: "(unset)", doc: "Default magnification for keyframes that name this location without their own `zoom`." },
+            SchemaField { name: "thumb", ty: "string", default: "(unset)", doc: "Preview image path relative to the script (reserved for editors; not read by the player)." },
+            SchemaField { name: "note", ty: "string", default: "(unset)", doc: "Free-text note for the author (ignored)." },
+        ],
+    },
+    SchemaTable {
+        toml: "[[palette]]",
+        repeatable: true,
+        summary: "A named palette. A keyframe's `palette = \"id\"` selects it, and the coloring interpolates between keyframes — one mechanism covering static palettes, morphs, and cycling.",
+        fields: &[
+            SchemaField { name: "id", ty: "string", default: "(required)", doc: "Unique name used to reference this palette." },
+            SchemaField { name: "preset", ty: "string", default: "(unset)", doc: "Built-in preset name (e.g. \"Ember\") or index. Either this or `stops` is required." },
+            SchemaField { name: "stops", ty: "[{at, color}]", default: "[]", doc: "Explicit gradient stops ascending by `at` (0..1), colors as #rrggbb; up to 8." },
+        ],
+    },
+    SchemaTable {
+        toml: "[[segment]]",
+        repeatable: true,
+        summary: "A chapter of the timeline. `--segment NAME` renders (or plays) only that range, keeping the global frame numbering — so ten seconds of narration can be re-rendered without redoing the whole tour.",
+        fields: &[
+            SchemaField { name: "id", ty: "string", default: "(title)", doc: "Short name matched by --segment (case-insensitive; the 1-based index also works)." },
+            SchemaField { name: "title", ty: "string", default: "(id)", doc: "Human-readable chapter title." },
+            SchemaField { name: "t", ty: "float", default: "0", doc: "Absolute start time (seconds). The chapter runs to the next segment's `t`, or the end of the tour." },
         ],
     },
     SchemaTable {
         toml: "[[keyframe]]",
         repeatable: true,
-        summary: "A camera waypoint. The view eases from the previous keyframe to this one over `secs`, then holds for `hold`. Discrete settings (center, fractal, julia, dual, orbits) inherit forward until changed.",
+        summary: "A camera waypoint. The view eases from the previous keyframe to this one, ARRIVING at absolute time `t`, then holds for `hold`. Everything except `t`/`hold`/`ease` inherits forward until changed, so a pure zoom-in needs only `t` and `zoom`.",
         fields: &[
-            SchemaField { name: "secs", ty: "float", default: "0", doc: "Seconds to glide here from the previous keyframe." },
-            SchemaField { name: "center_re", ty: "string", default: "(inherit)", doc: "Full-precision decimal real part of the center. Omit to inherit the previous center (pure zoom)." },
-            SchemaField { name: "center_im", ty: "string", default: "(inherit)", doc: "Full-precision decimal imaginary part of the center." },
-            SchemaField { name: "mag", ty: "float", default: "1", doc: "Magnification at this keyframe (up to ~1e308)." },
-            SchemaField { name: "mag_log10", ty: "float", default: "(unset)", doc: "Magnification as log10, for depths past f64's ~1e308 ceiling (e.g. 420 = 1e420x). Takes precedence over `mag`." },
-            SchemaField { name: "fractal", ty: "string", default: "(inherit)", doc: "Fractal family name (e.g. \"Mandelbrot\", \"Burning Ship\")." },
-            SchemaField { name: "julia", ty: "bool", default: "false", doc: "Julia mode for the family." },
+            SchemaField { name: "id", ty: "string", default: "(index)", doc: "Stable identity for reordering, cross-references, and error messages." },
+            SchemaField { name: "t", ty: "float", default: "0 (first) / (required)", doc: "ABSOLUTE second the camera arrives here. Must be >= the previous keyframe's t + hold. Absolute times mean inserting a keyframe can't desync downstream narration." },
+            SchemaField { name: "hold", ty: "float", default: "0", doc: "Seconds to pause here before the next glide begins." },
             SchemaField { name: "ease", ty: "string", default: "smooth", doc: "Easing for the glide arriving here: smooth, linear, smoother, in (accelerate), or out (decelerate)." },
-            SchemaField { name: "hold", ty: "float", default: "0", doc: "Seconds to pause at this keyframe before the next glide." },
-            SchemaField { name: "dual", ty: "bool", default: "false", doc: "Show the linked dual view (Mandelbrot + its Julia set side by side)." },
-            SchemaField { name: "julia_re", ty: "float", default: "(unset)", doc: "Pin the Julia parameter c (real part). Both julia_re and julia_im are required; interpolated between keyframes." },
-            SchemaField { name: "julia_im", ty: "float", default: "(unset)", doc: "Julia parameter c (imaginary part)." },
-            SchemaField { name: "orbits", ty: "bool", default: "false", doc: "Overlay the escape-time orbit (the path of z under iteration)." },
-            SchemaField { name: "orbit_re", ty: "float", default: "(unset)", doc: "The point whose orbit to draw, real part (both components required; interpolated)." },
-            SchemaField { name: "orbit_im", ty: "float", default: "(unset)", doc: "Orbit point imaginary part." },
+            SchemaField { name: "location", ty: "string", default: "(inherit)", doc: "Named coordinate to sit on (see [[location]]), instead of inline re/im." },
+            SchemaField { name: "re", ty: "string", default: "(inherit)", doc: "Center, real part: full-precision decimal or an exact rational. Omit to inherit (pure zoom)." },
+            SchemaField { name: "im", ty: "string", default: "(inherit)", doc: "Center, imaginary part." },
+            SchemaField { name: "zoom", ty: "float | string", default: "(inherit, else 1)", doc: "Magnification here, e.g. 2667 or \"6.5e94\". Strings carry depths past f64's ~1e308 ceiling." },
+            SchemaField { name: "max_iter", ty: "int", default: "(inherit, else [render])", doc: "Exact iteration budget at this keyframe, interpolated geometrically along the glide. One script-wide number cannot serve both a 1.33x home view and a 1e94x dive." },
+            SchemaField { name: "palette", ty: "string", default: "(inherit)", doc: "Palette id, preset name, or preset index; interpolated between keyframes." },
+            SchemaField { name: "fractal", ty: "string", default: "(inherit)", doc: "Fractal family name (e.g. \"Mandelbrot\", \"Burning Ship\")." },
+            SchemaField { name: "julia", ty: "bool", default: "(inherit)", doc: "Julia mode for the family." },
+            SchemaField { name: "dual", ty: "bool", default: "(inherit)", doc: "Show the linked dual view (Mandelbrot + its Julia set side by side)." },
+            SchemaField { name: "julia_re", ty: "float", default: "(inherit)", doc: "Pin the Julia parameter c (real part). Both julia_re and julia_im are required; interpolated between keyframes." },
+            SchemaField { name: "julia_im", ty: "float", default: "(inherit)", doc: "Julia parameter c (imaginary part)." },
+            SchemaField { name: "orbits", ty: "bool", default: "(inherit)", doc: "Overlay the escape-time orbit (the path of z under iteration)." },
+            SchemaField { name: "orbit_re", ty: "float", default: "(inherit)", doc: "The point whose orbit to draw, real part (both components required; interpolated)." },
+            SchemaField { name: "orbit_im", ty: "float", default: "(inherit)", doc: "Orbit point imaginary part." },
         ],
     },
     SchemaTable {
-        toml: "[[caption]]",
+        toml: "[[annotation]]",
         repeatable: true,
-        summary: "A timed on-screen caption (narration), independent of the camera path.",
+        summary: "A timed overlay, independent of the camera path. One array for every kind: an editor sees a single track list, and new kinds are additive.",
         fields: &[
-            SchemaField { name: "text", ty: "string", default: "(required)", doc: "The text to show (supports \\n for multiple lines)." },
-            SchemaField { name: "at", ty: "float", default: "0", doc: "When it appears on the timeline (seconds from the start)." },
+            SchemaField { name: "kind", ty: "string", default: "(required)", doc: "caption (narration text), callout (label anchored to a coordinate, tracking it as the view moves), or spotlight (dim everything outside a soft circle)." },
+            SchemaField { name: "id", ty: "string", default: "(index)", doc: "Stable identity for editors and cross-references." },
+            SchemaField { name: "t", ty: "float", default: "0", doc: "When it appears (absolute seconds)." },
             SchemaField { name: "secs", ty: "float", default: "0 = until end", doc: "How long it stays (seconds); 0/omitted keeps it until the tour ends." },
-            SchemaField { name: "pos", ty: "string", default: "bottom", doc: "Screen anchor: top, center, or bottom." },
             SchemaField { name: "fade", ty: "float", default: "0.4", doc: "Fade in/out time (seconds) at each end." },
-            SchemaField { name: "size", ty: "float", default: "22", doc: "Font size in points (scaled to the frame height)." },
-        ],
-    },
-    SchemaTable {
-        toml: "[[callout]]",
-        repeatable: true,
-        summary: "A labeled marker anchored to a fractal coordinate — it tracks the point as the view pans/zooms, with a leader line to the label.",
-        fields: &[
-            SchemaField { name: "text", ty: "string", default: "(required)", doc: "Label text." },
-            SchemaField { name: "center_re", ty: "string", default: "(required)", doc: "Anchor coordinate, real part (full-precision decimal)." },
-            SchemaField { name: "center_im", ty: "string", default: "(required)", doc: "Anchor coordinate, imaginary part." },
-            SchemaField { name: "at", ty: "float", default: "0", doc: "When it appears (seconds)." },
-            SchemaField { name: "secs", ty: "float", default: "0 = until end", doc: "How long it stays (seconds)." },
-            SchemaField { name: "fade", ty: "float", default: "0.4", doc: "Fade in/out time (seconds)." },
-            SchemaField { name: "size", ty: "float", default: "18", doc: "Label font size in points." },
-        ],
-    },
-    SchemaTable {
-        toml: "[[spotlight]]",
-        repeatable: true,
-        summary: "A vignette that dims everything outside a soft circle to draw the eye. Anchored to a coordinate so it tracks the point and stays a constant on-screen size.",
-        fields: &[
-            SchemaField { name: "center_re", ty: "string", default: "(required)", doc: "Circle center, real part (full-precision decimal)." },
-            SchemaField { name: "center_im", ty: "string", default: "(required)", doc: "Circle center, imaginary part." },
-            SchemaField { name: "radius", ty: "float", default: "0.25", doc: "Circle radius as a fraction of the frame height." },
-            SchemaField { name: "softness", ty: "float", default: "0.08", doc: "Soft-edge width as a fraction of the frame height." },
-            SchemaField { name: "dim", ty: "float", default: "0.7", doc: "How dark outside the circle (0..1)." },
-            SchemaField { name: "at", ty: "float", default: "0", doc: "When it appears (seconds)." },
-            SchemaField { name: "secs", ty: "float", default: "0 = until end", doc: "How long it stays (seconds)." },
-            SchemaField { name: "fade", ty: "float", default: "0.4", doc: "Fade in/out time (seconds)." },
+            SchemaField { name: "text", ty: "string", default: "(caption/callout)", doc: "The text to show (supports \\n for multiple lines). Required for caption and callout." },
+            SchemaField { name: "pos", ty: "string", default: "bottom", doc: "caption: screen anchor — top, center, or bottom." },
+            SchemaField { name: "size", ty: "float", default: "22 / 18", doc: "Font size in points, scaled to the frame height (caption 22, callout 18)." },
+            SchemaField { name: "location", ty: "string", default: "(unset)", doc: "callout/spotlight: named coordinate to anchor to, instead of re/im." },
+            SchemaField { name: "re", ty: "string", default: "(unset)", doc: "callout/spotlight: anchor coordinate, real part." },
+            SchemaField { name: "im", ty: "string", default: "(unset)", doc: "callout/spotlight: anchor coordinate, imaginary part." },
+            SchemaField { name: "radius", ty: "float", default: "0.25", doc: "spotlight: circle radius as a fraction of the frame height." },
+            SchemaField { name: "softness", ty: "float", default: "0.08", doc: "spotlight: soft-edge width as a fraction of the frame height." },
+            SchemaField { name: "dim", ty: "float", default: "0.7", doc: "spotlight: how dark outside the circle (0..1)." },
         ],
     },
 ];
@@ -447,8 +585,11 @@ pub(crate) fn tour_schema_markdown() -> String {
     );
     s.push_str(
         "Frames are written `<prefix>_00000.png` (prefix defaults to the script's file name; override \
-         with `--prefix`). Ready-made examples live in [`tours/`](tours/); run \
-         `fractadyne --help` for the full CLI.\n\n",
+         with `--prefix`). A script's `[render]` block supplies all of those settings, so a tour that \
+         declares them renders correctly from `--render-tour x.toml` alone and CLI flags merely \
+         override. `--segment NAME` renders just one `[[segment]]` chapter, keeping the global frame \
+         numbering so the frames drop back into the full sequence. Ready-made examples live in \
+         [`tours/`](tours/); run `fractadyne --help` for the full CLI.\n\n",
     );
 
     s.push_str("## Schema\n\n");
@@ -469,44 +610,62 @@ pub(crate) fn tour_schema_markdown() -> String {
 
     s.push_str(
         "## Timeline\n\n\
-         Keyframe timing is cumulative: each `[[keyframe]]` adds `secs` of glide from the previous \
-         keyframe's hold-end, then `hold` seconds of pause. The first keyframe starts at t=0. \
-         Caption / callout / spotlight `at` times are absolute seconds from the start, and `secs = 0` \
-         means \"until the tour ends\". At `--fps N` the tour renders `round(total * N) + 1` frames.\n\n\
-         For deep dives, keep `secs` generous, use `ease = \"in\"` / `\"out\"` at the ends with `linear` \
-         for the cruise, and express magnifications past f64 range with `mag_log10`. Pan at low zoom \
-         *before* diving so the camera doesn't zoom through the set's black interior.\n\n",
+         **Every time in a script is absolute seconds from the start.** A `[[keyframe]]`'s `t` is \
+         when the camera *arrives* there; it then sits still for `hold` before easing toward the \
+         next one, which must arrive no earlier than `t + hold`. Annotation `t` is when the overlay \
+         appears, and `secs = 0` means \"until the tour ends\". At `--fps N` the tour renders \
+         `round(total * N) + 1` frames.\n\n\
+         Absolute times are what make a script editable: inserting or lengthening a keyframe leaves \
+         every other element exactly where it was, instead of silently sliding all downstream \
+         narration out of sync.\n\n\
+         For deep dives, give the descent generous time, use `ease = \"in\"` / `\"out\"` at the ends \
+         with `linear` for the cruise, and write magnifications past f64 range as strings \
+         (`zoom = \"6.5e94\"`). Pan at low zoom *before* diving so the camera doesn't zoom through \
+         the set's black interior. Give the deep keyframes their own `max_iter`: one script-wide \
+         budget cannot serve both a 1.33x home view and a 1e94x dive.\n\n",
     );
 
     s.push_str(
         "## Example\n\n\
          ```toml\n\
-         name = \"Mini tour\"\n\
+         format_version = 2\n\
+         name = \"Mini tour\"\n\n\
+         [render]\n\
+         size = \"1920x1080\"\n\
+         fps = 30\n\
+         ss = 2\n\n\
+         [[location]]\n\
+         id = \"seahorse\"\n\
+         re = \"-0.743643887037158704752191506114774\"\n\
+         im = \"0.131825904205311970493132056385139\"\n\n\
+         [[keyframe]]            # overview — arrives at t=0, sits for 2s\n\
+         id = \"home\"\n\
+         t = 0\n\
+         re = \"-0.5\"\n\
+         im = \"0.0\"\n\
+         zoom = 1\n\
          palette = \"Ember\"\n\
-         format_version = 1\n\n\
-         [[keyframe]]            # overview\n\
-         secs = 0\n\
-         center_re = \"-0.5\"\n\
-         center_im = \"0.0\"\n\
-         mag = 1\n\
+         max_iter = 2000\n\
          hold = 2\n\n\
-         [[keyframe]]            # dive into Seahorse Valley\n\
-         secs = 6\n\
-         center_re = \"-0.743643887037158704752191506114774\"\n\
-         center_im = \"0.131825904205311970493132056385139\"\n\
-         mag_log10 = 6\n\
+         [[keyframe]]            # dive into Seahorse Valley, arriving at t=8\n\
+         id = \"dive\"\n\
+         t = 8\n\
+         location = \"seahorse\"\n\
+         zoom = \"1e6\"\n\
+         max_iter = 20000\n\
          ease = \"in\"\n\
          hold = 3\n\n\
-         [[caption]]\n\
+         [[annotation]]\n\
+         kind = \"caption\"\n\
          text = \"Seahorse Valley\"\n\
-         at = 8\n\
+         t = 8\n\
          secs = 4\n\
          pos = \"bottom\"\n\n\
-         [[spotlight]]\n\
-         center_re = \"-0.743643887037158704752191506114774\"\n\
-         center_im = \"0.131825904205311970493132056385139\"\n\
+         [[annotation]]\n\
+         kind = \"spotlight\"\n\
+         location = \"seahorse\"\n\
          radius = 0.28\n\
-         at = 8\n\
+         t = 8\n\
          secs = 4\n\
          ```\n",
     );
@@ -545,8 +704,142 @@ impl EaseKind {
     }
 }
 
-fn one_f64() -> f64 {
-    1.0
+/// Parse a magnification string into **log10 of the magnification**. Accepts a plain decimal
+/// (`"1.33"`, `"2667"`) or scientific notation (`"6.5e94"`, `"1e1216"`), with an optional trailing
+/// `x`/`×`. The exponent is handled symbolically rather than parsed into an f64, so depths past
+/// f64's ~1e308 ceiling — the whole point of this app — survive.
+fn parse_zoom_log10(s: &str) -> Result<f64, String> {
+    let t = s.trim().trim_end_matches(['x', 'X', '\u{d7}']).trim();
+    let (mant, exp) = match t.find(['e', 'E']) {
+        Some(i) => (
+            &t[..i],
+            t[i + 1..]
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| format!("zoom \"{s}\": exponent is not a number"))?,
+        ),
+        None => (t, 0.0),
+    };
+    let m: f64 = mant
+        .trim()
+        .parse()
+        .map_err(|_| format!("zoom \"{s}\": not a number"))?;
+    if !(m.is_finite() && m > 0.0) {
+        // A literal with 300+ integer digits overflows f64 — say so instead of rendering at 1x.
+        return Err(format!(
+            "zoom \"{s}\": magnification must be a positive finite number; write deep zooms in \
+             scientific notation (e.g. \"6.5e94\")"
+        ));
+    }
+    Ok(m.log10() + exp)
+}
+
+/// The resolved `[render]` block: what the script asks for. Every field is `None` when the script
+/// is silent, so the CLI (or a built-in default) fills it in — see `TourRenderConfig::resolve`.
+#[derive(Clone, Default)]
+pub(crate) struct TourRender {
+    pub(crate) width: Option<u32>,
+    pub(crate) height: Option<u32>,
+    pub(crate) fps: Option<f64>,
+    pub(crate) ss: Option<u32>,
+    pub(crate) prefix: Option<String>,
+    pub(crate) out: Option<std::path::PathBuf>,
+    /// `Some(None)` = encode an mp4 at the default path; `Some(Some(p))` = at `p`.
+    pub(crate) mp4: Option<Option<std::path::PathBuf>>,
+    pub(crate) max_iter: Option<u32>,
+    pub(crate) auto_iter: Option<bool>,
+    pub(crate) show_location: bool,
+}
+
+/// The tour-render flags exactly as the CLI gave them. `None` means "not specified": the script's
+/// `[render]` block fills it in, and a built-in default fills what neither states — so
+/// `--render-tour x.toml` alone reproduces the render the script intends, while any flag wins.
+#[derive(Clone, Default)]
+pub(crate) struct TourRenderConfig {
+    pub(crate) fps: Option<f64>,
+    pub(crate) width: Option<u32>,
+    pub(crate) height: Option<u32>,
+    pub(crate) ss: Option<u32>,
+    pub(crate) out: Option<std::path::PathBuf>,
+    pub(crate) prefix: Option<String>,
+    /// `--mp4 [PATH]`: `Some(None)` = default path, `Some(Some(p))` = at `p`.
+    pub(crate) mp4: Option<Option<std::path::PathBuf>>,
+    /// `--segment NAME`: render only that `[[segment]]` chapter (global frame numbering kept).
+    pub(crate) segment: Option<String>,
+    pub(crate) overwrite: bool,
+    pub(crate) resume: bool,
+}
+
+/// Everything the tour renderer needs, after merging the CLI over the script's `[render]` block.
+struct ResolvedTourRender {
+    fps: f64,
+    width: u32,
+    height: u32,
+    ss: u32,
+    out: std::path::PathBuf,
+    prefix: String,
+    mp4: Option<std::path::PathBuf>,
+}
+
+impl TourRenderConfig {
+    /// Merge: CLI flag > script `[render]` > built-in default.
+    fn resolve(&self, script: &TourRender, script_path: &std::path::Path) -> ResolvedTourRender {
+        let width = self.width.or(script.width).unwrap_or(1280).clamp(16, 16384);
+        let height = self
+            .height
+            .or(script.height)
+            .unwrap_or((width * 9 / 16).max(16))
+            .clamp(16, 16384);
+        let out = self
+            .out
+            .clone()
+            .or_else(|| script.out.clone())
+            .unwrap_or_else(|| std::path::PathBuf::from("frames"));
+        let prefix = self
+            .prefix
+            .clone()
+            .or_else(|| script.prefix.clone())
+            .unwrap_or_else(|| {
+                script_path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "frame".to_string())
+            });
+        ResolvedTourRender {
+            // Sub-1 fps is legitimate: sampling a long dive at --fps 0.25 is how the deep
+            // regression holds get inspected without rendering thousands of frames.
+            fps: self.fps.or(script.fps).unwrap_or(30.0).max(1.0e-3),
+            width,
+            height,
+            ss: self.ss.or(script.ss).unwrap_or(1).clamp(1, 8),
+            mp4: self
+                .mp4
+                .clone()
+                .or_else(|| script.mp4.clone())
+                .map(|p| p.unwrap_or_else(|| out.join(format!("{prefix}.mp4")))),
+            out,
+            prefix,
+        }
+    }
+}
+
+/// The viewer's own settings, saved when a tour starts so the script's iteration budget and
+/// coloring don't outlive it.
+pub(crate) struct PlaybackRestore {
+    pub(crate) max_iter: u32,
+    pub(crate) auto_iter: bool,
+    pub(crate) palette_idx: usize,
+    pub(crate) use_custom_palette: bool,
+    pub(crate) use_binary: bool,
+    pub(crate) use_duotone: bool,
+}
+
+/// A resolved chapter: `[start, end)` in tour seconds.
+pub(crate) struct Segment {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) start: f64,
+    pub(crate) end: f64,
 }
 
 /// A resolved keyframe: parsed center, the time the glide *reaches* it, how long it holds there,
@@ -565,6 +858,11 @@ struct Kf {
     julia_c: Option<(f64, f64)>,
     orbits: bool,
     orbit: Option<(f64, f64)>,
+    /// Exact iteration budget at this keyframe (interpolated geometrically along a glide), or
+    /// `None` to leave the budget to `[render]` / the session.
+    max_iter: Option<u32>,
+    /// Index into `Playback::palettes` for this keyframe's coloring (interpolated along a glide).
+    palette: Option<usize>,
 }
 
 /// The fully-resolved tour state at a moment in time: interpolated camera + the active keyframe's
@@ -580,12 +878,138 @@ pub(crate) enum PlaybackTick {
     Finished(Option<String>),
 }
 
+/// Read + parse a tour script, rejecting a retired v1 file with a migration message and warning
+/// (on stderr) about a version from a newer build. Shared by every entry point so the diagnosis
+/// is identical whether the script came from the CLI, the file dialog, or a test harness.
+fn read_script(path: &std::path::Path) -> Result<ScriptFile, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    parse_script_text(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Parse script TOML from memory — the path-free half of [`read_script`], so the selftest can
+/// resolve the shipped tours (compiled in with `include_str!`) without touching the filesystem.
+fn parse_script_text(text: &str) -> Result<ScriptFile, String> {
+    check_format_version(text)?;
+    toml::from_str(text).map_err(|e| format!("parse: {e}"))
+}
+
+/// Resolve script TOML from memory into a playable tour. Used by the selftest suite.
+pub(crate) fn parse_tour_text(text: &str) -> Result<Playback, String> {
+    resolve_script(parse_script_text(text)?, None)
+}
+
+/// Gate a script on its `format_version` **before** deserializing, so a v1 file gets a migration
+/// message instead of playing as garbage. v1 and v2 share no timing keys: v1's `secs`/`mag` simply
+/// don't exist in v2, so serde would default every keyframe to t=0 at 1× and the tour would render
+/// as one still frame of the whole set. There is deliberately no v1 reader — the format changed
+/// while the app had no users, and carrying a dead branch costs more than the migration did.
+fn check_format_version(text: &str) -> Result<(), String> {
+    let doc: toml::Value = toml::from_str(text).map_err(|e| format!("parse script: {e}"))?;
+    let ver = doc.get("format_version").and_then(|v| v.as_integer()).unwrap_or(0);
+    if ver < SCRIPT_FORMAT_VERSION as i64 {
+        return Err(format!(
+            "this script is format v{ver}, which this build no longer reads (current: v{}).\n\
+             v2 changed the timeline to ABSOLUTE keyframe times and reorganized the file:\n  \
+             [[keyframe]] secs = N        -> t = <absolute arrival second>\n  \
+             mag = N / mag_log10 = N      -> zoom = N  or  zoom = \"6.5e94\"\n  \
+             center_re / center_im        -> re / im   (or location = \"id\")\n  \
+             [[caption]]/[[callout]]/[[spotlight]] -> [[annotation]] with kind = \"...\", at -> t\n  \
+             top-level render settings    -> a [render] block\n\
+             See TOURS.md for the full schema and tours/ for migrated examples.",
+            SCRIPT_FORMAT_VERSION
+        ));
+    }
+    if ver > SCRIPT_FORMAT_VERSION as i64 {
+        eprintln!(
+            "Warning: script format v{ver} is newer than this build (v{}); newer features may \
+             not apply.",
+            SCRIPT_FORMAT_VERSION
+        );
+    }
+    Ok(())
+}
+
 /// Load + resolve a tour script file into a ready [`Playback`] (no palette side effects, no
 /// dialogs) — shared by the `--divetest` harness; `load_script` remains the interactive path.
 pub(crate) fn parse_tour_file(path: &std::path::Path) -> Result<Playback, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let sf: ScriptFile = toml::from_str(&text).map_err(|e| e.to_string())?;
-    resolve_script(sf, None).ok_or_else(|| "script has no usable keyframes".to_string())
+    resolve_script(read_script(path)?, None)
+}
+
+/// A tour palette: either a built-in preset (applied verbatim, so a static tour colors exactly as
+/// selecting that preset would) or explicit gradient stops.
+#[derive(Clone)]
+pub(crate) enum TourPalette {
+    Preset(usize),
+    Stops(Vec<[f32; 4]>),
+}
+
+/// What the app should do with the coloring for the current frame (see `Sampled::palette`).
+pub(crate) enum PaletteApply {
+    /// Select a built-in preset.
+    Preset(usize),
+    /// Install these gradient stops (`[pos, r, g, b]`, linear RGB) as the custom palette —
+    /// a keyframe-to-keyframe palette morph resolves to this.
+    Stops(Vec<[f32; 4]>),
+}
+
+impl TourPalette {
+    /// Gradient stops as `[pos, r, g, b]`, whatever the source.
+    fn stops(&self) -> Vec<[f32; 4]> {
+        match self {
+            TourPalette::Stops(s) => s.clone(),
+            TourPalette::Preset(i) => fractadyne_color::PRESETS[*i]
+                .stops
+                .iter()
+                .map(|(p, c)| [*p, c[0], c[1], c[2]])
+                .collect(),
+        }
+    }
+
+    /// Linear-RGB color at gradient position `u` (0..1), interpolating between stops.
+    fn color_at(stops: &[[f32; 4]], u: f32) -> [f32; 3] {
+        if stops.is_empty() {
+            return [0.0; 3];
+        }
+        let first = stops[0];
+        let last = stops[stops.len() - 1];
+        if u <= first[0] {
+            return [first[1], first[2], first[3]];
+        }
+        for w in stops.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            if u <= b[0] {
+                let span = (b[0] - a[0]).max(1.0e-6);
+                let f = ((u - a[0]) / span).clamp(0.0, 1.0);
+                return [
+                    a[1] + (b[1] - a[1]) * f,
+                    a[2] + (b[2] - a[2]) * f,
+                    a[3] + (b[3] - a[3]) * f,
+                ];
+            }
+        }
+        [last[1], last[2], last[3]]
+    }
+
+    /// Cross-fade two palettes at `t` (0..1). Their stop *positions* generally differ, so both are
+    /// resampled onto the same evenly spaced grid and the colors blended there — the only way to
+    /// morph gradients whose shapes don't line up.
+    fn blend(a: &TourPalette, b: &TourPalette, t: f32) -> Vec<[f32; 4]> {
+        let (sa, sb) = (a.stops(), b.stops());
+        let n = fractadyne_color::MAX_STOPS;
+        (0..n)
+            .map(|i| {
+                let pos = i as f32 / (n - 1) as f32;
+                let ca = Self::color_at(&sa, pos);
+                let cb = Self::color_at(&sb, pos);
+                [
+                    pos,
+                    ca[0] + (cb[0] - ca[0]) * t,
+                    ca[1] + (cb[1] - ca[1]) * t,
+                    ca[2] + (cb[2] - ca[2]) * t,
+                ]
+            })
+            .collect()
+    }
 }
 
 pub(crate) struct Sampled {
@@ -598,6 +1022,10 @@ pub(crate) struct Sampled {
     pub(crate) julia_c: Option<(f64, f64)>,
     pub(crate) orbits: bool,
     pub(crate) orbit: Option<(f64, f64)>,
+    /// Exact iteration budget this frame wants, when the script states one.
+    pub(crate) max_iter: Option<u32>,
+    /// Coloring for this frame, when the script states one.
+    pub(crate) palette: Option<PaletteApply>,
 }
 
 /// Aggregates sampled while a benchmark tour plays.
@@ -641,6 +1069,12 @@ pub(crate) struct Playback {
     pub(crate) callouts: Vec<Callout>,
     /// Spotlight vignettes (dim outside a soft circle; applied in the color shader).
     pub(crate) spotlights: Vec<Spotlight>,
+    /// Palettes the keyframes reference (by index).
+    palettes: Vec<TourPalette>,
+    /// Chapters, in time order (may be empty).
+    pub(crate) segments: Vec<Segment>,
+    /// What the script's `[render]` block asked for (CLI flags override — see `TourRenderConfig`).
+    pub(crate) render: TourRender,
     /// Current tour time (seconds), updated each frame — so the caption overlay knows what to show.
     pub(crate) cur_t: f64,
     /// Wall-clock of the previous `advance_playback` frame — gives the per-frame `dt` the
@@ -664,7 +1098,7 @@ impl Playback {
             }
         }
         let a = &self.kfs[i];
-        let mk = |cx, cy, lm, julia_c, orbit| Sampled {
+        let mk = |cx, cy, lm, julia_c, orbit, max_iter, palette| Sampled {
             cx,
             cy,
             logmag: lm,
@@ -674,10 +1108,16 @@ impl Playback {
             julia_c,
             orbits: a.orbits,
             orbit,
+            max_iter,
+            palette,
         };
         // Holding at `a` (or past the final keyframe): return its state unchanged.
         if e <= a.at + a.hold || i + 1 >= n {
-            return mk(a.cx.clone(), a.cy.clone(), a.logmag, a.julia_c, a.orbit);
+            let pal = a.palette.map(|p| match &self.palettes[p] {
+                TourPalette::Preset(i) => PaletteApply::Preset(*i),
+                TourPalette::Stops(s) => PaletteApply::Stops(s.clone()),
+            });
+            return mk(a.cx.clone(), a.cy.clone(), a.logmag, a.julia_c, a.orbit, a.max_iter, pal);
         }
         // Gliding a → b over its move window, with b's easing.
         let b = &self.kfs[i + 1];
@@ -699,13 +1139,80 @@ impl Playback {
             (Some(oa), Some(ob)) => Some(lerp2(oa, ob)),
             (x, _) => x,
         };
+        // Iteration budget: interpolate GEOMETRICALLY (in log space) — iteration cost grows with
+        // depth like the zoom does, so a linear ramp would over-budget the whole first half of a
+        // dive, which is exactly the "shallow frames cost minutes" failure per-keyframe budgets
+        // exist to fix.
+        let max_iter = match (a.max_iter, b.max_iter) {
+            (Some(ia), Some(ib)) if ia != ib => {
+                let l = (ia as f64).ln() + ((ib as f64).ln() - (ia as f64).ln()) * ease;
+                Some(l.exp().round().clamp(1.0, u32::MAX as f64) as u32)
+            }
+            (Some(ia), _) => Some(ia),
+            (None, x) => x,
+        };
+        // Palette: same index at both ends ⇒ pass the palette through untouched (a preset stays a
+        // preset). Different ⇒ cross-fade the two gradients.
+        let palette = match (a.palette, b.palette) {
+            (Some(pa), Some(pb)) if pa != pb => Some(PaletteApply::Stops(TourPalette::blend(
+                &self.palettes[pa],
+                &self.palettes[pb],
+                ease as f32,
+            ))),
+            (Some(pa), _) => Some(match &self.palettes[pa] {
+                TourPalette::Preset(i) => PaletteApply::Preset(*i),
+                TourPalette::Stops(s) => PaletteApply::Stops(s.clone()),
+            }),
+            (None, _) => None,
+        };
         mk(
             fractadyne_core::lerp_bf(&a.cx, &b.cx, ease, p),
             fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
             lm,
             julia_c,
             orbit,
+            max_iter,
+            palette,
         )
+    }
+
+    /// Find a chapter by `--segment` token: id or title (case-insensitive, also a unique prefix),
+    /// or a 1-based index. Returns the matching segment, or a message listing what's available.
+    pub(crate) fn find_segment(&self, token: &str) -> Result<&Segment, String> {
+        let t = token.trim();
+        let avail = || {
+            self.segments
+                .iter()
+                .enumerate()
+                .map(|(i, s)| format!("  {}. {} ({:.1}–{:.1}s)", i + 1, s.id, s.start, s.end))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if self.segments.is_empty() {
+            return Err(format!("--segment {t}: this script defines no [[segment]] chapters"));
+        }
+        if let Ok(n) = t.parse::<usize>() {
+            return self
+                .segments
+                .get(n.wrapping_sub(1))
+                .ok_or_else(|| format!("--segment {n}: out of range. Chapters:\n{}", avail()));
+        }
+        let eq = |a: &str| a.eq_ignore_ascii_case(t);
+        self.segments
+            .iter()
+            .find(|s| eq(&s.id) || eq(&s.title))
+            .or_else(|| {
+                let lower = t.to_ascii_lowercase();
+                let mut it = self.segments.iter().filter(|s| {
+                    s.id.to_ascii_lowercase().starts_with(&lower)
+                        || s.title.to_ascii_lowercase().starts_with(&lower)
+                });
+                match (it.next(), it.next()) {
+                    (Some(s), None) => Some(s), // unique prefix
+                    _ => None,
+                }
+            })
+            .ok_or_else(|| format!("--segment \"{t}\": no such chapter. Chapters:\n{}", avail()))
     }
 }
 
@@ -1096,41 +1603,170 @@ fn stamp_orbit(px: &mut [f32], w: u32, h: u32, vp: &fractadyne_core::Viewport, p
     }
 }
 
-/// Resolve a parsed script file into a playable tour (parses centers, accumulates
-/// keyframe times, fills inherited centers). Returns `None` if it has no keyframes.
-fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
-    if sf.keyframe.is_empty() {
+/// Resolve one `[[palette]]` definition into gradient stops (or a preset reference).
+fn resolve_palette_def(p: &PaletteFile) -> Result<TourPalette, String> {
+    if let Some(spec) = &p.preset {
+        let idx = preset_index(spec)
+            .ok_or_else(|| format!("palette \"{}\": unknown preset \"{spec}\"", p.id))?;
+        return Ok(TourPalette::Preset(idx));
+    }
+    if p.stops.is_empty() {
+        return Err(format!("palette \"{}\": needs either `preset` or `stops`", p.id));
+    }
+    if p.stops.len() > fractadyne_color::MAX_STOPS {
+        return Err(format!(
+            "palette \"{}\": {} stops, but at most {} are supported",
+            p.id,
+            p.stops.len(),
+            fractadyne_color::MAX_STOPS
+        ));
+    }
+    let mut stops = Vec::with_capacity(p.stops.len());
+    for s in &p.stops {
+        let c = parse_hex_color(&s.color)
+            .ok_or_else(|| format!("palette \"{}\": color \"{}\" is not #rrggbb", p.id, s.color))?;
+        stops.push([s.at.clamp(0.0, 1.0) as f32, c[0], c[1], c[2]]);
+    }
+    stops.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(TourPalette::Stops(stops))
+}
+
+/// Built-in preset by name (case-insensitive) or index.
+fn preset_index(spec: &str) -> Option<usize> {
+    let s = spec.trim();
+    s.parse::<usize>()
+        .ok()
+        .filter(|i| *i < fractadyne_color::PRESETS.len())
+        .or_else(|| fractadyne_color::PRESETS.iter().position(|p| p.name.eq_ignore_ascii_case(s)))
+}
+
+/// `#rrggbb` (or bare `rrggbb`) → linear RGB, matching how the presets store their colors.
+fn parse_hex_color(s: &str) -> Option<[f32; 3]> {
+    let h = s.trim().trim_start_matches('#');
+    if h.len() != 6 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let mut kfs = Vec::with_capacity(sf.keyframe.len());
-    let mut at = 0.0;
-    let mut last = ("-0.5".to_string(), "0.0".to_string());
-    // Discrete overlay state, inherited forward until a keyframe changes it.
-    let (mut dual, mut julia_c, mut orbits, mut orbit) = (false, None, false, None);
-    for k in &sf.keyframe {
-        at += k.secs.max(0.0); // glide time from the previous keyframe's hold-end to here
-        let reach = at;
-        let hold = k.hold.max(0.0);
-        at += hold; // then hold here before the next glide begins
-        if let Some(x) = &k.center_x {
-            last.0 = x.clone();
+    let srgb_to_linear = |c: f32| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
         }
-        if let Some(y) = &k.center_y {
-            last.1 = y.clone();
+    };
+    let v = u32::from_str_radix(h, 16).ok()?;
+    Some([
+        srgb_to_linear(((v >> 16) & 0xff) as f32 / 255.0),
+        srgb_to_linear(((v >> 8) & 0xff) as f32 / 255.0),
+        srgb_to_linear((v & 0xff) as f32 / 255.0),
+    ])
+}
+
+/// Resolve a parsed v2 script into a playable tour: keyframe times validated against each other,
+/// centers and zooms parsed at enough precision for the depth they're viewed at, `[[location]]` /
+/// `[[palette]]` references dereferenced, annotations split by kind, chapters closed off. Errors
+/// name the offending element (its `id`, or `#index` when it has none) so a broken script says
+/// exactly what to fix.
+fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, String> {
+    use std::collections::HashMap;
+    if sf.keyframe.is_empty() {
+        return Err("script has no [[keyframe]] — a tour needs at least one".to_string());
+    }
+    // --- named locations ---
+    let mut locs: HashMap<&str, &LocationFile> = HashMap::new();
+    for l in &sf.location {
+        if locs.insert(l.id.as_str(), l).is_some() {
+            return Err(format!("duplicate [[location]] id \"{}\"", l.id));
         }
-        let cx = fractadyne_core::parse_bf(&last.0)?;
-        let cy = fractadyne_core::parse_bf(&last.1)?;
-        let fractal = k
-            .fractal
-            .as_deref()
-            .and_then(FractalKind::from_name)
-            .unwrap_or(FractalKind::Mandelbrot);
-        // log-magnification: `mag_log10` (for deep zooms past f64 range) wins over `mag`.
-        let logmag = match k.mag_log10 {
-            Some(l10) => (l10.max(0.0)) * std::f64::consts::LN_10,
-            None => k.mag.max(1.0).ln(),
+    }
+    // --- named palettes (a keyframe may also name a preset directly, appended on demand) ---
+    let mut palettes: Vec<TourPalette> = Vec::new();
+    let mut pal_ids: HashMap<String, usize> = HashMap::new();
+    for p in &sf.palette {
+        let resolved = resolve_palette_def(p)?;
+        if pal_ids.contains_key(&p.id) {
+            return Err(format!("duplicate [[palette]] id \"{}\"", p.id));
+        }
+        pal_ids.insert(p.id.clone(), palettes.len());
+        palettes.push(resolved);
+    }
+
+    // --- keyframes ---
+    let mut kfs: Vec<Kf> = Vec::with_capacity(sf.keyframe.len());
+    let mut prev_end = 0.0f64; // when the previous keyframe finishes holding
+    let mut center: Option<(String, String)> = None;
+    let mut zoom: Option<String> = None;
+    // State inherited forward until a keyframe changes it.
+    let mut fractal = FractalKind::Mandelbrot;
+    let (mut julia, mut dual, mut julia_c, mut orbits, mut orbit) = (false, false, None, false, None);
+    let (mut max_iter, mut palette): (Option<u32>, Option<usize>) = (None, None);
+    for (i, k) in sf.keyframe.iter().enumerate() {
+        let id = k.id.clone().unwrap_or_else(|| format!("#{}", i + 1));
+        let at = match k.t {
+            Some(t) if t.is_finite() && t >= 0.0 => t,
+            Some(t) => return Err(format!("keyframe {id}: t = {t} is not a valid time")),
+            None if i == 0 => 0.0,
+            None => {
+                return Err(format!(
+                    "keyframe {id}: `t` is required — the absolute second the camera arrives here"
+                ))
+            }
         };
-        // Discrete overlays: update only when the keyframe specifies them; otherwise inherit.
+        if at < prev_end - 1.0e-9 {
+            return Err(format!(
+                "keyframe {id}: t = {at} is before the previous keyframe finishes holding \
+                 ({prev_end}). Keyframe times are absolute seconds from the start of the tour."
+            ));
+        }
+        let hold = k.hold.max(0.0);
+        prev_end = at + hold;
+        // Center: a named location, an inline pair, or inherited from the previous keyframe.
+        let loc = match &k.location {
+            Some(name) => Some(
+                *locs
+                    .get(name.as_str())
+                    .ok_or_else(|| format!("keyframe {id}: unknown location \"{name}\""))?,
+            ),
+            None => None,
+        };
+        if let Some(l) = loc {
+            center = Some((l.re.clone(), l.im.clone()));
+        }
+        match (&k.re, &k.im) {
+            (Some(re), Some(im)) => center = Some((re.clone(), im.clone())),
+            (None, None) => {}
+            _ => return Err(format!("keyframe {id}: `re` and `im` must be given together")),
+        }
+        // Zoom: explicit wins over the named location's default, else inherited, else 1×.
+        if let Some(z) = &k.zoom {
+            zoom = Some(z.as_string());
+        } else if let Some(z) = loc.and_then(|l| l.zoom.as_ref()) {
+            zoom = Some(z.as_string());
+        }
+        let logmag = match &zoom {
+            Some(z) => {
+                parse_zoom_log10(z).map_err(|e| format!("keyframe {id}: {e}"))?.max(0.0)
+                    * std::f64::consts::LN_10
+            }
+            None => 0.0,
+        };
+        // Parse the center at the precision this depth needs: an exact rational like (37+16i)/100
+        // is only as good as the bits it's evaluated to, and a deep keyframe wants all of them.
+        let octaves = (logmag / std::f64::consts::LN_2).max(0.0).ceil() as u64;
+        let prec = fractadyne_core::precision_for_octaves(octaves);
+        let (re, im) = center
+            .clone()
+            .unwrap_or_else(|| ("-0.5".to_string(), "0.0".to_string()));
+        let cx = fractadyne_core::parse_bf_prec(&re, prec)
+            .ok_or_else(|| format!("keyframe {id}: invalid coordinate re = \"{re}\""))?;
+        let cy = fractadyne_core::parse_bf_prec(&im, prec)
+            .ok_or_else(|| format!("keyframe {id}: invalid coordinate im = \"{im}\""))?;
+        if let Some(name) = &k.fractal {
+            fractal = FractalKind::from_name(name)
+                .ok_or_else(|| format!("keyframe {id}: unknown fractal \"{name}\""))?;
+        }
+        if let Some(j) = k.julia {
+            julia = j;
+        }
         if let Some(d) = k.dual {
             dual = d;
         }
@@ -1143,90 +1779,158 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
         if let (Some(r), Some(i)) = (k.orbit_re, k.orbit_im) {
             orbit = Some((r, i));
         }
+        if let Some(m) = k.max_iter {
+            max_iter = Some(m.max(1));
+        }
+        if let Some(spec) = &k.palette {
+            palette = Some(match pal_ids.get(spec) {
+                Some(i) => *i,
+                None => {
+                    // Not a [[palette]] id — a built-in preset named (or indexed) inline.
+                    let idx = preset_index(spec)
+                        .ok_or_else(|| format!("keyframe {id}: unknown palette \"{spec}\""))?;
+                    *pal_ids.entry(spec.clone()).or_insert_with(|| {
+                        palettes.push(TourPalette::Preset(idx));
+                        palettes.len() - 1
+                    })
+                }
+            });
+        }
         kfs.push(Kf {
-            at: reach,
+            at,
             hold,
             ease: EaseKind::parse(k.ease.as_deref()),
             cx,
             cy,
             logmag,
             fractal,
-            julia: k.julia.unwrap_or(false),
+            julia,
             dual,
             julia_c,
             orbits,
             orbit,
+            max_iter,
+            palette,
         });
     }
     let total = kfs.last().map(|k| k.at + k.hold).unwrap_or(0.0);
-    let captions = sf
-        .caption
+    // Annotation anchors are viewed at whatever depth the camera reaches, so parse them at the
+    // deepest keyframe's precision — a callout on a 1e94× dendrite is useless at 64 bits.
+    let anchor_prec = kfs
         .iter()
-        .filter(|c| !c.text.is_empty())
-        .map(|c| {
-            let start = c.at.max(0.0);
-            let end = if c.secs > 0.0 { start + c.secs } else { total.max(start) };
-            let pos = match c.pos.as_deref().map(|s| s.to_ascii_lowercase()).as_deref() {
-                Some("top") => CaptionPos::Top,
-                Some("center") | Some("centre") | Some("middle") => CaptionPos::Center,
-                _ => CaptionPos::Bottom,
+        .map(|k| (k.logmag / std::f64::consts::LN_2).max(0.0).ceil() as u64)
+        .max()
+        .map(fractadyne_core::precision_for_octaves)
+        .unwrap_or(64);
+
+    // --- annotations (one array, tagged by kind) ---
+    let (mut captions, mut callouts, mut spotlights) = (Vec::new(), Vec::new(), Vec::new());
+    for (i, a) in sf.annotation.iter().enumerate() {
+        let id = a.id.clone().unwrap_or_else(|| format!("#{}", i + 1));
+        let start = a.t.max(0.0);
+        let end = if a.secs > 0.0 { start + a.secs } else { total.max(start) };
+        let fade = a.fade.unwrap_or(0.4).max(0.0);
+        let kind = a.kind.trim().to_ascii_lowercase();
+        // Anchor coordinate, for the kinds that have one.
+        let anchor = || -> Result<(fractadyne_core::BigFloat, fractadyne_core::BigFloat), String> {
+            let (re, im) = match (&a.location, &a.re, &a.im) {
+                (Some(name), _, _) => {
+                    let l = locs
+                        .get(name.as_str())
+                        .ok_or_else(|| format!("{kind} {id}: unknown location \"{name}\""))?;
+                    (l.re.clone(), l.im.clone())
+                }
+                (None, Some(re), Some(im)) => (re.clone(), im.clone()),
+                _ => {
+                    return Err(format!(
+                        "{kind} {id}: needs an anchor — either location = \"id\" or both re and im"
+                    ))
+                }
             };
-            Caption {
-                text: c.text.clone(),
+            let cx = fractadyne_core::parse_bf_prec(&re, anchor_prec)
+                .ok_or_else(|| format!("{kind} {id}: invalid coordinate re = \"{re}\""))?;
+            let cy = fractadyne_core::parse_bf_prec(&im, anchor_prec)
+                .ok_or_else(|| format!("{kind} {id}: invalid coordinate im = \"{im}\""))?;
+            Ok((cx, cy))
+        };
+        let text = || -> Result<String, String> {
+            a.text
+                .clone()
+                .filter(|t| !t.is_empty())
+                .ok_or_else(|| format!("{kind} {id}: `text` is required"))
+        };
+        match kind.as_str() {
+            "caption" => captions.push(Caption {
+                text: text()?,
                 start,
                 end,
-                fade: c.fade.unwrap_or(0.4).max(0.0),
-                pos,
-                size: c.size.unwrap_or(22.0).clamp(8.0, 96.0) as f32,
+                fade,
+                pos: match a.pos.as_deref().map(|s| s.to_ascii_lowercase()).as_deref() {
+                    Some("top") => CaptionPos::Top,
+                    Some("center" | "centre" | "middle") => CaptionPos::Center,
+                    _ => CaptionPos::Bottom,
+                },
+                size: a.size.unwrap_or(22.0).clamp(8.0, 96.0) as f32,
+            }),
+            "callout" => {
+                let (cx, cy) = anchor()?;
+                callouts.push(Callout {
+                    text: text()?,
+                    cx,
+                    cy,
+                    start,
+                    end,
+                    fade,
+                    size: a.size.unwrap_or(18.0).clamp(8.0, 96.0) as f32,
+                });
+            }
+            "spotlight" => {
+                let (cx, cy) = anchor()?;
+                spotlights.push(Spotlight {
+                    cx,
+                    cy,
+                    radius: a.radius.unwrap_or(0.25).clamp(0.02, 2.0) as f32,
+                    soft: a.softness.unwrap_or(0.08).clamp(0.0, 1.0) as f32,
+                    dim: a.dim.unwrap_or(0.7).clamp(0.0, 1.0) as f32,
+                    start,
+                    end,
+                    fade,
+                });
+            }
+            other => {
+                return Err(format!(
+                    "annotation {id}: unknown kind \"{other}\" (expected caption, callout, or spotlight)"
+                ))
+            }
+        }
+    }
+
+    // --- chapters: each runs to the start of the next ---
+    let mut segments: Vec<Segment> = sf
+        .segment
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let id = s
+                .id
+                .clone()
+                .or_else(|| s.title.clone())
+                .unwrap_or_else(|| format!("{}", i + 1));
+            Segment {
+                title: s.title.clone().unwrap_or_else(|| id.clone()),
+                id,
+                start: s.t.max(0.0),
+                end: total,
             }
         })
         .collect();
-    let callouts = sf
-        .callout
-        .iter()
-        .filter(|c| !c.text.is_empty())
-        .filter_map(|c| {
-            let cx = fractadyne_core::parse_bf(&c.center_x)?;
-            let cy = fractadyne_core::parse_bf(&c.center_y)?;
-            let start = c.at.max(0.0);
-            let end = if c.secs > 0.0 { start + c.secs } else { total.max(start) };
-            Some(Callout {
-                text: c.text.clone(),
-                cx,
-                cy,
-                start,
-                end,
-                fade: c.fade.unwrap_or(0.4).max(0.0),
-                size: c.size.unwrap_or(18.0).clamp(8.0, 96.0) as f32,
-            })
-        })
-        .collect();
-    let spotlights = sf
-        .spotlight
-        .iter()
-        .filter_map(|s| {
-            let cx = fractadyne_core::parse_bf(&s.center_x)?;
-            let cy = fractadyne_core::parse_bf(&s.center_y)?;
-            let start = s.at.max(0.0);
-            let end = if s.secs > 0.0 { start + s.secs } else { total.max(start) };
-            Some(Spotlight {
-                cx,
-                cy,
-                radius: s.radius.unwrap_or(0.25).clamp(0.02, 2.0) as f32,
-                soft: s.softness.unwrap_or(0.08).clamp(0.0, 1.0) as f32,
-                dim: s.dim.unwrap_or(0.7).clamp(0.0, 1.0) as f32,
-                start,
-                end,
-                fade: s.fade.unwrap_or(0.4).max(0.0),
-            })
-        })
-        .collect();
-    Some(Playback {
-        name: if sf.name.is_empty() {
-            "Script".to_string()
-        } else {
-            sf.name
-        },
+    segments.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+    for i in 0..segments.len().saturating_sub(1) {
+        segments[i].end = segments[i + 1].start;
+    }
+
+    Ok(Playback {
+        name: if sf.name.is_empty() { "Script".to_string() } else { sf.name },
         kfs,
         total,
         t0: None,
@@ -1235,8 +1939,42 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
         captions,
         callouts,
         spotlights,
+        palettes,
+        segments,
+        render: resolve_render(&sf.render)?,
         cur_t: 0.0,
         last_now: None,
+    })
+}
+
+/// Resolve the `[render]` table (size string, mp4 spec) into the form the renderer merges with
+/// the CLI flags.
+fn resolve_render(r: &RenderFile) -> Result<TourRender, String> {
+    let (width, height) = match &r.size {
+        Some(s) => {
+            let (w, h) = crate::parse_size(s);
+            if w.is_none() {
+                return Err(format!("[render] size = \"{s}\": expected WIDTHxHEIGHT or a width"));
+            }
+            (w, h)
+        }
+        None => (None, None),
+    };
+    Ok(TourRender {
+        width,
+        height,
+        fps: r.fps.filter(|f| *f > 0.0),
+        ss: r.ss.map(|s| s.clamp(1, 8)),
+        prefix: r.prefix.clone(),
+        out: r.out.as_ref().map(std::path::PathBuf::from),
+        mp4: match &r.mp4 {
+            None | Some(Mp4Spec::Flag(false)) => None,
+            Some(Mp4Spec::Flag(true)) => Some(None),
+            Some(Mp4Spec::Path(p)) => Some(Some(std::path::PathBuf::from(p))),
+        },
+        max_iter: r.max_iter,
+        auto_iter: r.auto_iter,
+        show_location: r.show_location.unwrap_or(false),
     })
 }
 
@@ -1245,27 +1983,20 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Option<Playback> {
 fn benchmark_playback() -> Playback {
     let cx = "-0.743643887037158704752191506114774";
     let cy = "0.131825904205311970493132056385139";
-    let mags = [1.0, 1.0e3, 1.0e6, 1.0e9, 1.0e12];
-    let mut keyframe = Vec::new();
-    for (i, &m) in mags.iter().enumerate() {
-        keyframe.push(KeyframeFile {
-            secs: if i == 0 { 0.0 } else { 4.0 },
-            center_x: Some(cx.to_string()),
-            center_y: Some(cy.to_string()),
-            mag: m,
-            mag_log10: None,
+    let zooms = ["1", "1e3", "1e6", "1e9", "1e12"];
+    let keyframe = zooms
+        .iter()
+        .enumerate()
+        .map(|(i, z)| KeyframeFile {
+            t: Some(i as f64 * 4.0), // one 4-second glide per decade-triple
+            re: Some(cx.to_string()),
+            im: Some(cy.to_string()),
+            zoom: Some(NumOrStr::Str(z.to_string())),
             fractal: Some("Mandelbrot".to_string()),
             julia: Some(false),
-            ease: None,
-            hold: 0.0,
-            dual: None,
-            julia_re: None,
-            julia_im: None,
-            orbits: None,
-            orbit_re: None,
-            orbit_im: None,
-        });
-    }
+            ..Default::default()
+        })
+        .collect();
     let sf = ScriptFile {
         name: "Built-in benchmark".to_string(),
         loop_: false,
@@ -1282,20 +2013,50 @@ impl FractadyneApp {
         self.playback = Some(benchmark_playback());
     }
 
-    /// Apply a script's `palette` (preset name, case-insensitive, or index). A preset clears any
-    /// binary/duotone/custom palette so the tour colours consistently (deep exterior-only views
-    /// render as a gradient rather than one flat binary color).
-    fn apply_script_palette(&mut self, spec: &str) {
-        let s = spec.trim();
-        let idx = s
-            .parse::<usize>()
-            .ok()
-            .or_else(|| fractadyne_color::PRESETS.iter().position(|p| p.name.eq_ignore_ascii_case(s)));
-        if let Some(i) = idx {
-            self.coloring.palette_idx = i.min(fractadyne_color::PRESETS.len() - 1);
-            self.coloring.use_binary = false;
-            self.coloring.use_duotone = false;
-            self.coloring.use_custom_palette = false;
+    /// Apply a frame's scripted coloring. A preset is selected outright (so a static tour colors
+    /// exactly as picking that preset would); a keyframe-to-keyframe morph installs blended stops
+    /// as the custom palette. Either way binary/duotone are cleared, so a deep exterior-only view
+    /// renders as a gradient rather than one flat color.
+    pub(crate) fn apply_script_palette(&mut self, pal: &PaletteApply) {
+        match pal {
+            PaletteApply::Preset(i) => {
+                self.coloring.palette_idx = (*i).min(fractadyne_color::PRESETS.len() - 1);
+                self.coloring.use_custom_palette = false;
+            }
+            PaletteApply::Stops(stops) => {
+                self.coloring.custom_palette = stops.clone();
+                self.coloring.use_custom_palette = true;
+            }
+        }
+        self.coloring.use_binary = false;
+        self.coloring.use_duotone = false;
+    }
+
+    /// Stop the active tour and hand the viewer their own iteration budget and coloring back.
+    /// Every path that ends playback goes through here — Esc, Tools → Stop playback, autopilot,
+    /// and the tour running out — or a script's settings would silently become the session's.
+    pub(crate) fn stop_playback(&mut self) {
+        self.playback = None;
+        if let Some(r) = self.playback_restore.take() {
+            self.render_cfg.max_iter = r.max_iter;
+            self.render_cfg.auto_iter = r.auto_iter;
+            self.coloring.palette_idx = r.palette_idx;
+            self.coloring.use_custom_palette = r.use_custom_palette;
+            self.coloring.use_binary = r.use_binary;
+            self.coloring.use_duotone = r.use_duotone;
+        }
+    }
+
+    /// Apply the per-frame render settings a script states (iteration budget, palette). The
+    /// budget is EXACT — a keyframe that asks for 8M iterations at 1e94× means 8M, not 8M scaled
+    /// again by depth. Settings the script leaves unset are left alone.
+    pub(crate) fn apply_sampled_settings(&mut self, s: &Sampled) {
+        if let Some(m) = s.max_iter {
+            self.render_cfg.max_iter = m;
+            self.render_cfg.auto_iter = false;
+        }
+        if let Some(p) = &s.palette {
+            self.apply_script_palette(p);
         }
     }
 
@@ -1307,28 +2068,24 @@ impl FractadyneApp {
         else {
             return;
         };
-        let parsed = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| toml::from_str::<ScriptFile>(&t).ok());
-        let script_ver = parsed.as_ref().and_then(|sf| sf.format_version).unwrap_or(0);
-        let palette = parsed.as_ref().and_then(|sf| sf.palette.clone());
-        match parsed.and_then(|sf| resolve_script(sf, None)) {
-            Some(pb) => {
-                if let Some(p) = &palette {
-                    self.apply_script_palette(p);
-                }
-                if script_ver > SCRIPT_FORMAT_VERSION {
-                    self.bench_report = Some(format!(
-                        "Note: \"{}\" was authored for a newer script format (v{script_ver} > \
-                         v{SCRIPT_FORMAT_VERSION}). Playing what this build understands; newer \
-                         annotations may not appear.",
-                        pb.name
-                    ));
-                    self.dialogs.bench_open = true;
-                }
+        match read_script(&path).and_then(|sf| resolve_script(sf, None)) {
+            Ok(pb) => {
+                // Restore the viewer's own iteration/palette settings when the tour ends — a
+                // script's budget is the script's, not a permanent change to the session.
+                self.playback_restore = Some(PlaybackRestore {
+                    max_iter: self.render_cfg.max_iter,
+                    auto_iter: self.render_cfg.auto_iter,
+                    palette_idx: self.coloring.palette_idx,
+                    use_custom_palette: self.coloring.use_custom_palette,
+                    use_binary: self.coloring.use_binary,
+                    use_duotone: self.coloring.use_duotone,
+                });
                 self.playback = Some(pb);
             }
-            None => self.bench_report = Some(format!("Could not load script:\n{}", path.display())),
+            Err(e) => {
+                self.bench_report = Some(format!("Could not load {}:\n\n{e}", path.display()));
+                self.dialogs.bench_open = true;
+            }
         }
     }
 
@@ -1420,64 +2177,55 @@ impl FractadyneApp {
     /// `--render-tour` mode for producing a deep-zoom dive video. Steps the timeline at a
     /// fixed `fps`, rendering each frame at `width×height` (× `ss` supersampling) via the
     /// offscreen export path. Blocking; assemble the frames afterward (e.g. with ffmpeg).
-    #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 3: extract a TourRenderConfig + scripting crate
     pub(crate) fn render_tour_to_dir(
         &mut self,
         ctx: &egui::Context,
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
         script_path: &std::path::Path,
-        fps: f64,
-        width: u32,
-        height: u32,
-        ss: u32,
-        out_dir: &std::path::Path,
-        // Frame-name prefix: frames are written `<prefix>_00000.png`.
-        prefix: &str,
-        // Replace existing frames without prompting (CLI `--overwrite` / `-y`).
-        overwrite: bool,
-        // Resume an interrupted render (CLI `--resume`): silently keep frames that already exist and
-        // render only the missing ones. Takes precedence over `overwrite` for existing frames.
-        resume: bool,
-        // Some(path) → after the PNG sequence is written, invoke `ffmpeg` to assemble it into an
-        // H.264 mp4 at `path` (frames are kept). None → leave just the PNG sequence.
-        mp4: Option<&std::path::Path>,
+        cli: &TourRenderConfig,
     ) -> Result<String, String> {
-        let text = std::fs::read_to_string(script_path)
-            .map_err(|e| format!("read {}: {e}", script_path.display()))?;
-        let sf: ScriptFile = toml::from_str(&text).map_err(|e| format!("parse script: {e}"))?;
-        if sf.format_version.unwrap_or(0) > SCRIPT_FORMAT_VERSION {
-            eprintln!(
-                "Warning: script format v{} is newer than this build (v{SCRIPT_FORMAT_VERSION}); \
-                 newer annotations may not render.",
-                sf.format_version.unwrap_or(0)
-            );
-        }
-        let palette = sf.palette.clone();
-        let show_location = self.show_location || sf.show_location.unwrap_or(false);
-        let (script_iter, script_auto) = (sf.max_iter, sf.auto_iter);
-        let pb = resolve_script(sf, None).ok_or("script has no keyframes")?;
-        if let Some(p) = &palette {
-            self.apply_script_palette(p);
-        }
-        std::fs::create_dir_all(out_dir)
+        let pb = resolve_script(read_script(script_path)?, None)?;
+        let cfg = cli.resolve(&pb.render, script_path);
+        let (width, height, fps, out_dir, prefix) =
+            (cfg.width, cfg.height, cfg.fps, cfg.out.clone(), cfg.prefix.clone());
+        let (overwrite, resume, mp4) = (cli.overwrite, cli.resume, cfg.mp4.clone());
+        let show_location = self.show_location || pb.render.show_location;
+        // --segment: render just one chapter, keeping the GLOBAL frame numbering so its frames drop
+        // straight back into the full sequence (re-cutting ten seconds of narration must not mean
+        // re-rendering — or renumbering — the whole tour).
+        let (first_frame, last_frame) = match &cli.segment {
+            Some(name) => {
+                let seg = pb.find_segment(name)?;
+                println!(
+                    "Segment \"{}\" — {:.1}s to {:.1}s of \"{}\"",
+                    seg.title, seg.start, seg.end, pb.name
+                );
+                ((seg.start * fps).floor() as u64, (seg.end * fps).ceil() as u64)
+            }
+            None => (0, u64::MAX),
+        };
+        std::fs::create_dir_all(&out_dir)
             .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
         // Single-view offscreen render at the requested frame size.
         self.dual = false;
-        // Iterations for the whole render: the script decides when it says so, otherwise
-        // auto-scale from a high base (a fixed low cap renders deep structure as blobs). The
-        // "match the on-screen budget" export cap does NOT apply to tours — see
-        // `export_auto_iter_cap`; without that exemption every deep frame here rendered flat.
-        self.render_cfg.auto_iter = script_auto.unwrap_or(true);
-        self.render_cfg.max_iter =
-            script_iter.unwrap_or_else(|| self.render_cfg.max_iter.max(500_000));
+        // Iteration budget for frames whose keyframes don't state their own: the script's
+        // `[render]` block decides when it says so, otherwise auto-scale from a high base (a fixed
+        // low cap renders deep structure as blobs). The "match the on-screen budget" export cap
+        // does NOT apply to tours — see `export_auto_iter_cap`; without that exemption every deep
+        // frame here rendered flat. Per-keyframe `max_iter` overrides this per frame.
+        let (base_iter, base_auto) = (
+            pb.render.max_iter.unwrap_or_else(|| self.render_cfg.max_iter.max(500_000)),
+            pb.render.auto_iter.unwrap_or(true),
+        );
         self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
         self.export.width = width;
-        self.export.ss = ss.max(1);
-        let fps = fps.max(1.0);
+        self.export.ss = cfg.ss;
         let frames: u64 = if pb.total <= 0.0 { 1 } else { (pb.total * fps).round() as u64 + 1 };
+        let last_frame = last_frame.min(frames.saturating_sub(1));
+        let planned = (last_frame + 1).saturating_sub(first_frame);
         println!(
-            "Rendering tour \"{}\": {frames} frames at {width}×{height} ss{}, {fps} fps ({:.1}s)…",
+            "Rendering tour \"{}\": {planned} frames at {width}×{height} ss{}, {fps} fps ({:.1}s)…",
             pb.name, self.export.ss, pb.total
         );
         let meta = std::sync::Arc::new(self.view_metadata());
@@ -1522,7 +2270,7 @@ impl FractadyneApp {
         let mut overwrite_all = overwrite;
         let mut canceled = false;
         let started = std::time::Instant::now();
-        for fi in 0..frames {
+        for fi in first_frame..=last_frame {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
             let s = pb.sample(t);
             self.fractal = s.fractal;
@@ -1531,6 +2279,13 @@ impl FractadyneApp {
             if let Some(c) = s.julia_c {
                 self.julia_c = c;
             }
+            // Per-keyframe iteration budget + palette; fall back to the script-wide base. This is
+            // what lets one script hold a 1.33× home view at a few thousand iterations and a 1e94×
+            // spar at millions — a single budget either starves the deep frames or makes the
+            // shallow ones cost minutes each.
+            self.render_cfg.max_iter = base_iter;
+            self.render_cfg.auto_iter = base_auto;
+            self.apply_sampled_settings(&s);
             // Output path for this frame; ask before clobbering an existing one (unless overwriting).
             let frame_path = out_dir.join(format!("{prefix}_{fi:05}.png"));
             // Resume: a frame that's already on disk is assumed complete — skip it silently and
@@ -1650,13 +2405,13 @@ impl FractadyneApp {
             enc_tx
                 .send(EncodeJob { path: frame_path, w: rw, h: rh, px, fi })
                 .map_err(|_| format!("frame {fi}: encoder thread stopped"))?;
-            if fi % 10 == 0 || fi + 1 == frames {
-                let done = fi + 1;
+            if fi % 10 == 0 || fi == last_frame {
+                let done = fi + 1 - first_frame;
                 let elapsed = started.elapsed().as_secs_f64();
                 let rate = if elapsed > 0.0 { done as f64 / elapsed } else { 0.0 };
-                let eta = if rate > 0.0 { (frames - done) as f64 / rate } else { 0.0 };
+                let eta = if rate > 0.0 { (planned - done) as f64 / rate } else { 0.0 };
                 println!(
-                    "  frame {done}/{frames}  ({} elapsed, {} left, {rate:.2} fps)",
+                    "  frame {done}/{planned}  ({} elapsed, {} left, {rate:.2} fps)",
                     fmt_hms(elapsed),
                     fmt_hms(eta)
                 );
@@ -1679,7 +2434,7 @@ impl FractadyneApp {
             ));
         }
         println!(
-            "Rendered {frames} frame(s) in {} → {}",
+            "Rendered {planned} frame(s) in {} → {}",
             fmt_hms(render_secs),
             out_dir.display()
         );
@@ -1700,7 +2455,7 @@ impl FractadyneApp {
                 .arg(&pattern)
                 .args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"])
                 .args(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18"])
-                .arg(mp4_path)
+                .arg(&mp4_path)
                 .status();
             match status {
                 Ok(s) if s.success() => {
@@ -1810,6 +2565,8 @@ impl FractadyneApp {
         }
         self.anim.show_orbits = s.orbits;
         self.anim.tour_orbit = s.orbit;
+        // Per-keyframe iteration budget + palette (restored when the tour ends).
+        self.apply_sampled_settings(&s);
         // log2 path so playback stays exact past f64's 1e308× ceiling.
         self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
         self.pointer.settle_t = [now; 2]; // glide → cheap (interacting) render path
@@ -1848,6 +2605,9 @@ impl FractadyneApp {
         }
 
         if finished {
+            // `pb` is already out of `self.playback` — this only hands the viewer's own
+            // iteration budget and coloring back.
+            self.stop_playback();
             if let Some(b) = pb.bench.take() {
                 self.bench_report = Some(self.format_bench(&pb, &b));
                 self.dialogs.bench_open = true;

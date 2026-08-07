@@ -27,7 +27,7 @@ impl FractadyneApp {
             self.autopilot.goal = (0.5, 0.5);
             self.autopilot.eval_t = 0.0; // force an evaluation next frame
             self.home_anim = None;
-            self.playback = None;
+            self.stop_playback();
             self.set_toast("Autopilot on — diving toward detail (any input stops)", ctx);
         } else {
             self.pointer.zoom_vel = 0.0;

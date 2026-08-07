@@ -3,114 +3,158 @@
 # minibrot (a period-16014 island, verified with --find-minibrot).
 #
 #   Play in-app:  Tools -> Play script...
-#   Render movie: fractadyne --render-tour tours/deep-minibrot-dive.toml #                   --fps 30 --size 1920x1080 --ss 2 --out frames
+#   Render movie: fractadyne --render-tour tours/deep-minibrot-dive.toml --out frames
+#                 (size/fps/ss come from [render]; CLI flags override)
+format_version = 2
 name = "Deep dive to a minibrot"
-format_version = 1
-palette = "Ember"
+
+[render]
+size = "1920x1080"
+fps = 30
+ss = 2
+
+[[location]]
+id = "home"
+re = "-0.5"
+im = "0.0"
+zoom = 1.33333
+
+[[location]]
+id = "minibrot"
+re = "-7.436438870371587047521915061147723443299582954590750709038e-1"
+im = "1.318259042053119704931320563851357020465533657480713907209e-1"
+note = "Period-16014 island in Seahorse Valley (found with --find-minibrot)."
+
+[[segment]]
+id = "overview"
+title = "The whole set"
+t = 0
+
+[[segment]]
+id = "dive"
+title = "Dive to the minibrot"
+t = 10
 
 # --- overview (hold on the whole set) ---
 [[keyframe]]
-secs = 0
-center_re = "-0.5"
-center_im = "0.0"
-mag = 1.33333
+id = "open"
+t = 0
+location = "home"
+palette = "Ember"
+max_iter = 2000
 hold = 3.5
 
 # --- glide into Seahorse Valley, pause to look ---
 [[keyframe]]
-secs = 3.5
-center_re = "-7.436438870371587047521915061147723443299582954590750709038e-1"
-center_im = "1.318259042053119704931320563851357020465533657480713907209e-1"
-mag = 73.3333
-ease = "smooth"
+id = "seahorse"
+t = 7
+location = "minibrot"
+zoom = 73.3333
+max_iter = 3000
 hold = 3
 
 # --- the dive: accelerate in, cruise at constant zoom rate, decelerate onto the minibrot ---
 [[keyframe]]
-secs = 5
-mag = 66666.7
+id = "dive-1"
+t = 15
+zoom = 66666.7
+max_iter = 8000
 ease = "in"
 [[keyframe]]
-secs = 6
-mag = 1.33333e10
+id = "dive-2"
+t = 21
+zoom = "1.33333e10"
+max_iter = 25000
 ease = "linear"
 [[keyframe]]
-secs = 6
-mag = 1.33333e17
+id = "dive-3"
+t = 27
+zoom = "1.33333e17"
+max_iter = 45000
 ease = "linear"
 [[keyframe]]
-secs = 6
-mag = 1.33333e24
+id = "dive-4"
+t = 33
+zoom = "1.33333e24"
+max_iter = 70000
 ease = "linear"
 [[keyframe]]
-secs = 6
-mag = 8e29
+id = "arrive"
+t = 39
+zoom = "8e29"
+max_iter = 100000
 ease = "out"
 hold = 5
 
 # --- narration ---
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "The Mandelbrot Set"
-at = 0.2
+t = 0.2
 secs = 3.2
 pos = "center"
 size = 34
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Endless detail hides at every scale"
-at = 0.6
+t = 0.6
 secs = 2.9
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Seahorse Valley"
-at = 7.0
+t = 7.0
 secs = 2.9
 pos = "top"
 size = 28
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Diving deeper — past one million million million times"
-at = 11.5
+t = 11.5
 secs = 6.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "10^30x — a minibrot: a tiny copy of the whole set"
-at = 29.4
+t = 29.4
 secs = 4.5
-pos = "bottom"
 size = 26
 
 # --- overview callouts (point out landmarks while we hold on the set) ---
-[[callout]]
+[[annotation]]
+kind = "callout"
 text = "period-2 bulb"
-center_re = "-1.0"
-center_im = "0.0"
-at = 1.0
+re = "-1.0"
+im = "0.0"
+t = 1.0
 secs = 2.6
-[[callout]]
+[[annotation]]
+kind = "callout"
 text = "Seahorse Valley"
-center_re = "-0.75"
-center_im = "0.11"
-at = 1.0
+re = "-0.75"
+im = "0.11"
+t = 1.0
 secs = 2.6
-[[callout]]
+[[annotation]]
+kind = "callout"
 text = "Elephant Valley"
-center_re = "0.30"
-center_im = "0.0"
-at = 1.0
+re = "0.30"
+im = "0.0"
+t = 1.0
 secs = 2.6
-[[callout]]
+[[annotation]]
+kind = "callout"
 text = "a minibrot in the antenna"
-center_re = "-1.75"
-center_im = "0.0"
-at = 1.0
+re = "-1.75"
+im = "0.0"
+t = 1.0
 secs = 2.6
 
 # --- spotlight the minibrot at the finale ---
-[[spotlight]]
-center_re = "-7.436438870371587047521915061147723443299582954590750709038e-1"
-center_im = "1.318259042053119704931320563851357020465533657480713907209e-1"
+[[annotation]]
+kind = "spotlight"
+location = "minibrot"
 radius = 0.28
 softness = 0.1
 dim = 0.7
-at = 30.0
+t = 30.0
 secs = 4.0
 fade = 0.8

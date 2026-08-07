@@ -12,8 +12,11 @@ detail is in the git history.
 
 ## 0.2.40-beta (in progress)
 
-The post-0.2.36 series (**0.2.37 – 0.2.40-beta.15**, published as `v0.2.40-beta.N`
+The post-0.2.36 series (**0.2.37 – 0.2.40-beta.34**, published as `v0.2.40-beta.N`
 pre-releases on the Beta update track). Per-version detail is in the git history.
+**Incomplete:** beta.16 – beta.33 are not yet written up here (Newton-Raphson zoom, exact
+rational/complex coordinate entry, the multiplier λ, the 500k → 10M iteration ceiling, live
+limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — see TODO.md.
 
 - **Live deep-dive pipeline** — a scripted dive now stays smooth to extreme depth:
   - `best_reference` candidate scoring **parallelized across all cores** (result-identical;
@@ -38,6 +41,29 @@ pre-releases on the Beta update track). Per-version detail is in the git history
 - **Tours** — **Tools → "Script to current view…"**: one-click dive-tour generator (notation
   caption, depth-scaled duration; deep targets use the pan-shallow-then-dive structure that
   keeps every frame centered on the target) (beta.5–6).
+- **Tour script format v2 — BREAKING** (beta.34). v1 scripts are rejected with a migration
+  message rather than mis-played; the six shipped tours are migrated. What changed and why:
+  - **Absolute keyframe times** (`t` = the second the camera arrives, plus `hold`) replace
+    cumulative `secs`. Inserting or lengthening a keyframe used to silently desync every
+    caption after it.
+  - **Per-keyframe `max_iter`**, interpolated geometrically along each glide. One script-wide
+    budget cannot serve both a 1.33× home view and a 1e94× dive: an exact count made shallow
+    frames cost minutes each, and a depth-scaled base left the deepest holds capped. The grand
+    tour now spends 2 000 iterations on the whole set and 8 000 000 at 6.5e94×.
+  - **`[render]` block** (size, fps, ss, prefix, out, mp4, iteration budget, HUD) so
+    `--render-tour x.toml` with no flags reproduces the intended output; CLI flags override.
+  - **`[[location]]`** named coordinates — a 120-digit dive center is written once and
+    referenced by keyframes and annotations.
+  - **One `[[annotation]]` array** tagged by `kind` (caption / callout / spotlight), replacing
+    three parallel arrays, plus stable `id`s on keyframes and annotations.
+  - **`[[segment]]` chapters** and `--segment NAME`: render one chapter in isolation, keeping
+    the global frame numbering, instead of re-rendering a thousand frames to fix ten seconds.
+  - **`[[palette]]` definitions** with a per-keyframe reference, interpolated between
+    keyframes — static palettes, morphs, and cycling through one mechanism.
+  - `zoom = "6.5e94"` strings replace `mag` / `mag_log10` and their precedence rule.
+  - New `script` selftest group (5 checks): every shipped tour resolves, absolute timing and
+    the geometric budget ramp, deep zoom strings past f64 range, ten malformed scripts
+    rejected, and `--segment` lookup.
 - **Dev tooling** — `--bench-matrix`: a 22-segment path-coverage perf + regression suite
   (deterministic GPU-counter signatures vs a blessed baseline; its 20 fast segments joined
   `--selftest`, growing it 63 → **83 checks**) (beta.3); `--divetest`: a headless live-dive

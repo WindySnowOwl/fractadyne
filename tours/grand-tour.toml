@@ -15,126 +15,205 @@
 #     dive visits them all.
 #
 #   Play in-app:  Tools -> Play script...
-#   Render movie: fractadyne --render-tour tours/grand-tour.toml \
-#                   --fps 30 --size 1920x1080 --ss 2 --out frames --mp4
+#   Render movie: fractadyne --render-tour tours/grand-tour.toml --out frames --mp4
+#                 (size/fps/ss come from [render] below; flags still override)
+#   One chapter:  fractadyne --render-tour tours/grand-tour.toml --segment gauntlet
 #   Regression:   render at low fps/size (e.g. --fps 2 --size 640x360) and inspect
 #                 the hold frames; the deep chapter is where the cost is.
 #
-# Timeline is ~232 s. Caption `at` times below are absolute seconds and were computed
-# from the cumulative keyframe secs+hold — edit them together.
+# Timeline is 232 s. Every `t` is ABSOLUTE seconds from the start — keyframes and
+# narration can be edited independently without recomputing anything downstream.
+format_version = 2
 name = "Fractadyne Grand Tour"
-format_version = 1
-palette = "Ember"
 
-# The spar chapter needs a big budget; the shallow chapters must NOT pay for it (an exact
-# count applies everywhere and the home view alone then costs minutes a frame). auto_iter
-# keeps it depth-scaled, and this base rides at `recommended_max_iter`'s 2M ceiling where the
-# dive needs it. NOTE: the deepest holds (1e94x) still come out a few percent capped — they
-# want ~8M, which no single script-wide number can express without crippling the shallow
-# frames. PER-KEYFRAME `max_iter` is the format fix; see TODO.
-max_iter = 2000000
-auto_iter = true
+[render]
+size = "1920x1080"
+fps = 30
+ss = 2
+
+# Each keyframe carries its own iteration budget (interpolated geometrically along
+# the glides), so the shallow chapters cost a few thousand iterations a frame while
+# the spar holds get the millions they need. One script-wide number can do neither:
+# an exact count makes the 1.33x home view cost minutes a frame, and a depth-scaled
+# base leaves the deepest holds capped.
+#
+# The deepest hold is set to 4M rather than the ~8M it would take to fully resolve:
+# the offline path builds the NEXT frame's reference while this one renders, so the
+# peak is two references at once (~2.3 GB each at 379-bit precision, plus their BLA
+# tables) and 8M ran a 32 GB machine out of memory mid-dive. At 4M the 6.5e94x hold
+# is still a few percent capped - that depth is at the edge of what this build can
+# resolve at all (see the 1e95 wall in TODO.md), not a limit of the script format.
+
+# ============================================================ named coordinates
+[[location]]
+id = "home"
+re = "-0.5"
+im = "0.0"
+zoom = 1.33333
+note = "Classic whole-set framing."
+
+[[location]]
+id = "seahorse"
+re = "-0.743643887037151"
+im = "0.131825904205330"
+
+[[location]]
+id = "elephant"
+re = "0.2925755"
+im = "-0.0149977"
+
+[[location]]
+id = "triple-spiral"
+re = "-0.088643135"
+im = "0.654461185"
+
+[[location]]
+id = "antenna-tip"
+re = "-2.0"
+im = "0.0"
+note = "c = -2 exactly. Misiurewicz (2,1); multiplier exactly 4."
+
+[[location]]
+id = "c-equals-i"
+re = "0.0"
+im = "1.0"
+note = "c = i exactly. Misiurewicz (2,2); multiplier 4(1+i)."
+
+# The three-spar dive center — the deepest verified point of the family. Written
+# once here and referenced by the dive keyframe and the spotlight.
+[[location]]
+id = "three-spar"
+re = "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1"
+im = "9.5628651080914147131604703998237075557983304380930462483482733212267499793490593467836270525491219946548323699651521e-1"
+
+# ============================================================ chapters
+[[segment]]
+id = "whole-set"
+title = "1. The whole set"
+t = 0
+
+[[segment]]
+id = "landmarks"
+title = "2. Famous landmarks"
+t = 5
+
+[[segment]]
+id = "exact-points"
+title = "3. Points known exactly"
+t = 40
+
+[[segment]]
+id = "features"
+title = "4. Features"
+t = 80
+
+[[segment]]
+id = "gauntlet"
+title = "5. The deep gauntlet"
+t = 117
 
 # ============================================================ 1. The whole set
 [[keyframe]]
-secs = 0
-center_re = "-0.5"
-center_im = "0.0"
-mag = 1.33333
+id = "open"
+t = 0
+location = "home"
 fractal = "Mandelbrot"
+palette = "Ember"
+max_iter = 2000
 hold = 5
 
 # ============================================================ 2. Famous landmarks
 # Seahorse Valley — the classic first destination.
 [[keyframe]]
-secs = 6
-center_re = "-0.743643887037151"
-center_im = "0.131825904205330"
-mag = 2667
-ease = "smooth"
+id = "seahorse-1"
+t = 11
+location = "seahorse"
+zoom = 2667
+max_iter = 4000
 hold = 3
 [[keyframe]]
-secs = 5
-mag = 13330000
-ease = "smooth"
+id = "seahorse-2"
+t = 19
+zoom = 13330000
+max_iter = 12000
 hold = 3
 
 # Elephant Valley — the procession off the cardioid's cusp.
 [[keyframe]]
-secs = 6
-center_re = "0.2925755"
-center_im = "-0.0149977"
-mag = 2000
-ease = "smooth"
+id = "elephant"
+t = 28
+location = "elephant"
+zoom = 2000
+max_iter = 4000
 hold = 3
 
 # Triple Spiral Valley — three-fold symmetry off the period-3 bulb.
 [[keyframe]]
-secs = 6
-center_re = "-0.088643135"
-center_im = "0.654461185"
-mag = 1600
-ease = "smooth"
+id = "triple-spiral"
+t = 37
+location = "triple-spiral"
+zoom = 1600
+max_iter = 4000
 hold = 3
 
 # ============================================================ 3. Exact points
 # Back out, then visit two points whose mathematics is exactly known.
 [[keyframe]]
-secs = 4
-center_re = "-0.5"
-center_im = "0.0"
-mag = 1.33333
-ease = "smooth"
+id = "back-out-1"
+t = 44
+location = "home"
+max_iter = 2000
 hold = 1
 
 # The antenna tip, c = -2 exactly. Misiurewicz (2,1): the critical orbit lands on the
 # repelling fixed point 2, whose multiplier is exactly 4 — real, so the structure
 # repeats under zoom WITHOUT spiralling. The cleanest self-similarity in the set.
 [[keyframe]]
-secs = 5
-center_re = "-2.0"
-center_im = "0.0"
-mag = 8
-ease = "smooth"
+id = "antenna-tip"
+t = 50
+location = "antenna-tip"
+zoom = 8
+max_iter = 3000
 hold = 4
 [[keyframe]]
-secs = 5
-mag = 5000
-ease = "smooth"
+id = "antenna-tip-deep"
+t = 59
+zoom = 5000
+max_iter = 6000
 hold = 3
 
 # c = i exactly. Misiurewicz (2,2): the orbit reaches the 2-cycle {-1+i, -i} and the
 # multiplier is 4(1+i) — argument 45 degrees, so this one twists as it repeats.
 [[keyframe]]
-secs = 6
-center_re = "0.0"
-center_im = "1.0"
-mag = 8
-ease = "smooth"
+id = "c-equals-i"
+t = 68
+location = "c-equals-i"
+zoom = 8
+max_iter = 3000
 hold = 4
 [[keyframe]]
-secs = 5
-mag = 3000
-ease = "smooth"
+id = "c-equals-i-deep"
+t = 77
+zoom = 3000
+max_iter = 6000
 hold = 3
 
 # ============================================================ 4. Features
 # Dual view: the Mandelbrot set beside the Julia set of the point under the cursor.
 [[keyframe]]
-secs = 5
-center_re = "-0.5"
-center_im = "0.0"
-mag = 1.33333
+id = "dual-open"
+t = 85
+location = "home"
+max_iter = 2000
 dual = true
 julia_re = -0.122561
 julia_im = 0.744862
-ease = "smooth"
 hold = 5
 
 # Slide c along the boundary — the Julia set morphs continuously with it.
 [[keyframe]]
-secs = 6
-dual = true
+id = "dual-slide"
+t = 96
 julia_re = -0.743643
 julia_im = 0.131825
 ease = "linear"
@@ -142,247 +221,264 @@ hold = 4
 
 # Orbit overlay: the actual path of z under iteration, drawn over the set.
 [[keyframe]]
-secs = 4
+id = "orbit-overlay"
+t = 104
 dual = false
 orbits = true
 orbit_re = -0.743643
 orbit_im = 0.131825
-ease = "smooth"
 hold = 5
 
 # A different family entirely — the escape-time engine is not Mandelbrot-only.
 [[keyframe]]
-secs = 4
+id = "burning-ship"
+t = 113
 fractal = "Burning Ship"
-center_re = "-1.7"
-center_im = "-0.03"
-mag = 60
+re = "-1.7"
+im = "-0.03"
+zoom = 60
 orbits = false
-ease = "smooth"
 hold = 4
 
 # ============================================================ 5. The gauntlet
 # Back to the Mandelbrot set and onto the three-spar center for the deep dive.
 [[keyframe]]
-secs = 4
+id = "back-out-2"
+t = 121
 fractal = "Mandelbrot"
-center_re = "-0.5"
-center_im = "0.0"
-mag = 1.33333
-ease = "smooth"
+location = "home"
+max_iter = 2000
 hold = 2
 
 # Swoop onto the exact dive center at low zoom FIRST (panning while deep-zooming
 # drives the camera through the set's black interior), then hold the center fixed
-# for the whole descent. This center is the deepest verified point of the family.
+# for the whole descent.
 [[keyframe]]
-secs = 5
-center_re = "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1"
-center_im = "9.5628651080914147131604703998237075557983304380930462483482733212267499793490593467836270525491219946548323699651521e-1"
-mag = 8
-ease = "smooth"
+id = "dive-start"
+t = 128
+location = "three-spar"
+zoom = 8
+max_iter = 3000
 hold = 2
 
 [[keyframe]]
-secs = 8
-mag_log10 = 10.0
+id = "dive-e10"
+t = 138
+zoom = "1e10"
+max_iter = 20000
 ease = "in"
 [[keyframe]]
-secs = 14
-mag_log10 = 30.0
+id = "dive-e30"
+t = 152
+zoom = "1e30"
+max_iter = 60000
 ease = "linear"
 
 # --- regression holds: each depth below is a bug this family produced ---
 # 1.7e55 / 5.17e55 — beta.19: the adaptive iteration budget itself (smooth "capped
 # blobs" where the export showed dendrites), and its stale-baseline plateau.
 [[keyframe]]
-secs = 14
-mag_log10 = 55.0
+id = "hold-e55"
+t = 166
+zoom = "1e55"
+max_iter = 250000
 ease = "linear"
 hold = 3
 # 3.3e61 — beta.26: the plateau detector latched after ONE flat raise; capped
 # fraction sits at exactly 100% through x1.6 and x2.6 before collapsing at x4.1.
 [[keyframe]]
-secs = 6
-mag_log10 = 61.0
+id = "hold-e61"
+t = 175
+zoom = "1e61"
+max_iter = 400000
 ease = "linear"
 hold = 3
 # 6.3e63 — beta.27: LIVE_REF_CAP truncated a reference that escapes at 256,753,
 # 753 iterations past the cap -> partial -> pixel clamp -> blobs.
 [[keyframe]]
-secs = 4
-mag_log10 = 63.0
+id = "hold-e63"
+t = 182
+zoom = "1e63"
+max_iter = 500000
 ease = "linear"
 hold = 3
 # 2.6e72 — beta.28: the 500k iteration ceiling (this view needs ~1M), and the
 # clamped-budget deadlock it exposed in the reference extension.
 [[keyframe]]
-secs = 9
-mag_log10 = 72.0
+id = "hold-e72"
+t = 194
+zoom = "1e72"
+max_iter = 1200000
 ease = "linear"
 hold = 3
 # 2.0e82 — beta.30: the 128 MB storage-binding wall. The reference here escapes at
 # 928,084 samples — 112 past the old ~928k device cap.
 [[keyframe]]
-secs = 11
-mag_log10 = 82.0
+id = "hold-e82"
+t = 208
+zoom = "1e82"
+max_iter = 2000000
 ease = "linear"
 hold = 3
 # 6.5e94 — beta.32: the plateau detector again. This view needs ~39x the depth-scaled
 # cap before a single pixel escapes; three flat steps "proved" interior and reverted
 # to a black screen.
 [[keyframe]]
-secs = 13
-mag_log10 = 94.81
+id = "hold-e94"
+t = 224
+zoom = "6.46e94"
+max_iter = 4000000
 ease = "out"
 hold = 8
 
 # ============================================================ narration
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Fractadyne"
-at = 0.4
+t = 0.4
 secs = 2.6
 pos = "center"
 size = 40
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "The Mandelbrot set — drag to pan, wheel to zoom, click to dive"
-at = 1.5
+t = 1.5
 secs = 3.2
-pos = "bottom"
 
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Seahorse Valley"
-at = 11.5
+t = 11.5
 secs = 3.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "The same seahorses, ten thousand times smaller"
-at = 19.5
+t = 19.5
 secs = 3.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Elephant Valley"
-at = 28.5
+t = 28.5
 secs = 3.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Triple Spiral Valley"
-at = 37.5
+t = 37.5
 secs = 3.0
-pos = "bottom"
 
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Some points are known exactly"
-at = 45.5
+t = 45.5
 secs = 4.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "c = -2 exactly  ·  Misiurewicz (2,1)\nmultiplier 4, real — it repeats without spiralling"
-at = 50.5
+t = 50.5
 secs = 4.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "c = i exactly  ·  Misiurewicz (2,2)\nmultiplier 4(1+i) — 45 degrees of twist per repeat"
-at = 68.5
+t = 68.5
 secs = 4.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Type either one straight in — coordinates accept exact fractions"
-at = 77.5
+t = 77.5
 secs = 3.0
-pos = "bottom"
 
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Dual view: the Julia set of the point you point at"
-at = 85.5
+t = 85.5
 secs = 4.5
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Move c along the boundary and the Julia set follows"
-at = 90.5
+t = 90.5
 secs = 5.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Orbit overlay — the path of z under iteration"
-at = 104.5
+t = 104.5
 secs = 4.5
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Ten fractal families share the same deep-zoom engine"
-at = 113.5
+t = 113.5
 secs = 3.5
-pos = "bottom"
 
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Now the deep end"
-at = 123.5
+t = 123.5
 secs = 3.5
 pos = "center"
 size = 30
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "A Misiurewicz three-spar — the hardest field we know of"
-at = 130.5
+t = 130.5
 secs = 5.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "Perturbation + series approximation + bilinear approximation"
-at = 145.0
+t = 145.0
 secs = 5.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "10^55x — past here the iteration budget adapts itself"
-at = 166.5
+t = 166.5
 secs = 3.5
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "10^63x — the reference orbit is rebuilt as the view descends"
-at = 182.5
+t = 182.5
 secs = 3.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "10^72x — a million iterations per pixel"
-at = 194.5
+t = 194.5
 secs = 3.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "10^82x — 380-digit arithmetic, seven million reference samples"
-at = 208.5
+t = 208.5
 secs = 3.0
-pos = "bottom"
-[[caption]]
+[[annotation]]
+kind = "caption"
 text = "6.5 x 10^94 x"
-at = 225.0
+t = 225.0
 secs = 7.0
-pos = "bottom"
 size = 28
 
 # ============================================================ callouts
 # Anchored to coordinates, so they track the feature as the camera moves.
-[[callout]]
+[[annotation]]
+kind = "callout"
 text = "Seahorse Valley"
-center_re = "-0.743643887037151"
-center_im = "0.131825904205330"
-at = 7.0
+location = "seahorse"
+t = 7.0
 secs = 4.0
-[[callout]]
+[[annotation]]
+kind = "callout"
 text = "c = -2  (antenna tip)"
-center_re = "-2.0"
-center_im = "0.0"
-at = 50.0
+location = "antenna-tip"
+t = 50.0
 secs = 4.0
-[[callout]]
+[[annotation]]
+kind = "callout"
 text = "c = i"
-center_re = "0.0"
-center_im = "1.0"
-at = 68.0
+location = "c-equals-i"
+t = 68.0
 secs = 4.0
 
 # A spotlight to draw the eye onto the dive target before the descent starts.
-[[spotlight]]
-center_re = "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1"
-center_im = "9.5628651080914147131604703998237075557983304380930462483482733212267499793490593467836270525491219946548323699651521e-1"
+[[annotation]]
+kind = "spotlight"
+location = "three-spar"
 radius = 0.18
 softness = 0.10
 dim = 0.55
-at = 128.0
+t = 128.0
 secs = 4.0

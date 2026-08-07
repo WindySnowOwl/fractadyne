@@ -208,8 +208,8 @@ impl FractadyneApp {
         let filter: Option<String> = self.selftest_filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "iter-budget", "nr-zoom", "coords", "metadata", "display",
-            "catalog", "goldens", "bench-matrix",
+            "consistency", "counters", "iter-budget", "nr-zoom", "coords", "script", "metadata",
+            "display", "catalog", "goldens", "bench-matrix",
         ];
         if self.selftest_list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -2137,6 +2137,252 @@ impl FractadyneApp {
                 result: format!("{deep} bits agree"),
                 threshold: "≥4000 bits",
                 pass: deep >= 4000,
+            });
+        }
+
+        // ---- tour scripts (format v2) ----
+        // The shipped tours are the app's demo reel AND its deep-render regression gauntlet, so a
+        // script that no longer resolves is a shipped-content break, not a test-fixture break.
+        // They're compiled in, so this checks the files in the repo rather than whatever happens
+        // to sit next to an installed binary.
+        if want("script") {
+            const TOURS: &[(&str, &str)] = &[
+                ("grand-tour", include_str!("../../../tours/grand-tour.toml")),
+                ("deep-minibrot-dive", include_str!("../../../tours/deep-minibrot-dive.toml")),
+                ("deep-spiral-dive", include_str!("../../../tours/deep-spiral-dive.toml")),
+                ("dive-to-misiurewicz-4-1", include_str!("../../../tours/dive-to-misiurewicz-4-1.toml")),
+                ("dive-to-view-3e1216", include_str!("../../../tours/dive-to-view-3e1216.toml")),
+                ("julia-and-mandelbrot", include_str!("../../../tours/julia-and-mandelbrot.toml")),
+            ];
+            let mut bad = Vec::new();
+            let mut total_s = 0.0;
+            for (name, text) in TOURS {
+                match crate::scripting::parse_tour_text(text) {
+                    Ok(pb) if pb.total > 0.0 => total_s += pb.total,
+                    Ok(_) => bad.push(format!("{name}: zero-length timeline")),
+                    Err(e) => bad.push(format!("{name}: {}", e.lines().next().unwrap_or(&e))),
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "shipped tours resolve".into(),
+                params: format!("{} scripts", TOURS.len()),
+                result: if bad.is_empty() {
+                    format!("all resolve, {total_s:.0}s of tour")
+                } else {
+                    bad.join("; ")
+                },
+                threshold: "all resolve",
+                pass: bad.is_empty(),
+            });
+
+            // Absolute timing + inheritance. The camera must SIT at keyframe 1 through its hold
+            // and only then glide — cumulative `secs` timing got this right too, but only
+            // absolute `t` keeps it right when a keyframe is inserted above.
+            const TIMING: &str = "format_version = 2\n\
+                 [[keyframe]]\nid = \"a\"\nt = 0\nre = \"-0.5\"\nim = \"0.0\"\nzoom = 1\n\
+                 max_iter = 1000\nhold = 2\nease = \"linear\"\n\
+                 [[keyframe]]\nid = \"b\"\nt = 6\nzoom = \"1e12\"\nmax_iter = 1000000\n\
+                 ease = \"linear\"\n";
+            let (mut when, mut budget) = ("script failed to resolve".to_string(), String::new());
+            let mut timing_ok = false;
+            if let Ok(pb) = crate::scripting::parse_tour_text(TIMING) {
+                let l10 = |t: f64| pb.sample(t).logmag / std::f64::consts::LN_10;
+                // t=2 is the end of the hold (still 1×); t=4 is the midpoint of the 2→6s glide.
+                let (held, mid, end) = (l10(2.0), l10(4.0), l10(6.0));
+                // Iteration budget interpolates geometrically: √(1e3 · 1e6) ≈ 31623 at the middle.
+                let mid_iter = pb.sample(4.0).max_iter.unwrap_or(0);
+                let end_iter = pb.sample(6.0).max_iter.unwrap_or(0);
+                timing_ok = held.abs() < 1.0e-9
+                    && (mid - 6.0).abs() < 1.0e-6
+                    && (end - 12.0).abs() < 1.0e-9
+                    && (mid_iter as f64 - 31_623.0).abs() < 50.0
+                    && end_iter == 1_000_000
+                    && (pb.total - 6.0).abs() < 1.0e-9;
+                when = format!("hold@2s=1e{held:.1}, mid@4s=1e{mid:.3}, end=1e{end:.1}");
+                budget = format!(", iter mid={mid_iter} end={end_iter}");
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "absolute times + geometric iteration ramp".into(),
+                params: "hold 0–2s, glide 2–6s to 1e12×".into(),
+                result: format!("{when}{budget}"),
+                threshold: "still 1× at 2s, 1e6× at 4s, 31623 iters at 4s",
+                pass: timing_ok,
+            });
+
+            // Zoom strings past f64's ~1e308 ceiling — the reason `zoom` is a string at all.
+            const DEEP: &str = "format_version = 2\n\
+                 [[keyframe]]\nt = 0\nre = \"-0.5\"\nim = \"0.0\"\nzoom = \"3.0938e1216\"\n";
+            let deep_l10 = crate::scripting::parse_tour_text(DEEP)
+                .map(|pb| pb.sample(0.0).logmag / std::f64::consts::LN_10)
+                .unwrap_or(0.0);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "deep zoom string survives f64 range".into(),
+                params: "zoom = \"3.0938e1216\"".into(),
+                result: format!("log10 mag = {deep_l10:.4}"),
+                threshold: "1216.4904 ± 1e-3",
+                pass: (deep_l10 - 1216.4904).abs() < 1.0e-3,
+            });
+
+            // Malformed scripts must be REJECTED with a diagnosis, never silently mis-played.
+            // The v1 case is the sharp one: v1 and v2 share no timing keys, so a v1 file would
+            // otherwise default every keyframe to t=0 at 1× and render as one still frame.
+            let bad_scripts: &[(&str, &str)] = &[
+                ("v1 script", "name = \"old\"\nformat_version = 1\n[[keyframe]]\nsecs = 0\nmag = 1\n"),
+                ("no version", "[[keyframe]]\nt = 0\nzoom = 1\n"),
+                ("no keyframes", "format_version = 2\n"),
+                ("t goes backwards", "format_version = 2\n[[keyframe]]\nt = 5\nhold = 2\n[[keyframe]]\nt = 6\n"),
+                ("missing t", "format_version = 2\n[[keyframe]]\nt = 0\n[[keyframe]]\nzoom = 2\n"),
+                ("unknown location", "format_version = 2\n[[keyframe]]\nt = 0\nlocation = \"nope\"\n"),
+                ("unknown annotation kind", "format_version = 2\n[[keyframe]]\nt = 0\n[[annotation]]\nkind = \"subtitle\"\ntext = \"x\"\n"),
+                ("unanchored callout", "format_version = 2\n[[keyframe]]\nt = 0\n[[annotation]]\nkind = \"callout\"\ntext = \"x\"\n"),
+                ("unparseable zoom", "format_version = 2\n[[keyframe]]\nt = 0\nzoom = \"deep\"\n"),
+                ("half a coordinate", "format_version = 2\n[[keyframe]]\nt = 0\nre = \"-0.5\"\n"),
+            ];
+            let accepted: Vec<&str> = bad_scripts
+                .iter()
+                .filter(|(_, s)| crate::scripting::parse_tour_text(s).is_ok())
+                .map(|(n, _)| *n)
+                .collect();
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "malformed scripts rejected".into(),
+                params: format!("{} scripts", bad_scripts.len()),
+                result: if accepted.is_empty() {
+                    "all rejected".into()
+                } else {
+                    format!("ACCEPTED: {accepted:?}")
+                },
+                threshold: "all rejected",
+                pass: accepted.is_empty(),
+            });
+
+            // Palettes: a keyframe naming one preset must apply that preset verbatim (a static
+            // tour has to color exactly as picking the preset would), while a keyframe-to-keyframe
+            // change cross-fades the two gradients — the one mechanism behind static palettes,
+            // morphs, and cycling.
+            const PAL: &str = "format_version = 2\n\
+                 [[palette]]\nid = \"black-red\"\nstops = [{ at = 0.0, color = \"#000000\" }, \
+                 { at = 1.0, color = \"#ff0000\" }]\n\
+                 [[keyframe]]\nt = 0\nre = \"-0.5\"\nim = \"0.0\"\nzoom = 1\npalette = \"black-red\"\n\
+                 hold = 1\nease = \"linear\"\n\
+                 [[keyframe]]\nt = 3\npalette = \"Ember\"\nease = \"linear\"\n";
+            let (pal_ok, pal_desc) = match crate::scripting::parse_tour_text(PAL) {
+                Ok(pb) => {
+                    use crate::scripting::PaletteApply as P;
+                    let start = pb.sample(0.5).palette;
+                    let mid = pb.sample(2.0).palette;
+                    let end = pb.sample(3.0).palette;
+                    let ember = fractadyne_color::PRESETS
+                        .iter()
+                        .position(|p| p.name.eq_ignore_ascii_case("Ember"))
+                        .unwrap_or(0);
+                    // Halfway through the morph, the green channel must sit strictly between the
+                    // two sources at the same gradient position: the black→red ramp has none at
+                    // all, Ember has plenty. Ember's value is interpolated here independently of
+                    // the code under test.
+                    let blended = match &mid {
+                        Some(P::Stops(s)) if s.len() == fractadyne_color::MAX_STOPS => {
+                            let probe = s[4]; // pos 4/7 ≈ 0.571
+                            let (pos, g) = (probe[0], probe[2]);
+                            let src = fractadyne_color::PRESETS[ember].stops;
+                            let g_ember = src
+                                .windows(2)
+                                .find(|w| pos <= w[1].0)
+                                .map(|w| {
+                                    let f = ((pos - w[0].0) / (w[1].0 - w[0].0).max(1.0e-6)).clamp(0.0, 1.0);
+                                    w[0].1[1] + (w[1].1[1] - w[0].1[1]) * f
+                                })
+                                .unwrap_or(0.0);
+                            g > 0.05 && g < g_ember && (g - g_ember * 0.5).abs() < 0.02
+                        }
+                        _ => false,
+                    };
+                    let ok = matches!(&start, Some(P::Stops(s)) if s.len() == 2 && s[1][1] > 0.9)
+                        && blended
+                        && matches!(end, Some(P::Preset(i)) if i == ember);
+                    (
+                        ok,
+                        format!(
+                            "start={}, mid={}, end={}",
+                            match &start { Some(P::Stops(s)) => format!("{} stops", s.len()), Some(P::Preset(i)) => format!("preset {i}"), None => "none".into() },
+                            match &mid { Some(P::Stops(s)) => format!("{} blended stops", s.len()), Some(P::Preset(i)) => format!("preset {i}"), None => "none".into() },
+                            match &end { Some(P::Stops(s)) => format!("{} stops", s.len()), Some(P::Preset(i)) => format!("preset {i}"), None => "none".into() },
+                        ),
+                    )
+                }
+                Err(e) => (false, e.lines().next().unwrap_or("error").to_string()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "palette definition + morph".into(),
+                params: "custom stops → Ember over 2s".into(),
+                result: pal_desc,
+                threshold: "stops verbatim, blend at the midpoint, preset verbatim",
+                pass: pal_ok,
+            });
+
+            // "Script to current view" writes a script the app then has to read back. A generator
+            // emitting a shape the reader rejects is invisible until someone tries to play the
+            // file, so generate one at a past-f64 depth and resolve it here.
+            {
+                let saved = (self.viewport.clone(), self.render_cfg.max_iter);
+                self.viewport.center_x = fractadyne_core::parse_bf("-0.101096363845622131810062").unwrap();
+                self.viewport.center_y = fractadyne_core::parse_bf("0.956286510809141471316047").unwrap();
+                self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(-1200.0);
+                self.viewport.precision = fractadyne_core::precision_for_octaves(1200);
+                // The view's own depth is the target: `log2_magnification` folds in the viewport
+                // size, so it is NOT simply the 1200 in `units_per_pixel = 2^-1200`.
+                let want_l10 = self.viewport.log2_magnification() / std::f64::consts::LOG2_10;
+                let text = self.build_dive_script("Zoom to a deep view", 60.0);
+                let got = crate::scripting::parse_tour_text(&text)
+                    .map(|pb| (pb.total, pb.sample(pb.total).logmag / std::f64::consts::LN_10));
+                let (ok, desc) = match &got {
+                    // 1.5s hold + 4s swoop + 0.5s hold + 60s dive + 2s hold = 68s.
+                    Ok((total, l10)) => (
+                        (total - 68.0).abs() < 0.01 && (l10 - want_l10).abs() < 0.01,
+                        format!("{total:.1}s, ends 1e{l10:.1}× (view 1e{want_l10:.1}×)"),
+                    ),
+                    Err(e) => (false, e.lines().next().unwrap_or("error").to_string()),
+                };
+                (self.viewport, self.render_cfg.max_iter) = saved;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Script",
+                    name: "generated dive script round-trips".into(),
+                    params: "\"Script to current view\" at 2^1200×".into(),
+                    result: desc,
+                    threshold: "resolves, 68s, ends at the view's depth",
+                    pass: ok,
+                });
+            }
+
+            // `--segment` resolution: chapters close at the next chapter's start, and a name can
+            // be given as an id, a unique prefix, or a 1-based index.
+            let seg = crate::scripting::parse_tour_text(include_str!("../../../tours/grand-tour.toml"))
+                .ok()
+                .map(|pb| {
+                    let by_id = pb.find_segment("gauntlet").map(|s| (s.start, s.end));
+                    let by_prefix = pb.find_segment("land").map(|s| s.id.clone());
+                    let by_index = pb.find_segment("1").map(|s| s.id.clone());
+                    let missing = pb.find_segment("nope").is_err();
+                    (by_id, by_prefix, by_index, missing)
+                });
+            let (seg_ok, seg_desc) = match &seg {
+                Some((Ok((start, end)), Ok(prefix), Ok(first), true)) => (
+                    *start == 117.0 && *end == 232.0 && prefix == "landmarks" && first == "whole-set",
+                    format!("gauntlet {start}–{end}s, prefix→{prefix}, #1→{first}"),
+                ),
+                _ => (false, "segment lookup failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "segment lookup".into(),
+                params: "grand-tour chapters".into(),
+                result: seg_desc,
+                threshold: "id / prefix / index resolve, unknown errors",
+                pass: seg_ok,
             });
         }
 
