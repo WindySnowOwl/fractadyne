@@ -214,7 +214,7 @@ pub(crate) fn init_orbit_len_cap(max_storage_buffer_binding_size: u32) {
 }
 
 /// The orbit-build length ceiling — `u32::MAX` (no cap) when unset (tests / before device init).
-fn orbit_len_cap() -> u32 {
+pub(crate) fn orbit_len_cap() -> u32 {
     ORBIT_LEN_CAP.get().copied().unwrap_or(u32::MAX)
 }
 
@@ -1797,6 +1797,7 @@ impl FractadyneApp {
                 self.perf.iter_probe[vb] = None;
                 self.perf.iter_plateau[vb] = false;
                 self.perf.iter_stall[vb] = 0;
+                self.perf.capped_frac[vb] = None; // a moving frame's reading describes another view
             }
             let v = self.perf.maxiter_sink[vb].swap(u64::MAX, SeqCst);
             // The reading is `(frac_f32_bits << 32) | armed_max_iter`. Only adapt on readings
@@ -1823,6 +1824,21 @@ impl FractadyneApp {
             // (a frame already at the full appetite can't be helped by raising it).
             let boost = boost_now;
             let cap_bound = budget_now < eff_iter.min(crate::MAX_ITER_LIMIT);
+            // Publish the capped fraction for the status-bar limit diagnostic — INDEPENDENT of the
+            // adapt path below. When the user's own Iterations setting is the binding constraint
+            // (`cap_bound` false) the probe never runs, and that is precisely when they most need
+            // to be told the budget is the limit: the probe can't raise past their setting.
+            if v != u64::MAX && !interacting {
+                let frac = f32::from_bits(frac_bits) as f64;
+                if frac.is_finite() {
+                    self.perf.capped_frac[vb] = Some(frac);
+                    // Can the app still raise this budget on its own? Only while the zoom cap
+                    // binds AND the boost has headroom.
+                    self.perf.budget_maxed[vb] =
+                        !cap_bound || boost_now >= crate::ITER_BOOST_MAX * 0.99;
+                    self.perf.budget_measured[vb] = budget_now;
+                }
+            }
             // Drain the escape-range reading (live auto-normalization input) and EMA it — the
             // range moves smoothly with the view, and the EMA keeps the derived palette mapping
             // from flickering frame to frame.

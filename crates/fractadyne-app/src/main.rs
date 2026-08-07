@@ -182,6 +182,13 @@ struct Perf {
     /// True once raising has been shown not to help (true interior in view — e.g. inside a
     /// minibrot): stop probing, revert to where the fruitless run began. Cleared with the view.
     iter_plateau: [bool; 2],
+    /// Last settled measurement of the capped-pixel fraction, the budget it was measured at, and
+    /// whether the app could still raise that budget itself. Fed by every valid settled reading
+    /// (not just the probe's), so the status-bar limit diagnostic works at a manually-set budget
+    /// where the probe never runs. `None` while moving.
+    capped_frac: [Option<f64>; 2],
+    budget_measured: [u32; 2],
+    budget_maxed: [bool; 2],
     /// Consecutive raises that bought nothing, and the boost the run started from.
     ///
     /// A single unhelpful raise does NOT mean "interior". Measured at the 3.3e61× three-spar: the
@@ -245,6 +252,9 @@ impl Default for Perf {
             iter_boost: [1.0, 1.0],
             iter_probe: [None, None],
             iter_plateau: [false, false],
+            capped_frac: [None, None],
+            budget_measured: [0, 0],
+            budget_maxed: [false, false],
             iter_stall: [0, 0],
             iter_stall_base: [1.0, 1.0],
             norm_sink: [
@@ -2886,6 +2896,7 @@ impl FractadyneApp {
         self.perf.iter_plateau = [false, false];
         self.perf.iter_stall = [0, 0];
         self.perf.iter_stall_base = [1.0, 1.0];
+        self.perf.capped_frac = [None, None];
         self.perf.norm_range = [None, None];
     }
 

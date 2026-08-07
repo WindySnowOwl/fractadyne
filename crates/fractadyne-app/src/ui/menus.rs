@@ -601,6 +601,95 @@ impl FractadyneApp {
 
     /// Bottom status bar — center coordinate, cursor, zoom, effective iteration count, and the
     /// live script / benchmark playback progress.
+    /// Classify which rendering limit (if any) is binding, for the status-bar diagnostic.
+    /// Returns `(label, hover detail, severe)` — severe = red (a hard wall), else amber.
+    ///
+    /// Deliberately quiet during ordinary dives: a motion-capped partial reference (≤
+    /// `LIVE_REF_CAP`, nothing refused) is transient machinery, not a limit the user needs to
+    /// hear about. The conditions, in priority order, are the three walls actually measured on
+    /// the Misiurewicz spar family:
+    /// 1. reference refused AT the GPU buffer cap (2e95×: nothing deeper is computable),
+    /// 2. reference clamped below the iteration budget after a declined extension (e21000),
+    /// 3. pixels exhausting a budget the app cannot raise further, with escapes pressing the
+    ///    ceiling (starvation — as opposed to ordinary in-set pixels, which always cap).
+    #[allow(clippy::too_many_arguments)] // a pure classifier over independent state — a struct would just rename the args
+    pub(crate) fn limit_status(
+        partial: bool,
+        orbit_len: u32,
+        refused: u32,
+        dev_cap: u32,
+        eff_iter: u32,
+        capped: Option<f64>,
+        budget_measured: u32,
+        budget_maxed: bool,
+        esc_max: Option<f64>,
+        plateau: bool,
+    ) -> Option<(&'static str, String, bool)> {
+        let clamp_px = orbit_len.saturating_sub(1);
+        if refused >= dev_cap {
+            return Some((
+                "⚠ depth limit",
+                format!(
+                    "The reference orbit reached the GPU buffer cap ({} samples) without \
+                     escaping, so pixels here are limited to ~{} iterations and finer detail \
+                     cannot be computed at this view — live or exported. This is the current \
+                     depth limit for this location family.",
+                    commas(&dev_cap.to_string()),
+                    commas(&clamp_px.to_string())
+                ),
+                true,
+            ));
+        }
+        if partial && refused > 0 && clamp_px < eff_iter {
+            return Some((
+                "⚠ ref clamped",
+                format!(
+                    "Pixels are limited to {} iterations (budget {}): the reference orbit does \
+                     not escape within the length the app can safely use live — a {}-sample \
+                     extension was built and declined (it would freeze the GPU present). The \
+                     view may under-resolve; an export can push further.",
+                    commas(&clamp_px.to_string()),
+                    commas(&eff_iter.to_string()),
+                    commas(&refused.to_string())
+                ),
+                false,
+            ));
+        }
+        // Pixels exhausting the budget only means STARVATION if raising would help. In-set
+        // (interior) pixels always exhaust it — a view containing a minibrot is legitimately a few
+        // percent "capped" and warning there would cry wolf on the most ordinary deep view. The
+        // discriminator is where the ESCAPED pixels finish: under starvation escapes press right
+        // against the ceiling, whereas around a genuine minibrot they finish far below it (the
+        // 2e82× view escaped at 833k–1.12M under a 10M budget). A fully-capped frame has no
+        // escaped pixels to measure and is starved by definition.
+        if !plateau && budget_maxed {
+            if let Some(frac) = capped {
+                let pressing = frac > 0.98
+                    || esc_max.is_some_and(|mx| mx >= 0.9 * budget_measured.max(1) as f64);
+                if frac > 0.02 && pressing {
+                    let hint = if eff_iter >= crate::MAX_ITER_LIMIT {
+                        "Iterations is already at the maximum, so this view needs more than the \
+                         app can currently give."
+                    } else {
+                        "Raise Iterations (Rendering panel) to resolve it."
+                    };
+                    return Some((
+                        "⚠ iter capped",
+                        format!(
+                            "{:.0}% of pixels ran out of iterations at the {} budget, and the \
+                             escaping ones are finishing right at that ceiling — the view is \
+                             under-resolved. {hint}",
+                            frac * 100.0,
+                            commas(&budget_measured.to_string())
+                        ),
+                        false,
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn draw_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -641,6 +730,32 @@ impl FractadyneApp {
                     want_iter.min(zoom_iter_cap(self.viewport.log2_magnification()).max(256))
                 };
                 ui.monospace(format!("iter {}", commas(&eff_iter.to_string())));
+                // Rendering-limit diagnostics: when a cap is genuinely binding, say so where the
+                // user is already looking, instead of leaving a black/flat view unexplained (the
+                // Misiurewicz-spar reports arrived as mystery screenshots precisely because the
+                // app knew it was clamped and said nothing).
+                let vc = &self.ref_cache[0];
+                if let Some((label, detail, severe)) = Self::limit_status(
+                    vc.partial,
+                    vc.orbit_len,
+                    vc.ref_ext_refused,
+                    crate::render::orbit_len_cap(),
+                    eff_iter,
+                    self.perf.capped_frac[0],
+                    self.perf.budget_measured[0],
+                    self.perf.budget_maxed[0],
+                    self.perf.norm_range[0].map(|(_, mx)| mx as f64),
+                    self.perf.iter_plateau[0],
+                ) {
+                    ui.separator();
+                    let color = if severe {
+                        egui::Color32::from_rgb(0xE0, 0x6C, 0x60)
+                    } else {
+                        egui::Color32::from_rgb(0xE0, 0xA0, 0x30)
+                    };
+                    ui.colored_label(color, egui::RichText::new(label).monospace())
+                        .on_hover_text(detail);
+                }
                 if let Some(pb) = &self.playback {
                     let elapsed = pb.t0.map_or(0.0, |t0| ctx.input(|i| i.time) - t0);
                     let pct = if pb.total > 0.0 {
@@ -654,5 +769,61 @@ impl FractadyneApp {
                 }
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::FractadyneApp;
+
+    /// The measured limit regimes classify correctly, and ordinary states stay quiet.
+    /// Every case here is a real view measured this week, not an invented one.
+    #[test]
+    fn limit_status_matches_measured_regimes() {
+        const DEV: u32 = 7_452_444;
+        const MAX: u32 = crate::MAX_ITER_LIMIT;
+        // 2e95× spar: refusal AT the device cap → the red depth-limit wall.
+        let s = FractadyneApp::limit_status(true, 256_001, DEV + 1, DEV, MAX, None, 0, false, None, false)
+            .expect("device-cap refusal must warn");
+        assert!(s.0.contains("depth limit") && s.2, "want severe depth limit, got {s:?}");
+        // e21000: extension declined below the device cap, pixels clamped under the budget.
+        let s = FractadyneApp::limit_status(true, 256_001, 508_193, DEV, 500_000, None, 0, false, None, false)
+            .expect("declined extension must warn");
+        assert!(s.0.contains("ref clamped") && !s.2, "want amber ref clamp, got {s:?}");
+        // Starved at the app maximum: most pixels capped AND escapes pressing the ceiling.
+        let s = FractadyneApp::limit_status(
+            false, 900_000, 0, DEV, MAX, Some(0.60), MAX, true, Some(MAX as f64 * 0.97), false,
+        )
+        .expect("starved-at-ceiling must warn");
+        assert!(s.0.contains("iter capped") && s.1.contains("already at the maximum"), "got {s:?}");
+        // Fully capped (black frame): no escaped pixels to measure — starved by definition.
+        let s = FractadyneApp::limit_status(false, 900_000, 0, DEV, MAX, Some(1.0), MAX, true, None, false)
+            .expect("all-capped must warn");
+        assert!(s.0.contains("iter capped"), "got {s:?}");
+
+        // Quiet: an ordinary dive's motion partial (nothing refused)…
+        assert!(FractadyneApp::limit_status(true, 256_001, 0, DEV, 500_000, None, 0, false, None, false).is_none());
+        // …the user's 6.9e94× view — a minibrot in frame caps its in-set core (measured 3 px of
+        // 2304 = 0.13%) while escapes finish ~1.1M under a 10M budget: resolved, must stay quiet…
+        assert!(FractadyneApp::limit_status(
+            false, 2_848_721, 0, DEV, MAX, Some(0.0013), MAX, true, Some(1_120_000.0), false
+        )
+        .is_none());
+        // …a BIG minibrot (30% of frame in-set) with escapes far below the ceiling: still quiet —
+        // in-set pixels always exhaust the budget and raising cannot help them…
+        assert!(FractadyneApp::limit_status(
+            false, 2_848_721, 0, DEV, MAX, Some(0.30), MAX, true, Some(1_500_000.0), false
+        )
+        .is_none());
+        // …mid-climb capping (the app can still raise the budget itself — transient)…
+        assert!(FractadyneApp::limit_status(
+            false, 900_000, 0, DEV, 1_000_000, Some(0.5), 82_640 * 6, false, Some(490_000.0), false
+        )
+        .is_none());
+        // …and a latched plateau (true interior).
+        assert!(FractadyneApp::limit_status(
+            false, 900_000, 0, DEV, MAX, Some(0.9), MAX, true, Some(MAX as f64), true
+        )
+        .is_none());
     }
 }
