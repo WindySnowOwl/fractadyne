@@ -62,8 +62,28 @@ Mockups: [design/mockups/](design/mockups/).
     (fixed in beta.37 for RATIONAL coordinates, with a selftest that fails at 9.8e-40 drift without
     it) — but a plain decimal literal is parsed from its own digit count, so the shipped tours were
     never truncated and this was not the cause.
-  - The build carrying the beta.37 fix survived 500 s of the same tour, past all three crash points,
-    but that is not attributable — the tour's own timing changed in the same window.
+  - **RULED OUT: frame cost / the watchdog budget.** A fifth crash (beta.37, build 1157, 230 s)
+    died at `budget=3.000e11` — the CEILING — with `steps=3.949e9`, while an earlier one died at
+    `budget=4.000e8`, the FLOOR, with `steps=3.995e8`. Across the five, resolution varies 10x
+    (429x340 / 135x107) and the budget varies 750x, and it dies regardless. Shrinking the frame or
+    re-budgeting it therefore cannot fix this; the earlier "the cost model is wrong" reading was
+    incomplete.
+  - **The invariant is the STATE, not the size.** All five: `mode=2`, `orbit_len=626`,
+    `partial=false`, `iter` 27 049–27 697, `settled=false`. A 626-sample ESCAPED reference with a
+    ~27 000 pixel budget, i.e. ~43 rebases per pixel and a BLA tree that can skip nothing.
+  - **Also ruled out: an unbounded shader loop.** The mode-2 loop breaks on `iter >= max_iter` and
+    increments once per pass; the rebase at the end of the body resets `ref_n` only. So a pixel
+    really is bounded at ~27k iterations, which makes 4e8 nominal steps taking >2 s unexplained by
+    iteration count alone.
+  - **Leading hypothesis now: reference UPLOAD traffic, not iteration.** The prefetch rebuilds ~35
+    references a second and every install bumps `orbit_id`, which re-uploads the orbit + BLA
+    storage buffer. That buffer is sized against `orbit_len_cap()` (7 452 444 samples, ~1 GB
+    binding). Re-uploading at that rate would swamp the bus and is independent of frame size and
+    budget — which is exactly the observed signature. **Check what `orbit_id` actually re-uploads
+    and how much, before changing anything else.**
+  - The build carrying the beta.37 fix survived 500 s of the same tour, past all three earlier
+    crash points, but it then crashed at 230 s on the next run — so that survival was luck, not a
+    fix. Do not read it as one.
 
 - [x] **Live tour playback lost the GPU device — FIXED v0.2.40-beta.36.** Reported by the user
   ("it crashed in the live view of the tour"); reproduced in 29 s with the new `--play` flag. A
