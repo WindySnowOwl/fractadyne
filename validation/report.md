@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.34 (build 1106)
-- **Generated:** 2026-08-07 09:22:45 UTC (unix 1786094565)
+- **Version:** 0.2.40-beta.35 (build 1125)
+- **Generated:** 2026-08-07 12:55:37 UTC (unix 1786107337)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -83,7 +83,8 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Script | shipped tours resolve | 6 scripts | all resolve, 2142s of tour | all resolve | ✅ PASS |
 | Script | absolute times + geometric iteration ramp | hold 0–2s, glide 2–6s to 1e12× | hold@2s=1e0.0, mid@4s=1e6.000, end=1e12.0, iter mid=31623 end=1000000 | still 1× at 2s, 1e6× at 4s, 31623 iters at 4s | ✅ PASS |
 | Script | deep zoom string survives f64 range | zoom = "3.0938e1216" | log10 mag = 1216.4905 | 1216.4904 ± 1e-3 | ✅ PASS |
-| Script | malformed scripts rejected | 10 scripts | all rejected | all rejected | ✅ PASS |
+| Script | malformed scripts rejected | 11 scripts | all rejected | all rejected | ✅ PASS |
+| Script | playback pacing | pace = settled / default | settled parsed=true, default adaptive=true | settled honored, default adaptive | ✅ PASS |
 | Script | palette definition + morph | custom stops → Ember over 2s | start=2 stops, mid=8 blended stops, end=preset 0 | stops verbatim, blend at the midpoint, preset verbatim | ✅ PASS |
 | Script | generated dive script round-trips | "Script to current view" at 2^1200× | 68.0s, ends 1e359.0× (view 1e359.0×) | resolves, 68s, ends at the view's depth | ✅ PASS |
 | Script | segment lookup | grand-tour chapters | gauntlet 117–232s, prefix→landmarks, #1→whole-set | id / prefix / index resolve, unknown errors | ✅ PASS |
@@ -113,7 +114,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**98/98 checks passed.**
+**99/99 checks passed.**
 
 ## Coverage & scope
 

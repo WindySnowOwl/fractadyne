@@ -1201,6 +1201,61 @@ impl FractadyneApp {
         Some(rx)
     }
 
+    /// Has the live view finished resolving — is there anything left for the renderer to do?
+    ///
+    /// "Resolved" is deliberately NOT "most pixels escaped": a minibrot interior is legitimately
+    /// black, and demanding escapes there would wait forever. It is "there is a SETTLED
+    /// measurement of this view at its current budget, and either almost nothing is still capped
+    /// or the budget cannot be raised any further" — precisely the state in which waiting longer
+    /// cannot change the picture. `None` means no settled reading exists yet (the view is moving,
+    /// or its first settled frame hasn't landed), which is never "resolved".
+    pub(crate) fn view_resolved(&self, view: usize) -> bool {
+        let v = view.min(1);
+        // TERMINALLY clamped: the largest reference this view will ever ask for has already been
+        // refused by the freeze guard, so the pixel clamp can never lift and waiting cannot change
+        // the picture. The ask is bounded by the iteration appetite (and by the device cap), so a
+        // refusal at or above that bound means no bigger attempt is coming.
+        //
+        // The qualifier matters both ways, and both were measured. A refusal BELOW the appetite
+        // proves nothing — at the 6.5e94× spar, extensions were refused at 256k and 1.33M and then
+        // a 3.63M attempt ESCAPED and installed, and at 2.6e72× exactly that sequence takes the
+        // view from 100% black to fully resolved. But at 3.3e61×, a 408,193-sample refusal against
+        // a 400,000 appetite is the end of the road, and treating it as anything else made the
+        // hold sit out its entire settle timeout for a picture that could not improve.
+        if self.ref_cache[v].partial && self.ref_cache[v].ref_ext_refused > 0 {
+            // View 0's appetite: playback pacing (this method's only caller) drives the main view.
+            let appetite = if self.render_cfg.auto_iter {
+                self.viewport.recommended_max_iter(self.render_cfg.max_iter)
+            } else {
+                self.render_cfg.max_iter
+            };
+            if self.ref_cache[v].ref_ext_refused >= appetite.min(orbit_len_cap()) {
+                return true;
+            }
+        }
+        match self.perf.capped_frac[v] {
+            None => false,
+            Some(frac) => {
+                frac < 0.02
+                    || self.perf.budget_maxed[v]
+                    || self.perf.iter_plateau[v]
+                    || self.perf.iter_exhausted[v]
+            }
+        }
+    }
+
+    /// Is view `view` completely idle — settled, nothing in flight, and no new counter reading to
+    /// act on? A settled view that needs no re-iterate produces no counter at all, so "no reading"
+    /// on its own is ambiguous: it means either *finished* or *hasn't started yet*. The caller
+    /// disambiguates with time (see the settle grace period in `advance_playback_core`); this is
+    /// only the "nothing is happening" half.
+    pub(crate) fn view_idle(&self, view: usize) -> bool {
+        let v = view.min(1);
+        self.perf.capped_frac[v].is_none()
+            && self.recompute_rx[v].is_none()
+            && !self.perf.tile_pending[v]
+    }
+
     /// Build an export request for a given viewport + Julia flag at the export
     /// resolution. Recomputes a fresh reference orbit (deep) without touching the live
     /// cache. Height is derived from the viewport's aspect (square pixels).

@@ -54,6 +54,7 @@ mod export;
 mod bench_matrix;
 mod fractal;
 mod help;
+mod livetest;
 mod profile;
 mod refcache_persist;
 mod render;
@@ -491,7 +492,7 @@ pub(crate) const ZOOM_RATE: f64 = 0.462; // ln(2)/1.5 ≈ ~2× magnification per
 const EASE_TAU: f64 = 0.15; // ease-in/out time constant (seconds)
 /// Keep anti-aliasing off for this long after the last interaction, so rapid zoom
 /// steps don't each trigger a full-AA render (which felt laggy).
-const SETTLE_DELAY: f64 = 0.18;
+pub(crate) const SETTLE_DELAY: f64 = 0.18;
 
 /// Anti-alias supersampling for progressive-settle stage `frame`, ramping 1→2→4→… up to `target`.
 /// A settled view refines from an instant coarse frame to full AA over a few frames, rather than
@@ -1997,6 +1998,11 @@ struct FractadyneApp {
     /// CLI `--divetest FILE`: headless live-dive performance harness (real-time tour windows at
     /// increasing depths through the ACTUAL playback machinery), report + JSON, exit.
     divetest: Option<std::path::PathBuf>,
+    /// CLI `--livetest FILE`: headless live-OUTPUT harness — plays a tour through the live
+    /// pipeline and validates the frames it shows against offline renders of the same views.
+    livetest: Option<std::path::PathBuf>,
+    /// `--quick` with `--livetest`: skip the offline oracle (context/black metrics only).
+    livetest_quick: bool,
     /// CLI `--frametest`: run the frame-timing / stutter harness (deep-zoom dive), log, exit.
     frametest: bool,
     /// `--frametest --center X Y` (full-precision decimals; default seahorse).
@@ -2269,6 +2275,8 @@ impl FractadyneApp {
         let profile_reps = val("--reps").and_then(|s| s.parse().ok()).unwrap_or(5u32);
         let profile_regions = val("--regions").cloned();
         let divetest = val("--divetest").map(std::path::PathBuf::from);
+        let livetest = val("--livetest").map(std::path::PathBuf::from);
+        let livetest_quick = args.iter().any(|a| a == "--quick");
         let frametest_steps = val("--steps").and_then(|s| s.parse().ok()).unwrap_or(40u32);
         let frametest_hold = val("--hold").and_then(|s| s.parse().ok()).unwrap_or(4u32);
         let frametest_dive = val("--dive").and_then(|s| s.parse::<f64>().ok()).unwrap_or(30.0);
@@ -2407,6 +2415,8 @@ impl FractadyneApp {
             reusetest_done: false,
             resizetest,
             divetest,
+            livetest,
+            livetest_quick,
             frametest,
             frametest_center,
             frametest_steps,
@@ -3095,6 +3105,19 @@ impl FractadyneApp {
     fn utc_date_string(secs: u64) -> String {
         let (y, m, d, hh, mm, sss) = Self::civil_utc(secs);
         format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{sss:02} UTC")
+    }
+
+    /// Frame size for a headless harness: `--size W|WxH` (with `--height` overriding the height)
+    /// when given, else the harness's own default. Shares the tour flags so every harness takes
+    /// the same size options.
+    fn tour_size_or(&self, dw: u32, dh: u32) -> (u32, u32) {
+        let w = self.tour_cli.width.unwrap_or(dw).clamp(16, 16384);
+        let h = self
+            .tour_cli
+            .height
+            .unwrap_or(if self.tour_cli.width.is_some() { (w * 9 / 16).max(16) } else { dh })
+            .clamp(16, 16384);
+        (w, h)
     }
 
     /// Filename-safe `YYYYMMDD_HHMMSS` stamp (local-readable, sorts chronologically).
@@ -4911,6 +4934,24 @@ impl eframe::App for FractadyneApp {
                 });
                 self.run_divetest(dev, q, &tour, &out);
                 std::process::exit(0);
+            }
+        }
+
+        // CLI headless live-OUTPUT harness: play a tour through the live pipeline and validate the
+        // frames it puts on screen against offline renders of the same views, exit non-zero on a
+        // failing checkpoint (so it can gate a release the way the selftest does).
+        if let Some(tour) = self.livetest.clone() {
+            if let Some((dev, q)) = &gpu {
+                let (w, h) = self.tour_size_or(960, 540);
+                let out = self
+                    .tour_cli
+                    .out
+                    .clone()
+                    .unwrap_or_else(|| std::path::PathBuf::from("logs"));
+                let seg = self.tour_cli.segment.clone();
+                let fails =
+                    self.run_livetest(dev, q, &tour, seg.as_deref(), [w, h], &out, self.livetest_quick);
+                std::process::exit(if fails > 0 { 1 } else { 0 });
             }
         }
 

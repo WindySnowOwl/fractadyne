@@ -2239,6 +2239,7 @@ impl FractadyneApp {
                 ("unknown annotation kind", "format_version = 2\n[[keyframe]]\nt = 0\n[[annotation]]\nkind = \"subtitle\"\ntext = \"x\"\n"),
                 ("unanchored callout", "format_version = 2\n[[keyframe]]\nt = 0\n[[annotation]]\nkind = \"callout\"\ntext = \"x\"\n"),
                 ("unparseable zoom", "format_version = 2\n[[keyframe]]\nt = 0\nzoom = \"deep\"\n"),
+                ("unknown pace", "format_version = 2\n[playback]\npace = \"turbo\"\n[[keyframe]]\nt = 0\n"),
                 ("half a coordinate", "format_version = 2\n[[keyframe]]\nt = 0\nre = \"-0.5\"\n"),
             ];
             let accepted: Vec<&str> = bad_scripts
@@ -2257,6 +2258,36 @@ impl FractadyneApp {
                 },
                 threshold: "all rejected",
                 pass: accepted.is_empty(),
+            });
+
+            // Live-playback pacing: `settled` is what makes a deep tour show its destination
+            // instead of walking past it, so the value has to survive the round trip.
+            const PACE: &str = "format_version = 2\n[playback]\npace = \"settled\"\nsettle_timeout = 8\n\
+                 [[keyframe]]\nt = 0\nre = \"-0.5\"\nim = \"0.0\"\nzoom = 1\nhold = 2\n\
+                 [[keyframe]]\nt = 6\nzoom = 100\n";
+            let pace_ok = crate::scripting::parse_tour_text(PACE)
+                .map(|pb| {
+                    // `settled` acts at holds, so the hold windows must be identifiable: inside
+                    // the first keyframe's hold (0–2s) and at the final keyframe, but NOT during
+                    // the 2–6s glide between them.
+                    pb.pace == crate::scripting::Pace::Settled
+                        && pb.holding_at(1.0).0
+                        && !pb.holding_at(4.0).0
+                        && pb.holding_at(6.0).0
+                })
+                .unwrap_or(false);
+            let default_pace = crate::scripting::parse_tour_text(
+                "format_version = 2\n[[keyframe]]\nt = 0\nzoom = 1\n",
+            )
+            .map(|pb| pb.pace == crate::scripting::Pace::Adaptive)
+            .unwrap_or(false);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "playback pacing".into(),
+                params: "pace = settled / default".into(),
+                result: format!("settled parsed={pace_ok}, default adaptive={default_pace}"),
+                threshold: "settled honored, default adaptive",
+                pass: pace_ok && default_pace,
             });
 
             // Palettes: a keyframe naming one preset must apply that preset verbatim (a static

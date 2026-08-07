@@ -34,6 +34,19 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] **Live view rendered BLACK during scripted playback — FIXED v0.2.40-beta.35.** Reported by
+  the user as "sections that render as black" in the live view. `advance_playback_core` stamped
+  the interaction timestamp on EVERY playback tick, so a tour's view was permanently
+  "interacting" — right for a glide, wrong for a hold — and since the adaptive iteration budget
+  only measures and adapts on SETTLED frames (`render.rs`, `if interacting { … capped_frac = None }`),
+  the budget could never climb during a tour. Measured by the new `--livetest` harness at the
+  three-spar holds: the live view ran at the unboosted depth cap (49k / 54k / 56k / 63k / 72k /
+  83k iterations) against script budgets of 250k–4M, and was **100% black at 1e61×, 1e72× and
+  1e82× where an offline render of the same view at the same budget is 0% black** (image pairs
+  dumped by the harness). Fix: only a MOVING camera counts as interaction, so holds settle; plus
+  `[playback] pace = "settled"`, which stops the tour clock at a hold until the view resolves
+  (bounded by `settle_timeout`), because at depth the budget needs more settled frames to converge
+  than a few seconds of hold provides.
 - [ ] **Tour/offline render has no per-frame cost bound** — the TDR no longer reproduces, but the
   hole is still there. Found 2026-08-07 rendering `tours/grand-tour.toml` with a script-wide
   `max_iter = 2000000`: at frame 16 a 2,000,001-sample (non-escaping) reference installed and the
@@ -121,6 +134,23 @@ future *export* if anyone wants to cut frames in an NLE, never the native format
   clean teardown, never restarts), and the install derate trigger is ×1.5 (the killer install was
   a 1.985× length jump that sailed under ×2; dive installs are ×1.1–1.2, still never trip it).
   Real fix remains: cost-bound the first frame against a long non-escaping reference.
+  ⭐**COST NOW QUANTIFIED (beta.35, `--livetest` on the grand tour's gauntlet at 480×270).** With
+  the interaction bug fixed and the budget climbing (boost ×6.4–×16), the clamp is what is left,
+  and it is the sole remaining cause of a black live view at depth:
+
+  | hold | live black | offline black | live budget | script asks |
+  |---|---|---|---|---|
+  | 1.7e55 | 0.1% | 0.0% | 86 227 | 250 000 |
+  | 3.3e61 | 42.1% | 0.0% | 146 112 | 400 000 |
+  | 6.3e63 | 53.9% | 1.5% | **256 000** | 500 000 |
+  | 2.6e72 | 100% | 0.0% | **256 000** | 1 200 000 |
+  | 2.0e82 | 100% | 0.0% | **256 000** | 2 000 000 |
+  | 6.5e94 | 100% | 0.3% | **256 000** | 4 000 000 |
+
+  256 000 is `LIVE_REF_CAP` exactly: every extension past it came back still-partial and was
+  refused. Note the reference is not always hopeless — at 6.5e94× a 3 631 055-sample attempt
+  ESCAPED and installed, ~10 s after a 20 s settle timeout had already given up — so a refusal at
+  a mid-climb budget must never be treated as terminal (only one at the device cap is).
 
 - [x] **LIVE_REF_CAP truncates the reference below the live iteration budget → smooth "blobs"**
   — FIXED v0.2.40-beta.27 (reported 2026-08-06 at the 6.3e63× three-spar). The reference there

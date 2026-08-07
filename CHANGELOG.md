@@ -41,6 +41,26 @@ limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — s
 - **Tours** — **Tools → "Script to current view…"**: one-click dive-tour generator (notation
   caption, depth-scaled duration; deep targets use the pan-shallow-then-dive structure that
   keeps every frame centered on the target) (beta.5–6).
+- **The live view no longer goes black during a scripted tour** (beta.35), plus the harness that
+  found it:
+  - **`--livetest`** — a headless harness that plays a tour through the *live* pipeline
+    (`advance_playback_core` + `build_params`, exactly as `--divetest` does) but keeps the pixels,
+    and at every keyframe hold renders the same view through the offline path as an oracle. The
+    contract it enforces: *the live view should show what an offline render of the same view at
+    the same iteration budget shows.* Reports excess blackness and sRGB difference per checkpoint,
+    dumps live/truth image pairs for failures, and exits non-zero so it can gate a release.
+  - **Fix: a scripted tour marked every frame as "interaction."** Playback stamped the interaction
+    timestamp on every tick, so the view was permanently on the cheap moving path — correct during
+    a glide, wrong during a hold. Because the adaptive iteration budget only measures and adapts on
+    *settled* frames, it could never climb during a tour: measured at the three-spar holds, the live
+    view ran at the unboosted depth cap (49k–83k iterations) against script budgets of 250k–4M and
+    rendered **100% black at 1e61×, 1e72× and 1e82× where the offline render of the same view is 0%
+    black**. Holds now settle, so the budget climbs and the AA/tiled-settle ramps engage.
+  - **`[playback] pace` script option** — `realtime` (never dilate; what a benchmark wants),
+    `adaptive` (default: slow down while the reference pipeline lags), or `settled`: stop the clock
+    at each hold until the view has actually resolved, bounded by `settle_timeout`. Settling makes
+    the budget able to climb; `settled` gives it the time to, since at depth convergence needs more
+    settled frames than a few seconds of hold provides. The four deep shipped tours set it.
 - **Tour script format v2 — BREAKING** (beta.34). v1 scripts are rejected with a migration
   message rather than mis-played; the six shipped tours are migrated. What changed and why:
   - **Absolute keyframe times** (`t` = the second the camera arrives, plus `hold`) replace

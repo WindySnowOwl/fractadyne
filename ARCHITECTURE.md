@@ -52,7 +52,7 @@ select + reference recompute / reuse / freeze-reproject + export requests), `aut
 window), `cli.rs` (headless modes), `export.rs` (view-metadata / `.fdn`), `fractal.rs`
 (`FractalKind`), `refcache_persist.rs` (persist/restore the deep-zoom reference), `error.rs`
 (`AppError`), `selftest.rs` (GPU validation), `theme.rs`, `profile.rs` (profiling + the
-`--frametest`/`--divetest` harnesses), `sysinfo.rs`, `diag.rs` (log/crash/watchdog/trace),
+`--frametest`/`--divetest`/`--livetest` harnesses), `sysinfo.rs`, `diag.rs` (log/crash/watchdog/trace),
 `update.rs` (GitHub-Releases update check, Stable/Beta tracks), `bench_matrix.rs` (the
 `--bench-matrix` path-coverage perf/regression suite), `reusetest.rs`, and a `ui/` submodule tree
 (`central.rs`, `menus.rs`, `panels.rs`, `dialogs.rs`) from the intra-crate UI split.
@@ -249,6 +249,7 @@ confirm) removes the whole config dir.
 `--render-iter`, `--find-minibrot`, `--import-kfr`, `--check-updates`, `--reset-state`,
 `@args-file`; dev harnesses: `--profile`, `--bench-matrix` (path-coverage perf/regression suite vs
 a blessed baseline), `--frametest`, `--divetest` (headless live-dive windows per depth band),
+`--livetest` (live-output validation against offline renders of the same views),
 `--reusetest`, `--refdiag`.
 
 ---

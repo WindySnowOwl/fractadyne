@@ -24,6 +24,7 @@ Script-wide settings.
 | `name` | string | "" | Display name (shown in render progress and the end-of-script toast). |
 | `loop` | bool | false | Loop the tour during live playback (Tools -> Play script). |
 | `render` | [render] | {} | How the tour is meant to be rendered — see below. |
+| `playback` | [playback] | {} | How the tour behaves in the LIVE view — see below. |
 | `location` | [[location]] | [] | Named coordinates, referenced by `location = "id"`. |
 | `palette` | [[palette]] | [] | Named palettes, referenced by a keyframe's `palette = "id"`. |
 | `segment` | [[segment]] | [] | Chapters, so one can be rendered in isolation (`--segment`). |
@@ -46,6 +47,15 @@ Output settings, so `--render-tour x.toml` with no flags reproduces the intended
 | `max_iter` | int | (session, min 500000) | Iteration budget for frames whose keyframes don't state their own. Deep tours SHOULD set a per-keyframe budget instead: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat. |
 | `auto_iter` | bool | true | Whether this `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false). Per-keyframe budgets are always exact. |
 | `show_location` | bool | false | Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag). |
+
+### `[playback]`
+
+How the tour behaves during LIVE playback (Tools -> Play script). None of this affects an offline render, which always computes every frame to completion.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `pace` | string | adaptive | realtime = run on the wall clock and show whatever is ready (what a benchmark wants — the measurement IS what the machine got done in real time). adaptive = slow the tour while the reference pipeline lags, so a deep dive degrades in duration rather than into a stale blur. settled = adaptive, plus stop the clock at every keyframe HOLD until the view has actually resolved. Deep tours want settled: the live iteration budget only climbs on settled frames and needs more of them than a few seconds of hold provides, so without it the tour walks past its own destination while the screen is still starved. |
+| `settle_timeout` | float | 20 | With pace = "settled": seconds a hold may wait for the view to resolve before giving up and moving on, so an unresolvable view cannot stall the tour forever. |
 
 ### `[[location]]` — repeatable
 
@@ -133,6 +143,8 @@ A timed overlay, independent of the camera path. One array for every kind: an ed
 Absolute times are what make a script editable: inserting or lengthening a keyframe leaves every other element exactly where it was, instead of silently sliding all downstream narration out of sync.
 
 For deep dives, give the descent generous time, use `ease = "in"` / `"out"` at the ends with `linear` for the cruise, and write magnifications past f64 range as strings (`zoom = "6.5e94"`). Pan at low zoom *before* diving so the camera doesn't zoom through the set's black interior. Give the deep keyframes their own `max_iter`: one script-wide budget cannot serve both a 1.33x home view and a 1e94x dive.
+
+**Live playback is not the same as a render.** An offline render computes every frame to completion, however long that takes. The live view has a wall clock to keep up with, so it bounds per-frame cost and raises its iteration budget adaptively over successive *settled* frames — which at depth needs more of them than a few seconds of hold provides. A deep tour meant to be WATCHED should therefore set `[playback] pace = "settled"`, which stops the clock at each hold until the picture has actually resolved. Validate either path with `--livetest` (live) or by rendering frames (offline).
 
 ## Example
 

@@ -33,6 +33,9 @@ struct ScriptFile {
     /// and CLI flags merely override.
     #[serde(default)]
     render: RenderFile,
+    /// Live-playback behaviour (pacing).
+    #[serde(default)]
+    playback: PlaybackFile,
     /// Named coordinates, referenced by `location = "id"` from keyframes and annotations.
     #[serde(default)]
     location: Vec<LocationFile>,
@@ -77,6 +80,48 @@ impl NumOrStr {
 enum Mp4Spec {
     Flag(bool),
     Path(String),
+}
+
+/// The `[playback]` table: how the tour behaves in the LIVE view (`Tools -> Play script`).
+/// Nothing here affects an offline render, which always renders every frame to completion.
+#[derive(Deserialize, Default, Clone)]
+struct PlaybackFile {
+    #[serde(default)]
+    pace: Option<String>,
+    /// Seconds a `settled` hold may wait for the view to resolve before giving up and moving on.
+    #[serde(default)]
+    settle_timeout: Option<f64>,
+}
+
+/// How the live playback clock treats a renderer that can't keep up.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub(crate) enum Pace {
+    /// Never dilate: the tour runs on the wall clock and shows whatever is ready. What a
+    /// benchmark wants — the measurement IS how much the machine got done in real time.
+    Realtime,
+    /// Dilate the clock while the reference pipeline lags, so a dive slows instead of blurring
+    /// into a stale reprojection. The default.
+    #[default]
+    Adaptive,
+    /// Adaptive, plus: at a keyframe HOLD, stop the clock until the view has actually resolved
+    /// (or `settle_timeout` elapses). The hold is where the viewer is looking at a still frame,
+    /// and at depth the adaptive iteration budget needs several settled frames to climb to what
+    /// the field needs — more than a 3-second hold of wall clock. Correctness over duration:
+    /// what a demo reel or a regression pass wants.
+    Settled,
+}
+
+impl Pace {
+    fn parse(s: Option<&str>) -> Result<Pace, String> {
+        match s.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+            None | Some("adaptive") => Ok(Pace::Adaptive),
+            Some("realtime" | "real-time") => Ok(Pace::Realtime),
+            Some("settled" | "quality") => Ok(Pace::Settled),
+            Some(other) => Err(format!(
+                "[playback] pace = \"{other}\": expected realtime, adaptive, or settled"
+            )),
+        }
+    }
 }
 
 /// The `[render]` table: how this tour is meant to be rendered.
@@ -460,6 +505,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "name", ty: "string", default: "\"\"", doc: "Display name (shown in render progress and the end-of-script toast)." },
             SchemaField { name: "loop", ty: "bool", default: "false", doc: "Loop the tour during live playback (Tools -> Play script)." },
             SchemaField { name: "render", ty: "[render]", default: "{}", doc: "How the tour is meant to be rendered — see below." },
+            SchemaField { name: "playback", ty: "[playback]", default: "{}", doc: "How the tour behaves in the LIVE view — see below." },
             SchemaField { name: "location", ty: "[[location]]", default: "[]", doc: "Named coordinates, referenced by `location = \"id\"`." },
             SchemaField { name: "palette", ty: "[[palette]]", default: "[]", doc: "Named palettes, referenced by a keyframe's `palette = \"id\"`." },
             SchemaField { name: "segment", ty: "[[segment]]", default: "[]", doc: "Chapters, so one can be rendered in isolation (`--segment`)." },
@@ -482,6 +528,15 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "max_iter", ty: "int", default: "(session, min 500000)", doc: "Iteration budget for frames whose keyframes don't state their own. Deep tours SHOULD set a per-keyframe budget instead: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat." },
             SchemaField { name: "auto_iter", ty: "bool", default: "true", doc: "Whether this `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false). Per-keyframe budgets are always exact." },
             SchemaField { name: "show_location", ty: "bool", default: "false", doc: "Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag)." },
+        ],
+    },
+    SchemaTable {
+        toml: "[playback]",
+        repeatable: false,
+        summary: "How the tour behaves during LIVE playback (Tools -> Play script). None of this affects an offline render, which always computes every frame to completion.",
+        fields: &[
+            SchemaField { name: "pace", ty: "string", default: "adaptive", doc: "realtime = run on the wall clock and show whatever is ready (what a benchmark wants — the measurement IS what the machine got done in real time). adaptive = slow the tour while the reference pipeline lags, so a deep dive degrades in duration rather than into a stale blur. settled = adaptive, plus stop the clock at every keyframe HOLD until the view has actually resolved. Deep tours want settled: the live iteration budget only climbs on settled frames and needs more of them than a few seconds of hold provides, so without it the tour walks past its own destination while the screen is still starved." },
+            SchemaField { name: "settle_timeout", ty: "float", default: "20", doc: "With pace = \"settled\": seconds a hold may wait for the view to resolve before giving up and moving on, so an unresolvable view cannot stall the tour forever." },
         ],
     },
     SchemaTable {
@@ -622,7 +677,14 @@ pub(crate) fn tour_schema_markdown() -> String {
          with `linear` for the cruise, and write magnifications past f64 range as strings \
          (`zoom = \"6.5e94\"`). Pan at low zoom *before* diving so the camera doesn't zoom through \
          the set's black interior. Give the deep keyframes their own `max_iter`: one script-wide \
-         budget cannot serve both a 1.33x home view and a 1e94x dive.\n\n",
+         budget cannot serve both a 1.33x home view and a 1e94x dive.\n\n\
+         **Live playback is not the same as a render.** An offline render computes every frame to \
+         completion, however long that takes. The live view has a wall clock to keep up with, so it \
+         bounds per-frame cost and raises its iteration budget adaptively over successive *settled* \
+         frames — which at depth needs more of them than a few seconds of hold provides. A deep tour \
+         meant to be WATCHED should therefore set `[playback] pace = \"settled\"`, which stops the \
+         clock at each hold until the picture has actually resolved. Validate either path with \
+         `--livetest` (live) or by rendering frames (offline).\n\n",
     );
 
     s.push_str(
@@ -845,6 +907,8 @@ pub(crate) struct Segment {
 /// A resolved keyframe: parsed center, the time the glide *reaches* it, how long it holds there,
 /// and the easing of the glide arriving at it.
 struct Kf {
+    /// The script's `id` (or `#index`) — what harnesses and error messages call this keyframe.
+    id: String,
     at: f64,
     hold: f64,
     ease: EaseKind,
@@ -1075,6 +1139,14 @@ pub(crate) struct Playback {
     pub(crate) segments: Vec<Segment>,
     /// What the script's `[render]` block asked for (CLI flags override — see `TourRenderConfig`).
     pub(crate) render: TourRender,
+    /// How the live clock treats a renderer that can't keep up (`[playback] pace`).
+    pub(crate) pace: Pace,
+    /// Seconds a `Settled` hold may wait for the view to resolve before moving on.
+    settle_timeout: f64,
+    /// Wall-clock seconds the current hold has already spent waiting, and which keyframe it is
+    /// waiting at (so the budget resets at the next hold rather than accumulating across the tour).
+    settle_waited: f64,
+    settle_kf: usize,
     /// Current tour time (seconds), updated each frame — so the caption overlay knows what to show.
     pub(crate) cur_t: f64,
     /// Wall-clock of the previous `advance_playback` frame — gives the per-frame `dt` the
@@ -1174,6 +1246,38 @@ impl Playback {
             max_iter,
             palette,
         )
+    }
+
+    /// Is the camera stationary at time `e` — inside a keyframe's hold, or past the final one?
+    /// A hold is the only part of a tour where the view is meant to be LOOKED at rather than
+    /// travelled through, which is why it gets settled rendering and (under `Settled` pacing) as
+    /// much time as it needs.
+    pub(crate) fn holding_at(&self, e: f64) -> (bool, usize) {
+        let n = self.kfs.len();
+        let mut i = 0;
+        for j in 0..n {
+            if self.kfs[j].at <= e {
+                i = j;
+            } else {
+                break;
+            }
+        }
+        match self.kfs.get(i) {
+            Some(a) => (e <= a.at + a.hold || i + 1 >= n, i),
+            None => (true, 0),
+        }
+    }
+
+    /// Tour times worth validating: every keyframe that HOLDS, sampled near the end of its hold.
+    /// A hold is where the camera stops for the viewer to look, so it is both the most demanding
+    /// moment for the renderer (the view has had the whole hold to resolve) and the only one where
+    /// a stale or starved frame is unambiguously a defect rather than motion.
+    pub(crate) fn hold_checkpoints(&self) -> Vec<(f64, String)> {
+        self.kfs
+            .iter()
+            .filter(|k| k.hold > 0.0)
+            .map(|k| (k.at + k.hold * 0.9, k.id.clone()))
+            .collect()
     }
 
     /// Find a chapter by `--segment` token: id or title (case-insensitive, also a unique prefix),
@@ -1797,6 +1901,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             });
         }
         kfs.push(Kf {
+            id: id.clone(),
             at,
             hold,
             ease: EaseKind::parse(k.ease.as_deref()),
@@ -1942,6 +2047,10 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         palettes,
         segments,
         render: resolve_render(&sf.render)?,
+        pace: Pace::parse(sf.playback.pace.as_deref())?,
+        settle_timeout: sf.playback.settle_timeout.unwrap_or(20.0).max(0.0),
+        settle_waited: 0.0,
+        settle_kf: usize::MAX,
         cur_t: 0.0,
         last_now: None,
     })
@@ -2528,8 +2637,42 @@ impl FractadyneApp {
             let dt = pb.last_now.map_or(0.0, |t| (now - t).max(0.0));
             pb.last_now = Some(now);
             let lag = self.ref_cache.iter().map(|c| c.last_depth_lag).fold(0.0, f64::max);
-            let hold = ((lag - crate::PACE_LAG_LO) / (crate::PACE_LAG_HI - crate::PACE_LAG_LO))
-                .clamp(0.0, 1.0);
+            let mut hold = if pb.pace == Pace::Realtime {
+                0.0 // the wall clock IS the measurement — never dilate
+            } else {
+                ((lag - crate::PACE_LAG_LO) / (crate::PACE_LAG_HI - crate::PACE_LAG_LO)).clamp(0.0, 1.0)
+            };
+            // `Settled` pacing: at a hold, stop the clock outright until the view has resolved.
+            // The lag-based dilation above only reacts to the REFERENCE pipeline falling behind;
+            // it says nothing about whether the picture is finished. At depth the adaptive
+            // iteration budget needs several settled frames to climb to what the field needs —
+            // far more than a 3-second hold of wall clock — so without this the tour walks past
+            // its own destination while the screen is still starved (black).
+            if pb.pace == Pace::Settled && dt > 0.0 {
+                let e_now = (now - *pb.t0.get_or_insert(now)).clamp(0.0, pb.total);
+                let (holding, kf) = pb.holding_at(e_now);
+                if pb.settle_kf != kf {
+                    pb.settle_kf = kf;
+                    pb.settle_waited = 0.0;
+                }
+                // A view that has stopped changing entirely — settled, nothing in flight, no new
+                // counter reading — is finished, and "no reading" is how a settled view that needs
+                // no re-iterate looks. But that is also how a view looks in the instant after the
+                // camera arrives, before the work it needs has even been requested, so only
+                // conclude it after a grace period. Without this, an ordinary shallow view (which
+                // never re-iterates once settled) waits out the entire timeout: measured, the
+                // 1.33× home view sat for the full 90 s while already matching an offline render.
+                const SETTLE_GRACE: f64 = 1.5;
+                let idle = pb.settle_waited > SETTLE_GRACE && self.view_idle(0);
+                if holding
+                    && !idle
+                    && !self.view_resolved(0)
+                    && pb.settle_waited < pb.settle_timeout
+                {
+                    pb.settle_waited += dt;
+                    hold = 1.0;
+                }
+            }
             if hold > 0.0 && dt > 0.0 {
                 if let Some(t0) = pb.t0.as_mut() {
                     *t0 += dt * hold; // shift the start forward = the tour clock stands still
@@ -2569,7 +2712,14 @@ impl FractadyneApp {
         self.apply_sampled_settings(&s);
         // log2 path so playback stays exact past f64's 1e308× ceiling.
         self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
-        self.pointer.settle_t = [now; 2]; // glide → cheap (interacting) render path
+        // Only a MOVING camera counts as interaction. Stamping every playback tick kept the view
+        // permanently "interacting", which is right for a glide (cheap moving path, reprojection)
+        // but wrong for a HOLD: the adaptive iteration budget only measures and adapts on SETTLED
+        // frames, so a tour could never raise its budget and starved deep views stayed black for
+        // the whole hold — while the same view resolves the moment a human stops touching it.
+        if !pb.holding_at(e).0 {
+            self.pointer.settle_t = [now; 2];
+        }
         // Reference LOOKAHEAD: the script knows where the camera is going — build the reference the
         // dive is about to need on idle cores, and install it as the dive arrives (render.rs).
         self.playback_ref_prefetch(&pb, e);

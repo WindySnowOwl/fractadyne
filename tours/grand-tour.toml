@@ -31,6 +31,18 @@ size = "1920x1080"
 fps = 30
 ss = 2
 
+# Live playback (Tools -> Play script) only. The live view raises its iteration budget over
+# successive SETTLED frames, which at these depths needs longer than a hold of wall clock —
+# without this the tour walks past its own destination while the screen is still black.
+# An offline render is unaffected: it always computes every frame to completion.
+[playback]
+pace = "settled"
+# 20s (the default) is not enough at these depths: every raise of the iteration budget triggers a
+# fresh reference build, ~10s a piece past 1e60x, and the budget needs several raises to climb
+# from the depth-scaled cap to what the field wants. Measured at 1e61x: the default expired with
+# the view at 146k of the 400k this keyframe asks for, still 42% black.
+settle_timeout = 90
+
 # Each keyframe carries its own iteration budget (interpolated geometrically along
 # the glides), so the shallow chapters cost a few thousand iterations a frame while
 # the spar holds get the millions they need. One script-wide number can do neither:
