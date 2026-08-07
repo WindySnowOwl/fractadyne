@@ -282,6 +282,53 @@ fn ema(prev: f64, sample: f64) -> f64 {
     }
 }
 
+/// State for the "Render script…" dialog and the render it launches.
+///
+/// The render runs as a CHILD PROCESS (`--render-tour`), not on a thread: a tour render mutates
+/// app state per frame — viewport, fractal, iteration budget — so moving it to a worker would mean
+/// extracting all of that first. A separate process also gets its own GPU device, which matters
+/// here specifically: a deep tour render is the heaviest thing this app does, and the failure mode
+/// on record is losing the device. In a child, that kills the render and leaves the editor alive.
+pub(crate) struct TourRenderUi {
+    pub(crate) open: bool,
+    pub(crate) out: String,
+    pub(crate) prefix: String,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) fps: f64,
+    pub(crate) ss: u32,
+    /// 0 = the whole tour; otherwise 1-based into the script's `[[segment]]` chapters.
+    pub(crate) segment: usize,
+    pub(crate) mp4: bool,
+    pub(crate) overwrite: bool,
+    /// Latest line from the child (its "frame N/M …" progress), and the finished-run summary.
+    pub(crate) progress: String,
+    pub(crate) status: Option<String>,
+    pub(crate) child: Option<std::process::Child>,
+    pub(crate) rx: Option<std::sync::mpsc::Receiver<String>>,
+}
+
+impl Default for TourRenderUi {
+    fn default() -> Self {
+        Self {
+            open: false,
+            out: "frames".to_string(),
+            prefix: String::new(),
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            ss: 2,
+            segment: 0,
+            mp4: false,
+            overwrite: true,
+            progress: String::new(),
+            status: None,
+            child: None,
+            rx: None,
+        }
+    }
+}
+
 /// Parse a `--size` value as either a bare width (`1920`) or `WIDTHxHEIGHT` (`5120x2160`,
 /// case-insensitive `x`/`X`/`×`). Returns `(width, height)` where each is `Some` when present and
 /// parseable. This lets callers accept both forms; a bare width leaves the height to `--height` or
@@ -1949,6 +1996,8 @@ struct FractadyneApp {
     /// The viewer's own iteration budget + coloring, saved while a tour overrides them and
     /// restored when it ends (a script's settings are the script's, not the session's).
     playback_restore: Option<crate::scripting::PlaybackRestore>,
+    /// "Render script…" dialog + the child process doing the work (see `TourRenderUi`).
+    tour_render: TourRenderUi,
     /// Last benchmark report text + whether its window is open.
     bench_report: Option<String>,
     bench_cfg: BenchConfig,
@@ -2381,6 +2430,7 @@ impl FractadyneApp {
             orbit_cache: std::cell::RefCell::new(None),
             playback: None,
             playback_restore: None,
+            tour_render: TourRenderUi::default(),
             bench_report: None,
             dialogs: DialogState {
                 bench_open: false,
@@ -5295,6 +5345,8 @@ impl eframe::App for FractadyneApp {
         // fractal area (below the menu bar, inside the right panel) — the transport anchors to
         // the VIEW, not the window.
         self.draw_playback_transport(ctx);
+        self.poll_tour_render(ctx);
+        self.draw_tour_render_dialog(ctx);
 
         // Right-hand control panel: fractal info, coloring, navigation, and the
         // optional performance section. Hidden entirely while in fullscreen.

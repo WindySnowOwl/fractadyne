@@ -49,6 +49,14 @@ limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — s
   follows through the normal sampling path, so scrubbing needs no special case anywhere else. The
   status bar also WRAPS now: it was a fixed row that silently clipped, which put the whole
   transport off the right edge on any window narrower than ~1600 px.
+- **Render a script from the GUI** (beta.36) — a 🎬 button on the playback transport opens a
+  "Render script" dialog: output folder, frame prefix, size, fps, supersampling, chapter picker,
+  mp4, overwrite — seeded from the script's own `[render]` block — with a live frame count and a
+  progress readout. It renders as a CHILD PROCESS (`--render-tour`) rather than in-process, which
+  is the point: a deep tour render is the heaviest thing this app does and the failure mode on
+  record is a lost GPU device, so in a child that kills the render and leaves the session alive.
+  It also reuses the code path everything else is measured through. "Copy command" yields the
+  equivalent command line.
 - **Playback transport** (beta.36) — restart / back 10 s / pause / stop / forward 10 s / speed
   (0.5–4×) / loop, in a floating bar over the top-centre of the view. It is not in the status bar
   because that bar is sized by its content: the centre coordinates gain and lose digits as the view

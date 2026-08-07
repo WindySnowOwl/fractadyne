@@ -996,7 +996,9 @@ fn check_format_version(text: &str) -> Result<(), String> {
 /// Load + resolve a tour script file into a ready [`Playback`] (no palette side effects, no
 /// dialogs) — shared by the `--divetest` harness; `load_script` remains the interactive path.
 pub(crate) fn parse_tour_file(path: &std::path::Path) -> Result<Playback, String> {
-    resolve_script(read_script(path)?, None)
+    let mut pb = resolve_script(read_script(path)?, None)?;
+    pb.source = Some(path.to_path_buf());
+    Ok(pb)
 }
 
 /// A tour palette: either a built-in preset (applied verbatim, so a static tour colors exactly as
@@ -1122,6 +1124,10 @@ impl Bench {
 /// An active camera tour (and optional benchmark sampling).
 pub(crate) struct Playback {
     pub(crate) name: String,
+    /// The file this tour was loaded from, when there was one. The render dialog needs it (it
+    /// renders the SCRIPT, not the live state), and the built-in benchmark has none — which is
+    /// exactly why it is an Option rather than a path everyone assumes exists.
+    pub(crate) source: Option<std::path::PathBuf>,
     kfs: Vec<Kf>,
     pub(crate) total: f64,
     /// Repeat when the end is reached (`loop` in the script; toggled by the status-bar transport).
@@ -2050,6 +2056,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
 
     Ok(Playback {
         name: if sf.name.is_empty() { "Script".to_string() } else { sf.name },
+        source: None, // set by the loaders below; a synthesized tour has no file
         kfs,
         total,
         started: false,
@@ -2195,7 +2202,8 @@ impl FractadyneApp {
             return;
         };
         match read_script(&path).and_then(|sf| resolve_script(sf, None)) {
-            Ok(pb) => {
+            Ok(mut pb) => {
+                pb.source = Some(path.clone());
                 // Restore the viewer's own iteration/palette settings when the tour ends — a
                 // script's budget is the script's, not a permanent change to the session.
                 self.playback_restore = Some(PlaybackRestore {

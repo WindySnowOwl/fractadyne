@@ -812,6 +812,8 @@ impl FractadyneApp {
         // `stop_playback` needs it mutably.
         let (mut seek, mut toggle_pause, mut stop, mut cycle_speed, mut toggle_loop) =
             (None::<f64>, false, false, false, false);
+        let mut open_render = false;
+        let has_source = self.playback.as_ref().is_some_and(|p| p.source.is_some());
         // `available_rect` is what the panels left over — the fractal view, below the menu bar and
         // inside the right panel — so the transport centres on the VIEW, not on the window.
         let view = ctx.available_rect();
@@ -880,6 +882,23 @@ impl FractadyneApp {
                             {
                                 cycle_speed = true;
                             }
+                            // Render: the tour on screen is a preview of a frame sequence, so
+                            // the transport is where you would look for the button that makes one.
+                            // Disabled for a tour with no file (the built-in benchmark), since the
+                            // renderer takes a script PATH.
+                            ui.add_enabled_ui(has_source, |ui| {
+                                if ui
+                                    .add(egui::Button::new(egui::RichText::new("🎬").size(14.0)).small())
+                                    .on_hover_text(if has_source {
+                                        "Render this script to a frame sequence…"
+                                    } else {
+                                        "The built-in benchmark has no script file to render"
+                                    })
+                                    .clicked()
+                                {
+                                    open_render = true;
+                                }
+                            });
                             if ui
                                 .add(
                                     egui::Button::new(egui::RichText::new("🔁").size(14.0))
@@ -911,6 +930,9 @@ impl FractadyneApp {
                     });
             });
 
+        if open_render {
+            self.open_tour_render();
+        }
         // Apply the transport. A seek moves the clock only: the camera follows on the next tick
         // through the normal sampling path, so scrubbing needs no special case anywhere else.
         if stop {
