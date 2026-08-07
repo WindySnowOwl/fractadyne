@@ -2195,7 +2195,17 @@ impl FractadyneApp {
         // and silently shrink their internal resolution. They are not the watchdog case that motivated
         // this (they have always run at the ceiling and never tripped it), so leave them exactly as
         // they were: deep exports and the validation corpus must stay bit-for-bit reproducible.
-        let offscreen = self.auto_render || self.playback.is_some();
+        //
+        // LIVE PLAYBACK IS NOT ONE OF THOSE. It paints the window every frame, so it resolves probes
+        // like any other on-screen view and must obey the measured budget — `TDR_STEPS_CEIL` is the
+        // pre-measurement constant this very comment block records as ~15× too generous. Including
+        // it here also disabled tiled settle (`can_tile` requires `!offscreen`), which is precisely
+        // the mechanism that renders a settled deep frame at native resolution WITHOUT one huge
+        // dispatch. It survived only because scripted playback never settled: every frame took the
+        // shrunk motion path. Once holds began settling (beta.35) the first full-resolution settled
+        // frame went straight over the ceiling and LOST THE DEVICE — crash report 2026-08-07
+        // 17:01 UTC, `wgpu device lost (Unknown)` inside `queue.submit` at 51.8 s of a live tour.
+        let offscreen = self.auto_render;
         // A reproject frame re-samples the frozen texture, so it must land on the SAME resolution as
         // the frame that produced it; recomputing from a moving budget would drift `fit` off 1.
         let tdr_steps = if offscreen {
@@ -2328,12 +2338,19 @@ impl FractadyneApp {
         let max_ss = ((budget / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
             .sqrt()
             .max(1.0) as u32;
-        let max_ss_tdr = if is_fe {
-            ((tdr_allowed / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
+        // The GPU watchdog does not care which arithmetic mode a dispatch uses. `tdr_allowed` is
+        // only MEASURED on the floatexp path, so the other modes cannot use it — but `u32::MAX`
+        // (what they used to get) is not a cap at all, and the frame cost is just as unbounded
+        // there: `spx·ss²·gpu_iter` with a high iteration count and the settle ramp's ss=8 is over
+        // a trillion nominal steps. That is not hypothetical — it is the 2026-08-07 device loss,
+        // at a SHALLOW mode-0 view. Cap those modes against the app's stated absolute maximum for
+        // a single dispatch instead. At an ordinary shallow view (~1e3 iterations) this permits
+        // ss well past the 8 the UI offers, so it binds only where the frame is genuinely huge.
+        let max_ss_tdr = {
+            let envelope = if is_fe { tdr_allowed } else { TDR_STEPS_CEIL };
+            ((envelope / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
                 .sqrt()
                 .max(1.0) as u32
-        } else {
-            u32::MAX
         };
         // `max_ss_tdr` used to be extendable past its own value by a measured-AA allowance, on the
         // grounds that it assumed BLA skips NOTHING and so over-throttled views where BLA is effective.
@@ -2885,6 +2902,31 @@ impl FractadyneApp {
         } else {
             gpu_iter
         };
+
+        // LIVE MANIFEST. A frame that re-iterates is the only thing here that can lose the device,
+        // and until now the crash report's `manifest:` line was EMPTY for every live crash — it is
+        // set by the EXPORT request builder, so an on-screen death recorded nothing about the frame
+        // that caused it. State the dispatch: this is the record that says whether a TDR came from
+        // resolution, supersampling, or the iteration budget. Only on re-iterating frames, so a
+        // reproject/cached frame costs nothing.
+        if !will_reproject {
+            let steps = spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(shader_iter.max(1) as u64);
+            crate::diag::set_manifest(format!(
+                "LIVE view={vs} mode={} {}x{} ss={ss} iter={shader_iter} (gpu_iter={gpu_iter}, \
+                 eff={eff_iter}, boost={:.2}) steps={steps:.3e} budget={tdr_steps:.3e} \
+                 tile={} orbit_len={} partial={} settled={}",
+                mode.to_u32(),
+                resolution[0],
+                resolution[1],
+                self.perf.iter_boost[vs.min(1)],
+                tile.is_some(),
+                self.ref_cache[vi].orbit_len,
+                self.ref_cache[vi].partial,
+                !interacting,
+            ));
+        }
 
         // Record the nominal cost of a frame that will actually re-iterate, so `update` can price the
         // measurement that comes back for it. Only such frames run the pass, so only they arm a

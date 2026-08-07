@@ -2001,6 +2001,11 @@ struct FractadyneApp {
     /// CLI `--livetest FILE`: headless live-OUTPUT harness — plays a tour through the live
     /// pipeline and validates the frames it shows against offline renders of the same views.
     livetest: Option<std::path::PathBuf>,
+    /// CLI `--play FILE`: start the GUI with this tour already playing in the LIVE view. The only
+    /// way to exercise the on-screen playback path (present, watchdog budget, tiled settle) from a
+    /// command line — a headless harness cannot reach it.
+    play_tour: Option<std::path::PathBuf>,
+    play_tour_done: bool,
     /// `--quick` with `--livetest`: skip the offline oracle (context/black metrics only).
     livetest_quick: bool,
     /// CLI `--frametest`: run the frame-timing / stutter harness (deep-zoom dive), log, exit.
@@ -2276,6 +2281,7 @@ impl FractadyneApp {
         let profile_regions = val("--regions").cloned();
         let divetest = val("--divetest").map(std::path::PathBuf::from);
         let livetest = val("--livetest").map(std::path::PathBuf::from);
+        let play_tour = val("--play").map(std::path::PathBuf::from);
         let livetest_quick = args.iter().any(|a| a == "--quick");
         let frametest_steps = val("--steps").and_then(|s| s.parse().ok()).unwrap_or(40u32);
         let frametest_hold = val("--hold").and_then(|s| s.parse().ok()).unwrap_or(4u32);
@@ -2417,6 +2423,8 @@ impl FractadyneApp {
             divetest,
             livetest,
             livetest_quick,
+            play_tour,
+            play_tour_done: false,
             frametest,
             frametest_center,
             frametest_steps,
@@ -3334,7 +3342,9 @@ impl FractadyneApp {
         // Progressive settle AA (after the `vp` borrow ends): coarse (1×) while moving, then refine
         // 1×→2×→4×→… up to the chosen level over consecutive frames, so a heavy view never blocks on
         // one full-AA frame.
-        let aa_target = if interacting {
+        let aa_target = if interacting || self.playback.is_some() {
+            // Scripted playback: no settle AA ramp — see the note in `ui/central.rs`. Its cost is
+            // quadratic and, outside the floatexp path, nothing bounds it.
             self.pointer.settle_frame[view] = 0;
             1
         } else {
@@ -5087,6 +5097,33 @@ impl eframe::App for FractadyneApp {
                         }
                     }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+
+        // CLI `--play FILE`: start the tour in the LIVE view (once). Unlike every other tour entry
+        // point this one keeps the GUI running, so it exercises the on-screen path — present,
+        // watchdog budget, tiled settle — which no headless harness can reach.
+        if let Some(script) = self.play_tour.clone() {
+            if !self.play_tour_done {
+                self.play_tour_done = true;
+                match scripting::parse_tour_file(&script) {
+                    Ok(pb) => {
+                        println!("Playing \"{}\" ({:.0}s) in the live view…", pb.name, pb.total);
+                        self.playback_restore = Some(scripting::PlaybackRestore {
+                            max_iter: self.render_cfg.max_iter,
+                            auto_iter: self.render_cfg.auto_iter,
+                            palette_idx: self.coloring.palette_idx,
+                            use_custom_palette: self.coloring.use_custom_palette,
+                            use_binary: self.coloring.use_binary,
+                            use_duotone: self.coloring.use_duotone,
+                        });
+                        self.playback = Some(pb);
+                    }
+                    Err(e) => {
+                        eprintln!("Could not play {}: {e}", script.display());
+                        std::process::exit(2);
+                    }
                 }
             }
         }

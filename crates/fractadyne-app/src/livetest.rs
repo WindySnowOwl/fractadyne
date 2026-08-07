@@ -242,7 +242,12 @@ impl FractadyneApp {
             if real {
                 let req = crate::profile::params_to_request(&params);
                 let t_gpu = Instant::now();
-                if let Ok(r) = fractadyne_gpu::render_iter(device, queue, &req) {
+                // Pure-GPU iterate time via TIMESTAMP_QUERY (as `--divetest` does): `render_iter`'s
+                // wall time includes a full texture readback the GUI never pays, and that time
+                // feeds the watchdog budget below.
+                let (rendered, ts) =
+                    fractadyne_gpu::timing::capture(|| fractadyne_gpu::render_iter(device, queue, &req));
+                if let Ok(r) = rendered {
                     // Stand in for the live view's GPU counter readback. The on-screen path arms a
                     // counter pass that reports `CTR_MAXITER / pixels` back through this sink, and
                     // the ADAPTIVE ITERATION BUDGET is driven entirely by it — but that pass
@@ -259,6 +264,21 @@ impl FractadyneApp {
                     last_real = Some((r.pixels, [r.width, r.height], t_base.elapsed().as_secs_f64()));
                 }
                 gpu_ms = t_gpu.elapsed().as_secs_f64() * 1000.0;
+                // Maintain the watchdog step budget the way the GUI's event loop does. Without
+                // this it stays 0, `build_params` falls back to the pessimistic bootstrap, and
+                // every deep frame is shrunk to a fraction of the requested size — the harness
+                // would then be measuring a view the GUI never renders. (The GUI keeps this loop
+                // in `update`; the harness has no event loop, so it runs the same arithmetic.)
+                let ms = if ts.captured { ts.iterate_ms } else { gpu_ms };
+                if ms > 0.01 && self.perf.fe_steps_last[0] > 0 {
+                    let cur = self.perf.fe_budget[0].max(crate::render::TDR_BOOTSTRAP_STEPS);
+                    let factor = (crate::render::TDR_BUDGET_MS / ms)
+                        .clamp(crate::render::TDR_SHRINK_MAX, crate::render::TDR_GROW_MAX);
+                    let next = ((cur as f64 * factor) as u64)
+                        .clamp(crate::render::TDR_BOOTSTRAP_STEPS, crate::render::TDR_STEPS_CEIL);
+                    self.perf.fe_budget_ok[0] = next == cur || (0.8..=1.25).contains(&factor);
+                    self.perf.fe_budget[0] = next;
+                }
             }
             let frame_ms = (build_ms + gpu_ms).max(VSYNC * 1000.0);
             self.perf.last_dt_ms = frame_ms;

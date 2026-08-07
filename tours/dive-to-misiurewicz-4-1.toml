@@ -17,17 +17,18 @@ size = "1920x1080"
 fps = 30
 ss = 2
 
-# Live playback (Tools -> Play script) only. The live view raises its iteration budget over
-# successive SETTLED frames, which at these depths needs longer than a hold of wall clock —
-# without this the tour walks past its own destination while the screen is still black.
-# An offline render is unaffected: it always computes every frame to completion.
+# Live playback only; an offline render always computes every frame to completion regardless.
+# `settled` stops the tour clock at each hold until the view resolves, so a deep hold gets the
+# extra seconds its iteration budget needs to climb instead of being walked past while black.
+#
+# The timeout is what makes this watchable, and it was measured, not guessed: at 90s the tour
+# stalled (a 320-second stretch with no reference build at all), while at 15s it played steadily
+# start to finish in 286s of wall clock against its authored 232s. Exhaustively resolving the
+# deepest holds takes far longer than any watchable number — that question belongs to
+# `--livetest`, which can wait as long as it likes because nobody is watching it.
 [playback]
 pace = "settled"
-# 20s (the default) is not enough at these depths: every raise of the iteration budget triggers a
-# fresh reference build, ~10s a piece past 1e60x, and the budget needs several raises to climb
-# from the depth-scaled cap to what the field wants. Measured at 1e61x: the default expired with
-# the view at 146k of the 400k this keyframe asks for, still 42% black.
-settle_timeout = 90
+settle_timeout = 15
 
 [[location]]
 id = "home"

@@ -763,7 +763,14 @@ impl FractadyneApp {
                 }
                 let interacting = now - self.pointer.settle_t[0] < SETTLE_DELAY;
                 // Progressive settle AA (see `nav_and_draw`): refine 1×→2×→4×→… over settled frames.
-                let aa_target = if interacting {
+                let aa_target = if interacting || self.playback.is_some() {
+                    // A scripted tour holds for a few seconds and then moves again, so the settle
+                    // ramp — which exists to sharpen a view an idle USER has stopped on — buys
+                    // almost nothing here and costs quadratically: ss=8 is 64 samples per pixel.
+                    // Settling during a hold is for the ITERATION BUDGET and the reference build,
+                    // not for supersampling. Measured: a 12,000-iteration hold that reached ss=8
+                    // submitted 1.246e12 nominal steps in one dispatch and lost the device (crash
+                    // 2026-08-07 17:13 UTC, manifest `ss=8 iter=12000 steps=1.246e12`).
                     self.pointer.settle_frame[0] = 0;
                     1
                 } else {

@@ -34,6 +34,24 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] **Live tour playback lost the GPU device — FIXED v0.2.40-beta.36.** Reported by the user
+  ("it crashed in the live view of the tour"); reproduced in 29 s with the new `--play` flag. A
+  regression from beta.35's settling change plus a latent bug it exposed. The crash report's new
+  LIVE manifest named the frame outright: `1431x1134 ss=8 iter=12000 (boost=1.60) steps=1.246e12
+  budget=4.000e8 tile=false settled=true` — once holds settled, the progressive-AA ramp ran during
+  playback and reached ss=8 (64 samples/pixel), and at a SHALLOW `mode=0` view nothing bounded it.
+  Fixes: (1) no settle AA ramp during scripted playback — a tour's camera moves again in seconds,
+  so the ramp buys nothing and costs quadratically; settling at a hold is for the iteration budget
+  and the reference build. (2) The watchdog ss cap existed only on the floatexp path
+  (`max_ss_tdr = if is_fe {…} else { u32::MAX }`) — **a latent crash reachable interactively**
+  (high manual iteration count + AA 8 at a mostly-interior shallow view), now capped in every mode.
+  (3) Live playback is no longer classified as an offscreen one-shot, so it obeys the measured
+  budget and may tile. (4) The live path now sets a crash manifest at all — before this, every
+  on-screen device loss recorded an EMPTY `manifest:` line, which is why this class has historically
+  been diagnosed by inference. ⚠**Lesson: the crash report only knew about EXPORT frames. When a
+  diagnostic is silent for the path that actually crashes, fix the diagnostic first — it turned
+  three rounds of speculation into one line of fact.**
+
 - [x] **Live view rendered BLACK during scripted playback — FIXED v0.2.40-beta.35.** Reported by
   the user as "sections that render as black" in the live view. `advance_playback_core` stamped
   the interaction timestamp on EVERY playback tick, so a tour's view was permanently

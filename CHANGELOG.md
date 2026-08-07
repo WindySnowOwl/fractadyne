@@ -41,6 +41,29 @@ limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — s
 - **Tours** — **Tools → "Script to current view…"**: one-click dive-tour generator (notation
   caption, depth-scaled duration; deep targets use the pan-shallow-then-dive structure that
   keeps every frame centered on the target) (beta.5–6).
+- **Live tour playback lost the GPU device — FIXED beta.36.** A regression from beta.35's settling
+  change, plus a latent bug it exposed. Once holds settled, the progressive-AA ramp ran during
+  playback and climbed to **ss=8 — 64 samples per pixel** — and the crash report's new live
+  manifest states the frame exactly: `1431x1134 ss=8 iter=12000 steps=1.246e12 budget=4.000e8`,
+  a trillion-step dispatch against a 4e8 budget. Three fixes:
+  - **No settle AA ramp during scripted playback.** A tour's camera moves again in seconds, so the
+    ramp (which exists to sharpen a view an idle *user* stopped on) bought nothing and cost
+    quadratically. Settling during a hold is for the iteration budget and the reference build.
+  - **The watchdog supersampling cap now exists in every arithmetic mode.** It was gated on the
+    floatexp path (`max_ss_tdr = if is_fe {…} else { u32::MAX }`) — no cap at all elsewhere. The
+    crash was at a *shallow* mode-0 view, and the same frame is reachable interactively with a
+    high manual iteration count and AA 8, so this was a latent crash independent of tours.
+  - **Live playback is no longer classified as an offscreen one-shot.** It paints the window every
+    frame, so it must obey the measured frame budget and may use the tiled settle — being lumped
+    in with `--render` pinned it to the pre-measurement ceiling and disabled tiling.
+  - **New: the live path records a manifest.** A live device loss used to write `manifest:` empty,
+    because only the *export* request builder set one — so an on-screen crash said nothing about
+    the frame that caused it. This is what turned the diagnosis from inference into one line.
+  - **New `--play FILE`**: start the GUI with a tour already playing, the only way to exercise the
+    on-screen playback path from a command line (no headless harness reaches present/watchdog).
+  - `[playback] settle_timeout` on the shipped tours is **15 s, not 90 s** — measured: at 90 s a
+    live tour stalled (a 320-second stretch with no reference build at all), at 15 s it played
+    steadily start to finish, 286 s of wall clock against an authored 232 s.
 - **The live view no longer goes black during a scripted tour** (beta.35), plus the harness that
   found it:
   - **`--livetest`** — a headless harness that plays a tour through the *live* pipeline
