@@ -624,6 +624,7 @@ impl FractadyneApp {
         budget_maxed: bool,
         esc_max: Option<f64>,
         plateau: bool,
+        exhausted: bool,
     ) -> Option<(&'static str, String, bool)> {
         let clamp_px = orbit_len.saturating_sub(1);
         if refused >= dev_cap {
@@ -662,6 +663,24 @@ impl FractadyneApp {
         // against the ceiling, whereas around a genuine minibrot they finish far below it (the
         // 2e82× view escaped at 833k–1.12M under a 10M budget). A fully-capped frame has no
         // escaped pixels to measure and is starved by definition.
+        // The probe climbed to the full appetite and the frame stayed all-capped. Report it: this
+        // is the state that produced a black screen with no explanation (6.5e94×, iterations at
+        // 10M). Deliberately does NOT claim which cause — from the escape data the two are
+        // indistinguishable, and saying "raise iterations" when they are already at the maximum
+        // would be worse than saying nothing.
+        if exhausted {
+            return Some((
+                "⚠ iter exhausted",
+                format!(
+                    "Every pixel still ran out of iterations at the largest budget this view can \
+                     be given ({}). Either the view is inside the set here (normal at depth), or \
+                     it needs more iterations than the app can currently provide — the image is \
+                     the same either way, so the budget was returned to a cheap one.",
+                    commas(&eff_iter.to_string())
+                ),
+                false,
+            ));
+        }
         if !plateau && budget_maxed {
             if let Some(frac) = capped {
                 let pressing = frac > 0.98
@@ -746,6 +765,7 @@ impl FractadyneApp {
                     self.perf.budget_maxed[0],
                     self.perf.norm_range[0].map(|(_, mx)| mx as f64),
                     self.perf.iter_plateau[0],
+                    self.perf.iter_exhausted[0],
                 ) {
                     ui.separator();
                     let color = if severe {
@@ -783,46 +803,46 @@ mod tests {
         const DEV: u32 = 7_452_444;
         const MAX: u32 = crate::MAX_ITER_LIMIT;
         // 2e95× spar: refusal AT the device cap → the red depth-limit wall.
-        let s = FractadyneApp::limit_status(true, 256_001, DEV + 1, DEV, MAX, None, 0, false, None, false)
+        let s = FractadyneApp::limit_status(true, 256_001, DEV + 1, DEV, MAX, None, 0, false, None, false, false)
             .expect("device-cap refusal must warn");
         assert!(s.0.contains("depth limit") && s.2, "want severe depth limit, got {s:?}");
         // e21000: extension declined below the device cap, pixels clamped under the budget.
-        let s = FractadyneApp::limit_status(true, 256_001, 508_193, DEV, 500_000, None, 0, false, None, false)
+        let s = FractadyneApp::limit_status(true, 256_001, 508_193, DEV, 500_000, None, 0, false, None, false, false)
             .expect("declined extension must warn");
         assert!(s.0.contains("ref clamped") && !s.2, "want amber ref clamp, got {s:?}");
+        // The 6.5e94× black screen: probe climbed to the full appetite, frame stayed all-capped.
+        let s = FractadyneApp::limit_status(false, 3_631_055, 0, DEV, MAX, Some(1.0), MAX, true, None, true, true)
+            .expect("exhausted must warn");
+        assert!(s.0.contains("iter exhausted"), "got {s:?}");
         // Starved at the app maximum: most pixels capped AND escapes pressing the ceiling.
         let s = FractadyneApp::limit_status(
-            false, 900_000, 0, DEV, MAX, Some(0.60), MAX, true, Some(MAX as f64 * 0.97), false,
+            false, 900_000, 0, DEV, MAX, Some(0.60), MAX, true, Some(MAX as f64 * 0.97), false, false,
         )
         .expect("starved-at-ceiling must warn");
         assert!(s.0.contains("iter capped") && s.1.contains("already at the maximum"), "got {s:?}");
-        // Fully capped (black frame): no escaped pixels to measure — starved by definition.
-        let s = FractadyneApp::limit_status(false, 900_000, 0, DEV, MAX, Some(1.0), MAX, true, None, false)
-            .expect("all-capped must warn");
-        assert!(s.0.contains("iter capped"), "got {s:?}");
 
         // Quiet: an ordinary dive's motion partial (nothing refused)…
-        assert!(FractadyneApp::limit_status(true, 256_001, 0, DEV, 500_000, None, 0, false, None, false).is_none());
+        assert!(FractadyneApp::limit_status(true, 256_001, 0, DEV, 500_000, None, 0, false, None, false, false).is_none());
         // …the user's 6.9e94× view — a minibrot in frame caps its in-set core (measured 3 px of
         // 2304 = 0.13%) while escapes finish ~1.1M under a 10M budget: resolved, must stay quiet…
         assert!(FractadyneApp::limit_status(
-            false, 2_848_721, 0, DEV, MAX, Some(0.0013), MAX, true, Some(1_120_000.0), false
+            false, 2_848_721, 0, DEV, MAX, Some(0.0013), MAX, true, Some(1_120_000.0), false, false
         )
         .is_none());
         // …a BIG minibrot (30% of frame in-set) with escapes far below the ceiling: still quiet —
         // in-set pixels always exhaust the budget and raising cannot help them…
         assert!(FractadyneApp::limit_status(
-            false, 2_848_721, 0, DEV, MAX, Some(0.30), MAX, true, Some(1_500_000.0), false
+            false, 2_848_721, 0, DEV, MAX, Some(0.30), MAX, true, Some(1_500_000.0), false, false
         )
         .is_none());
         // …mid-climb capping (the app can still raise the budget itself — transient)…
         assert!(FractadyneApp::limit_status(
-            false, 900_000, 0, DEV, 1_000_000, Some(0.5), 82_640 * 6, false, Some(490_000.0), false
+            false, 900_000, 0, DEV, 1_000_000, Some(0.5), 82_640 * 6, false, Some(490_000.0), false, false
         )
         .is_none());
-        // …and a latched plateau (true interior).
+        // …and a latched plateau that did NOT exhaust the appetite (partial-frame interior).
         assert!(FractadyneApp::limit_status(
-            false, 900_000, 0, DEV, MAX, Some(0.9), MAX, true, Some(MAX as f64), true
+            false, 900_000, 0, DEV, MAX, Some(0.9), MAX, true, Some(MAX as f64), true, false
         )
         .is_none());
     }

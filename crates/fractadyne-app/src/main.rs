@@ -189,6 +189,11 @@ struct Perf {
     capped_frac: [Option<f64>; 2],
     budget_measured: [u32; 2],
     budget_maxed: [bool; 2],
+    /// The probe climbed to the full appetite and the frame was STILL essentially all-capped —
+    /// deep interior, or a view needing more than the app can give. Either way nothing more can
+    /// be done here, so the boost reverts (same flat image, far cheaper) and the status bar says
+    /// so rather than leaving a black screen unexplained.
+    iter_exhausted: [bool; 2],
     /// Consecutive raises that bought nothing, and the boost the run started from.
     ///
     /// A single unhelpful raise does NOT mean "interior". Measured at the 3.3e61× three-spar: the
@@ -255,6 +260,7 @@ impl Default for Perf {
             capped_frac: [None, None],
             budget_measured: [0, 0],
             budget_maxed: [false, false],
+            iter_exhausted: [false, false],
             iter_stall: [0, 0],
             iter_stall_base: [1.0, 1.0],
             norm_sink: [
@@ -2897,6 +2903,7 @@ impl FractadyneApp {
         self.perf.iter_stall = [0, 0];
         self.perf.iter_stall_base = [1.0, 1.0];
         self.perf.capped_frac = [None, None];
+        self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
     }
 

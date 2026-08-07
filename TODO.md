@@ -1112,7 +1112,9 @@ descent and the Tan Lei self-checking test).
   points of interest AND the locations that have historically broken us, serving as both the demo
   reel and a regression test. Candidates from this repo's own scar tissue: the Misiurewicz spar
   fields where the iteration cap starves and the view goes flat/black (the 1.7e55× / 5.17e55× /
-  3.3e61× / 6.3e63× / 2.6e72× three-spar family — FIVE separate bugs, beta.19/22/26/27/28),
+  3.3e61× / 6.3e63× / 2.6e72× / 2e82× / 6.5e94× three-spar family — SEVEN separate bugs,
+  beta.19/22/26/27/28/30/32; the recurring shape is a heuristic tuned at one depth failing at the
+  next, so the tour must sample MANY depths of this family, not one),
   the e1216 dive the pacer/lookahead work targeted,
   the corpus-14/15 glitch-and-aliasing locations, the deep interior minibrots whose cores cost
   ~50× (the glitch-correct pathology), and the extreme-zoom tip at e21000. Wanted: a `--render-tour`

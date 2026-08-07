@@ -1797,6 +1797,7 @@ impl FractadyneApp {
                 self.perf.iter_probe[vb] = None;
                 self.perf.iter_plateau[vb] = false;
                 self.perf.iter_stall[vb] = 0;
+                self.perf.iter_exhausted[vb] = false;
                 self.perf.capped_frac[vb] = None; // a moving frame's reading describes another view
             }
             let v = self.perf.maxiter_sink[vb].swap(u64::MAX, SeqCst);
@@ -1862,6 +1863,29 @@ impl FractadyneApp {
                     }
                 }
             }
+            if v != u64::MAX && !interacting && !cap_bound && !self.perf.iter_plateau[vb] {
+                // At FULL APPETITE and still essentially all-capped: raising is no longer
+                // possible, so the frame is flat at the most this view can be given. Whether that
+                // is deep interior (normal) or a view needing more than the app can offer, the
+                // IMAGE is identical at a cheaper budget — so revert to the cheap one, stop
+                // probing, and record it for the status bar to report honestly. Without this the
+                // budget stays pinned at the appetite forever, paying millions of iterations per
+                // pixel to render the same flat frame.
+                let frac = f32::from_bits(frac_bits) as f64;
+                if frac.is_finite() && frac > 0.98 && boost > 1.0 {
+                    self.perf.iter_plateau[vb] = true;
+                    self.perf.iter_exhausted[vb] = true;
+                    self.perf.iter_boost[vb] = 1.0;
+                    crate::diag::trace(
+                        "gpu",
+                        format!(
+                            "adaptive iter: exhausted — {:.1}% capped at the full appetite \
+                             ({budget_now}); reverting boost {boost:.1}→1.0",
+                            frac * 100.0
+                        ),
+                    );
+                }
+            }
             if v != u64::MAX && !interacting && cap_bound && !self.perf.iter_plateau[vb] {
                 let frac = f32::from_bits(frac_bits) as f64;
                 // 0.05%: low enough to chase a thin Misiurewicz-spar core (the 1.7e55× case
@@ -1875,9 +1899,20 @@ impl FractadyneApp {
                     // walking up in 1.6× steps spends many settle cycles showing the user
                     // nothing; once mostly resolved, fine steps avoid overshooting the cost.
                     let step = if frac > 0.9 { 2.5 } else { 1.6 };
-                    if unhelpful && self.perf.iter_stall[vb] + 1 >= crate::ITER_STALL_LIMIT {
-                        // Several raises in a row bought nothing — genuinely interior. Revert to
-                        // where the fruitless run began, not just the last step.
+                    // A frame that is essentially ALL capped looks identical whether we revert or
+                    // keep climbing, so a flat step there is NOT evidence of interior — it can
+                    // simply mean the budget is still orders of magnitude short. Measured at
+                    // 6.5e94×: that view needs ~121× the depth-scaled cap, so three flat 2.5×
+                    // steps only reached 15.6×, "proved" interior, reverted to 1.0 — and left a
+                    // permanently BLACK screen on a view that resolves fine at 10M. While fully
+                    // capped, climb to the ceiling; the `!cap_bound` branch above concludes it.
+                    let fully_capped = frac > 0.98;
+                    if !fully_capped
+                        && unhelpful
+                        && self.perf.iter_stall[vb] + 1 >= crate::ITER_STALL_LIMIT
+                    {
+                        // Several raises bought nothing on a PARTIALLY capped frame — the
+                        // remaining capped pixels are interior. Revert to where the run began.
                         let back = self.perf.iter_stall_base[vb];
                         self.perf.iter_plateau[vb] = true;
                         self.perf.iter_boost[vb] = back;
@@ -1886,7 +1921,7 @@ impl FractadyneApp {
                             format!("adaptive iter: plateau (interior) — boost back to {back:.1}"),
                         );
                     } else {
-                        if unhelpful {
+                        if unhelpful && !fully_capped {
                             if self.perf.iter_stall[vb] == 0 {
                                 // Remember where to fall back to if this run stays fruitless.
                                 self.perf.iter_stall_base[vb] =
