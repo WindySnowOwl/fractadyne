@@ -1144,6 +1144,15 @@ impl FractadyneApp {
     /// Headless CLI runs never adapt (boost stays 1.0), so `--render`/tour/corpus semantics are
     /// unchanged; still bounded by `recommended_max_iter`'s appetite at the call sites.
     fn export_auto_iter_cap(&self, log2mag: f64, julia: bool) -> u32 {
+        // A TOUR render has no on-screen view to match, and no live probe ever runs, so the boost
+        // stays 1.0 and this "match the screen" cap collapses to the bare `zoom_iter_cap` — the
+        // very under-budget the live probe exists to correct. Measured: every deep frame of
+        // tours/grand-tour.toml rendered FLAT at iter=82,627 (the cap at 1e94×) while the same
+        // view resolves at 545k (maxiter=11 of 129,600 px). Offline video is exactly where the
+        // full appetite matters, so the cap does not apply there.
+        if self.render_tour.is_some() {
+            return u32::MAX;
+        }
         let vi = (self.dual && julia) as usize;
         ((zoom_iter_cap(log2mag).max(256) as f64) * self.perf.iter_boost[vi]) as u32
     }

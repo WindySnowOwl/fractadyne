@@ -5,6 +5,24 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] **Tour/offline render can TDR the GPU at a high iteration budget — no per-frame cost bound.**
+  Found 2026-08-07 rendering `tours/grand-tour.toml` with `max_iter = 2000000`: at frame 16 a
+  2,000,001-sample (non-escaping) reference installed and the next frame lost the device
+  (`DEVICE LOST (Unknown)`), even at 240x135. beta.29's loop guard correctly declined to
+  restart (22 s uptime), so the failure is clean — but the render dies. The LIVE path bounds
+  per-frame cost (`fe_budget` + tiled settle + motion-res); the tour path has none of that, and
+  `render_export`'s `TILE_WORK_BUDGET` evidently isn't bounding this dispatch (240·135·2e6 =
+  6.5e10 nominal steps vs a 2e10 tile budget — check whether the tour render path actually goes
+  through the tiled export). Fix direction: route tour frames through the tiled export path with
+  a budget calibrated like the live one, so iteration budget and frame cost are decoupled.
+  Until then a deep tour must be rendered at a modest `max_iter`, which under-resolves the
+  deepest frames — see the note in `tours/grand-tour.toml`.
+- [ ] **Per-keyframe `max_iter` (script format).** One script-wide iteration budget cannot serve
+  both a 1.33x home view and a 1e94x dive: an exact count makes shallow frames cost minutes
+  each (measured — the render never finished), while a depth-scaled base that keeps shallow
+  frames cheap leaves the deepest holds a few percent capped (they want ~8M). Per-keyframe
+  budget is the fix, and it folds into the v2 format restructure.
+
 - [x] **wgpu device loss (TDR) crashes the app — FIXED v0.2.40-beta.29 (both halves).** Two crash
   reports on record, both `Surface::get_current_texture_view: Parent device is lost` → panic:
   2026-08-02 (v0.2.27, shallow view — external cause class) and 2026-08-06 (beta.27, the 2.6e72×

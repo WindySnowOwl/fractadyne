@@ -32,6 +32,17 @@ struct ScriptFile {
     /// `--show-location` CLI flag. Omit / false to leave frames clean.
     #[serde(default)]
     show_location: Option<bool>,
+    /// Iteration budget for the tour, overriding the session's. Without this a deep tour is at
+    /// the mercy of whatever the viewer happens to have set, and auto-iter's depth formula
+    /// (~220/octave) under-budgets hard fields badly: the Misiurewicz three-spar gets ~46k at
+    /// 1e61× and ~71k at 1e95× where it measurably needs 222k and millions — every deep frame
+    /// renders FLAT. A tour that dives somewhere hard must be able to say what it needs.
+    #[serde(default)]
+    max_iter: Option<u32>,
+    /// Whether the tour's `max_iter` is a BASE that still scales with depth (`true`, the session
+    /// default) or an exact count to use as-is (`false`). Deep tours normally want `false`.
+    #[serde(default)]
+    auto_iter: Option<bool>,
     #[serde(default)]
     keyframe: Vec<KeyframeFile>,
     #[serde(default)]
@@ -342,6 +353,8 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "palette", ty: "string", default: "(session)", doc: "Coloring palette preset name (e.g. \"Ember\") or index, applied on load so the tour looks the same regardless of the current palette." },
             SchemaField { name: "loop", ty: "bool", default: "false", doc: "Loop the tour during live playback (Tools -> Play script)." },
             SchemaField { name: "show_location", ty: "bool", default: "false", doc: "Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag)." },
+            SchemaField { name: "max_iter", ty: "int", default: "(session, min 500000)", doc: "Iteration budget for the render. Deep tours SHOULD set this: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat." },
+            SchemaField { name: "auto_iter", ty: "bool", default: "true", doc: "Whether `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false)." },
             SchemaField { name: "keyframe", ty: "[[keyframe]]", default: "[]", doc: "The camera path (at least one required) — see below." },
             SchemaField { name: "caption", ty: "[[caption]]", default: "[]", doc: "Timed narration overlays — see below." },
             SchemaField { name: "callout", ty: "[[callout]]", default: "[]", doc: "Labeled markers anchored to a coordinate — see below." },
@@ -1442,6 +1455,7 @@ impl FractadyneApp {
         }
         let palette = sf.palette.clone();
         let show_location = self.show_location || sf.show_location.unwrap_or(false);
+        let (script_iter, script_auto) = (sf.max_iter, sf.auto_iter);
         let pb = resolve_script(sf, None).ok_or("script has no keyframes")?;
         if let Some(p) = &palette {
             self.apply_script_palette(p);
@@ -1450,10 +1464,13 @@ impl FractadyneApp {
             .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
         // Single-view offscreen render at the requested frame size.
         self.dual = false;
-        // Auto-scale iterations with depth so deep tour frames resolve (a fixed low cap would
-        // render the deep structure as under-iterated blobs). Keep a high base for detail.
-        self.render_cfg.auto_iter = true;
-        self.render_cfg.max_iter = self.render_cfg.max_iter.max(500_000);
+        // Iterations for the whole render: the script decides when it says so, otherwise
+        // auto-scale from a high base (a fixed low cap renders deep structure as blobs). The
+        // "match the on-screen budget" export cap does NOT apply to tours — see
+        // `export_auto_iter_cap`; without that exemption every deep frame here rendered flat.
+        self.render_cfg.auto_iter = script_auto.unwrap_or(true);
+        self.render_cfg.max_iter =
+            script_iter.unwrap_or_else(|| self.render_cfg.max_iter.max(500_000));
         self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
         self.export.width = width;
         self.export.ss = ss.max(1);

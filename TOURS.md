@@ -25,6 +25,8 @@ Script-wide settings.
 | `palette` | string | (session) | Coloring palette preset name (e.g. "Ember") or index, applied on load so the tour looks the same regardless of the current palette. |
 | `loop` | bool | false | Loop the tour during live playback (Tools -> Play script). |
 | `show_location` | bool | false | Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag). |
+| `max_iter` | int | (session, min 500000) | Iteration budget for the render. Deep tours SHOULD set this: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat. |
+| `auto_iter` | bool | true | Whether `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false). |
 | `keyframe` | [[keyframe]] | [] | The camera path (at least one required) — see below. |
 | `caption` | [[caption]] | [] | Timed narration overlays — see below. |
 | `callout` | [[callout]] | [] | Labeled markers anchored to a coordinate — see below. |
