@@ -1,5 +1,33 @@
 # Fractadyne — Development Tracking
 
+## ▶ Announce readiness (fractalforums) — status 2026-08-07
+
+Goal: a stable `v0.2.40` suitable for announcing. Current head is **v0.2.40-beta.33**; the latest
+*published* prerelease is still beta.27 (beta.28–33 are pushed commits, deliberately untagged —
+GitHub builds only fire on explicit request).
+
+**Done:** the crash ledger is clean (both recorded device-loss crashes fixed, plus auto-restart
+recovery); seven spar-family rendering bugs fixed; status-bar diagnostics now explain rendering
+limits instead of leaving a black screen unexplained; the iteration ceiling is 10M; the grand
+tour exists.
+
+**Blockers before tagging:**
+1. **CHANGELOG is stale** — its `0.2.40-beta` entry stops at beta.15, so ~18 betas of work are
+   undocumented, including everything a forum reader cares about (Newton-Raphson zoom, exact
+   rational/complex coordinate entry, the multiplier λ, the 500k→10M ceiling, live limit
+   diagnostics, crash recovery). Release notes come from here and README is the front door.
+2. **Fresh-install smoke test** — never run this cycle. Wipe the config dir, boot, confirm a
+   stranger gets a sane first view, working menus, no stale-state warnings.
+
+**Decide before posting:** binaries are Windows-only, so "Linux?" will be the first reply — ship
+the Ubuntu job (above) or say so plainly in the post. And the pitch: what is genuinely novel next
+to KF/Fraktaler-3 is the **adaptive iteration budget** (nobody else raises the budget from live
+GPU feedback), **Newton-Raphson zoom**, the cursor-driven **dual Julia at depth**, and the
+**F3-matched corpus** as evidence rather than a boast.
+
+**Explicitly deferred, not blockers:** the 1e95 depth wall (documented and now self-reporting),
+the glitch-correction pathology, the tour-render TDR, and the proposals backlog.
+
 Living backlog. Specs: [DESIGN.md](DESIGN.md), [UI-DESIGN.md](UI-DESIGN.md).
 Mockups: [design/mockups/](design/mockups/).
 
@@ -22,6 +50,48 @@ Mockups: [design/mockups/](design/mockups/).
   each (measured — the render never finished), while a depth-scaled base that keeps shallow
   frames cheap leaves the deepest holds a few percent capped (they want ~8M). Per-keyframe
   budget is the fix, and it folds into the v2 format restructure.
+
+## Script format v2 — agreed design, not yet started (2026-08-07)
+
+Breaking change, explicitly sanctioned: the app has no users yet, so **no compatibility branch
+and no v1 reader** — migrate the five shipped tours in the same pass and delete the old shape.
+Rationale for each item is in the session that designed it; the short form:
+
+- **Absolute keyframe times** (`t` = arrival, plus `hold`), replacing cumulative `secs`. Today a
+  keyframe's position is the sum of everything before it, so inserting one silently desyncs all
+  downstream narration — hit while authoring `grand-tour.toml`, where the caption times had to be
+  hand-computed. Editors drag keyframes to times; this is the single highest-value change.
+- **Stable `id` on every element** — reorder, undo, selection and cross-references all need
+  identity that isn't positional.
+- **One `[[annotation]]` array with `kind = "caption" | "callout" | "spotlight" | …`**, replacing
+  the three parallel arrays. An editor merges them into one track list anyway, and new annotation
+  kinds become additive rather than a new top-level array each time.
+- **`[render]` block** — size, fps, ss, prefix, mp4 flags, `max_iter` / `auto_iter` (top-level
+  versions shipped in beta.33; fold them in here), so `--render-tour x.toml` with no flags
+  reproduces the intended output and CLI flags merely override.
+- **Per-keyframe `max_iter`** — see the Open bugs item above; the deep chapter needs it.
+- **`[[location]]`** — named coordinates with an optional `thumb`. Kills the 120-digit
+  duplication (the grand tour's dive center appears three times) and doubles as the home for the
+  shipped landmark library and an editor's location picker.
+- **`zoom = "6.5e94"` string**, replacing `mag` + `mag_log10` and their precedence rule.
+- **`[[segment]]`** — chapters, so one can be rendered or scrubbed in isolation
+  (`--segment "Chapter 3"`). With full renders in the thousands of frames, re-rendering
+  everything to fix ten seconds of narration is the real workflow killer.
+- **`[[palette]]` definitions + per-keyframe palette reference**, interpolated between keyframes
+  — this one mechanism covers static palettes, palette morphs and cycling animation. Sources:
+  preset name, inline gradient stops, or a KF `.map` file once that import lands.
+- **Thumbnails by reference, not embedded** — `thumb = "thumbs/x.png"` relative to the script,
+  plus a generated cache the app can populate (it already renders bookmark/minimap thumbnails).
+  Base64 in TOML would bloat diffs and make hand-editing miserable.
+- **Stubs worth reserving now**: an `[[audio]]` track (music/narration timing is the usual next
+  ask for video), per-property easing (camera and palette want different curves — borrow glTF's
+  channel/sampler model), and an `editor` table for editor-only state so it needs no sidecar.
+
+Not a compatibility target: there is no de-facto fractal tour-script format worth conforming to
+(KF drives zoom videos from folders of numbered `.kfr` files; Ultra Fractal's `.upr` timeline is
+proprietary and tangled with its formula system). The interop that matters for zoom video is
+**exponential-map EXR for zoomasm** (listed above) — spend the effort there. OpenTimelineIO is a
+plausible future *export* if anyone wants to cut frames in an NLE, never the native format.
 
 - [x] **wgpu device loss (TDR) crashes the app — FIXED v0.2.40-beta.29 (both halves).** Two crash
   reports on record, both `Surface::get_current_texture_view: Parent device is lost` → panic:
@@ -1066,6 +1136,21 @@ for fun, informative value, and ease of use.
 - [ ] **Ecosystem/platform** — no plugin system; Windows-only release builds (code is portable
   wgpu/egui — a Linux/macOS CI target is mostly release.yml work); KF interop partial (.kfr
   import yes, .kfb map files no).
+- [ ] **Linux build target** — QUEUED (user is setting up a separate test machine). Build on
+  **Ubuntu 22.04 LTS**: glibc compatibility only runs backwards, so a binary built there
+  (glibc 2.35) runs on newer distros while one built on 24.04/Fedora will not run on 22.04 —
+  build on the oldest glibc worth supporting. It also has the most trodden path for proprietary
+  NVIDIA drivers and the widest wgpu/Vulkan testing. Work is mostly `release.yml` (add a
+  ubuntu-22.04 job producing a tar.gz + sha256) plus whatever the first real run turns up
+  (file dialogs via rfd need a portal/GTK dep; check the icon/font loading paths).
+- [ ] **First-run experience** — AGREED DESIGN (2026-08-07): a welcome overlay on first launch
+  covering navigation (drag to pan, wheel to zoom, click-to-zoom, `M` for the minibrot jump) and
+  a couple of preset destinations, since deep-zoom apps are opaque to newcomers and this is the
+  friction a forum reader hits in the first two minutes. ⚠**Not** a Simple/Advanced *mode*:
+  hiding controls creates "where did that go" support questions and doubles the UI states to
+  test. Instead ship the advanced sections **collapsed by default** (the Controls panel already
+  labels one "Accelerators (advanced)") — same benefit for newcomers, nothing hidden, no mode
+  flag to maintain.
 - Out of scope (named deliberately): 3D fractals (Mandelbulber's domain).
 
 ## Proposed feature set — reconciled backlog (2026-08-06)
@@ -1124,9 +1209,32 @@ descent and the Tan Lei self-checking test).
   Verification: a self-checking test that each landmark *is* what it claims — nuclei re-converge
   under `find_nucleus` at their stated period, Misiurewicz points under `find_misiurewicz` at
   their stated (k,p).
-- [ ] **KF `.map` palette import** (P1, §2.6 gap) — see the peer-renderer section above; plain
-  256-entry RGB text. Verification: parser tests + a golden render through an imported palette.
-- [ ] **Grand-tour script: landmarks + pathological locations** — one tour that visits the known
+- [ ] **KF `.map` palette import** (P1, §2.6 gap) — plain 256-entry RGB text; import into the
+  custom-gradient editor and offer as a palette source alongside the presets. **NEXT UP after the
+  format work.** Verification bar set by the user: exactness, not just "it loads" — obtain
+  reference `.map` files AND the KF-rendered images that use them, then assert our render through
+  the imported palette matches KF's colours with no artifacts (interpolation between the 256
+  entries, and gamma/linear handling, are the two places this silently goes wrong). Needs those
+  reference assets before starting.
+- [x] **Grand-tour script: landmarks + pathological locations** — SHIPPED v0.2.40-beta.33 as
+  `tours/grand-tour.toml` (~232 s): the whole set, the famous valleys, the exactly-known
+  Misiurewicz points (c = −2, c = i, with their multipliers narrated), the feature showcase
+  (dual Julia, orbit overlay, a second fractal family), then a single continuous dive through
+  the three-spar family HOLDING at every depth that has broken us — 1.7e55 / 3.3e61 / 6.3e63 /
+  2.6e72 / 2.0e82 / 6.5e94 — since they share one center. A flat frame at any hold is a
+  regression. It found a real bug on its first run (offline iteration starvation, fixed in the
+  same release). ⚠**Not yet fully validated end-to-end**: the deep chapter needs a bigger
+  iteration budget than the renderer can currently survive (see the tour-render TDR bug in Open
+  bugs) — validate the deep holds once that lands. Remaining from the original idea, now its own
+  item: an automated PASS/FAIL harness over the rendered frames (per-frame escaped-pixel and
+  capped fractions vs thresholds) so "it went black at depth" becomes a failing check.
+- [ ] **Automated tour-frame verdict harness** — render `grand-tour.toml` (low fps/size) and
+  assert per-frame flatness metrics: standard deviation and distinct-colour count over a sampled
+  grid, plus the GPU capped fraction where available. The ad-hoc PowerShell version used during
+  beta.33 development worked (flat frames read sd ≈ 0–8 and 2–12 colours against 60–100+ for a
+  healthy frame, and PNG size is a good cheap proxy: 5–8 KB vs 150–240 KB) — make it a committed
+  script or a `--tour-verify` flag so it runs unattended.
+- [ ] **Original grand-tour spec (superseded, kept for the unbuilt parts)** — one tour that visits the known
   points of interest AND the locations that have historically broken us, serving as both the demo
   reel and a regression test. Candidates from this repo's own scar tissue: the Misiurewicz spar
   fields where the iteration cap starves and the view goes flat/black (the 1.7e55× / 5.17e55× /
