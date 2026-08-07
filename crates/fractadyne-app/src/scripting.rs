@@ -1124,8 +1124,13 @@ pub(crate) struct Playback {
     pub(crate) name: String,
     kfs: Vec<Kf>,
     pub(crate) total: f64,
-    pub(crate) t0: Option<f64>,
-    loop_: bool,
+    /// Repeat when the end is reached (`loop` in the script; toggled by the status-bar transport).
+    pub(crate) loop_: bool,
+    /// Has the tour been ticked yet? (Was `t0`, the wall-clock origin. The clock is now an
+    /// ACCUMULATOR — `cur_t += dt * speed` — because a derived `now - t0` cannot express pause,
+    /// seek or speed: every transport control would have to fake them by moving the origin, and
+    /// the pacer already moves the origin for its own reasons.)
+    pub(crate) started: bool,
     pub(crate) bench: Option<Bench>,
     /// Timed narration overlays (drawn by the app over the fractal + into exported frames).
     pub(crate) captions: Vec<Caption>,
@@ -1147,8 +1152,12 @@ pub(crate) struct Playback {
     /// waiting at (so the budget resets at the next hold rather than accumulating across the tour).
     settle_waited: f64,
     settle_kf: usize,
-    /// Current tour time (seconds), updated each frame — so the caption overlay knows what to show.
+    /// Current tour time (seconds) — the authoritative clock, advanced by `advance_playback_core`.
     pub(crate) cur_t: f64,
+    /// Transport: playback rate multiplier, and whether the clock is user-paused. Distinct from
+    /// `paced_hold`, which is the RENDERER asking for time; these two are the USER asking.
+    pub(crate) speed: f64,
+    pub(crate) paused: bool,
     /// How much the pacer is holding the tour clock back this frame: 0 = playing in real time,
     /// 1 = fully stopped (waiting for the renderer). The status bar reads this so a stalled
     /// progress percentage says WHY instead of looking like a hang — which is exactly how it was
@@ -2043,7 +2052,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         name: if sf.name.is_empty() { "Script".to_string() } else { sf.name },
         kfs,
         total,
-        t0: None,
+        started: false,
         loop_: sf.loop_,
         bench,
         captions,
@@ -2051,6 +2060,8 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         spotlights,
         palettes,
         segments,
+        speed: 1.0,
+        paused: false,
         render: resolve_render(&sf.render)?,
         paced_hold: 0.0,
         pace: Pace::parse(sf.playback.pace.as_deref())?,
@@ -2628,7 +2639,8 @@ impl FractadyneApp {
             return PlaybackTick::Idle;
         };
         // Fresh tour → no leftover lookahead state from a previous run may install into it.
-        if pb.t0.is_none() {
+        if !pb.started {
+            pb.started = true;
             self.ref_prefetch.clear();
         }
         // Pipeline-paced clock: at extreme depth the async reference rebuild can fall behind a fast
@@ -2655,8 +2667,7 @@ impl FractadyneApp {
             // far more than a 3-second hold of wall clock — so without this the tour walks past
             // its own destination while the screen is still starved (black).
             if pb.pace == Pace::Settled && dt > 0.0 {
-                let e_now = (now - *pb.t0.get_or_insert(now)).clamp(0.0, pb.total);
-                let (holding, kf) = pb.holding_at(e_now);
+                let (holding, kf) = pb.holding_at(pb.cur_t);
                 if pb.settle_kf != kf {
                     pb.settle_kf = kf;
                     pb.settle_waited = 0.0;
@@ -2680,21 +2691,19 @@ impl FractadyneApp {
                 }
             }
             pb.paced_hold = hold;
-            if hold > 0.0 && dt > 0.0 {
-                if let Some(t0) = pb.t0.as_mut() {
-                    *t0 += dt * hold; // shift the start forward = the tour clock stands still
-                }
+            // Advance the clock. `1 - hold` is the pacer's dilation (0 = fully stopped while the
+            // renderer catches up), `speed` and `paused` are the user's transport. At speed 1 with
+            // no hold this is exactly the old wall-clock behaviour, so tour durations and the
+            // `--divetest` timings are unchanged.
+            let step = if pb.paused { 0.0 } else { dt * pb.speed * (1.0 - hold) };
+            pb.cur_t += step;
+            if pb.loop_ && pb.total > 0.0 && pb.cur_t >= pb.total {
+                pb.cur_t = 0.0;
             }
         }
-        let t0 = *pb.t0.get_or_insert(now);
-        let mut elapsed = now - t0;
-        if pb.loop_ && pb.total > 0.0 && elapsed >= pb.total {
-            pb.t0 = Some(now);
-            elapsed = 0.0;
-        }
-        let finished = !pb.loop_ && elapsed >= pb.total;
-        let e = elapsed.clamp(0.0, pb.total);
-        pb.cur_t = e; // for the caption overlay
+        let finished = !pb.loop_ && pb.cur_t >= pb.total;
+        let e = pb.cur_t.clamp(0.0, pb.total);
+        pb.cur_t = e;
         let s = pb.sample(e);
         if s.fractal != self.fractal || s.julia != self.julia_mode {
             self.fractal = s.fractal;

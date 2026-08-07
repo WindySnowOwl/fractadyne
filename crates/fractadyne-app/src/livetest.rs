@@ -189,7 +189,8 @@ impl FractadyneApp {
         println!("  {}", "-".repeat(104));
 
         let t_base = Instant::now();
-        pb.t0 = Some(t_base.elapsed().as_secs_f64() - t_from);
+        pb.cur_t = t_from; // seed the clock at the segment start
+        pb.started = false;
         pb.last_now = None;
         self.playback = Some(pb);
         self.invalidate_refs();
@@ -342,13 +343,12 @@ impl FractadyneApp {
                     self.export.width = saved_w;
                     self.export.ss = saved_ss;
                 }
-                // Give the tour clock back the time the oracle stole.
-                let paused = pause.elapsed().as_secs_f64();
+                // Give the tour clock back the time the oracle stole. With an accumulating clock
+                // that is simply "don't count the pause as elapsed": re-baseline `last_now`, and
+                // the next tick's `dt` covers only the frame, not the minutes of oracle render.
+                let _ = pause.elapsed();
                 if let Some(p) = self.playback.as_mut() {
-                    if let Some(t0) = p.t0.as_mut() {
-                        *t0 += paused;
-                    }
-                    p.last_now = p.last_now.map(|t| t + paused);
+                    p.last_now = Some(t_base.elapsed().as_secs_f64());
                 }
 
                 let cp = Checkpoint {

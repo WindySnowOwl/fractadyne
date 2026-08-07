@@ -421,8 +421,8 @@ impl crate::FractadyneApp {
             let Some(e_start) = time_at(&pb, *d) else { continue };
             // Cold reference state per window, then seed the tour clock at the window start.
             self.invalidate_refs();
-            let now0 = t_base.elapsed().as_secs_f64();
-            pb.t0 = Some(now0 - e_start);
+            pb.cur_t = e_start; // seed the clock at the window start (was: shift the origin)
+            pb.started = false;
             pb.last_now = None;
             self.playback = Some(pb);
 

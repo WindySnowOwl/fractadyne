@@ -710,8 +710,16 @@ impl FractadyneApp {
     }
 
     pub(crate) fn draw_status_bar(&mut self, ctx: &egui::Context) {
+        // Transport intents, applied after the panel closure — the buttons live inside a closure
+        // that already borrows `self`, and `stop_playback` needs it mutably.
+        let (mut seek, mut toggle_pause, mut stop, mut cycle_speed, mut toggle_loop) =
+            (None::<f64>, false, false, false, false);
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
+            // WRAPPED, not a single row: the deep-zoom coordinates alone can be most of the width,
+            // and a plain `horizontal` silently CLIPS whatever doesn't fit — which put the playback
+            // transport off the right edge on any window narrower than ~1600 px, i.e. invisible
+            // controls. Wrapping costs a second line only when it is actually needed.
+            ui.horizontal_wrapped(|ui| {
                 let l2 = self.viewport.log2_magnification();
                 ui.monospace(format!(
                     "center {}, {}",
@@ -783,25 +791,82 @@ impl FractadyneApp {
                 // looks exactly like a hang. The spinner animates regardless (it proves the UI
                 // thread is alive), the clock reads mm:ss / mm:ss, and a held clock says why.
                 if let Some(pb) = &self.playback {
+                    let (name, cur_t, total, paused, speed, looping, is_bench, held) = (
+                        pb.name.clone(),
+                        pb.cur_t,
+                        pb.total,
+                        pb.paused,
+                        pb.speed,
+                        pb.loop_,
+                        pb.bench.is_some(),
+                        pb.paced_hold > 0.5,
+                    );
                     ui.separator();
-                    ui.add(egui::Spinner::new().size(12.0));
-                    let pct = if pb.total > 0.0 {
-                        (pb.cur_t / pb.total * 100.0).clamp(0.0, 100.0)
+                    // The spinner only animates while the tour clock is actually moving: a paused
+                    // tour should LOOK paused. It stays spinning while the pacer holds the clock,
+                    // because the renderer is working then — that is the case that was mistaken
+                    // for a hang.
+                    if !paused {
+                        ui.add(egui::Spinner::new().size(12.0));
                     } else {
-                        100.0
-                    };
+                        ui.monospace("⏸");
+                    }
                     let mmss = |t: f64| {
                         let t = t.max(0.0) as u64;
                         format!("{}:{:02}", t / 60, t % 60)
                     };
-                    let tag = if pb.bench.is_some() { "benchmark" } else { "script" };
-                    ui.monospace(format!(
-                        "{} {tag} {} / {} ({pct:.0}%)",
-                        pb.name,
-                        mmss(pb.cur_t),
-                        mmss(pb.total),
-                    ));
-                    if pb.paced_hold > 0.5 {
+                    let pct = if total > 0.0 { (cur_t / total * 100.0).clamp(0.0, 100.0) } else { 100.0 };
+                    let tag = if is_bench { "benchmark" } else { "script" };
+                    ui.monospace(format!("{name} {tag} {} / {} ({pct:.0}%)", mmss(cur_t), mmss(total)));
+
+                    // --- transport ---
+                    // A tour is a timeline, so it gets timeline controls. Seeks move the clock
+                    // directly (see `Playback::cur_t`); nothing here touches the renderer, so
+                    // scrubbing to a deep keyframe simply asks the live path for that view.
+                    // Media glyphs, NOT monospace: the transport symbols live in egui's bundled
+                    // emoji font, and forcing the monospace family would drop them to tofu boxes.
+                    let btn = |ui: &mut egui::Ui, glyph: &str, tip: &str| -> bool {
+                        ui.add(egui::Button::new(egui::RichText::new(glyph).size(13.0)).small())
+                            .on_hover_text(tip)
+                            .clicked()
+                    };
+                    if btn(ui, "⏮", "Restart from the beginning") {
+                        seek = Some(0.0);
+                    }
+                    if btn(ui, "⏪", "Back 10 seconds") {
+                        seek = Some((cur_t - 10.0).max(0.0));
+                    }
+                    if btn(ui, if paused { "▶" } else { "⏸" }, if paused { "Resume" } else { "Pause" }) {
+                        toggle_pause = true;
+                    }
+                    if btn(ui, "⏹", "Stop playback and restore your own view settings") {
+                        stop = true;
+                    }
+                    if btn(ui, "⏩", "Forward 10 seconds") {
+                        seek = Some((cur_t + 10.0).min(total));
+                    }
+                    // Speed cycles rather than opening a menu: one control, one glance, and the
+                    // label doubles as the readout.
+                    if ui
+                        .add(egui::Button::new(egui::RichText::new(format!("{}x", crate::fmt_speed(speed))).monospace()).small())
+                        .on_hover_text("Playback speed (click to cycle 0.5x / 1x / 2x / 4x)")
+                        .clicked()
+                    {
+                        cycle_speed = true;
+                    }
+                    let loop_btn = ui.add(
+                        egui::Button::new(egui::RichText::new("🔁").size(13.0))
+                            .small()
+                            .fill(if looping {
+                                crate::theme::BRAND_ACCENT.gamma_multiply(0.35)
+                            } else {
+                                ui.visuals().widgets.inactive.bg_fill
+                            }),
+                    );
+                    if loop_btn.on_hover_text("Repeat the tour when it reaches the end").clicked() {
+                        toggle_loop = true;
+                    }
+                    if held {
                         ui.colored_label(
                             egui::Color32::from_rgb(0xE0, 0xA0, 0x30),
                             egui::RichText::new("waiting for detail").monospace(),
@@ -815,6 +880,31 @@ impl FractadyneApp {
                 }
             });
         });
+        // Apply the transport. A seek moves the clock only: the camera follows on the next tick
+        // through the normal sampling path, so scrubbing needs no special case anywhere else.
+        if stop {
+            self.stop_playback();
+            return;
+        }
+        if let Some(pb) = self.playback.as_mut() {
+            if let Some(t) = seek {
+                pb.cur_t = t.clamp(0.0, pb.total);
+            }
+            if toggle_pause {
+                pb.paused = !pb.paused;
+            }
+            if toggle_loop {
+                pb.loop_ = !pb.loop_;
+            }
+            if cycle_speed {
+                pb.speed = match pb.speed {
+                    s if s < 0.75 => 1.0,
+                    s if s < 1.5 => 2.0,
+                    s if s < 3.0 => 4.0,
+                    _ => 0.5,
+                };
+            }
+        }
     }
 }
 

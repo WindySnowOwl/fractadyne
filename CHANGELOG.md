@@ -41,6 +41,14 @@ limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — s
 - **Tours** — **Tools → "Script to current view…"**: one-click dive-tour generator (notation
   caption, depth-scaled duration; deep targets use the pan-shallow-then-dive structure that
   keeps every frame centered on the target) (beta.5–6).
+- **Transport controls for script playback** (beta.36) — restart / back 10 s / pause / stop /
+  forward 10 s / speed (0.5–4×) / loop, as media icons in the status bar, appearing only while a
+  script runs. This required making the tour clock an ACCUMULATOR (`cur_t += dt · speed`) rather
+  than deriving it from a wall-clock origin: pause, seek and speed cannot be expressed by moving an
+  origin the pacer is already moving for its own reasons. A seek moves the clock only — the camera
+  follows through the normal sampling path, so scrubbing needs no special case anywhere else. The
+  status bar also WRAPS now: it was a fixed row that silently clipped, which put the whole
+  transport off the right edge on any window narrower than ~1600 px.
 - **Script playback is visible in the status bar** (beta.36) — a spinner, `mm:ss / mm:ss (N%)`,
   and an explicit "waiting for detail" when the pacer has stopped the tour clock. A deep hold can
   legitimately sit on one frame for many seconds and the pacer deliberately freezes the clock while

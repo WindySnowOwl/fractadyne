@@ -1044,6 +1044,16 @@ fn fmt_zoom(mag: f64) -> String {
 
 /// Format magnification from `log2(magnification)` — stays correct past `f64`'s 1e308×
 /// (where `magnification()` saturates to `∞`), formatting `2^log2mag` via base-10.
+/// Playback-speed label for the transport button: `0.5`, `1`, `2`, `4` — no trailing `.0`, since
+/// the button is a readout as much as a control and "1.0x" reads like a measurement.
+pub(crate) fn fmt_speed(speed: f64) -> String {
+    if (speed - speed.round()).abs() < 1.0e-6 {
+        format!("{}", speed.round() as i64)
+    } else {
+        format!("{speed}")
+    }
+}
+
 pub(crate) fn fmt_zoom_log2(log2mag: f64) -> String {
     if log2mag <= 1020.0 {
         fmt_zoom(2f64.powf(log2mag.max(0.0)))
