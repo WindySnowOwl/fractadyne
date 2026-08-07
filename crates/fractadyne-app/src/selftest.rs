@@ -1895,7 +1895,7 @@ impl FractadyneApp {
             let (saved_iter, saved_auto) =
                 (self.render_cfg.max_iter, self.render_cfg.auto_iter);
             self.render_cfg.auto_iter = false;
-            let mut at_budget = |app: &mut Self, iter: u32| -> Option<f64> {
+            let at_budget = |app: &mut Self, iter: u32| -> Option<f64> {
                 app.render_cfg.max_iter = iter;
                 let mut req = make(app, SPAR_X, SPAR_Y, SPAR_MAG);
                 req.width = 96;

@@ -784,6 +784,14 @@ pub(crate) const PACE_LAG_HI: f64 = 2.8;
 /// pays a few extra settle frames before reverting.
 pub(crate) const ITER_STALL_LIMIT: u8 = 3;
 
+/// Ceiling on the adaptive iteration boost multiplier. The old ×16 was a wall the Misiurewicz
+/// spar family outgrew by ~1e82×: `zoom_iter_cap` there is ~72k, so even a maxed boost stopped at
+/// ~1.15M while the field genuinely needs several million — the probe was still measuring "capped,
+/// and raising helps" when the ceiling cut it off. 256× lets `zoom_iter_cap × boost` reach
+/// `MAX_ITER_LIMIT` at any depth where that appetite is real; runaway protection is the job of the
+/// stall/plateau evidence logic and the frame-budget machinery (cost-based), not this number.
+pub(crate) const ITER_BOOST_MAX: f64 = 256.0;
+
 /// Hard ceiling on the user-settable iteration count (the Iterations slider max and the live
 /// budget clamps). Was 500,000 — which the 2.6e72× Misiurewicz spar outgrew (measured: 33% of
 /// samples still capped at 500k, ZERO at 1M — the view was fully resolvable, the app just refused
@@ -911,11 +919,24 @@ fn main() -> eframe::Result<()> {
                         {
                             features |= eframe::wgpu::Features::TIMESTAMP_QUERY;
                         }
+                        // Reference-orbit headroom: the default 128 MB storage-binding limit caps
+                        // the orbit+BLA buffer at ~928k samples — a wall the Misiurewicz spar
+                        // family hits by ~1e82× (its reference needs >928k iterations to escape,
+                        // so the view renders black there while shallower spar depths resolve).
+                        // Ask the ADAPTER for up to 1 GiB (≈7.4M samples); a lesser adapter grants
+                        // what it has, and `init_orbit_len_cap` sizes the cap from whatever was
+                        // actually granted, so nothing here assumes a big GPU.
+                        let want_binding: u32 = 1 << 30;
+                        let adapter_limits = adapter.limits();
+                        let binding = adapter_limits.max_storage_buffer_binding_size.min(want_binding);
+                        let buffer = adapter_limits.max_buffer_size.min(want_binding as u64);
                         eframe::wgpu::DeviceDescriptor {
                             label: Some("fractadyne device"),
                             required_features: features,
                             required_limits: eframe::wgpu::Limits {
                                 max_texture_dimension_2d: 8192,
+                                max_storage_buffer_binding_size: binding.max(base_limits.max_storage_buffer_binding_size),
+                                max_buffer_size: buffer.max(base_limits.max_buffer_size),
                                 ..base_limits
                             },
                             memory_hints: eframe::wgpu::MemoryHints::default(),
@@ -2132,8 +2153,30 @@ impl FractadyneApp {
             }
             panic!("wgpu uncaptured error: {e}");
         }));
+        // The device-lost CALLBACK must also restart — not just the uncaptured-error path above.
+        // Measured (e21000 experiment, 2026-08-07): after a TDR the main thread can BLOCK inside
+        // a wgpu wait on the dead device, so no error ever surfaces, no panic fires, and the app
+        // hangs forever with the watchdog barking — the historical "present wedge", finally
+        // explained. This callback runs on another thread and is then the ONLY recovery path:
+        // write the crash report and relaunch (same loop guard as above). `Destroyed` is the
+        // clean-teardown reason — never restart on it.
         render_state.device.set_device_lost_callback(|reason, msg| {
             diag::log_line("wgpu", &format!("DEVICE LOST ({reason:?}): {msg}"));
+            if !matches!(reason, eframe::wgpu::DeviceLostReason::Destroyed) {
+                diag::write_crash_report(&format!("wgpu device lost ({reason:?}): {msg}"));
+                if diag::elapsed_s() > 60.0 {
+                    if let Ok(exe) = std::env::current_exe() {
+                        diag::log_line("wgpu", "device lost — restarting");
+                        let _ = std::process::Command::new(exe)
+                            .args(std::env::args().skip(1))
+                            .env("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS", "1")
+                            .spawn();
+                    }
+                } else {
+                    diag::log_line("wgpu", "device lost within 60s of boot — not restarting (loop guard)");
+                }
+                std::process::exit(2);
+            }
         });
         // D1.4: hang watchdog for every update()-driven mode. update() stamps liveness each
         // frame; long blocking phases stamp via breadcrumbs and progress pumps, so a stale

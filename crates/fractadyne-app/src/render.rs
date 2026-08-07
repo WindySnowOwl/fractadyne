@@ -630,6 +630,13 @@ impl FractadyneApp {
     fn install_recompute(&mut self, vi: usize, res: RecomputeResult) {
         // `orbit_len` counts SAMPLES (`iters + 1`): a build capped at exactly `LIVE_REF_CAP`
         // iterations stores `LIVE_REF_CAP + 1` samples and must install normally.
+        //
+        // The guard is LOAD-BEARING, re-proven 2026-08-07: bypassing it at the e21000 tip
+        // (derate + restart nets active) TDR'd on the first frame after the 508k-partial install,
+        // and the main thread then blocked inside a wgpu wait on the dead device — the historical
+        // wedge. Views whose reference stays partial at the device cap (the 2e95× spar) therefore
+        // keep the clamp and render under-resolved live; that is the accepted trade until the
+        // install frame itself can be cost-bounded.
         if res.partial && res.orbit_len > crate::LIVE_REF_CAP.saturating_add(1) {
             // Record the refused length: the quality gate only re-requests when it can ask for
             // STRICTLY MORE, so this refusal quiets it until the (boost-driven) budget outgrows
@@ -671,7 +678,12 @@ impl FractadyneApp {
             let vb = vi.min(1);
             let old = &self.ref_cache[vi];
             let clamp_lifted = old.partial && !res.partial && res.orbit_len > old.orbit_len;
-            let big_jump = old.orbit_len > 0 && res.orbit_len > old.orbit_len.saturating_mul(2);
+            // ×1.5, not ×2: the e21000 experiment's killer install was a 1.985× length jump
+            // (256,001 → 508,193 — pixel clamp and therefore per-frame cost nearly DOUBLED) and
+            // sailed under a ×2 trigger. Dive installs advance ~0.5 octave ≈ ×1.1–1.2 in orbit
+            // length, so ×1.5 still never fires on the smooth path.
+            let big_jump = old.orbit_len > 0
+                && res.orbit_len as u64 * 2 > old.orbit_len as u64 * 3;
             if clamp_lifted || big_jump {
                 let cur = self.perf.fe_budget[vb];
                 let derated = (cur / 8).max(TDR_BOOTSTRAP_STEPS);
@@ -1869,7 +1881,7 @@ impl FractadyneApp {
                             self.perf.iter_stall[vb] = 0;
                         }
                         self.perf.iter_probe[vb] = Some((boost, frac));
-                        self.perf.iter_boost[vb] = (boost * step).min(16.0);
+                        self.perf.iter_boost[vb] = (boost * step).min(crate::ITER_BOOST_MAX);
                         crate::diag::trace(
                             "gpu",
                             format!(
@@ -2948,6 +2960,13 @@ mod reuse_tests {
         assert!(cap * 9 * 16 <= LIMIT_128MB as u64, "cap {cap} + BLA overruns the 128 MB binding");
         // …and clear the deepest escaping corpus reference so it is never truncated.
         assert!(cap > LOC15_ORBIT, "cap {cap} must exceed loc 15's {LOC15_ORBIT}-sample orbit");
+        // At the 1 GiB binding the app now REQUESTS from capable adapters (the e82 spar's
+        // reference does not escape within the 128 MB default's ~928k samples), the same formula
+        // must yield multi-million-sample room while still fitting orbit + BLA in the binding.
+        const LIMIT_1GIB: u32 = 1 << 30;
+        let cap_1g = ((LIMIT_1GIB as u64) / 16 / 9).saturating_sub(4096);
+        assert!(cap_1g > 7_000_000, "1 GiB binding should afford >7M samples, got {cap_1g}");
+        assert!(cap_1g * 9 * 16 <= LIMIT_1GIB as u64, "1 GiB cap math overruns the binding");
     }
 
     /// The 6.3e63× spar "blobs" contract: a SETTLED live build's orbit cap must follow the

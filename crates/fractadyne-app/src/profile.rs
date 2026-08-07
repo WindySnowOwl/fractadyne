@@ -594,10 +594,10 @@ impl crate::FractadyneApp {
         // it reprojected). `settle_t` drives `interacting` exactly like the GUI.
         let t0 = Instant::now();
         let mut last_real_res: Option<[u32; 2]> = None;
-        let mut frame = |app: &mut crate::FractadyneApp,
-                         w: u32,
-                         h: u32,
-                         last_real_res: &mut Option<[u32; 2]>|
+        let frame = |app: &mut crate::FractadyneApp,
+                     w: u32,
+                     h: u32,
+                     last_real_res: &mut Option<[u32; 2]>|
          -> (bool, [u32; 2]) {
             let now = t0.elapsed().as_secs_f64();
             let (nw, nh) = (w as f64, h as f64);

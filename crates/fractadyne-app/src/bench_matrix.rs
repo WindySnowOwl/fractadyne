@@ -143,21 +143,18 @@ pub(crate) fn matrix() -> Vec<Segment> {
     v
 }
 
-/// Measured result for one segment (deterministic signature + timings).
+/// Measured result for one segment (deterministic signature + timings). Timings kept are the two
+/// the report prints and the baseline stores (`ref_ms`, `bla_ms`, `render_ms` → `gpu_ms`); the
+/// per-pass GPU split lives in `--profile`, not here.
 struct SegResult {
-    group: &'static str,
     name: String,
-    deterministic: bool,
     mode: u32,
     sa_skip: u32,
     orbit_len: u32,
     eff_iter: u32,
     counters: [u64; 5], // rebase, ext, glitch, bla_skip, maxiter
     ref_ms: f64,
-    series_ms: f64,
     bla_ms: f64,
-    gpu_it_ms: f64,
-    gpu_col_ms: f64,
     render_ms: f64,
 }
 
@@ -235,18 +232,12 @@ impl crate::FractadyneApp {
         // Warm-up (shader/pipeline compile, first upload) — not counted.
         let _ = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
 
-        let (mut render_ms, mut gpu_it, mut gpu_col) = (Vec::new(), Vec::new(), Vec::new());
+        let mut render_ms = Vec::new();
         let mut counters = [0u64; 5];
         for _ in 0..reps.max(1) {
             let t = Instant::now();
-            let (res, ts) = fractadyne_gpu::timing::capture(|| {
-                fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
-            });
+            let res = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
             render_ms.push(t.elapsed().as_secs_f64() * 1000.0);
-            if ts.captured {
-                gpu_it.push(ts.iterate_ms);
-                gpu_col.push(ts.color_ms);
-            }
             if let Ok(er) = &res {
                 // Slots 0..5: rebase, ext, glitch, bla_skip, maxiter (deterministic).
                 counters.copy_from_slice(&er.counters[0..5]);
@@ -254,19 +245,14 @@ impl crate::FractadyneApp {
         }
 
         SegResult {
-            group: s.group,
             name: s.name.clone(),
-            deterministic: s.deterministic,
             mode: req.mode,
             sa_skip: req.sa_skip,
             orbit_len: req.orbit_len,
             eff_iter: req.max_iter,
             counters,
             ref_ms: setup.reference_ms,
-            series_ms: setup.series_ms,
             bla_ms: setup.bla_ms,
-            gpu_it_ms: median(&mut gpu_it),
-            gpu_col_ms: median(&mut gpu_col),
             render_ms: median(&mut render_ms),
         }
     }

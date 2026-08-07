@@ -23,11 +23,21 @@ Mockups: [design/mockups/](design/mockups/).
 - [ ] **Live pixel clamp for long-non-escaping references vs CLI** — residual of the beta.27/28
   freeze-guard design, accepted for now. A reference still partial past `LIVE_REF_CAP` is refused
   (present-wedge safety, reproduced at e21000), leaving live pixels clamped at the last installed
-  orbit (≤256k) while a CLI render of the same view clamps at the device cap (~928k) — so live can
-  under-resolve where an export succeeds. Only bites when the picked reference's escape exceeds
-  the ~928k device cap or genuinely never escapes. Real fix = root-cause the present-wedge (it is
-  the FIRST FRAME against a long non-escaping reference, not the build) so long partials can
-  install safely, or tile/pace that frame.
+  orbit (≤256k) while a CLI render of the same view clamps at the device cap — so live can
+  under-resolve where an export succeeds. Bites when the picked reference's escape exceeds the
+  device cap or genuinely never escapes — **measured 2026-08-07 at the 2.05e95× spar: the
+  reference is still partial at the full 7.45M-sample cap, so the live view is BLACK there while
+  a CLI render (pixels clamped at 7.45M) can still resolve.** **Experiment RUN 2026-08-07
+  (guard bypassed at e21000, derate + restart nets active): the wedge is REAL and now fully
+  explained** — the first frame after the 508k-partial install TDR'd (`DEVICE LOST (Unknown)` +5s
+  after install), and the main thread then BLOCKED inside a wgpu wait on the dead device: no error
+  ever surfaced, so no panic, no report, no restart — a permanent hang with the watchdog barking.
+  So the guard STAYS (v0.2.40-beta.30 re-proves and documents it), and the experiment hardened two
+  things it exposed: the device-lost CALLBACK now also writes the report and restarts (it fires on
+  another thread and is the only recovery path in the blocked-main-thread case; `Destroyed` =
+  clean teardown, never restarts), and the install derate trigger is ×1.5 (the killer install was
+  a 1.985× length jump that sailed under ×2; dive installs are ×1.1–1.2, still never trip it).
+  Real fix remains: cost-bound the first frame against a long non-escaping reference.
 
 - [x] **LIVE_REF_CAP truncates the reference below the live iteration budget → smooth "blobs"**
   — FIXED v0.2.40-beta.27 (reported 2026-08-06 at the 6.3e63× three-spar). The reference there
