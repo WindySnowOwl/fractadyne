@@ -2391,6 +2391,9 @@ impl FractadyneApp {
 
             // `--segment` resolution: chapters close at the next chapter's start, and a name can
             // be given as an id, a unique prefix, or a 1-based index.
+            // Asserted against the script's OWN total rather than a literal: the tour's timeline
+            // is edited (the deep chapter was slowed once already), and a hardcoded duration turns
+            // every such edit into a spurious failure that says nothing about segment lookup.
             let seg = crate::scripting::parse_tour_text(include_str!("../../../tours/grand-tour.toml"))
                 .ok()
                 .map(|pb| {
@@ -2398,12 +2401,13 @@ impl FractadyneApp {
                     let by_prefix = pb.find_segment("land").map(|s| s.id.clone());
                     let by_index = pb.find_segment("1").map(|s| s.id.clone());
                     let missing = pb.find_segment("nope").is_err();
-                    (by_id, by_prefix, by_index, missing)
+                    (by_id, by_prefix, by_index, missing, pb.total)
                 });
             let (seg_ok, seg_desc) = match &seg {
-                Some((Ok((start, end)), Ok(prefix), Ok(first), true)) => (
-                    *start == 117.0 && *end == 232.0 && prefix == "landmarks" && first == "whole-set",
-                    format!("gauntlet {start}–{end}s, prefix→{prefix}, #1→{first}"),
+                Some((Ok((start, end)), Ok(prefix), Ok(first), true, total)) => (
+                    // The last chapter runs to the end of the tour; the others are ordered.
+                    *start > 0.0 && *end == *total && prefix == "landmarks" && first == "whole-set",
+                    format!("gauntlet {start}–{end}s of {total}s, prefix→{prefix}, #1→{first}"),
                 ),
                 _ => (false, "segment lookup failed".into()),
             };

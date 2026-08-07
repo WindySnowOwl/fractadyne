@@ -1149,6 +1149,11 @@ pub(crate) struct Playback {
     settle_kf: usize,
     /// Current tour time (seconds), updated each frame — so the caption overlay knows what to show.
     pub(crate) cur_t: f64,
+    /// How much the pacer is holding the tour clock back this frame: 0 = playing in real time,
+    /// 1 = fully stopped (waiting for the renderer). The status bar reads this so a stalled
+    /// progress percentage says WHY instead of looking like a hang — which is exactly how it was
+    /// first reported ("the script stopped").
+    pub(crate) paced_hold: f64,
     /// Wall-clock of the previous `advance_playback` frame — gives the per-frame `dt` the
     /// pipeline pacer needs to dilate the tour clock (see `advance_playback`). `None` = first frame.
     pub(crate) last_now: Option<f64>,
@@ -2047,6 +2052,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         palettes,
         segments,
         render: resolve_render(&sf.render)?,
+        paced_hold: 0.0,
         pace: Pace::parse(sf.playback.pace.as_deref())?,
         settle_timeout: sf.playback.settle_timeout.unwrap_or(20.0).max(0.0),
         settle_waited: 0.0,
@@ -2673,6 +2679,7 @@ impl FractadyneApp {
                     hold = 1.0;
                 }
             }
+            pb.paced_hold = hold;
             if hold > 0.0 && dt > 0.0 {
                 if let Some(t0) = pb.t0.as_mut() {
                     *t0 += dt * hold; // shift the start forward = the tour clock stands still

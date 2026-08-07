@@ -21,8 +21,14 @@
 #   Regression:   render at low fps/size (e.g. --fps 2 --size 640x360) and inspect
 #                 the hold frames; the deep chapter is where the cost is.
 #
-# Timeline is 232 s. Every `t` is ABSOLUTE seconds from the start — keyframes and
+# Timeline is 316 s. Every `t` is ABSOLUTE seconds from the start — keyframes and
 # narration can be edited independently without recomputing anything downstream.
+#
+# The deep chapter descends at roughly half a decade per second. It used to run at one
+# decade per second, and no deep view can resolve at that rate: the reference rebuild alone
+# costs seconds past 1e60x, so the camera outran the renderer and the dive was watched
+# through frames that never finished. Slower is not padding here — it is the difference
+# between seeing the structure and seeing the budget lose.
 format_version = 2
 name = "Fractadyne Grand Tour"
 
@@ -282,7 +288,7 @@ max_iter = 20000
 ease = "in"
 [[keyframe]]
 id = "dive-e30"
-t = 152
+t = 166
 zoom = "1e30"
 max_iter = 60000
 ease = "linear"
@@ -292,57 +298,57 @@ ease = "linear"
 # blobs" where the export showed dendrites), and its stale-baseline plateau.
 [[keyframe]]
 id = "hold-e55"
-t = 166
+t = 200
 zoom = "1e55"
 max_iter = 250000
 ease = "linear"
-hold = 3
+hold = 6
 # 3.3e61 — beta.26: the plateau detector latched after ONE flat raise; capped
 # fraction sits at exactly 100% through x1.6 and x2.6 before collapsing at x4.1.
 [[keyframe]]
 id = "hold-e61"
-t = 175
+t = 218
 zoom = "1e61"
 max_iter = 400000
 ease = "linear"
-hold = 3
+hold = 6
 # 6.3e63 — beta.27: LIVE_REF_CAP truncated a reference that escapes at 256,753,
 # 753 iterations past the cap -> partial -> pixel clamp -> blobs.
 [[keyframe]]
 id = "hold-e63"
-t = 182
+t = 230
 zoom = "1e63"
 max_iter = 500000
 ease = "linear"
-hold = 3
+hold = 6
 # 2.6e72 — beta.28: the 500k iteration ceiling (this view needs ~1M), and the
 # clamped-budget deadlock it exposed in the reference extension.
 [[keyframe]]
 id = "hold-e72"
-t = 194
+t = 252
 zoom = "1e72"
 max_iter = 1200000
 ease = "linear"
-hold = 3
+hold = 6
 # 2.0e82 — beta.30: the 128 MB storage-binding wall. The reference here escapes at
 # 928,084 samples — 112 past the old ~928k device cap.
 [[keyframe]]
 id = "hold-e82"
-t = 208
+t = 276
 zoom = "1e82"
 max_iter = 2000000
 ease = "linear"
-hold = 3
+hold = 6
 # 6.5e94 — beta.32: the plateau detector again. This view needs ~39x the depth-scaled
 # cap before a single pixel escapes; three flat steps "proved" interior and reverted
 # to a black screen.
 [[keyframe]]
 id = "hold-e94"
-t = 224
+t = 306
 zoom = "6.46e94"
 max_iter = 4000000
 ease = "out"
-hold = 8
+hold = 10
 
 # ============================================================ narration
 [[annotation]]
@@ -436,32 +442,32 @@ secs = 5.0
 [[annotation]]
 kind = "caption"
 text = "Perturbation + series approximation + bilinear approximation"
-t = 145.0
+t = 150.0
 secs = 5.0
 [[annotation]]
 kind = "caption"
 text = "10^55x — past here the iteration budget adapts itself"
-t = 166.5
+t = 200.5
 secs = 3.5
 [[annotation]]
 kind = "caption"
 text = "10^63x — the reference orbit is rebuilt as the view descends"
-t = 182.5
+t = 230.5
 secs = 3.0
 [[annotation]]
 kind = "caption"
 text = "10^72x — a million iterations per pixel"
-t = 194.5
+t = 252.5
 secs = 3.0
 [[annotation]]
 kind = "caption"
 text = "10^82x — 380-digit arithmetic, seven million reference samples"
-t = 208.5
+t = 276.5
 secs = 3.0
 [[annotation]]
 kind = "caption"
 text = "6.5 x 10^94 x"
-t = 225.0
+t = 307.0
 secs = 7.0
 size = 28
 

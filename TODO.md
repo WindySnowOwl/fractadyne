@@ -356,6 +356,41 @@ future *export* if anyone wants to cut frames in an NLE, never the native format
   reference for the export instead of re-picking cold. Not GPU-bound; mode-2 Fe per-iter cost is not
   the bottleneck.
 
+## Autopilot / auto-zoom — target selection & path planning (user spec, 2026-08-07)
+
+The current autopilot picks a direction from a geometric average of "interesting" pixels, which
+oscillates and dead-ends. The machinery to do this properly already ships (Newton nucleus finding,
+`nucleus_size`, the Misiurewicz solver, multiplier λ, DE and orbit-stat aux channels) — it just
+isn't wired into target selection.
+
+- [ ] **Target selection: score candidates, don't average.** Use Newton nucleus finding to locate
+  the dominant period-*p* minibrot and its atom size, plus the Misiurewicz solve for nearby hubs,
+  then SCORE the candidates. Useful score terms:
+  - **Structure density** — local iteration-count entropy, or DE-gradient variance, in a window.
+  - **Remaining depth** — atom size relative to the current view, i.e. how many decades of
+    interest the target still has left in it.
+  - **A penalty for near-tip locations.**
+- [ ] **Aim beside the nucleus, not at it.** Landing exactly on a minibrot terminates the zoom in a
+  dead end. Choose the aim point as an OFFSET from the nucleus — skirting it at a fraction of the
+  atom size is precisely the Dinkydau shape-stacking manoeuvre that generates embedded Julia sets.
+- [ ] **Prefer Misiurewicz targets as the other good class.** λ guarantees the descent never runs
+  out: structure repeats every factor of |λ|, forever.
+- [ ] **Path planning: receding horizon with commitment.** Pick a target several decades ahead,
+  COMMIT to it, fly there smoothly, and only re-plan once within some fraction of the atom size.
+  Commitment is what kills the oscillation.
+- [ ] **Fly it with Van Wijk & Nuij (2003)**, "Smooth and efficient zooming and panning" — the
+  closed-form optimal path in (center, log-zoom) space between two views such that apparent motion
+  is perceptually uniform. Naive linear center interpolation with exponential zoom produces the
+  "swing" artifact where the target lurches sideways before settling; Van Wijk–Nuij eliminates it.
+  Plan in log-scale: zoom is exponential and everything is linear there. (This also applies to the
+  tour camera, which interpolates centers linearly today — see `Playback::sample`.)
+- [ ] **Two cautions specific to this stack:**
+  - Center interpolation must happen in ARBITRARY PRECISION (or as a delta against a fixed
+    reference), or the path quantizes into visible steps below ~1e15×.
+  - Target re-planning must run OFF-THREAD — Newton refinement mid-flight would stall the live
+    loop. Same concern the NR-zoom follow-up already flags
+    (`NR_REFINE_MAX_BIT_ITERS` declines a synchronous refine past ~1 s of UI blocking).
+
 ## Design follow-ups (from mockup review, 2026-06-25)
 
 - [ ] **CA 2-D Birth/Survive rows only go 0–5; must be 0–8.** A 2-D life-like cell

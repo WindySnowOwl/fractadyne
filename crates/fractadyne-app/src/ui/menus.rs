@@ -776,16 +776,42 @@ impl FractadyneApp {
                     ui.colored_label(color, egui::RichText::new(label).monospace())
                         .on_hover_text(detail);
                 }
+                // Playback indicator. A spinner, because the honest failure mode here is not
+                // knowing whether anything is happening: a deep hold can legitimately sit on one
+                // frame for many seconds, and the pacer deliberately STOPS the tour clock while
+                // the renderer catches up — so a frozen percentage is expected behaviour that
+                // looks exactly like a hang. The spinner animates regardless (it proves the UI
+                // thread is alive), the clock reads mm:ss / mm:ss, and a held clock says why.
                 if let Some(pb) = &self.playback {
-                    let elapsed = pb.t0.map_or(0.0, |t0| ctx.input(|i| i.time) - t0);
+                    ui.separator();
+                    ui.add(egui::Spinner::new().size(12.0));
                     let pct = if pb.total > 0.0 {
-                        (elapsed / pb.total * 100.0).clamp(0.0, 100.0)
+                        (pb.cur_t / pb.total * 100.0).clamp(0.0, 100.0)
                     } else {
                         100.0
                     };
-                    ui.separator();
+                    let mmss = |t: f64| {
+                        let t = t.max(0.0) as u64;
+                        format!("{}:{:02}", t / 60, t % 60)
+                    };
                     let tag = if pb.bench.is_some() { "benchmark" } else { "script" };
-                    ui.monospace(format!("▶ {} {tag} {pct:.0}%", pb.name));
+                    ui.monospace(format!(
+                        "{} {tag} {} / {} ({pct:.0}%)",
+                        pb.name,
+                        mmss(pb.cur_t),
+                        mmss(pb.total),
+                    ));
+                    if pb.paced_hold > 0.5 {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(0xE0, 0xA0, 0x30),
+                            egui::RichText::new("waiting for detail").monospace(),
+                        )
+                        .on_hover_text(
+                            "The tour clock is paused while the renderer resolves this view \
+                             (reference build / iteration budget climbing). Playback resumes by \
+                             itself; see [playback] pace in the script.",
+                        );
+                    }
                 }
             });
         });

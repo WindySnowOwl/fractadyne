@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.36 (build 1132)
-- **Generated:** 2026-08-07 17:39:18 UTC (unix 1786124358)
+- **Version:** 0.2.40-beta.36 (build 1134)
+- **Generated:** 2026-08-07 19:46:17 UTC (unix 1786131977)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -80,14 +80,14 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Coords | complex rational (37+16i)/100 | 264-bit floor | re/im ok=true/true, Δ vs decimal=0.0e0 | both coords, Δ<1e-30 | ✅ PASS |
 | Coords | malformed coordinates rejected | 8 inputs | all rejected | all rejected | ✅ PASS |
 | Coords | deep decimal round-trip intact | 4096-bit coordinate | 4100 bits agree | ≥4000 bits | ✅ PASS |
-| Script | shipped tours resolve | 6 scripts | all resolve, 2142s of tour | all resolve | ✅ PASS |
+| Script | shipped tours resolve | 6 scripts | all resolve, 2226s of tour | all resolve | ✅ PASS |
 | Script | absolute times + geometric iteration ramp | hold 0–2s, glide 2–6s to 1e12× | hold@2s=1e0.0, mid@4s=1e6.000, end=1e12.0, iter mid=31623 end=1000000 | still 1× at 2s, 1e6× at 4s, 31623 iters at 4s | ✅ PASS |
 | Script | deep zoom string survives f64 range | zoom = "3.0938e1216" | log10 mag = 1216.4905 | 1216.4904 ± 1e-3 | ✅ PASS |
 | Script | malformed scripts rejected | 11 scripts | all rejected | all rejected | ✅ PASS |
 | Script | playback pacing | pace = settled / default | settled parsed=true, default adaptive=true | settled honored, default adaptive | ✅ PASS |
 | Script | palette definition + morph | custom stops → Ember over 2s | start=2 stops, mid=8 blended stops, end=preset 0 | stops verbatim, blend at the midpoint, preset verbatim | ✅ PASS |
 | Script | generated dive script round-trips | "Script to current view" at 2^1200× | 68.0s, ends 1e359.0× (view 1e359.0×) | resolves, 68s, ends at the view's depth | ✅ PASS |
-| Script | segment lookup | grand-tour chapters | gauntlet 117–232s, prefix→landmarks, #1→whole-set | id / prefix / index resolve, unknown errors | ✅ PASS |
+| Script | segment lookup | grand-tour chapters | gauntlet 117–316s of 316s, prefix→landmarks, #1→whole-set | id / prefix / index resolve, unknown errors | ✅ PASS |
 | View format | metadata round-trips a deep view | serialize → scramble → load | iter 1234 aa 3 upp_log2 -120.000 cx -0.743643887037151 | clean load; fractal/iter/aa/zoom/center preserved | ✅ PASS |
 | View format | newer format_version flagged | format_version=999 | saved by a newer Fractadyne (format v999); some settings may not apply — consider updating | newer == Some(999) | ✅ PASS |
 | View format | hostile fields clamped + reported | upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf, bogus_field | iter 10000000 aa 16 upp_log2 -3.40e7; clamped [zoom depth, max_iter, cycle, offset, anti-aliasing]; unknown [bogus_field] | clamped & finite; report lists clamped + unknown | ✅ PASS |

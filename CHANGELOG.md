@@ -41,6 +41,15 @@ limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — s
 - **Tours** — **Tools → "Script to current view…"**: one-click dive-tour generator (notation
   caption, depth-scaled duration; deep targets use the pan-shallow-then-dive structure that
   keeps every frame centered on the target) (beta.5–6).
+- **Script playback is visible in the status bar** (beta.36) — a spinner, `mm:ss / mm:ss (N%)`,
+  and an explicit "waiting for detail" when the pacer has stopped the tour clock. A deep hold can
+  legitimately sit on one frame for many seconds and the pacer deliberately freezes the clock while
+  the renderer catches up, so a frozen percentage was expected behaviour that looked exactly like a
+  hang — it was reported as "the script stopped".
+- **The grand tour's deep chapter descends at half the old rate** (beta.36) — it ran at ~1 decade
+  per second, which no deep view can resolve at (the reference rebuild alone costs seconds past
+  1e60×), so the camera outran the renderer. The regression holds doubled to 6 s (10 s at the
+  final one) and the tour is 316 s rather than 232 s.
 - **Live tour playback lost the GPU device — FIXED beta.36.** A regression from beta.35's settling
   change, plus a latent bug it exposed. Once holds settled, the progressive-AA ramp ran during
   playback and climbed to **ss=8 — 64 samples per pixel** — and the crash report's new live
