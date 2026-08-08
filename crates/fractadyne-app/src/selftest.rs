@@ -2211,6 +2211,41 @@ impl FractadyneApp {
                 pass: timing_ok,
             });
 
+            // Export size presets must be REPRODUCIBLE in the image dialog's model, which stores a
+            // width plus an aspect key and derives the height. A preset whose ratio no key
+            // expresses would render at a different size than its own label claims — silently, and
+            // only for that one entry. Check every row end to end: resolve its aspect, then redo
+            // the dialog's own `width / ratio` rounding and demand the stated height back.
+            let mut bad_sizes = Vec::new();
+            for (label, w, h) in crate::STANDARD_SIZES {
+                match crate::aspect_key_for(*w, *h) {
+                    None => bad_sizes.push(format!("{label}: no aspect key")),
+                    Some(k) => {
+                        let ratio = crate::EXPORT_ASPECTS
+                            .iter()
+                            .find(|(kk, _)| kk == &k)
+                            .map(|(_, r)| *r)
+                            .unwrap_or(0.0);
+                        let got = ((*w as f64) / ratio).round().max(1.0) as u32;
+                        if got != *h {
+                            bad_sizes.push(format!("{label}: {k} gives {got}, not {h}"));
+                        }
+                    }
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "export size presets round-trip through the aspect model".into(),
+                params: format!("{} presets", crate::STANDARD_SIZES.len()),
+                result: if bad_sizes.is_empty() {
+                    "all reproduce their stated height".into()
+                } else {
+                    bad_sizes.join("; ")
+                },
+                threshold: "every preset resolves to an aspect key that regenerates its height",
+                pass: bad_sizes.is_empty(),
+            });
+
             // Lookahead HOLD rule. `playback_ref_prefetch` builds references for depths the tour is
             // about to reach; a slot the dive has NOT yet reached must be HELD. Through beta.37 the
             // rule was read from the slot's BLA `dc_max` with the sign inverted, so an early slot

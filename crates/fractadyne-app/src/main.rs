@@ -326,6 +326,8 @@ pub(crate) struct TourRenderUi {
     pub(crate) prefix: String,
     pub(crate) width: u32,
     pub(crate) height: u32,
+    /// Size dropdown is on "Custom…" — see `ExportState::custom_size` for why it is sticky.
+    pub(crate) custom_size: bool,
     pub(crate) fps: f64,
     pub(crate) ss: u32,
     /// 0 = the whole tour; otherwise 1-based into the script's `[[segment]]` chapters.
@@ -347,6 +349,7 @@ impl Default for TourRenderUi {
             prefix: String::new(),
             width: 1920,
             height: 1080,
+            custom_size: false,
             fps: 30.0,
             ss: 2,
             segment: 0,
@@ -790,6 +793,41 @@ const EXPORT_ASPECTS: [(&str, f64); 8] = [
     ("9:16", 9.0 / 16.0),
     ("2:1", 2.0),
 ];
+
+/// Standard output sizes offered by the export and tour-render dialogs: (label, width, height).
+///
+/// Every entry's ratio matches an [`EXPORT_ASPECTS`] key, because the image dialog stores a width
+/// plus an aspect and derives the height — a preset whose ratio it cannot express would silently
+/// render at a different size than its own label claims. [`aspect_key_for`] is what enforces that,
+/// and the `export-sizes` selftest fails if a row is ever added that breaks it.
+pub(crate) const STANDARD_SIZES: &[(&str, u32, u32)] = &[
+    ("HD 720p — 1280×720", 1280, 720),
+    ("Full HD 1080p — 1920×1080", 1920, 1080),
+    ("WUXGA — 1920×1200", 1920, 1200),
+    ("QHD 1440p — 2560×1440", 2560, 1440),
+    ("WQXGA — 2560×1600", 2560, 1600),
+    ("4K UHD — 3840×2160", 3840, 2160),
+    ("5K — 5120×2880", 5120, 2880),
+    ("8K UHD — 7680×4320", 7680, 4320),
+    ("UXGA 4:3 — 1600×1200", 1600, 1200),
+    ("3:2 — 1920×1280", 1920, 1280),
+    ("Square — 2048×2048", 2048, 2048),
+    ("Portrait 9:16 — 1080×1920", 1080, 1920),
+];
+
+/// The [`EXPORT_ASPECTS`] key matching `w × h`, or `None` when no listed ratio reproduces it.
+/// The tolerance is half a pixel of height at this width: that is exactly the condition for the
+/// dialog's `round()`-ed height to come back as `h`, so a `Some` here is a promise the preset
+/// renders at its stated size. It is looser than exact equality on purpose: 1366×768 is not 16:9
+/// (1.7786 vs 1.7778) yet 1366/(16/9) rounds to exactly 768, so it IS reproducible and rejecting
+/// it would be wrong. A true mismatch — 3440×1440, whose 21:9 no key expresses — still fails.
+pub(crate) fn aspect_key_for(w: u32, h: u32) -> Option<&'static str> {
+    let (w, h) = (w as f64, h.max(1) as f64);
+    EXPORT_ASPECTS
+        .iter()
+        .find(|(_, r)| ((w / r) - h).abs() < 0.5)
+        .map(|(k, _)| *k)
+}
 
 
 /// Curated famous Mandelbrot locations: (name, center_x, center_y, magnification).
@@ -1672,6 +1710,10 @@ struct ExportState {
     dual_mode: DualExport,
     /// Aspect ratio: "window" (match the live view) or a fixed key ("16:9", "1:1", …).
     aspect: String,
+    /// The size dropdown is on "Custom…", so the width/aspect fields are shown for direct editing.
+    /// Sticky rather than derived: a custom size that happens to equal a preset would otherwise
+    /// snap the dialog back to preset mode mid-edit and hide the field being typed into.
+    custom_size: bool,
     notes: String,
     status: Option<String>,
     /// In-flight background export; receives the final status message when done.
@@ -2578,6 +2620,9 @@ impl FractadyneApp {
                     _ => DualExport::SideBySide,
                 },
                 aspect: s.export_aspect.clone(),
+                // Start in Custom mode only if the restored size isn't one of the presets, so a
+                // session saved at 1920×1080 reopens showing "Full HD 1080p".
+                custom_size: false,
                 notes: String::new(),
                 status: None,
                 task: None,

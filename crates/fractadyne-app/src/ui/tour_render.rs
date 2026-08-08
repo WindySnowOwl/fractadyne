@@ -33,6 +33,9 @@ impl FractadyneApp {
         };
         self.tour_render.width = w;
         self.tour_render.height = h;
+        // Let the dropdown name the script's size when it is a standard one; it falls back to
+        // Custom on its own when no preset matches.
+        self.tour_render.custom_size = false;
         self.tour_render.fps = r.fps.unwrap_or(30.0);
         self.tour_render.ss = r.ss.unwrap_or(1);
         self.tour_render.mp4 = r.mp4.is_some();
@@ -143,10 +146,50 @@ impl FractadyneApp {
                         ui.end_row();
 
                         ui.label("Size");
-                        ui.horizontal(|ui| {
-                            ui.add(egui::DragValue::new(&mut self.tour_render.width).range(16..=16384));
-                            ui.label("×");
-                            ui.add(egui::DragValue::new(&mut self.tour_render.height).range(16..=16384));
+                        ui.vertical(|ui| {
+                            // Same preset table as the image export dialog (`STANDARD_SIZES`).
+                            // This dialog stores width AND height, so a preset sets them directly
+                            // — no aspect round-trip to go wrong.
+                            let (w, h) = (self.tour_render.width, self.tour_render.height);
+                            let cur = crate::STANDARD_SIZES
+                                .iter()
+                                .find(|(_, pw, ph)| *pw == w && *ph == h)
+                                .map(|(l, _, _)| *l);
+                            let custom = self.tour_render.custom_size || cur.is_none();
+                            egui::ComboBox::from_id_salt("tour_render_size")
+                                .width(210.0)
+                                .selected_text(if custom {
+                                    format!("Custom — {w}×{h}")
+                                } else {
+                                    cur.unwrap_or_default().to_string()
+                                })
+                                .show_ui(ui, |ui| {
+                                    for (label, pw, ph) in crate::STANDARD_SIZES {
+                                        let on = !custom && cur == Some(*label);
+                                        if ui.selectable_label(on, *label).clicked() {
+                                            self.tour_render.width = *pw;
+                                            self.tour_render.height = *ph;
+                                            self.tour_render.custom_size = false;
+                                        }
+                                    }
+                                    ui.separator();
+                                    if ui.selectable_label(custom, "Custom…").clicked() {
+                                        self.tour_render.custom_size = true;
+                                    }
+                                });
+                            if custom {
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::DragValue::new(&mut self.tour_render.width)
+                                            .range(16..=16384),
+                                    );
+                                    ui.label("×");
+                                    ui.add(
+                                        egui::DragValue::new(&mut self.tour_render.height)
+                                            .range(16..=16384),
+                                    );
+                                });
+                            }
                         });
                         ui.end_row();
 

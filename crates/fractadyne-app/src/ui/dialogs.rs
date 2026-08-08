@@ -1128,13 +1128,52 @@ impl FractadyneApp {
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
-                egui::ComboBox::from_label("Width (px)")
-                    .selected_text(format!("{}", self.export.width))
+                // Size presets. The dialog's underlying model is width + aspect (height is
+                // derived), so a preset sets BOTH — `aspect_key_for` guarantees the listed
+                // dimensions are reproducible in that model, which is why the table is shared with
+                // the tour-render dialog rather than duplicated with different rounding.
+                let cur_h = self.export_height();
+                let cur_preset = crate::STANDARD_SIZES
+                    .iter()
+                    .find(|(_, w, h)| *w == self.export.width && *h == cur_h)
+                    .map(|(l, _, _)| *l);
+                let custom = self.export.custom_size || cur_preset.is_none();
+                egui::ComboBox::from_label("Size")
+                    .width(210.0)
+                    .selected_text(if custom {
+                        format!("Custom — {}×{}", self.export.width, cur_h)
+                    } else {
+                        cur_preset.unwrap_or_default().to_string()
+                    })
                     .show_ui(ui, |ui| {
-                        for w in [1280u32, 1920, 2560, 3840, 5120, 7680] {
-                            ui.selectable_value(&mut self.export.width, w, format!("{w}"));
+                        for (label, w, h) in crate::STANDARD_SIZES {
+                            let on = !custom && cur_preset == Some(*label);
+                            if ui.selectable_label(on, *label).clicked() {
+                                self.export.width = *w;
+                                if let Some(k) = crate::aspect_key_for(*w, *h) {
+                                    self.export.aspect = k.to_string();
+                                }
+                                self.export.custom_size = false;
+                            }
+                        }
+                        ui.separator();
+                        if ui
+                            .selectable_label(custom, "Custom…")
+                            .on_hover_text("Set the width yourself; height follows the Aspect below.")
+                            .clicked()
+                        {
+                            self.export.custom_size = true;
                         }
                     });
+                if custom {
+                    ui.horizontal(|ui| {
+                        ui.label("Width (px)");
+                        ui.add(
+                            egui::DragValue::new(&mut self.export.width).range(16..=32768).speed(8),
+                        );
+                        ui.label(format!("× {cur_h} (from Aspect)"));
+                    });
+                }
                 egui::ComboBox::from_label("Supersampling")
                     .selected_text(format!("{}×", self.export.ss))
                     .show_ui(ui, |ui| {
