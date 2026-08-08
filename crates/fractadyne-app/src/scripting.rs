@@ -274,6 +274,38 @@ pub(crate) struct Caption {
 }
 
 /// Eased fade opacity (0..1) for a timed annotation window `[start, end]` at tour time `t`.
+/// `(width, height)` of a COMPLETE PNG, or `None` if the file is missing, malformed, or truncated.
+///
+/// Reads only the head and tail: the 8-byte signature, the `IHDR` dimensions that follow it, and
+/// the 12-byte `IEND` trailer that a writer emits last. That trailer is the point — a file cut off
+/// by a full disk or a killed process has everything except its ending, so its absence is the
+/// signal, and checking it costs two seeks rather than decoding a 4K image.
+fn png_frame_size(path: &std::path::Path) -> Option<(u32, u32)> {
+    use std::io::{Read, Seek, SeekFrom};
+    const MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    // 8 magic + 8 (IHDR length+type) + 8 (w,h) = 24, and a 12-byte IEND cannot overlap them.
+    const IEND: [u8; 8] = [0, 0, 0, 0, b'I', b'E', b'N', b'D'];
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    if len < 24 + 12 {
+        return None;
+    }
+    let mut head = [0u8; 24];
+    f.read_exact(&mut head).ok()?;
+    if head[..8] != MAGIC || &head[12..16] != b"IHDR" {
+        return None;
+    }
+    f.seek(SeekFrom::End(-12)).ok()?;
+    let mut tail = [0u8; 8];
+    f.read_exact(&mut tail).ok()?;
+    if tail != IEND {
+        return None;
+    }
+    let w = u32::from_be_bytes([head[16], head[17], head[18], head[19]]);
+    let h = u32::from_be_bytes([head[20], head[21], head[22], head[23]]);
+    (w > 0 && h > 0).then_some((w, h))
+}
+
 /// A finished tour frame handed to the background encoder pool for PNG compression.
 struct EncodeJob {
     path: std::path::PathBuf,
@@ -2371,6 +2403,81 @@ impl FractadyneApp {
         }
     }
 
+    /// Prepare an interrupted sequence for `--resume`: verify the frames already on disk, discard
+    /// any TRAILING ones that are unusable, and confirm the survivors were rendered at this size.
+    ///
+    /// Necessary because resume's per-frame test is `frame_path.exists()`, and the frame a render
+    /// dies on is exactly the one that is present but INCOMPLETE — the disk-full failure at frame
+    /// 1091 left a truncated PNG that a naive resume would have kept forever, baking a corrupt
+    /// frame into the middle of a 9,931-frame sequence. So the newest frame is checked, and if it
+    /// fails, the one before it, and so on until a good one is found: a render can only ever be
+    /// killed mid-write on the frame it was writing, so in practice this discards one file.
+    ///
+    /// Validity here is STRUCTURAL — magic, `IHDR` dimensions, terminating `IEND` — which is
+    /// precisely what a truncated or partially-flushed write breaks, and costs a few bytes of IO
+    /// per frame instead of a full decode of thousands of 4K images. It would not catch a file
+    /// whose pixel data is corrupt but whose framing survived; nothing short of re-rendering
+    /// would, and that is not a failure mode an interrupted write produces.
+    fn prepare_resume(
+        out_dir: &std::path::Path,
+        prefix: &str,
+        want_w: u32,
+        want_h: u32,
+    ) -> Result<String, String> {
+        let mut idx: Vec<u64> = Vec::new();
+        let Ok(rd) = std::fs::read_dir(out_dir) else {
+            return Ok(String::new()); // nothing rendered yet
+        };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(rest) = name.strip_prefix(&format!("{prefix}_")) {
+                if let Some(num) = rest.strip_suffix(".png") {
+                    if let Ok(n) = num.parse::<u64>() {
+                        idx.push(n);
+                    }
+                }
+            }
+        }
+        if idx.is_empty() {
+            return Ok(String::new());
+        }
+        idx.sort_unstable();
+        let mut discarded = 0usize;
+        while let Some(&top) = idx.last() {
+            let path = out_dir.join(format!("{prefix}_{top:05}.png"));
+            match png_frame_size(&path) {
+                Some((w, h)) if w == want_w && h == want_h => {
+                    return Ok(format!(
+                        "Resuming: {} frames on disk (through {top}){}",
+                        idx.len(),
+                        if discarded > 0 {
+                            format!(", discarded {discarded} incomplete")
+                        } else {
+                            String::new()
+                        }
+                    ));
+                }
+                // A COMPLETE frame at the wrong size means the folder holds a different render.
+                // Resuming would interleave two resolutions into one sequence, so refuse and say
+                // so rather than silently producing an unusable mix.
+                Some((w, h)) => {
+                    return Err(format!(
+                        "{} holds {w}×{h} frames but this render is {want_w}×{want_h} — \
+                         use a different output folder, or turn Resume off to re-render",
+                        out_dir.display()
+                    ));
+                }
+                None => {
+                    // Incomplete/unreadable: drop it and check the frame before it.
+                    let _ = std::fs::remove_file(&path);
+                    discarded += 1;
+                    idx.pop();
+                }
+            }
+        }
+        Ok(format!("Resuming: no usable frames found, discarded {discarded} incomplete"))
+    }
+
     /// Render a keyframe-tour script (TOML) to a numbered PNG frame sequence — the headless
     /// `--render-tour` mode for producing a deep-zoom dive video. Steps the timeline at a
     /// fixed `fps`, rendering each frame at `width×height` (× `ss` supersampling) via the
@@ -2405,6 +2512,15 @@ impl FractadyneApp {
         };
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
+        // Vet what is already there BEFORE rendering a frame, so a mismatch is reported in seconds
+        // rather than after the render has appended to a sequence it can never complete.
+        if resume {
+            let note = Self::prepare_resume(&out_dir, &prefix, width, height)?;
+            if !note.is_empty() {
+                println!("{note}");
+                crate::diag::log_line("render", &note);
+            }
+        }
         // Single-view offscreen render at the requested frame size.
         self.dual = false;
         // Iteration budget for frames whose keyframes don't state their own: the script's

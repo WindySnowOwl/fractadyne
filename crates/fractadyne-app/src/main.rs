@@ -334,6 +334,8 @@ pub(crate) struct TourRenderUi {
     pub(crate) segment: usize,
     pub(crate) mp4: bool,
     pub(crate) overwrite: bool,
+    /// Keep frames already on disk and render only what's missing (`--resume`).
+    pub(crate) resume: bool,
     /// Latest line from the child (its "frame N/M …" progress), and the finished-run summary.
     pub(crate) progress: String,
     /// First error line the child wrote to stderr — the reason a render stopped.
@@ -357,6 +359,7 @@ impl Default for TourRenderUi {
             segment: 0,
             mp4: false,
             overwrite: true,
+            resume: false,
             progress: String::new(),
             error: None,
             status: None,

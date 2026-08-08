@@ -406,7 +406,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--prefix NAME", "Frame-name prefix -> NAME_00000.png (default: the tour script's file name)."),
         Flag("--segment NAME", "Render only one [[segment]] chapter (by id, unique prefix, or 1-based index), keeping the global frame numbering so its frames drop back into the full sequence."),
         Flag("--overwrite, -y", "Replace existing frames without the [y]es/[a]ll/[n]o/[q]uit prompt."),
-        Flag("--resume", "Restart an interrupted render: silently keep frames already on disk and render only the missing ones."),
+        Flag("--resume", "Restart an interrupted render: keep frames already on disk and render only the missing ones. The newest frame is verified first and discarded if incomplete (a render dies on the frame it is writing), stepping back until a good one is found; a folder holding frames at a different size is refused rather than mixed into the sequence."),
         Section("View (with --render / --find-minibrot)"),
         Flag("--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\"."),
         Flag("--center X Y", "View center (full-precision decimals)."),

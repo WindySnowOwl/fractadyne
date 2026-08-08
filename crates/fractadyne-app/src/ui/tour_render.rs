@@ -134,10 +134,16 @@ impl FractadyneApp {
         let mut open = self.tour_render.open;
         let (mut go, mut stop, mut browse, mut copy_cmd) = (false, false, false, false);
 
+        // ABOVE the tour overlays. Captions and callouts paint into `Order::Middle` layers, which
+        // is also where a Window lives, and they are painted after it — so during playback the
+        // caption drew straight over this dialog. `Order::Foreground` puts the dialog where a
+        // dialog belongs: above the content it is about. (The playback transport is already
+        // Foreground for the same reason.)
         egui::Window::new("Render script")
             .open(&mut open)
             .resizable(false)
             .default_width(460.0)
+            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.label(
                     egui::RichText::new(format!("{tour_name}  ·  {}", script.display()))
@@ -148,14 +154,30 @@ impl FractadyneApp {
                 ui.add_enabled_ui(!running, |ui| {
                     egui::Grid::new("tour_render_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                         ui.label("Output folder");
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.tour_render.out)
-                                    .desired_width(250.0),
-                            );
-                            if ui.button("Browse…").clicked() {
-                                browse = true;
-                            }
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.tour_render.out)
+                                        .desired_width(250.0),
+                                );
+                                if ui.button("Browse…").clicked() {
+                                    browse = true;
+                                }
+                            });
+                            // Show where this ACTUALLY lands. The default is the relative "frames",
+                            // which resolves against the app's working directory — not the script's
+                            // folder, and not anywhere the user necessarily expects. A render that
+                            // takes hours should not leave you hunting for its output.
+                            let abs = std::path::Path::new(&self.tour_render.out);
+                            let abs = if abs.is_absolute() {
+                                abs.to_path_buf()
+                            } else {
+                                std::env::current_dir().unwrap_or_default().join(abs)
+                            };
+                            ui.label(
+                                egui::RichText::new(abs.display().to_string()).weak().small(),
+                            )
+                            .on_hover_text("Full path the frames are written to.");
                         });
                         ui.end_row();
 
@@ -270,6 +292,14 @@ impl FractadyneApp {
                         ui.checkbox(&mut self.tour_render.overwrite, "Overwrite existing frames")
                             .on_hover_text("Off: the render stops to ask, which it cannot do from here.");
                     });
+                    ui.checkbox(&mut self.tour_render.resume, "Resume an interrupted render")
+                        .on_hover_text(
+                            "Keep the frames already in the output folder and render only the \
+                             missing ones. The newest frame is checked first and discarded if it \
+                             is incomplete (the frame a render dies on is the one it was writing), \
+                             stepping back until a good one is found; a folder holding frames at a \
+                             different size is refused rather than mixed into this sequence.",
+                        );
                 });
 
                 // What this is about to cost, before committing to it.
@@ -424,6 +454,9 @@ impl FractadyneApp {
         }
         if t.mp4 {
             a.push("--mp4".to_string());
+        }
+        if t.resume {
+            a.push("--resume".to_string());
         }
         if t.overwrite {
             a.push("-y".to_string());
