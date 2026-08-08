@@ -89,6 +89,20 @@ struct Perf {
     rate_count: u32,
     rate_t0: Option<Instant>,
     recompute_per_s: f32,
+    /// Reference builds SPAWNED in the current 1 s window, and the last computed rate. Distinct
+    /// from `recompute_per_s`, which counts INSTALLS: a build whose result is discarded (a
+    /// lookahead slot the dive never reaches, a refused extension) costs full CPU and shows up
+    /// nowhere else. That blind spot hid a prefetch spin running ~400 builds a second for six
+    /// minutes — the perf panel read a calm `recompute/s 2` throughout. See
+    /// `playback_ref_prefetch`.
+    build_count: u32,
+    builds_per_s: f32,
+    /// Of those, the ones the script-playback LOOKAHEAD spawned — the counter its rate backstop
+    /// reads, so a runaway queue stops itself instead of merely being reported.
+    prefetch_count: u32,
+    /// Latched once per session: a build rate this high is a bug, not a workload (the reactive
+    /// path plus a full lookahead queue is single digits per second).
+    build_storm_warned: bool,
     /// Diagnostics from the last view-0 (Mandelbrot) build.
     last_mode: u32,
     last_eff_iter: u32,
@@ -225,6 +239,10 @@ impl Default for Perf {
             recompute_ms: 0.0,
             recompute_total: 0,
             rate_count: 0,
+            build_count: 0,
+            builds_per_s: 0.0,
+            prefetch_count: 0,
+            build_storm_warned: false,
             rate_t0: None,
             recompute_per_s: 0.0,
             last_mode: 0,
@@ -832,6 +850,17 @@ pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
 /// (`init_orbit_len_cap`, orbit + BLA sized together) is the remaining bound, so GPU memory stays
 /// safe. Export keeps the full appetite (`orbit_len_cap = u32::MAX`).
 pub(crate) const LIVE_REF_CAP: u32 = 256_000;
+
+/// Reference builds per second that mean a spin rather than a workload. Healthy playback spawns
+/// one reactive build plus at most `PREFETCH_SLOTS` lookahead builds per INSTALL, and installs run
+/// ~2/octave — single digits per second even on the fastest dive. Set an order of magnitude above
+/// that so it can only fire on a genuine runaway.
+pub(crate) const BUILD_STORM_PER_S: u32 = 60;
+
+/// Hard ceiling on lookahead reference builds per second (`playback_ref_prefetch`). A backstop, not
+/// a policy: the queue's own bookkeeping should keep it near one build per install, and three
+/// separate defects have each turned it into a spin. Well above any legitimate rate.
+pub(crate) const PREFETCH_BUILDS_PER_S: u32 = 30;
 
 /// Deep-dive pipeline pacing window (octaves of `last_depth_lag`): below `LO` the dive runs at
 /// full speed; above `HI` it's fully held (just under the mode-2 stale-reference spin/freeze
@@ -3564,6 +3593,7 @@ impl FractadyneApp {
         ui.separator();
         ui.monospace(format!("ref recompute {:6.2} ms", p.recompute_ms));
         ui.monospace(format!("recompute/s   {:>4.0}", p.recompute_per_s));
+        ui.monospace(format!("ref builds/s  {:>4.0}", p.builds_per_s));
         ui.monospace(format!("recompute tot {:>5}", p.recompute_total));
     }
 
@@ -5389,6 +5419,26 @@ impl eframe::App for FractadyneApp {
             Some(t0) if nowi.duration_since(t0).as_secs_f64() >= 1.0 => {
                 self.perf.recompute_per_s = self.perf.rate_count as f32;
                 self.perf.rate_count = 0;
+                self.perf.builds_per_s = self.perf.build_count as f32;
+                // A build storm is silent otherwise: the workers are off-thread, each one is
+                // fast, and nothing they produce is installed. Say it once, in the log, with the
+                // number — the 2026-08-07 playback crash was diagnosed only by counting
+                // breadcrumbs in a 5 MB log after the fact.
+                if self.perf.build_count >= BUILD_STORM_PER_S && !self.perf.build_storm_warned {
+                    self.perf.build_storm_warned = true;
+                    crate::diag::log_line(
+                        "ref",
+                        &format!(
+                            "reference-build storm: {} builds in 1 s ({} lookahead, {} installed) \
+                             — a build queue is rebuilding targets it never installs",
+                            self.perf.build_count,
+                            self.perf.prefetch_count,
+                            self.perf.recompute_per_s as u32
+                        ),
+                    );
+                }
+                self.perf.build_count = 0;
+                self.perf.prefetch_count = 0;
                 self.perf.rate_t0 = Some(nowi);
             }
             None => self.perf.rate_t0 = Some(nowi),

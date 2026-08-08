@@ -2211,6 +2211,28 @@ impl FractadyneApp {
                 pass: timing_ok,
             });
 
+            // Lookahead HOLD rule. `playback_ref_prefetch` builds references for depths the tour is
+            // about to reach; a slot the dive has NOT yet reached must be HELD. Through beta.37 the
+            // rule was read from the slot's BLA `dc_max` with the sign inverted, so an early slot
+            // looked like a missed one and was dropped the moment its build landed — the queue then
+            // rebuilt the same six targets every frame (~400 reference builds a second, measured in
+            // a 230 s playback that lost the GPU device). Pin all three outcomes.
+            let slots = [(100.5, true), (101.0, true), (101.5, false), (102.0, true)];
+            let early = crate::render::prefetch_reached(100.0, &slots);
+            let arrived = crate::render::prefetch_reached(100.5, &slots);
+            // A dive that crossed three targets in one pump takes the DEEPEST ready one (index 3),
+            // not the shallowest, and is not blocked by the still-building slot at 101.5.
+            let leapt = crate::render::prefetch_reached(102.0, &slots);
+            let hold_ok = early.is_none() && arrived == Some(0) && leapt == Some(3);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "lookahead holds slots the dive hasn't reached".into(),
+                params: "queue at +0.5/+1.0/+1.5(building)/+2.0 octaves".into(),
+                result: format!("at 100.0 → {early:?}, at 100.5 → {arrived:?}, at 102.0 → {leapt:?}"),
+                threshold: "none held-back, then slot 0, then deepest ready (slot 3)",
+                pass: hold_ok,
+            });
+
             // Zoom strings past f64's ~1e308 ceiling — the reason `zoom` is a string at all.
             const DEEP: &str = "format_version = 2\n\
                  [[keyframe]]\nt = 0\nre = \"-0.5\"\nim = \"0.0\"\nzoom = \"3.0938e1216\"\n";

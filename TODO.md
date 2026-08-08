@@ -2,14 +2,15 @@
 
 ## ▶ Announce readiness (fractalforums) — status 2026-08-07
 
-Goal: a stable `v0.2.40` suitable for announcing. Current head is **v0.2.40-beta.34**; the latest
-*published* prerelease is still beta.27 (beta.28–34 are pushed commits, deliberately untagged —
+Goal: a stable `v0.2.40` suitable for announcing. Current head is **v0.2.40-beta.38**; the latest
+*published* prerelease is still beta.27 (beta.28–38 are commits, deliberately untagged —
 GitHub builds only fire on explicit request).
 
-**Done:** the crash ledger is clean (both recorded device-loss crashes fixed, plus auto-restart
-recovery); seven spar-family rendering bugs fixed; status-bar diagnostics now explain rendering
-limits instead of leaving a black screen unexplained; the iteration ceiling is 10M; the grand
-tour exists and now renders end to end (script format v2, beta.34).
+**Done:** the crash ledger is clean (every recorded device-loss crash fixed, including the live
+tour-playback one that blocked the announce — beta.38 — plus auto-restart recovery); seven
+spar-family rendering bugs fixed; status-bar diagnostics now explain rendering limits instead of
+leaving a black screen unexplained; the iteration ceiling is 10M; the grand tour exists, renders
+end to end (script format v2, beta.34) and now plays live for 12 minutes without incident.
 
 **Blockers before tagging:**
 1. **CHANGELOG is stale** — its `0.2.40-beta` entry stops at beta.15, so ~18 betas of work are
@@ -34,7 +35,45 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] **Live playback loses the GPU device a few minutes in — UNRESOLVED, cause not established.**
+- [x] **Live playback loses the GPU device a few minutes in — FIXED v0.2.40-beta.38.** Cause: the
+  script-playback reference LOOKAHEAD was spinning. **Measured ~400 reference builds a second,
+  sustained** — 13,529 of 14,311 builds in the 392 s crash log returned the same `len=626`, six
+  worker threads spawned per frame, ~92,000 in a single 230 s playback, each fanning out across
+  every core. Two independent defects in `playback_ref_prefetch`, both now fixed:
+  1. **The hold/install test was read with the sign inverted.** The queue timed a slot by its BLA
+     `dc_max` against the view's, and that lag GROWS as the dive descends (a tree built for a
+     target Δ octaves ahead starts at `1 − Δ` and rises one per octave). So `lag < 0.86` means
+     "the dive has not reached this slot yet" — the code took it for "window missed" and CULLED.
+     Every result was discarded the moment it landed and the queue instantly rebuilt the same six
+     targets. It only ever appeared to work because a deep build takes about as long as the dive
+     takes to cover `PREFETCH_OCT`; wherever builds were cheap, it span. The test is now the
+     slot's own `target_l2` against the script's current depth (`prefetch_reached`, pure and
+     covered by a selftest that fails on the inverted reading), which also handles slots with no
+     BLA at all — those had `NEG_INFINITY` lag, so the old form could not time them either.
+  2. **The refill fought its own housekeeping on every non-diving stretch.** `max_ahead` is keyed
+     off the CURRENT depth, so on the grand tour's back-out chapters a falling `cur_l2` swept down
+     through the queued targets, culled them, and the refill rebuilt the same set for the next
+     chapter's dive: **214 builds/s, none installed.** The refill is now gated on the tour
+     actually descending (probe at +0.25 s), with a hard 30 builds/s backstop that does not depend
+     on the queue logic being right.
+
+  **The diagnostic gap is what made this expensive.** `recompute/s` counted INSTALLS only, so 400
+  discarded builds a second read as a calm `recompute/s 2`, and every build logged an identical
+  breadcrumb — the storm was visible only by counting lines in a 5 MB log after the fact. Now:
+  a `ref builds/s` counter beside it, each breadcrumb tagged with its origin
+  (`live` / `lookahead` / `export`), and a once-per-session log line when the rate passes 60/s.
+  That tripwire is what caught defect (2), immediately, after (1) was fixed.
+
+  **Verified 2026-08-07:** same tour, same machine, `--play tours/grand-tour.toml` — **722 s,
+  responding, no device loss, no storm**, past all five recorded crash points (230/261/392/470 s);
+  build rate 400/s → 3.6/s. Suite 101/101 + goldens 17/17; `--divetest` on the e1216 dive holds
+  57.6–60 fps with p95 ≤ 21.6 ms in every band (2 frames >33 ms in the whole run), so the
+  lookahead still does its job. ⚠**Not proof of the mechanism**: the run is a null result on a
+  bug that took 230–470 s to appear, and *why* a build storm takes the device out (CPU starvation
+  of the driver? allocator churn?) was never established — only that removing it removes the
+  crash. If it recurs, the storm counter now names the source in one line.
+
+  Original investigation, kept for the diagnosis trail:
   Three crashes on 2026-08-07 (beta.36 builds 1134/1149) at 261 s, 392 s and 470 s of live tour
   playback. The signature is NOTHING like the beta.36 crash that was fixed — this frame is far
   UNDER budget and tiny:

@@ -127,6 +127,24 @@ struct ReuseRef {
     prec: usize,
 }
 
+/// Slack (octaves) on "the dive has arrived at this slot's target" — the width of the old install
+/// window, kept so a pump landing just short of a target still installs instead of waiting a frame.
+pub(crate) const PREFETCH_REACH_SLACK: f64 = 0.14;
+
+/// Which queued lookahead slot the dive has ARRIVED at: the DEEPEST ready target at or below the
+/// current depth `cur_l2`, or `None` if every ready slot is still ahead of the view. Slots ahead of
+/// the view must be HELD, never dropped — dropping them is what turned this queue into a ~400
+/// build/s spin through beta.37 (see `playback_ref_prefetch`). Deepest-first because a fast dive
+/// can cross several targets between pumps. Pure, so the rule is pinned by `--selftest`.
+pub(crate) fn prefetch_reached(cur_l2: f64, slots: &[(f64, bool)]) -> Option<usize> {
+    slots
+        .iter()
+        .enumerate()
+        .filter(|(_, (target, ready))| *ready && cur_l2 >= target - PREFETCH_REACH_SLACK)
+        .max_by(|a, b| a.1 .0.total_cmp(&b.1 .0))
+        .map(|(i, _)| i)
+}
+
 /// One script-playback lookahead slot: an in-flight (or finished, held) future-reference build,
 /// tagged with the log2 magnification it targets so the queue spaces targets without duplicates.
 /// See [`FractadyneApp::playback_ref_prefetch`].
@@ -138,6 +156,11 @@ pub(crate) struct RefPrefetchSlot {
 
 /// Owned, `Send` inputs for an off-thread reference recompute.
 struct RecomputeInputs {
+    /// Which path asked for this build (`live` / `lookahead` / `export`), for the breadcrumb only.
+    /// Every build logs the same line, so a runaway shows up as thousands of indistinguishable
+    /// entries — naming the caller is the difference between reading a 5 MB log and knowing which
+    /// queue is spinning.
+    origin: &'static str,
     center_bf: [fractadyne_core::BigFloat; 2],
     span: (fractadyne_core::FloatExp, fractadyne_core::FloatExp),
     span_mantissa: fractadyne_core::SpanMantissa,
@@ -246,8 +269,8 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     // The bignum orbit build is the longest silent phase in the app — name it for the
     // watchdog/crash report before starting (D1.2).
     crate::diag::breadcrumb(format!(
-        "building reference: iter={} prec={}",
-        inp.gpu_iter, inp.precision
+        "building reference [{}]: iter={} prec={}",
+        inp.origin, inp.gpu_iter, inp.precision
     ));
     // Deep-dive reuse: when the prior reference is still valid for this (deeper) frame, EXTEND its
     // orbit instead of recomputing every bignum step (the orbit build dominates a deep frame). Falls
@@ -413,7 +436,10 @@ fn finish_reference(
         _ => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
     };
     let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
-    crate::diag::breadcrumb(format!("reference built: len={len} iter={orbit_iter} prec={orbit_prec}"));
+    crate::diag::breadcrumb(format!(
+        "reference built [{}]: len={len} iter={orbit_iter} prec={orbit_prec}",
+        inp.origin
+    ));
     if crate::diag::trace_on("ref") {
         // Timing is on the line now (design/diagnostics.md F14): the cold export reference
         // build dominates a deep render (~12 s of a ~15 s 2560×1440 me148 render, vs ~2.7 s
@@ -755,6 +781,7 @@ impl FractadyneApp {
         /// oversubscribe threads — harmless for compute-bound bursts.
         const PREFETCH_SLOTS: usize = 6;
         const LN_2: f64 = std::f64::consts::LN_2;
+        let cur_l2 = pb.sample(e).logmag / LN_2;
         // 1) Collect finished builds into their slots.
         for slot in &mut self.ref_prefetch {
             if let Some(rx) = slot.rx.take() {
@@ -765,29 +792,31 @@ impl FractadyneApp {
                 }
             }
         }
-        // 2) Install the slot whose validity window the dive has reached; cull slots the dive
-        //    already zoomed past (lag below the window ⇒ their BLA would read as out-of-range)
-        //    and dead workers. Early slots (lag above the window) are held.
-        let scale = self.viewport.gpu_scale();
-        let needed = Self::bla_dc_max(scale.span_mantissa, scale.delta_exp).log2();
+        // 2) Install the deepest READY slot the dive has already ARRIVED AT; HOLD every slot it
+        //    hasn't reached yet; drop the ones the install supersedes, and dead workers.
+        //
+        // The clock is the slot's own `target_l2` against the script's current depth. Through
+        // beta.37 it was the slot's BLA `dc_max` against the view's — an indirect measure of the
+        // same thing, read with the SIGN BACKWARDS. That lag GROWS as the dive descends (a tree
+        // built for a target Δ octaves ahead starts at `1 − Δ` and rises one per octave), so
+        // `lag < 0.86` meant "not there yet"; the code took it for "window missed" and CULLED. Any
+        // time a build finished faster than the dive covered `PREFETCH_OCT`, every result was
+        // discarded the moment it landed and the queue instantly rebuilt the same six targets.
+        // Field-measured at a short-escaping reference where builds cost <1 ms: **~400 reference
+        // builds a second, six threads per frame, ~92 000 in a single 230 s playback.** Comparing
+        // depths directly removes the trap and also covers slots with no BLA at all, which the lag
+        // form could not time (`NEG_INFINITY`) and therefore also spun on.
+        self.ref_prefetch.retain(|slot| slot.rx.is_some() || slot.ready.is_some());
+        let queued: Vec<(f64, bool)> =
+            self.ref_prefetch.iter().map(|s| (s.target_l2, s.ready.is_some())).collect();
         let mut install: Option<RecomputeResult> = None;
-        self.ref_prefetch.retain_mut(|slot| {
-            if slot.rx.is_none() && slot.ready.is_none() {
-                return false; // worker died without a result
-            }
-            let Some(res) = &slot.ready else { return true }; // still building
-            let lag = res.bla_dc_max_log2 - needed;
-            if !lag.is_finite() || lag < 0.86 {
-                return false; // window missed / no BLA — reactive path covers it
-            }
-            if lag <= 1.09 {
-                if install.is_none() {
-                    install = slot.ready.take();
-                }
-                return false;
-            }
-            true // early — hold until the dive arrives
-        });
+        if let Some(i) = prefetch_reached(cur_l2, &queued) {
+            let target = self.ref_prefetch[i].target_l2;
+            install = self.ref_prefetch[i].ready.take();
+            // Everything at or above this depth is superseded — including still-building slots,
+            // whose result would land for a depth the dive has left.
+            self.ref_prefetch.retain(|s| s.target_l2 > target);
+        }
         if let Some(res) = install {
             if res.prec >= self.viewport.precision {
                 if crate::diag::trace_on("ref") {
@@ -804,7 +833,24 @@ impl FractadyneApp {
         if self.dual || self.julia_mode {
             return;
         }
-        let cur_l2 = pb.sample(e).logmag / LN_2;
+        // Only while the tour is actually DIVING. On a hold, a pan, or a back-out there is nothing
+        // to prepare — and the queue's housekeeping below is keyed off the CURRENT depth, so as
+        // `cur_l2` falls, `max_ahead` sweeps down through the queued targets and culls them, the
+        // refill rebuilds the same set for the next chapter's dive, and the pair spins. Measured on
+        // the grand tour's back-out chapters: **214 lookahead builds in one second, none installed.**
+        // The tour still reaches those depths later; the lookahead re-queues them when it resumes
+        // descending, and the reactive path covers everything in between as it always has.
+        const DIVE_PROBE_S: f64 = 0.25;
+        if pb.sample((e + DIVE_PROBE_S).min(pb.total)).logmag / LN_2 <= cur_l2 {
+            return;
+        }
+        // Hard backstop on the spawn rate, independent of any reasoning about the queue. Three
+        // separate spins have now been traced to this loop; a bound that does not depend on getting
+        // the logic right is worth the one line. Legitimate lookahead is one build per install
+        // (~2 installs/octave, ~10 octaves/s at the fastest dive phase).
+        if self.perf.prefetch_count >= crate::PREFETCH_BUILDS_PER_S {
+            return;
+        }
         // Cull overshot slots: a slot targeting far past the queue's span can only exist if the
         // tour was re-timed or a target overshot — it would sit "held" for minutes, wasting its
         // queue position while the reactive path fills the gap (exactly the beta.9 field failure:
@@ -890,6 +936,7 @@ impl FractadyneApp {
                 _ => None,
             };
             let inputs = RecomputeInputs {
+                origin: "lookahead",
                 center_bf: [vp.center_x.clone(), vp.center_y.clone()],
                 span,
                 span_mantissa,
@@ -914,6 +961,8 @@ impl FractadyneApp {
             std::thread::spawn(move || {
                 let _ = tx.send(recompute_worker(inputs));
             });
+            self.perf.build_count += 1;
+            self.perf.prefetch_count += 1;
             self.ref_prefetch.push(RefPrefetchSlot { rx: Some(rx), ready: None, target_l2 });
         }
     }
@@ -1061,6 +1110,7 @@ impl FractadyneApp {
             && self.render_cfg.series_approx
             && bla_dc_max.is_none();
         RecomputeInputs {
+            origin: "export",
             center_bf: [vp.center_x.clone(), vp.center_y.clone()],
             span: vp.complex_span_fe(),
             span_mantissa,
@@ -1111,7 +1161,7 @@ impl FractadyneApp {
     /// `orbit_id` instead of rebuilt each frame. A larger `dc_max` only shrinks the skip radii
     /// (safer, never wrong); the few skips lost vs. a per-frame-tight bound are bought back many
     /// times over by not rebuilding the tree every frame.
-    fn bla_dc_max(span_mantissa: fractadyne_core::SpanMantissa, delta_exp: i32) -> fractadyne_core::FloatExp {
+    pub(crate) fn bla_dc_max(span_mantissa: fractadyne_core::SpanMantissa, delta_exp: i32) -> fractadyne_core::FloatExp {
         let diag = (span_mantissa.x * span_mantissa.x + span_mantissa.y * span_mantissa.y).sqrt();
         fractadyne_core::FloatExp::from_f64((2.5 * diag).max(1e-300)).mul_pow2(delta_exp as f64)
     }
@@ -2655,6 +2705,7 @@ impl FractadyneApp {
                     }
                 };
                 let inputs = RecomputeInputs {
+                    origin: "live",
                     center_bf: center_bf.clone(),
                     span,
                     span_mantissa,
@@ -2714,6 +2765,7 @@ impl FractadyneApp {
                     std::thread::spawn(move || {
                         recompute_worker_staged(inputs, tx, progressive);
                     });
+                    self.perf.build_count += 1;
                     self.recompute_rx[vi] = Some(rx);
                 }
                 // else: a recompute is already in flight (or throttled) — use the cached reference.
@@ -3035,6 +3087,7 @@ mod reuse_tests {
         vp.set_center_log2mag(parse_bf(cx).unwrap(), parse_bf(cy).unwrap(), log2mag);
         let scale = vp.gpu_scale();
         RecomputeInputs {
+            origin: "test",
             center_bf: [vp.center_x.clone(), vp.center_y.clone()],
             span: vp.complex_span_fe(),
             span_mantissa: scale.span_mantissa,
