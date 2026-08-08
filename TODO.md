@@ -35,6 +35,34 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] ⭐**Crash reporting was blind to ABORTS — FIXED v0.2.40-beta.43.** Three mechanisms now cover
+  the classes that left nothing behind:
+  1. **Global allocator wrapper** (`alloc.rs`). `set_alloc_error_hook` is nightly-only, so
+     `ReportingAlloc` forwards to `System` and reports on the null return, just before the runtime
+     aborts on it. Deliberately keeps NO per-allocation counters — an atomic RMW per allocation in
+     a bignum-heavy, rayon-parallel program is a contended cacheline on the hottest path; process
+     memory comes from `sysinfo::process_memory()` at report time instead, costing nothing until
+     something fails.
+  2. **`memory :` line in every crash report**, and memory on the reference-build breadcrumb
+     (`building reference [live]: iter=1033260 prec=4061 (rss 289 MB, peak 1260 MB)`) — that build
+     is the app's largest allocation by a wide margin and is what an OOM dies inside. Breadcrumbs
+     only; never per-frame.
+  3. **Unclean-exit marker.** Armed around the GUI event loop only and cleared by `crate::exit`,
+     which ALL 30 `std::process::exit` call sites now route through — one choke point, because a
+     single missed site would report a deliberate quit as a crash, and a false crash report teaches
+     everyone to ignore the real ones. On the next launch a surviving marker produces a report
+     quoting the previous session's last six log lines in chronological order. Worded as "no clean
+     shutdown", not "crash": a hard kill lands here too.
+  **Verified all three, not just compiled:** a clean `--selftest` arms nothing and reports nothing;
+  a GUI run killed with `Stop-Process` is reported on the next launch with its log tail; and
+  `--oomtest` (a new flag that requests an unsatisfiable allocation) exits with **`0xC0000409` —
+  the exact signature of the three real crashes — and now writes a report naming the failed size,
+  the memory, and the breadcrumb. Suite 101/101 + goldens 17/17; `--divetest` 59.5–60 fps, p95
+  ≤ 15 ms per band, so the allocator wrapper costs nothing measurable.
+- [ ] ⭐**PRIORITY: unexplained access violation, `08-07 17:00:25 0xc0000005`.** No crash report and
+  never investigated. Distinct from the abort class above (a segfault, not a controlled exit), so
+  it needs its own look once (c) above makes silent deaths visible.
+
 - [ ] **The live view cannot honour a high explicit iteration count, and the cost model is why.**
   Reported at 8.8e94× (three-spar): Iterations set to **10,000,000** with auto-scale OFF, but the
   status bar reads `iter 82,741` and `⚠ iter exhausted`, and the picture is blocky. Two mechanisms,

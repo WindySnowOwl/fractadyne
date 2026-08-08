@@ -46,6 +46,7 @@ use eframe::egui;
 use fractadyne_core::Viewport;
 use fractadyne_gpu::{add_mandelbrot, install_renderer};
 
+mod alloc;
 mod autopilot;
 mod cli;
 mod diag;
@@ -71,6 +72,11 @@ pub(crate) use sysinfo::*;
 pub(crate) use theme::*;
 use help::*;
 use std::time::Instant;
+
+/// An allocation failure aborts without running the panic hook, so the app's crash reporting is
+/// blind to it — this wrapper reports the null return first. See `alloc.rs`.
+#[global_allocator]
+static GLOBAL: alloc::ReportingAlloc = alloc::ReportingAlloc;
 
 /// Lightweight per-frame performance/diagnostic tracking, shown in an overlay.
 /// On by default for now; toggle via the View menu or the `--no-perf` CLI flag.
@@ -983,12 +989,25 @@ fn main() -> eframe::Result<()> {
         Ok(a) => a,
         Err(e) => {
             eprintln!("fractadyne: {e}");
-            std::process::exit(2);
+            crate::exit(2);
         }
     };
     // Crash/hang visibility (design/diagnostics.md D1): log file, panic hook, watchdog.
     // Before run_headless so even the pre-GUI CLI modes get crash reports.
     diag::init(&args);
+    // `--oomtest`: force a real allocation failure, to prove the OOM path actually writes a crash
+    // report. It cannot be verified any other way — an out-of-memory abort skips the panic hook,
+    // which is the whole reason this machinery exists, and waiting for a genuine OOM means waiting
+    // for the deep reference build to die again.
+    if args.iter().any(|a| a == "--oomtest") {
+        diag::breadcrumb("oomtest: requesting an impossible allocation".into());
+        let n = usize::MAX / 2;
+        // Deliberately unsatisfiable: the allocator returns null, `ReportingAlloc` reports, and
+        // the runtime aborts on it exactly as a real exhaustion would.
+        let v: Vec<u8> = Vec::with_capacity(n);
+        std::hint::black_box(&v);
+        crate::exit(0);
+    }
     if cli::run_headless(&args) {
         return Ok(());
     }
@@ -1055,11 +1074,26 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
-    eframe::run_native(
+    // Arm the unclean-exit marker around the event loop only (see `diag::begin_gui_session`).
+    // Every deliberate exit goes through `crate::exit`, which disarms it, so a clean shutdown can
+    // never be mistaken for a crash.
+    diag::begin_gui_session();
+    let r = eframe::run_native(
         "Fractadyne",
         native_options,
         Box::new(move |cc| Ok(Box::new(FractadyneApp::new(cc, &args)))),
-    )
+    );
+    diag::end_session();
+    r
+}
+
+/// Terminate the process, disarming the unclean-exit marker first. EVERY `std::process::exit` in
+/// this crate goes through here: `exit` runs no destructors and no hooks, so a marker left armed
+/// by a deliberate quit would be reported as a crash on the next launch. One choke point is the
+/// only way to be sure none was missed.
+pub(crate) fn exit(code: i32) -> ! {
+    diag::end_session();
+    std::process::exit(code)
 }
 
 /// Group an integer string with commas every 3 digits (handles a leading `-`).
@@ -2227,7 +2261,7 @@ impl FractadyneApp {
                     "Fractadyne requires the wgpu GPU backend (eframe Renderer::Wgpu), which failed \
                      to initialize. Check that your GPU drivers support Vulkan/DX12/Metal."
                 );
-                std::process::exit(1);
+                crate::exit(1);
             }
         };
         install_renderer(render_state);
@@ -2264,7 +2298,7 @@ impl FractadyneApp {
                 } else {
                     diag::log_line("wgpu", "device lost within 60s of boot — not restarting (loop guard)");
                 }
-                std::process::exit(2);
+                crate::exit(2);
             }
             panic!("wgpu uncaptured error: {e}");
         }));
@@ -2290,7 +2324,7 @@ impl FractadyneApp {
                 } else {
                     diag::log_line("wgpu", "device lost within 60s of boot — not restarting (loop guard)");
                 }
-                std::process::exit(2);
+                crate::exit(2);
             }
         });
         // D1.4: hang watchdog for every update()-driven mode. update() stamps liveness each
@@ -4994,7 +5028,7 @@ impl eframe::App for FractadyneApp {
             if let Some((dev, q)) = &gpu {
                 self.selftest_done = true;
                 let ok = self.run_selftest(dev, q);
-                std::process::exit(if ok { 0 } else { 1 });
+                crate::exit(if ok { 0 } else { 1 });
             }
         }
 
@@ -5021,7 +5055,7 @@ impl eframe::App for FractadyneApp {
                 });
                 let reps = self.profile_reps;
                 self.run_profile(dev, q, &regions, reps, &out);
-                std::process::exit(0);
+                crate::exit(0);
             }
         }
 
@@ -5033,7 +5067,7 @@ impl eframe::App for FractadyneApp {
                 let bless = self.selftest_bless; // shared `--bless` flag
                 let reps = self.profile_reps; // shared `--reps N` flag (default 5)
                 let code = self.run_bench_matrix(dev, q, bless, reps, false);
-                std::process::exit(code);
+                crate::exit(code);
             }
         }
 
@@ -5050,7 +5084,7 @@ impl eframe::App for FractadyneApp {
             if let Some((dev, q)) = &gpu {
                 self.reusetest_done = true;
                 self.run_reusetest(dev, q);
-                std::process::exit(0);
+                crate::exit(0);
             }
         }
 
@@ -5066,7 +5100,7 @@ impl eframe::App for FractadyneApp {
                     std::path::PathBuf::from(format!("logs/divetest-{}.json", Self::file_stamp(secs)))
                 });
                 self.run_divetest(dev, q, &tour, &out);
-                std::process::exit(0);
+                crate::exit(0);
             }
         }
 
@@ -5084,7 +5118,7 @@ impl eframe::App for FractadyneApp {
                 let seg = self.tour_cli.segment.clone();
                 let fails =
                     self.run_livetest(dev, q, &tour, seg.as_deref(), [w, h], &out, self.livetest_quick);
-                std::process::exit(if fails > 0 { 1 } else { 0 });
+                crate::exit(if fails > 0 { 1 } else { 0 });
             }
         }
 
@@ -5099,7 +5133,7 @@ impl eframe::App for FractadyneApp {
                 });
                 let (steps, hold, dive) = (self.frametest_steps, self.frametest_hold, self.frametest_dive);
                 self.run_frametest(dev, q, steps, hold, dive, 512, &out);
-                std::process::exit(0);
+                crate::exit(0);
             }
         }
 
@@ -5143,7 +5177,7 @@ impl eframe::App for FractadyneApp {
                     Ok(()) => println!("\nSaved benchmark → {}", out.display()),
                     Err(e) => eprintln!("Failed to save benchmark to {}: {e}", out.display()),
                 }
-                std::process::exit(0);
+                crate::exit(0);
             }
         }
 
@@ -5195,7 +5229,7 @@ impl eframe::App for FractadyneApp {
                         // made scripted corpus renders unable to detect failures (D1/F8).
                         eprintln!("Render failed: {e}");
                         diag::log_line("render", &format!("FAILED: {e}"));
-                        std::process::exit(1);
+                        crate::exit(1);
                     }
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -5216,7 +5250,7 @@ impl eframe::App for FractadyneApp {
                         Err(e) => {
                             eprintln!("Tour render failed: {e}");
                             diag::log_line("render", &format!("tour FAILED: {e}"));
-                            std::process::exit(1);
+                            crate::exit(1);
                         }
                     }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -5245,7 +5279,7 @@ impl eframe::App for FractadyneApp {
                     }
                     Err(e) => {
                         eprintln!("Could not play {}: {e}", script.display());
-                        std::process::exit(2);
+                        crate::exit(2);
                     }
                 }
             }

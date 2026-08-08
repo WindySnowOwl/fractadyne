@@ -444,6 +444,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--divetest FILE [--out P]", "Dev: headless live-dive perf harness — plays real-time windows of a tour script at increasing depths through the actual playback machinery (pacer, lookahead, reuse-hold) and reports fps/hitches/refresh cadence per depth band -> JSON."),
         Flag("--livetest FILE [--segment NAME] [--size WxH] [--out DIR] [--quick]", "Dev: headless live-OUTPUT harness — plays a tour through the live pipeline and, at every keyframe hold, compares what the live view SHOWS against an offline render of the same view at the same iteration budget. Reports excess blackness / sRGB difference per checkpoint and dumps image pairs for failures; exit 1 if any checkpoint fails."),
         Flag("--play FILE", "Start with a tour script already playing in the live view (Tools -> Play script, from the command line). Useful for reproducing live-playback behaviour that headless harnesses cannot reach."),
+        Flag("--oomtest", "Dev: request an unsatisfiable allocation to prove the out-of-memory path writes a crash report. Exits 0xC0000409 (abort) by design — an OOM skips the panic hook, so this is the only way to exercise that reporting."),
         Flag("--dump-tour-schema", "Print the tour-script (.toml) schema reference as Markdown and exit (generates TOURS.md)."),
         Section("Examples"),
         Example("fractadyne --render -o out.png --fractal Mandelbrot --center -0.743644 0.131826 --zoom 2e7 --iter 6000 --method stripe --ss 3"),

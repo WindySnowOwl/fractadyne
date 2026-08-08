@@ -216,7 +216,7 @@ impl FractadyneApp {
             for g in GROUPS {
                 println!("  {g}");
             }
-            std::process::exit(0);
+            crate::exit(0);
         }
         // (A filter that runs ZERO checks is rejected AFTER the suite — see the guard just
         // before the report is written. Doing it post-hoc matches on what actually ran, so
@@ -2764,7 +2764,7 @@ zoom = \"1e94\"
                  Use --selftest-list for the group tags.",
                 filter.as_deref().unwrap_or("")
             );
-            std::process::exit(2);
+            crate::exit(2);
         }
 
         // ---- build the human-readable + verifiable report ----

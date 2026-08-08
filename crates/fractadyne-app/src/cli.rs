@@ -75,7 +75,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
             }
             crate::update::UpdateStatus::Error(e) => {
                 eprintln!("Update check failed: {e}");
-                std::process::exit(1);
+                crate::exit(1);
             }
         }
         return true;
@@ -85,7 +85,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     if let Some(bad) = first_unknown_flag(args) {
         eprintln!("fractadyne: unrecognized option '{bad}'\n");
         eprint!("{}", crate::help::cli_help_text());
-        std::process::exit(2);
+        crate::exit(2);
     }
 
     // --reset-state [-y|--yes]: permanently delete all persisted application state (session,
@@ -115,7 +115,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
             Ok(false) => println!("No application state to reset (nothing was stored)."),
             Err(e) => {
                 eprintln!("Reset failed: {e}");
-                std::process::exit(1);
+                crate::exit(1);
             }
         }
         return true;
@@ -486,7 +486,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         // PASS: membership ≥99.5%, and ≥99% of smooth-region exterior pixels match within 1.
         let pass = pct(interior_ok, interior_tot) >= 99.5 && pct(within1, smooth_tot) >= 99.0;
         println!("crosscheck-f3: {}", if pass { "PASS" } else { "FAIL" });
-        std::process::exit(if pass { 0 } else { 1 });
+        crate::exit(if pass { 0 } else { 1 });
     }
 
     // Extreme-depth validation battery (no GPU, no external data): exercises the
@@ -566,7 +566,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
             }
         }
         println!("validate-deep: {}", if all_ok { "PASS" } else { "FAIL" });
-        std::process::exit(if all_ok { 0 } else { 1 });
+        crate::exit(if all_ok { 0 } else { 1 });
     }
     false
 }

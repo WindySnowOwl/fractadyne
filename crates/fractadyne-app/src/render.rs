@@ -268,9 +268,17 @@ pub(crate) fn live_orbit_cap(interacting: bool, ref_build_iter: u32) -> u32 {
 fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     // The bignum orbit build is the longest silent phase in the app — name it for the
     // watchdog/crash report before starting (D1.2).
+    // Memory on the line: a deep reference build is the app's largest allocation by a wide margin
+    // (millions of samples plus BLA levels at hundreds of bits), and it is what an out-of-memory
+    // abort dies inside — 2026-08-08, `iter=10000000 prec=380` was the last thing the log held
+    // before the process vanished. Without a size here the report can name the phase but not say
+    // how close it was to the wall.
     crate::diag::breadcrumb(format!(
-        "building reference [{}]: iter={} prec={}",
-        inp.origin, inp.gpu_iter, inp.precision
+        "building reference [{}]: iter={} prec={} ({})",
+        inp.origin,
+        inp.gpu_iter,
+        inp.precision,
+        crate::diag::memory_summary()
     ));
     // Deep-dive reuse: when the prior reference is still valid for this (deeper) frame, EXTEND its
     // orbit instead of recomputing every bignum step (the orbit build dominates a deep frame). Falls

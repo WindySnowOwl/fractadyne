@@ -142,7 +142,7 @@ impl FractadyneApp {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("livetest: cannot load {}: {e}", tour.display());
-                std::process::exit(2);
+                crate::exit(2);
             }
         };
         // Optional chapter window (reuses the script's own [[segment]] definitions).
@@ -151,7 +151,7 @@ impl FractadyneApp {
                 Ok(s) => (s.start, s.end),
                 Err(e) => {
                     eprintln!("livetest: {e}");
-                    std::process::exit(2);
+                    crate::exit(2);
                 }
             },
             None => (0.0, pb.total),
@@ -169,7 +169,7 @@ impl FractadyneApp {
                 tour.display(),
                 segment.map(|s| format!(" segment \"{s}\"")).unwrap_or_default()
             );
-            std::process::exit(2);
+            crate::exit(2);
         }
         pending.reverse(); // pop() takes the earliest
 

@@ -45,6 +45,76 @@ static ALIVE_MS: AtomicU64 = AtomicU64::new(0);
 static WATCHDOG_ON: AtomicBool = AtomicBool::new(false);
 /// Monotonic suffix for crash-report filenames (collision-proofs same-second panics).
 static CRASH_SEQ: AtomicU64 = AtomicU64::new(0);
+/// Set once an allocation failure has been reported — the reporting path itself allocates, so a
+/// second failure inside it must fall straight through to the runtime's abort instead of
+/// recursing.
+static OOM_REPORTED: AtomicBool = AtomicBool::new(false);
+/// Emergency allocation held from startup and released on the FIRST allocation failure, so the
+/// report (which formats strings and captures a backtrace) has room to run in a process that has
+/// just been told there is none. Stored as a `usize` because the pointer crosses a static.
+static OOM_RESERVE: AtomicU64 = AtomicU64::new(0);
+/// Size of that reserve. Big enough for a backtrace capture and the report string; small enough
+/// that holding it costs nothing worth measuring.
+const OOM_RESERVE_BYTES: usize = 8 << 20;
+
+/// Process working set / peak, for a breadcrumb. Cheap (one Win32 call), so it can sit on phase
+/// transitions — but NOT on anything per-frame.
+pub(crate) fn memory_summary() -> String {
+    memory_line()
+}
+
+/// Process working set / peak, formatted for a report line. `(0, 0)` off Windows → "unavailable".
+fn memory_line() -> String {
+    match crate::sysinfo::process_memory() {
+        (0, 0) => "unavailable".to_string(),
+        (ws, peak) => format!("rss {} MB, peak {} MB", ws >> 20, peak >> 20),
+    }
+}
+
+/// Reserve the emergency block. Called once from [`init`], before anything large runs.
+fn arm_oom_reserve() {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    let Ok(layout) = Layout::from_size_align(OOM_RESERVE_BYTES, 16) else {
+        return;
+    };
+    // SAFETY: a plain sized allocation from the system allocator; the pointer is only ever
+    // handed back to `System.dealloc` with this same layout, in `release_oom_reserve`.
+    let p = unsafe { System.alloc(layout) };
+    if !p.is_null() {
+        OOM_RESERVE.store(p as usize as u64, Ordering::SeqCst);
+    }
+}
+
+/// Give the reserve back to the allocator so the report below can allocate.
+fn release_oom_reserve() {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    let p = OOM_RESERVE.swap(0, Ordering::SeqCst);
+    if p == 0 {
+        return;
+    }
+    let Ok(layout) = Layout::from_size_align(OOM_RESERVE_BYTES, 16) else {
+        return;
+    };
+    // SAFETY: `p` came from `System.alloc` with this exact layout in `arm_oom_reserve`, and the
+    // swap above guarantees only one caller ever frees it.
+    unsafe { System.dealloc(p as usize as *mut u8, layout) };
+}
+
+/// An allocation just returned null; the runtime is about to `abort()`. Leave a record first.
+/// Called from the global allocator ([`crate::alloc::ReportingAlloc`]) — see that module for why
+/// this is the only place it can be done on stable Rust.
+pub(crate) fn on_alloc_fail(bytes: usize) {
+    if OOM_REPORTED.swap(true, Ordering::SeqCst) {
+        return; // already reporting (or re-entered from inside the report) — let it abort
+    }
+    release_oom_reserve();
+    let msg = format!(
+        "out of memory: allocation of {bytes} bytes failed ({})",
+        memory_line()
+    );
+    write_crash_report_at(&msg, "<allocator>");
+    log_line("oom", &msg);
+}
 
 /// Seconds since process start (0.0 before [`init`]).
 pub(crate) fn elapsed_s() -> f64 {
@@ -79,6 +149,9 @@ pub(crate) fn init(args: &[String]) {
         }
         *LOG_FILE.lock().unwrap() = Some(path);
     }
+    // BEFORE the start line, so the "last log lines" it quotes belong to the dead session.
+    report_unclean_previous_session();
+    arm_oom_reserve();
     log_line(
         "start",
         &format!(
@@ -275,6 +348,7 @@ fn write_crash_report_at(msg: &str, loc: &str) {
          uptime  : {:.1}s\n\
          panic   : {msg}\n\
          at      : {loc}\n\
+         memory  : {}\n\
          activity: {}\n\
          manifest: {}\n\
          thread  : {}\n\n\
@@ -282,6 +356,7 @@ fn write_crash_report_at(msg: &str, loc: &str) {
         crate::sysinfo::version_string(),
         crate::sysinfo::now_utc_string(),
         elapsed_s(),
+        memory_line(),
         current_breadcrumb(),
         MANIFEST.lock().map(|m| m.clone()).unwrap_or_default(),
         std::thread::current().name().unwrap_or("<unnamed>"),
@@ -295,6 +370,71 @@ fn write_crash_report_at(msg: &str, loc: &str) {
             let _ = writeln!(std::io::stderr(), "[fd-panic] crash report written: {}", path.display());
         }
     }
+}
+
+/// `<logs>/session.running` — present only while the GUI event loop is running.
+fn marker_path() -> Option<PathBuf> {
+    LOG_DIR.get().cloned().flatten().map(|d| d.join("session.running"))
+}
+
+/// Arm the unclean-exit marker. Called immediately before the GUI event loop starts.
+///
+/// This is the backstop for the death classes nothing else can see. The panic hook covers
+/// panics and the allocator wrapper covers OOM, but a `__fastfail` abort from anywhere else, an
+/// access violation (`0xc0000005`, one of which is on record here unexplained), or an outright
+/// kill all leave no trace at all — the process is simply gone and the log stops mid-sentence.
+///
+/// Armed around the GUI ONLY, and every deliberate exit routes through [`crate::exit`] which
+/// disarms it, so a normal shutdown can never look like a crash. That matters more than
+/// coverage: a false crash report would teach everyone to ignore real ones.
+pub(crate) fn begin_gui_session() {
+    if let Some(p) = marker_path() {
+        let body = format!(
+            "{}\nstarted {}\n",
+            crate::sysinfo::version_string(),
+            crate::sysinfo::now_utc_string()
+        );
+        let _ = std::fs::write(p, body);
+    }
+}
+
+/// Disarm the marker. Idempotent; called from [`crate::exit`] and after the event loop returns.
+pub(crate) fn end_session() {
+    if let Some(p) = marker_path() {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// If the previous GUI session left its marker behind, it never shut down cleanly. Report it,
+/// naming what it was doing — the log's last breadcrumb is the only evidence such a death leaves.
+/// Deliberately worded as "no clean shutdown" rather than asserting a crash: a hard kill (Task
+/// Manager, a `Stop-Process` from a test harness, a power loss) lands here too.
+fn report_unclean_previous_session() {
+    let Some(p) = marker_path() else { return };
+    let Ok(prev) = std::fs::read_to_string(&p) else { return };
+    let _ = std::fs::remove_file(&p);
+    let tail = LOG_DIR
+        .get()
+        .cloned()
+        .flatten()
+        .map(|d| d.join("fractadyne.log"))
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .map(|s| {
+            // Last six lines in CHRONOLOGICAL order — `rev().take()` alone reads newest-first,
+            // which is exactly backwards for following what the process was doing as it died.
+            let mut last: Vec<&str> = s.lines().rev().take(6).collect();
+            last.reverse();
+            last.join("\n  ")
+        })
+        .unwrap_or_default();
+    let msg = format!(
+        "previous session ended without a clean shutdown (no panic, no crash report) — \
+         {} | last log lines:\n  {}",
+        prev.lines().collect::<Vec<_>>().join(", "),
+        tail
+    );
+    log_line("unclean", &msg);
+    write_crash_report_at(&msg, "<previous session>");
 }
 
 fn install_panic_hook() {

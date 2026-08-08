@@ -371,7 +371,7 @@ impl crate::FractadyneApp {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("divetest: cannot load {}: {e}", tour.display());
-                std::process::exit(2);
+                crate::exit(2);
             }
         };
         let max_l10 = probe.sample(probe.total).logmag / std::f64::consts::LN_10;
@@ -642,7 +642,7 @@ impl crate::FractadyneApp {
             }
             if Instant::now() > settle_deadline {
                 eprintln!("resizetest: view failed to settle (no real frame in 30 s)");
-                std::process::exit(2);
+                crate::exit(2);
             }
             std::thread::sleep(std::time::Duration::from_millis(16));
         }
@@ -703,9 +703,9 @@ impl crate::FractadyneApp {
                  live window still stretches during a drag, the stretch is compositor-level\n\
                  (presents lagging the OS resize stream), not in what the app paints."
             );
-            std::process::exit(0);
+            crate::exit(0);
         }
-        std::process::exit(1);
+        crate::exit(1);
     }
 }
 
