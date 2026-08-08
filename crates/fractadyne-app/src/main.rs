@@ -151,6 +151,12 @@ struct Perf {
     /// True once a view's budget measurement has converged near the target — the gate for
     /// starting a tiled settle (see the controller in `update`).
     fe_budget_ok: [bool; 2],
+    /// The `RenderMode` each view's budget was measured under (`u32::MAX` = never). A mode switch
+    /// changes the cost of a nominal step by several times — floatexp is much dearer than df32 —
+    /// so carrying the old budget across one sizes the first frame in the new mode off a
+    /// measurement of the old. Same class as `install_recompute`'s cost-discontinuity derate, and
+    /// handled the same way: drop the budget and let the controller re-climb.
+    budget_mode: [u32; 2],
     /// Tiled-settle progress per view (see `render::TileGrid`); `None` = no grid armed or running.
     tile_state: [Option<render::TileGrid>; 2],
     /// True while a view's settle grid has tiles left — holds the AA ramp and keeps repaints coming.
@@ -260,6 +266,7 @@ impl Default for Perf {
             fe_steps_last: [0, 0],
             last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],
+            budget_mode: [u32::MAX, u32::MAX],
             tile_state: [None, None],
             tile_pending: [false, false],
             tile_turn: u64::MAX,
@@ -4859,6 +4866,11 @@ impl eframe::App for FractadyneApp {
                 continue;
             }
             let cur = self.perf.fe_budget[v].max(render::TDR_BOOTSTRAP_STEPS);
+            let steps = self.perf.fe_steps_last[v];
+            // Over the target is never a meaningless reading. Whatever the dispatch's nominal size,
+            // the GPU just took this long to finish it, and that is the only thing the watchdog
+            // reacts to.
+            let slow = ms > render::TDR_BUDGET_MS;
             // A dispatch well under budget size — a clamped edge/corner tile of a settle grid —
             // finishes fast because it is SMALL, not because the GPU got faster; at depth it is
             // latency-bound, so its time says nothing about throughput. Pricing it as budget-sized
@@ -4866,21 +4878,32 @@ impl eframe::App for FractadyneApp {
             // flapping `fe_budget_ok` (which used to tear down the very grid mid-flight). Ignore
             // it; full frames and interior tiles are budget-sized by construction and carry the
             // real signal.
-            if (self.perf.fe_steps_last[v] as f64) < cur as f64 * 0.7 {
+            //
+            // ONE-SIDED, and that is the whole point: every word of the reasoning above is about a
+            // reading that would push the budget UP. Discarding a SLOW undersized dispatch throws
+            // away the strongest evidence there is that the budget is too high — and this rule was
+            // doing exactly that, measured on the df32 repro of the 2026-08-07 22:17 crash:
+            // `gpu_iterate=1451.4ms IGNORED (steps=1.030e10 < 0.7×budget)`. 1451 ms is 1.6× the
+            // target and most of the way to the watchdog, and the budget stayed at 1.663e11.
+            if (steps as f64) < cur as f64 * 0.7 && !slow {
                 if diag::trace_on("gpu") {
                     diag::trace(
                         "gpu",
-                        format!(
-                            "view={v} gpu_iterate={ms:.1}ms IGNORED (steps={:.3e} < 0.7×budget)",
-                            self.perf.fe_steps_last[v] as f64
-                        ),
+                        format!("view={v} gpu_iterate={ms:.1}ms IGNORED (steps={:.3e} < 0.7×budget)",
+                            steps as f64),
                     );
                 }
                 continue;
             }
             self.perf.last_iterate_ms[v] = ms;
             let factor = (render::TDR_BUDGET_MS / ms).clamp(render::TDR_SHRINK_MAX, render::TDR_GROW_MAX);
-            let next = ((cur as f64 * factor) as u64)
+            // A dispatch that measured slow proves ITS OWN size is already unaffordable, so the
+            // budget must come down to at most that size — otherwise a small-but-slow frame (the
+            // latency-bound deep interior) leaves the budget parked far above anything the GPU can
+            // actually finish, and the ratio search crawls down from a number that was never real.
+            // This assumes only that a smaller dispatch is not slower, not that `steps ∝ time`.
+            let base = if slow { cur.min(steps.max(1)) } else { cur };
+            let next = ((base as f64 * factor) as u64)
                 .clamp(render::TDR_BOOTSTRAP_STEPS, render::TDR_STEPS_CEIL);
             // CONVERGED = the last frame measured near the target (or the budget is pinned at a
             // clamp and cannot move). A tiled settle waits for this: starting a grid while the

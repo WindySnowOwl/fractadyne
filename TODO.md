@@ -35,6 +35,49 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] **A df32 frame had no cost bound at all — FIXED v0.2.40-beta.40.** Device loss 2026-08-07
+  22:17 UTC (beta.39, build 1175), 49 s into a live tour in a maximized window:
+
+      LIVE view=0 mode=0 4631x2060 ss=1 iter=12000 (boost=1.60)
+      steps=1.145e11 budget=4.000e8 tile=false settled=true
+
+  9.54 M pixels × 12,000 iterations = **1.145e11 nominal steps in one dispatch, 286× that frame's
+  own budget**, submitted untiled; the log goes silent for eight seconds and then loses the device.
+  `mode=0` is `Df32Pert`, and **five separate guards were gated on `is_fe`**, so on the df32 path
+  there was nothing at all between the frame and the watchdog:
+  1. the GPU timestamp SINK was only attached on floatexp (`is_fe.then(...)`) — the root: with no
+     sink there is no measurement, hence no budget, hence nothing for anything else to size against;
+  2. `fe_steps_last` (which the controller requires non-zero) was only recorded on floatexp;
+  3. `can_tile` required `is_fe` — no tiled settle;
+  4. the resolution shrink required `is_fe` — no shrink;
+  5. the `tile` trace was floatexp-only, hiding the case that crashed.
+  The one guard that did cover every mode, `max_ss_tdr`, floors at ss=1 and this frame was already
+  ss=1 — and it measured against `TDR_STEPS_CEIL` (3e11), which 1.145e11 is *under*, so it could
+  never have fired. Had the same frame been floatexp, the shrink would have taken it to ~273×121.
+  That asymmetry was the bug. **Same shape as the beta.36 crash already in this ledger**, where
+  `max_ss_tdr` was floatexp-only and got generalised — only the ss half was fixed then.
+  Fix: every mode measures and is bounded; a MODE SWITCH derates the budget (`budget_mode`) exactly
+  as `install_recompute` derates on a reference discontinuity, since a nominal step costs several
+  times more in floatexp than in df32.
+- [x] **The budget controller discarded the readings that mattered — FIXED v0.2.40-beta.40.** Found
+  while verifying the above, in the trace of the repro: `gpu_iterate=1451.4ms IGNORED (steps=1.030e10
+  < 0.7×budget)`. A dispatch 1.6× over the 900 ms target and most of the way to the ~2 s watchdog,
+  thrown away — so the budget sat at 1.663e11 with no way to learn otherwise. The `< 0.7×budget`
+  rule exists to stop a *fast* undersized tile (a clamped grid edge, latency-bound at depth) from
+  inflating the budget; every word of its rationale is about readings that push the budget UP, but
+  it was applied two-sided. It is now one-sided, and a slow reading also bases the shrink on
+  `min(budget, that dispatch's own steps)` — a size that just measured slow cannot remain the
+  budget. Assumes only "smaller is not slower", never `steps ∝ time`.
+
+  **Verified** on a repro of the crash's exact frame (mode 0, 4631×2060, 12,000 iterations,
+  1.145e11 steps, maximized): the slow reading is now acted on — `1146.9ms x0.78 cur=1.752e11 →
+  next=1.218e10` — and the frame ends up **tiled at full resolution** (`budget=4.339e10
+  tiling=true tile=Some([2875,0,1756,2060])`) instead of one dispatch. 74 s, no device loss. Deep
+  path unregressed: `--divetest` 59.3–60 fps, p95 ≤ 22.2 ms per band. Suite 101/101 + goldens 17/17.
+  ⚠The repro reproduces the frame's SHAPE, not its cost — the same nominal steps measured 114 ms at
+  one location and 1147 ms at another, which is this codebase's standing lesson that `steps ∝ time`
+  is false. The bound is what was verified, not a re-triggering of the original TDR.
+
 - [x] **Live playback loses the GPU device a few minutes in — FIXED v0.2.40-beta.38.** Cause: the
   script-playback reference LOOKAHEAD was spinning. **Measured ~400 reference builds a second,
   sustained** — 13,529 of 14,311 builds in the 392 s crash log returned the same `len=626`, six

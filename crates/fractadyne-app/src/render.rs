@@ -2256,6 +2256,33 @@ impl FractadyneApp {
         // frame went straight over the ceiling and LOST THE DEVICE — crash report 2026-08-07
         // 17:01 UTC, `wgpu device lost (Unknown)` inside `queue.submit` at 51.8 s of a live tour.
         let offscreen = self.auto_render;
+        // A MODE SWITCH is a cost discontinuity, so the budget measured in the old mode must not
+        // size a frame in the new one: a nominal step costs several times more in floatexp than in
+        // df32, and the dive crosses that boundary at speed. Now that every mode measures, this is
+        // reachable in both directions — the dangerous one being floatexp→df32 carrying a budget
+        // earned where BLA skips most of the nominal work. Derate exactly as `install_recompute`
+        // does for a reference discontinuity and let the controller re-climb; its climb is
+        // overshoot-safe by design, so the cost is one or two coarser frames after the crossover.
+        if !offscreen {
+            // `mode` itself is selected further down; it is a pure function of these two.
+            let m = RenderMode::select(fractal.supports_perturbation(), magnification).to_u32();
+            if self.perf.budget_mode[vidx] != m {
+                self.perf.budget_mode[vidx] = m;
+                let cur = self.perf.fe_budget[vidx];
+                let derated = (cur / 8).max(TDR_BOOTSTRAP_STEPS);
+                if cur != 0 && derated < cur {
+                    self.perf.fe_budget[vidx] = derated;
+                    self.perf.fe_budget_ok[vidx] = false; // tiling re-arms once re-converged
+                    crate::diag::trace(
+                        "gpu",
+                        format!(
+                            "mode switch to {m}: budget {:.2e}→{:.2e}, re-converging",
+                            cur as f64, derated as f64
+                        ),
+                    );
+                }
+            }
+        }
         // A reproject frame re-samples the frozen texture, so it must land on the SAME resolution as
         // the frame that produced it; recomputing from a moving budget would drift `fit` off 1.
         let tdr_steps = if offscreen {
@@ -2292,8 +2319,15 @@ impl FractadyneApp {
         if interacting {
             self.perf.interact_frame[vidx] = self.perf.frame_idx;
         }
-        let can_tile = is_fe
-            && self.allow_tiled_settle
+        // NOT gated on `is_fe`. The GPU watchdog does not care which arithmetic mode a dispatch
+        // uses, and a df32 frame is just as capable of exceeding it — 2026-08-07 22:17 UTC, a
+        // MODE-0 view at 4631×2060 ss=1 × 12,000 iterations submitted 1.145e11 nominal steps in one
+        // dispatch against a 4.000e8 budget (286× over) and lost the device. Tiling, the resolution
+        // shrink below, and the cost measurement that feeds both were all floatexp-only, so on the
+        // df32 path there was nothing between the frame and the watchdog. (Precedent: `max_ss_tdr`
+        // was floatexp-only for the same reason and was generalised in beta.36 after the same class
+        // of crash; only the ss half got fixed then.)
+        let can_tile = self.allow_tiled_settle
             && !offscreen
             && !interacting
             && !will_reproject
@@ -2374,7 +2408,9 @@ impl FractadyneApp {
         // shrink it differs between moving and settled frames, which is what caused the v0.1.44 bug.)
         let (resolution, spx) = {
             let iter_cost = spx.saturating_mul(gpu_iter.max(1) as u64);
-            if is_fe && iter_cost > tdr_allowed {
+            // Every mode, not just floatexp — see `can_tile`. `tdr_allowed` is now measured on all
+            // of them, so this is the same bound applied to the same kind of frame.
+            if iter_cost > tdr_allowed {
                 let f = (tdr_allowed as f64 / iter_cost as f64).sqrt();
                 let r = [
                     ((resolution[0] as f64 * f) as u32).max(16),
@@ -2388,20 +2424,16 @@ impl FractadyneApp {
         let max_ss = ((budget / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
             .sqrt()
             .max(1.0) as u32;
-        // The GPU watchdog does not care which arithmetic mode a dispatch uses. `tdr_allowed` is
-        // only MEASURED on the floatexp path, so the other modes cannot use it — but `u32::MAX`
-        // (what they used to get) is not a cap at all, and the frame cost is just as unbounded
-        // there: `spx·ss²·gpu_iter` with a high iteration count and the settle ramp's ss=8 is over
-        // a trillion nominal steps. That is not hypothetical — it is the 2026-08-07 device loss,
-        // at a SHALLOW mode-0 view. Cap those modes against the app's stated absolute maximum for
-        // a single dispatch instead. At an ordinary shallow view (~1e3 iterations) this permits
-        // ss well past the 8 the UI offers, so it binds only where the frame is genuinely huge.
-        let max_ss_tdr = {
-            let envelope = if is_fe { tdr_allowed } else { TDR_STEPS_CEIL };
-            ((envelope / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
-                .sqrt()
-                .max(1.0) as u32
-        };
+        // The GPU watchdog does not care which arithmetic mode a dispatch uses. This cap was
+        // generalised to every mode in beta.36 (a settle ramp reaching ss=8 at a shallow view is
+        // over a trillion nominal steps), but the non-floatexp branch had to fall back on the
+        // absolute `TDR_STEPS_CEIL` because no budget was MEASURED there. It is now, so every mode
+        // uses its own measured envelope — which matters because the ceiling is ~15× too generous
+        // and, being an ss cap, this floors at ss=1 and could never bound the ss=1 frame that lost
+        // the device anyway. The resolution shrink above is what bounds that case.
+        let max_ss_tdr = ((tdr_allowed / spx.saturating_mul(gpu_iter.max(1) as u64).max(1)) as f64)
+            .sqrt()
+            .max(1.0) as u32;
         // `max_ss_tdr` used to be extendable past its own value by a measured-AA allowance, on the
         // grounds that it assumed BLA skips NOTHING and so over-throttled views where BLA is effective.
         // That reasoning is now folded into `tdr_steps` itself, which is DERIVED from measurement — a
@@ -2474,7 +2506,9 @@ impl FractadyneApp {
                 self.perf.tile_pending[vidx] = false;
             }
         }
-        if crate::diag::trace_on("tile") && is_fe {
+        // Every mode — this trace is how a frame's cost bound is inspected, and the df32 path is
+        // now budgeted and tileable too, so hiding it there would hide the case that crashed.
+        if crate::diag::trace_on("tile") {
             let steps = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
@@ -2498,8 +2532,10 @@ impl FractadyneApp {
         }
         let bootstrap =
             self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none();
-        if is_fe
-            && !interacting
+        // Armed on EVERY mode. While this was floatexp-only, a df32 view's budget never left the
+        // 4e8 bootstrap, so both bounds above were computed from a number that had measured
+        // nothing — and the shrink they gate was itself floatexp-only, so nothing bound the frame.
+        if !interacting
             && !will_reproject
             && !self.tour_playing() // tour frames move every keyframe — not settled-cost data
             && (key_changed || bootstrap)
@@ -2985,13 +3021,20 @@ impl FractadyneApp {
         // timestamp — but the SINK must be attached on EVERY frame: the readback lands a couple of
         // frames later, by which time the view is usually serving cached/reproject frames, and a
         // sink-less pump would silently discard the reading.
-        if is_fe && key_changed && !will_reproject {
+        // Every mode: the controller in `update` SKIPS a view whose `fe_steps_last` is zero, so
+        // leaving this floatexp-only would have armed df32 probes above that could never resolve
+        // into a budget — measurement in name only.
+        if key_changed && !will_reproject {
             self.perf.fe_steps_last[vs] = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
             self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
         }
-        let iterate_ms = is_fe.then(|| self.perf.iterate_ms[vs].clone());
+        // The sink is what carries the GPU timestamp back at all. Attaching it only on floatexp was
+        // the root of the whole floatexp-only budget: with no sink there is no measurement, so no
+        // budget, so nothing for the shrink or the tiled settle to size a frame against — and those
+        // were then gated on `is_fe` to match. Every mode measures now.
+        let iterate_ms = Some(self.perf.iterate_ms[vs].clone());
         // The GPU self-arms the maxiter-fraction readback on full-frame iterates and computes the
         // fraction itself (count and pixel denominator always from the same frame).
         let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
