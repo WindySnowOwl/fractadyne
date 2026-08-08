@@ -336,9 +336,11 @@ pub(crate) struct TourRenderUi {
     pub(crate) overwrite: bool,
     /// Latest line from the child (its "frame N/M …" progress), and the finished-run summary.
     pub(crate) progress: String,
+    /// First error line the child wrote to stderr — the reason a render stopped.
+    pub(crate) error: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) child: Option<std::process::Child>,
-    pub(crate) rx: Option<std::sync::mpsc::Receiver<String>>,
+    pub(crate) rx: Option<std::sync::mpsc::Receiver<crate::ui::tour_render::RenderLine>>,
 }
 
 impl Default for TourRenderUi {
@@ -356,6 +358,7 @@ impl Default for TourRenderUi {
             mp4: false,
             overwrite: true,
             progress: String::new(),
+            error: None,
             status: None,
             child: None,
             rx: None,

@@ -35,6 +35,29 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] **A 4K tour render died at frame 1091 and the dialog wouldn't say why — FIXED
+  v0.2.40-beta.45.** The render itself was not at fault: the log had the reason in plain words,
+  `tour FAILED: frame 1091: There is not enough space on the disk. (os error 112)`. Measured after
+  the fact: 4K frames cost **5.28 MB each**, so 9,931 of them need **~51 GB**, against ~6 GB free.
+  The render was impossible before it started and spent 1h28m proving it.
+  Two real defects, neither of them the disk:
+  1. **The GUI threw the reason away.** `draw_tour_render_dialog` spawned the child with
+     `.stderr(Stdio::null())`, and the child reports failures through `diag::log_line`, which
+     writes to STDERR. So the dialog could only ever repeat its last stdout progress line —
+     "Render failed or was stopped. frame 1091/9931 (1h28m35s elapsed…)" — which says where it
+     stopped and not one word about why. Now stderr is piped, error-ish lines are tagged
+     (`RenderLine::Error`), the FIRST one is kept (later lines are consequences), and the status
+     quotes it: "Render failed: … not enough space on the disk".
+  2. **Nothing estimated the output size.** The dialog costed the render in frames and seconds but
+     never in bytes, which is the one resource a frame sequence actually exhausts. It now shows
+     `≈N GB of frames · M GB free` from `sysinfo::free_disk_bytes`, amber with "not enough room for
+     the whole sequence" when short. ~0.65 B/px, the measured PNG cost of a 4K fractal frame,
+     labelled as an estimate — deep frames compress worse than shallow ones, so it is an order of
+     magnitude, not a promise, and the 1.2× margin keeps it quiet when it is merely close.
+  ⚠**This is the third time in two days that the diagnostic, not the failure, was the problem** (the
+  beta.36 crash manifest knowing only export frames; the controller's silent `continue`). The
+  pattern each time: a component states the reason correctly and something upstream discards it.
+
 - [x] ⭐**Crash reporting was blind to ABORTS — FIXED v0.2.40-beta.43.** Three mechanisms now cover
   the classes that left nothing behind:
   1. **Global allocator wrapper** (`alloc.rs`). `set_alloc_error_hook` is nightly-only, so

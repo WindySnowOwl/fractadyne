@@ -9,4 +9,4 @@ mod central;
 mod dialogs;
 mod menus;
 mod panels;
-mod tour_render;
+pub(crate) mod tour_render;

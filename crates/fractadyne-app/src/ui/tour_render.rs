@@ -19,6 +19,14 @@
 
 use crate::FractadyneApp;
 
+/// A line from the render child, tagged by which stream it came from. Progress lines overwrite the
+/// live readout; error lines are kept separately so the failure message survives the progress
+/// spam that follows it.
+pub(crate) enum RenderLine {
+    Progress(String),
+    Error(String),
+}
+
 impl FractadyneApp {
     /// Open the render dialog for the currently loaded script, seeding it from the script's own
     /// `[render]` block so the defaults are what the author intended rather than what this app
@@ -60,7 +68,16 @@ impl FractadyneApp {
     pub(crate) fn poll_tour_render(&mut self, ctx: &egui::Context) {
         if let Some(rx) = &self.tour_render.rx {
             while let Ok(line) = rx.try_recv() {
-                self.tour_render.progress = line;
+                match line {
+                    RenderLine::Progress(l) => self.tour_render.progress = l,
+                    // Keep the FIRST error: the one that stopped the render. Later lines are
+                    // usually consequences of it.
+                    RenderLine::Error(l) => {
+                        if self.tour_render.error.is_none() {
+                            self.tour_render.error = Some(l);
+                        }
+                    }
+                }
             }
         }
         let done = match self.tour_render.child.as_mut() {
@@ -77,8 +94,13 @@ impl FractadyneApp {
             self.tour_render.status = Some(if ok {
                 format!("Render finished → {}", self.tour_render.out)
             } else {
-                // A failed render has already printed why; the last progress line is usually it.
-                format!("Render failed or was stopped. {}", self.tour_render.progress)
+                // Quote the child's OWN reason when it gave one — it is the only thing here that
+                // says WHY. Falling back to the last progress line (all this used to do) reports
+                // where it stopped and leaves the cause in a log file.
+                match self.tour_render.error.take() {
+                    Some(e) => format!("Render failed: {e}"),
+                    None => format!("Render failed or was stopped. {}", self.tour_render.progress),
+                }
             });
             ctx.request_repaint();
         }
@@ -267,6 +289,35 @@ impl FractadyneApp {
                     ))
                     .monospace(),
                 );
+                // DISK. A frame sequence is the one output here big enough to run a volume dry,
+                // and it does so an hour and a half in, after the frames that DID fit were
+                // written: measured at 4K, 5.28 MB/frame × 9931 frames ≈ 51 GB against 6 GB free,
+                // failing at frame 1091. Nothing in this dialog hinted at that before starting.
+                //
+                // ~0.65 B/px is the measured PNG cost of a 4K fractal frame; it is an ESTIMATE and
+                // labelled as one — deep frames with fine structure compress worse than shallow
+                // ones, so treat it as the right order of magnitude, not a promise.
+                let est_bytes = (self.tour_render.width as u64)
+                    .saturating_mul(self.tour_render.height as u64)
+                    .saturating_mul(frames as u64)
+                    * 65
+                    / 100;
+                let gb = |b: u64| b as f64 / (1u64 << 30) as f64;
+                let free = crate::sysinfo::free_disk_bytes(std::path::Path::new(&self.tour_render.out));
+                let disk = match free {
+                    Some(f) => format!("≈{:.1} GB of frames · {:.1} GB free", gb(est_bytes), gb(f)),
+                    None => format!("≈{:.1} GB of frames", gb(est_bytes)),
+                };
+                // Warn on a genuine shortfall only. The estimate is rough, so a 1.2× margin keeps
+                // this quiet when it is merely close and loud when the render cannot finish.
+                let short = free.is_some_and(|f| (f as f64) < gb(est_bytes) * 1.2 * (1u64 << 30) as f64);
+                ui.label(if short {
+                    egui::RichText::new(format!("⚠ {disk} — not enough room for the whole sequence"))
+                        .monospace()
+                        .color(egui::Color32::from_rgb(0xE0, 0xA0, 0x30))
+                } else {
+                    egui::RichText::new(disk).monospace().weak()
+                });
                 ui.label(
                     egui::RichText::new(
                         "Renders the script FROM DISK in a separate process, so unsaved edits \
@@ -393,22 +444,46 @@ impl FractadyneApp {
         let args = self.tour_render_args(script, chapters);
         self.tour_render.progress.clear();
         self.tour_render.status = None;
+        // STDERR IS PIPED, not discarded. The child reports why it failed through `diag::log_line`,
+        // which writes to stderr — so throwing stderr away meant the dialog could only ever repeat
+        // the last progress line. Measured: a 4K render died at frame 1091 with the child saying
+        // `tour FAILED: frame 1091: There is not enough space on the disk. (os error 112)`, and the
+        // dialog reported "Render failed or was stopped. frame 1091/9931 …" — the one fact that
+        // mattered was in the log file and nowhere the user would look.
         let child = std::process::Command::new(exe)
             .args(&args)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .spawn();
         match child {
             Ok(mut c) => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                self.tour_render.rx = Some(rx);
                 if let Some(out) = c.stdout.take() {
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    self.tour_render.rx = Some(rx);
+                    let tx = tx.clone();
                     std::thread::spawn(move || {
                         for line in BufReader::new(out).lines().map_while(Result::ok) {
                             // Only the lines worth showing: per-frame progress and the summary.
                             let l = line.trim().to_string();
-                            if !l.is_empty() && tx.send(l).is_err() {
+                            if !l.is_empty() && tx.send(RenderLine::Progress(l)).is_err() {
                                 break; // the app dropped the receiver
+                            }
+                        }
+                    });
+                }
+                if let Some(err) = c.stderr.take() {
+                    std::thread::spawn(move || {
+                        for line in BufReader::new(err).lines().map_while(Result::ok) {
+                            // Keep only what explains a failure. The child's stderr also carries
+                            // routine diagnostics (`[fd-start]`, trace categories), and promoting
+                            // those to the dialog would bury the one line that matters.
+                            let l = line.trim().to_string();
+                            let interesting = l.contains("FAILED")
+                                || l.contains("panic")
+                                || l.contains("error")
+                                || l.contains("Error");
+                            if interesting && tx.send(RenderLine::Error(l)).is_err() {
+                                break;
                             }
                         }
                     });

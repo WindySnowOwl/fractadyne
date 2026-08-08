@@ -78,6 +78,43 @@ pub(crate) fn process_memory() -> (u64, u64) {
     (0, 0)
 }
 
+/// Bytes free on the volume holding `path` (for the caller's user quota), or `None` when it can't
+/// be determined — an unwritable/nonexistent path included, so the caller must treat `None` as
+/// "unknown", never as "full".
+#[cfg(windows)]
+pub(crate) fn free_disk_bytes(path: &std::path::Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    extern "system" {
+        fn GetDiskFreeSpaceExW(
+            dir: *const u16,
+            free_to_caller: *mut u64,
+            total: *mut u64,
+            total_free: *mut u64,
+        ) -> i32;
+    }
+    // The path may not exist yet (the render creates its output folder), so walk up to the first
+    // ancestor that does — the volume is the same either way, and that is all we are asking about.
+    let mut probe = if path.as_os_str().is_empty() {
+        std::path::Path::new(".")
+    } else {
+        path
+    };
+    while !probe.exists() {
+        probe = probe.parent()?;
+    }
+    let wide: Vec<u16> = probe.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let (mut free, mut total, mut total_free) = (0u64, 0u64, 0u64);
+    // SAFETY: `wide` is a NUL-terminated UTF-16 path that outlives the call, and the three outputs
+    // are valid `u64` slots. A zero return means failure, in which case nothing is read.
+    let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, &mut total_free) };
+    (ok != 0).then_some(free)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn free_disk_bytes(_path: &std::path::Path) -> Option<u64> {
+    None
+}
+
 /// Host system facts shown in benchmark reports (gathered once at startup).
 pub(crate) struct SysInfo {
     pub(crate) cpu: String,
