@@ -35,6 +35,37 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] **A reference the freeze guard refuses is re-requested forever — ROOT CAUSE of the 3:35
+  stall, NOT fixed.** At the grand tour's `hold-e55` keyframe (t=215 s, `zoom = "1e55"`,
+  `max_iter = 250000`) the settled extension asks for `ref_build_iter = 250000 + 8192 = 258192`.
+  That orbit never escapes, so it comes back **partial at 258,193 samples — 2,192 over
+  `LIVE_REF_CAP` (256,000)** — and `install_recompute`'s freeze guard refuses it. Measured in the
+  field log: the identical build repeats **every ~450 ms indefinitely** (`reference built [live]:
+  len=258193 iter=258192`), burning a core forever. `ref_ext_refused` is supposed to stop exactly
+  this ("re-fire only for strictly more than a refused attempt"), so either something is clearing
+  it each round or the re-request comes from a path that does not consult it — that is the thread
+  to pull. Consequence while it loops: no reference installs, pixels stay clamped to the previously
+  installed orbit (48,772 iterations against a 250,000 ask), and the view is BLACK.
+  ⚠Note the arithmetic: any script asking 248k–256k iterations lands in the refusal band purely
+  because `ref_build_iter` adds 8,192 of headroom. The tour asks for 250,000.
+- [x] **The tour clock could be held forever — FIXED v0.2.40-beta.42.** Reported from the field:
+  the grand tour "seems to have hung at 3:35 (waiting for detail)" running full screen. The app was
+  fine — responding, renderer busy, log advancing; it was the TOUR CLOCK that had stopped for good.
+  `settle_timeout` has always bounded the settled-hold branch of the pacer, but the **lag-based
+  dilation was bounded by nothing**: with the reference above never installing, the BLA never
+  refreshes, `last_depth_lag` never falls, and `hold` stays at 1.0 for the rest of the run. Fix: a
+  final backstop over every reason the clock can be held — once fully stopped for `settle_timeout`,
+  the pacer gives up and lets the tour run. The release is STICKY until the pipeline genuinely
+  recovers; releasing for one frame and re-arming the timer would only convert the stall into a
+  15 s duty cycle, which is a hang with extra steps.
+  ⚠**Two shortcut repros FAILED to reproduce it** and would have "proved" a fix that fixed nothing:
+  starting cold at 1e55 builds a fresh reference (no lag, no stall), and a 1e30→1e55 dive at the
+  tour's own rate also completed. The stall needs the whole tour's accumulated state AND the
+  reported window size — the field report was full screen (5142×2182), ~7× the pixels of a default
+  window, which is what makes the frames costly enough to matter. **Verified the only way that
+  works: the actual grand tour, maximized, end to end — 5:31/5:31, past the 3:35 stall point, no
+  storm, no device loss.** Suite 101/101 + goldens 17/17.
+
 - [x] **A static view rendered at 205×162 upscaled to the panel — FIXED v0.2.40-beta.41.** Reported
   as "detail isn't resolving, it looks very pixelated" at a 6.6e18× df32 view. A beta.40 regression,
   and the mechanism is worth keeping: **the frame-cost budget could never bootstrap on a view that

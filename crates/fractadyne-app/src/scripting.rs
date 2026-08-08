@@ -1162,6 +1162,16 @@ pub(crate) struct Playback {
     /// waiting at (so the budget resets at the next hold rather than accumulating across the tour).
     settle_waited: f64,
     settle_kf: usize,
+    /// Wall-clock seconds the PACER has held the clock effectively stopped, for any reason. The
+    /// settled-hold branch below has always been bounded by `settle_timeout`; the lag-based
+    /// dilation was not bounded by anything, and a tour that reaches a view whose reference can
+    /// never install (the freeze guard refuses it) sits at `hold = 1.0` forever — reported from
+    /// the field as a hang at 3:35 of the grand tour, with the renderer still working and the
+    /// clock simply never advancing again. A tour must always finish.
+    pace_waited: f64,
+    /// Latched once `pace_waited` exceeds the timeout: the pacer has given up waiting and lets the
+    /// clock run until the pipeline actually catches up (`hold` falls on its own).
+    pace_released: bool,
     /// Current tour time (seconds) — the authoritative clock, advanced by `advance_playback_core`.
     pub(crate) cur_t: f64,
     /// Transport: playback rate multiplier, and whether the clock is user-paused. Distinct from
@@ -2117,6 +2127,8 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         settle_timeout: sf.playback.settle_timeout.unwrap_or(20.0).max(0.0),
         settle_waited: 0.0,
         settle_kf: usize::MAX,
+        pace_waited: 0.0,
+        pace_released: false,
         cur_t: 0.0,
         last_now: None,
     })
@@ -2750,6 +2762,30 @@ impl FractadyneApp {
                     pb.settle_waited += dt;
                     hold = 1.0;
                 }
+            }
+            // FINAL BACKSTOP, over every reason the clock can be held. `settle_timeout` bounds the
+            // settled-hold branch above, but the lag dilation had no bound at all: at a view whose
+            // reference the freeze guard refuses, no new reference ever installs, so the BLA never
+            // refreshes, `last_depth_lag` never falls, and `hold` stays 1.0 for the rest of time —
+            // measured in the field as the grand tour stopping dead at 3:35 with the renderer still
+            // busy. Whatever the pipeline is waiting for, a tour that has been fully stopped for
+            // `settle_timeout` gives up waiting and moves on: a blurry frame that keeps playing is
+            // strictly better than a tour that never reaches its end. Releasing only clears the
+            // dilation — the renderer keeps working, so the view still sharpens if it can.
+            // The release is STICKY until the pipeline genuinely recovers. Releasing for a single
+            // frame and then re-arming the timer would just make the stall a duty cycle — 15 s
+            // stopped, one frame of progress, 15 s stopped — which is a hang with extra steps.
+            if hold > 0.5 {
+                if !pb.pace_released {
+                    pb.pace_waited += dt;
+                    pb.pace_released = pb.pace_waited > pb.settle_timeout;
+                }
+            } else {
+                pb.pace_waited = 0.0;
+                pb.pace_released = false; // caught up — normal pacing resumes
+            }
+            if pb.pace_released {
+                hold = 0.0;
             }
             pb.paced_hold = hold;
             // Advance the clock. `1 - hold` is the pacer's dilation (0 = fully stopped while the
