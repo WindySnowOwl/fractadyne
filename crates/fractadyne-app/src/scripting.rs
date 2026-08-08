@@ -940,6 +940,10 @@ pub(crate) enum PlaybackTick {
     /// The tour just ended: `Some(name)` = surface a "finished" toast; `None` = a benchmark run
     /// whose report dialog was already queued.
     Finished(Option<String>),
+    /// A finished tour, still loaded so its player stays on screen. The camera was re-sampled (a
+    /// scrub while stopped must move the view) but the clock did not advance, so this must NOT
+    /// drive a repaint — otherwise a finished tour spins the render loop forever.
+    Ended,
 }
 
 /// Read + parse a tour script, rejecting a retired v1 file with a migration message and warning
@@ -1164,6 +1168,12 @@ pub(crate) struct Playback {
     /// `paced_hold`, which is the RENDERER asking for time; these two are the USER asking.
     pub(crate) speed: f64,
     pub(crate) paused: bool,
+    /// The tour has reached its end and stopped there. The player STAYS on screen in this state —
+    /// a finished tour is the one moment you most want to scrub back into it, and the old
+    /// behaviour (tear the transport down the instant the clock ran out) took that away. The
+    /// script's own iteration budget and coloring are still applied; the viewer's are handed back
+    /// only when the player is closed (`stop_playback`). Scrubbing or pressing play clears it.
+    pub(crate) finished: bool,
     /// How much the pacer is holding the tour clock back this frame: 0 = playing in real time,
     /// 1 = fully stopped (waiting for the renderer). The status bar reads this so a stalled
     /// progress percentage says WHY instead of looking like a hang — which is exactly how it was
@@ -2100,6 +2110,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         segments,
         speed: 1.0,
         paused: false,
+        finished: false,
         render: resolve_render(&sf.render)?,
         paced_hold: 0.0,
         pace: Pace::parse(sf.playback.pace.as_deref())?,
@@ -2194,6 +2205,16 @@ impl FractadyneApp {
         }
         self.coloring.use_binary = false;
         self.coloring.use_duotone = false;
+    }
+
+    /// Is a tour actually RUNNING — as opposed to merely loaded? A finished tour keeps its player
+    /// on screen parked at the final keyframe, and for everything that asks "is the camera being
+    /// driven?" that state is an idle view, not playback: it may settle its AA, arm frame-cost
+    /// measurements, and use the progressive cold start, exactly as if a user had stopped there.
+    /// Callers that mean "is a tour loaded at all?" (its annotations, Esc, the Stop menu item) keep
+    /// testing `playback.is_some()`.
+    pub(crate) fn tour_playing(&self) -> bool {
+        self.playback.as_ref().is_some_and(|p| !p.finished)
     }
 
     /// Stop the active tour and hand the viewer their own iteration budget and coloring back.
@@ -2667,6 +2688,7 @@ impl FractadyneApp {
                 false
             }
             PlaybackTick::Finished(None) => false, // benchmark → report dialog already queued
+            PlaybackTick::Ended => false, // player still up, clock stopped — no repaint
         }
     }
 
@@ -2734,13 +2756,16 @@ impl FractadyneApp {
             // renderer catches up), `speed` and `paused` are the user's transport. At speed 1 with
             // no hold this is exactly the old wall-clock behaviour, so tour durations and the
             // `--divetest` timings are unchanged.
-            let step = if pb.paused { 0.0 } else { dt * pb.speed * (1.0 - hold) };
+            let step = if pb.paused || pb.finished { 0.0 } else { dt * pb.speed * (1.0 - hold) };
             pb.cur_t += step;
             if pb.loop_ && pb.total > 0.0 && pb.cur_t >= pb.total {
                 pb.cur_t = 0.0;
             }
         }
-        let finished = !pb.loop_ && pb.cur_t >= pb.total;
+        // Only the FIRST tick past the end ends the tour. Afterwards the player stays up with the
+        // clock parked, so this must not re-fire the toast (or re-queue a benchmark report) on
+        // every frame.
+        let just_finished = !pb.loop_ && !pb.finished && pb.cur_t >= pb.total;
         let e = pb.cur_t.clamp(0.0, pb.total);
         pb.cur_t = e;
         let s = pb.sample(e);
@@ -2809,19 +2834,32 @@ impl FractadyneApp {
             }
         }
 
-        if finished {
-            // `pb` is already out of `self.playback` — this only hands the viewer's own
-            // iteration budget and coloring back.
-            self.stop_playback();
+        if just_finished {
             if let Some(b) = pb.bench.take() {
+                // A benchmark run OWNS the session while it plays and reports through a dialog;
+                // there is nothing to scrub back into, so it still tears down. `pb` is already out
+                // of `self.playback`, so this only hands the viewer's settings back.
+                self.stop_playback();
                 self.bench_report = Some(self.format_bench(&pb, &b));
                 self.dialogs.bench_open = true;
                 return PlaybackTick::Finished(None); // report dialog carries the outcome
             }
-            return PlaybackTick::Finished(Some(pb.name.clone())); // pb dropped → stops at final keyframe
+            // A script parks at its final keyframe with the player still up (see `Playback::
+            // finished`). The viewer's own iteration budget and coloring are handed back when they
+            // close it, not here — restoring them now would recolor the frame they are looking at.
+            pb.finished = true;
+            pb.paused = true;
+            let name = pb.name.clone();
+            self.playback = Some(pb);
+            return PlaybackTick::Finished(Some(name));
         }
+        let ended = pb.finished;
         self.playback = Some(pb);
-        PlaybackTick::Playing
+        if ended {
+            PlaybackTick::Ended
+        } else {
+            PlaybackTick::Playing
+        }
     }
 
     /// Build a human-readable benchmark report.

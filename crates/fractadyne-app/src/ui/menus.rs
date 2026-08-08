@@ -280,7 +280,15 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         ui.add_enabled_ui(self.playback.is_some(), |ui| {
-                            if ui.button("Stop playback").clicked() {
+                            // Same thing the player's ✖ does — the transport's own ⏹ only rewinds.
+                            if ui
+                                .button("Close player")
+                                .on_hover_text(
+                                    "Stop the tour, close its player, and restore your own \
+                                     iteration and coloring settings",
+                                )
+                                .clicked()
+                            {
                                 self.stop_playback();
                                 ui.close_menu();
                             }
@@ -789,16 +797,23 @@ impl FractadyneApp {
         });
     }
 
-    /// Floating playback transport — restart / back / pause / stop / forward / speed / loop —
-    /// anchored over the top-centre of the VIEW while a script runs.
+    /// Floating playback transport — scrubber, restart / back / pause / stop / forward, speed,
+    /// render, loop, close — anchored over the top-centre of the VIEW while a script is loaded.
     ///
     /// It lives here rather than in the status bar because that bar is sized by its content: the
     /// centre coordinates alone gain and lose digits as the view moves, so anything to their right
     /// slides horizontally under the cursor while you are trying to click it. A fixed anchor over
     /// the view is the only stable position — and it is where a video player puts a transport.
+    ///
+    /// **Nothing in here may change width while it is on screen**, for the same reason. Three
+    /// things did: the elapsed clock (`9:59` → `10:00`), the speed label (`1×` → `0.5×`), and the
+    /// "waiting for detail" notice appearing mid-hold — which moved every button to its right just
+    /// as the renderer got busy and you reached for one. All three are now width-stable: the clock
+    /// is padded to the total's width, the speed label to its widest form, and the notice is always
+    /// laid out and merely painted transparent when it does not apply.
     pub(crate) fn draw_playback_transport(&mut self, ctx: &egui::Context) {
         let Some(pb) = &self.playback else { return };
-        let (name, cur_t, total, paused, speed, looping, is_bench, held) = (
+        let (name, cur_t, total, paused, speed, looping, is_bench, held, finished) = (
             pb.name.clone(),
             pb.cur_t,
             pb.total,
@@ -807,12 +822,13 @@ impl FractadyneApp {
             pb.loop_,
             pb.bench.is_some(),
             pb.paced_hold > 0.5,
+            pb.finished,
         );
         // Transport intents, applied after the closure: the widgets borrow `self` immutably and
         // `stop_playback` needs it mutably.
         let (mut seek, mut toggle_pause, mut stop, mut cycle_speed, mut toggle_loop) =
             (None::<f64>, false, false, false, false);
-        let mut open_render = false;
+        let (mut open_render, mut close) = (false, false);
         let has_source = self.playback.as_ref().is_some_and(|p| p.source.is_some());
         // `available_rect` is what the panels left over — the fractal view, below the menu bar and
         // inside the right panel — so the transport centres on the VIEW, not on the window.
@@ -827,33 +843,72 @@ impl FractadyneApp {
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(40)))
                     .corner_radius(6)
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
+                        // NOTHING IN HERE MAY BE SIZED FROM THE AVAILABLE WIDTH. Inside an `Area`
+                        // that width is unbounded, so anything derived from it (a scrub bar told to
+                        // "fill the row", a right-aligned sub-layout) blows the player up to the
+                        // width of the screen; egui then clamps the result against the screen edge
+                        // and the whole thing slides sideways with its right-hand buttons off-view.
+                        // Every part is therefore intrinsically sized AND width-stable — the name is
+                        // elided to a fixed field, the clock and speed are padded, the scrub bar is
+                        // a constant, and the renderer notice is always laid out — so the player is
+                        // content-sized and that content never changes width.
+                        let row = ui.horizontal(|ui| {
                             // The spinner animates only while the clock actually moves, so a
                             // paused tour looks paused. It keeps spinning while the PACER holds the
                             // clock, because the renderer is working then — that is the state that
                             // was mistaken for a hang.
-                            if paused {
-                                ui.label(egui::RichText::new("⏸").size(13.0));
+                            // Fixed slot: the three states are a stopped glyph, a paused glyph and
+                            // an animated spinner, and they do not share a natural width — laid out
+                            // freely, the whole row would shift a pixel or two every time playback
+                            // paused. Everything on this row is sized this way for that reason.
+                            const GLYPH: [f32; 2] = [18.0, 18.0];
+                            if finished {
+                                ui.add_sized(GLYPH, egui::Label::new(egui::RichText::new("⏹").size(13.0)))
+                                    .on_hover_text("Finished — scrub back in, or ✖ to close");
+                            } else if paused {
+                                ui.add_sized(GLYPH, egui::Label::new(egui::RichText::new("⏸").size(13.0)));
                             } else {
-                                ui.add(egui::Spinner::new().size(12.0));
+                                ui.add_sized(GLYPH, egui::Spinner::new().size(12.0));
                             }
                             let mmss = |t: f64| {
                                 let t = t.max(0.0) as u64;
                                 format!("{}:{:02}", t / 60, t % 60)
                             };
+                            // Pad elapsed to the total's width: `9:59 / 12:00` and `10:00 / 12:00`
+                            // must occupy the same space, or the whole transport jumps left once a
+                            // tour passes ten minutes.
+                            let tot = mmss(total);
                             let tag = if is_bench { "benchmark" } else { "script" };
+                            const NAME_MAX: usize = 16;
+                            let short = if name.chars().count() > NAME_MAX {
+                                let s: String = name.chars().take(NAME_MAX - 1).collect();
+                                format!("{s}…")
+                            } else {
+                                name.clone()
+                            };
                             ui.label(
-                                egui::RichText::new(format!("{name}  {} / {}", mmss(cur_t), mmss(total)))
-                                    .monospace(),
+                                egui::RichText::new(format!(
+                                    "{short:<NAME_MAX$} {:>w$} / {tot}",
+                                    mmss(cur_t),
+                                    w = tot.len()
+                                ))
+                                .monospace(),
                             )
-                            .on_hover_text(format!("Playing {tag}"));
+                            .on_hover_text(format!("Playing {tag} \"{name}\""));
                             ui.separator();
                             // Media glyphs, NOT monospace: they live in egui's bundled emoji font,
                             // and forcing the monospace family drops them to tofu boxes.
+                            // Every button gets the SAME fixed size. `▶` and `⏸` are not the same
+                            // width in that font, so a play/pause toggle would otherwise nudge each
+                            // button after it — the same complaint as the notice, one glyph wide.
+                            const BTN: [f32; 2] = [26.0, 20.0];
                             let btn = |ui: &mut egui::Ui, glyph: &str, tip: &str| -> bool {
-                                ui.add(egui::Button::new(egui::RichText::new(glyph).size(14.0)).small())
-                                    .on_hover_text(tip)
-                                    .clicked()
+                                ui.add_sized(
+                                    BTN,
+                                    egui::Button::new(egui::RichText::new(glyph).size(14.0)).small(),
+                                )
+                                .on_hover_text(tip)
+                                .clicked()
                             };
                             if btn(ui, "⏮", "Restart from the beginning") {
                                 seek = Some(0.0);
@@ -862,10 +917,13 @@ impl FractadyneApp {
                                 seek = Some((cur_t - 10.0).max(0.0));
                             }
                             if btn(ui, if paused { "▶" } else { "⏸" },
-                                   if paused { "Resume" } else { "Pause" }) {
+                                   if finished { "Play again from the beginning" }
+                                   else if paused { "Resume" } else { "Pause" }) {
                                 toggle_pause = true;
                             }
-                            if btn(ui, "⏹", "Stop playback and restore your own view settings") {
+                            // Stop = rewind and park, as on any media player. It no longer tears
+                            // the player down — that is ✖ — so the tour stays scrubable.
+                            if btn(ui, "⏹", "Stop and rewind to the start") {
                                 stop = true;
                             }
                             if btn(ui, "⏩", "Forward 10 seconds") {
@@ -874,9 +932,16 @@ impl FractadyneApp {
                             // Speed cycles rather than opening a menu: one control, one glance,
                             // and the label doubles as the readout.
                             if ui
-                                .add(egui::Button::new(
-                                    egui::RichText::new(format!("{}×", crate::fmt_speed(speed))).monospace(),
-                                ).small())
+                                .add_sized(
+                                    [40.0, BTN[1]],
+                                    egui::Button::new(
+                                        // Right-padded to `0.5×`, the widest of the four, so
+                                        // cycling the speed cannot resize its own button either.
+                                        egui::RichText::new(format!("{:>3}×", crate::fmt_speed(speed)))
+                                            .monospace(),
+                                    )
+                                    .small(),
+                                )
                                 .on_hover_text("Playback speed (click to cycle 0.5× / 1× / 2× / 4×)")
                                 .clicked()
                             {
@@ -888,7 +953,11 @@ impl FractadyneApp {
                             // renderer takes a script PATH.
                             ui.add_enabled_ui(has_source, |ui| {
                                 if ui
-                                    .add(egui::Button::new(egui::RichText::new("🎬").size(14.0)).small())
+                                    .add_sized(
+                                        BTN,
+                                        egui::Button::new(egui::RichText::new("🎬").size(14.0))
+                                            .small(),
+                                    )
                                     .on_hover_text(if has_source {
                                         "Render this script to a frame sequence…"
                                     } else {
@@ -899,32 +968,73 @@ impl FractadyneApp {
                                     open_render = true;
                                 }
                             });
+                            let loop_fill = if looping {
+                                crate::theme::BRAND_ACCENT.gamma_multiply(0.35)
+                            } else {
+                                ui.visuals().widgets.inactive.bg_fill
+                            };
                             if ui
-                                .add(
+                                .add_sized(
+                                    BTN,
                                     egui::Button::new(egui::RichText::new("🔁").size(14.0))
                                         .small()
-                                        .fill(if looping {
-                                            crate::theme::BRAND_ACCENT.gamma_multiply(0.35)
-                                        } else {
-                                            ui.visuals().widgets.inactive.bg_fill
-                                        }),
+                                        .fill(loop_fill),
                                 )
                                 .on_hover_text("Repeat the tour when it reaches the end")
                                 .clicked()
                             {
                                 toggle_loop = true;
                             }
+                            // Separated from the transport buttons so it is never the one you hit by
+                            // accident. Placed inline, NOT in a right-aligned sub-layout: a
+                            // right-to-left layout claims the remaining available width, which
+                            // inside an `Area` is unbounded — that pushed the button off-screen.
+                            ui.separator();
+                            if btn(ui, "✖", "Close the player and restore your own view settings") {
+                                close = true;
+                            }
+                        });
+                        // ---- scrub bar + renderer notice ----
+                        // The notice shares this row rather than the button row: it is the widest
+                        // thing here, and on the button row it would push the buttons around. It is
+                        // ALWAYS laid out and merely painted transparent when it does not apply, so
+                        // the player keeps one width whether or not the renderer is behind — the
+                        // point being that it used to appear exactly when the view got heavy,
+                        // shifting every button along just as you reached for one.
+                        ui.horizontal(|ui| {
+                            let notice = ui.colored_label(
+                                if held {
+                                    egui::Color32::from_rgb(0xE0, 0xA0, 0x30)
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                },
+                                egui::RichText::new("waiting for detail").monospace(),
+                            );
                             if held {
-                                ui.separator();
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(0xE0, 0xA0, 0x30),
-                                    egui::RichText::new("waiting for detail").monospace(),
-                                )
-                                .on_hover_text(
+                                notice.clone().on_hover_text(
                                     "The tour clock is paused while the renderer resolves this \
                                      view (reference build / iteration budget climbing). Playback \
                                      resumes by itself; see [playback] pace in the script.",
                                 );
+                            }
+                            // Fill out the button row's width. Safe to measure BECAUSE the row
+                            // above cannot contain this slider — sizing the slider from the width
+                            // of a row it is itself inside is the feedback loop that made the
+                            // player grow to the width of the screen.
+                            let spacing = ui.spacing().item_spacing.x;
+                            ui.spacing_mut().slider_width =
+                                (row.response.rect.width() - notice.rect.width() - 2.0 * spacing)
+                                    .clamp(120.0, 640.0);
+                            let mut scrub = cur_t;
+                            if ui
+                                .add(
+                                    egui::Slider::new(&mut scrub, 0.0..=total.max(0.001))
+                                        .show_value(false),
+                                )
+                                .on_hover_text("Drag to scrub through the tour")
+                                .changed()
+                            {
+                                seek = Some(scrub);
                             }
                         });
                     });
@@ -933,18 +1043,34 @@ impl FractadyneApp {
         if open_render {
             self.open_tour_render();
         }
-        // Apply the transport. A seek moves the clock only: the camera follows on the next tick
-        // through the normal sampling path, so scrubbing needs no special case anywhere else.
-        if stop {
+        if close {
             self.stop_playback();
             return;
         }
+        // Apply the transport. A seek moves the clock only: the camera follows on the next tick
+        // through the normal sampling path, so scrubbing needs no special case anywhere else.
         if let Some(pb) = self.playback.as_mut() {
+            if stop {
+                pb.cur_t = 0.0;
+                pb.paused = true;
+                pb.finished = false;
+            }
             if let Some(t) = seek {
                 pb.cur_t = t.clamp(0.0, pb.total);
+                // Scrubbing back into a finished tour makes it playable again; scrubbing to the
+                // very end leaves it finished, so it doesn't immediately re-fire the toast.
+                pb.finished = pb.cur_t >= pb.total;
             }
             if toggle_pause {
-                pb.paused = !pb.paused;
+                // Play on a finished tour means "watch it again" — the only sensible reading, and
+                // it saves reaching for ⏮ first.
+                if pb.finished {
+                    pb.cur_t = 0.0;
+                    pb.finished = false;
+                    pb.paused = false;
+                } else {
+                    pb.paused = !pb.paused;
+                }
             }
             if toggle_loop {
                 pb.loop_ = !pb.loop_;

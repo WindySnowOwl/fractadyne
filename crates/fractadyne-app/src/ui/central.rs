@@ -420,7 +420,7 @@ impl FractadyneApp {
         // a deep pan/zoom refreshing its reference. The SHOW_DELAY below keeps quick (shallow) builds
         // unmarked so it never strobes, and consecutive frames of one build re-use the same start. Tour
         // playback re-invalidates the reference every keyframe, so suppress there rather than strobe.
-        let busy = self.recompute_rx[vi].is_some() && self.playback.is_none();
+        let busy = self.recompute_rx[vi].is_some() && !self.tour_playing();
         if busy {
             // A real gap since the last in-flight frame re-arms the delay, so each fresh build must
             // again outlast it (a quick one never shows); consecutive frames of one build do not. The
@@ -763,7 +763,7 @@ impl FractadyneApp {
                 }
                 let interacting = now - self.pointer.settle_t[0] < SETTLE_DELAY;
                 // Progressive settle AA (see `nav_and_draw`): refine 1×→2×→4×→… over settled frames.
-                let aa_target = if interacting || self.playback.is_some() {
+                let aa_target = if interacting || self.tour_playing() {
                     // A scripted tour holds for a few seconds and then moves again, so the settle
                     // ramp — which exists to sharpen a view an idle USER has stopped on — buys
                     // almost nothing here and costs quadratically: ss=8 is 64 samples per pixel.

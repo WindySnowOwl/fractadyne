@@ -3431,7 +3431,7 @@ impl FractadyneApp {
         // Progressive settle AA (after the `vp` borrow ends): coarse (1×) while moving, then refine
         // 1×→2×→4×→… up to the chosen level over consecutive frames, so a heavy view never blocks on
         // one full-AA frame.
-        let aa_target = if interacting || self.playback.is_some() {
+        let aa_target = if interacting || self.tour_playing() {
             // Scripted playback: no settle AA ramp — see the note in `ui/central.rs`. Its cost is
             // quadratic and, outside the floatexp path, nothing bounds it.
             self.pointer.settle_frame[view] = 0;

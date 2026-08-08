@@ -2501,7 +2501,7 @@ impl FractadyneApp {
         if is_fe
             && !interacting
             && !will_reproject
-            && self.playback.is_none() // tour frames move every keyframe — not settled-cost data
+            && !self.tour_playing() // tour frames move every keyframe — not settled-cost data
             && (key_changed || bootstrap)
         {
             // Carry this frame's nominal step count: both arming conditions re-iterate (a changed key
@@ -2761,7 +2761,7 @@ impl FractadyneApp {
                     // the worker (COARSE_ITER exceeds their gpu_iter).
                     let progressive = cold
                         && !(self.dual && vi == 1 && self.julia_pin.is_none())
-                        && self.playback.is_none();
+                        && !self.tour_playing();
                     std::thread::spawn(move || {
                         recompute_worker_staged(inputs, tx, progressive);
                     });

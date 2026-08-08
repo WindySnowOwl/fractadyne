@@ -175,6 +175,36 @@ Mockups: [design/mockups/](design/mockups/).
   leaves it a few percent capped. Worth bounding the lookahead by available memory, or at least
   failing with a diagnosis instead of an allocator abort.
 
+## Playback player — v0.2.40-beta.39 (2026-08-07)
+
+Reported: "messages about waiting for detail adjust the width of the controls", plus asks for a
+scrub bar, a player that outlives the tour, and a close button.
+
+- **Scrub bar.** A slider under the transport row; dragging seeks the clock and the camera follows
+  through the normal sampling path, so it needed no special case anywhere else.
+- **Nothing on the player changes width any more.** Four things did: the "waiting for detail"
+  notice appearing mid-hold, the elapsed clock crossing ten minutes, the speed label cycling to
+  `0.5×`, and `▶`/`⏸` not being the same glyph width. Now the notice sits on the scrub row and is
+  ALWAYS laid out (painted transparent when idle), the clock is padded to the total's width, the
+  name is elided to a fixed field, and every button is `add_sized`. ⚠**The layout rule for this
+  widget: nothing inside it may be sized from the available width** — inside an `egui::Area` that
+  is unbounded, so a "fill the row" scrub bar or a right-aligned sub-layout blows the player up to
+  the width of the screen and egui then clamps it against the screen edge, sliding the whole thing
+  sideways with its right-hand buttons off-view. Both mistakes were made and measured here.
+- **The player outlives the tour** (`Playback::finished`): a finished script parks at its final
+  keyframe with the transport up, so you can scrub back in; the viewer's own iteration budget and
+  coloring are handed back only on close, since restoring them earlier would recolor the frame
+  being looked at. A finished tour is NOT "playing" (`tour_playing()`) — it settles its AA and
+  arms frame-cost measurement like any idle view. The benchmark still tears down on completion:
+  it owns the session and reports through a dialog.
+- **✖ closes the player** (as does Esc and Tools → Close player); ⏹ now only stops and rewinds, as
+  on any media player, and ▶ on a finished tour replays it.
+
+⚠**Harness note, cost me several wrong conclusions:** a DPI-unaware PowerShell screenshot gets
+VIRTUALISED coordinates from `GetWindowRect` while `PrintWindow` renders at true device size, so
+the capture silently clips the right ~30% of the window — which reads exactly like a UI
+overflowing its frame. Call `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` first.
+
 ## Script format v2 — SHIPPED v0.2.40-beta.34 (2026-08-07)
 
 Breaking change, explicitly sanctioned: no compatibility branch and no v1 reader — a v1 script is
