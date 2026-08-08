@@ -1,39 +1,147 @@
 # Fractadyne — Development Tracking
 
-## ▶ Announce readiness (fractalforums) — status 2026-08-07
+## ▶ Announce readiness (fractalforums) — TRIAGE 2026-08-08
 
-Goal: a stable `v0.2.40` suitable for announcing. Current head is **v0.2.40-beta.38**; the latest
-*published* prerelease is still beta.27 (beta.28–38 are commits, deliberately untagged —
-GitHub builds only fire on explicit request).
+Goal restated by the user: a release **stable enough to announce publicly**, meaning (a) no easily
+reproducible bugs, (b) no fundamentally missing features, (c) something substantively new in the
+landscape, and (d) a runnable Linux build. Head is **v0.2.40-beta.46**, pushed; the latest
+*published* prerelease is still beta.27 (28–46 are untagged — GitHub builds fire only on request).
 
-**Done:** the crash ledger is clean (every recorded device-loss crash fixed, including the live
-tour-playback one that blocked the announce — beta.38 — plus auto-restart recovery); seven
-spar-family rendering bugs fixed; status-bar diagnostics now explain rendering limits instead of
-leaving a black screen unexplained; the iteration ceiling is 10M; the grand tour exists, renders
-end to end (script format v2, beta.34) and now plays live for 12 minutes without incident.
+### A — BLOCKERS: easily reproducible bugs
 
-**Blockers before tagging:**
-1. **CHANGELOG is stale** — its `0.2.40-beta` entry stops at beta.15, so ~18 betas of work are
-   undocumented, including everything a forum reader cares about (Newton-Raphson zoom, exact
-   rational/complex coordinate entry, the multiplier λ, the 500k→10M ceiling, live limit
-   diagnostics, crash recovery). Release notes come from here and README is the front door.
-2. **Fresh-install smoke test** — never run this cycle. Wipe the config dir, boot, confirm a
-   stranger gets a sane first view, working menus, no stale-state warnings.
+Ordered by how fast a stranger hits them.
 
-**Decide before posting:** binaries are Windows-only, so "Linux?" will be the first reply — ship
-the Ubuntu job (above) or say so plainly in the post. And the pitch: what is genuinely novel next
-to KF/Fraktaler-3 is the **adaptive iteration budget** (nobody else raises the budget from live
-GPU feedback), **Newton-Raphson zoom**, the cursor-driven **dual Julia at depth**, and the
-**F3-matched corpus** as evidence rather than a boast.
+1. **An explicit iteration count is silently overridden.** Set Iterations to 10,000,000 at a deep
+   view and the status bar reads `iter 82,741` + `⚠ iter exhausted`. Thirty seconds to reproduce,
+   and "why won't it use the number I typed?" is a forum question waiting to happen. Blocked on the
+   cost model (nominal steps ignore BLA skipping) — honouring the setting naively collapses the
+   frame to 16×16, MEASURED and reverted. See the open item below.
+2. **A GPU without `TIMESTAMP_QUERY` renders at ~1/3 resolution forever.** No timing → budget stuck
+   at bootstrap → resolution shrink binds → tiled settle can't recover. Invisible on the dev 3080,
+   near-certain on the swappable-GPU Linux rig and on any GL-backend fallback. Also (d)'s biggest
+   risk. See the tunables item.
+3. **The grand tour's own 1e55 hold spins forever.** The freeze guard refuses a reference 2,192
+   samples over `LIVE_REF_CAP` and the quality gate re-requests it every ~450 ms indefinitely: a
+   core pinned, the view black. It is in the flagship demo script, so anyone who plays it sees it.
+4. **Unexplained `0xc0000005` access violation** (08-07 17:00:25). One occurrence, no reproduction,
+   no report at the time. Cannot block indefinitely on a ghost — but must not ship blind either.
+   beta.43's unclean-exit reporting will now capture a recurrence; run the tour/export paths under
+   load and see if it returns.
 
-**Explicitly deferred, not blockers:** the 1e95 depth wall (documented and now self-reporting),
-the glitch-correction pathology, the unbounded per-frame cost/memory of the offline tour path,
-and the proposals backlog.
+### B — BLOCKERS: runnable Linux build (d)
+
+5. **Release artifacts** — `release.yml` needs an `ubuntu-22.04` job producing tar.gz + sha256.
+   CI now proves the full workspace *compiles* there (2026-08-08, all jobs green, no code changes).
+6. **Real-hardware validation** on the new rig, across the swappable GPUs — this is where (2) and
+   the orbit-cap differences surface.
+7. **Four diagnostics are Windows-only stubs** — `process_memory`, `free_disk_bytes`,
+   `cpu_topology`, `gpu_vram_bytes` return zero/None on Linux, so crash reports lose their memory
+   line and the new disk-space warning never fires. Shipping Linux without these means shipping the
+   platform where we are blind.
+8. **`--version` is unrecognized** — prints `unrecognized option` then help. Trivial; it is also the
+   first thing anyone types.
+9. **CI cannot run the selftest** — the harness builds an eframe event loop, so it needs a display
+   (`xvfb-run`). Until that lands, the Linux job gates compilation only.
+
+### C — BLOCKERS: announce hygiene
+
+10. **CHANGELOG stale** — the `0.2.40-beta` entry stops at beta.15; ~30 betas undocumented,
+    including everything a reader cares about. Release notes come from here.
+11. **Fresh-install smoke test** — never run this cycle. Wipe the config dir, boot, confirm a
+    stranger gets a sane first view and working menus.
+
+### D — STRONGLY RECOMMENDED, not blocking
+
+12. **First-run overlay** (design already agreed) — deep-zoom apps are opaque to newcomers and this
+    is exactly the first-two-minutes friction a forum reader hits.
+
+### E — (b) fundamentally missing features: assessed, nothing blocking
+
+Nothing *fundamental* is absent for a deep-zoom explorer. The honest gaps, all defensible to name
+in the post rather than fix: no custom-formula scripting (Ultra Fractal's domain), no layers/blend
+compositing, exports capped at the GPU texture size (KF tiles to wall-sized), SA covers Mandelbrot
++ Multibrot 3–5 only, no `.map` palette import yet (blocked on sample files), 3D explicitly out of
+scope. The gradient editor, bookmarks, dual Julia, tours, `.fdn`/`.kfr` import and the export
+pipeline are all present.
+
+### F — (c) what is substantively new — the pitch
+
+The **adaptive iteration budget** (nobody else raises the pixel budget from live GPU feedback),
+**Newton-Raphson zoom** onto nuclei with the atom-size estimate, the cursor-driven **dual Julia at
+depth**, the **script/tour system** with per-keyframe budgets and chapters, and the **F3-matched
+corpus** offered as evidence rather than a boast. Secondary but unusual: the app explains its own
+rendering limits in the status bar instead of leaving a black screen unexplained.
+
+### Explicitly deferred, named not hidden
+
+The 1e95 depth wall (self-reporting), the glitch-correction pathology, the offline tour path's
+unbounded per-frame cost and memory, the autopilot rework, the tour editor, and the proposals
+backlog.
 
 Living backlog. Specs: [DESIGN.md](DESIGN.md), [UI-DESIGN.md](UI-DESIGN.md).
 Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
+
+- [ ] ⭐**PRIORITY: tunables + hardware-dependent factors are individually well-reasoned and
+  collectively fragile.** Raised 2026-08-08 after a week in which most incidents came from this
+  machinery. An inventory first — three tiers:
+  - **Fixed constants**: `TDR_BUDGET_MS` 900, `TDR_BOOTSTRAP_STEPS` 4e8, `TDR_STEPS_CEIL` 3e11,
+    `TDR_GROW_MAX` 1.5 / `TDR_SHRINK_MAX` 0.5, `TDR_MAX_TILES`, `LIVE_REF_CAP` 256k,
+    `MAX_ITER_LIMIT` 10M, `ITER_BOOST_MAX` 256, `ITER_STALL_LIMIT`, `PACE_LAG_LO/HI`,
+    `PREFETCH_OCT/SLOTS`, `BUILD_STORM_PER_S`, `PREFETCH_BUILDS_PER_S`, `WORK_BUDGET`,
+    `PERT_FE_THRESHOLD`, `SETTLE_DELAY`, `zoom_iter_cap`'s `2000 + 256/octave`.
+  - **Hardware-derived at startup**: `orbit_len_cap` (from `max_storage_buffer_binding_size`),
+    `TIMESTAMP_QUERY` presence, GL backend → downlevel limits.
+  - **Measured at runtime**: `fe_budget` (GPU timestamps), `iter_boost` (capped-fraction counter),
+    `motion_res` (AIMD on the frame interval).
+
+  ⭐**The bug history says the values are mostly NOT the problem.** Everything that broke falls
+  into five shapes, and only the last is "a constant is wrong":
+  1. **A measured loop with a path where measurement never arrives**, falling back to a bootstrap
+     constant that then BINDS something important. Three incidents: beta.41 (a static view never
+     measures → 205×162 upscaled), beta.40's `is_fe` measurement gate, and the `TIMESTAMP_QUERY`
+     case below. The dominant family by a wide margin.
+  2. **Wrong cost model** — nominal steps ignore BLA skipping and latency-bound interiors.
+     `steps ∝ time` is documented as false in these very files and still drives the settled
+     resolution bound (the 16×16 collapse; the `1451ms IGNORED` discard).
+  3. **Inconsistent capability gating** — five of six `is_fe` sites.
+  4. **Unbounded waits/retries** — the lag hold with no timeout, the refused-reference loop, the
+     lookahead spin.
+  5. **A constant tuned at one depth failing at the next** — the spar family's eight bugs.
+
+  ⛔**Reproducible consequence, found 2026-08-08 and NOT yet fixed: a GPU without
+  `TIMESTAMP_QUERY` renders at ~1/3 resolution forever.** `IterTiming::new` returns `None`
+  without the feature → no timing is ever published → the controller skips on `bits == 0` →
+  `fe_budget` stays 0 → `tdr_steps` sits at the 4e8 bootstrap → and beta.40 made that floor drive
+  the resolution shrink in EVERY mode (1920×1080 at 2k iters = 4.1e9 steps ⇒ ~600×337). `can_tile`
+  also requires `fe_budget != 0`, so the tiled settle cannot recover it. Invisible on the dev
+  RTX 3080; **certain to appear on the swappable-GPU Linux rig** (older Intel iGPUs, some
+  Mesa/RADV/ANV combinations, and any fall back to the GL backend, which has no timestamp queries).
+
+  **Plan, in value order** — note that a startup calibration is *not* first:
+  1. **One invariant retires the largest family**: an UNMEASURED budget may bound the first
+     dispatch but must NEVER bind resolution or quality downward. Plus a wall-clock fallback when
+     timestamps are absent — the AIMD motion controller already proves that works.
+  2. **Centralise the tunables** with a declared contract each: what it bounds, how it is measured,
+     what happens when measurement is unavailable, where it was last validated. The prose today is
+     good but scattered, and the contract is implicit — which is why one mistake recurred in three
+     places.
+  3. **Property tests for the controllers**, in the style that pinned the lookahead sign: with
+     measurement disabled resolution must not collapse; a slow reading must lower the budget; every
+     wait terminates. Catches families 1 and 4 structurally instead of one incident at a time.
+  4. **Unify settled + motion on measured cost** — retires family 2 and unblocks explicit
+     iteration counts.
+  5. **Capability probe at startup** — query the adapter once, log one line, put it in crash
+     reports and bench baselines. ⚠**Scope it to capabilities and a SAFE STARTING POINT, never to
+     the cost model**: cost here is data-dependent, not hardware-dependent — the same nominal step
+     count measured 114 ms at one location and 1147 ms at another on the SAME GPU. A calibration on
+     the home view would produce a confident number that is wrong exactly where the app crashes,
+     and would justify a larger first dispatch than the deliberately tiny bootstrap that currently
+     makes an unknown GPU safe.
+  6. **Make the swappable-GPU rig an instrument** — extend `--bench-matrix` to record adapter
+     capabilities and the resolved tunables per card, so a GPU swap yields a comparable profile
+     rather than an impression.
 
 - [x] **A 4K tour render died at frame 1091 and the dialog wouldn't say why — FIXED
   v0.2.40-beta.45.** The render itself was not at fault: the log had the reason in plain words,
@@ -842,13 +950,16 @@ cache, adaptive iterations, auto-save/restore, and the first side panels.
       `.00`; small zooms trim trailing zeros.
 - [x] **Dual-view toolbar icon** — custom-painted "two side-by-side rectangles"
       (`dual_toggle_button`), so it reads as the split view regardless of font glyphs.
-- [ ] **Gradient stop editor** (custom palettes) — the one custom widget (UI-DESIGN §8).
+- [x] **Gradient stop editor** (custom palettes) — SHIPPED: "Edit gradient…" in the Coloring
+      panel opens the stop editor (`palette_editor_open`); up to eight stops, each a colour +
+      position, seeded from a preset. (Item was stale-open; verified in the running app.)
 - [x] **Bookmarks / presets library** — Bookmarks menu (+ ★ toolbar button) saves the
       current view (full-precision center via the export view-metadata blob) to
       `bookmarks.toml` in the config dir; click any bookmark to jump back instantly.
       Manage… window adds (with optional name), lists with zoom, and deletes. Invaluable
       now that deep zoom reaches extreme depths (re-zooming to 1e30× by hand is painful).
-- [ ] **Left Parameters panel** (type, power, location, zoom).
+- [~] **Left Parameters panel** (type, power, location, zoom) — SUPERSEDED by the right-hand
+      Controls panel plus the status bar; keeping a second panel would duplicate both. Not a gap.
 
 ### Planned settings (Preferences UI — mockup 10)
 
