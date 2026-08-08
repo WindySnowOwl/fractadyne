@@ -35,6 +35,32 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] **A static view rendered at 205×162 upscaled to the panel — FIXED v0.2.40-beta.41.** Reported
+  as "detail isn't resolving, it looks very pixelated" at a 6.6e18× df32 view. A beta.40 regression,
+  and the mechanism is worth keeping: **the frame-cost budget could never bootstrap on a view that
+  stops changing.** `fe_steps_last` — the nominal step count the controller prices a GPU timing
+  against — was recorded only on `key_changed && !will_reproject`, and on a view that reaches its
+  final state inside the reproject window that condition never held, so the number was never
+  written at all. Timings kept arriving and kept being discarded: `no reading (bits=true, ms=0.28,
+  steps=0)`, every frame, forever. The budget therefore sat at `TDR_BOOTSTRAP_STEPS` — a value
+  chosen as a safe FIRST dispatch on unknown hardware, not a statement about what a view can
+  afford — and beta.40 had just made that floor drive the resolution shrink on df32. Result: a
+  permanent 205×162 render upscaled to a 1431×1134 panel. Fix: record `fe_steps_last` on
+  `key_changed` alone; the timing only ever arrives from a dispatch that really ran, so pairing it
+  with the last key change is sound, and a stale pairing costs one mis-priced measurement that the
+  ratio search corrects. Now the budget climbs 4.000e8 → 3.460e10 in ~2.5 s and the view renders at
+  full 1431×1134.
+  ⚠**The `is_fe` gates hid this.** Before beta.40 the budget was equally unmeasurable on a static
+  floatexp view, but nothing on the df32 path consumed it, so the dead controller was invisible.
+  Generalising the bound is what turned a silent stall into a visible one.
+  **Verified** by A/B at the reported location on beta.39 vs beta.40 vs the fix (same
+  `session.toml` restored before each run): beta.39 sharp, beta.40 blocky at 205×162, fix sharp and
+  pixel-comparable to beta.39. Suite 101/101 + goldens 17/17; `--divetest` 59.3–60 fps, p95 ≤ 16 ms
+  per band; and the beta.40 crash repro still bounds — the same frame now tiles at **4631×2060
+  ss=2** (better than the ss=1 it managed before) with no device loss. New `no reading (…)` trace
+  under `FRACTADYNE_TRACE=gpu` names which of the three preconditions blocked a measurement — it is
+  what found this, and the controller was previously silent on every one of them.
+
 - [x] **A df32 frame had no cost bound at all — FIXED v0.2.40-beta.40.** Device loss 2026-08-07
   22:17 UTC (beta.39, build 1175), 49 s into a live tour in a maximized window:
 

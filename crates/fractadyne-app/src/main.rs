@@ -4863,6 +4863,16 @@ impl eframe::App for FractadyneApp {
             let bits = self.perf.iterate_ms[v].swap(0, std::sync::atomic::Ordering::SeqCst);
             let ms = f64::from_bits(bits);
             if bits == 0 || !(ms > 0.01) || self.perf.fe_steps_last[v] == 0 {
+                if diag::trace_on("gpu") && v == 0 {
+                    diag::trace(
+                        "gpu",
+                        format!(
+                            "view={v} no reading (bits={}, ms={ms:.2}, steps={})",
+                            bits != 0,
+                            self.perf.fe_steps_last[v]
+                        ),
+                    );
+                }
                 continue;
             }
             let cur = self.perf.fe_budget[v].max(render::TDR_BOOTSTRAP_STEPS);

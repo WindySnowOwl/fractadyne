@@ -3024,7 +3024,18 @@ impl FractadyneApp {
         // Every mode: the controller in `update` SKIPS a view whose `fe_steps_last` is zero, so
         // leaving this floatexp-only would have armed df32 probes above that could never resolve
         // into a budget — measurement in name only.
-        if key_changed && !will_reproject {
+        //
+        // Keyed on `key_changed` ALONE. `&& !will_reproject` looked right — a reprojecting frame
+        // re-samples the frozen texture instead of iterating — but it is not what the GPU actually
+        // dispatches on, and on a view that reaches its final state during the reproject window it
+        // meant the number was NEVER written: measured at the 6.6e18× df32 view as
+        // `no reading (bits=true, ms=0.28, steps=0)` — a real timing thrown away for want of the
+        // step count to price it against, on every frame, forever. With nothing to price, the
+        // budget stays at the bootstrap floor, and once that floor drives the resolution shrink the
+        // view is pinned at 205x162 upscaled to a 1431x1134 panel. The timing itself only ever
+        // arrives from a dispatch that really ran, so pairing it with the last key change is safe;
+        // a stale pairing costs one mis-priced measurement, which the ratio search corrects.
+        if key_changed {
             self.perf.fe_steps_last[vs] = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
