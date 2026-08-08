@@ -783,7 +783,13 @@ impl RenderMode {
 }
 
 /// Fixed export aspect ratios (key, width ÷ height). "window" (not listed) matches the live view.
-const EXPORT_ASPECTS: [(&str, f64); 8] = [
+///
+/// The keys are EXACT ratios, not marketing names, because [`aspect_key_for`] has to reproduce a
+/// preset's stated height to within half a pixel. "21:9" is the trap: no ultrawide display is
+/// actually 21:9 (2.333) — 2560×1080 is 64:27 (2.370) and 3440×1440 is 43:18 (2.389) — so a single
+/// "21:9" entry would render both at the wrong height. They get one key each, and the friendly
+/// names live in [`STANDARD_SIZES`] where users actually pick a size.
+const EXPORT_ASPECTS: [(&str, f64); 12] = [
     ("16:9", 16.0 / 9.0),
     ("16:10", 16.0 / 10.0),
     ("3:2", 3.0 / 2.0),
@@ -792,6 +798,10 @@ const EXPORT_ASPECTS: [(&str, f64); 8] = [
     ("2:3", 2.0 / 3.0),
     ("9:16", 9.0 / 16.0),
     ("2:1", 2.0),
+    ("64:27", 64.0 / 27.0),   // 21:9 ultrawide — 2560×1080, 3840×1620
+    ("43:18", 43.0 / 18.0),   // 21:9 ultrawide — 3440×1440 (UWQHD)
+    ("32:9", 32.0 / 9.0),     // super ultrawide — 5120×1440
+    ("256:135", 256.0 / 135.0), // DCI cinema — 2048×1080, 4096×2160
 ];
 
 /// Standard output sizes offered by the export and tour-render dialogs: (label, width, height).
@@ -813,6 +823,12 @@ pub(crate) const STANDARD_SIZES: &[(&str, u32, u32)] = &[
     ("3:2 — 1920×1280", 1920, 1280),
     ("Square — 2048×2048", 2048, 2048),
     ("Portrait 9:16 — 1080×1920", 1080, 1920),
+    ("UW-UXGA 21:9 — 2560×1080", 2560, 1080),
+    ("UWQHD 21:9 — 3440×1440", 3440, 1440),
+    ("UW4K 21:9 — 3840×1620", 3840, 1620),
+    ("Super ultrawide 32:9 — 5120×1440", 5120, 1440),
+    ("DCI 2K — 2048×1080", 2048, 1080),
+    ("DCI 4K — 4096×2160", 4096, 2160),
 ];
 
 /// The [`EXPORT_ASPECTS`] key matching `w × h`, or `None` when no listed ratio reproduces it.

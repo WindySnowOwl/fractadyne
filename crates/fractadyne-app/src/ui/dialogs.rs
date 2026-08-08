@@ -1140,12 +1140,27 @@ impl FractadyneApp {
                 let custom = self.export.custom_size || cur_preset.is_none();
                 egui::ComboBox::from_label("Size")
                     .width(210.0)
+                    // Tall enough for every preset plus Custom: egui's default popup height
+                    // showed only the first ten, which hid the ultrawide/DCI entries AND put
+                    // "Custom…" behind a scroll nobody would look for.
+                    .height(460.0)
                     .selected_text(if custom {
                         format!("Custom — {}×{}", self.export.width, cur_h)
                     } else {
                         cur_preset.unwrap_or_default().to_string()
                     })
                     .show_ui(ui, |ui| {
+                        // Custom FIRST, not last: the preset list is long enough to overflow the
+                        // popup and scroll, and a "Custom…" below the fold is one nobody finds.
+                        // Ordering it first is robust to the list growing; a taller popup is not.
+                        if ui
+                            .selectable_label(custom, "Custom…")
+                            .on_hover_text("Set the width yourself; height follows the Aspect below.")
+                            .clicked()
+                        {
+                            self.export.custom_size = true;
+                        }
+                        ui.separator();
                         for (label, w, h) in crate::STANDARD_SIZES {
                             let on = !custom && cur_preset == Some(*label);
                             if ui.selectable_label(on, *label).clicked() {
@@ -1155,14 +1170,6 @@ impl FractadyneApp {
                                 }
                                 self.export.custom_size = false;
                             }
-                        }
-                        ui.separator();
-                        if ui
-                            .selectable_label(custom, "Custom…")
-                            .on_hover_text("Set the width yourself; height follows the Aspect below.")
-                            .clicked()
-                        {
-                            self.export.custom_size = true;
                         }
                     });
                 if custom {

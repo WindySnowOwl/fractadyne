@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.44 (build 1205)
-- **Generated:** 2026-08-08 16:01:59 UTC (unix 1786204919)
+- **Version:** 0.2.40-beta.44 (build 1208)
+- **Generated:** 2026-08-08 16:17:03 UTC (unix 1786205823)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -82,7 +82,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Coords | deep decimal round-trip intact | 4096-bit coordinate | 4100 bits agree | ≥4000 bits | ✅ PASS |
 | Script | shipped tours resolve | 6 scripts | all resolve, 2242s of tour | all resolve | ✅ PASS |
 | Script | absolute times + geometric iteration ramp | hold 0–2s, glide 2–6s to 1e12× | hold@2s=1e0.0, mid@4s=1e6.000, end=1e12.0, iter mid=31623 end=1000000 | still 1× at 2s, 1e6× at 4s, 31623 iters at 4s | ✅ PASS |
-| Script | export size presets round-trip through the aspect model | 12 presets | all reproduce their stated height | every preset resolves to an aspect key that regenerates its height | ✅ PASS |
+| Script | export size presets round-trip through the aspect model | 18 presets | all reproduce their stated height | every preset resolves to an aspect key that regenerates its height | ✅ PASS |
 | Script | lookahead holds slots the dive hasn't reached | queue at +0.5/+1.0/+1.5(building)/+2.0 octaves | at 100.0 → None, at 100.5 → Some(0), at 102.0 → Some(3) | none held-back, then slot 0, then deepest ready (slot 3) | ✅ PASS |
 | Script | deep zoom string survives f64 range | zoom = "3.0938e1216" | log10 mag = 1216.4905 | 1216.4904 ± 1e-3 | ✅ PASS |
 | Script | malformed scripts rejected | 11 scripts | all rejected | all rejected | ✅ PASS |

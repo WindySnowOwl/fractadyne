@@ -158,12 +158,18 @@ impl FractadyneApp {
                             let custom = self.tour_render.custom_size || cur.is_none();
                             egui::ComboBox::from_id_salt("tour_render_size")
                                 .width(210.0)
+                                .height(460.0) // see the export dialog: fit every preset
                                 .selected_text(if custom {
                                     format!("Custom — {w}×{h}")
                                 } else {
                                     cur.unwrap_or_default().to_string()
                                 })
                                 .show_ui(ui, |ui| {
+                                    // Custom first — see the export dialog.
+                                    if ui.selectable_label(custom, "Custom…").clicked() {
+                                        self.tour_render.custom_size = true;
+                                    }
+                                    ui.separator();
                                     for (label, pw, ph) in crate::STANDARD_SIZES {
                                         let on = !custom && cur == Some(*label);
                                         if ui.selectable_label(on, *label).clicked() {
@@ -171,10 +177,6 @@ impl FractadyneApp {
                                             self.tour_render.height = *ph;
                                             self.tour_render.custom_size = false;
                                         }
-                                    }
-                                    ui.separator();
-                                    if ui.selectable_label(custom, "Custom…").clicked() {
-                                        self.tour_render.custom_size = true;
                                     }
                                 });
                             if custom {
