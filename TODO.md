@@ -35,6 +35,35 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] **The live view cannot honour a high explicit iteration count, and the cost model is why.**
+  Reported at 8.8e94× (three-spar): Iterations set to **10,000,000** with auto-scale OFF, but the
+  status bar reads `iter 82,741` and `⚠ iter exhausted`, and the picture is blocky. Two mechanisms,
+  and the second is the real one:
+  1. **The setting is overridden.** `gpu_iter = eff_iter.min(iter_cap).min(boosted_cap)` where
+     `boosted_cap = zoom_iter_cap(l2) × iter_boost`. At this depth `zoom_iter_cap = 2000 + 315.4 ×
+     256 = 82,742` — exactly the number displayed. The adaptive boost is what should lift it, and
+     it does climb; but at the full appetite the frame is still >98% capped, so the `!cap_bound`
+     branch declares "exhausted" and **reverts the boost to 1.0**, dropping the render two orders
+     of magnitude below what was asked for. That revert is right for an AUTO budget (identical flat
+     image, far cheaper) and wrong for an explicit one.
+  2. **Simply honouring it makes things WORSE — measured, not predicted.** Removing the cap when
+     `auto_iter` is off renders at 10M and the frame collapses to **16×16 pixels** (the shrink's
+     own floor) upscaled to the panel: at 10M iterations one pixel is 1e7 nominal steps, so even
+     16×16 is 2.56e9 against a 9.000e8 budget, and the tiled settle never arms (`can_tile=true
+     tiling=false`) because the budget never converges. Strictly worse than the 82,741 being
+     complained about. **The change was written, measured, and reverted** — do not re-attempt it
+     without fixing (3) first.
+  3. ⭐**ROOT CAUSE: the settled cost bound counts NOMINAL steps and ignores BLA skipping.** The
+     field HUD at this very view: `iterate 1.3 ms (GPU)`, `steps/s 119,629 G`, `budget 3.00e11` —
+     the frame's REAL cost is trivial because BLA skips nearly all of it, while the budget prices
+     it as if nothing were skipped, and over-shrinks by orders of magnitude. The MOTION path
+     already solved exactly this (the AIMD `res_scale`, driven by the measured frame interval,
+     whose comment says the nominal model "over-shrinks the moving frame" where BLA skips); the
+     SETTLED path never got the same treatment. Fix direction: size the settled resolution/tiling
+     from measured cost like the motion path does. Then an explicit iteration count can be honoured
+     at full resolution — the affordable range at this view is ~1.05M iterations before the shrink
+     binds at all, i.e. ~12× what the view currently gets.
+
 - [ ] **A reference the freeze guard refuses is re-requested forever — ROOT CAUSE of the 3:35
   stall, NOT fixed.** At the grand tour's `hold-e55` keyframe (t=215 s, `zoom = "1e55"`,
   `max_iter = 250000`) the settled extension asks for `ref_build_iter = 250000 + 8192 = 258192`.
