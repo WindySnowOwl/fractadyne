@@ -2512,10 +2512,7 @@ impl FractadyneApp {
             self.perf.frozen_budget[vidx]
         } else {
             // Zero until the first probe resolves; the loop in `update` maintains it thereafter.
-            match self.perf.fe_budget[vidx] {
-                0 => TDR_BOOTSTRAP_STEPS,
-                b => b.clamp(TDR_MIN_STEPS, TDR_STEPS_CEIL),
-            }
+            budget_base(self.perf.fe_budget[vidx])
         };
         if !offscreen && !will_reproject {
             self.perf.frozen_budget[vidx] = tdr_steps;
@@ -3496,6 +3493,22 @@ pub(crate) fn refusal_survives_install(refused: u32, installed_len: u32, point_m
 /// `cur` is the current budget (already floored at the bootstrap), `steps` the nominal size of the
 /// dispatch that was measured, `ms` how long it took. Returns the next budget and whether the
 /// reading counts as CONVERGED, or `None` when the reading carries no usable signal.
+/// The budget a measurement or a dispatch should start from. Zero means "nothing measured yet in
+/// this mode", the one case the opening guess exists for; anything else is a real measurement and
+/// is used AS IS.
+///
+/// ⚠This is a function because three call sites — the dispatch sizing in `build_params`, the
+/// controller in `update`, and the livetest harness's copy of it — each made the decision
+/// separately, and two of them made it wrong the same way: `fe_budget.max(TDR_BOOTSTRAP_STEPS)`,
+/// which hoists a converged-low budget back to the opening guess on every reading so it can never
+/// settle below `bootstrap × TDR_SHRINK_MAX`. The guess is a starting point, never a floor.
+pub(crate) fn budget_base(fe_budget: u64) -> u64 {
+    match fe_budget {
+        0 => TDR_BOOTSTRAP_STEPS,
+        b => b.clamp(TDR_MIN_STEPS, TDR_STEPS_CEIL),
+    }
+}
+
 pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64) -> Option<(u64, bool)> {
     let slow = ms > TDR_BUDGET_MS;
     // A fast dispatch far under budget size finished quickly because it is SMALL. One-sided: a
@@ -3606,6 +3619,15 @@ mod controller_props {
         // the budget stayed at 1.663e11, far above anything the GPU could finish.
         let (next, _) = budget_step(166_300_000_000, 10_300_000_000, 1451.4).unwrap();
         assert!(next <= 10_300_000_000, "budget must come down to the size that measured slow");
+    }
+
+    #[test]
+    fn a_converged_low_budget_is_never_hoisted_back_to_the_guess() {
+        let low = TDR_MIN_STEPS * 2;
+        assert!(low < TDR_BOOTSTRAP_STEPS);
+        assert_eq!(budget_base(low), low, "a real measurement is used as is");
+        assert_eq!(budget_base(0), TDR_BOOTSTRAP_STEPS, "only 'unmeasured' gets the guess");
+        assert_eq!(budget_base(1), TDR_MIN_STEPS, "but never below the absolute floor");
     }
 
     #[test]

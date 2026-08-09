@@ -4984,7 +4984,12 @@ impl FractadyneApp {
     /// `ms` is how long the dispatch of `steps` nominal steps took. Returns whether the budget
     /// moved. The caller owns the pairing: `steps` must be the count that `ms` actually priced.
     fn apply_iterate_measurement(&mut self, v: usize, ms: f64, steps: u64, src: &str) -> bool {
-        let cur = self.perf.fe_budget[v].max(render::TDR_BOOTSTRAP_STEPS);
+        // Zero means "nothing measured yet in this mode" — that is the one case the opening guess
+        // is for. ⚠It used to be `.max(TDR_BOOTSTRAP_STEPS)`, which re-raised the budget to the
+        // guess before EVERY step, so a converged-low budget was hoisted back up on each reading
+        // and could never settle below `bootstrap × TDR_SHRINK_MAX`. That is the same
+        // guess-as-a-floor bug as the clamp in `budget_step`, in a second place; see TDR_MIN_STEPS.
+        let cur = render::budget_base(self.perf.fe_budget[v]);
         // The arithmetic lives in `render::budget_step` as a pure function so the properties that
         // matter — a slow reading always shrinks, growth is bounded, the clamps hold — are pinned
         // by tests rather than by re-reading this block.

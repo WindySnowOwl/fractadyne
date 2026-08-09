@@ -348,16 +348,20 @@ impl FractadyneApp {
                 // this it stays 0, `build_params` falls back to the pessimistic bootstrap, and
                 // every deep frame is shrunk to a fraction of the requested size — the harness
                 // would then be measuring a view the GUI never renders. (The GUI keeps this loop
-                // in `update`; the harness has no event loop, so it runs the same arithmetic.)
+                // in `update`; the harness has no event loop, so it calls the same function.)
+                // ⚠This used to be a hand-copy of the arithmetic and had already drifted from it —
+                // it re-raised the budget to the opening guess on every reading and skipped the
+                // "steps « budget ⇒ the reading priced a different frame" gate. A harness whose
+                // controller differs from the app's measures a view the app never renders, which
+                // is the one thing it exists to rule out. Call the shared function instead.
                 let ms = if ts.captured { ts.iterate_ms } else { gpu_ms };
-                if ms > 0.01 && self.perf.fe_steps_last[0] > 0 {
-                    let cur = self.perf.fe_budget[0].max(crate::render::TDR_BOOTSTRAP_STEPS);
-                    let factor = (crate::render::TDR_BUDGET_MS / ms)
-                        .clamp(crate::render::TDR_SHRINK_MAX, crate::render::TDR_GROW_MAX);
-                    let next = ((cur as f64 * factor) as u64)
-                        .clamp(crate::render::TDR_BOOTSTRAP_STEPS, crate::render::TDR_STEPS_CEIL);
-                    self.perf.fe_budget_ok[0] = next == cur || (0.8..=1.25).contains(&factor);
-                    self.perf.fe_budget[0] = next;
+                let steps = self.perf.fe_steps_last[0];
+                if ms > 0.01 && steps > 0 {
+                    let cur = crate::render::budget_base(self.perf.fe_budget[0]);
+                    if let Some((next, ok)) = crate::render::budget_step(cur, steps, ms) {
+                        self.perf.fe_budget_ok[0] = ok;
+                        self.perf.fe_budget[0] = next;
+                    }
                 }
             }
             let frame_ms = (build_ms + gpu_ms).max(VSYNC * 1000.0);
