@@ -18,6 +18,23 @@ pre-releases on the Beta update track). Per-version detail is in the git history
 rational/complex coordinate entry, the multiplier λ, the 500k → 10M iteration ceiling, live
 limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — see TODO.md.
 
+- **Frame-cost measurement: no GPU left rendering at a third of its resolution** (beta.47).
+  A device without `TIMESTAMP_QUERY` never published an iterate timing, so the frame budget sat
+  forever on the bootstrap constant — a value chosen as a safe FIRST dispatch on unknown hardware,
+  never as a statement about what a view can afford — and since beta.40 that floor drove the
+  resolution shrink in every mode. Measured: a 1445×1134 panel at 2,000 iterations rendered at
+  **504×396**, permanently, with the tiled settle also gated off. Now:
+  - **An unmeasured budget may bound the first dispatch but never binds resolution downward.**
+    Tiling no longer requires a measured budget, and a never-measured one may arm a grid — every
+    tile is independently budget-sized, so this means more small dispatches, not a bigger one.
+  - **A wall-clock fallback** takes over when timings stop arriving, tripped by OBSERVATION rather
+    than by the capability bit, so a sink that silently never delivers is covered too.
+  - **Timings are paired with their own dispatch's cost at the producer.** The readback lands 2–3
+    frames late and a tiled settle dispatches every frame, so the app's single "last steps" slot
+    was always describing a later tile; every reading was discarded as undersized and the budget
+    froze. A settled view now ratchets to native resolution instead of stalling part-way.
+  - `FRACTADYNE_NO_TIMESTAMPS=1` makes the whole path reproducible on hardware that has the
+    feature, and `render::controller_props` pins the controller's properties in `cargo test`.
 - **Live deep-dive pipeline** — a scripted dive now stays smooth to extreme depth:
   - `best_reference` candidate scoring **parallelized across all cores** (result-identical;
     ~12–14× — 796→55 ms at 1e400×, 7.6 s→0.6 s at 1e1216×), removing the stall that blurred

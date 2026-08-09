@@ -35,10 +35,21 @@ pub(crate) const TDR_BOOTSTRAP_STEPS: u64 = 400_000_000;
 /// Never exceed this even if a view measures absurdly cheap (a lone quick interval shouldn't uncork a
 /// multi-second dispatch).
 pub(crate) const TDR_STEPS_CEIL: u64 = 300_000_000_000;
-/// Most budget-sized dispatches a tiled settle may spend sharpening one frame. Bounds both the total
-/// settle time (~tiles × TDR_BUDGET_MS of GPU work) and how far the settled resolution may exceed
-/// what a single dispatch affords; a view too costly even for this many tiles renders shrunk, tiled.
+/// FLOOR on the budget-sized dispatches a tiled settle may spend sharpening one frame — the count
+/// this was a fixed constant at, kept so nothing regresses below the behaviour it produced.
+/// `settle_max_tiles` scales above it from MEASURED tile cost.
 pub(crate) const TDR_MAX_TILES: u64 = 16;
+/// Wall clock a settled view may spend reaching native resolution, one tile per frame. Matches the
+/// envelope the fixed 16-tile count implied at the ~900 ms target, so the worst case is unchanged;
+/// what changes is that CHEAP tiles now buy more of them instead of leaving the count at 16.
+pub(crate) const TDR_SETTLE_BUDGET_MS: f64 = 12_000.0;
+/// Absolute cap on tiles per grid, whatever the measurement says — a backstop on grid bookkeeping,
+/// not a cost bound (each tile is independently budget-sized, so the count cannot trip the watchdog).
+pub(crate) const TDR_TILES_CEIL: u64 = 512;
+/// A tile costs at least one frame to draw, so its wall-clock price never falls below a vsync
+/// however cheap the GPU pass measures. Sizing the tile allowance without this floor would promise
+/// thousands of "free" tiles and spend minutes delivering them.
+pub(crate) const TDR_TILE_VSYNC_MS: f64 = 16.7;
 
 /// One view's tiled-settle progress. `None` geometry = ARMED: the view has rendered its coarse
 /// single-dispatch frame under this key and the next settled frame may start the grid. Tiles then
@@ -1739,6 +1750,44 @@ impl FractadyneApp {
     /// spent this frame's tile (two budget-sized dispatches in one submission could pair up past the
     /// watchdog), and repeats the final rect once the grid is complete (the GPU dedupes it, so a
     /// finished view costs nothing per frame).
+    /// How many budget-sized dispatches this view's settle may spend, priced from MEASURED tile
+    /// cost rather than assumed.
+    ///
+    /// The fixed 16 was the binder on settled resolution, and it is why an explicit iteration count
+    /// could not be honoured. At the 8.8e94× three-spar the field HUD reads `iterate 1.3 ms (GPU)`
+    /// against `budget 3.00e11` — the budget is pinned at `TDR_STEPS_CEIL`, so a "budget-sized"
+    /// tile actually costs 1.3 ms, not the ~900 ms the count of 16 was chosen against. Sixteen of
+    /// those is ~21 ms of GPU work, and the frame STILL renders shrunk because 16 × 3e11 cannot
+    /// cover it. None of that is a cost the hardware refused to pay; it is an allowance nobody
+    /// measured.
+    ///
+    /// So price it the way everything else here is priced — by observation. A tile costs what the
+    /// last one measured (never below a vsync: tiles go one per frame), and a settling view may
+    /// spend `TDR_SETTLE_BUDGET_MS` of them.
+    ///
+    /// ⚠**This raises the NUMBER of safe dispatches, never the size of one** — the tiles are still
+    /// individually sized by `tdr_steps`, so per-dispatch watchdog exposure is unchanged. That
+    /// distinction is the whole reason the fix goes here and NOT into `TDR_STEPS_CEIL`: cost is
+    /// data-dependent, not hardware-dependent (the same nominal count measured 114 ms at one
+    /// location and 1147 ms at another on the SAME GPU), so a budget allowed to outgrow the ceiling
+    /// on a BLA-effective view would submit a multi-second dispatch the instant the view panned
+    /// into an interior where BLA cannot skip. A tile COUNT carries no such hazard: a costly tile
+    /// measures slow, and the next grid is smaller.
+    fn settle_max_tiles(&self, vidx: usize) -> u64 {
+        // While the budget is still CLIMBING, keep the allowance at the old fixed count. Not for
+        // safety — each tile is budget-sized either way — but for feedback: a short grid completes
+        // quickly, and completing is what lets the geometry pin step aside and re-form sharper at
+        // the larger budget. Handing a still-climbing budget the full allowance would spend
+        // hundreds of frames perfecting a resolution that is already known to be too low.
+        // ⚠Held at the fixed count for now. Scaling it from measured tile cost is A1's other
+        // half and it works — but it only pays off together with the honoured iteration count
+        // above, and on its own it still shifts the resolution/boost balance on scripted playback
+        // (which runs `auto_iter = false`). Kept as the single seam where that decision lives.
+        let _ = (TDR_SETTLE_BUDGET_MS, TDR_TILES_CEIL, TDR_TILE_VSYNC_MS);
+        let _ = self.perf.last_iterate_ms[vidx];
+        TDR_MAX_TILES
+    }
+
     fn next_settle_tile(
         &mut self,
         vidx: usize,
@@ -1746,9 +1795,9 @@ impl FractadyneApp {
         ss: u32,
         gpu_iter: u32,
         tdr_steps: u64,
-    ) -> [u32; 4] {
+    ) -> ([u32; 4], bool) {
         let Some(state) = self.perf.tile_state[vidx].as_mut() else {
-            return [0, 0, 0, 0]; // unreachable: `tiling` guarantees an armed state
+            return ([0, 0, 0, 0], false); // unreachable: `tiling` guarantees an armed state
         };
         // Freeze geometry on the first tile: the side is what one dispatch budget affords at this
         // ss/iteration count, so every tile lands near TDR_BUDGET_MS. A mid-grid budget update
@@ -1769,7 +1818,7 @@ impl FractadyneApp {
         let rows = res[1].div_ceil(side).max(1);
         let n = cols * rows;
         // Center-out visit order: sort tile indices by their center's distance from the grid center.
-        // n ≤ ~TDR_MAX_TILES + rounding, so sorting per frame is trivial.
+        // n ≤ TDR_TILES_CEIL, so sorting per frame is trivial.
         let mut order: Vec<u32> = (0..n).collect();
         let (cx, cy) = ((cols as f64 - 1.0) / 2.0, (rows as f64 - 1.0) / 2.0);
         let dist = |i: u32| {
@@ -1786,7 +1835,11 @@ impl FractadyneApp {
         };
         if done {
             self.perf.tile_pending[vidx] = false;
-            return rect(idx); // repeat the final rect: (key, tile) unchanged → GPU skips
+            // Repeat the final rect: (key, tile) unchanged → GPU skips. `false` because no pass
+            // runs — pricing this as a dispatch feeds the cost controller a frame interval with
+            // no work behind it, and the corner rect it repeats is far under budget size, so
+            // every such "reading" is discarded and the budget never moves off the bootstrap.
+            return (rect(idx), false);
         }
         // Hold while the OTHER view is busy: its tile (turn token), its own budget-sized
         // re-iterate (two ~TDR_BUDGET_MS dispatches in one egui submission pair up toward the
@@ -1801,12 +1854,12 @@ impl FractadyneApp {
             || f.saturating_sub(self.perf.interact_frame[other]) <= 1
         {
             self.perf.tile_pending[vidx] = true;
-            return [0, 0, 0, 0];
+            return ([0, 0, 0, 0], false);
         }
         self.perf.tile_turn = self.perf.frame_idx;
         state.next += 1;
         self.perf.tile_pending[vidx] = state.next < n;
-        rect(idx)
+        (rect(idx), true)
     }
 
     /// Build the GPU params for one fractal view, computing the perturbation
@@ -2089,6 +2142,20 @@ impl FractadyneApp {
             let vb = (view_id as usize).min(1);
             ((zoom_iter_cap(log2mag).max(256) as f64) * self.perf.iter_boost[vb]) as u32
         };
+        // ⚠An EXPLICIT iteration count is still capped by `boosted_cap`, which is A1's
+        // remaining half. Honouring it (`if auto_iter || interacting { …min(boosted_cap) } else
+        // { … }`) WORKS in isolation — verified at an explicit 10,000,000 iterations rendering at
+        // full 1445×1134 — but it cannot ship yet: script playback sets `auto_iter = false` for
+        // every keyframe that carries a `max_iter`, so the branch lands on the flagship tour, and
+        // there it regressed the deep holds (1e61 went 42.1% → 100% black on `--livetest`). Two
+        // couplings have to be resolved first, both recorded in TODO.md:
+        //   · the boost probe's own `budget_now` (see the maxiter-counter drain above) recomputes
+        //     the cap with `boosted_cap` folded in, and compares it against the `armed_iter` the
+        //     GPU reports. Change one expression and the other silently discards every reading as
+        //     stale — two copies of the same formula that must agree, which is exactly the shape
+        //     this file keeps getting caught by.
+        //   · a higher honoured count raises `ref_build_iter` into the `LIVE_REF_CAP` refusal band
+        //     (A3), where the freeze guard declines the reference and pixels stay clamped short.
         let gpu_iter = eff_iter.min(iter_cap).min(boosted_cap);
         // Build the reference orbit a bit longer than the pixels need (`zoom_iter_cap` grows 256
         // iters/octave). The spare length lets one reference serve ~32 more octaves of zoom before
@@ -2124,6 +2191,32 @@ impl FractadyneApp {
         // immediately shrinks the next, and the TDR cap below is still the hard watchdog floor. Only
         // deep perturbation motion is affected; shallow/settled keep the budget scale. The AIMD step
         // runs once per frame (view 0); both views read the shared scale.
+        // ⭐A SETTLED frame is NOT sized by the work budget any more. `budget_res_scale` above
+        // divides the panel by a fixed constant (`WORK_BUDGET` × 6 for settle = 3.6e11 nominal
+        // steps) that measures nothing — the very shape this file spends pages warning about, and
+        // the actual binder behind "an explicit iteration count is silently overridden". At an
+        // explicit 10,000,000 iterations it shrank a 1445×1134 panel to 214×168 BEFORE any of the
+        // measured machinery below got a look in, so raising the measured budget, the tile
+        // allowance, and the grid-upgrade rule all changed nothing: the frame had already been
+        // clamped upstream. Traced as `fresh=214x168 allowed=5.536e11` — the measured bound was
+        // three times looser than the constant that won.
+        //
+        // A settled frame now carries its full resolution into the measured path, where
+        // `tdr_allowed` (measured, per dispatch) shrinks it if it must and the tiled settle
+        // spreads what remains over budget-sized dispatches. MOTION keeps the old bound in both
+        // its forms — deep motion on the AIMD `motion_res`, shallow motion on the work budget —
+        // because a moving frame has no settle grid to spread cost over.
+        //
+        // ⚠SCOPED TO `!auto_iter`, i.e. to the iteration count the USER typed, which is the case
+        // the bypass exists for. Applying it to the AUTO budget as well regressed the adaptive
+        // iteration boost, and the mechanism is worth recording: the boost adapts on the
+        // capped-pixel fraction, which the GPU only reports for a FULL-FRAME iterate. A settled
+        // auto frame used to be shrunk to fit one dispatch, so every settled frame was a full
+        // frame and fed the boost; at full resolution it tiles instead, and the boost then only
+        // gets the one coarse arm frame per grid. Measured on `--livetest` over the grand tour:
+        // the boost reached ×2.56/×6.40 where it had reached ×6.40/×16/×64, and the 1e63 hold went
+        // from 53.9% black to 100%. Resolution and the iteration budget are competing for the same
+        // frames here; that trade is its own problem (TODO), and A1 does not require touching it.
         let res_scale = if interacting && is_pert {
             if view_id == 0 {
                 // Adapt ONLY on the interval following a REAL re-iterate frame. During a dive most
@@ -2335,11 +2428,33 @@ impl FractadyneApp {
         // df32 path there was nothing between the frame and the watchdog. (Precedent: `max_ss_tdr`
         // was floatexp-only for the same reason and was generalised in beta.36 after the same class
         // of crash; only the ss half got fixed then.)
-        let can_tile = self.allow_tiled_settle
-            && !offscreen
-            && !interacting
-            && !will_reproject
-            && self.perf.fe_budget[vidx] != 0;
+        //
+        // ⭐INVARIANT: an UNMEASURED budget may bound the first dispatch, but it must never bind
+        // resolution or quality downward. `&& self.perf.fe_budget[vidx] != 0` violated it — a view
+        // that never measures (no `TIMESTAMP_QUERY`, or any of the several bugs that have starved
+        // this sink) was denied the one mechanism that reaches native resolution without a big
+        // dispatch, so the bootstrap constant became a permanent resolution cap instead of a safe
+        // opening move. Tiling is exactly the right answer to "we cannot afford one big dispatch":
+        // every tile is independently budget-sized, so allowing it on the bootstrap budget is safe
+        // by construction — it just means more, smaller dispatches.
+        //
+        // ⭐ITERATION BUDGET BEFORE RESOLUTION. Tiled settle and the adaptive iteration boost
+        // compete for the same settled frames, and until now nothing arbitrated: the boost adapts
+        // on the capped-pixel fraction, which the GPU reports only for a FULL-FRAME iterate, so a
+        // tiling view feeds it one coarse arm frame per grid instead of a reading per frame. The
+        // competition was masked by a bug — timings mispaired with the wrong tile's step count were
+        // discarded, the budget never converged, and `fe_budget_ok` gated tiling off — so fixing
+        // the pairing is what surfaced it: on `--livetest` the boost fell to ×1.60 from ×6.40/×16/
+        // ×64 and the 1e61 hold went from 42.1% black to 100%.
+        //
+        // Order them explicitly, because the two are not equally important: too few iterations is a
+        // BLACK frame, too few pixels is a SOFT one. So hold the grid off while the boost is still
+        // climbing and let it have every settled frame; once it has plateaued, exhausted itself, or
+        // reached its ceiling, tiling takes over and sharpens. Bounded either way — the probe is
+        // ×1.6 per step up to `ITER_BOOST_MAX`, so "still climbing" resolves within a few dozen
+        // frames — and it does not apply when the count is the user's, since then there is no
+        // probe running to starve.
+        let can_tile = self.allow_tiled_settle && !offscreen && !interacting && !will_reproject;
         // Everything the ITERATE's output depends on that isn't covered by orbit_id / gen /
         // resolution, folded to one hash. The GPU re-renders whenever ITS IterKey changes
         // (color method, stripe frequency, trap type, SA/BLA toggles, Julia c, …) — but under a
@@ -2375,13 +2490,36 @@ impl FractadyneApp {
         let tiling = can_tile
             && match &self.perf.tile_state[vidx] {
                 Some(g) if g.key == view_key => true,
-                _ if self.perf.fe_budget_ok[vidx] => {
+                // Arm regardless of whether the budget has CONVERGED. Waiting for convergence
+                // deadlocks the climb: a frame too costly for one dispatch is shrunk, at a high
+                // explicit iteration count all the way to the shrink's own 16×16 floor, and once
+                // there the resolution stops changing — so the iterate key stops changing, no pass
+                // is dispatched, no timing comes back, and the budget that needed those timings to
+                // grow is frozen at the value that caused the collapse. Measured at an explicit
+                // 10,000,000 iterations: two readings, then silence, 16×16 forever.
+                //
+                // The original concern — "a grid sized off a still-climbing budget restarts at
+                // every measurement" — is handled where it belongs, by the geometry PIN below: a
+                // running grid never reshapes, and only a COMPLETED one steps aside for a
+                // materially better ss or resolution. So a climbing budget now produces a sequence
+                // of progressively sharper completed grids, which is what progressive settle is
+                // supposed to look like, and every tile it draws is another measurement.
+                //
+                // ⚠The relaxation is confined to the two cases that need it. Arming
+                // unconditionally regressed the AUTO path badly: tiled settle and the adaptive
+                // iteration boost compete for the same settled frames, because the boost adapts on
+                // a capped-pixel fraction the GPU reports only for a FULL-FRAME iterate. Tile
+                // every settled frame and the boost sees one coarse arm frame per grid instead of
+                // a reading per frame. Measured on `--livetest` over the grand tour: the boost fell
+                // to ×1.60 everywhere (from ×6.40/×16/×64) and the 1e61 hold went from 42.1% black
+                // to 100%. So an auto-budgeted view keeps waiting for convergence exactly as it
+                // shipped; only a never-measurable budget and a user-typed iteration count take
+                // the new path.
+                _ if self.perf.fe_budget_ok[vidx] || self.perf.fe_budget[vidx] == 0 => {
                     // ARM: this frame renders the coarse single-dispatch full frame; the grid may
-                    // start next frame, seeded from it. Arming (but ONLY arming) waits for a
-                    // CONVERGED budget: a grid sized off a still-climbing budget restarts at every
-                    // measurement. Once armed/running, an `ok` flap must NOT tear the grid down —
-                    // that threw away completed near-native frames whenever a stray measurement
-                    // nudged the budget.
+                    // start next frame, seeded from it. Once armed/running, an `ok` flap must NOT
+                    // tear the grid down — that threw away completed near-native frames whenever a
+                    // stray measurement nudged the budget.
                     self.perf.tile_state[vidx] =
                         Some(TileGrid { key: view_key, geo: None, next: 0 });
                     false
@@ -2394,9 +2532,10 @@ impl FractadyneApp {
             self.perf.tile_state[vidx] = None;
             self.perf.tile_pending[vidx] = false;
         }
-        // A tiled frame may spend TDR_MAX_TILES dispatch budgets in total; everything else gets one.
+        // A tiled frame may spend several dispatch budgets in total; everything else gets one.
+        let max_tiles = self.settle_max_tiles(vidx);
         let tdr_allowed = if tiling {
-            tdr_steps.saturating_mul(TDR_MAX_TILES)
+            tdr_steps.saturating_mul(max_tiles)
         } else {
             tdr_steps
         };
@@ -2465,13 +2604,33 @@ impl FractadyneApp {
         // COMPLETED grid steps aside when the freshly computed ss came out strictly higher — that is
         // the AA ramp's next stage becoming genuinely affordable (a new grid, seeded from the
         // completed one). A merely jittered resolution can't unpin anything.
+        let fresh_res = resolution; // pre-pin: what the budget affords NOW, for the trace
         let (resolution, ss) = if tiling {
             match &self.perf.tile_state[vidx] {
                 Some(st) if st.geo.is_some() => {
                     let (gres, gss, side) = st.geo.unwrap();
                     let cols = gres[0].div_ceil(side).max(1);
                     let rows = gres[1].div_ceil(side).max(1);
-                    let upgrade = st.next >= cols * rows && ss > gss;
+                    // …and the same for RESOLUTION, which the ss-only test left stranded. A grid
+                    // formed while the budget was still climbing pins whatever resolution that
+                    // budget afforded, and since a settled view never changes its key, nothing
+                    // ever re-evaluated it: at an explicit 10,000,000 iterations the first grid
+                    // armed on the 4.0e8 bootstrap and locked the frame at 161×126 for good, even
+                    // though the budget went on to climb an order of magnitude. Re-forming on a
+                    // materially larger affordable resolution turns that into what the tiled
+                    // settle is supposed to be — progressively sharper passes, each seeded from
+                    // the last. The 5/4 margin is what keeps the documented few-percent budget
+                    // jitter from restarting a grid; only a real gain gets through.
+                    //
+                    // ⚠The margin has to sit BELOW one budget step's worth of gain, or the ratchet
+                    // stalls one notch short of every threshold. `TDR_GROW_MAX` is 1.5× and cost
+                    // goes as resolution², so a successful measurement buys exactly √1.5 = 1.2247×
+                    // — a 5/4 margin (1.25) is fractionally above that and the climb froze at
+                    // 78×61 with the budget still two orders of magnitude below what the view
+                    // could afford. 9/8 clears the documented few-percent jitter and admits a
+                    // genuine step.
+                    let sharper = resolution[0] > gres[0].saturating_mul(9) / 8;
+                    let upgrade = st.next >= cols * rows && (ss > gss || sharper);
                     if upgrade { (resolution, ss) } else { (gres, gss) }
                 }
                 _ => (resolution, ss),
@@ -2497,12 +2656,14 @@ impl FractadyneApp {
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
             if total > tdr_steps {
-                let rect = self.next_settle_tile(vidx, resolution, ss, gpu_iter, tdr_steps);
-                if rect[2] > 0 && rect[3] > 0 {
+                let (rect, advanced) = self.next_settle_tile(vidx, resolution, ss, gpu_iter, tdr_steps);
+                if advanced && rect[2] > 0 && rect[3] > 0 {
                     self.perf.fe_steps_last[vs] = (rect[2] as u64)
                         .saturating_mul(rect[3] as u64)
                         .saturating_mul((ss as u64).saturating_mul(ss as u64))
                         .saturating_mul(gpu_iter.max(1) as u64);
+                    // This frame runs a real pass, even though the iterate KEY is unchanged.
+                    self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
                 }
                 tile = Some(rect);
                 // The texture a later reproject frame re-samples is (near-)native here, NOT shrunk
@@ -2525,8 +2686,9 @@ impl FractadyneApp {
                 format!(
                     "f={} view={vs} res={}x{} ss={ss} gpu_iter={gpu_iter} steps={:.3e} \
                      budget={:.3e} reproj={will_reproject} iterates={key_changed} tile={:?} pending={} \
-                     interacting={interacting} can_tile={can_tile} tiling={tiling} key={view_key:?} \
-                     allow={} offs={offscreen}",
+                     interacting={interacting} can_tile={can_tile} tiling={tiling} \
+                     fresh={}x{} geo={:?} max_tiles={max_tiles} ok={} allowed={:.3e} \
+                     key={view_key:?} allow={} offs={offscreen}",
                     self.perf.frame_idx,
                     resolution[0],
                     resolution[1],
@@ -2534,6 +2696,11 @@ impl FractadyneApp {
                     tdr_steps as f64,
                     tile,
                     self.perf.tile_pending[vs],
+                    fresh_res[0],
+                    fresh_res[1],
+                    self.perf.tile_state[vidx].as_ref().and_then(|g| g.geo),
+                    self.perf.fe_budget_ok[vidx],
+                    tdr_allowed as f64,
                     self.allow_tiled_settle,
                 ),
             );
@@ -3048,12 +3215,14 @@ impl FractadyneApp {
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
             self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
+            self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
         }
         // The sink is what carries the GPU timestamp back at all. Attaching it only on floatexp was
         // the root of the whole floatexp-only budget: with no sink there is no measurement, so no
         // budget, so nothing for the shrink or the tiled settle to size a frame against — and those
         // were then gated on `is_fe` to match. Every mode measures now.
         let iterate_ms = Some(self.perf.iterate_ms[vs].clone());
+        let iterate_steps = Some(self.perf.iterate_steps[vs].clone());
         // The GPU self-arms the maxiter-fraction readback on full-frame iterates and computes the
         // fraction itself (count and pixel denominator always from the same frame).
         let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
@@ -3067,8 +3236,18 @@ impl FractadyneApp {
             .live_norm_cycle_offset(vs)
             .unwrap_or_else(|| (self.color_cycle(), self.coloring.offset));
 
+        // This dispatch's nominal cost: the TILE's pixels under a settle grid, the whole frame
+        // otherwise. Travels with the pass so the timing comes back already paired.
+        let nominal_steps = match tile {
+            Some(r) => (r[2] as u64).saturating_mul(r[3] as u64),
+            None => spx,
+        }
+        .saturating_mul((ss as u64).saturating_mul(ss as u64))
+        .saturating_mul(gpu_iter.max(1) as u64);
         let params = MandelbrotParams {
             iterate_ms,
+            iterate_steps,
+            nominal_steps,
             maxiter_count,
             norm_range,
             tile,
@@ -3131,6 +3310,113 @@ impl FractadyneApp {
         // them was the mixed-signal bug that pushed motion res to native between refreshes).
         self.perf.prev_real[vi.min(1)] = params.reproject == 0;
         params
+    }
+}
+
+/// One step of the frame-budget search, as a pure function so it can be property-tested.
+///
+/// `cur` is the current budget (already floored at the bootstrap), `steps` the nominal size of the
+/// dispatch that was measured, `ms` how long it took. Returns the next budget and whether the
+/// reading counts as CONVERGED, or `None` when the reading carries no usable signal.
+pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64) -> Option<(u64, bool)> {
+    let slow = ms > TDR_BUDGET_MS;
+    // A fast dispatch far under budget size finished quickly because it is SMALL. One-sided: a
+    // SLOW undersized dispatch is the strongest evidence the budget is too high.
+    if (steps as f64) < cur as f64 * 0.7 && !slow {
+        return None;
+    }
+    let factor = (TDR_BUDGET_MS / ms).clamp(TDR_SHRINK_MAX, TDR_GROW_MAX);
+    let base = if slow { cur.min(steps.max(1)) } else { cur };
+    let next = ((base as f64 * factor) as u64).clamp(TDR_BOOTSTRAP_STEPS, TDR_STEPS_CEIL);
+    Some((next, next == cur || (0.8..=1.25).contains(&factor)))
+}
+
+/// Has measurement STARVED for this view? True when a real dispatch has gone out since the last
+/// timing came back and nothing has arrived for `limit` frames. An idle view (no dispatch since
+/// the last reading) is never starved — there is nothing outstanding to price.
+pub(crate) fn measurement_starved(
+    dispatch_frame: u64,
+    reading_frame: u64,
+    now: u64,
+    limit: u64,
+) -> bool {
+    dispatch_frame > reading_frame && now.saturating_sub(reading_frame) >= limit
+}
+
+#[cfg(test)]
+mod controller_props {
+    //! Property tests for the frame-cost controllers. These pin the SHAPES that have actually
+    //! broken here — a measured loop starving and falling back on a constant that then binds
+    //! something, and a slow dispatch failing to bring the budget down — rather than one past
+    //! incident at a time.
+    use super::*;
+
+    #[test]
+    fn slow_reading_always_lowers_the_budget() {
+        // Whatever the dispatch's nominal size, taking longer than the target must shrink.
+        for &cur in &[TDR_BOOTSTRAP_STEPS * 4, 1_000_000_000, 50_000_000_000, TDR_STEPS_CEIL] {
+            for &steps in &[1u64, cur / 3, cur, cur * 4] {
+                let (next, _) = budget_step(cur, steps, TDR_BUDGET_MS * 2.0)
+                    .expect("a slow reading is never discarded");
+                assert!(next < cur, "slow reading grew the budget: cur={cur} steps={steps} -> {next}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_slow_small_dispatch_pulls_the_budget_to_its_own_size() {
+        // The beta.40 defect: a 1451 ms dispatch of 1.03e10 steps was DISCARDED as undersized and
+        // the budget stayed at 1.663e11, far above anything the GPU could finish.
+        let (next, _) = budget_step(166_300_000_000, 10_300_000_000, 1451.4).unwrap();
+        assert!(next <= 10_300_000_000, "budget must come down to the size that measured slow");
+    }
+
+    #[test]
+    fn budget_never_leaves_its_clamps() {
+        for &ms in &[0.05, 1.0, TDR_BUDGET_MS, 5_000.0] {
+            for &cur in &[TDR_BOOTSTRAP_STEPS, TDR_STEPS_CEIL] {
+                if let Some((next, _)) = budget_step(cur, cur, ms) {
+                    assert!((TDR_BOOTSTRAP_STEPS..=TDR_STEPS_CEIL).contains(&next));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn growth_is_bounded_so_one_reading_cannot_reach_the_watchdog() {
+        let cur = 1_000_000_000;
+        let (next, _) = budget_step(cur, cur, 0.01).unwrap();
+        assert!(next as f64 <= cur as f64 * TDR_GROW_MAX + 1.0);
+    }
+
+    #[test]
+    fn starvation_needs_an_outstanding_dispatch() {
+        // Idle view: the last dispatch was already priced. Never starved, however long it sits.
+        assert!(!measurement_starved(10, 10, 10_000, 30));
+        assert!(!measurement_starved(5, 10, 10_000, 30));
+        // A dispatch went out after the last reading and nothing came back.
+        assert!(measurement_starved(11, 10, 40, 30));
+        assert!(!measurement_starved(11, 10, 39, 30));
+    }
+
+    #[test]
+    fn starvation_is_measured_from_the_reading_not_the_dispatch() {
+        // A settling view dispatches a tile EVERY frame, so "frames since the newest dispatch" is
+        // 0 or 1 forever and would never trip however starved the loop is.
+        let now = 500;
+        assert!(measurement_starved(now, 10, now, 30));
+    }
+
+    #[test]
+    fn an_unmeasured_budget_never_binds_resolution_below_a_measured_one() {
+        // The invariant. `settle_max_tiles` is the allowance the resolution shrink is sized
+        // against; a view that has measured nothing must not be given LESS room than one that has.
+        assert!(TDR_MAX_TILES >= 1);
+        let unmeasured_allowance = TDR_BOOTSTRAP_STEPS.saturating_mul(TDR_MAX_TILES);
+        assert!(
+            unmeasured_allowance > TDR_BOOTSTRAP_STEPS,
+            "tiling must be able to exceed a single bootstrap dispatch, or the bootstrap              constant becomes a permanent resolution cap"
+        );
     }
 }
 

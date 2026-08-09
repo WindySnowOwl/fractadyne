@@ -23,6 +23,7 @@ dir, logs included.
 | `FRACTADYNE_LOG` | `0` | Disables the log file (stderr unchanged) |
 | `FRACTADYNE_PERF` | `1` | Appends per-render perf records to `logs/perf.jsonl` (regression tracking across builds) — plus, during script playback, one `kind:"live"` record per frame (tour time, depth, frame/cpu ms, pipeline lag) for live-judder analysis |
 | `FRACTADYNE_CONFIG_DIR` | path | Relocates config dir (and therefore `logs/`) |
+| `FRACTADYNE_NO_TIMESTAMPS` | `1` | Decline `TIMESTAMP_QUERY` even where the adapter offers it — the only way to exercise the no-timestamp frame-budget path on a GPU that has it. That path had a reproducible bug (budget stuck at the bootstrap ⇒ ~1/3 resolution forever) that was invisible on the dev 3080 for exactly that reason; older Intel iGPUs, some Mesa/RADV/ANV combinations and the GL backend all land on it for real. Expect `capability: TIMESTAMP_QUERY=false` in the log, then `pricing frames by wall clock` |
 | `FRACTADYNE_DIVETEST_WINDOWS` | `"300,700"` | `--divetest`: override the default every-100-decades window sweep (targeted bands) |
 | `FRACTADYNE_DIVETEST_SESSION_RES` | `1` | `--divetest`: keep the session's `min_motion_res` instead of pinning the 0.30 default (user-repro runs) |
 | `FRACTADYNE_LIVETEST_SESSION_RES` | `1` | `--livetest`: same, for the live-output harness |

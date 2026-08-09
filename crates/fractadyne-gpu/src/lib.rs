@@ -135,6 +135,13 @@ struct IterTiming {
     resolve: wgpu::Buffer,
     /// MAP_READ staging copy: two u64 ticks.
     read: wgpu::Buffer,
+    /// Nominal step count of the pass currently being timed, captured when the timestamps were
+    /// recorded and published back together with the milliseconds. The app cannot pair these
+    /// itself: the readback lands 2-3 frames later, and during a tiled settle a fresh dispatch
+    /// goes out every frame, so a single app-side "last steps" slot is always describing a LATER
+    /// tile than the one the timing measured. Every reading was then priced against the wrong
+    /// (usually smaller, clamped-edge) tile and discarded as undersized, which froze the budget.
+    steps: u64,
     state: TimingState,
     done: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -176,6 +183,7 @@ impl IterTiming {
                 "fractadyne.iterate_ts.read",
                 wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             ),
+            steps: 0,
             state: TimingState::Idle,
             done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
@@ -188,6 +196,7 @@ impl IterTiming {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        out_steps: Option<&Arc<std::sync::atomic::AtomicU64>>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -211,6 +220,12 @@ impl IterTiming {
                         let ticks: [u64; 2] = bytemuck::pod_read_unaligned(&data[..16]);
                         let ns = ticks[1].saturating_sub(ticks[0]) as f64
                             * queue.get_timestamp_period() as f64;
+                        // Steps FIRST: the app treats a non-zero `iterate_ms` as "a reading is
+                        // ready" and reads the paired count in the same breath, so publishing the
+                        // time first would expose one frame's timing against the previous count.
+                        if let Some(o) = out_steps {
+                            o.store(self.steps, SeqCst);
+                        }
                         if let Some(o) = out {
                             o.store((ns / 1.0e6).to_bits(), SeqCst);
                         }
@@ -808,6 +823,12 @@ pub struct MandelbrotParams {
     /// sizes deep floatexp frames against it; see [`IterTiming`]. `None` disables capture. Written a
     /// couple of frames after the pass it describes, and only for frames that actually re-iterate.
     pub iterate_ms: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the NOMINAL STEP COUNT of the pass `iterate_ms` timed, published in the same
+    /// breath so the app never has to guess which dispatch a late reading belongs to.
+    pub iterate_steps: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// This dispatch's nominal cost (`px x ss^2 x iterations`; for a tile, the TILE's px). Handed
+    /// to `IterTiming` when the pass is timed and handed back with the measurement.
+    pub nominal_steps: u64,
     /// Sink for the live iterate pass's MAXITER FRACTION (capped pixels / iterated pixels, as
     /// `f64::to_bits`), published a couple of frames after a FULL-frame iterate. The app drains
     /// with `swap(u64::MAX)` (`u64::MAX` = no fresh reading). Feeds the adaptive iteration
@@ -936,7 +957,7 @@ impl CallbackTrait for MandelbrotParams {
 
         // Drain any timestamp readback armed on an earlier frame before this frame may re-arm it.
         if let Some(t) = view.timing.as_mut() {
-            t.pump(device, queue, self.iterate_ms.as_ref());
+            t.pump(device, queue, self.iterate_ms.as_ref(), self.iterate_steps.as_ref());
         }
         // Same for the event-counter readback (adaptive iteration budget + live-normalize feedback).
         view.counter_read.pump(device, self.maxiter_count.as_ref(), self.norm_range.as_ref());
@@ -1173,6 +1194,7 @@ impl CallbackTrait for MandelbrotParams {
                 let t = view.timing.as_mut().unwrap();
                 encoder.resolve_query_set(&t.qs, 0..2, &t.resolve, 0);
                 encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.read, 0, 16);
+                t.steps = self.nominal_steps; // pair the cost with the time it took
                 t.state = TimingState::Recorded;
             }
             if arm_ctr {

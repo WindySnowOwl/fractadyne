@@ -149,6 +149,13 @@ struct Perf {
     fe_budget: [u64; 2],
     /// Live iterate GPU time (ms, `f64::to_bits`; 0 = nothing new) published by the paint callback.
     iterate_ms: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// Nominal step count of the pass `iterate_ms` timed, published by the GPU in the same breath.
+    /// The app must NOT pair a late reading with its own "last dispatch" slot: the readback lands
+    /// 2-3 frames after the pass, and a tiled settle dispatches every frame, so that slot has
+    /// already moved on (usually to a small clamped-edge tile) and every reading gets discarded as
+    /// undersized. Measured at an explicit 10,000,000 iterations: five readings, then the budget
+    /// froze at 9.0e8 and the view sat at 34x27 forever.
+    iterate_steps: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// Nominal steps of the last frame that actually re-iterated — the cost that `iterate_ms` prices.
     fe_steps_last: [u64; 2],
     /// Last measured live iterate GPU ms per view — a copy of the swapped `iterate_ms`
@@ -157,6 +164,33 @@ struct Perf {
     /// True once a view's budget measurement has converged near the target — the gate for
     /// starting a tiled settle (see the controller in `update`).
     fe_budget_ok: [bool; 2],
+    /// Frame index at which a live iterate TIMING last arrived for this view. Compared against
+    /// `fe_iter_frame` to detect MEASUREMENT STARVATION — a real iterate ran and nothing ever came
+    /// back to price it. That is this codebase's single most repeated bug shape (beta.40's `is_fe`
+    /// sink gate, beta.41's unwritten `fe_steps_last`, and a device with no `TIMESTAMP_QUERY` are
+    /// the same failure): a measured loop silently falls back on a bootstrap constant, and the
+    /// constant then BINDS something it was never meant to size.
+    ts_reading_frame: [u64; 2],
+    /// Frame index at which this view last submitted a REAL iterate dispatch — a changed iterate
+    /// key OR an advancing settle tile. Distinct from `fe_iter_frame`, which is stamped on the key
+    /// change alone: under a running grid the key is deliberately stable and only the tile rect
+    /// moves, so `fe_iter_frame` freezes for the whole settle even though every frame dispatches.
+    /// Both the starvation detector and the wall-clock reading need "did this frame actually run
+    /// the pass", and pairing either with the key-change stamp costs the entire settle's worth of
+    /// measurements. (Kept separate rather than widening `fe_iter_frame`, whose other reader — the
+    /// other view's busy check in `next_settle_tile` — would starve the second panel's grid if it
+    /// were stamped every frame.)
+    fe_dispatch_frame: [u64; 2],
+    /// Sticky, global: measurement never arrived, so frames are priced by WALL CLOCK instead.
+    /// Deliberately tripped by observation rather than by the `TIMESTAMP_QUERY` capability bit —
+    /// the capability is only one of the ways a reading fails to show up, and the other ways are
+    /// bugs, which is exactly when a fallback is worth having. Global because every cause is
+    /// (device features, a starved sink); either view may trip it.
+    wall_fallback: bool,
+    /// Whether the device granted `TIMESTAMP_QUERY` at all. Diagnostics only — nothing sizes a
+    /// frame from it — but a crash report that names it turns "renders blurry on my laptop" into
+    /// one line of fact.
+    ts_supported: bool,
     /// The `RenderMode` each view's budget was measured under (`u32::MAX` = never). A mode switch
     /// changes the cost of a nominal step by several times — floatexp is much dearer than df32 —
     /// so carrying the old budget across one sizes the first frame in the new mode off a
@@ -269,9 +303,14 @@ impl Default for Perf {
             // Unknown until measured — the first floatexp frame uses the hardware-agnostic bootstrap.
             fe_budget: [0, 0],
             iterate_ms: [Default::default(), Default::default()],
+            iterate_steps: [Default::default(), Default::default()],
             fe_steps_last: [0, 0],
             last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],
+            ts_reading_frame: [0, 0],
+            fe_dispatch_frame: [0, 0],
+            wall_fallback: false,
+            ts_supported: false,
             budget_mode: [u32::MAX, u32::MAX],
             tile_state: [None, None],
             tile_pending: [false, false],
@@ -1092,9 +1131,18 @@ fn main() -> eframe::Result<()> {
                                 eframe::wgpu::Limits::default()
                             };
                         let mut features = eframe::wgpu::Features::empty();
-                        if adapter
-                            .features()
-                            .contains(eframe::wgpu::Features::TIMESTAMP_QUERY)
+                        // `FRACTADYNE_NO_TIMESTAMPS=1` declines the feature even where the adapter
+                        // offers it. Not a user setting — it is the only way to exercise the
+                        // no-TIMESTAMP_QUERY path on a dev box whose GPU has it, and that path had
+                        // a reproducible bug (budget stuck at bootstrap → ~1/3 resolution forever)
+                        // that was invisible here for exactly that reason. Older Intel iGPUs, some
+                        // Mesa/RADV/ANV combinations, and the GL backend all land on it for real.
+                        let no_ts = std::env::var("FRACTADYNE_NO_TIMESTAMPS")
+                            .is_ok_and(|v| v != "0" && !v.is_empty());
+                        if !no_ts
+                            && adapter
+                                .features()
+                                .contains(eframe::wgpu::Features::TIMESTAMP_QUERY)
                         {
                             features |= eframe::wgpu::Features::TIMESTAMP_QUERY;
                         }
@@ -4916,6 +4964,82 @@ impl FractadyneApp {
         }
         self.invalidate_refs();
     }
+
+    /// Fold one measured iterate cost into a view's frame budget. Shared by BOTH measurement
+    /// sources — the GPU timestamp readback and the wall-clock fallback — because the arithmetic
+    /// must not differ between them: a fallback that walks the budget by different rules is a
+    /// second controller to reason about, and this ledger already records what happens when two
+    /// paths that should be identical drift apart (five `is_fe` sites, of which one was missed).
+    ///
+    /// `ms` is how long the dispatch of `steps` nominal steps took. Returns whether the budget
+    /// moved. The caller owns the pairing: `steps` must be the count that `ms` actually priced.
+    fn apply_iterate_measurement(&mut self, v: usize, ms: f64, steps: u64, src: &str) -> bool {
+        let cur = self.perf.fe_budget[v].max(render::TDR_BOOTSTRAP_STEPS);
+        // The arithmetic lives in `render::budget_step` as a pure function so the properties that
+        // matter — a slow reading always shrinks, growth is bounded, the clamps hold — are pinned
+        // by tests rather than by re-reading this block.
+        let Some((next, ok)) = render::budget_step(cur, steps, ms) else {
+            if diag::trace_on("gpu") {
+                diag::trace(
+                    "gpu",
+                    format!(
+                        "view={v} {src}={ms:.1}ms IGNORED (steps={:.3e} < 0.7×budget)",
+                        steps as f64
+                    ),
+                );
+            }
+            return false;
+        };
+        self.perf.last_iterate_ms[v] = ms;
+        self.perf.fe_budget_ok[v] = ok;
+        if diag::trace_on("gpu") {
+            diag::trace(
+                "gpu",
+                format!(
+                    "view={v} {src}={ms:.1}ms cur={:.3e} -> next={:.3e} ok={ok}",
+                    cur as f64, next as f64
+                ),
+            );
+        }
+        let moved = next != self.perf.fe_budget[v];
+        self.perf.fe_budget[v] = next;
+        moved
+    }
+
+    /// WALL-CLOCK FALLBACK for the frame budget, used once `wall_fallback` trips (no GPU
+    /// timestamps, or a sink that never delivers). Called from the frame-interval capture, which
+    /// is the one point where the interval, `prev_real`, and `fe_steps_last` all describe the SAME
+    /// frame — the controller runs earlier in `update` and would pair a time with the wrong step
+    /// count, and `build_params` runs later and would pair it with the next frame's.
+    ///
+    /// Precedent: the AIMD motion-resolution controller has always sized the moving frame from the
+    /// measured frame interval, needs no device feature, and cannot hang. This is the same signal
+    /// applied to the settled budget. It reads HIGH — the interval also contains present, the CPU
+    /// side, and the other view — so the budget settles a little low, which is the safe direction.
+    /// A dispatch that fits inside a vsync cannot be distinguished from a much cheaper one, but
+    /// that only means the climb keeps growing at `TDR_GROW_MAX` until a frame is genuinely slow,
+    /// which is exactly the intended search.
+    fn wall_clock_budget_tick(&mut self, dt_ms: f64) {
+        if !self.perf.wall_fallback || !(dt_ms > 0.01) {
+            return;
+        }
+        for v in 0..2 {
+            // Only price a frame that REALLY re-iterated. `fe_iter_frame` is stamped by
+            // `build_params` on a changed iterate key, and `frame_idx` has not yet advanced for
+            // this frame, so equality means "the frame just drawn ran the pass and left its step
+            // count in `fe_steps_last`". `prev_real` is the weaker test the AIMD can afford —
+            // it only excludes reprojections, not key-unchanged frames the GPU dedupes away, and
+            // pricing one of those would authorize the budget off a ~vsync interval that
+            // measured nothing.
+            if self.perf.fe_dispatch_frame[v] != self.perf.frame_idx
+                || self.perf.fe_steps_last[v] == 0
+            {
+                continue;
+            }
+            let steps = self.perf.fe_steps_last[v];
+            self.apply_iterate_measurement(v, dt_ms, steps, "wall_iterate");
+        }
+    }
 }
 
 // Menu bar, toolbar, control panels, status bar, and the central fractal canvas. The modal
@@ -4951,6 +5075,23 @@ impl eframe::App for FractadyneApp {
         let gpu = frame
             .wgpu_render_state()
             .map(|rs| (rs.device.clone(), rs.queue.clone()));
+        // Capability probe, once. Recorded for the crash report and the perf HUD only — the
+        // wall-clock fallback trips on observed starvation, not on this bit, so a device that
+        // advertises the feature but never delivers a reading is covered too. Deliberately NOT
+        // used to size anything: cost here is data-dependent, not hardware-dependent (the same
+        // nominal step count measured 114 ms at one location and 1147 ms at another on the SAME
+        // GPU), so a capability-derived cost model would be confidently wrong exactly where it
+        // matters.
+        if self.perf.frame_idx == 0 {
+            if let Some((dev, _)) = &gpu {
+                self.perf.ts_supported =
+                    dev.features().contains(eframe::wgpu::Features::TIMESTAMP_QUERY);
+                diag::log_line(
+                    "wgpu",
+                    &format!("capability: TIMESTAMP_QUERY={}", self.perf.ts_supported),
+                );
+            }
+        }
 
         // Re-size the floatexp frame budget from the LIVE iterate's measured GPU time, published by the
         // paint callback a couple of frames after the pass it describes. Walk the budget toward the
@@ -4974,65 +5115,55 @@ impl eframe::App for FractadyneApp {
                         ),
                     );
                 }
-                continue;
-            }
-            let cur = self.perf.fe_budget[v].max(render::TDR_BOOTSTRAP_STEPS);
-            let steps = self.perf.fe_steps_last[v];
-            // Over the target is never a meaningless reading. Whatever the dispatch's nominal size,
-            // the GPU just took this long to finish it, and that is the only thing the watchdog
-            // reacts to.
-            let slow = ms > render::TDR_BUDGET_MS;
-            // A dispatch well under budget size — a clamped edge/corner tile of a settle grid —
-            // finishes fast because it is SMALL, not because the GPU got faster; at depth it is
-            // latency-bound, so its time says nothing about throughput. Pricing it as budget-sized
-            // rails `factor` at the grow clamp, inflating the budget off a meaningless reading and
-            // flapping `fe_budget_ok` (which used to tear down the very grid mid-flight). Ignore
-            // it; full frames and interior tiles are budget-sized by construction and carry the
-            // real signal.
-            //
-            // ONE-SIDED, and that is the whole point: every word of the reasoning above is about a
-            // reading that would push the budget UP. Discarding a SLOW undersized dispatch throws
-            // away the strongest evidence there is that the budget is too high — and this rule was
-            // doing exactly that, measured on the df32 repro of the 2026-08-07 22:17 crash:
-            // `gpu_iterate=1451.4ms IGNORED (steps=1.030e10 < 0.7×budget)`. 1451 ms is 1.6× the
-            // target and most of the way to the watchdog, and the budget stayed at 1.663e11.
-            if (steps as f64) < cur as f64 * 0.7 && !slow {
-                if diag::trace_on("gpu") {
-                    diag::trace(
-                        "gpu",
-                        format!("view={v} gpu_iterate={ms:.1}ms IGNORED (steps={:.3e} < 0.7×budget)",
-                            steps as f64),
+                // MEASUREMENT STARVATION. A real iterate ran at `fe_iter_frame` and no timing has
+                // come back since; a healthy timestamp readback lands 2–3 frames later, so half a
+                // second of silence means it is never coming. Give up on timestamps for the rest of
+                // the session and price frames by wall clock instead (applied at the interval
+                // capture below, where the timing and the step count it prices line up).
+                //
+                // Without this the budget sits on `TDR_BOOTSTRAP_STEPS` forever — a value chosen as
+                // a safe FIRST dispatch on unknown hardware, never as a statement about what a view
+                // can afford — and since beta.40 that floor drives the resolution shrink in every
+                // mode: 1920×1080 at 2k iterations is 4.1e9 nominal steps against 4.0e8, so the
+                // view renders at ~600×337 upscaled to the panel, permanently. `can_tile` used to
+                // require a non-zero budget too, so the tiled settle could not recover it either.
+                // Measured from the last READING, not the last dispatch. A settling view
+                // dispatches a tile every frame, so "frames since the newest dispatch" is 0 or 1
+                // forever and never trips however starved the loop is; what matters is how long
+                // the unpriced work has been piling up. The first clause keeps an idle view (no
+                // dispatches at all, so nothing to price) from tripping it.
+                const TS_STARVE_FRAMES: u64 = 30;
+                if !self.perf.wall_fallback
+                    && render::measurement_starved(
+                        self.perf.fe_dispatch_frame[v],
+                        self.perf.ts_reading_frame[v],
+                        self.perf.frame_idx,
+                        TS_STARVE_FRAMES,
+                    )
+                {
+                    self.perf.wall_fallback = true;
+                    diag::log_line(
+                        "wgpu",
+                        &format!(
+                            "no GPU iterate timing after {TS_STARVE_FRAMES} frames \
+                             (TIMESTAMP_QUERY={}): pricing frames by wall clock",
+                            self.perf.ts_supported
+                        ),
                     );
                 }
                 continue;
             }
-            self.perf.last_iterate_ms[v] = ms;
-            let factor = (render::TDR_BUDGET_MS / ms).clamp(render::TDR_SHRINK_MAX, render::TDR_GROW_MAX);
-            // A dispatch that measured slow proves ITS OWN size is already unaffordable, so the
-            // budget must come down to at most that size — otherwise a small-but-slow frame (the
-            // latency-bound deep interior) leaves the budget parked far above anything the GPU can
-            // actually finish, and the ratio search crawls down from a number that was never real.
-            // This assumes only that a smaller dispatch is not slower, not that `steps ∝ time`.
-            let base = if slow { cur.min(steps.max(1)) } else { cur };
-            let next = ((base as f64 * factor) as u64)
-                .clamp(render::TDR_BOOTSTRAP_STEPS, render::TDR_STEPS_CEIL);
-            // CONVERGED = the last frame measured near the target (or the budget is pinned at a
-            // clamp and cannot move). A tiled settle waits for this: starting a grid while the
-            // budget is still climbing would reshape/restart it every measurement, throwing tiles
-            // away — the single-dispatch frames of the climb are themselves decent progressive
-            // feedback (each one sharper than the last).
-            self.perf.fe_budget_ok[v] = next == cur || (0.8..=1.25).contains(&factor);
-            if diag::trace_on("gpu") {
-                diag::trace(
-                    "gpu",
-                    format!(
-                        "view={v} gpu_iterate={ms:.1}ms x{factor:.2} cur={:.3e} -> next={:.3e} ok={}",
-                        cur as f64, next as f64, self.perf.fe_budget_ok[v]
-                    ),
-                );
+            self.perf.ts_reading_frame[v] = self.perf.frame_idx;
+            // The count that came back WITH the timing — see `Perf::iterate_steps`. Falls back to
+            // the app-side slot only for a reading published before the paired sink existed.
+            let steps = match self.perf.iterate_steps[v].swap(0, std::sync::atomic::Ordering::SeqCst)
+            {
+                0 => self.perf.fe_steps_last[v],
+                n => n,
+            };
+            if self.apply_iterate_measurement(v, ms, steps, "gpu_iterate") {
+                ctx.request_repaint();
             }
-            self.perf.fe_budget[v] = next;
-            ctx.request_repaint();
         }
         self.update_minimap(ctx, &gpu);
 
@@ -5458,6 +5589,10 @@ impl eframe::App for FractadyneApp {
             let dt = frame_start.duration_since(prev).as_secs_f64() * 1000.0;
             self.perf.last_dt_ms = dt; // raw — the motion-res controller reads the actual spike
             self.perf.frame_ms = ema(self.perf.frame_ms, dt);
+            // Same interval, second consumer: with no GPU timestamps this is the ONLY cost signal
+            // the frame budget can have. Here `dt`, `fe_iter_frame`, and `fe_steps_last` all still
+            // describe the frame just drawn — see `wall_clock_budget_tick`.
+            self.wall_clock_budget_tick(dt);
             // Resolve adaptive-AA probes (see `Perf::aa_probe`): a stage armed on frame F is
             // costed as the max frame interval over F+1..=F+2 — with frame latency 1 a heavy GPU
             // frame stalls the NEXT acquire, so its cost shows up one interval late. A resolution

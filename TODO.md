@@ -11,15 +11,18 @@ landscape, and (d) a runnable Linux build. Head is **v0.2.40-beta.46**, pushed; 
 
 Ordered by how fast a stranger hits them.
 
-1. **An explicit iteration count is silently overridden.** Set Iterations to 10,000,000 at a deep
-   view and the status bar reads `iter 82,741` + `⚠ iter exhausted`. Thirty seconds to reproduce,
-   and "why won't it use the number I typed?" is a forum question waiting to happen. Blocked on the
-   cost model (nominal steps ignore BLA skipping) — honouring the setting naively collapses the
-   frame to 16×16, MEASURED and reverted. See the open item below.
-2. **A GPU without `TIMESTAMP_QUERY` renders at ~1/3 resolution forever.** No timing → budget stuck
-   at bootstrap → resolution shrink binds → tiled settle can't recover. Invisible on the dev 3080,
-   near-certain on the swappable-GPU Linux rig and on any GL-backend fallback. Also (d)'s biggest
-   risk. See the tunables item.
+1. **An explicit iteration count is silently overridden** — PARTLY FIXED v0.2.40-beta.47; the
+   remaining half is blocked, see the open item below. The cost model no longer collapses the
+   frame: at an explicit 10,000,000 iterations the view now renders at full native resolution
+   (measured 1445×1134, budget climbing 4.0e8 → 3.0e11 across ~160 readings) instead of the 16×16
+   shrink floor an earlier attempt produced. What is still capped is `gpu_iter` itself — the status
+   bar still reads `iter 82,741` — because removing the `boosted_cap` clamp lands on scripted
+   playback, which sets `auto_iter = false` for every keyframe carrying a `max_iter`.
+2. **A GPU without `TIMESTAMP_QUERY` renders at ~1/3 resolution forever — FIXED
+   v0.2.40-beta.47.** Reproduced on the dev 3080 via the new `FRACTADYNE_NO_TIMESTAMPS=1`, which
+   declines the feature the adapter offers: a 1445×1134 panel at 2,000 iterations rendered at
+   **504×396 for 167 consecutive settled frames**, `budget=4.000e8` pinned at the bootstrap,
+   **zero readings ever**, `can_tile=false`. Same view on the fix: **native 1445×1134**, tiled.
 3. **The grand tour's own 1e55 hold spins forever.** The freeze guard refuses a reference 2,192
    samples over `LIVE_REF_CAP` and the quality gate re-requests it every ~450 ms indefinitely: a
    core pinned, the view black. It is in the flagship demo script, so anyone who plays it sees it.
@@ -110,7 +113,28 @@ Mockups: [design/mockups/](design/mockups/).
      lookahead spin.
   5. **A constant tuned at one depth failing at the next** — the spar family's eight bugs.
 
-  ⛔**Reproducible consequence, found 2026-08-08 and NOT yet fixed: a GPU without
+  ✅**Plan items 1 and 3 landed in v0.2.40-beta.47** — the invariant, a wall-clock fallback, and
+  property tests. Details under the two bug entries below; the short version:
+  - **`FRACTADYNE_NO_TIMESTAMPS=1`** declines the feature the adapter offers, so the whole
+    no-timestamp path is now reproducible on the dev 3080. It is what turned this from a
+    reasoned-about risk into a measured 504×396.
+  - **The invariant is enforced where it binds**: `can_tile` no longer requires a measured budget,
+    and a never-measured budget may arm a grid (the bootstrap is a CONSTANT, so the "a grid sized
+    off a climbing budget restarts every measurement" objection does not apply to it).
+  - **Measurement starvation is detected and fallen back on**, tripping on OBSERVATION rather than
+    on the capability bit — so a device that advertises `TIMESTAMP_QUERY` but never delivers a
+    reading (i.e. every bug in family 1) is covered by the same mechanism.
+  - **Property tests** (`render::controller_props`, 7 checks in `cargo test --bins`) pin the
+    shapes rather than the incidents: a slow reading always shrinks the budget, a slow *undersized*
+    dispatch pulls it down to its own size (the beta.40 defect), growth is bounded, the clamps
+    hold, starvation is measured from the last READING not the last dispatch, and an idle view
+    never trips it.
+
+  Items 2 (centralise the tunables with declared contracts), 4 (unify settled + motion on measured
+  cost — half done, see below) and 5/6 (capability probe as an instrument; the probe itself now
+  logs one line and is in the crash report, but `--bench-matrix` does not yet record it) remain.
+
+  ✅**Reproducible consequence, found 2026-08-08, FIXED v0.2.40-beta.47: a GPU without
   `TIMESTAMP_QUERY` renders at ~1/3 resolution forever.** `IterTiming::new` returns `None`
   without the feature → no timing is ever published → the controller skips on `bits == 0` →
   `fe_budget` stays 0 → `tdr_steps` sits at the 4e8 bootstrap → and beta.40 made that floor drive
@@ -194,7 +218,54 @@ Mockups: [design/mockups/](design/mockups/).
   never investigated. Distinct from the abort class above (a segfault, not a controlled exit), so
   it needs its own look once (c) above makes silent deaths visible.
 
-- [ ] **The live view cannot honour a high explicit iteration count, and the cost model is why.**
+- [~] **The live view cannot honour a high explicit iteration count — the COST MODEL half is FIXED
+  (v0.2.40-beta.47); honouring the count itself is blocked on two couplings.** What landed, all
+  measured at an explicit 10,000,000 iterations on a 1445×1134 panel:
+  1. ⭐**The timing was being paired with the wrong dispatch's step count** — the defect under
+     everything else here. `IterTiming` publishes ~2–3 frames after the pass it measured, while
+     `fe_steps_last` is a single app-side slot overwritten by every dispatch; a tiled settle
+     dispatches every frame, so each reading was priced against a LATER, usually clamped-edge tile
+     and thrown away as undersized. The budget therefore froze wherever it happened to be
+     (observed: five readings, then silence at 9.0e8, view stuck at 34×27). Fixed at the producer:
+     `MandelbrotParams::nominal_steps` travels with the pass, `IterTiming` stashes it when it
+     records the timestamps, and both come back together through `iterate_steps`. Steps are stored
+     BEFORE the ms, since the app treats a non-zero `iterate_ms` as "a reading is ready".
+  2. **A completed grid repeats its final rect** (so the GPU dedupes it) and that repeat was being
+     priced as a dispatch. `next_settle_tile` now returns whether the tile actually ADVANCED.
+  3. **A grid formed while the budget was climbing pinned that resolution forever**, because a
+     settled view never changes its key and only an ss increase could unpin it. It now also
+     re-forms on a materially larger affordable resolution. ⚠The margin must sit BELOW one budget
+     step's worth of gain — `TDR_GROW_MAX` is 1.5× and cost goes as resolution², so a step buys
+     exactly √1.5 = 1.2247×, and a 5/4 margin stalled the ratchet one notch short at 78×61. It is
+     9/8.
+  4. Net: the view ratchets 16×16 → 34×27 → 78×61 → … → 597×468 → **native 1445×1134** while the
+     budget climbs 4.0e8 → 3.0e11, over ~160 readings and ~590 tiled frames.
+
+  ⛔**Blocked, and both blockers are worth knowing before re-attempting:**
+  - **`gpu_iter` is still `.min(boosted_cap)`.** Removing that when `auto_iter` is off works in
+    isolation (that is how the native-resolution result above was obtained) but CANNOT ship,
+    because **script playback sets `auto_iter = false` for every keyframe carrying a `max_iter`**
+    (`apply_sampled_settings`). So the branch lands on the flagship tour, and there it regressed
+    the deep holds — `--livetest` on the grand tour: 1e61 went 42.1% → 100% black.
+  - **Two copies of the same formula.** The boost probe recomputes the effective cap itself
+    (`budget_now`, in the maxiter-counter drain) and compares it against the `armed_iter` the GPU
+    reports, to reject stale pre-raise readings. Change `gpu_iter` without changing that
+    expression and every reading is silently discarded as stale, the probe freezes, and the boost
+    sits at its first step (measured: ×1.60 everywhere, against ×6.40/×16/×64). These two must be
+    derived from one function before either is touched.
+  - **Resolution and the iteration budget compete for the same settled frames.** The boost adapts
+    on the capped-pixel fraction, which the GPU reports only for a FULL-FRAME iterate; a tiling
+    view feeds it one coarse arm frame per grid instead of a reading per frame. This was masked by
+    (1) — mispaired readings meant the budget never converged and `fe_budget_ok` gated tiling off.
+    Fixing the pairing surfaced it. An explicit "iteration budget first, resolution second" gate
+    (hold the grid off until the boost plateaus) was tried and did NOT restore the boost, so the
+    coupling is not simply tiling-vs-probe; it needs its own investigation.
+  ⚠Everything above is confined so the shipped auto/scripted path is unchanged: `--livetest` on the
+  grand tour matches the pre-change build exactly (18 ok / 1 warn / 3 FAIL, same percentages, same
+  boosts, same orbit lengths), `--divetest` is within run-to-run variance (1e300 56.7/55.0 fps vs
+  baseline 56.5/56.4), suite 102/102 + goldens 17/17, bench-matrix 0 drift.
+
+  Original diagnosis, kept — item (3) below is what beta.47 acted on:
   Reported at 8.8e94× (three-spar): Iterations set to **10,000,000** with auto-scale OFF, but the
   status bar reads `iter 82,741` and `⚠ iter exhausted`, and the picture is blocky. Two mechanisms,
   and the second is the real one:
