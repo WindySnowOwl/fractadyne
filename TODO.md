@@ -61,6 +61,19 @@ Ordered by how fast a stranger hits them.
 
 12. **First-run overlay** (design already agreed) — deep-zoom apps are opaque to newcomers and this
     is exactly the first-two-minutes friction a forum reader hits.
+13. **Script playback is buried and forgets what you played.** Two small UX fixes to the feature
+    that is one of the announce pitch's headline items (F), currently reachable only via
+    *Tools → Play script…* (`ui/menus.rs`, `load_script()`), which opens a file dialog every time:
+    - **A play-script button on the toolbar**, beside the existing icon actions in `ui/menus.rs`.
+      The tours are the most demo-able thing in the app and right now nothing on screen suggests
+      they exist.
+    - **Default to the last script played.** Persist the path in `fractadyne-state` (the
+      `export_dir: Option<String>` field is the precedent) so the toolbar button replays it with
+      one click, and the menu item's dialog opens in its directory. Re-playing the same tour is
+      the overwhelmingly common case — during this session's crash-hunting it meant a file dialog
+      per attempt.
+    ⚠A missing or moved file must fall back to the picker rather than erroring, and the stored
+    path should not be treated as trusted input (same handling as any loaded `.toml`).
 
 ### E — (b) fundamentally missing features: assessed, nothing blocking
 
