@@ -187,6 +187,12 @@ struct Perf {
     /// bugs, which is exactly when a fallback is worth having. Global because every cause is
     /// (device features, a starved sink); either view may trip it.
     wall_fallback: bool,
+    /// Duration of the PREVIOUS frame's `update` body (ms) — see the slow-frame attribution log.
+    prev_body_ms: f64,
+    /// In-flight wall-clock cost probe per view: `(steps, frame it was armed on, max interval
+    /// seen since)`. See `wall_clock_budget_tick` — a dispatch's cost lands one to two intervals
+    /// after the frame that submitted it, so it cannot be priced in place.
+    wall_probe: [Option<(u64, u64, f64)>; 2],
     /// Whether the device granted `TIMESTAMP_QUERY` at all. Diagnostics only — nothing sizes a
     /// frame from it — but a crash report that names it turns "renders blurry on my laptop" into
     /// one line of fact.
@@ -319,6 +325,8 @@ impl Default for Perf {
             ts_reading_frame: [0, 0],
             fe_dispatch_frame: [0, 0],
             wall_fallback: false,
+            prev_body_ms: 0.0,
+            wall_probe: [None, None],
             ts_supported: false,
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
@@ -5039,20 +5047,38 @@ impl FractadyneApp {
             return;
         }
         for v in 0..2 {
-            // Only price a frame that REALLY re-iterated. `fe_iter_frame` is stamped by
-            // `build_params` on a changed iterate key, and `frame_idx` has not yet advanced for
-            // this frame, so equality means "the frame just drawn ran the pass and left its step
-            // count in `fe_steps_last`". `prev_real` is the weaker test the AIMD can afford —
-            // it only excludes reprojections, not key-unchanged frames the GPU dedupes away, and
-            // pricing one of those would authorize the budget off a ~vsync interval that
-            // measured nothing.
-            if self.perf.fe_dispatch_frame[v] != self.perf.frame_idx
-                || self.perf.fe_steps_last[v] == 0
-            {
-                continue;
+            // ⭐**A DISPATCH IS NOT PRICED BY THE INTERVAL IT WAS SUBMITTED IN.** Submission is
+            // asynchronous: the frame that queues 2 s of GPU work returns from `update` in a
+            // vsync-shaped ~17 ms, and the cost only surfaces when the queue backs up and stalls a
+            // later acquire. With `desired_maximum_frame_latency: 1` that is the NEXT acquire, so
+            // the cost shows up one interval late — which is exactly what `aa_probe` below already
+            // does ("costed as the max frame interval over F+1..=F+2"). This function used to pair
+            // THIS frame's step count with the interval that ended before its work did, and the
+            // error is not small: at the beta.48 device loss it read **18.4 ms for a frame that
+            // took 1070 ms**, grew the budget 4.0e8 → 6.0e8 on that, and the next dispatch measured
+            // **2136 ms** and took the device out. A 58× underestimate, in the direction of growth.
+            //
+            // So arm a probe at dispatch and cost it as the MAX interval over the following two
+            // frames. Max, not mean: one of those intervals is the stall, the others are whatever
+            // the loop did while waiting, and a stall is the signal.
+            //
+            // Only arm on a frame that REALLY re-iterated. `fe_dispatch_frame` is stamped when the
+            // pass is encoded and `frame_idx` has not advanced yet, so equality means "the frame
+            // just drawn ran the pass and left its step count in `fe_steps_last`". Pricing a
+            // reprojection or a key-unchanged frame the GPU deduped away would authorize the
+            // budget off an interval that measured nothing.
+            let dispatched = self.perf.fe_dispatch_frame[v] == self.perf.frame_idx;
+            let (probe, priced) = render::wall_probe_step(
+                self.perf.wall_probe[v],
+                dispatched,
+                self.perf.fe_steps_last[v],
+                self.perf.frame_idx,
+                dt_ms,
+            );
+            self.perf.wall_probe[v] = probe;
+            if let Some((ms, steps)) = priced {
+                self.apply_iterate_measurement(v, ms, steps, "wall_iterate");
             }
-            let steps = self.perf.fe_steps_last[v];
-            self.apply_iterate_measurement(v, dt_ms, steps, "wall_iterate");
         }
     }
 }
@@ -5169,6 +5195,16 @@ impl eframe::App for FractadyneApp {
                 continue;
             }
             self.perf.ts_reading_frame[v] = self.perf.frame_idx;
+            // A real GPU timing arrived, so the fallback's premise is gone — UNLATCH it. It used to
+            // be a one-way switch, so a single 30-frame gap (a settle, a long reference install, an
+            // alt-tab) turned the wall clock into a permanent SECOND measurement source competing
+            // with working timestamps, on hardware where `TIMESTAMP_QUERY=true`. That is how the
+            // beta.48 device loss got its fatal reading: this machine had timestamps the whole time.
+            if self.perf.wall_fallback {
+                self.perf.wall_fallback = false;
+                self.perf.wall_probe[v] = None;
+                diag::log_line("wgpu", "GPU iterate timing resumed: wall-clock pricing off");
+            }
             // The count that came back WITH the timing — see `Perf::iterate_steps`. Falls back to
             // the app-side slot only for a reading published before the paired sink existed.
             let steps = match self.perf.iterate_steps[v].swap(0, std::sync::atomic::Ordering::SeqCst)
@@ -5755,7 +5791,33 @@ impl eframe::App for FractadyneApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(50));
             }
         }
-        self.perf.cpu_ms = ema(self.perf.cpu_ms, frame_start.elapsed().as_secs_f64() * 1000.0);
+        let body_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+        self.perf.cpu_ms = ema(self.perf.cpu_ms, body_ms);
+        // ⭐SLOW-FRAME ATTRIBUTION. A long frame interval has two very different causes and the
+        // interval alone cannot tell them apart: time spent INSIDE `update` (CPU work — reference
+        // installs, UI, a blocking wait we own) versus time spent OUTSIDE it (eframe's acquire /
+        // present, i.e. blocked on the GPU, or simply idle waiting for the next repaint request).
+        // Guessing between them cost this project two wrong diagnoses of the same crash: a 1.018 s
+        // frame cadence after the df32→floatexp switch reads equally well as "1 Hz idle timer" and
+        // as "1 s GPU dispatches", and the two call for opposite fixes. `outside` is measured
+        // against the PREVIOUS frame's body, since dt spans `frame_start(N-1) → frame_start(N)`.
+        if body_ms > 200.0 || self.perf.last_dt_ms > 200.0 {
+            let outside = self.perf.last_dt_ms - self.perf.prev_body_ms;
+            diag::log_line(
+                "render",
+                &format!(
+                    "slow frame {}: dt={:.0}ms = body {:.0}ms + outside(acquire/present/idle)                      {:.0}ms — mode={} steps={:.3e} budget={:.3e}",
+                    self.perf.frame_idx,
+                    self.perf.last_dt_ms,
+                    self.perf.prev_body_ms,
+                    outside.max(0.0),
+                    self.perf.last_mode,
+                    self.perf.fe_steps_last[0] as f64,
+                    self.perf.fe_budget[0] as f64,
+                ),
+            );
+        }
+        self.perf.prev_body_ms = body_ms;
 
         // Navigation history: record a location each time the single view settles after
         // a pan/zoom gesture (its own dedup avoids repeats). Discrete jumps record

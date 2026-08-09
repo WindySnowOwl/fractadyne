@@ -35,9 +35,18 @@ pub(crate) const TDR_SHRINK_MAX: f64 = 0.5;
 /// floatexp / no-BLA regime, and believing it cost six device losses.** Measured 2026-08-09 on an
 /// RTX 3080 at the three-spar dive, `mode=2` with `orbit_len=626` (an escaped reference so short
 /// that BLA skips nothing and real cost tracks the nominal count instead of being a small fraction
-/// of it): a 4e8-step frame took **~780 ms**. A nominal step is not a fixed amount of work — that
-/// is the standing lesson of this file — so no constant expressed in steps can be "a few ms"
-/// everywhere. See `TDR_MIN_STEPS`.
+/// of it): the old 4e8 value measured **~1070 ms**, over half the ~2 s driver watchdog on a
+/// current discrete part and therefore NEGATIVE margin on anything slower. A nominal step is not a
+/// fixed amount of work — that is the standing lesson of this file — so no constant expressed in
+/// steps can be "a few ms" everywhere.
+///
+/// ⚠**Lowering it does not help and is not free — TRIED 4e8 → 1e8, REVERTED.** It did not prevent
+/// the device loss (the run died anyway, at 69×54 and 9.86e7 steps), because the cost that kills is
+/// not reachable by this constant — see the mode-2 throughput collapse in TODO.md. And it cost real
+/// resolution: `--livetest` caught the `seahorse-2` checkpoint dropping **480×270 → 100×56**. The
+/// guess is a starting point the controller climbs from at ×1.5 per reading, so starting 4× lower
+/// costs ~4 frames of coarseness at every checkpoint that has not converged yet. See
+/// `TDR_MIN_STEPS` for the change that does matter.
 pub(crate) const TDR_BOOTSTRAP_STEPS: u64 = 400_000_000;
 /// ⭐Absolute floor the measured budget may fall to. The clamp's lower bound used to be
 /// `TDR_BOOTSTRAP_STEPS`, which meant **the controller could not shrink below the opening guess no
@@ -3502,6 +3511,38 @@ pub(crate) fn refusal_survives_install(refused: u32, installed_len: u32, point_m
 /// separately, and two of them made it wrong the same way: `fe_budget.max(TDR_BOOTSTRAP_STEPS)`,
 /// which hoists a converged-low budget back to the opening guess on every reading so it can never
 /// settle below `bootstrap × TDR_SHRINK_MAX`. The guess is a starting point, never a floor.
+/// One step of the WALL-CLOCK cost probe: fold `dt` into the in-flight probe and, once two frames
+/// have passed since it was armed, return the `(ms, steps)` pair to price.
+///
+/// ⚠A dispatch is not priced by the interval it was submitted in — submission is asynchronous, so
+/// the frame that queues 2 s of GPU work still returns in a vsync-shaped ~17 ms and the cost only
+/// surfaces when the queue stalls a later acquire. Pricing in place read **18.4 ms for a 1070 ms
+/// frame** at the beta.48 device loss and grew the budget on it. `aa_probe` already had this right;
+/// this is the same shape, extracted so the deferral is pinned by a test rather than by reading.
+///
+/// `probe` is `(steps, armed_frame, max_dt_seen)`. `dispatched` says this frame really re-iterated
+/// and `steps` is what it dispatched.
+pub(crate) fn wall_probe_step(
+    probe: Option<(u64, u64, f64)>,
+    dispatched: bool,
+    steps: u64,
+    frame_idx: u64,
+    dt_ms: f64,
+) -> (Option<(u64, u64, f64)>, Option<(f64, u64)>) {
+    match probe {
+        Some((s, armed, max_dt)) => {
+            let max_dt = max_dt.max(dt_ms);
+            if frame_idx >= armed + 2 {
+                (None, Some((max_dt, s)))
+            } else {
+                (Some((s, armed, max_dt)), None)
+            }
+        }
+        None if dispatched && steps > 0 => (Some((steps, frame_idx, dt_ms)), None),
+        None => (None, None),
+    }
+}
+
 pub(crate) fn budget_base(fe_budget: u64) -> u64 {
     match fe_budget {
         0 => TDR_BOOTSTRAP_STEPS,
@@ -3619,6 +3660,28 @@ mod controller_props {
         // the budget stayed at 1.663e11, far above anything the GPU could finish.
         let (next, _) = budget_step(166_300_000_000, 10_300_000_000, 1451.4).unwrap();
         assert!(next <= 10_300_000_000, "budget must come down to the size that measured slow");
+    }
+
+    #[test]
+    fn a_wall_probe_is_not_priced_by_the_frame_that_submitted_it() {
+        // Arm on frame 10 with a vsync-shaped interval — the lie that killed the device.
+        let (p, out) = wall_probe_step(None, true, 400_000_000, 10, 18.4);
+        assert!(out.is_none(), "the submitting frame must not price its own dispatch");
+        // Frame 11: still too early, but the stall lands here.
+        let (p, out) = wall_probe_step(p, true, 999, 11, 1070.0);
+        assert!(out.is_none());
+        // Frame 12: two intervals after arming, priced at the MAX seen, not the first or the mean.
+        let (p, out) = wall_probe_step(p, true, 999, 12, 20.0);
+        assert_eq!(p, None, "the probe clears when it resolves");
+        let (ms, steps) = out.expect("a probe armed on frame 10 resolves by frame 12");
+        assert_eq!(steps, 400_000_000, "priced against the count IT dispatched");
+        assert!((ms - 1070.0).abs() < 1e-9, "the stall is the signal, got {ms}");
+    }
+
+    #[test]
+    fn a_wall_probe_only_arms_on_a_frame_that_really_iterated() {
+        assert_eq!(wall_probe_step(None, false, 400_000_000, 10, 18.4), (None, None));
+        assert_eq!(wall_probe_step(None, true, 0, 10, 18.4), (None, None));
     }
 
     #[test]

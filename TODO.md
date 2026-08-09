@@ -320,6 +320,55 @@ Mockups: [design/mockups/](design/mockups/).
   controller's own growth factor) rather than on a mechanism inferred from timing. `nvlddmkm`
   Event 153 remains the objective verdict.
 
+  ⭐⭐⭐**REPRODUCED LOCALLY, 3/3, AND ATTRIBUTED — 2026-08-09. The frames are GPU-bound: ~1 s of
+  GPU for a 69×54 frame, with the CPU idle.** This is the first on-demand local repro this class
+  has ever had. Recipe, exactly:
+
+      rm -rf $SANDBOX && FRACTADYNE_CONFIG_DIR=$SANDBOX         ./target/release/fractadyne.exe --play tours/grand-tour.toml
+
+  A **fresh** config dir is the ingredient the earlier 0/12 attempts were missing. It died at
+  +203.9 s, +203.9 s, +203.9 s on three consecutive runs — to the tenth of a second, ~3.2 s after
+  the df32→floatexp switch at +200.6 s. (`use_bla = true` in the sandbox session, so this is not
+  the fresh-sandbox-has-BLA-off trap.)
+
+  The new `slow frame` attribution log settles what a frame interval never could — whether a long
+  frame is CPU work inside `update` or a block outside it:
+
+      slow frame 11267: dt=1018ms = body 0ms + outside(acquire/present/idle) 1018ms — mode=2 steps=9.860e7 budget=0.000e0
+      slow frame 11268: dt=1018ms = body 2ms + outside 1016ms
+      slow frame 11269: dt=1018ms = body 1ms + outside 1017ms
+      DEVICE LOST
+
+  **Zero CPU. One second blocked on the GPU, three frames running, at 69×54.** So:
+
+  - ⛔**CPU starvation is OUT** as the cause — it was the beta.47 hypothesis and the lookahead cap
+    it produced is a real quality win, but `body 0ms` ends it. Frame cost is IN, definitively.
+  - ⛔**The resolution lever cannot reach this.** 69×54 is 3,726 pixels — ~2% occupancy on a 3080.
+    At that width the pass is latency-bound, so shrinking further trades parallelism for nothing;
+    `steps ∝ time` is false here exactly as [[topic-deep-zoom-gpu]] warns.
+  - ⛔**Neither can the budget.** `budget=0.000e0`: no timing EVER came back before the device died.
+    A healthy timestamp readback lands 2–3 frames later, and at ~1 s/frame that is ~3 s — longer
+    than the watchdog allows. **The control loop's feedback is slower than the failure.** No value
+    of `TDR_BOOTSTRAP_STEPS` fixes that: 4e8 died, 1e8 died.
+
+  ⭐**The number to explain: 9.86e7 steps in 1018 ms = 9.7e7 steps/s.** The same view offline
+  measured ~3.4e9 steps in ~0.4 s = **8.6e9 steps/s, 88× faster** — but offline reported `mode=0`
+  at this zoom and a sweep of `--zoom-log2 92 → 96` showed no cliff, so the offline path may never
+  enter mode 2 and that comparison is NOT yet apples-to-apples. Also measured there, and probably
+  central: `bla_skip=0` with **46 rebases per pixel** (`rebase=5962666` over 129,600 px) — the
+  626-sample reference means BLA skips nothing and every pixel grinds 26,464 iterations serially.
+
+  **NEXT, in order** (all now cheap — there is a 4.5-minute repro):
+  1. Time a mode-2 dispatch in isolation at 69×54 / 480×270 / 1920×1080 at this view. If time is
+     flat across them it is latency-bound and only fewer ITERATIONS per dispatch can help — which
+     means splitting the first mode-2 frame the way the tiled settle already splits a settled one.
+     If it scales, the resolution lever works and something else is defeating it.
+  2. Ask why the reference is 626 samples when pixels need 26,464. A reference that escapes at 626
+     is a bad pick, and `best_reference` scoring exists to avoid exactly that. This may be a
+     rendering-quality bug that happens to also be the performance cliff.
+  3. Only then consider a-priori throttles. An a-priori bound is the ONLY defence available given
+     point 3 above, so it has to be right rather than tuned.
+
   ⭐**One long-standing assumption is still DISPROVEN — do not re-derive it:**
   - **It is not reference upload traffic** (the previous leading hypothesis, which this file told
     the next person to check first). `orbit_id` re-uploads only `orbit.len() + bla.len()` ACTUAL
