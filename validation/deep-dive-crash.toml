@@ -5,8 +5,18 @@ name = "Deep-dive device-loss repro (dive → e55)"
 # live device-loss class fast, so the class can be worked on in ~2 minutes instead of the
 # grand tour's ~3.5.
 #
-# ⚠STATUS: reproduces the PRECONDITION, not (yet) the crash. Read the negative results below
-# before spending time here — they are the expensive part.
+# ⚠STATUS: reaches the PRECONDITION fast; has never produced the crash. But neither has the
+# full grand tour since the susceptible window closed — see the reliability note below —
+# so the negative results here are INCONCLUSIVE, not evidence that this tour is missing an
+# ingredient. Read that note before spending time here; it is the expensive part.
+#
+# ⛔RELIABILITY. The bug is INTERMITTENT AND CLUSTERED. Across one afternoon's `--play`
+# runs the tally was 2 crashes in the first 2 runs, then 0 in the next 9 (~25 minutes of
+# playback), INCLUDING a re-run of the identical full grand tour as a control. Those two
+# crashes came minutes after two of the user's own, so all four sit in a single ~40-minute
+# window. Establish a base rate over N unmodified runs before comparing any variant — a
+# single clean run proves nothing, and a "fix" validated against one is indistinguishable
+# from the bug not firing.
 #
 # The class has eight recorded instances (five field crashes on beta.36/37, two field crashes
 # 2026-08-09, and both halves of the beta.46-vs-.47 attribution A/B). Every manifest shares one
@@ -49,7 +59,8 @@ name = "Deep-dive device-loss repro (dive → e55)"
 #   play it:   fractadyne --play validation/deep-dive-crash.toml
 #   verdict:   `DEVICE LOST` in <config>/logs/fractadyne.log, plus a crash report whose
 #              manifest should carry the signature above.
-#   fallback:  `fractadyne --play tours/grand-tour.toml` is the reliable repro (~205 s).
+#   fallback:  `fractadyne --play tours/grand-tour.toml` — the two recorded crashes were at
+#              204.7 s and 205.9 s, but see the reliability note: it is not dependable.
 
 [render]
 size = "1280x720"
@@ -135,11 +146,42 @@ zoom = "1e30"
 max_iter = 60000
 ease = "linear"
 
-# The glide the crashes land in: all four recorded instances died between e30 and e55, at a
-# ~27,000 pixel budget against the 626-sample reference.
+# The glide the crashes land in — REPEATED. All eight recorded instances died between e30 and
+# e55, and the grand tour covers that band in 34 s (its t=181..215) before dying at t≈205. One
+# pass through it is not enough here, so sweep it back and forth at the SAME rate: same glide
+# speed, same reference-rebuild cadence, same 626-sample regime, just more of it. This is what
+# separates "the crash needs specific earlier content" from "it needs enough time in the state".
 [[keyframe]]
-id = "hold-e55"
+id = "e55-1"
 t = 96
+zoom = "1e55"
+max_iter = 250000
+ease = "linear"
+
+[[keyframe]]
+id = "e30-2"
+t = 130
+zoom = "1e30"
+max_iter = 60000
+ease = "linear"
+
+[[keyframe]]
+id = "e55-2"
+t = 164
+zoom = "1e55"
+max_iter = 250000
+ease = "linear"
+
+[[keyframe]]
+id = "e30-3"
+t = 198
+zoom = "1e30"
+max_iter = 60000
+ease = "linear"
+
+[[keyframe]]
+id = "e55-3"
+t = 232
 zoom = "1e55"
 max_iter = 250000
 ease = "linear"

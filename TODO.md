@@ -103,8 +103,32 @@ Mockups: [design/mockups/](design/mockups/).
   ✅**Not a regression from beta.47.** Settled by A/B on the same machine, same tour, same
   harness (`--play tours/grand-tour.toml`): **beta.46 died at 204.7 s, beta.47 at 205.9 s**, with
   identical manifests (236 vs 262 reference builds, 181 vs 187 of them `len=626`, 0 storm
-  warnings). `--play` is the repro: it is the only entry point that drives ON-SCREEN playback, and
-  neither `--livetest` nor `--divetest` has ever produced this.
+  warnings). A crash on beta.46 is positive evidence and needs no reproducibility to stand, so
+  this conclusion holds. `--play` is the only entry point that drives ON-SCREEN playback; neither
+  `--livetest` nor `--divetest` has ever produced this.
+
+  ⛔**IT IS INTERMITTENT AND CLUSTERED — do not trust a clean run.** Corrected the same session it
+  was claimed: an earlier revision of this entry called it "reproducible on demand in ~205 s" on
+  the strength of two consecutive crashes. The tally across every `--play` run that day was
+  **2 crashes in the first 2 runs, then 0 in the next 9** (~25 minutes of playback), *including a
+  re-run of the identical full grand tour as a control*. The two crashes came minutes after the
+  user's own two, so all four sit inside one ~40-minute window; everything after it is clean.
+  That points at a susceptible STATE (driver left degraded by a previous loss is the obvious
+  candidate) on top of whatever the software trigger is.
+
+  ⚠**Consequence: every negative result below is INCONCLUSIVE**, including the bisection. They
+  were run believing the repro was reliable, and they only show the bug did not fire that time.
+  Anyone resuming this needs a reliability model FIRST — run the unmodified grand tour N times,
+  establish the base rate, and only then compare variants. Otherwise a "fix" is indistinguishable
+  from the bug simply not firing, which is the exact trap the beta.38 entry warns about
+  ("a null result on a bug that took 230–470 s to appear").
+
+  Bisection attempted (all inconclusive per the above, none crashed): the real dive chapter alone
+  (`t≥143`, 260 s, 1317 builds); features + gauntlet (`t≥95`, 300 s, 1347 builds); a hand-built
+  dive with the dual-view / orbit-overlay / fractal-switch churn prepended; and a tour sweeping
+  the e30↔e55 band three times at the grand tour's own glide rate (300 s, 2550 builds). All four
+  reached the `len=626` precondition (~410 occurrences each). `scratchpad/trim_tour.py` produces
+  prefix-trimmed copies of a v2 tour if the bisection is resumed.
 
   ⭐**Two long-standing assumptions are now DISPROVEN — do not re-derive them:**
   - **It is not a Windows TDR.** The System log records no display-driver reset for these losses,
@@ -119,23 +143,22 @@ Mockups: [design/mockups/](design/mockups/).
   3.1e9 budget and at 4.1e9 against 8.8e9) and **a build storm** (0.7 builds/s, against the ~400/s
   beta.38 cured).
 
-  ⚠**`validation/deep-dive-crash.toml` reproduces the PRECONDITION, not the crash** — read its
-  header before working here, it records two full negative runs. It reaches the exact state
-  (`len=626` on 427 of 715 builds, prec 327, the `len=258193` e55 extension) in ~120 s and does
-  NOT die, and neither does it with the grand tour's dual-view / orbit-overlay / fractal-switch
-  churn prepended. So the deep dive is necessary and not sufficient; something else the full tour
-  accumulates over its first 143 s is the missing ingredient. The grand tour remains the reliable
-  repro.
+  ⚠**`validation/deep-dive-crash.toml` reaches the PRECONDITION fast** — `len=626` on ~410 of its
+  reference builds, prec 327, the `len=258193` e55 extension, in ~120 s — which is useful for
+  working in the regime. It has never produced the crash, but neither has the full tour since the
+  susceptible window closed, so that says nothing either way yet.
 
   ⚠**Timing-sensitive**: a grand-tour run under `FRACTADYNE_TRACE=ref,tile,gpu` did not reproduce
   in 300 s where an untraced one died at 205 s. Reproduce first, then instrument, and treat one
   clean traced run as inconclusive.
 
-  **Next lever**, given no TDR and no exception: this looks like resource/state accumulation
-  rather than a costly frame. Instrument what actually grows across the grand tour's first 143 s
-  — iteration-texture recreations (the motion-res AIMD changes resolution constantly, and
-  `ensure_orbit_capacity` only ever grows), bind-group and buffer churn, VRAM — and bisect the
-  preamble by playing the tour from successive chapters.
+  **Next lever.** The clustering is now the most informative thing known about this bug, and it
+  is cheap to test: run the grand tour repeatedly and see whether a loss makes the NEXT run more
+  likely (the app auto-restarts, so a susceptible driver state would persist across the restart).
+  If it does, the software trigger and the susceptibility are separable and can be attacked apart.
+  Only then is instrumenting accumulation worthwhile — iteration-texture recreations (the
+  motion-res AIMD changes resolution constantly, and `ensure_orbit_capacity` only ever grows),
+  bind-group and buffer churn, VRAM.
 
 - [ ] **A 4K tour render died silently at frame 5682/9931 (~t=3:09), 2026-08-08.**
   `--render-tour grand-tour.toml --out H:\frames --size 3840x2160 --fps 30 --ss 4 --resume -y`,
