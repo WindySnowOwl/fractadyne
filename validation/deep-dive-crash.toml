@@ -1,0 +1,151 @@
+format_version = 2
+name = "Deep-dive device-loss repro (dive → e55)"
+
+# DIAGNOSTIC TOUR, not a demo. Its job is to get into the state behind the `orbit_len=626`
+# live device-loss class fast, so the class can be worked on in ~2 minutes instead of the
+# grand tour's ~3.5.
+#
+# ⚠STATUS: reproduces the PRECONDITION, not (yet) the crash. Read the negative results below
+# before spending time here — they are the expensive part.
+#
+# The class has eight recorded instances (five field crashes on beta.36/37, two field crashes
+# 2026-08-09, and both halves of the beta.46-vs-.47 attribution A/B). Every manifest shares one
+# STATE rather than one size:
+#
+#     mode=2  orbit_len=626  partial=false  settled=false  boost=1.00
+#
+# — a 626-sample ESCAPED reference against a ~27,000-iteration pixel budget, i.e. ~45 rebases
+# per pixel and a BLA tree of 626 entries that can skip essentially nothing.
+#
+# What is NOT the trigger (all measured, do not re-derive):
+#   · Frame cost. The recorded crashes span budget 4.0e8 → 3.0e11 and resolutions 135×107 →
+#     4631×2060; the A/B pair died at 3.1e9 steps against a 3.1e9 budget (at budget) and at
+#     4.1e9 against 8.8e9 (at half).
+#   · A build storm. beta.38's fix holds — 0.7 builds/s here, against the ~400/s it cured.
+#   · Reference upload traffic (the previous leading hypothesis). `orbit_id` re-uploads only
+#     `orbit.len() + bla.len()` actual bytes, which at 626 samples is ~10 KB, not the ~1 GB
+#     `orbit_len_cap` binding.
+#   · A Windows TDR. The System log records NO display-driver reset for these losses, and
+#     Application/WER records no exception — so the driver-watchdog framing the ledger has
+#     assumed throughout may simply be wrong for this class.
+#
+# What this file DOES reproduce, in ~120 s: the precondition state, faithfully —
+# `len=626` on 427 of 715 reference builds, prec 327, and the `len=258193` e55 extension.
+#
+# What it does NOT reproduce: the device loss itself. Two negative results, each a full run:
+#   1. Entering cold at 1e28× produced 613 builds and ZERO `len=626` — the degenerate
+#      reference is a product of the dive's reference REUSE chain, not of the depth, so the
+#      dive must start shallow and glide through. That is why the keyframes below are the
+#      grand tour's dive chapter (its t=143..215) verbatim.
+#   2. The dive alone does not crash, and neither does the dive with the grand tour's
+#      "features" churn prepended (dual view open/close, orbit overlay, a FRACTAL SWITCH that
+#      drops and reallocates the reference caches). The grand tour dies at t≈205 s every time;
+#      something else it accumulates is still missing.
+#
+# ⚠Timing-sensitive. A grand-tour run with `FRACTADYNE_TRACE=ref,tile,gpu` did NOT reproduce in
+# 300 s where an untraced one died at 205 s — log I/O alone is enough to shift it. Reproduce
+# first, then add tracing, and treat a single clean traced run as inconclusive.
+#
+#   play it:   fractadyne --play validation/deep-dive-crash.toml
+#   verdict:   `DEVICE LOST` in <config>/logs/fractadyne.log, plus a crash report whose
+#              manifest should carry the signature above.
+#   fallback:  `fractadyne --play tours/grand-tour.toml` is the reliable repro (~205 s).
+
+[render]
+size = "1280x720"
+fps = 30
+ss = 1
+
+[playback]
+pace = "settled"
+settle_timeout = 15
+
+# The three-spar dive centre, copied from tours/grand-tour.toml so the two stay comparable.
+[[location]]
+id = "three-spar"
+re = "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1"
+im = "9.5628651080914147131604703998237075557983304380930462483482733212267499793490593467836270525491219946548323699651521e-1"
+
+# ⚠START SHALLOW AND DIVE THROUGH. The `orbit_len=626` state is a product of the dive's
+# reference REUSE chain, not of the depth: a continuous dive extends/reuses the same short
+# escaping orbit, while a cold start at e28 makes `best_reference` pick a fresh, longer
+# candidate. Measured — an earlier version of this file entered at 1e28x and produced 613
+# reference builds in 90 s with `len=626` appearing exactly ZERO times, and no crash.
+#
+# So these four keyframes are the grand tour's dive chapter verbatim (its t=143..215), shifted
+# to t=0. That is the shortest prefix that still builds the state the crashes need.
+# ⚠…AND THE DIVE ALONE IS NOT ENOUGH. Measured: the four dive keyframes below, on their own,
+# reach prec=327 and the `len=258193` e55 extension with `len=626` appearing 415 times — the
+# exact precondition state — and DO NOT crash in 120 s, while the grand tour dies at t≈205 s
+# every time. What the grand tour has that the dive does not is 143 s of preceding chapters,
+# so these three keyframes replay the resource churn from its "features" chapter: a dual view
+# opening and closing, the orbit overlay, and a FRACTAL SWITCH (which drops the reference
+# caches and reallocates). That the crash needs accumulated GPU state rather than a costly
+# frame is consistent with the other evidence — Windows logs no TDR, and the recorded
+# manifests span a 750x range of frame budgets.
+[[keyframe]]
+id = "dual-open"
+t = 0
+re = "-0.5"
+im = "0.0"
+zoom = 1.33333
+max_iter = 2000
+dual = true
+julia_re = -0.122561
+julia_im = 0.744862
+hold = 4
+
+[[keyframe]]
+id = "orbit-overlay"
+t = 8
+dual = false
+orbits = true
+hold = 4
+
+[[keyframe]]
+id = "burning-ship"
+t = 16
+fractal = "Burning Ship"
+re = "-1.7"
+im = "-0.03"
+zoom = 60
+orbits = false
+hold = 3
+
+[[keyframe]]
+id = "dive-start"
+t = 24
+fractal = "Mandelbrot"
+location = "three-spar"
+zoom = 8
+max_iter = 3000
+hold = 2
+
+[[keyframe]]
+id = "dive-e10"
+t = 34
+zoom = "1e10"
+max_iter = 20000
+ease = "in"
+
+[[keyframe]]
+id = "dive-e30"
+t = 62
+zoom = "1e30"
+max_iter = 60000
+ease = "linear"
+
+# The glide the crashes land in: all four recorded instances died between e30 and e55, at a
+# ~27,000 pixel budget against the 626-sample reference.
+[[keyframe]]
+id = "hold-e55"
+t = 96
+zoom = "1e55"
+max_iter = 250000
+ease = "linear"
+hold = 8
+
+[[segment]]
+id = "repro"
+title = "dive to e55"
+t = 0

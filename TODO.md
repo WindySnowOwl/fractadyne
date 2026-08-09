@@ -90,6 +90,68 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] ⭐**PRIORITY: live device loss with a 626-sample reference — EIGHT instances, still not
+  root-caused, but now REPRODUCIBLE ON DEMAND in ~205 s.** Field report 2026-08-09 (two crashes
+  at 250 s and 342 s of live tour playback) plus a deliberate A/B that crashed both builds. Every
+  manifest across all eight shares one STATE, never one size:
+
+      mode=2  orbit_len=626  partial=false  settled=false  boost=1.00
+
+  a 626-sample ESCAPED reference against a ~27,000-iteration pixel budget — ~45 rebases per pixel
+  and a 626-entry BLA that can skip essentially nothing.
+
+  ✅**Not a regression from beta.47.** Settled by A/B on the same machine, same tour, same
+  harness (`--play tours/grand-tour.toml`): **beta.46 died at 204.7 s, beta.47 at 205.9 s**, with
+  identical manifests (236 vs 262 reference builds, 181 vs 187 of them `len=626`, 0 storm
+  warnings). `--play` is the repro: it is the only entry point that drives ON-SCREEN playback, and
+  neither `--livetest` nor `--divetest` has ever produced this.
+
+  ⭐**Two long-standing assumptions are now DISPROVEN — do not re-derive them:**
+  - **It is not a Windows TDR.** The System log records no display-driver reset for these losses,
+    and Application/WER records no exception. Every prior investigation in this ledger framed the
+    class as "the GPU watchdog" and tuned frame cost against it; that framing looks wrong.
+  - **It is not reference upload traffic** (the previous leading hypothesis, which this file told
+    the next person to check first). `orbit_id` re-uploads only `orbit.len() + bla.len()` ACTUAL
+    bytes — at 626 samples that is ~10 KB per install, not the ~1 GB `orbit_len_cap` binding.
+
+  Also still ruled out, consistent with the earlier entries: **frame cost** (the eight span budget
+  4.0e8 → 3.0e11 and resolutions 135×107 → 4631×2060; the A/B pair died at 3.1e9 steps against a
+  3.1e9 budget and at 4.1e9 against 8.8e9) and **a build storm** (0.7 builds/s, against the ~400/s
+  beta.38 cured).
+
+  ⚠**`validation/deep-dive-crash.toml` reproduces the PRECONDITION, not the crash** — read its
+  header before working here, it records two full negative runs. It reaches the exact state
+  (`len=626` on 427 of 715 builds, prec 327, the `len=258193` e55 extension) in ~120 s and does
+  NOT die, and neither does it with the grand tour's dual-view / orbit-overlay / fractal-switch
+  churn prepended. So the deep dive is necessary and not sufficient; something else the full tour
+  accumulates over its first 143 s is the missing ingredient. The grand tour remains the reliable
+  repro.
+
+  ⚠**Timing-sensitive**: a grand-tour run under `FRACTADYNE_TRACE=ref,tile,gpu` did not reproduce
+  in 300 s where an untraced one died at 205 s. Reproduce first, then instrument, and treat one
+  clean traced run as inconclusive.
+
+  **Next lever**, given no TDR and no exception: this looks like resource/state accumulation
+  rather than a costly frame. Instrument what actually grows across the grand tour's first 143 s
+  — iteration-texture recreations (the motion-res AIMD changes resolution constantly, and
+  `ensure_orbit_capacity` only ever grows), bind-group and buffer churn, VRAM — and bisect the
+  preamble by playing the tour from successive chapters.
+
+- [ ] **A 4K tour render died silently at frame 5682/9931 (~t=3:09), 2026-08-08.**
+  `--render-tour grand-tour.toml --out H:\frames --size 3840x2160 --fps 30 --ss 4 --resume -y`,
+  beta.46. Ran 70 minutes, wrote 5,681 frames (24 GB), then vanished between two progress lines.
+  Both known render failure modes are excluded: **not disk** (H: had 159 GB free — the beta.45
+  case) and **not memory** (rss flat 261→288 MB, peak pinned at 591 MB since early — the beta.34
+  OOM case). Frame cadence was steady at ~2.6 s to the last line. No panic, no crash report, no
+  WER entry, no TDR; detected only by beta.43's unclean-exit marker, which is that machinery
+  working as designed.
+  One thread worth pulling: the GUI **parent** that launched it also ended uncleanly, and a
+  beta.45 report shows a render child dying on `failed printing to stdout: The pipe is being
+  closed` when its parent goes away — though this child then ran headless for 70 minutes, so it
+  is not a clean fit. A render child that outlives its parent should not depend on the pipe;
+  worth making it write its own completion marker either way.
+
+
 - [x] ⭐**The live-path harnesses could not tell "unchanged" from "still broken" — FIXED
   v0.2.40-beta.47.** Raised after the beta.47 work, where establishing what a *clean* run of
   `--livetest` looks like cost two full 331 s runs of a rebuilt pre-change binary. Skipping that
