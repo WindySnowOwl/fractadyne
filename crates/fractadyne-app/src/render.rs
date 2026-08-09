@@ -2260,7 +2260,27 @@ impl FractadyneApp {
         // the boost reached ×2.56/×6.40 where it had reached ×6.40/×16/×64, and the 1e63 hold went
         // from 53.9% black to 100%. Resolution and the iteration budget are competing for the same
         // frames here; that trade is its own problem (TODO), and A1 does not require touching it.
-        let res_scale = if interacting && is_pert {
+        // ⭐A SETTLED view the user is SITTING AT is not sized by the work budget. `budget_res_scale`
+        // above divides the panel by a fixed constant (`WORK_BUDGET` × 6 for settle = 3.6e11 nominal
+        // steps) that measures nothing — the shape this file spends pages warning about, and the
+        // reason a deep view with a high explicit iteration count renders soft. Reported from the
+        // field at 6.46e94× with Iterations 4,000,000 and auto-scale off: `want` is ~6.6e12, so the
+        // shrink lands at ~0.23 of native linear and the frame is visibly blocky. The measured
+        // `tdr_allowed` bound and the tiled settle below are what should size it instead.
+        //
+        // ⚠GATED ON `!tour_playing()`, and that gate is load-bearing — not a stylistic choice.
+        // Applying this during scripted playback regressed the tour badly: tiled settle and the
+        // adaptive iteration boost compete for the same settled frames (the boost only adapts on a
+        // capped-pixel fraction the GPU reports for a FULL-FRAME iterate), so a tiling hold feeds
+        // the boost one coarse arm frame per grid instead of a reading per frame. Measured on
+        // `--livetest`: the boost fell to ×1.60 from ×6.40/×16/×64 and the 1e61 hold went from
+        // 42.1% black to 100%. The distinction that matters is TIME: a scripted hold has a few
+        // seconds on a clock and must spend them on iterations, while a view the user is parked at
+        // has as long as it likes and should spend it on resolution. A FINISHED tour is not
+        // "playing", so a parked tour sharpens — which is the reported case.
+        let res_scale = if !interacting && !self.tour_playing() {
+            1.0
+        } else if interacting && is_pert {
             if view_id == 0 {
                 // Adapt ONLY on the interval following a REAL re-iterate frame. During a dive most
                 // frames are ~free reprojections; adapting on those (the old behaviour) pushed the

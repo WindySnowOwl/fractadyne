@@ -40,7 +40,13 @@ Ordered by how fast a stranger hits them.
 5. **Release artifacts** — `release.yml` needs an `ubuntu-22.04` job producing tar.gz + sha256.
    CI now proves the full workspace *compiles* there (2026-08-08, all jobs green, no code changes).
 6. **Real-hardware validation** on the new rig, across the swappable GPUs — this is where (2) and
-   the orbit-cap differences surface.
+   the orbit-cap differences surface. ✅**The Linux machine is AVAILABLE as of 2026-08-09**, so this
+   is unblocked and waiting on the Windows build stabilising first (the user's sequencing). Highest
+   value once it starts: the no-`TIMESTAMP_QUERY` path is no longer theoretical — `IterTiming` is
+   absent on the GL backend and on several Mesa/RADV/ANV combinations, and the beta.47 wall-clock
+   fallback and settled-resolution invariant have only ever been exercised there via
+   `FRACTADYNE_NO_TIMESTAMPS=1` on an NVIDIA card. Run `--selftest --selftest-filter live-res` and
+   a `--play` of the grand tour on each GPU, and record adapter + resolved tunables per card.
 7. **Four diagnostics are Windows-only stubs** — `process_memory`, `free_disk_bytes`,
    `cpu_topology`, `gpu_vram_bytes` return zero/None on Linux, so crash reports lose their memory
    line and the new disk-space warning never fires. Shipping Linux without these means shipping the
@@ -494,7 +500,21 @@ Mockups: [design/mockups/](design/mockups/).
   4. Net: the view ratchets 16×16 → 34×27 → 78×61 → … → 597×468 → **native 1445×1134** while the
      budget climbs 4.0e8 → 3.0e11, over ~160 readings and ~590 tiled frames.
 
-  ⛔**Blocked, and both blockers are worth knowing before re-attempting:**
+  ✅**The SHARPNESS half landed 2026-08-09.** Reported from the field at 6.46e94× with Iterations
+  4,000,000 and auto-scale off: a settled, parked view rendering visibly blocky. Cause was the one
+  diagnosed above — `budget_res_scale` sizing a SETTLED frame from `6 × WORK_BUDGET`, a fixed
+  constant that measures nothing (`want` ≈ 6.6e12 there, so the shrink lands at ~0.23 of native
+  linear). A settled view is no longer sized by it; the measured `tdr_allowed` bound and the tiled
+  settle size it instead. Measured at an explicit 4,000,000 iterations: the view ratchets
+  281×221 → 776×609 → 951×746 → 1427×1120 → **native 1445×1134**.
+  ⚠**Gated on `!tour_playing()`, and that gate is load-bearing.** The earlier attempt applied it
+  during playback too and regressed the tour (1e61 hold 42.1% → 100% black) because tiled settle
+  and the iteration boost compete for the same settled frames. The distinction is TIME: a scripted
+  hold has seconds on a clock and must spend them on iterations; a view the user is parked at has
+  as long as it likes and should spend it on resolution. A FINISHED tour is not "playing", so a
+  parked tour sharpens — the reported case. Livetest 0 drifted, suite 104/104.
+
+  ⛔**Still blocked — the ITERATION-COUNT half, and both blockers are worth knowing:**
   - **`gpu_iter` is still `.min(boosted_cap)`.** Removing that when `auto_iter` is off works in
     isolation (that is how the native-resolution result above was obtained) but CANNOT ship,
     because **script playback sets `auto_iter = false` for every keyframe carrying a `max_iter`**
