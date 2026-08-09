@@ -18,6 +18,12 @@ pre-releases on the Beta update track). Per-version detail is in the git history
 rational/complex coordinate entry, the multiplier λ, the 500k → 10M iteration ceiling, live
 limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — see TODO.md.
 
+- **Live-path regression gates** (beta.47). Goldens are offline export renders, so none of them
+  can see a live-path bug. Two additions close that: `--livetest` is now graded against a blessed
+  baseline (`--bless`, mirroring `--bench-matrix`) and fails on CHANGE rather than on failure, so
+  a tour whose deep holds fail for a known reason can still be a green gate; and a new
+  `live-res` selftest group asserts both halves of the frame-budget invariant — an unmeasured
+  budget bounds the first dispatch, and does not bind the settled resolution. Suite 102 → 104.
 - **Frame-cost measurement: no GPU left rendering at a third of its resolution** (beta.47).
   A device without `TIMESTAMP_QUERY` never published an iterate timing, so the frame budget sat
   forever on the bootstrap constant — a value chosen as a safe FIRST dispatch on unknown hardware,

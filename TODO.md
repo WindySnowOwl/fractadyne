@@ -86,6 +86,42 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] ⭐**The live-path harnesses could not tell "unchanged" from "still broken" — FIXED
+  v0.2.40-beta.47.** Raised after the beta.47 work, where establishing what a *clean* run of
+  `--livetest` looks like cost two full 331 s runs of a rebuilt pre-change binary. Skipping that
+  would have shipped an iteration-boost regression; the harness had all the data and no opinion.
+  Two additions, both aimed at the same gap — **goldens are OFFLINE export renders, so no golden
+  can ever see a live-path bug** (an offline render has no panel to be a fraction of, no settle
+  grid, no frame budget, no measurement loop):
+  1. **`--livetest` is graded against a blessed baseline** (`benchmarks/livetest-<tour>-<WxH>.json`,
+     recorded with `--bless`), the contract `--bench-matrix` already used. It fails on CHANGE, not
+     on failure: per checkpoint it compares verdict, live/offline black, budget, appetite, boost,
+     orbit length + PARTIAL, and resolution — excluding `stale_ms` and `t`, which are timings
+     rather than outcomes. This matters because three of the grand tour's checkpoints fail for a
+     documented reason, so the old "exit non-zero if anything failed" rule could never go green.
+     Now: `22 checkpoint(s) · 0 drifted · 0 new`, exit 0, with the 3 known FAILs recorded.
+  2. **A settled-RESOLUTION property check** (`--selftest --selftest-filter live-res`, 2 checks),
+     which is the single assertion that covers the whole beta.40/41/47 family — each of those
+     ended as a settled view pinned at a fraction of its panel and upscaled. It drives the real
+     `build_params` at a 1445×1134 panel / 2,000 iterations with `fe_budget = 0` and asserts BOTH
+     halves of the invariant: the arm frame stays inside `TDR_BOOTSTRAP_STEPS` (so an unknown GPU
+     is still safe) and the settled frame reaches ≥90% of the panel. ⭐**Verified against the bug,
+     not just against the fix** — re-introducing the pre-fix `can_tile` gate makes it report
+     35% of panel; the dispatch-bound check passes either way, so the pair cannot be satisfied by
+     simply deleting the bound.
+  ⚠**Two harness traps found writing it, both of which make a live check silently measure the
+  wrong path**: `frame_idx` must ADVANCE between `build_params` calls (the tile turn token is
+  keyed off it, so a pinned index yields exactly one tile and then holds forever — which looks
+  identical to the bug), and the reference orbit must be allowed to LAND (it builds off-thread, and
+  until it does `will_reproject` forces `can_tile` off).
+
+  Still open on the harness side: `--divetest` has no baseline either (it was compared by hand
+  against a rebuilt binary in beta.47), and the F3 corpus regression gate
+  (`generate_corpus.py --check`) is still outside `--selftest`/CI — that, rather than a new
+  shallow floatexp golden, is the right way to cover depth, since the deep bugs in this ledger are
+  depth-specific (e142, e148, e163) and a golden at e40 would guard a band nothing has broken in.
+
+
 - [ ] ⭐**PRIORITY: tunables + hardware-dependent factors are individually well-reasoned and
   collectively fragile.** Raised 2026-08-08 after a week in which most incidents came from this
   machinery. An inventory first — three tiers:

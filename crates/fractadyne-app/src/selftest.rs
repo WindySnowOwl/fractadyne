@@ -79,7 +79,7 @@ fn push_check(checks: &mut Vec<SelfCheck>, last: &mut std::time::Instant, c: Sel
 /// invocation), else walk up from the executable (target/release/… → repo root) looking
 /// for the `validation/` tree. A suite run from another directory must not silently lose
 /// whole check categories — callers still fail LOUDLY if the file is absent everywhere.
-fn anchored(rel: &str) -> std::path::PathBuf {
+pub(crate) fn anchored(rel: &str) -> std::path::PathBuf {
     let cwd = std::path::PathBuf::from(rel);
     if cwd.exists() || std::path::Path::new("validation").exists() {
         return cwd;
@@ -209,7 +209,7 @@ impl FractadyneApp {
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "iter-budget", "nr-zoom", "coords", "script", "metadata",
-            "display", "catalog", "goldens", "bench-matrix",
+            "display", "catalog", "goldens", "bench-matrix", "live-res",
         ];
         if self.selftest_list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -1869,6 +1869,125 @@ impl FractadyneApp {
         // the check can't silently pass on an easy view), and the budget the probe can reach in
         // `ITER_STALL_LIMIT` raises really does resolve it. Lower the limit or the step and this
         // fails, which is the point: the controller reverted too early and the view went black.
+
+        // ---- live settled RESOLUTION invariant ----
+        // ⭐The one assertion that would have caught the whole beta.40/41/47 family in one line.
+        // Each of those bugs ended the same way — a settled view pinned at a fraction of its panel
+        // and upscaled — and none of them could be seen by a golden, because a golden renders
+        // OFFLINE at a requested size and so has no panel to be a fraction of:
+        //   · beta.40  the df32 path had no cost bound at all, then got one that over-shrank
+        //   · beta.41  the budget could never bootstrap on a static view → 205×162 upscaled
+        //   · beta.47  no `TIMESTAMP_QUERY` → budget stuck at the bootstrap → 504×396, forever
+        //
+        // The invariant, both halves: an UNMEASURED budget MAY bound the first dispatch, and must
+        // NOT bind the settled resolution. So assert both directions — a suite that only checked
+        // the second would pass if the bound were simply deleted.
+        if want("live-res") {
+            // The reported A2 geometry: a maximized panel at an explicit, ordinary iteration
+            // count. 1445·1134·2000 ≈ 3.3e9 nominal steps against the 4.0e8 bootstrap, so a
+            // single dispatch cannot hold it and the tiled settle has to.
+            const PANEL: [u32; 2] = [1445, 1134];
+            const ITER: u32 = 2000;
+            let (saved_iter, saved_auto, saved_aa) = (
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.render_cfg.aa,
+            );
+            self.render_cfg.max_iter = ITER;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.aa = 1;
+            self.viewport.set_size(PANEL[0] as f64, PANEL[1] as f64);
+            self.viewport.set_center_log2mag(
+                fractadyne_core::parse_bf(SX).unwrap(),
+                fractadyne_core::parse_bf(SY).unwrap(),
+                (1.0e9f64).log2(),
+            );
+            // A never-measured budget, which is the state a device without TIMESTAMP_QUERY is
+            // stuck in permanently and every view is in for its first frames.
+            self.perf.fe_budget = [0, 0];
+            self.perf.fe_budget_ok = [false, false];
+            self.perf.tile_state = [None, None];
+            self.perf.view_gen = [0, 0];
+            self.allow_tiled_settle = true;
+
+            // The real loop advances `frame_idx` every frame, and the tiled settle depends on it:
+            // `next_settle_tile`'s turn token (`tile_turn == frame_idx`) and its "is the other
+            // view busy" guards all compare against it, so a harness that leaves it pinned gets
+            // exactly ONE tile and then holds forever — which looks identical to the bug under
+            // test. Start clear of the `frame_idx - interact_frame[other] <= 1` window too.
+            self.perf.frame_idx = 100;
+            let build = |app: &mut Self| -> (u32, u32, u32) {
+                app.perf.frame_idx += 1;
+                let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
+                let center = app.viewport.center_f64();
+                let span = app.viewport.complex_span_fe();
+                let mag = app.viewport.magnification();
+                let l2 = app.viewport.log2_magnification();
+                let pr = app.build_params(
+                    center_bf, center, span, mag, l2, app.fractal, false, ITER, false, 1, PANEL,
+                    0, None,
+                );
+                (pr.resolution[0], pr.resolution[1], pr.ss)
+            };
+
+            // WARM UP until the reference orbit exists. `build_params` starts the bignum build
+            // off-thread and installs it on a later call, and until it lands `will_reproject` is
+            // true (no `ref_pt`), which forces `can_tile` off — a harness that skipped this would
+            // measure the reproject path and report the very collapse it is meant to detect.
+            let mut warm = 0;
+            while self.ref_cache[0].ref_pt.is_none() && warm < 400 {
+                let _ = build(self);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                warm += 1;
+            }
+            let have_ref = self.ref_cache[0].ref_pt.is_some();
+            // Re-arm from a clean grid so the measurement below starts at the ARM frame.
+            self.perf.tile_state = [None, None];
+            self.perf.tile_pending = [false, false];
+
+            // Frame 1 ARMS the grid: it is the coarse single-dispatch full frame, so it MUST be
+            // bounded — this is the half that keeps an unknown GPU safe.
+            let (arm_w, arm_h, arm_ss) = build(self);
+            let arm_steps = (arm_w as u64) * (arm_h as u64) * (arm_ss as u64).pow(2) * ITER as u64;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Live budget",
+                name: "unmeasured budget bounds the FIRST dispatch".into(),
+                params: format!("{}×{} panel, {ITER} iter, fe_budget=0", PANEL[0], PANEL[1]),
+                result: format!("arm frame {arm_w}×{arm_h} ss{arm_ss} = {:.3e} steps", arm_steps as f64),
+                threshold: "≤ TDR_BOOTSTRAP_STEPS",
+                pass: arm_steps <= crate::render::TDR_BOOTSTRAP_STEPS,
+            });
+
+            // Subsequent settled frames run the grid and must reach (near-)native resolution.
+            // A handful of frames is plenty: the grid geometry is fixed on its first tile.
+            // The grid needs one frame per tile; this geometry is ~15 tiles, so give it room.
+            let mut best_w = arm_w;
+            for _ in 0..40 {
+                let (w, _, _) = build(self);
+                best_w = best_w.max(w);
+            }
+            let frac = best_w as f64 / PANEL[0] as f64;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Live budget",
+                name: "unmeasured budget does NOT bind settled resolution".into(),
+                params: format!("{}×{} panel, {ITER} iter, fe_budget=0", PANEL[0], PANEL[1]),
+                result: format!("settled width {best_w}/{} ({:.0}% of panel)", PANEL[0], frac * 100.0),
+                threshold: "≥90% of panel width",
+                pass: have_ref && frac >= 0.90,
+            });
+            if !have_ref {
+                eprintln!(
+                    "[selftest] live-res: reference orbit never installed — the check above is                      reporting the reproject path, not the tiled settle."
+                );
+            }
+
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            self.render_cfg.aa = saved_aa;
+            self.allow_tiled_settle = false;
+            self.perf.tile_state = [None, None];
+        }
+
         if want("iter-budget") {
             const SPAR_X: &str = "-1.0109636384562213181006238475735192993836101418531854095957676149333034794266e-1";
             const SPAR_Y: &str = "9.5628651080914147131604703998237075557983304380930462483482733394361292090816e-1";

@@ -110,6 +110,57 @@ fn img_diff(a: &[u8], b: &[u8]) -> (u32, f64) {
     (max, sum as f64 / a.len() as f64)
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// BASELINE. `--livetest` used to exit non-zero whenever any checkpoint failed — and three of the
+// grand tour's checkpoints fail today for a documented reason (the `LIVE_REF_CAP` pixel clamp, an
+// open item in TODO.md). A harness that can never go green is not a gate: establishing that
+// "18 ok / 1 warn / 3 FAIL at these exact numbers" WAS the expected state cost two full 331 s runs
+// of a rebuilt pre-change binary during the beta.47 work, and skipping that would have shipped the
+// iteration-boost regression it caught.
+//
+// So compare against a blessed baseline and fail on CHANGE, not on failure — the contract
+// `--bench-matrix` already uses. A recorded FAIL is fine; a checkpoint that differs from what was
+// recorded is not.
+const LIVETEST_BASELINE_DIR: &str = "benchmarks";
+
+/// Percentage-point tolerance (as a fraction) on the black measurements. These were bit-stable
+/// across repeated runs on one machine; the slack only stops a single pixel reading as drift.
+const BLACK_TOL: f64 = 0.005;
+
+/// One checkpoint's blessed state. Deliberately excludes `stale_ms` (a timing, not an outcome) and
+/// `t` (the schedule, not the result).
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+struct BaseCp {
+    verdict: String,
+    gpu_iter: u32,
+    eff_iter: u32,
+    boost: f64,
+    orbit_len: u32,
+    partial: bool,
+    res: [u32; 2],
+    live_black: f64,
+    truth_black: f64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LivetestBaseline {
+    version: String,
+    gpu: String,
+    utc: String,
+    tour: String,
+    size: [u32; 2],
+    checkpoints: std::collections::BTreeMap<String, BaseCp>,
+}
+
+/// Per (tour, size) — a `--segment` run reaches a subset of the same checkpoint ids and compares
+/// only those, but a different SIZE is a different live path and deserves its own baseline.
+fn baseline_path(tour: &std::path::Path, size: [u32; 2]) -> std::path::PathBuf {
+    let stem = tour.file_stem().and_then(|s| s.to_str()).unwrap_or("tour");
+    crate::selftest::anchored(LIVETEST_BASELINE_DIR)
+        .join(format!("livetest-{stem}-{}x{}.json", size[0], size[1]))
+}
+
 impl FractadyneApp {
     /// `--livetest FILE`: play a tour in real time through the live pipeline and validate the
     /// frames it puts on screen against offline renders of the same views. Returns the number of
@@ -469,6 +520,188 @@ impl FractadyneApp {
                  large `stale` ⇒ the screen is showing an old frame reprojected."
             );
         }
-        fails
+        if self.selftest_bless {
+            return self.bless_livetest(&results, tour, resolution);
+        }
+        self.compare_livetest(&results, tour, resolution, fails)
+    }
+
+    fn bless_livetest(
+        &self,
+        results: &[Checkpoint],
+        tour: &std::path::Path,
+        size: [u32; 2],
+    ) -> usize {
+        let baseline = LivetestBaseline {
+            version: crate::version_string(),
+            gpu: self.gpu_name.clone(),
+            utc: crate::utc_string(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+            ),
+            tour: tour.display().to_string(),
+            size,
+            checkpoints: results
+                .iter()
+                .map(|c| {
+                    (
+                        c.id.clone(),
+                        BaseCp {
+                            verdict: c.verdict().to_string(),
+                            gpu_iter: c.gpu_iter,
+                            eff_iter: c.eff_iter,
+                            boost: c.boost,
+                            orbit_len: c.orbit_len,
+                            partial: c.partial,
+                            res: c.res,
+                            live_black: c.live_black,
+                            truth_black: c.truth_black,
+                        },
+                    )
+                })
+                .collect(),
+        };
+        let path = baseline_path(tour, size);
+        if let Some(d) = path.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        match serde_json::to_string_pretty(&baseline)
+            .map_err(|e| e.to_string())
+            .and_then(|j| std::fs::write(&path, j + "\n").map_err(|e| e.to_string()))
+        {
+            Ok(()) => {
+                println!(
+                    "\nBlessed livetest baseline ({} checkpoint(s)) → {}",
+                    results.len(),
+                    path.display()
+                );
+                0
+            }
+            Err(e) => {
+                eprintln!("\nFailed to write livetest baseline {}: {e}", path.display());
+                1
+            }
+        }
+    }
+
+    /// Compare against the blessed baseline. Returns 0 when every checkpoint matches what was
+    /// recorded — INCLUDING recorded FAILs, which is the point: the tour's deep holds fail for a
+    /// known reason, and a gate that stays red on a known problem says nothing about a new one.
+    fn compare_livetest(
+        &self,
+        results: &[Checkpoint],
+        tour: &std::path::Path,
+        size: [u32; 2],
+        fails: usize,
+    ) -> usize {
+        let path = baseline_path(tour, size);
+        let baseline: LivetestBaseline = match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+        {
+            Some(b) => b,
+            None => {
+                println!(
+                    "\nNo livetest baseline at {} — re-run the same command with `--bless` to \
+                     record one. Until then this run is graded on raw FAILs, which stays red while \
+                     the tour's known-failing holds are unfixed.",
+                    path.display()
+                );
+                return fails;
+            }
+        };
+        let same_gpu = baseline.gpu == self.gpu_name;
+        println!(
+            "\nvs. baseline {} ({}, {}){}",
+            baseline.version,
+            baseline.gpu,
+            baseline.utc,
+            if same_gpu {
+                ""
+            } else {
+                "  [different GPU — the live path adapts to measured cost, so drift here may be \
+                 the hardware rather than a regression]"
+            }
+        );
+        let (mut drift, mut missing) = (0usize, 0usize);
+        for c in results {
+            let Some(b) = baseline.checkpoints.get(&c.id) else {
+                println!("  ? {:<16} not in baseline (new checkpoint)", c.id);
+                missing += 1;
+                continue;
+            };
+            let mut d: Vec<String> = Vec::new();
+            if c.verdict() != b.verdict {
+                d.push(format!("verdict {} → {}", b.verdict, c.verdict()));
+            }
+            if (c.live_black - b.live_black).abs() > BLACK_TOL {
+                d.push(format!(
+                    "live black {:.1}% → {:.1}%",
+                    b.live_black * 100.0,
+                    c.live_black * 100.0
+                ));
+            }
+            if (c.truth_black - b.truth_black).abs() > BLACK_TOL {
+                d.push(format!(
+                    "offline black {:.1}% → {:.1}%",
+                    b.truth_black * 100.0,
+                    c.truth_black * 100.0
+                ));
+            }
+            if c.gpu_iter != b.gpu_iter {
+                d.push(format!("budget {} → {}", b.gpu_iter, c.gpu_iter));
+            }
+            if c.eff_iter != b.eff_iter {
+                d.push(format!("appetite {} → {}", b.eff_iter, c.eff_iter));
+            }
+            if (c.boost - b.boost).abs() > 1.0e-6 {
+                d.push(format!("boost ×{:.2} → ×{:.2}", b.boost, c.boost));
+            }
+            if c.orbit_len != b.orbit_len || c.partial != b.partial {
+                d.push(format!(
+                    "orbit {}{} → {}{}",
+                    b.orbit_len,
+                    if b.partial { " PARTIAL" } else { "" },
+                    c.orbit_len,
+                    if c.partial { " PARTIAL" } else { "" }
+                ));
+            }
+            if c.res != b.res {
+                d.push(format!(
+                    "res {}×{} → {}×{}",
+                    b.res[0], b.res[1], c.res[0], c.res[1]
+                ));
+            }
+            if !d.is_empty() {
+                drift += 1;
+                println!("  ✗ {:<16} {}", c.id, d.join("; "));
+            }
+        }
+        let absent = baseline
+            .checkpoints
+            .keys()
+            .filter(|k| !results.iter().any(|c| &c.id == *k))
+            .count();
+        println!(
+            "\n{} checkpoint(s) · {drift} drifted · {missing} new{}",
+            results.len(),
+            if absent > 0 {
+                format!(" · {absent} in baseline not reached")
+            } else {
+                String::new()
+            }
+        );
+        if drift == 0 && missing == 0 {
+            println!("No live-path drift (recorded FAILs are expected — see TODO.md).");
+            0
+        } else {
+            println!(
+                "Live-path DRIFT vs the blessed baseline. If the change is intended, re-run with \
+                 `--bless`. The recorded FAILs are known and are NOT what this is reporting."
+            );
+            drift + missing
+        }
     }
 }

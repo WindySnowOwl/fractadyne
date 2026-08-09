@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.46 (build 1243)
-- **Generated:** 2026-08-09 00:07:15 UTC (unix 1786234035)
+- **Version:** 0.2.40-beta.47 (build 1255)
+- **Generated:** 2026-08-09 02:23:02 UTC (unix 1786242182)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -72,6 +72,8 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Catalog | main-cardioid interior (c = -0.5) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
 | Catalog | exterior point (c = 1) | interior expected false | oracle says interior=false | matches catalog | ✅ PASS |
 | Catalog | deep minibrot nucleus interior (full precision) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
+| Live budget | unmeasured budget bounds the FIRST dispatch | 1445×1134 panel, 2000 iter, fe_budget=0 | arm frame 504×396 ss1 = 3.992e8 steps | ≤ TDR_BOOTSTRAP_STEPS | ✅ PASS |
+| Live budget | unmeasured budget does NOT bind settled resolution | 1445×1134 panel, 2000 iter, fe_budget=0 | settled width 1445/1445 (100% of panel) | ≥90% of panel width | ✅ PASS |
 | Iter-budget | probe reach resolves a starved spar | 3.3e61× three-spar, cap 54315 → reach 848671 | flat 100.0% at cap → 0.2% at reach | >99% flat at cap, <10% at reach | ✅ PASS |
 | NR-zoom | atom size vs exactly-known components | period 1, 2 + home-view identity | all exact | exact to 1e-9 | ✅ PASS |
 | NR-zoom | deep minibrot: size, framing, center accuracy | seahorse 1e6× → period 998 | size 2^-50.505, frame 2^50.505, center err 2^-194, moved 7.0e-31 | period 998, size 2^-50.5, err < size/2^100 | ✅ PASS |
@@ -88,7 +90,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Script | malformed scripts rejected | 11 scripts | all rejected | all rejected | ✅ PASS |
 | Script | playback pacing | pace = settled / default | settled parsed=true, default adaptive=true | settled honored, default adaptive | ✅ PASS |
 | Script | palette definition + morph | custom stops → Ember over 2s | start=2 stops, mid=8 blended stops, end=preset 0 | stops verbatim, blend at the midpoint, preset verbatim | ✅ PASS |
-| Script | generated dive script round-trips | "Script to current view" at 2^1200× | 68.0s, ends 1e359.0× (view 1e359.0×) | resolves, 68s, ends at the view's depth | ✅ PASS |
+| Script | generated dive script round-trips | "Script to current view" at 2^1200× | 68.0s, ends 1e358.8× (view 1e358.8×) | resolves, 68s, ends at the view's depth | ✅ PASS |
 | Script | shallow keyframe keeps deep-neighbour precision | rational centre on a 1e8× keyframe, tour reaches 1e94× | centre drift 8.46e-117 | < 1e-110 (the 1e94× view span is ~1e-95) | ✅ PASS |
 | Script | segment lookup | grand-tour chapters | gauntlet 132–331s of 331s, prefix→landmarks, #1→whole-set | id / prefix / index resolve, unknown errors | ✅ PASS |
 | View format | metadata round-trips a deep view | serialize → scramble → load | iter 1234 aa 3 upp_log2 -120.000 cx -0.743643887037151 | clean load; fractal/iter/aa/zoom/center preserved | ✅ PASS |
@@ -117,7 +119,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**102/102 checks passed.**
+**104/104 checks passed.**
 
 ## Coverage & scope
 

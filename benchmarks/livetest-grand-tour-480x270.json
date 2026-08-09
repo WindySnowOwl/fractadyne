@@ -1,0 +1,320 @@
+{
+  "version": "0.2.40-beta.47 (build 1247)",
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "utc": "2026-08-09 02:02:54 UTC",
+  "tour": "tours/grand-tour.toml",
+  "size": [
+    480,
+    270
+  ],
+  "checkpoints": {
+    "antenna-tip": {
+      "verdict": "ok",
+      "gpu_iter": 3000,
+      "eff_iter": 3000,
+      "boost": 1.6,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0011419753086419754,
+      "truth_black": 0.0011419753086419754
+    },
+    "antenna-tip-deep": {
+      "verdict": "ok",
+      "gpu_iter": 6000,
+      "eff_iter": 6000,
+      "boost": 1.6,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    },
+    "back-out-1": {
+      "verdict": "ok",
+      "gpu_iter": 2000,
+      "eff_iter": 2000,
+      "boost": 1.6,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.09416666666666666,
+      "truth_black": 0.09416666666666666
+    },
+    "back-out-2": {
+      "verdict": "ok",
+      "gpu_iter": 2000,
+      "eff_iter": 2000,
+      "boost": 1.0,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.09416666666666666,
+      "truth_black": 0.09416666666666666
+    },
+    "burning-ship": {
+      "verdict": "ok",
+      "gpu_iter": 2000,
+      "eff_iter": 2000,
+      "boost": 1.0,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.04274691358024691,
+      "truth_black": 0.04274691358024691
+    },
+    "c-equals-i": {
+      "verdict": "ok",
+      "gpu_iter": 3000,
+      "eff_iter": 3000,
+      "boost": 1.6,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.03564814814814815,
+      "truth_black": 0.03564814814814815
+    },
+    "c-equals-i-deep": {
+      "verdict": "ok",
+      "gpu_iter": 6000,
+      "eff_iter": 6000,
+      "boost": 1.6,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    },
+    "dive-start": {
+      "verdict": "ok",
+      "gpu_iter": 3000,
+      "eff_iter": 3000,
+      "boost": 1.6,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.05450617283950617,
+      "truth_black": 0.05450617283950617
+    },
+    "dual-open": {
+      "verdict": "ok",
+      "gpu_iter": 2000,
+      "eff_iter": 2000,
+      "boost": 1.0,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.09416666666666666,
+      "truth_black": 0.09416666666666666
+    },
+    "dual-slide": {
+      "verdict": "ok",
+      "gpu_iter": 2000,
+      "eff_iter": 2000,
+      "boost": 1.0,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.09416666666666666,
+      "truth_black": 0.09416666666666666
+    },
+    "elephant": {
+      "verdict": "ok",
+      "gpu_iter": 4000,
+      "eff_iter": 4000,
+      "boost": 1.6,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.00830246913580247,
+      "truth_black": 0.00830246913580247
+    },
+    "hold-e55": {
+      "verdict": "ok",
+      "gpu_iter": 86227,
+      "eff_iter": 250000,
+      "boost": 2.5600000000000005,
+      "orbit_len": 86228,
+      "partial": true,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0009799382716049383,
+      "truth_black": 0.0
+    },
+    "hold-e61": {
+      "verdict": "FAIL",
+      "gpu_iter": 146112,
+      "eff_iter": 400000,
+      "boost": 6.400000000000001,
+      "orbit_len": 146113,
+      "partial": true,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.4208256172839506,
+      "truth_black": 0.0001080246913580247
+    },
+    "hold-e63": {
+      "verdict": "FAIL",
+      "gpu_iter": 256000,
+      "eff_iter": 500000,
+      "boost": 6.400000000000001,
+      "orbit_len": 256001,
+      "partial": true,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.5388657407407408,
+      "truth_black": 0.014853395061728395
+    },
+    "hold-e72": {
+      "verdict": "ok",
+      "gpu_iter": 1011664,
+      "eff_iter": 1200000,
+      "boost": 16.000000000000004,
+      "orbit_len": 602516,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    },
+    "hold-e82": {
+      "verdict": "FAIL",
+      "gpu_iter": 256000,
+      "eff_iter": 2000000,
+      "boost": 16.000000000000004,
+      "orbit_len": 256001,
+      "partial": true,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 1.0,
+      "truth_black": 0.0
+    },
+    "hold-e94": {
+      "verdict": "warn",
+      "gpu_iter": 4000000,
+      "eff_iter": 4000000,
+      "boost": 64.00000000000001,
+      "orbit_len": 3631055,
+      "partial": false,
+      "res": [
+        365,
+        205
+      ],
+      "live_black": 0.0027129969929836286,
+      "truth_black": 0.0027129969929836286
+    },
+    "open": {
+      "verdict": "ok",
+      "gpu_iter": 2000,
+      "eff_iter": 2000,
+      "boost": 1.0,
+      "orbit_len": 0,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.09416666666666666,
+      "truth_black": 0.09416666666666666
+    },
+    "orbit-overlay": {
+      "verdict": "ok",
+      "gpu_iter": 2000,
+      "eff_iter": 2000,
+      "boost": 1.0,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.09416666666666666,
+      "truth_black": 0.09416666666666666
+    },
+    "seahorse-1": {
+      "verdict": "ok",
+      "gpu_iter": 4000,
+      "eff_iter": 4000,
+      "boost": 1.0,
+      "orbit_len": 0,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.000046296296296296294,
+      "truth_black": 0.000046296296296296294
+    },
+    "seahorse-2": {
+      "verdict": "ok",
+      "gpu_iter": 12000,
+      "eff_iter": 12000,
+      "boost": 1.6,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.7008024691358025,
+      "truth_black": 0.7007484567901234
+    },
+    "triple-spiral": {
+      "verdict": "ok",
+      "gpu_iter": 4000,
+      "eff_iter": 4000,
+      "boost": 1.6,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.02199074074074074,
+      "truth_black": 0.02199074074074074
+    }
+  }
+}
