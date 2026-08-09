@@ -192,15 +192,53 @@ Mockups: [design/mockups/](design/mockups/).
   margin, in the one regime where cost is least predictable (`orbit_len=626`, so BLA skips nothing
   and real cost tracks the nominal count instead of being a small fraction of it).
 
-  ✅**FIX ATTEMPTED v0.2.40-beta.47: a mode switch now marks the budget UNMEASURED** rather than
+  ⛔⛔**FRAME COST IS DEFINITIVELY OUT — and the mode-switch fix PROVED it rather than fixing
+  the crash.** With the budget pinned to the bootstrap the very next crash (08:33, build 1273)
+  read `135x106 ss=1 steps=3.969e8 budget=4.000e8` — the smallest frame the shrink allows, ~10 ms
+  of GPU work on a 3080 — and died anyway, `since_mode_switch=8 frames`. A frame that small
+  cannot be a 2-second dispatch. (The ledger had half of this already: one beta.36/37 crash died
+  at `budget=4.000e8`, the FLOOR.)
+
+  ⭐⭐**ROOT CAUSE (mechanism identified, fix landed): LOOKAHEAD THREAD OVERSUBSCRIPTION STARVES
+  THE RENDER THREAD.** The same 08:33 log: mode switch at +245.148 s, device lost at +248.986 s —
+  **8 frames in 3.8 s, ~475 ms per frame, for ~10 ms of GPU work.** The frames were never
+  GPU-bound; the main thread was starved. The starver is the reference lookahead:
+  `playback_ref_prefetch` refills until the queue is full, so whenever it drains it spawns SIX
+  builds in the same millisecond (five `building reference [lookahead]` lines share a timestamp in
+  every crash log) — and `best_reference`'s candidate scoring uses `std::thread::scope` with
+  `available_parallelism()` threads **per call, a fresh set each time rather than a shared pool**.
+  Six concurrent builds therefore put six times the core count of bignum work against the
+  renderer. The existing comment called this "harmless for compute-bound bursts"; that was the
+  untested assumption, and beta.38 left "why a build storm takes the device out (CPU starvation of
+  the driver?)" explicitly open. This is that answer.
+
+  ✅**FIXED v0.2.40-beta.47: `PREFETCH_MAX_INFLIGHT = 2`** bounds builds IN FLIGHT (the queue still
+  covers its full depth; slots fill in sequence). The effect on the dive is large and was
+  measured with `--divetest`, not assumed:
+
+  | band | before | after |
+  |---|---|---|
+  | 1e300 fps / p95 | 56.5 / 23.9 ms | **59.8 / 15.5 ms** |
+  | 1e700 p95 | 15.9 ms | **9.9 ms** |
+  | motion res @1e300 | 0.30–1.00 | **0.79–1.00** |
+  | motion res @1e700 | 0.30–0.46 | **1.00–1.00** |
+
+  The AIMD had been cutting motion resolution to 30% because frames measured slow — and they were
+  slow from the oversubscription, not from GPU cost. Reference installs are unchanged (160), so
+  the lookahead still keeps pace with the dive. **This is a real quality win independent of
+  whether it cures the device loss.**
+
+  ✅**Also kept, v0.2.40-beta.47: a mode switch now marks the budget UNMEASURED** rather than
   derating the old mode's measurement by 8 — the same invariant the no-`TIMESTAMP_QUERY` fix rests
   on, since a budget that has measured nothing *in this mode* may bound the first dispatch and
   must do no more. Measured: the crossover now goes `7.78e10 → unmeasured (bootstrap 4.00e8)`, and
   the slowest GPU iterate across a full oscillating run fell 18.8 ms → 14.0 ms. The controller
   re-climbs at ×1.5 per reading, so the cost is a few coarse frames during a dive, where motion
   resolution is already reduced. Suite 104/104, goldens 17/17, livetest 0 drifted.
-  ⚠**UNVERIFIED against the crash** — it is intermittent (2 in 2 runs, then 0 in 12) and has not
-  been reproduced locally since. `nvlddmkm` 153 is now the objective verdict signal and does not
+  ⚠**Neither fix is VERIFIED against the crash** — it is intermittent (2 in 2 runs, then 0 in 12)
+  and has not been reproduced locally since. The mode-switch change is now known NOT to cure it on
+  its own; the in-flight cap targets the measured starvation and is untested against a live
+  occurrence. `nvlddmkm` 153 is now the objective verdict signal and does not
   depend on the app: `Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='nvlddmkm'}`.
 
   ⭐**One long-standing assumption is still DISPROVEN — do not re-derive it:**

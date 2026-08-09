@@ -821,6 +821,25 @@ impl FractadyneApp {
         /// build's candidate scoring already fans out across all cores, so concurrent slots briefly
         /// oversubscribe threads — harmless for compute-bound bursts.
         const PREFETCH_SLOTS: usize = 6;
+        /// ⭐How many lookahead builds may be IN FLIGHT at once, as opposed to how many slots the
+        /// queue holds. Previously unbounded: the refill loop below spawns until the queue is
+        /// full, so whenever the queue drained it started six builds in the same millisecond —
+        /// visible in every crash log as five `building reference [lookahead]` lines sharing a
+        /// timestamp.
+        ///
+        /// That is not the cheap burst the old comment assumed. `best_reference`'s candidate
+        /// scoring uses `std::thread::scope` with `available_parallelism()` threads PER CALL — a
+        /// fresh set each time, not a shared pool — so six concurrent builds put six times the
+        /// core count of bignum work up against the render thread. Measured on the 2026-08-09
+        /// 08:33 device loss, with the frame budget already pinned to the bootstrap so the GPU had
+        /// almost nothing to do: **8 frames in 3.8 s — ~475 ms per frame — for a 135×106 frame
+        /// doing 4e8 steps**, which is ~10 ms of GPU work on the dev 3080. The frames were not
+        /// GPU-bound; the main thread was starved.
+        ///
+        /// Two is enough to keep a build overlapping the one being consumed while leaving the
+        /// machine to the renderer. The queue still covers its full depth — slots simply fill in
+        /// sequence instead of all at once.
+        const PREFETCH_MAX_INFLIGHT: usize = 2;
         const LN_2: f64 = std::f64::consts::LN_2;
         let cur_l2 = pb.sample(e).logmag / LN_2;
         // 1) Collect finished builds into their slots.
@@ -898,7 +917,9 @@ impl FractadyneApp {
         // coarse probe steps on an easing tour built slots +46…+293 octaves ahead).
         let max_ahead = cur_l2 + PREFETCH_OCT * (PREFETCH_SLOTS as f64 + 1.0) + 1.0;
         self.ref_prefetch.retain(|s| s.target_l2 <= max_ahead);
-        while self.ref_prefetch.len() < PREFETCH_SLOTS {
+        while self.ref_prefetch.len() < PREFETCH_SLOTS
+            && self.ref_prefetch.iter().filter(|s| s.rx.is_some()).count() < PREFETCH_MAX_INFLIGHT
+        {
             // Next target: PREFETCH_OCT octaves past the deepest queued target (or the current
             // depth). Find the first script time that reaches it — a coarse scan for a bracket,
             // then BISECTION to the crossing (samples are cheap keyframe interpolation), so the
