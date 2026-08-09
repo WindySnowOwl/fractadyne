@@ -127,6 +127,18 @@ const LIVETEST_BASELINE_DIR: &str = "benchmarks";
 /// Percentage-point tolerance (as a fraction) on the black measurements. These were bit-stable
 /// across repeated runs on one machine; the slack only stops a single pixel reading as drift.
 const BLACK_TOL: f64 = 0.005;
+/// ⚠OUTCOME vs CONTEXT. Only what the viewer sees gates the run — verdict, the two black
+/// fractions, and the rendered resolution. The counts (budget, appetite, boost, orbit length)
+/// are reported alongside a drifting checkpoint because they are what ATTRIBUTES it, but they
+/// do not trigger on their own: the reference PICK is not stable run to run in a real-time
+/// paced tour, and two runs of one unchanged build produced `orbit 3090 → 20193 PARTIAL` on
+/// five shallow checkpoints whose verdict, black fractions and resolution were identical. No
+/// tolerance absorbs a 550% swing, and a gate that cries wolf is a gate that gets ignored.
+///
+/// Nothing is lost: every regression this has actually caught moved an outcome field too — the
+/// stale-reprojection regression showed as verdict FAIL→warn, black 42.1%→0.1% AND res
+/// 480×270→144×81, and the iteration-boost regression came with its own verdict change.
+///
 /// Relative tolerance on the iteration/orbit COUNTS. They are wall-clock sensitive in a way the
 /// outcome is not: a change that only shifts WHEN the checkpoint samples the appetite moves them a
 /// few iterations in 146,000 with the verdict, black fractions, boost and resolution all identical
@@ -649,6 +661,7 @@ impl FractadyneApp {
                 continue;
             };
             let mut d: Vec<String> = Vec::new();
+            let mut ctx: Vec<String> = Vec::new();
             if c.verdict() != b.verdict {
                 d.push(format!("verdict {} → {}", b.verdict, c.verdict()));
             }
@@ -667,16 +680,16 @@ impl FractadyneApp {
                 ));
             }
             if count_drifted(b.gpu_iter, c.gpu_iter) {
-                d.push(format!("budget {} → {}", b.gpu_iter, c.gpu_iter));
+                ctx.push(format!("budget {} → {}", b.gpu_iter, c.gpu_iter));
             }
             if count_drifted(b.eff_iter, c.eff_iter) {
-                d.push(format!("appetite {} → {}", b.eff_iter, c.eff_iter));
+                ctx.push(format!("appetite {} → {}", b.eff_iter, c.eff_iter));
             }
             if (c.boost - b.boost).abs() > 1.0e-6 {
-                d.push(format!("boost ×{:.2} → ×{:.2}", b.boost, c.boost));
+                ctx.push(format!("boost ×{:.2} → ×{:.2}", b.boost, c.boost));
             }
             if count_drifted(b.orbit_len, c.orbit_len) || c.partial != b.partial {
-                d.push(format!(
+                ctx.push(format!(
                     "orbit {}{} → {}{}",
                     b.orbit_len,
                     if b.partial { " PARTIAL" } else { "" },
@@ -692,7 +705,12 @@ impl FractadyneApp {
             }
             if !d.is_empty() {
                 drift += 1;
-                println!("  ✗ {:<16} {}", c.id, d.join("; "));
+                let why = if ctx.is_empty() {
+                    String::new()
+                } else {
+                    format!("   [context: {}]", ctx.join("; "))
+                };
+                println!("  ✗ {:<16} {}{}", c.id, d.join("; "), why);
             }
         }
         let absent = baseline

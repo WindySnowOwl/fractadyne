@@ -146,46 +146,71 @@ zoom = "1e30"
 max_iter = 60000
 ease = "linear"
 
-# The glide the crashes land in — REPEATED. All eight recorded instances died between e30 and
-# e55, and the grand tour covers that band in 34 s (its t=181..215) before dying at t≈205. One
-# pass through it is not enough here, so sweep it back and forth at the SAME rate: same glide
-# speed, same reference-rebuild cadence, same 626-sample regime, just more of it. This is what
-# separates "the crash needs specific earlier content" from "it needs enough time in the state".
+# ⭐OSCILLATE ACROSS THE df32 → floatexp BOUNDARY. `PERT_FE_THRESHOLD` is 1.0e28, and the grand
+# tour glides LINEARLY in log-zoom from 1e10 (its t=153) to 1e30 (t=181), so it crosses at
+#
+#     t = 153 + 28 x (28-10)/(30-10) = 178.2 s = 2:58
+#
+# — which is where the user reports it dying, "exactly at 2:58", and all five recorded manifests
+# sit 1-5 s past it (eff 56k-64k interpolates to t = 179..183). So the trigger is the MODE
+# SWITCH, not the depth: at the crossover `budget_mode` derates the measured frame budget by 8
+# and clears `fe_budget_ok`, the shader changes to a path that costs ~1.7x more per nominal step,
+# the reference is rebuilt, and the lookahead is spawning 5-6 all-core bignum builds a second.
+# Four of the five manifests then show `steps` within 0.2% of `budget` — the frame is sized to
+# exactly fill a budget that was just re-derived in the other mode.
+#
+# This is also why the earlier e30<->e55 sweep in this file never fired: BOTH ends are above
+# 1e28, so it stayed in mode 2 and never re-crossed. Oscillating e20 <-> e35 crosses on every
+# leg, at the grand tour's own rate of ~1.4 s per decade.
 [[keyframe]]
-id = "e55-1"
+id = "up-e35-1"
 t = 96
-zoom = "1e55"
-max_iter = 250000
+zoom = "1e35"
+max_iter = 80000
 ease = "linear"
 
 [[keyframe]]
-id = "e30-2"
-t = 130
-zoom = "1e30"
-max_iter = 60000
+id = "down-e20-1"
+t = 117
+zoom = "1e20"
+max_iter = 40000
 ease = "linear"
 
 [[keyframe]]
-id = "e55-2"
-t = 164
-zoom = "1e55"
-max_iter = 250000
+id = "up-e35-2"
+t = 138
+zoom = "1e35"
+max_iter = 80000
 ease = "linear"
 
 [[keyframe]]
-id = "e30-3"
-t = 198
-zoom = "1e30"
-max_iter = 60000
+id = "down-e20-2"
+t = 159
+zoom = "1e20"
+max_iter = 40000
 ease = "linear"
 
 [[keyframe]]
-id = "e55-3"
-t = 232
-zoom = "1e55"
-max_iter = 250000
+id = "up-e35-3"
+t = 180
+zoom = "1e35"
+max_iter = 80000
 ease = "linear"
-hold = 8
+
+[[keyframe]]
+id = "down-e20-3"
+t = 201
+zoom = "1e20"
+max_iter = 40000
+ease = "linear"
+
+[[keyframe]]
+id = "up-e35-4"
+t = 222
+zoom = "1e35"
+max_iter = 80000
+ease = "linear"
+hold = 4
 
 [[segment]]
 id = "repro"

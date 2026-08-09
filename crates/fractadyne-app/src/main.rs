@@ -197,6 +197,15 @@ struct Perf {
     /// measurement of the old. Same class as `install_recompute`'s cost-discontinuity derate, and
     /// handled the same way: drop the budget and let the controller re-climb.
     budget_mode: [u32; 2],
+    /// `frame_idx` of the last arithmetic-MODE switch for this view (`u64::MAX` = none yet).
+    /// Surfaced in the live crash manifest as `since_mode_switch`, because the df32 → floatexp
+    /// crossover is where this app's longest-running crash class lands: the grand tour glides
+    /// linearly in log-zoom from 1e10 to 1e30 and so crosses `PERT_FE_THRESHOLD` (1e28) at
+    /// t = 178.2 s — "exactly 2:58", which is where the field reports put it, and all five
+    /// recorded manifests interpolate to 1–5 s past it. Knowing how many frames separate the
+    /// crossover from the death is the difference between a coincidence and a cause, and it
+    /// costs one `u64` to answer.
+    mode_switch_frame: [u64; 2],
     /// Tiled-settle progress per view (see `render::TileGrid`); `None` = no grid armed or running.
     tile_state: [Option<render::TileGrid>; 2],
     /// True while a view's settle grid has tiles left — holds the AA ramp and keeps repaints coming.
@@ -312,6 +321,7 @@ impl Default for Perf {
             wall_fallback: false,
             ts_supported: false,
             budget_mode: [u32::MAX, u32::MAX],
+            mode_switch_frame: [u64::MAX, u64::MAX],
             tile_state: [None, None],
             tile_pending: [false, false],
             tile_turn: u64::MAX,

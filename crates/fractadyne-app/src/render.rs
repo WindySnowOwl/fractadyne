@@ -2390,7 +2390,21 @@ impl FractadyneApp {
             // `mode` itself is selected further down; it is a pure function of these two.
             let m = RenderMode::select(fractal.supports_perturbation(), magnification).to_u32();
             if self.perf.budget_mode[vidx] != m {
+                let prev = self.perf.budget_mode[vidx];
                 self.perf.budget_mode[vidx] = m;
+                self.perf.mode_switch_frame[vidx] = self.perf.frame_idx;
+                // Always logged, not trace-gated: this crossover is the suspect in the
+                // `orbit_len=626` device-loss class, the class is intermittent, and a trace run
+                // has already been observed to suppress it. A one-line breadcrumb per switch
+                // costs nothing and is in the log when the next one happens.
+                crate::diag::log_line(
+                    "render",
+                    &format!(
+                        "arithmetic mode {} → {m} at frame {} (mag 2^{log2mag:.1})",
+                        if prev == u32::MAX { "none".to_string() } else { prev.to_string() },
+                        self.perf.frame_idx
+                    ),
+                );
                 let cur = self.perf.fe_budget[vidx];
                 let derated = (cur / 8).max(TDR_BOOTSTRAP_STEPS);
                 if cur != 0 && derated < cur {
@@ -3231,7 +3245,7 @@ impl FractadyneApp {
             crate::diag::set_manifest(format!(
                 "LIVE view={vs} mode={} {}x{} ss={ss} iter={shader_iter} (gpu_iter={gpu_iter}, \
                  eff={eff_iter}, boost={:.2}) steps={steps:.3e} budget={tdr_steps:.3e} \
-                 tile={} orbit_len={} partial={} settled={}",
+                 tile={} orbit_len={} partial={} settled={} since_mode_switch={}",
                 mode.to_u32(),
                 resolution[0],
                 resolution[1],
@@ -3240,6 +3254,10 @@ impl FractadyneApp {
                 self.ref_cache[vi].orbit_len,
                 self.ref_cache[vi].partial,
                 !interacting,
+                match self.perf.mode_switch_frame[vidx] {
+                    u64::MAX => "never".to_string(),
+                    f => format!("{} frames", self.perf.frame_idx.saturating_sub(f)),
+                },
             ));
         }
 

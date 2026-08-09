@@ -130,6 +130,31 @@ Mockups: [design/mockups/](design/mockups/).
   reached the `len=626` precondition (~410 occurrences each). `scratchpad/trim_tour.py` produces
   prefix-trimmed copies of a v2 tour if the bisection is resumed.
 
+  ⭐⭐**LOCALISED: "exactly 2:58" is the df32 → floatexp MODE TRANSITION, to the second.** Third
+  field report 2026-08-09 gave the tour-clock time rather than an uptime, which is what cracked
+  it — the earlier reports were wall-clock and the pacer dilates the clock, so nobody had tied the
+  crashes to a tour POSITION. `PERT_FE_THRESHOLD` is 1e28 and the grand tour glides LINEARLY in
+  log-zoom from 1e10 (t=153) to 1e30 (t=181), so it crosses at
+
+      t = 153 + 28 × (28 − 10)/(30 − 10) = 178.2 s = 2:58.2
+
+  and every recorded manifest interpolates to **1–5 s past it** (eff_iter 56 069 → t≈179.3,
+  60 916 → 181.4, 63 600 → 182, 64 182 → 182.7). All of them are `mode=2`, i.e. already across.
+  Six instances now agree. Note this also explains a dead end: the e30↔e55 sweep in
+  `deep-dive-crash.toml` never fired because BOTH ends are above 1e28 — it stayed in mode 2 and
+  never re-crossed.
+
+  At the crossover, `budget_mode` derates the measured frame budget ÷8 and clears `fe_budget_ok`;
+  measured here as 7.39e10→9.24e9, 1.05e11→1.32e10, 9.00e10→1.12e10 — landing squarely in the
+  2.5e9–8.8e9 range the crash manifests record, with four of the five showing `steps` within 0.2%
+  of `budget` (the shrink sizes the frame to exactly fill it). The tempting story is that the ÷8
+  derate is smaller than the documented 10× data-dependence, so the first floatexp frames are
+  mispriced. ⚠**But the measurement does not support it**: across a full oscillating run the
+  slowest GPU iterate was **18.8 ms**, nowhere near the 900 ms target, because the motion
+  res_scale keeps moving frames tiny. Frame cost stays ruled out. What the crossover changes
+  besides the budget — reference/BLA rebuild, shader path, buffer and bind-group recreation while
+  5–6 all-core bignum lookahead builds run per second — is the remaining surface.
+
   ⭐**Two long-standing assumptions are now DISPROVEN — do not re-derive them:**
   - **It is not a Windows TDR.** The System log records no display-driver reset for these losses,
     and Application/WER records no exception. Every prior investigation in this ledger framed the
@@ -151,6 +176,13 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**Timing-sensitive**: a grand-tour run under `FRACTADYNE_TRACE=ref,tile,gpu` did not reproduce
   in 300 s where an untraced one died at 205 s. Reproduce first, then instrument, and treat one
   clean traced run as inconclusive.
+
+  ✅**Instrumented for the next occurrence** (beta.47): the live crash manifest now carries
+  `since_mode_switch=N frames`, and every arithmetic-mode change logs one always-on line
+  (`arithmetic mode 0 → 2 at frame 3627 (mag 2^93.0)` — 2^93 = 9.9e27, the threshold). Deliberately
+  NOT trace-gated: the class is intermittent and a traced run has already been seen to suppress
+  it. The next field crash report will say outright whether the death is frames or minutes from
+  the crossover, which is the difference between a coincidence and a cause.
 
   **Next lever.** The clustering is now the most informative thing known about this bug, and it
   is cheap to test: run the grand tour repeatedly and see whether a loss makes the NEXT run more
