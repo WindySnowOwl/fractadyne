@@ -1,7 +1,7 @@
 {
-  "version": "0.2.40-beta.47 (build 1247)",
+  "version": "0.2.40-beta.49 (build 1312)",
   "gpu": "NVIDIA GeForce RTX 3080",
-  "utc": "2026-08-09 02:02:54 UTC",
+  "utc": "2026-08-09 23:42:47 UTC",
   "tour": "tours/grand-tour.toml",
   "size": [
     480,
@@ -164,53 +164,53 @@
     },
     "hold-e55": {
       "verdict": "ok",
-      "gpu_iter": 86227,
+      "gpu_iter": 250000,
       "eff_iter": 250000,
-      "boost": 2.5600000000000005,
-      "orbit_len": 86228,
+      "boost": 6.553600000000002,
+      "orbit_len": 258193,
       "partial": true,
       "res": [
         480,
         270
       ],
-      "live_black": 0.0009799382716049383,
+      "live_black": 0.0,
       "truth_black": 0.0
     },
     "hold-e61": {
-      "verdict": "FAIL",
-      "gpu_iter": 146112,
+      "verdict": "ok",
+      "gpu_iter": 400000,
       "eff_iter": 400000,
-      "boost": 6.400000000000001,
-      "orbit_len": 146113,
+      "boost": 10.485760000000004,
+      "orbit_len": 408193,
       "partial": true,
       "res": [
         480,
         270
       ],
-      "live_black": 0.4208256172839506,
+      "live_black": 0.0001080246913580247,
       "truth_black": 0.0001080246913580247
     },
     "hold-e63": {
-      "verdict": "FAIL",
-      "gpu_iter": 256000,
+      "verdict": "ok",
+      "gpu_iter": 500000,
       "eff_iter": 500000,
-      "boost": 6.400000000000001,
-      "orbit_len": 256001,
+      "boost": 10.485760000000004,
+      "orbit_len": 508193,
       "partial": true,
       "res": [
         480,
         270
       ],
-      "live_black": 0.5388657407407408,
+      "live_black": 0.014853395061728395,
       "truth_black": 0.014853395061728395
     },
     "hold-e72": {
       "verdict": "ok",
-      "gpu_iter": 1011664,
+      "gpu_iter": 1060806,
       "eff_iter": 1200000,
-      "boost": 16.000000000000004,
-      "orbit_len": 602516,
-      "partial": false,
+      "boost": 16.777216000000006,
+      "orbit_len": 1208193,
+      "partial": true,
       "res": [
         480,
         270
@@ -219,24 +219,24 @@
       "truth_black": 0.0
     },
     "hold-e82": {
-      "verdict": "FAIL",
-      "gpu_iter": 256000,
+      "verdict": "ok",
+      "gpu_iter": 2000000,
       "eff_iter": 2000000,
-      "boost": 16.000000000000004,
-      "orbit_len": 256001,
+      "boost": 42.94967296000002,
+      "orbit_len": 2008193,
       "partial": true,
       "res": [
         480,
         270
       ],
-      "live_black": 1.0,
+      "live_black": 0.0,
       "truth_black": 0.0
     },
     "hold-e94": {
       "verdict": "warn",
       "gpu_iter": 4000000,
       "eff_iter": 4000000,
-      "boost": 64.00000000000001,
+      "boost": 68.71947673600003,
       "orbit_len": 3631055,
       "partial": false,
       "res": [
@@ -251,7 +251,7 @@
       "gpu_iter": 2000,
       "eff_iter": 2000,
       "boost": 1.0,
-      "orbit_len": 0,
+      "orbit_len": 626,
       "partial": false,
       "res": [
         480,
@@ -279,7 +279,7 @@
       "gpu_iter": 4000,
       "eff_iter": 4000,
       "boost": 1.0,
-      "orbit_len": 0,
+      "orbit_len": 626,
       "partial": false,
       "res": [
         480,

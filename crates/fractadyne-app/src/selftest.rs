@@ -208,7 +208,8 @@ impl FractadyneApp {
         let filter: Option<String> = self.selftest_filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "iter-budget", "nr-zoom", "coords", "script", "metadata",
+            "consistency", "counters", "iter-budget", "nr-zoom", "coords", "ref-pick", "script",
+            "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res",
         ];
         if self.selftest_list {
@@ -2179,6 +2180,71 @@ impl FractadyneApp {
         // The Go-to dialog's parser. Several mathematically significant landmarks are exactly
         // rational and NOT representable as terminating decimals, so accepting `p/q` is what
         // makes them enterable at all; the precision floor is what makes them usable at depth.
+        if want("ref-pick") {
+            // ⭐The 2:58 device-loss pick, exactly (design/reference-lifecycle.md L1). A lookahead
+            // build at the grand tour's shallow-dive era scored candidates at 78 bits, where the
+            // three-spar Misiurewicz centre's orbit numerically escapes in a few hundred
+            // iterations (the precision CLIFF — see core test `escape_length_vs_precision`), so
+            // phase 1 had no survivor and the longest-escaper fallback picked a 626-sample
+            // reference. Reuse then pinned it into ~90× frame cost and a GPU device loss. The
+            // cliff rescue must redo the selection at the build precision and return the CENTRE,
+            // surviving the full ask.
+            let cx = fractadyne_core::parse_bf(
+                "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1",
+            )
+            .expect("three-spar cx");
+            let cy = fractadyne_core::parse_bf(
+                "9.5628651080914147131604703998237075557983304380930462483482733212267499793490593467836270525491219946548323699651521e-1",
+            )
+            .expect("three-spar cy");
+            let span = fractadyne_core::FloatExp::from_f64(2.4e-4); // mag ≈ 2^14, the prec-78 era
+            let (pick, diag) = fractadyne_core::best_reference_diag(
+                &[cx.clone(), cy.clone()],
+                [span, span],
+                0,     // Mandelbrot
+                false, // not Julia
+                [0.0, 0.0],
+                13_607, // the observed lookahead ask at that era
+                78,     // the observed scoring precision — deep inside the cliff
+            );
+            let picked_centre = pick[0] == cx && pick[1] == cy;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "RefPick",
+                name: "cliff rescue picks the surviving centre".into(),
+                params: "three-spar @2^14, ask 13607, scored @78 bits".into(),
+                result: format!(
+                    "rescued={:?} survivors={} winner_len={} centre={picked_centre}",
+                    diag.rescued, diag.survivors, diag.winner_len
+                ),
+                threshold: "rescued, centre picked, survives the ask",
+                pass: diag.rescued.is_some() && picked_centre && diag.winner_len >= 13_607,
+            });
+
+            // The rescue must NOT fire on a healthy pick: same view scored at an adequate
+            // precision picks the centre plainly (phase-1 survivor, no rescue) — this pins that
+            // healthy picks stay byte-identical to the pre-rescue selection.
+            let (pick2, diag2) = fractadyne_core::best_reference_diag(
+                &[cx.clone(), cy.clone()],
+                [span, span],
+                0,
+                false,
+                [0.0, 0.0],
+                13_607,
+                286,
+            );
+            let picked_centre2 = pick2[0] == cx && pick2[1] == cy;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "RefPick",
+                name: "healthy pick unchanged (no rescue)".into(),
+                params: "same view, scored @286 bits".into(),
+                result: format!(
+                    "rescued={:?} survivors={} winner_len={} centre={picked_centre2}",
+                    diag2.rescued, diag2.survivors, diag2.winner_len
+                ),
+                threshold: "no rescue, centre picked",
+                pass: diag2.rescued.is_none() && picked_centre2 && diag2.winner_len >= 13_607,
+            });
+        }
         if want("coords") {
             // Exact dyadic rationals — the parabolic valley entrances.
             let exact: &[(&str, f64)] =

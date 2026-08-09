@@ -5826,7 +5826,9 @@ impl eframe::App for FractadyneApp {
             diag::log_line(
                 "render",
                 &format!(
-                    "slow frame {}: dt={:.0}ms = body {:.0}ms + outside(acquire/present/idle)                      {:.0}ms repaint_requested={} — mode={} steps={:.3e} budget={:.3e}                      rebase={} bla_skip={}",
+                    "slow frame {}: dt={:.0}ms = body {:.0}ms + outside(acquire/present/idle) \
+                     {:.0}ms repaint_requested={} — mode={} steps={:.3e} budget={:.3e} \
+                     rebase={} bla_skip={} ref_len={} partial={}",
                     self.perf.frame_idx,
                     self.perf.last_dt_ms,
                     self.perf.prev_body_ms,
@@ -5844,6 +5846,10 @@ impl eframe::App for FractadyneApp {
                     // count, not that the frame is intrinsically expensive.
                     rebase_bla.0,
                     rebase_bla.1,
+                    // Reference state closes the loop: bla_skip≈0 with a short NON-partial
+                    // (escaped) reference = the unfit-reuse pathology, not an expensive view.
+                    self.ref_cache[0].orbit_len,
+                    self.ref_cache[0].partial,
                 ),
             );
         }

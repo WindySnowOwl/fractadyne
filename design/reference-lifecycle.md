@@ -1,6 +1,9 @@
 # Reference lifecycle redesign — precision cliffs, fitness, and non-destructive replacement
 
-Status: **PLAN** (2026-08-09). Owner: the 2:58 device-loss investigation.
+Status: **L0+L1+L2-core LANDED** (2026-08-09, beta.49) — see § 6 for what shipped and how it
+deviated from the plan below. Remaining: § 3 Layer 2's incumbent/challenger (deferred — see § 6),
+Layer 3 protocol notes.
+Owner: the 2:58 device-loss investigation.
 Prereq reading: TODO.md § Open bugs (the device-loss entry, bottom-up), `topic-spar-family` memory.
 
 ## 1. What is actually wrong (all measured, nothing inferred)
@@ -188,3 +191,63 @@ Each layer lands with suite 104+/goldens 17/bench-matrix 0-drift/livetest 0-drif
   preferable to 90× frame cost — and lands at install boundaries exactly like today's re-picks.
 - **Bench-matrix pick determinism**: the probe must be deterministic (fixed escalation schedule,
   no timing dependence) so the tripwire stays meaningful.
+
+
+## 6. What actually shipped (beta.49) — and where the plan was wrong
+
+Implementation order was driven by two measurements made AFTER the plan was written:
+
+1. **The rounded-point axis** (`escape_length_of_rounded_centre`): `Playback::sample` routed a
+   PINNED-CENTRE glide through `lerp_bf(a, a, ease, p)` with `p` = the *current interpolated
+   depth's* precision — which rounds the centre, handing the pick a genuinely different point:
+   78 bits → true escape 625 (**the crash's `len=626`**), 157 → 94,126, 206 → 602,515 (**hold-e72's
+   "accumulated" 602,516 — it was never an accumulation**), 300+ → survives. Every mysterious
+   orbit length in the ledger is `escape(round(centre, p)) + 1`. Fixed: a pinned-centre glide now
+   returns the centre exactly; genuine pans still interpolate (arrivals are keyframes, which the
+   hold branch returns exactly).
+2. **The e72 lottery**: the deep holds' historically-green states were CARRIED by cliff-escaped
+   (numerically wrong) orbits laundering themselves past the freeze guard — a truthful orbit comes
+   back partial > `LIVE_REF_CAP` and was refused. So the sampler fix and the guard change are
+   COUPLED: landing the first without the second regresses e72 to 100% black (measured, twice,
+   before the coupling was understood).
+
+Shipped:
+- **L0**: pick trace (`pick [origin]: ask/scored@bits/survivors/winner_len/RESCUED/offset`),
+  slow-frame log carries `rebase/bla_skip/ref_len/partial`.
+- **L1 — cliff rescue** in `best_reference` (now `best_reference_diag`): no phase-1 survivor →
+  full re-scan at `p+128` (the build precision); winner-escapes-early → centre rescored at
+  `p+128`, taken only if it survives the render. Deterministic; healthy picks byte-identical
+  (bench-matrix 0 drift). Selftest group `ref-pick` pins the exact bug pick (prec-78 era) and the
+  no-rescue-on-healthy case.
+- **L1 — exact pinned-centre glides** in `Playback::sample` (the entry-vector fix).
+- **L2-core — the freeze guard now INSTALLS long partials at the FLOOR budget** instead of
+  refusing them: `install_recompute` treats `partial > LIVE_REF_CAP+1` as maximally
+  cost-discontinuous (`fe_budget := TDR_MIN_STEPS`, re-measure from a ~10 ms worst-case
+  dispatch). The refusal's own comment said it stood "until the install frame itself can be
+  cost-bounded"; beta.48's floor is that bound. This retires the A3 refusal loop (nothing
+  refuses), and the pixel clamp lifts at every deep hold.
+
+Measured outcomes (all on the grand tour, fresh-dir protocol):
+- Device loss: **0 in 4 hygienic runs** (base rate was 3-in-4; p ≈ 0.4% if unfixed), 0 `nvlddmkm`
+  Event 153 in the window. The 626 era is gone from the traces.
+- `--livetest`: **hold-e61 42.1% → 0.0% black, hold-e63 53.9% → 1.5% (matches offline),
+  hold-e82 100% → 0.0%**, hold-e72 stays 0%; orbit contexts now show truthful long partials
+  installed (408,193 / 508,193 / 2,008,193). One cosmetic drift: `seahorse-2` captures mid
+  budget-re-climb after a healthier install (res varies run to run; verdict ok). Baseline
+  re-blessed.
+- e21000 canonical wedge case: 120 s live soak, responsive throughout, no crash, no hang.
+- Suite 106/106, goldens 17/17, bench-matrix 0 algorithmic drift.
+
+Plan deviations, recorded:
+- The plan's L1 "escape-plateau probe on built orbits" was NOT implemented — the rescue subsumes
+  its pick-time role, and the reuse-time role belongs to L2's challenger (a probe cannot fix a
+  genuinely-escaping pinned point, and a rebuild-at-higher-precision result may be uninstallable
+  mid-motion; both measured).
+- A reuse-fitness refusal gate (L1 draft) was implemented, measured to regress hold-e72 by
+  trajectory change even when scoped to `ask ≤ LIVE_REF_CAP`, and REMOVED. Attribution run
+  (rescue-only) confirmed the gate was the sole regressor. Refusal-shaped eviction stays dead;
+  if a pinned-bad-reference case surfaces again it must be solved by the incumbent/challenger
+  design (§ 3 L2), never a predicate.
+- With the entry vector (sampler) fixed and reuse now serving truthful orbits, the
+  incumbent/challenger cache is DEFERRED until a real pinned-unfit case is observed — the live
+  `bla_skip/rebase` counters and the pick trace make one visible within minutes if it exists.

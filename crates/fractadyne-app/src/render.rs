@@ -342,7 +342,7 @@ fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
 /// so this is cheap and deterministic — the SAME point comes back for any iteration budget past the
 /// cap, which is why a coarse and a full stage share it exactly.
 fn pick_reference(inp: &RecomputeInputs) -> [fractadyne_core::BigFloat; 2] {
-    fractadyne_core::best_reference(
+    let (point, diag) = fractadyne_core::best_reference_diag(
         &inp.center_bf,
         [inp.span.0, inp.span.1],
         inp.formula,
@@ -350,7 +350,37 @@ fn pick_reference(inp: &RecomputeInputs) -> [fractadyne_core::BigFloat; 2] {
         [inp.julia_c.0, inp.julia_c.1],
         inp.gpu_iter,
         inp.precision,
-    )
+    );
+    if crate::diag::trace_on("ref") {
+        // Offset of the pick from the view centre, in spans — the same normalisation the reuse
+        // drift gate uses, so a pick and its later reuse verdicts read in one unit.
+        let dx = fractadyne_core::ref_offset_mantissa(
+            &inp.center_bf[0],
+            &point[0],
+            inp.delta_exp,
+            inp.precision,
+        ) / inp.span_mantissa.x;
+        let dy = fractadyne_core::ref_offset_mantissa(
+            &inp.center_bf[1],
+            &point[1],
+            inp.delta_exp,
+            inp.precision,
+        ) / inp.span_mantissa.y;
+        crate::diag::trace(
+            "ref",
+            format!(
+                "pick [{}]: ask={} scored@{}bits survivors={} winner_len={}{}{} offset=({dx:.3},{dy:.3}) spans",
+                inp.origin,
+                inp.gpu_iter,
+                diag.scoring_prec,
+                diag.survivors,
+                diag.winner_len,
+                diag.rescued.map(|r| format!(" RESCUED={r}")).unwrap_or_default(),
+                if diag.fallback_escaper { " FALLBACK-ESCAPER" } else { "" },
+            ),
+        );
+    }
+    point
 }
 
 /// Extra orbit precision above the depth's exact requirement, so successive DEEPER rebuilds within
@@ -718,31 +748,28 @@ impl FractadyneApp {
         // wedge. Views whose reference stays partial at the device cap (the 2e95× spar) therefore
         // keep the clamp and render under-resolved live; that is the accepted trade until the
         // install frame itself can be cost-bounded.
-        if res.partial && res.orbit_len > crate::LIVE_REF_CAP.saturating_add(1) {
-            // Record the refused length: the quality gate only re-requests when it can ask for
-            // STRICTLY MORE, so this refusal quiets it until the (boost-driven) budget outgrows
-            // the failed attempt. A refusal at the device cap is terminal by construction. A
-            // partial at a smaller mid-climb budget proves nothing about escape — the 2.6e72×
-            // spar's reference is still partial at a 405k attempt yet escapes within the final
-            // budget — so a bigger attempt stays possible.
-            let vc = &mut self.ref_cache[vi];
-            vc.ref_ext_refused = vc.ref_ext_refused.max(res.orbit_len);
-            crate::diag::trace(
-                "ref",
-                format!(
-                    "extension refused: len={} still partial past LIVE_REF_CAP — dropped \
-                     (keeping the {}-sample clamp){}",
-                    res.orbit_len,
-                    vc.orbit_len,
-                    if res.orbit_len >= orbit_len_cap() {
-                        "; at the device cap — terminal"
-                    } else {
-                        ""
-                    }
-                ),
-            );
-            return;
-        }
+        // ⭐LONG-PARTIAL INSTALLS ARE NOW ACCEPTED, AT THE FLOOR BUDGET (2026-08-09,
+        // `design/reference-lifecycle.md` L2). This used to be a REFUSAL ("freeze guard"): a
+        // partial longer than `LIVE_REF_CAP + 1` was dropped and the pixel clamp kept, because an
+        // install that lifts the clamp raises per-frame cost discontinuously and the e21000
+        // guard-bypass experiment TDR'd on exactly that first frame. The refusal's own comment
+        // said it stood "until the install frame itself can be cost-bounded" — and beta.48's
+        // `TDR_MIN_STEPS` is that bound: reset the frame budget to the FLOOR (a ~10 ms dispatch
+        // even in the worst regime measured, mode 2 with useless BLA) and let the controller
+        // re-climb from there; the resolution shrink sizes the next frames to the floor, and the
+        // beta.48 clamp fix means the controller can keep shrinking if even the floor measures
+        // slow. The old world's missing valves — the budget floor, the deferred wall probe, the
+        // mode-switch unmeasured rule — all exist now.
+        //
+        // What the refusal actually cost, measured on the grand tour: the settled extension at a
+        // deep hold was BUILT (seconds of bignum), refused, and re-requested forever (the A3
+        // refusal loop — 258,193 → 408,193 → 508,193 → 2,008,193 at the gauntlet); the pixel
+        // clamp then never lifted, which is the direct mechanism of the black e63/e72/e82 holds.
+        // And the ONLY reason those holds ever looked healthy historically was a numerically
+        // ESCAPED (precision-cliff) orbit laundering itself past this guard — see
+        // `escape_length_of_rounded_centre`. A correct camera (exact pinned-centre glides) makes
+        // truthful long partials the NORM at deep holds, so they must be installable.
+        let long_partial = res.partial && res.orbit_len > crate::LIVE_REF_CAP.saturating_add(1);
         // A reference install that changes the pixel COST MODEL discontinuously invalidates the
         // measured frame budget. The budget controller sizes dispatches in NOMINAL steps against
         // measured GPU time; BLA/SA skip-effectiveness and the partial-clamp make real cost per
@@ -765,9 +792,13 @@ impl FractadyneApp {
             // length, so ×1.5 still never fires on the smooth path.
             let big_jump = old.orbit_len > 0
                 && res.orbit_len as u64 * 2 > old.orbit_len as u64 * 3;
-            if clamp_lifted || big_jump {
+            if clamp_lifted || big_jump || long_partial {
                 let cur = self.perf.fe_budget[vb];
-                let derated = (cur / 8).max(TDR_MIN_STEPS);
+                // A long-partial install lifts the pixel clamp by an UNBOUNDED factor (256k → the
+                // full ask, 4×+ at the deep holds), so it goes straight to the floor rather than
+                // ÷8 — re-measure from the smallest dispatch the controller allows.
+                let derated =
+                    if long_partial { TDR_MIN_STEPS } else { (cur / 8).max(TDR_MIN_STEPS) };
                 if cur == 0 || derated < cur {
                     self.perf.fe_budget[vb] = derated;
                     self.perf.fe_budget_ok[vb] = false; // tiling re-arms once re-converged
@@ -777,7 +808,13 @@ impl FractadyneApp {
                             "install derate: orbit {}→{} ({}) — budget {:.2e}→{:.2e}, re-converging",
                             old.orbit_len,
                             res.orbit_len,
-                            if clamp_lifted { "clamp lifted" } else { "length jump" },
+                            if long_partial {
+                                "long partial → floor"
+                            } else if clamp_lifted {
+                                "clamp lifted"
+                            } else {
+                                "length jump"
+                            },
                             cur as f64,
                             derated as f64
                         ),

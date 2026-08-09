@@ -785,9 +785,57 @@ const REF_SCORE_SCAN: u32 = 4096;
 /// in candidate order, so these are the most central — the likeliest good references).
 const REF_DEEP_MAX: usize = 16;
 
+/// Extra scoring precision for the CLIFF RESCUE passes in [`best_reference_diag`]. Matches the
+/// app's `REF_PREC_HEADROOM` (the orbit is built 128 bits above the request), so a rescued score
+/// describes exactly the orbit that will be built — scoring BELOW the build precision is the
+/// blindness this exists to cure.
+const REF_RESCUE_EXTRA_BITS: usize = 128;
+
+/// Why/how a pick was made — the observability half of the reference-lifecycle redesign
+/// (`design/reference-lifecycle.md` L0/L1). Everything here is deterministic.
+#[derive(Clone, Copy, Debug)]
+pub struct RefPickDiag {
+    /// Precision the WINNING selection was scored at (`p`, or `p + 128` after a rescue rescan).
+    pub scoring_prec: usize,
+    /// Phase-1 survivor count of the winning pass.
+    pub survivors: usize,
+    /// The winner's deep score at `scoring_prec` (≥ `max_iter` means it survives the render).
+    pub winner_len: u32,
+    /// `Some("rescan")` — no phase-1 survivor at `p`, whole selection redone at `p + 128`;
+    /// `Some("centre")` — the `p`-winner escaped early and the centre, rescored at `p + 128`,
+    /// survives the full render. `None` — the plain pick stood.
+    pub rescued: Option<&'static str>,
+    /// The winning pass had no survivor either: the pick is the longest ESCAPER (deep exterior).
+    pub fallback_escaper: bool,
+}
+
+/// One selection pass at a fixed precision: phase 1 (cheap rank to `quick`) + phase 2 (deep-rank
+/// survivors). Factored out of [`best_reference`] so the cliff rescue can rerun it at higher
+/// precision; the selection semantics inside are byte-identical to the original.
+enum PickPass {
+    /// A phase-1 survivor won; `deep_len` is its phase-2 score (early-break semantics preserved).
+    Winner { point: [BigFloat; 2], deep_len: u32, survivors: usize },
+    /// Every candidate escaped within `quick` — the longest escaper and its length.
+    NoSurvivor { point: [BigFloat; 2], esc_len: u32 },
+}
+
 /// Pick a reference within the view with the longest orbit (prefers an interior point). For a Julia
 /// view, candidates are `Z₀` values with the fixed `julia_c`; otherwise they are `c` values with
 /// `Z₀ = 0`. Returns the chosen bignum point.
+///
+/// ⭐**Cliff rescue** (2026-08-09, `design/reference-lifecycle.md` L1): orbit arithmetic at `p`
+/// bits is only true for a precision-dependent number of iterations before rounding error, amplified
+/// by a repelling orbit, makes it spuriously escape — measured at the three-spar Misiurewicz centre
+/// as ESCAPE CLIFFS: 128 bits → 570, 160 → 84,941, 207 → 570,711, 286+ → survives (test
+/// `escape_length_vs_precision`). Below the cliff this function used to go BLIND: every candidate
+/// "escaped" inside the quick scan, phase 1 had no survivor, and the longest-escaper fallback
+/// institutionalised a short-escaper pick (the grand tour's 626-sample reference — `bla_skip=0`,
+/// ~90× frame cost, the 2:58 device loss). Two rescues, both deterministic and both scoped to the
+/// already-suspicious outcomes so healthy picks are byte-identical to the old selection:
+/// - no phase-1 survivor at `p` → redo the whole selection at `p + 128` (the orbit-build
+///   precision, so the rescued score describes the orbit that will actually be built);
+/// - the winner escapes before `max_iter` → rescore the CENTRE alone at `p + 128`; take the
+///   centre only if it then survives the full render (the unambiguous case).
 #[allow(clippy::too_many_arguments)]
 pub fn best_reference(
     center: &[BigFloat; 2],
@@ -798,6 +846,111 @@ pub fn best_reference(
     max_iter: u32,
     p: usize,
 ) -> [BigFloat; 2] {
+    best_reference_diag(center, span, formula, julia, julia_c, max_iter, p).0
+}
+
+/// [`best_reference`] plus the pick diagnostics — see [`RefPickDiag`].
+#[allow(clippy::too_many_arguments)]
+pub fn best_reference_diag(
+    center: &[BigFloat; 2],
+    span: [FloatExp; 2],
+    formula: u32,
+    julia: bool,
+    julia_c: [f64; 2],
+    max_iter: u32,
+    p: usize,
+) -> ([BigFloat; 2], RefPickDiag) {
+    match pick_pass(center, span, formula, julia, julia_c, max_iter, p) {
+        PickPass::Winner { point, deep_len, survivors } if deep_len >= max_iter => (
+            point,
+            RefPickDiag {
+                scoring_prec: p,
+                survivors,
+                winner_len: deep_len,
+                rescued: None,
+                fallback_escaper: false,
+            },
+        ),
+        PickPass::Winner { point, deep_len, survivors } => {
+            // The winner escapes before the render budget — either a genuine boundary/exterior
+            // view (every point escapes) or a precision cliff between `quick` and `max_iter`.
+            // Rescoring the centre at the BUILD precision separates them: only a cliff un-blinds.
+            let p2 = p + REF_RESCUE_EXTRA_BITS;
+            let jcx = bf(julia_c[0], p2);
+            let jcy = bf(julia_c[1], p2);
+            let zero = bf(0.0, p2);
+            let centre_len = if julia {
+                orbit_length_bf(&center[0], &center[1], &jcx, &jcy, formula, max_iter, p2)
+            } else {
+                orbit_length_bf(&zero, &zero, &center[0], &center[1], formula, max_iter, p2)
+            };
+            if centre_len >= max_iter {
+                (
+                    [center[0].clone(), center[1].clone()],
+                    RefPickDiag {
+                        scoring_prec: p2,
+                        survivors,
+                        winner_len: centre_len,
+                        rescued: Some("centre"),
+                        fallback_escaper: false,
+                    },
+                )
+            } else {
+                (
+                    point,
+                    RefPickDiag {
+                        scoring_prec: p,
+                        survivors,
+                        winner_len: deep_len,
+                        rescued: None,
+                        fallback_escaper: false,
+                    },
+                )
+            }
+        }
+        PickPass::NoSurvivor { .. } => {
+            // Not one candidate outlived the quick scan at `p`. A genuinely deep-exterior view
+            // looks like this — but so does the cliff, and below the cliff every score is
+            // fiction. Redo the WHOLE selection at the build precision; a still-empty pass is
+            // then a real exterior view and the longest escaper (at truthful scores) stands.
+            let p2 = p + REF_RESCUE_EXTRA_BITS;
+            match pick_pass(center, span, formula, julia, julia_c, max_iter, p2) {
+                PickPass::Winner { point, deep_len, survivors } => (
+                    point,
+                    RefPickDiag {
+                        scoring_prec: p2,
+                        survivors,
+                        winner_len: deep_len,
+                        rescued: Some("rescan"),
+                        fallback_escaper: false,
+                    },
+                ),
+                PickPass::NoSurvivor { point, esc_len } => (
+                    point,
+                    RefPickDiag {
+                        scoring_prec: p2,
+                        survivors: 0,
+                        winner_len: esc_len,
+                        rescued: Some("rescan"),
+                        fallback_escaper: true,
+                    },
+                ),
+            }
+        }
+    }
+}
+
+/// The original selection body, at one precision. See [`best_reference`] for the semantics.
+#[allow(clippy::too_many_arguments)]
+fn pick_pass(
+    center: &[BigFloat; 2],
+    span: [FloatExp; 2],
+    formula: u32,
+    julia: bool,
+    julia_c: [f64; 2],
+    max_iter: u32,
+    p: usize,
+) -> PickPass {
     // Score candidates by orbit length in **bignum** (f64 coords collapse to the same value at deep
     // zoom, which broke reference selection on cold jumps). TWO PHASES: rank cheaply to `quick`, then
     // DEEP-rank the survivors to the full render length and take the longest-surviving. A reference
@@ -856,7 +1009,8 @@ pub fn best_reference(
         }
     }
     if survivors.is_empty() {
-        return cands[esc_i].clone(); // deep exterior — take the longest-escaping point
+        // Deep exterior — or a precision cliff; the caller's rescue pass tells them apart.
+        return PickPass::NoSurvivor { point: cands[esc_i].clone(), esc_len };
     }
     // Phase 2 — deep-rank survivors to the full render length; take the longest-surviving. The centre
     // (cands[0], usually best on the boundary) is scanned first — alone, so the common boundary case
@@ -867,7 +1021,11 @@ pub fn best_reference(
     let first = survivors[0];
     let dl0 = score(&cands[first][0], &cands[first][1], max_iter);
     if dl0 >= max_iter {
-        return cands[first].clone();
+        return PickPass::Winner {
+            point: cands[first].clone(),
+            deep_len: dl0,
+            survivors: survivors.len(),
+        };
     }
     let rest: Vec<usize> = survivors.iter().skip(1).take(REF_DEEP_MAX - 1).copied().collect();
     let deep = par_orbit_scores(&cands, &rest, max_iter, julia, &jcx, &jcy, formula, p);
@@ -881,7 +1039,11 @@ pub fn best_reference(
             }
         }
     }
-    cands[best_i].clone()
+    PickPass::Winner {
+        point: cands[best_i].clone(),
+        deep_len: best_len,
+        survivors: survivors.len(),
+    }
 }
 
 /// Score `idxs`-selected candidates' orbit lengths (up to `cap`) in parallel across the machine's
@@ -1706,6 +1868,35 @@ mod aux_bla_oracle {
     /// e63's "natural escape at 256,753" and e72's 602,516 are ALL this one mechanism at
     /// different precisions, and that the picker itself goes blind at low precision (no candidate
     /// survives phase 1, so `best_reference` falls back to "longest escaper").
+    /// COMPANION EXPERIMENT (run: `cargo test -p fractadyne-core --release --lib
+    /// escape_length_of_rounded_centre -- --ignored --nocapture`): the ROUNDED-POINT axis of the
+    /// cliff. `Playback::sample` used to route a pinned-centre glide through
+    /// `lerp_bf(a, a, ease, p)` with `p` = the CURRENT interpolated depth's precision — which is
+    /// not the identity: it ROUNDS the centre to `p` bits, i.e. hands the reference machinery a
+    /// genuinely different point. This measures the true escape length (high-precision
+    /// arithmetic) of `lerp_bf(centre, centre, 0.5, k)` for the glide precisions the grand tour
+    /// actually produces. However good the picker, it cannot beat a wrong input point.
+    #[test]
+    #[ignore]
+    fn escape_length_of_rounded_centre() {
+        let cxs = "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1";
+        let cys = "9.5628651080914147131604703998237075557983304380930462483482733212267499793490593467836270525491219946548323699651521e-1";
+        let cx = crate::parse_bf(cxs).unwrap();
+        let cy = crate::parse_bf(cys).unwrap();
+        let max_iter = 700_000u32;
+        let arith = 480usize; // far above every cliff measured on the arithmetic axis
+        let zero = BigFloat::from_f64(0.0, arith);
+        for k in [64usize, 78, 96, 128, 157, 206, 300] {
+            let rx = crate::lerp_bf(&cx, &cx, 0.5, k);
+            let ry = crate::lerp_bf(&cy, &cy, 0.5, k);
+            let n = orbit_length_bf(&zero, &zero, &rx, &ry, 0, max_iter, arith);
+            println!(
+                "lerp'd at {k:4} bits -> true escape {n}{}",
+                if n >= max_iter { "  (SURVIVED)" } else { "" }
+            );
+        }
+    }
+
     #[test]
     #[ignore]
     fn escape_length_vs_precision() {

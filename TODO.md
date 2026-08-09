@@ -116,7 +116,22 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] ⭐⭐⭐**REDESIGN PLANNED — read `design/reference-lifecycle.md` FIRST; it supersedes the
+- [x] ⭐⭐⭐**RESOLVED v0.2.40-beta.49 (2026-08-09): the 2:58 device loss AND the black deep holds
+  — one root cause, `design/reference-lifecycle.md` § 6 is the authoritative account.** Short
+  form: `Playback::sample` ROUNDED a pinned-centre glide's centre to the current depth's precision
+  (`lerp_bf(a, a, ease, p)` is not the identity), and every mysterious orbit length in this ledger
+  is `escape(round(centre, p)) + 1` — the crash's 626 is the 78-bit rounding, hold-e72's "602,516
+  accumulation" is the 206-bit rounding. Fixes: exact pinned-centre glides + the picker's cliff
+  rescue (`best_reference_diag`, selftest group `ref-pick`) + the freeze guard now INSTALLS long
+  partials at the floor budget (retiring the A3 refusal loop; e61/e63/e82 went green, baseline
+  re-blessed). Verified: 0 losses in 4 fresh-dir runs (base rate was 3-in-4), 0 Event 153,
+  e21000 soak clean, suite 106/106, goldens 17/17, bench-matrix 0 drift.
+  ⚠Watch items: `seahorse-2` captures mid re-climb (cosmetic, verdict ok); the incumbent/
+  challenger cache (plan § 3 L2) is DEFERRED until the live `bla_skip` counters ever show a
+  pinned-unfit reference again.
+
+- [ ] ~~⭐⭐⭐REDESIGN PLANNED~~ (superseded by the resolution above; kept for the forensic
+  record) — **read `design/reference-lifecycle.md` FIRST; it supersedes the
   next-step lists inside the entry below.** 2026-08-09 (late): the mechanism is now fully
   measured, and it rewrites several of the entry's conclusions:
   - **A reference orbit's usable length is a function of PRECISION, with cliffs** (new experiment

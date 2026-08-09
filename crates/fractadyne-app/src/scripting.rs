@@ -1309,15 +1309,30 @@ impl Playback {
             }),
             (None, _) => None,
         };
-        mk(
-            fractadyne_core::lerp_bf(&a.cx, &b.cx, ease, p),
-            fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
-            lm,
-            julia_c,
-            orbit,
-            max_iter,
-            palette,
-        )
+        // ⭐A PINNED-CENTRE GLIDE MUST RETURN THE CENTRE EXACTLY. `lerp_bf(x, x, ease, p)` is not
+        // the identity — it ROUNDS x to `p` bits, and `p` here is the precision of the CURRENT
+        // interpolated depth, so a zoom dive's shallow entry rounds the destination centre it will
+        // spend the whole descent converging on. A rounded centre is a genuinely DIFFERENT point,
+        // and at a Misiurewicz centre its true orbit escapes at a length set by the rounding
+        // (measured, core test `escape_length_of_rounded_centre`: 78 bits → escape 625, 157 →
+        // 94,126, 206 → 602,515, 300+ → survives). The grand tour's 626-sample reference — pinned
+        // by reuse through the df32→floatexp crossover into `bla_skip=0`, ~90× frame cost and a
+        // GPU device loss at 2:58 — was exactly `escape(round(centre, 78)) + 1`, and hold-e72's
+        // mysterious 602,516-sample orbit was `escape(round(centre, 206)) + 1`. However good the
+        // reference picker, it cannot beat a wrong input point.
+        //
+        // A genuine pan (a.c ≠ b.c) still interpolates at the depth precision: mid-pan centres are
+        // transient (references re-anchor continuously) and every arrival point is a keyframe,
+        // which the hold branch above returns EXACTLY.
+        let (cx, cy) = if a.cx == b.cx && a.cy == b.cy {
+            (a.cx.clone(), a.cy.clone())
+        } else {
+            (
+                fractadyne_core::lerp_bf(&a.cx, &b.cx, ease, p),
+                fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
+            )
+        };
+        mk(cx, cy, lm, julia_c, orbit, max_iter, palette)
     }
 
     /// Is the camera stationary at time `e` — inside a keyframe's hold, or past the final one?
