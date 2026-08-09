@@ -5806,11 +5806,16 @@ impl eframe::App for FractadyneApp {
             diag::log_line(
                 "render",
                 &format!(
-                    "slow frame {}: dt={:.0}ms = body {:.0}ms + outside(acquire/present/idle)                      {:.0}ms — mode={} steps={:.3e} budget={:.3e}",
+                    "slow frame {}: dt={:.0}ms = body {:.0}ms + outside(acquire/present/idle)                      {:.0}ms repaint_requested={} — mode={} steps={:.3e} budget={:.3e}",
                     self.perf.frame_idx,
                     self.perf.last_dt_ms,
                     self.perf.prev_body_ms,
                     outside.max(0.0),
+                    // ⭐The discriminator between "blocked on the GPU" and "idle". If the app
+                    // requested no repaint, eframe falls back to its ~1 Hz tick and the interval
+                    // measures NOTHING about cost — 1018/1016/1017 ms three frames running is a
+                    // timer, not GPU work, and the two want opposite fixes.
+                    ctx.has_requested_repaint(),
                     self.perf.last_mode,
                     self.perf.fe_steps_last[0] as f64,
                     self.perf.fe_budget[0] as f64,

@@ -326,10 +326,23 @@ Mockups: [design/mockups/](design/mockups/).
 
       rm -rf $SANDBOX && FRACTADYNE_CONFIG_DIR=$SANDBOX         ./target/release/fractadyne.exe --play tours/grand-tour.toml
 
-  A **fresh** config dir is the ingredient the earlier 0/12 attempts were missing. It died at
-  +203.9 s, +203.9 s, +203.9 s on three consecutive runs — to the tenth of a second, ~3.2 s after
-  the df32→floatexp switch at +200.6 s. (`use_bla = true` in the sandbox session, so this is not
-  the fresh-sandbox-has-BLA-off trap.)
+  A **fresh** config dir is the ingredient the earlier 0/12 attempts were missing. It dies ~3.2 s
+  after the df32→floatexp switch, at +203.9–204.0 s, consistently to the tenth of a second.
+  (`use_bla = true` in the sandbox session, so this is not the fresh-sandbox-has-BLA-off trap.)
+
+  ⛔⛔**MANDATORY HYGIENE — `taskkill /F /IM fractadyne.exe` BEFORE AND AFTER EVERY RUN.** The
+  device-loss handler AUTO-RESTARTS the app, and that restarted child is not a descendant of the
+  `timeout` that launched the original, so **every crash leaves a survivor that outlives the run
+  and races the next one.** Two GPU-heavy instances on one device is its own plausible cause of a
+  loss, so a contaminated run proves nothing. Caught by the user, not by me: run 2 of a back-to-back
+  pair had visibly interleaved out-of-order timestamps (201.770 → 201.370 → 202.121) because two
+  processes were writing one log. ⚠**My first "3/3, reproducible on demand" was contaminated** —
+  runs 2 and 3 raced run 1's survivor. Re-measured with kills between runs: **3 device losses in 4
+  clean runs.** Still much the best repro this class has had, but it is ~75%, not deterministic,
+  so a single clean run STILL does not clear a fix.
+  → Worth fixing in the product too: auto-restart is right for a user whose GPU hiccuped and wrong
+  for `--play` / automation, where it silently forks the experiment. Suppress it when a tour is
+  being driven headlessly.
 
   The new `slow frame` attribution log settles what a frame interval never could — whether a long
   frame is CPU work inside `update` or a block outside it:
@@ -340,6 +353,17 @@ Mockups: [design/mockups/](design/mockups/).
       DEVICE LOST
 
   **Zero CPU. One second blocked on the GPU, three frames running, at 69×54.** So:
+
+  ✅**Confirmed blocked, not idle.** `1018/1016/1017 ms` three frames running looked like a 1 Hz
+  timer — eframe falls back to ~1 Hz when the app requests no repaint, and an idle interval
+  measures nothing about cost, so this had to be settled before reading anything into it. The log
+  now carries `repaint_requested`, and it is **true** on every one of these frames: the app is
+  asking for the next frame and not getting it. Genuinely blocked outside `update`.
+
+  ⛔**Glitch correction is OUT.** It was the strongest remaining lead — `glitch_correct = true` in
+  the session, `glitch=367` counted at this view offline, and a documented >1 h glitch-correction
+  pathology already in this file. Tested by flipping it off in the sandbox session: **1 loss in 2
+  runs, the same rate as with it on.**
 
   - ⛔**CPU starvation is OUT** as the cause — it was the beta.47 hypothesis and the lookahead cap
     it produced is a real quality win, but `body 0ms` ends it. Frame cost is IN, definitively.
@@ -375,9 +399,11 @@ Mockups: [design/mockups/](design/mockups/).
   two, so at 626 samples it is not reallocating the ~1 GB cap buffer per frame.
 
   **NEXT, in order** (all now cheap — there is a 4.5-minute repro):
-  1. Find what the live frame submits that the offline frame does not. `body 0ms` means the main
-     thread is blocked in acquire/present, so the GPU has ~1 s of work queued from SOMEWHERE — the
-     iterate pass at 69×54 cannot be it. Candidates: a second view still live from the dual-view
+  1. Find what the live frame submits that the offline frame does not. `body 0ms` +
+     `repaint_requested=true` means the main thread is blocked in acquire/present, so the GPU has
+     ~1 s of work queued from SOMEWHERE — the iterate pass cannot be it. The gap is ~90×: the live
+     frames measure `steps=3.95e8` at ~26 464 iterations ⇒ ~141×106, and offline 138×108 in mode 2
+     costs **11 ms**. Candidates: a second view still live from the dual-view
      chapter, the minimap, the orbit overlay, a pass running at window resolution rather than the
      iterate resolution, or the iterate pass running more than once per frame. Instrument by
      labelling every submit in the frame and logging the set when `outside > 200 ms`.
