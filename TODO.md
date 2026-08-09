@@ -414,15 +414,30 @@ Mockups: [design/mockups/](design/mockups/).
   still suits the frame. That is why `len=626` is byte-identical across every build, every run and
   every field crash — one bad point, pinned, while the dive's appetite grows 600 → 34,000.
 
-  ⛔**ATTEMPTED FIX, REVERTED — `reference_reusable(escaped, len, ask)`**, refusing to reuse an
-  escaped reference once `ask/len` exceeds N traversals. Tried N=2 and N=8. Both regressed
-  `--livetest` `hold-e72` from **0% → 100% black** (`orbit 602516 → 256001 PARTIAL`, budget
-  1011664 → 256000): refusing reuse also **discards an ACCUMULATED orbit**, and the fresh build is
-  capped at `LIVE_REF_CAP`. Goldens 17/17 and `--bench-matrix` 0 drift throughout, so this is
-  live-path-specific. ⚠**The thing I could not explain and the next person must**: e72's reference
-  is 602,516 samples AND escaped. If an escaped orbit cannot be extended, how did it accumulate?
-  Read `try_reuse_reference` before touching this again — my model of reuse/extend is evidently
-  wrong, and that is exactly what the regression is telling me.
+  ⛔⛔**ATTEMPTED FIX, REVERTED THREE TIMES — do not reach for a reuse-refusal predicate again
+  without reading this.** `reference_reusable(...)`, refusing to reuse an escaped reference once
+  `ask/len` exceeds N traversals: tried N=2, N=8, and N=8 plus a `len >= fresh_cap` guard. **All
+  three regressed `--livetest hold-e72` from 0% → 100% black**, with byte-identical numbers every
+  time (`orbit 602516 → 256001 PARTIAL`, budget 1011664 → 256000). Goldens 17/17 and
+  `--bench-matrix` 0 drift throughout, so it is live-path-specific.
+
+  ⭐**Mechanism, now understood (`try_reuse_reference` + `extend_reference_orbit`):**
+  - An escaped orbit is returned by `extend_reference_orbit` UNCHANGED — it can never grow. But it
+    can be LONG, because it grew by extension while it was still PARTIAL and escaped during one of
+    those extensions. That is e72's 602,516-sample escaped reference, and it answers the question
+    the previous revision left open.
+  - **Refusing reuse is DESTRUCTIVE AND UNRECOVERABLE within a tour.** The 602k orbit is
+    accumulated across the whole descent, one extension per rebuild. Refuse once, anywhere in the
+    climb, and the replacement starts from a fresh build capped at `LIVE_REF_CAP` = 256,000 and
+    never catches up — which is why the third attempt's `len >= fresh_cap` guard did not help: the
+    refusal that does the damage fires EARLIER, while the reference is still short.
+
+  ⛔**So the lever is wrong.** A predicate can only choose between "keep the bad reference" and
+  "throw away the accumulation"; both are losing moves. Any real fix has to avoid the destruction:
+  pick a new reference while KEEPING the old orbit until the new one is at least as good, or make
+  a re-pick able to seed from the cached orbit. That is a design change in the reference cache, not
+  a threshold. ⚠And whatever it is, the cost that actually kills is `bla_skip=0` at 54 traversals —
+  verify against THAT counter, now that the live path publishes it.
 
   ⚠**`--livetest` FLAPS.** Twice today it reported `1 drifted` and then `0 drifted` on an
   IDENTICAL binary. The gate was narrowed to outcome-only fields precisely to stop this, so the
