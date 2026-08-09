@@ -168,10 +168,42 @@ Mockups: [design/mockups/](design/mockups/).
   besides the budget — reference/BLA rebuild, shader path, buffer and bind-group recreation while
   5–6 all-core bignum lookahead builds run per second — is the remaining surface.
 
-  ⭐**Two long-standing assumptions are now DISPROVEN — do not re-derive them:**
-  - **It is not a Windows TDR.** The System log records no display-driver reset for these losses,
-    and Application/WER records no exception. Every prior investigation in this ledger framed the
-    class as "the GPU watchdog" and tuned frame cost against it; that framing looks wrong.
+  ⛔⛔**CORRECTION: it IS a driver-level GPU fault. My earlier "Windows logs no TDR" was a bad
+  query, not a finding.** The System log carries **`nvlddmkm` Event ID 153** at the instant of
+  every single loss — six events, six losses, **1:1**, and none during the ~12 clean runs:
+
+      23:02:39 · 23:08:21 (field)   23:22:18 · 23:27:20 (the beta.46/47 A/B)
+      04:46:47 (field)              08:02:37 (field)
+
+  The earlier search missed them because it filtered on Event IDs 4101/4102/13/14 and a message
+  regex, and Event 153 arrives with an EMPTY message body. There is no 4101 "display driver
+  stopped responding", but there is unambiguously a GPU error. Frame cost is therefore back on
+  the table, and the "not a TDR" reasoning built on top of the bad query is void.
+
+  ⭐**And the frame rate collapses at the crossover.** From the 2026-08-09 08:02 report, with the
+  new `since_mode_switch` instrument:
+
+      mode switch 0→2  at +221.551s (frame 11838, mag 2^93 — the 1e28 threshold)
+      DEVICE LOST      at +226.164s, `since_mode_switch=10 frames`
+
+  **Ten frames in 4.6 seconds is ~460 ms per frame.** The instant it crosses into floatexp the app
+  is submitting half-second dispatches — the ÷8 derate left the budget at 4.98e9 and the
+  resolution shrink duly sized the frame to fill it. Against a ~2 s watchdog that is ~4× of
+  margin, in the one regime where cost is least predictable (`orbit_len=626`, so BLA skips nothing
+  and real cost tracks the nominal count instead of being a small fraction of it).
+
+  ✅**FIX ATTEMPTED v0.2.40-beta.47: a mode switch now marks the budget UNMEASURED** rather than
+  derating the old mode's measurement by 8 — the same invariant the no-`TIMESTAMP_QUERY` fix rests
+  on, since a budget that has measured nothing *in this mode* may bound the first dispatch and
+  must do no more. Measured: the crossover now goes `7.78e10 → unmeasured (bootstrap 4.00e8)`, and
+  the slowest GPU iterate across a full oscillating run fell 18.8 ms → 14.0 ms. The controller
+  re-climbs at ×1.5 per reading, so the cost is a few coarse frames during a dive, where motion
+  resolution is already reduced. Suite 104/104, goldens 17/17, livetest 0 drifted.
+  ⚠**UNVERIFIED against the crash** — it is intermittent (2 in 2 runs, then 0 in 12) and has not
+  been reproduced locally since. `nvlddmkm` 153 is now the objective verdict signal and does not
+  depend on the app: `Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='nvlddmkm'}`.
+
+  ⭐**One long-standing assumption is still DISPROVEN — do not re-derive it:**
   - **It is not reference upload traffic** (the previous leading hypothesis, which this file told
     the next person to check first). `orbit_id` re-uploads only `orbit.len() + bla.len()` ACTUAL
     bytes — at 626 samples that is ~10 KB per install, not the ~1 GB `orbit_len_cap` binding.

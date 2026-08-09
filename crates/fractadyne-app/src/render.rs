@@ -2405,16 +2405,38 @@ impl FractadyneApp {
                         self.perf.frame_idx
                     ),
                 );
+                // ⭐The budget is now treated as UNMEASURED in the new mode, not as the old mode's
+                // measurement scaled down. The ÷8 derate was still TRUSTING a number earned under
+                // different arithmetic, and the field evidence says that trust is misplaced:
+                //
+                //   mode switch 0→2 at +221.551s (frame 11838, mag 2^93 = the 1e28 threshold)
+                //   DEVICE LOST  at +226.164s — 4.6 s later, `since_mode_switch=10 frames`
+                //
+                // Ten frames in 4.6 seconds is **~460 ms per frame**: the instant it crosses into
+                // floatexp the app is submitting half-second dispatches, because the derate left
+                // the budget at 4.98e9 and the resolution shrink duly sized the frame to fill it.
+                // Against a ~2 s driver watchdog that is barely 4× of margin, in the one regime
+                // where cost is least predictable — `orbit_len=626`, so BLA skips nothing and the
+                // real cost tracks the nominal count instead of being a small fraction of it. Six
+                // device losses, each matched 1:1 by an `nvlddmkm` Event 153 at the same instant,
+                // and none during a dozen clean runs.
+                //
+                // Marking it unmeasured is the same invariant the no-`TIMESTAMP_QUERY` fix rests
+                // on: a budget that has measured nothing IN THIS MODE may bound the first dispatch
+                // and must not do more than that. The first floatexp frames then cost ~40 ms
+                // instead of ~460 ms and the controller re-climbs at ×1.5 per reading — a few
+                // coarse frames during a dive, where the motion resolution is already reduced.
                 let cur = self.perf.fe_budget[vidx];
-                let derated = (cur / 8).max(TDR_BOOTSTRAP_STEPS);
-                if cur != 0 && derated < cur {
-                    self.perf.fe_budget[vidx] = derated;
+                if cur != 0 {
+                    self.perf.fe_budget[vidx] = 0;
                     self.perf.fe_budget_ok[vidx] = false; // tiling re-arms once re-converged
-                    crate::diag::trace(
-                        "gpu",
-                        format!(
-                            "mode switch to {m}: budget {:.2e}→{:.2e}, re-converging",
-                            cur as f64, derated as f64
+                    crate::diag::log_line(
+                        "render",
+                        &format!(
+                            "mode switch to {m}: budget {:.2e} → unmeasured (bootstrap {:.2e}), \
+                             re-converging",
+                            cur as f64,
+                            TDR_BOOTSTRAP_STEPS as f64
                         ),
                     );
                 }
