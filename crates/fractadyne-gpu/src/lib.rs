@@ -286,6 +286,7 @@ impl CounterRead {
         device: &wgpu::Device,
         out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         norm_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        work_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -316,6 +317,17 @@ impl CounterRead {
                         if let Some(o) = norm_out {
                             let packed = ((slots[CTR_ESC_MIN] as u64) << 32)
                                 | slots[CTR_ESC_MAX] as u64;
+                            o.store(packed, SeqCst);
+                        }
+                        // ⭐Rebases and BLA skips, published live. All eight slots have always been
+                        // read here and only two were forwarded, so the live path could not see its
+                        // own BLA effectiveness — the exact blind spot that let a period-626
+                        // reference cost ~1 s a frame for a whole release cycle while every
+                        // diagnosis argued about frame budgets. `+1` biases so a real zero is
+                        // distinguishable from "never published".
+                        if let Some(o) = work_out {
+                            let packed = (((slots[CTR_REBASE] as u64) + 1) << 32)
+                                | ((slots[CTR_BLA_SKIP] as u64) + 1);
                             o.store(packed, SeqCst);
                         }
                     }
@@ -838,6 +850,8 @@ pub struct MandelbrotParams {
     /// bit patterns; `min_bits == 0xFFFFFFFF` = no escaped pixels). Drained with `swap(u64::MAX)`.
     /// Feeds the live palette auto-normalization. `None` disables capture.
     pub norm_range: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Live sink for `(rebase + 1) << 32 | (bla_skip + 1)` — see `CounterRead::pump`.
+    pub work_counters: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Tiled settle: `Some([x, y, w, h])` in BASE pixels renders only that sub-rect of the iteration
     /// texture this frame (scissored, `LoadOp::Load`), leaving the rest intact. The uniforms are
     /// identical to a full-frame render and the fragment coordinates are absolute in the texture, so
@@ -960,7 +974,12 @@ impl CallbackTrait for MandelbrotParams {
             t.pump(device, queue, self.iterate_ms.as_ref(), self.iterate_steps.as_ref());
         }
         // Same for the event-counter readback (adaptive iteration budget + live-normalize feedback).
-        view.counter_read.pump(device, self.maxiter_count.as_ref(), self.norm_range.as_ref());
+        view.counter_read.pump(
+            device,
+            self.maxiter_count.as_ref(),
+            self.norm_range.as_ref(),
+            self.work_counters.as_ref(),
+        );
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed
         // the device's max 2D texture dimension (e.g. 8192) or wgpu fatally errors —

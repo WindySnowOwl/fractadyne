@@ -3387,6 +3387,7 @@ impl FractadyneApp {
         // fraction itself (count and pixel denominator always from the same frame).
         let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
         let norm_range = Some(self.perf.norm_sink[vs.min(1)].clone());
+        let work_counters = Some(self.perf.work_sink[vs.min(1)].clone());
         // LIVE palette auto-normalization (see `live_norm_cycle_offset`): when the frame's escaped
         // smooth-iter range is huge, a fixed cycle wraps the palette thousands of times between
         // adjacent pixels and a CORRECT dense escape field reads as speckle "noise pools" (the
@@ -3410,6 +3411,7 @@ impl FractadyneApp {
             nominal_steps,
             maxiter_count,
             norm_range,
+            work_counters,
             tile,
             orbit: self.ref_cache[vi].orbit.clone(),
             orbit_id: self.ref_cache[vi].orbit_id,

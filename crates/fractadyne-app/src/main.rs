@@ -281,6 +281,10 @@ struct Perf {
     /// Escape-range sink per view (GPU → app: packed `(min_bits << 32) | max_bits` f32 bits of the
     /// frame's escaped smooth-iter range; drained with `swap(u64::MAX)`).
     norm_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// Live sink for `(rebase + 1) << 32 | (bla_skip + 1)` per view — how effective BLA actually
+    /// is on the frames the user is looking at. Until beta.48 only the offline paths could see
+    /// this, and a reference whose BLA skips nothing cost ~1 s a frame unnoticed.
+    work_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
     /// Adaptive deep-motion resolution scale (AIMD), driven by `frame_ms` in `build_params`. The
@@ -355,6 +359,10 @@ impl Default for Perf {
             norm_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            ],
+            work_sink: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             norm_range: [None, None],
             motion_res: 0.6,
@@ -5042,6 +5050,17 @@ impl FractadyneApp {
     /// A dispatch that fits inside a vsync cannot be distinguished from a much cheaper one, but
     /// that only means the climb keeps growing at `TDR_GROW_MAX` until a frame is genuinely slow,
     /// which is exactly the intended search.
+    /// Live `(rebase, bla_skip)` from the last counter readback, or `(0, 0)` if none has landed.
+    /// Both are stored biased by one so a genuine zero is distinguishable from "never published" —
+    /// and a genuine zero is the interesting reading here, not a missing one.
+    fn live_work_counters(&self, v: usize) -> (u64, u64) {
+        let packed = self.perf.work_sink[v].load(std::sync::atomic::Ordering::SeqCst);
+        if packed == 0 {
+            return (0, 0);
+        }
+        ((packed >> 32).saturating_sub(1), (packed & 0xFFFF_FFFF).saturating_sub(1))
+    }
+
     fn wall_clock_budget_tick(&mut self, dt_ms: f64) {
         if !self.perf.wall_fallback || !(dt_ms > 0.01) {
             return;
@@ -5803,10 +5822,11 @@ impl eframe::App for FractadyneApp {
         // against the PREVIOUS frame's body, since dt spans `frame_start(N-1) → frame_start(N)`.
         if body_ms > 200.0 || self.perf.last_dt_ms > 200.0 {
             let outside = self.perf.last_dt_ms - self.perf.prev_body_ms;
+            let rebase_bla = self.live_work_counters(0);
             diag::log_line(
                 "render",
                 &format!(
-                    "slow frame {}: dt={:.0}ms = body {:.0}ms + outside(acquire/present/idle)                      {:.0}ms repaint_requested={} — mode={} steps={:.3e} budget={:.3e}",
+                    "slow frame {}: dt={:.0}ms = body {:.0}ms + outside(acquire/present/idle)                      {:.0}ms repaint_requested={} — mode={} steps={:.3e} budget={:.3e}                      rebase={} bla_skip={}",
                     self.perf.frame_idx,
                     self.perf.last_dt_ms,
                     self.perf.prev_body_ms,
@@ -5819,6 +5839,11 @@ impl eframe::App for FractadyneApp {
                     self.perf.last_mode,
                     self.perf.fe_steps_last[0] as f64,
                     self.perf.fe_budget[0] as f64,
+                    // BLA effectiveness on the very frame that was slow. `bla_skip` near zero
+                    // against a large `rebase` says the reference is wrong for this iteration
+                    // count, not that the frame is intrinsically expensive.
+                    rebase_bla.0,
+                    rebase_bla.1,
                 ),
             );
         }
