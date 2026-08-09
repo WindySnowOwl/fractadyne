@@ -420,6 +420,12 @@ fn finish_reference(
 ) -> RecomputeResult {
     use fractadyne_core as fc;
     let partial = !tail.escaped;
+    // ⚠The trace below used to print `orbit_tail.is_none() && !partial`, which has been
+    // HARDCODED FALSE ever since the tail became unconditional (see `orbit_tail` below) — a dead
+    // field that read as "this reference never escaped" for every reference in the log. It cost a
+    // wrong root cause: `len=626 partial=false escaped=false` was read as a period-626 nucleus
+    // when it is an orbit that ESCAPED at 626.
+    let tail_escaped = tail.escaped;
     // A SHORT ESCAPED reference (deep EXTERIOR): the orbit escapes early (e.g. ~3.3k iters at 1e261×)
     // and this orbit geometry has an EARLY-ITERATION perturbation glitch. A BLA view normally turns
     // SERIES APPROXIMATION off ("BLA subsumes SA") — which leaves that glitch EXPOSED and shatters the
@@ -500,7 +506,7 @@ fn finish_reference(
                 "len={len} iter={orbit_iter} prec={orbit_prec} partial={partial} \
                  escaped={} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={} \
                  | orbit_ms={ref_ms:.0} sa_ms={series_ms:.0} bla_ms={bla_ms:.0}",
-                orbit_tail.is_none() && !partial,
+                tail_escaped,
                 sa.skip,
                 bla.len(),
             ),

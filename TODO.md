@@ -398,6 +398,37 @@ Mockups: [design/mockups/](design/mockups/).
   Ruled out while finding this: `ensure_orbit_capacity` only ever grows and rounds to a power of
   two, so at 626 samples it is not reallocating the ~1 GB cap buffer per frame.
 
+  ⛔⛔**CORRECTION 2026-08-09 (late): the "period-626 nucleus" reading below is WRONG, and it came
+  from a DEAD DIAGNOSTIC.** `finish_reference` sets `orbit_tail = Some(tail)` unconditionally
+  (deliberately — an escaped orbit cannot be extended but can still be reused as-is, so a rebuild
+  does not re-pick and make the view jump on zoom). The trace then printed
+  `escaped = orbit_tail.is_none() && !partial`, which is therefore **hardcoded false for every
+  reference ever logged**. `partial = !tail.escaped`, so `len=626 partial=false` means the orbit
+  **ESCAPED at 626** — the original reading in this ledger was right. Fixed: the trace now prints
+  `tail.escaped`. ⚠A diagnostic that cannot print one of its two values is worse than no
+  diagnostic; it survived because nobody cross-checked it against `partial`, which was sitting on
+  the same line saying the opposite.
+
+  ⭐**What that same code path DOES reveal: an escaped reference is reused FOREVER.** Reuse is
+  gated only on `orbit_tail.is_some()`, which is always true, with no check that the reference
+  still suits the frame. That is why `len=626` is byte-identical across every build, every run and
+  every field crash — one bad point, pinned, while the dive's appetite grows 600 → 34,000.
+
+  ⛔**ATTEMPTED FIX, REVERTED — `reference_reusable(escaped, len, ask)`**, refusing to reuse an
+  escaped reference once `ask/len` exceeds N traversals. Tried N=2 and N=8. Both regressed
+  `--livetest` `hold-e72` from **0% → 100% black** (`orbit 602516 → 256001 PARTIAL`, budget
+  1011664 → 256000): refusing reuse also **discards an ACCUMULATED orbit**, and the fresh build is
+  capped at `LIVE_REF_CAP`. Goldens 17/17 and `--bench-matrix` 0 drift throughout, so this is
+  live-path-specific. ⚠**The thing I could not explain and the next person must**: e72's reference
+  is 602,516 samples AND escaped. If an escaped orbit cannot be extended, how did it accumulate?
+  Read `try_reuse_reference` before touching this again — my model of reuse/extend is evidently
+  wrong, and that is exactly what the regression is telling me.
+
+  ⚠**`--livetest` FLAPS.** Twice today it reported `1 drifted` and then `0 drifted` on an
+  IDENTICAL binary. The gate was narrowed to outcome-only fields precisely to stop this, so the
+  narrowing is insufficient. Re-run before believing a single drift — and fix the flap, because a
+  gate that cries wolf is one that gets ignored (its own doc comment says so).
+
   ⭐⭐⭐**THE ~90× IS THE REFERENCE, NOT THE PASS. Live and offline pick fundamentally different
   references for the SAME view, and the live one is a period-626 periodic orbit.**
 
