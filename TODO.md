@@ -205,12 +205,19 @@ Mockups: [design/mockups/](design/mockups/).
   margin, in the one regime where cost is least predictable (`orbit_len=626`, so BLA skips nothing
   and real cost tracks the nominal count instead of being a small fraction of it).
 
-  ⛔⛔**FRAME COST IS DEFINITIVELY OUT — and the mode-switch fix PROVED it rather than fixing
+  ⛔~~**FRAME COST IS DEFINITIVELY OUT — and the mode-switch fix PROVED it rather than fixing
   the crash.** With the budget pinned to the bootstrap the very next crash (08:33, build 1273)
   read `135x106 ss=1 steps=3.969e8 budget=4.000e8` — the smallest frame the shrink allows, ~10 ms
   of GPU work on a 3080 — and died anyway, `since_mode_switch=8 frames`. A frame that small
   cannot be a 2-second dispatch. (The ledger had half of this already: one beta.36/37 crash died
-  at `budget=4.000e8`, the FLOOR.)
+  at `budget=4.000e8`, the FLOOR.)~~
+  ⛔⛔**RETRACTED 2026-08-09 — see the beta.48 entry below. "~10 ms of GPU work" was an ASSUMPTION
+  read off the step count, not a measurement, and it is wrong by ~80×.** The same false premise
+  sits in the "budget=4.000e8, the FLOOR" observation and in every other place this ledger reasons
+  from a small budget to a cheap frame. In this regime 4e8 nominal steps measures **~780 ms**.
+  This file's own standing lesson — a nominal step is not a fixed amount of work — was written
+  four bugs ago and I applied it to the resolution ratchet while still reading the budget as if it
+  were milliseconds.
 
   ⭐⭐**ROOT CAUSE (mechanism identified, fix landed): LOOKAHEAD THREAD OVERSUBSCRIPTION STARVES
   THE RENDER THREAD.** The same 08:33 log: mode switch at +245.148 s, device lost at +248.986 s —
@@ -260,15 +267,68 @@ Mockups: [design/mockups/](design/mockups/).
   occurrence. `nvlddmkm` 153 is now the objective verdict signal and does not
   depend on the app: `Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='nvlddmkm'}`.
 
+  ⭐⭐⭐**ROOT CAUSE, 2026-08-09 (build 1277, the fourth field crash — the one that carried BOTH
+  beta.47 fixes): THE BUDGET'S LOWER CLAMP WAS `TDR_BOOTSTRAP_STEPS`, so the controller could not
+  shrink below its own opening guess — and in this regime that guess is worth ~780 ms.**
+
+  Build 1277 crashed at 2:58 with both fixes active, and its log is what cracked it because both
+  fixes are visibly WORKING:
+
+      mode switch  +219.821s → budget 7.78e10 → unmeasured (bootstrap 4.00e8)
+      DEVICE LOST  +223.356s   since_mode_switch=7 frames
+      lookahead spawns, last 4 s: 2, 1, 1, 1, 1      ← the cap holds (was 5–6 in one millisecond)
+      frame: 146x115  steps=4.598e8  budget=4.625e8  orbit_len=626  partial=false
+
+  So: lookahead bounded, budget unmeasured, frame 146×115 — and still ~500 ms per frame and still
+  dead. That kills CPU starvation as the sole cause too. The tell is the budget itself: it had
+  GROWN 4.00e8 → 4.625e8, a factor of 1.156, and the controller's factor is `900 / ms` — so a
+  reading came back at **778 ms for a 4e8-step frame**. The frame was GPU-bound all along.
+
+  `TDR_BOOTSTRAP_STEPS`' doc comment claimed 4e8 was "a few ms even on a GPU orders of magnitude
+  slower than a desktop discrete part". At `mode=2` with `orbit_len=626` — an escaped reference so
+  short that BLA skips nothing, the exact state all nine crashes share — it is ~780 ms on a 3080.
+  Roughly 80× off, and every conclusion drawn from "the budget is small so the frame is cheap"
+  inherits the error.
+
+  Then the mechanism, which is the part that actually explains the deaths: the clamp was
+
+      next.clamp(TDR_BOOTSTRAP_STEPS, TDR_STEPS_CEIL)
+
+  with the OPENING GUESS as the FLOOR. Where that guess is worth 780 ms rather than a few ms, the
+  controller measured slow frames, tried to shrink, and hit the floor every time. It then sat
+  submitting ~0.8 s dispatches back to back — about 2× from the ~2 s driver watchdog, in the one
+  regime where cost is least predictable — and any data-dependent spike takes it over. **A safety
+  valve that cannot move in the direction of safety.** It was working exactly as designed; the
+  design had no way down.
+
+  This also retires the apparent paradox that made the class so confusing: the crash manifests
+  cluster at tiny resolutions and near-floor budgets *because the controller was pinned at the
+  floor*, and tiny resolution was read as evidence of a cheap frame when it was evidence of a
+  controller in distress.
+
+  ✅**FIXED v0.2.40-beta.48: `TDR_MIN_STEPS = 4_000_000`** (100× below the opening guess) is the
+  new clamp floor, in `budget_step`, in the `tdr_steps` read-back that would otherwise re-raise a
+  below-bootstrap budget, and in `install_recompute`'s discontinuity derate. The bootstrap is now
+  documented as an opening guess, not a floor, with the 780 ms measurement recorded against its
+  old claim. Property test `the_budget_can_shrink_below_the_opening_guess` pins the behaviour;
+  `budget_never_leaves_its_clamps` updated. The resolution shrink's own 16×16 floor still bounds
+  how small a frame can get, so the valve cannot collapse the view.
+
+  ⚠**UNVERIFIED against a live occurrence, like the two before it** — the class is intermittent
+  and has not reproduced locally since the first cluster. What is different this time is that the
+  fix rests on a direct measurement of the failing quantity (778 ms at 4e8 steps, derived from the
+  controller's own growth factor) rather than on a mechanism inferred from timing. `nvlddmkm`
+  Event 153 remains the objective verdict.
+
   ⭐**One long-standing assumption is still DISPROVEN — do not re-derive it:**
   - **It is not reference upload traffic** (the previous leading hypothesis, which this file told
     the next person to check first). `orbit_id` re-uploads only `orbit.len() + bla.len()` ACTUAL
     bytes — at 626 samples that is ~10 KB per install, not the ~1 GB `orbit_len_cap` binding.
 
-  Also still ruled out, consistent with the earlier entries: **frame cost** (the eight span budget
-  4.0e8 → 3.0e11 and resolutions 135×107 → 4631×2060; the A/B pair died at 3.1e9 steps against a
-  3.1e9 budget and at 4.1e9 against 8.8e9) and **a build storm** (0.7 builds/s, against the ~400/s
-  beta.38 cured).
+  Still ruled out: **a build storm** (0.7 builds/s, against the ~400/s beta.38 cured). ⛔The
+  companion claim that **frame cost** was ruled out — "the eight span budget 4.0e8 → 3.0e11 and
+  resolutions 135×107 → 4631×2060" — is RETRACTED: it compared step counts and pixel dimensions
+  across regimes where a step costs wildly different amounts, so it never measured cost at all.
 
   ⚠**`validation/deep-dive-crash.toml` reaches the PRECONDITION fast** — `len=626` on ~410 of its
   reference builds, prec 327, the `len=258193` e55 extension, in ~120 s — which is useful for

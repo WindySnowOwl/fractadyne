@@ -28,10 +28,31 @@ pub(crate) const TDR_BUDGET_MS: f64 = 900.0;
 /// assumption — it just walks toward whatever size actually measures near the target.
 pub(crate) const TDR_GROW_MAX: f64 = 1.5;
 pub(crate) const TDR_SHRINK_MAX: f64 = 0.5;
-/// Cost of the very first floatexp frame, before any measurement exists. Deliberately tiny — a few ms
-/// even on a GPU orders of magnitude slower than a desktop discrete part — so the bootstrap frame is
-/// safe on hardware we have never seen. Everything above it is measured, not assumed.
+/// Cost of the very first frame in a mode, before any measurement exists — the OPENING GUESS, not a
+/// floor. Everything above it is measured, not assumed.
+///
+/// ⚠**Its old claim, "a few ms even on a GPU orders of magnitude slower", is FALSE in the
+/// floatexp / no-BLA regime, and believing it cost six device losses.** Measured 2026-08-09 on an
+/// RTX 3080 at the three-spar dive, `mode=2` with `orbit_len=626` (an escaped reference so short
+/// that BLA skips nothing and real cost tracks the nominal count instead of being a small fraction
+/// of it): a 4e8-step frame took **~780 ms**. A nominal step is not a fixed amount of work — that
+/// is the standing lesson of this file — so no constant expressed in steps can be "a few ms"
+/// everywhere. See `TDR_MIN_STEPS`.
 pub(crate) const TDR_BOOTSTRAP_STEPS: u64 = 400_000_000;
+/// ⭐Absolute floor the measured budget may fall to. The clamp's lower bound used to be
+/// `TDR_BOOTSTRAP_STEPS`, which meant **the controller could not shrink below the opening guess no
+/// matter what it measured** — and where that guess is worth 780 ms rather than a few ms, the app
+/// sat submitting ~0.8 s dispatches back to back during a fast dive, roughly 2× from the ~2 s
+/// driver watchdog, in the one regime where cost is least predictable. Six device losses, each
+/// matched 1:1 by an `nvlddmkm` Event 153, all within seconds of entering that regime; the last
+/// one at `146x115  steps=4.598e8  budget=4.625e8` — the controller had grown the budget from the
+/// bootstrap because a frame measured 780 ms against a 900 ms target, i.e. it was working exactly
+/// as designed and the design had no way down.
+///
+/// A safety valve must be able to move in the direction of safety. 100× below the opening guess is
+/// far enough to reach single-digit milliseconds in the worst regime measured, and the resolution
+/// shrink's own 16×16 floor still bounds how small a frame can get.
+pub(crate) const TDR_MIN_STEPS: u64 = 4_000_000;
 /// Never exceed this even if a view measures absurdly cheap (a lone quick interval shouldn't uncork a
 /// multi-second dispatch).
 pub(crate) const TDR_STEPS_CEIL: u64 = 300_000_000_000;
@@ -731,7 +752,7 @@ impl FractadyneApp {
                 && res.orbit_len as u64 * 2 > old.orbit_len as u64 * 3;
             if clamp_lifted || big_jump {
                 let cur = self.perf.fe_budget[vb];
-                let derated = (cur / 8).max(TDR_BOOTSTRAP_STEPS);
+                let derated = (cur / 8).max(TDR_MIN_STEPS);
                 if cur == 0 || derated < cur {
                     self.perf.fe_budget[vb] = derated;
                     self.perf.fe_budget_ok[vb] = false; // tiling re-arms once re-converged
@@ -2493,7 +2514,7 @@ impl FractadyneApp {
             // Zero until the first probe resolves; the loop in `update` maintains it thereafter.
             match self.perf.fe_budget[vidx] {
                 0 => TDR_BOOTSTRAP_STEPS,
-                b => b.clamp(TDR_BOOTSTRAP_STEPS, TDR_STEPS_CEIL),
+                b => b.clamp(TDR_MIN_STEPS, TDR_STEPS_CEIL),
             }
         };
         if !offscreen && !will_reproject {
@@ -3484,7 +3505,7 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64) -> Option<(u64, bool)> 
     }
     let factor = (TDR_BUDGET_MS / ms).clamp(TDR_SHRINK_MAX, TDR_GROW_MAX);
     let base = if slow { cur.min(steps.max(1)) } else { cur };
-    let next = ((base as f64 * factor) as u64).clamp(TDR_BOOTSTRAP_STEPS, TDR_STEPS_CEIL);
+    let next = ((base as f64 * factor) as u64).clamp(TDR_MIN_STEPS, TDR_STEPS_CEIL);
     Some((next, next == cur || (0.8..=1.25).contains(&factor)))
 }
 
@@ -3588,11 +3609,31 @@ mod controller_props {
     }
 
     #[test]
+    fn the_budget_can_shrink_below_the_opening_guess() {
+        // The floor used to be TDR_BOOTSTRAP_STEPS, so a regime where the opening guess is itself
+        // too expensive (measured: 4e8 steps = 780 ms at mode 2 with orbit_len=626) left the
+        // controller with nowhere to go. A safety valve has to move toward safety.
+        let (next, _) = budget_step(TDR_BOOTSTRAP_STEPS, TDR_BOOTSTRAP_STEPS, 780.0)
+            .expect("a reading at the opening guess is usable");
+        // 780 ms is under the 900 ms target, so this one still grows — the point is the next ones.
+        let mut b = TDR_BOOTSTRAP_STEPS;
+        for _ in 0..8 {
+            b = budget_step(b, b, 2_000.0).expect("a slow reading is never discarded").0;
+        }
+        assert!(
+            b < TDR_BOOTSTRAP_STEPS,
+            "sustained 2 s frames must drive the budget below the opening guess, got {b}"
+        );
+        assert!(b >= TDR_MIN_STEPS);
+        let _ = next;
+    }
+
+    #[test]
     fn budget_never_leaves_its_clamps() {
         for &ms in &[0.05, 1.0, TDR_BUDGET_MS, 5_000.0] {
-            for &cur in &[TDR_BOOTSTRAP_STEPS, TDR_STEPS_CEIL] {
+            for &cur in &[TDR_MIN_STEPS, TDR_BOOTSTRAP_STEPS, TDR_STEPS_CEIL] {
                 if let Some((next, _)) = budget_step(cur, cur, ms) {
-                    assert!((TDR_BOOTSTRAP_STEPS..=TDR_STEPS_CEIL).contains(&next));
+                    assert!((TDR_MIN_STEPS..=TDR_STEPS_CEIL).contains(&next));
                 }
             }
         }
