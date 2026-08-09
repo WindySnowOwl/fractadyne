@@ -398,7 +398,43 @@ Mockups: [design/mockups/](design/mockups/).
   Ruled out while finding this: `ensure_orbit_capacity` only ever grows and rounds to a power of
   two, so at 626 samples it is not reallocating the ~1 GB cap buffer per frame.
 
+  ⭐⭐⭐**THE ~90× IS THE REFERENCE, NOT THE PASS. Live and offline pick fundamentally different
+  references for the SAME view, and the live one is a period-626 periodic orbit.**
+
+  | | reference | kind | BLA | cost |
+  |---|---|---|---|---|
+  | offline `--render` | `len=26465 prec=286` | linear, `partial=true` (hit the cap, never escaped) | `bla_nodes=211724`, **`bla_skip=298829`** | **11 ms** @138×108 |
+  | live at the crash | `len=626 prec=207` | **periodic**, `partial=false escaped=false` | `bla_nodes=5020` | **1018 ms** @~141×106 |
+
+  `escaped` is logged as `orbit_tail.is_none() && !partial` (render.rs:503), so `partial=false
+  escaped=false` means an orbit TAIL exists — the reference is a minibrot nucleus of period 626,
+  not a truncated or escaped orbit. ⚠**This corrects an assumption carried through every earlier
+  entry in this ledger, including mine hours ago: `len=626` was read as "an escaped reference too
+  short for BLA to skip anything". It is a periodic reference, which is normally the BEST kind.**
+  The 626 is constant across every build, run and field crash because it is a PROPERTY OF THE
+  POINT — the same nucleus, correctly re-found each time.
+
+  It is the right reference for pixels needing ~626 iterations and the wrong one for pixels needing
+  **26,464** — ~42 wraps of the cycle, with a BLA tree that can only span 626 samples. The offline
+  path sidesteps it by building a long linear reference instead. So `best_reference` is scoring
+  "is this a good nucleus?" when the question at this view is "what will this cost the pixels?".
+
+  **That reframes the whole class.** The device loss is downstream: a ~1 s dispatch every frame,
+  ~2× from the watchdog, is what a period-626 reference costs at 26,464 iterations. Fixing the
+  reference choice removes the cost, and with it the loss — and it is a rendering-quality fix
+  independently, since these are the same holds that render black.
+
+  ⚠Also re-confirmed here: **tracing suppresses it.** This traced run did not die (`device_lost=0`)
+  where the four untraced clean runs before it went 3/4. Reproduce untraced, then instrument.
+
   **NEXT, in order** (all now cheap — there is a 4.5-minute repro):
+  0. ⭐**Score references by what they will COST the pixels, not by nucleus quality alone.** When
+     the iteration appetite greatly exceeds the period, a periodic reference needs `appetite/period`
+     wraps and its BLA cannot span them; either extend it linearly (the offline path's shape) or
+     prefer a longer non-periodic candidate. Check what `bla_skip` the live path actually achieves
+     first — `bla_dc_max_log2=-88.1` against pixel offsets of ~2^-93 says the BLA radius COVERS
+     these pixels, so if skips are still near zero the wrap is defeating the tree and that is the
+     specific thing to fix.
   1. Find what the live frame submits that the offline frame does not. `body 0ms` +
      `repaint_requested=true` means the main thread is blocked in acquire/present, so the GPU has
      ~1 s of work queued from SOMEWHERE — the iterate pass cannot be it. The gap is ~90×: the live
