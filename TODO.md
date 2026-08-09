@@ -72,6 +72,13 @@ Ordered by how fast a stranger hits them.
       one click, and the menu item's dialog opens in its directory. Re-playing the same tour is
       the overwhelmingly common case — during this session's crash-hunting it meant a file dialog
       per attempt.
+    - **A playback-speed control beside it.** ⚠One already exists — a `1×` button in the floating
+      transport that CYCLES through speeds (`draw_playback_transport`, `ui/menus.rs`) — so this is
+      about reach, not capability: the speed is only available once a script is already playing and
+      only by clicking through values. Wanted on the toolbar, and worth reconsidering as a direct
+      picker rather than a cycle. ⚠The transport's layout rule still applies to anything added
+      there: nothing inside it may be sized from the available width, and the speed label is padded
+      to its widest form so the widget cannot change size mid-playback.
     ⚠A missing or moved file must fall back to the picker rather than erroring, and the stored
     path should not be treated as trusted input (same handling as any loaded `.toml`).
 
@@ -235,6 +242,12 @@ Mockups: [design/mockups/](design/mockups/).
   the slowest GPU iterate across a full oscillating run fell 18.8 ms → 14.0 ms. The controller
   re-climbs at ×1.5 per reading, so the cost is a few coarse frames during a dive, where motion
   resolution is already reduced. Suite 104/104, goldens 17/17, livetest 0 drifted.
+  ✅**FIRST CLEAN PASS, 2026-08-09 (field, build 1275): the grand tour played through 2:58 and
+  completed all 5:31 without a device loss** — the first full pass on record after six losses.
+  Encouraging but NOT proof: the class is intermittent (2 in 2 runs, then 0 in 12 here), so one
+  clean run is exactly the evidence the beta.38 entry warns against reading too much into. The
+  base-rate measurement is still owed. `nvlddmkm` Event 153 remains the objective check.
+
   ⚠**Neither fix is VERIFIED against the crash** — it is intermittent (2 in 2 runs, then 0 in 12)
   and has not been reproduced locally since. The mode-switch change is now known NOT to cure it on
   its own; the in-flight cap targets the measured starvation and is untested against a live
