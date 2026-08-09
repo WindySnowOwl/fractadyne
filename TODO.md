@@ -358,11 +358,32 @@ Mockups: [design/mockups/](design/mockups/).
   central: `bla_skip=0` with **46 rebases per pixel** (`rebase=5962666` over 129,600 px) — the
   626-sample reference means BLA skips nothing and every pixel grinds 26,464 iterations serially.
 
+  ⭐**Step 1 DONE, and it deepens the mystery: offline mode 2 at 69×54 is FREE.** Same centre, same
+  `--iter 26464`, `--zoom-log2 94` (94 not 93 — `magnification()` depends on the viewport, so at
+  93 the mode flips with resolution), wall time minus the ~1500 ms constant of app start +
+  reference build:
+
+  | size | 69×54 | 138×108 | 480×270 | 960×540 |
+  |---|---|---|---|---|
+  | mode-2 render | ~0 ms | ~11 ms | ~196 ms | ~1403 ms |
+
+  It scales with pixels, so the pass is NOT latency-bound at these widths, and the resolution lever
+  does work — offline. **The live path spends 1018 ms where the offline path spends ~0 ms for the
+  same view, mode, and iteration count.** That ~1000× gap, not the shader, is the bug.
+
+  Ruled out while finding this: `ensure_orbit_capacity` only ever grows and rounds to a power of
+  two, so at 626 samples it is not reallocating the ~1 GB cap buffer per frame.
+
   **NEXT, in order** (all now cheap — there is a 4.5-minute repro):
-  1. Time a mode-2 dispatch in isolation at 69×54 / 480×270 / 1920×1080 at this view. If time is
-     flat across them it is latency-bound and only fewer ITERATIONS per dispatch can help — which
-     means splitting the first mode-2 frame the way the tiled settle already splits a settled one.
-     If it scales, the resolution lever works and something else is defeating it.
+  1. Find what the live frame submits that the offline frame does not. `body 0ms` means the main
+     thread is blocked in acquire/present, so the GPU has ~1 s of work queued from SOMEWHERE — the
+     iterate pass at 69×54 cannot be it. Candidates: a second view still live from the dual-view
+     chapter, the minimap, the orbit overlay, a pass running at window resolution rather than the
+     iterate resolution, or the iterate pass running more than once per frame. Instrument by
+     labelling every submit in the frame and logging the set when `outside > 200 ms`.
+     ⚠Note the offline CLI renders TWO images (`cli-render-map` + `cli-render-julia`), so the table
+     above already includes a second view's cost — which makes the live number stranger, not less
+     strange.
   2. Ask why the reference is 626 samples when pixels need 26,464. A reference that escapes at 626
      is a bad pick, and `best_reference` scoring exists to avoid exactly that. This may be a
      rendering-quality bug that happens to also be the performance cliff.
