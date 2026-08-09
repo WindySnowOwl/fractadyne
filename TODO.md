@@ -116,6 +116,30 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] ⭐⭐⭐**REDESIGN PLANNED — read `design/reference-lifecycle.md` FIRST; it supersedes the
+  next-step lists inside the entry below.** 2026-08-09 (late): the mechanism is now fully
+  measured, and it rewrites several of the entry's conclusions:
+  - **A reference orbit's usable length is a function of PRECISION, with cliffs** (new experiment
+    `escape_length_vs_precision` in fractadyne-core, `--ignored`): at the exact three-spar centre,
+    128 bits → escapes at 570 · 160 → 84,941 · 207 → 570,711 · 286+ → survives 700k. Every
+    "reference naturally escapes at N" in the spar family is a precision cliff, not a fact about
+    the location. The `octaves + 64` precision policy is iteration-blind.
+  - **`best_reference` goes blind below the cliff**: scoring at the caller's precision, every
+    candidate "escapes" < the 4,096 quick scan ⇒ no survivor ⇒ longest-escaper fallback ⇒ a
+    626-class pick. Fed adequate precision it picks the centre and is healthy (offline 26,465
+    partial @286 bits; live 52,648 partial later in the same tour).
+  - **The 626 entered via a `prec=78` lookahead build** (wall t≈172; the pacer-dilated clock puts
+    the tour shallow then) and **reuse pinned it** — prec gate 206 ≥ 158 passes, drift ≈ 0, no
+    fitness term — through the crossover into the device loss.
+  - **A populated config dir MASKS the bug**: `refcache_persist` restores the previous session's
+    deep reference, so the dive extends it and never picks badly. This explains the fresh-dir
+    repro ingredient AND the 2-in-2-then-0-in-12 intermittency (those 12 runs reused the sandbox
+    dir). ⚠And the reverse: `build_saved_ref` only skips PARTIAL references, so an escaped 626
+    WOULD be persisted and poison the next session.
+  - Plan: L0 pick/reuse traces → L1 escape-plateau probe + picker rescue (root fix) → L2
+    incumbent/challenger cache (adopt-if-strictly-better; no destruction, so the e72 deadlock is
+    structurally impossible) → L3 test/protocol hardening. Acceptance gates in the doc.
+
 - [ ] ⭐**PRIORITY: live device loss with a 626-sample reference — EIGHT instances, still not
   root-caused, but now REPRODUCIBLE ON DEMAND in ~205 s.** Field report 2026-08-09 (two crashes
   at 250 s and 342 s of live tour playback) plus a deliberate A/B that crashed both builds. Every

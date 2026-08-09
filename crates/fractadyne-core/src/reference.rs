@@ -1697,6 +1697,30 @@ pub fn render_multiref_mandel(
 mod aux_bla_oracle {
     use super::*;
 
+    /// EXPERIMENT (run: `cargo test -p fractadyne-core escape_length_vs_precision -- --ignored
+    /// --nocapture`): at a Misiurewicz centre, how long does the computed reference orbit stay
+    /// true as a function of ARITHMETIC precision? The point is parsed at full precision (116
+    /// digits ≈ 385 bits); only the orbit arithmetic varies. A Misiurewicz orbit is repelling, so
+    /// per-iteration rounding error is amplified until the computed orbit spuriously escapes —
+    /// the hypothesis is that the grand-tour crossover's `len=626` reference (built at 207 bits),
+    /// e63's "natural escape at 256,753" and e72's 602,516 are ALL this one mechanism at
+    /// different precisions, and that the picker itself goes blind at low precision (no candidate
+    /// survives phase 1, so `best_reference` falls back to "longest escaper").
+    #[test]
+    #[ignore]
+    fn escape_length_vs_precision() {
+        let cxs = "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1";
+        let cys = "9.5628651080914147131604703998237075557983304380930462483482733212267499793490593467836270525491219946548323699651521e-1";
+        let cx = crate::parse_bf(cxs).unwrap();
+        let cy = crate::parse_bf(cys).unwrap();
+        let max_iter = 700_000u32;
+        for p in [128usize, 160, 180, 207, 240, 286, 340, 400, 480] {
+            let zero = BigFloat::from_f64(0.0, p);
+            let n = orbit_length_bf(&zero, &zero, &cx, &cy, 0, max_iter, p);
+            println!("prec {p:4} bits -> escape length {n}{}", if n >= max_iter { "  (SURVIVED)" } else { "" });
+        }
+    }
+
     // Extending a cached (truncated) orbit must be byte-identical to a from-scratch build to the same
     // length — this is what lets a deep dive reuse the prior orbit instead of recomputing every step.
     #[test]
