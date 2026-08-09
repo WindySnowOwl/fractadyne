@@ -23,9 +23,13 @@ Ordered by how fast a stranger hits them.
    declines the feature the adapter offers: a 1445×1134 panel at 2,000 iterations rendered at
    **504×396 for 167 consecutive settled frames**, `budget=4.000e8` pinned at the bootstrap,
    **zero readings ever**, `can_tile=false`. Same view on the fix: **native 1445×1134**, tiled.
-3. **The grand tour's own 1e55 hold spins forever.** The freeze guard refuses a reference 2,192
-   samples over `LIVE_REF_CAP` and the quality gate re-requests it every ~450 ms indefinitely: a
-   core pinned, the view black. It is in the flagship demo script, so anyone who plays it sees it.
+3. **The grand tour's own 1e55 hold spins forever — DOWNGRADED, could not reproduce
+   (2026-08-09).** Two real holes in the refusal machinery were found and closed (see the open
+   item below), but the reported symptom — the identical build repeating every ~450 ms — does not
+   occur on the current build in any harness or window size tried. On the gauntlet the extension
+   is refused **once** at each of 258,193 / 408,193 / 508,193 / 2,008,193 and the tour moves on.
+   Not a blocker on this evidence; still worth a look if it recurs in the field, where the
+   original report came from.
 4. **Unexplained `0xc0000005` access violation** (08-07 17:00:25). One occurrence, no reproduction,
    no report at the time. Cannot block indefinitely on a ghost — but must not ship blind either.
    beta.43's unclean-exit reporting will now capture a recurrence; run the tour/export paths under
@@ -330,8 +334,41 @@ Mockups: [design/mockups/](design/mockups/).
      at full resolution — the affordable range at this view is ~1.05M iterations before the shrink
      binds at all, i.e. ~12× what the view currently gets.
 
-- [ ] **A reference the freeze guard refuses is re-requested forever — ROOT CAUSE of the 3:35
-  stall, NOT fixed.** At the grand tour's `hold-e55` keyframe (t=215 s, `zoom = "1e55"`,
+- [~] **A reference the freeze guard refuses is re-requested forever — TWO HOLES CLOSED
+  v0.2.40-beta.47, but the SYMPTOM NEVER REPRODUCED (2026-08-09).** Both halves the original entry
+  guessed at ("either something is clearing it each round or the re-request comes from a path that
+  does not consult it") turned out to be real, and both are now closed:
+  1. ⭐**The refusal record was amnesiac.** `install_recompute` cleared `ref_ext_refused` on EVERY
+     install. After the extension is refused at 258,193 samples, the PRECISION and
+     `bla_out_of_range` triggers rebuild anyway — at a shorter length, which passes the cap and
+     installs — and that install wiped the record. Traced on the gauntlet: refusal at 258,193
+     followed immediately by a stream of installs at 133,499 / 133,876 / 134,257 / … A shorter
+     orbit cannot disprove "an orbit this long was still partial", so the record now survives
+     unless the install actually reaches past it or the reference POINT moved (a re-anchor is a
+     different orbit — the 6.5e94× spar depends on that path staying open).
+  2. **The refusal was advisory, not authoritative.** `needs_quality`'s partial branch respected
+     it; the precision branch and `bla_out_of_range` did not, so they could spawn the identical
+     doomed build. A rebuild whose ask is no larger than the refused length, at the same point,
+     is now suppressed at the spawn.
+  ⚠**Scoped to settled builds past `LIVE_REF_CAP`, and that scoping is load-bearing.** Suppressing
+  every rebuild instead looked like a fix and was a regression: the 1e61 hold's black fraction
+  "improved" 42.1% → 0.1% purely because the view stopped rebuilding and froze on a **31.7-second
+  stale reprojection at 144×81**, with the sRGB difference from the offline truth nearly doubling
+  (33.4 → 60.2). Only a settled extension can be refused; a rebuild capped at `LIVE_REF_CAP`
+  always installs, and those installs are what keep the BLA fresh and the view re-iterating.
+  Caught by the livetest baseline landed the same day — the black metric alone called it a win.
+
+  ⚠**The symptom did not reproduce, so treat this as hardening, not a demonstrated fix.** Tried:
+  a static session seeded at the hold-e55 centre and 250,000 iterations (gives the exact reported
+  numbers — `len=258193`, refused, keeping a 56,795-sample clamp — but 3 builds and 1 refusal in
+  40 s, no loop); `--livetest --segment gauntlet` at 480×270 and at 2560×1440 (763 builds, 4
+  one-off refusals). The guards measure as a no-op on that workload — 759–762 builds, 4 refusals,
+  **0 suppressions** across repeat runs — and the livetest gate reports 0 drift, so the picture is
+  unchanged. Six property tests (`render::controller_props`) pin both rules so a future change
+  cannot quietly reintroduce either hole. If the field report recurs, the trace now says
+  `rebuild suppressed: ask N ≤ refused M` when the guard fires.
+
+  Original diagnosis, kept: At the grand tour's `hold-e55` keyframe (t=215 s, `zoom = "1e55"`,
   `max_iter = 250000`) the settled extension asks for `ref_build_iter = 250000 + 8192 = 258192`.
   That orbit never escapes, so it comes back **partial at 258,193 samples — 2,192 over
   `LIVE_REF_CAP` (256,000)** — and `install_recompute`'s freeze guard refuses it. Measured in the

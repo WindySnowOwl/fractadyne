@@ -127,6 +127,22 @@ const LIVETEST_BASELINE_DIR: &str = "benchmarks";
 /// Percentage-point tolerance (as a fraction) on the black measurements. These were bit-stable
 /// across repeated runs on one machine; the slack only stops a single pixel reading as drift.
 const BLACK_TOL: f64 = 0.005;
+/// Relative tolerance on the iteration/orbit COUNTS. They are wall-clock sensitive in a way the
+/// outcome is not: a change that only shifts WHEN the checkpoint samples the appetite moves them a
+/// few iterations in 146,000 with the verdict, black fractions, boost and resolution all identical
+/// (measured after the A3 refusal fix: 146,112 → 146,109). Exact matching turned that into a red
+/// gate, which is how a gate starts getting ignored. The regressions this must catch are nothing
+/// like it — 146,112 → 86,227 is 41% — so 1% keeps all the signal and none of the noise.
+const COUNT_TOL: f64 = 0.01;
+
+/// Did a count move by more than `COUNT_TOL`, relative to the blessed value?
+fn count_drifted(base: u32, cur: u32) -> bool {
+    if base == cur {
+        return false;
+    }
+    let denom = base.max(1) as f64;
+    ((cur as f64 - base as f64).abs() / denom) > COUNT_TOL
+}
 
 /// One checkpoint's blessed state. Deliberately excludes `stale_ms` (a timing, not an outcome) and
 /// `t` (the schedule, not the result).
@@ -650,16 +666,16 @@ impl FractadyneApp {
                     c.truth_black * 100.0
                 ));
             }
-            if c.gpu_iter != b.gpu_iter {
+            if count_drifted(b.gpu_iter, c.gpu_iter) {
                 d.push(format!("budget {} → {}", b.gpu_iter, c.gpu_iter));
             }
-            if c.eff_iter != b.eff_iter {
+            if count_drifted(b.eff_iter, c.eff_iter) {
                 d.push(format!("appetite {} → {}", b.eff_iter, c.eff_iter));
             }
             if (c.boost - b.boost).abs() > 1.0e-6 {
                 d.push(format!("boost ×{:.2} → ×{:.2}", b.boost, c.boost));
             }
-            if c.orbit_len != b.orbit_len || c.partial != b.partial {
+            if count_drifted(b.orbit_len, c.orbit_len) || c.partial != b.partial {
                 d.push(format!(
                     "orbit {}{} → {}{}",
                     b.orbit_len,

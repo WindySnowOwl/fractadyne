@@ -18,6 +18,13 @@ pre-releases on the Beta update track). Per-version detail is in the git history
 rational/complex coordinate entry, the multiplier λ, the 500k → 10M iteration ceiling, live
 limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — see TODO.md.
 
+- **A refused reference extension is no longer forgotten** (beta.47). The freeze guard drops a
+  reference that is still partial past `LIVE_REF_CAP`, and recorded why — but any later install
+  cleared that record, and two of the three rebuild triggers never consulted it, so the same
+  doomed build could be requested again. Both are closed: the record now survives a shorter
+  install (only a longer one, or a re-anchor to a different point, supersedes it), and a rebuild
+  that can only be refused again is suppressed at the spawn. Scoped to settled builds past the
+  cap — suppressing ordinary rebuilds too froze a deep hold on a 31-second stale reprojection.
 - **Live-path regression gates** (beta.47). Goldens are offline export renders, so none of them
   can see a live-path bug. Two additions close that: `--livetest` is now graded against a blessed
   baseline (`--bless`, mirroring `--bench-matrix`) and fails on CHANGE rather than on failure, so
