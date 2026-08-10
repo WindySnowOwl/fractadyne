@@ -770,6 +770,15 @@ impl FractadyneApp {
         // `escape_length_of_rounded_centre`. A correct camera (exact pinned-centre glides) makes
         // truthful long partials the NORM at deep holds, so they must be installable.
         let long_partial = res.partial && res.orbit_len > crate::LIVE_REF_CAP.saturating_add(1);
+        if long_partial && crate::diag::trace_on("ref") {
+            crate::diag::trace(
+                "ref",
+                format!(
+                    "long-partial install: len={} (clamp was {}) — accepted",
+                    res.orbit_len, self.ref_cache[vi].orbit_len
+                ),
+            );
+        }
         // A reference install that changes the pixel COST MODEL discontinuously invalidates the
         // measured frame budget. The budget controller sizes dispatches in NOMINAL steps against
         // measured GPU time; BLA/SA skip-effectiveness and the partial-clamp make real cost per
@@ -792,13 +801,23 @@ impl FractadyneApp {
             // length, so ×1.5 still never fires on the smooth path.
             let big_jump = old.orbit_len > 0
                 && res.orbit_len as u64 * 2 > old.orbit_len as u64 * 3;
-            if clamp_lifted || big_jump || long_partial {
+            // ⚠PURE PARTIAL GROWTH DOES NOT DERATE (2026-08-09, field report "past 3:35 it
+            // pixellates badly" — two prior shapes tried and reverted the same day: a floor reset
+            // on long-partial installs, then ÷8 via `big_jump`). The budget is denominated in
+            // NOMINAL STEPS, which already include the iteration count: when an install raises
+            // the pixel clamp, the resolution shrink automatically sizes the next frame smaller
+            // for the same step budget, so a partial orbit growing longer changes per-step cost
+            // almost not at all — there is nothing discontinuous to re-measure. And with TRUTHFUL
+            // references (the beta.49 sampler fix) partial growth is the NORM: deep-glide
+            // lookahead installs land every ~300 ms with ×2.3 length jumps (measured), so any
+            // derate wired to them pins the budget at its floor and the whole deep chapter
+            // renders pixellated. The derate is for PER-STEP cost discontinuities: a clamp LIFT
+            // (partial → complete, BLA character changes end-to-end) and length jumps between
+            // ESCAPED orbits (a different orbit shape under the same BLA machinery).
+            let growth_only = old.partial && res.partial;
+            if clamp_lifted || (big_jump && !growth_only) {
                 let cur = self.perf.fe_budget[vb];
-                // A long-partial install lifts the pixel clamp by an UNBOUNDED factor (256k → the
-                // full ask, 4×+ at the deep holds), so it goes straight to the floor rather than
-                // ÷8 — re-measure from the smallest dispatch the controller allows.
-                let derated =
-                    if long_partial { TDR_MIN_STEPS } else { (cur / 8).max(TDR_MIN_STEPS) };
+                let derated = (cur / 8).max(TDR_MIN_STEPS);
                 if cur == 0 || derated < cur {
                     self.perf.fe_budget[vb] = derated;
                     self.perf.fe_budget_ok[vb] = false; // tiling re-arms once re-converged
@@ -808,13 +827,7 @@ impl FractadyneApp {
                             "install derate: orbit {}→{} ({}) — budget {:.2e}→{:.2e}, re-converging",
                             old.orbit_len,
                             res.orbit_len,
-                            if long_partial {
-                                "long partial → floor"
-                            } else if clamp_lifted {
-                                "clamp lifted"
-                            } else {
-                                "length jump"
-                            },
+                            if clamp_lifted { "clamp lifted" } else { "length jump" },
                             cur as f64,
                             derated as f64
                         ),

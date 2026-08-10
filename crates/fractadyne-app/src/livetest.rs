@@ -701,8 +701,17 @@ impl FractadyneApp {
                     if c.partial { " PARTIAL" } else { "" }
                 ));
             }
+            // Resolution ATTRIBUTES, it does not GATE (demoted 2026-08-09 after flapping the
+            // gate four times in one day). A checkpoint can legitimately capture mid budget
+            // re-climb after an install derate — `seahorse-2` recorded 480×270, 100×56 and
+            // 150×84 across runs of IDENTICAL builds with verdict and both black fractions
+            // unchanged, and no tolerance absorbs that. Nothing real is lost: every regression
+            // this harness has actually caught moved verdict or blackness too (the beta.47
+            // stale-reprojection showed verdict FAIL→warn AND black 42.1%→0.1%; the A2
+            // resolution collapse showed at every deep checkpoint's verdict). A res change with
+            // NO outcome change is a capture-timing artifact, so it is reported as context.
             if c.res != b.res {
-                d.push(format!(
+                ctx.push(format!(
                     "res {}×{} → {}×{}",
                     b.res[0], b.res[1], c.res[0], c.res[1]
                 ));
@@ -732,7 +741,9 @@ impl FractadyneApp {
             }
         );
         if drift == 0 && missing == 0 {
-            println!("No live-path drift (recorded FAILs are expected — see TODO.md).");
+            // (Any FAILs recorded in the baseline itself are expected states, not news — though
+            // since beta.50 the blessed grand-tour baseline carries none.)
+            println!("No live-path drift vs the blessed baseline.");
             0
         } else {
             println!(

@@ -251,3 +251,30 @@ Plan deviations, recorded:
 - With the entry vector (sampler) fixed and reuse now serving truthful orbits, the
   incumbent/challenger cache is DEFERRED until a real pinned-unfit case is observed — the live
   `bla_skip/rebase` counters and the pick trace make one visible within minutes if it exists.
+
+### 6.1 beta.50 — the derate had to learn what truthful references changed
+
+First field run of beta.49: past 2:58 cleanly (the crash fix held in the field), but "at 3:35 and
+beyond it pixellates badly". Cause, found in one traced run: with truthful references the deep
+glide's lookahead installs land every ~300 ms with ×2.3 LENGTH jumps — the old pinned cliff orbits
+never changed length, so `big_jump` never fired during dives and nobody had ever seen the derate
+under a healthy reference stream. Every install knocked the budget ÷8 (and my first shipping shape,
+a floor reset, was worse); at ~3 knocks/s the controller lived pinned at its floor and the whole
+deep chapter rendered tiny.
+
+Fix: **pure partial→partial length growth does not derate at all.** The budget is denominated in
+nominal steps, which include the iteration count, so the resolution shrink already absorbs a clamp
+raise exactly; the derate exists for PER-STEP cost discontinuities — clamp lifts
+(partial → complete) and length jumps between ESCAPED orbits. Measured after: zero derates in the
+deep chapter (7 run-wide, all legitimate), budget 3.5e10–5.2e10 through the e55 hold, livetest all
+six deep holds at +0.0 pt, e21000 soak clean, 2/2 fresh-dir runs clean.
+
+Also: livetest's `res` field was demoted from gating to context (it flapped the gate four times in
+one day capturing legitimate mid-re-climb moments; every real regression it ever caught also moved
+verdict or blackness), and the blessed grand-tour baseline now carries NO recorded FAILs — the
+first all-green baseline in the harness's history.
+
+Known remaining at the deepest hold: e94 runs at the script's own `max_iter = 4,000,000` ceiling
+(set for the offline renderer's OOM, still open in TODO.md); the view wants ~8M. Raising the
+keyframe is a one-line tour edit gated on that OOM item, not on this design.
+

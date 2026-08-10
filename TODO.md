@@ -126,9 +126,17 @@ Mockups: [design/mockups/](design/mockups/).
   partials at the floor budget (retiring the A3 refusal loop; e61/e63/e82 went green, baseline
   re-blessed). Verified: 0 losses in 4 fresh-dir runs (base rate was 3-in-4), 0 Event 153,
   e21000 soak clean, suite 106/106, goldens 17/17, bench-matrix 0 drift.
-  ⚠Watch items: `seahorse-2` captures mid re-climb (cosmetic, verdict ok); the incumbent/
-  challenger cache (plan § 3 L2) is DEFERRED until the live `bla_skip` counters ever show a
-  pinned-unfit reference again.
+  ⚠Watch items: the incumbent/challenger cache (plan § 3 L2) is DEFERRED until the live
+  `bla_skip` counters ever show a pinned-unfit reference again.
+  **beta.50 follow-up (field report "past 3:35 it pixellates badly"): the install derate was
+  firing on every deep-glide install** — truthful references grow ×2.3 per lookahead install
+  where the old cliff orbits never changed length, so `big_jump` had never been exercised on a
+  healthy stream. Pure partial→partial growth now does not derate (step-denominated budgets
+  absorb clamp raises via resolution exactly); derates remain for clamp lifts and escaped-orbit
+  jumps. Zero deep-chapter derates after; all six holds +0.0 pt; livetest `res` demoted from
+  gate to context (flapped 4× in one day); the blessed baseline now carries NO recorded FAILs.
+  ⚠e94 runs at the tour's own `max_iter = 4M` ceiling (view wants ~8M) — raising it is gated on
+  the offline tour-render OOM item, not on the reference work.
 
 - [ ] ~~⭐⭐⭐REDESIGN PLANNED~~ (superseded by the resolution above; kept for the forensic
   record) — **read `design/reference-lifecycle.md` FIRST; it supersedes the
