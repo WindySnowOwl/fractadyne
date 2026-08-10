@@ -854,9 +854,10 @@ impl FractadyneApp {
     /// laid out and merely painted transparent when it does not apply.
     pub(crate) fn draw_playback_transport(&mut self, ctx: &egui::Context) {
         let Some(pb) = &self.playback else { return };
-        let (name, cur_t, total, paused, speed, looping, is_bench, held, finished) = (
+        let (name, cur_t, wall_t, total, paused, speed, looping, is_bench, held, finished) = (
             pb.name.clone(),
             pb.cur_t,
+            pb.wall_t,
             pb.total,
             pb.paused,
             pb.speed,
@@ -1067,15 +1068,59 @@ impl FractadyneApp {
                                 (row.response.rect.width() - notice.rect.width() - 2.0 * spacing)
                                     .clamp(120.0, 640.0);
                             let mut scrub = cur_t;
-                            if ui
+                            let drift = wall_t - cur_t;
+                            let hover = if drift > 0.05 {
+                                let d = drift.max(0.0) as u64;
+                                format!(
+                                    "Drag to scrub through the tour\nScript clock is {}:{:02} behind \
+                                     real time (the pacer slowed the tour to let the renderer keep \
+                                     up). The upper tick marks where wall-clock playback would be.",
+                                    d / 60,
+                                    d % 60
+                                )
+                            } else {
+                                "Drag to scrub through the tour".to_string()
+                            };
+                            let sr = ui
                                 .add(
                                     egui::Slider::new(&mut scrub, 0.0..=total.max(0.001))
                                         .show_value(false),
                                 )
-                                .on_hover_text("Drag to scrub through the tour")
-                                .changed()
-                            {
+                                .on_hover_text(hover);
+                            if sr.changed() {
                                 seek = Some(scrub);
+                            }
+                            // Wall-clock DRIFT indicator (user request): a split tick. The slider's
+                            // own handle already marks the actual script clock (cur_t, the lower
+                            // half); this paints an UPPER tick at where a wall-clock-locked playback
+                            // would be (wall_t ≥ cur_t, so always at or right of the handle). When
+                            // they coincide the split closes; as the pacer holds the tour back the
+                            // upper tick pulls ahead, with a faint bracket spanning the gap. Drawn
+                            // only past a visible threshold so a sub-frame drift doesn't shimmer.
+                            if drift > 0.05 && total > 0.0 {
+                                let rect = sr.rect;
+                                let r = (rect.height() * 0.5).min(8.0); // ≈ handle radius inset
+                                let x0 = rect.left() + r;
+                                let x1 = rect.right() - r;
+                                let map = |t: f64| {
+                                    x0 + ((t / total) as f32).clamp(0.0, 1.0) * (x1 - x0)
+                                };
+                                let (cx, gx) = (map(cur_t), map(wall_t));
+                                let top = rect.top() + 1.0;
+                                let mid = rect.center().y;
+                                let amber = egui::Color32::from_rgb(0xE0, 0xA0, 0x30);
+                                let faint = egui::Color32::from_rgba_unmultiplied(0xE0, 0xA0, 0x30, 90);
+                                let p = ui.painter();
+                                // Upper tick at the wall-clock ghost.
+                                p.line_segment(
+                                    [egui::pos2(gx, top), egui::pos2(gx, mid)],
+                                    egui::Stroke::new(2.0, amber),
+                                );
+                                // Bracket from the playhead across to the ghost.
+                                p.line_segment(
+                                    [egui::pos2(cx, top), egui::pos2(gx, top)],
+                                    egui::Stroke::new(1.0, faint),
+                                );
                             }
                         });
                     });
@@ -1093,11 +1138,13 @@ impl FractadyneApp {
         if let Some(pb) = self.playback.as_mut() {
             if stop {
                 pb.cur_t = 0.0;
+                pb.wall_t = 0.0; // ghost re-anchors: no drift at a fresh stop
                 pb.paused = true;
                 pb.finished = false;
             }
             if let Some(t) = seek {
                 pb.cur_t = t.clamp(0.0, pb.total);
+                pb.wall_t = pb.cur_t; // a manual seek jumps real-time "to here" — drift resets
                 // Scrubbing back into a finished tour makes it playable again; scrubbing to the
                 // very end leaves it finished, so it doesn't immediately re-fire the toast.
                 pb.finished = pb.cur_t >= pb.total;
@@ -1107,6 +1154,7 @@ impl FractadyneApp {
                 // it saves reaching for ⏮ first.
                 if pb.finished {
                     pb.cur_t = 0.0;
+                    pb.wall_t = 0.0;
                     pb.finished = false;
                     pb.paused = false;
                 } else {

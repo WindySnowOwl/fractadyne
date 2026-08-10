@@ -1210,6 +1210,14 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Playback player — v0.2.40-beta.39 (2026-08-07)
 
+- [x] **Wall-clock DRIFT indicator on the scrub bar (user, 2026-08-10, beta.55)** — the pacer
+  dilates the tour clock (and settle-holds stop it) so the script clock falls behind real time;
+  the scrubber now paints a "ghost" upper tick where a wall-clock-locked playback would be, with a
+  faint bracket to the actual playhead and a hover reporting the drift. `Playback::wall_t`
+  advances by `dt·speed` with no `hold` factor (so `wall_t − cur_t` IS the stolen time) and
+  re-anchors to the playhead on any seek/stop/restart. Threshold-gated at 0.05 s so a sub-frame
+  drift doesn't shimmer.
+
 Reported: "messages about waiting for detail adjust the width of the controls", plus asks for a
 scrub bar, a player that outlives the tour, and a close button.
 

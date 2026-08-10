@@ -1273,6 +1273,11 @@ pub(crate) struct Playback {
     /// Wall-clock of the previous `advance_playback` frame — gives the per-frame `dt` the
     /// pipeline pacer needs to dilate the tour clock (see `advance_playback`). `None` = first frame.
     pub(crate) last_now: Option<f64>,
+    /// Where a WALL-CLOCK-locked playback would be — advanced by `dt * speed` with NO pacer
+    /// dilation, so `wall_t - cur_t` is exactly the time the pacer/settle-holds have stolen. Drives
+    /// the transport's "ghost" scrub tick (the tour clock has drifted behind real time). Reset to
+    /// `cur_t` on any seek/restart, so drift is always measured from the last thing the USER did.
+    pub(crate) wall_t: f64,
 }
 
 impl Playback {
@@ -2233,6 +2238,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         pace_released: false,
         cur_t: 0.0,
         last_now: None,
+        wall_t: 0.0,
     })
 }
 
@@ -3056,10 +3062,15 @@ impl FractadyneApp {
             // renderer catches up), `speed` and `paused` are the user's transport. At speed 1 with
             // no hold this is exactly the old wall-clock behaviour, so tour durations and the
             // `--divetest` timings are unchanged.
-            let step = if pb.paused || pb.finished { 0.0 } else { dt * pb.speed * (1.0 - hold) };
+            let live = if pb.paused || pb.finished { 0.0 } else { dt * pb.speed };
+            let step = live * (1.0 - hold);
             pb.cur_t += step;
+            // The wall-clock ghost ignores the pacer's `hold`, so it runs ahead exactly by the
+            // dilation. Clamp to the tour end — a ghost past the finish just pins at the end tick.
+            pb.wall_t = (pb.wall_t + live).min(pb.total);
             if pb.loop_ && pb.total > 0.0 && pb.cur_t >= pb.total {
                 pb.cur_t = 0.0;
+                pb.wall_t = 0.0;
             }
         }
         // Only the FIRST tick past the end ends the tour. Afterwards the player stays up with the
