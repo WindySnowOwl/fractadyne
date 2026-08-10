@@ -386,6 +386,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--benchmark-std [--res R] [--depth D] [--burnin N]", "Standardized benchmark: pinned resolution + settings, comparable across machines. --res = 720p | 1080p | 4k | 5k (default 1080p). --depth = standard (1e12x) | ultra (1e28x, hammers the deep-zoom path); --ultra is shorthand. --burnin N repeats it N times (default 10) to check stability / throttling."),
         Flag("--refdiag --center X Y --zoom-log2 L", "Dev: sample reference orbit lengths across a view."),
         Flag("--find-minibrot", "Print the nearby minibrot's period + center and exit (--center X Y --zoom M)."),
+        Flag("--version, -V", "Print the version and build number, then exit."),
         Flag("--check-updates [stable|beta]", "Check GitHub for a newer release on the given track (default stable), print the result, and exit (needs network)."),
         Flag("--selftest [--bless]", "Run the GPU validation suite; exit 0 = all passed. --bless records the goldens."),
         Flag("--selftest-filter SUBSTR", "With --selftest: run only the check groups / goldens whose tag or name contains SUBSTR (see --selftest-list). For fast iteration on one failure; groups share state, so use a full run for the real verdict."),

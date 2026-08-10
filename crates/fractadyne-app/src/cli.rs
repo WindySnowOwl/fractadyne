@@ -46,6 +46,12 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         print!("{}", crate::help::cli_help_text());
         return true;
     }
+    // `--version` / `-V`: the first thing anyone types at a new binary. One line, exit 0 —
+    // conventional shape (`fractadyne 0.2.40-beta.50 (build 1319)`), greppable by scripts.
+    if args.iter().skip(1).any(|a| a == "--version" || a == "-V") {
+        println!("fractadyne {}", version_string());
+        return true;
+    }
     // Print the tour-script schema reference (Markdown) and exit — used to (re)generate TOURS.md.
     if args.iter().any(|a| a == "--dump-tour-schema") {
         print!("{}", crate::scripting::tour_schema_markdown());

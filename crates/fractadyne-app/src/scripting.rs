@@ -355,6 +355,35 @@ fn prompt_overwrite(path: &std::path::Path) -> Result<OverwriteChoice, String> {
     }
 }
 
+/// Pipe-safe progress line for the tour RENDER path. `println!` PANICS when stdout closes
+/// ("failed printing to stdout: The pipe is being closed") — and the render usually runs as a
+/// child process of the GUI with stdout piped, so the parent exiting mid-render used to KILL a
+/// headless render that needed nothing from it (observed in a beta.45 crash report; the prime
+/// suspect in the silent 4K death at frame 5682/9931). Progress is best-effort: write, ignore a
+/// dead pipe, and mirror to the render log so a parentless child still leaves a trail on disk.
+fn say(msg: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stdout(), "{msg}");
+    crate::diag::log_line("render", msg);
+}
+
+/// On-disk render status marker: `<out_dir>/render-status.txt`. The 2026-08-08 4K render died
+/// silently at frame 5682/9931 — no panic, no report, detected only by the session-global
+/// unclean-exit marker — so the OUTPUT DIRECTORY itself now records the render's state:
+/// `running` (with pid, so a live render is distinguishable from a corpse), then `complete` /
+/// `canceled` / `failed: <why>`. A stale `running` whose pid is gone IS the silent-death
+/// signature, diagnosable from the frames folder alone — and the Render Script dialog's planned
+/// progress bar can read the same file. Best-effort by design: a full disk must not take down a
+/// render that is otherwise succeeding.
+fn write_render_status(out_dir: &std::path::Path, state: &str) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let line = format!("{state}\npid {}\n{}\n", std::process::id(), crate::sysinfo::utc_string(now));
+    let _ = std::fs::write(out_dir.join("render-status.txt"), line);
+}
+
 /// Format a duration in seconds as a compact `1h02m03s` / `2m03s` / `4.2s` string for progress logs.
 fn fmt_hms(secs: f64) -> String {
     let s = secs.max(0.0);
@@ -2517,23 +2546,26 @@ impl FractadyneApp {
         let (first_frame, last_frame) = match &cli.segment {
             Some(name) => {
                 let seg = pb.find_segment(name)?;
-                println!(
+                say(&format!(
                     "Segment \"{}\" — {:.1}s to {:.1}s of \"{}\"",
                     seg.title, seg.start, seg.end, pb.name
-                );
+                ));
                 ((seg.start * fps).floor() as u64, (seg.end * fps).ceil() as u64)
             }
             None => (0, u64::MAX),
         };
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
+        write_render_status(&out_dir, "running");
+        // Immediately-invoked closure so the status marker below brackets EVERY exit path —
+        // the `?`s and early `return Ok(…)`s inside become the closure's returns.
+        let render_result = (|| -> Result<String, String> {
         // Vet what is already there BEFORE rendering a frame, so a mismatch is reported in seconds
         // rather than after the render has appended to a sequence it can never complete.
         if resume {
             let note = Self::prepare_resume(&out_dir, &prefix, width, height)?;
             if !note.is_empty() {
-                println!("{note}");
-                crate::diag::log_line("render", &note);
+                say(&note); // say() mirrors to the render log itself
             }
         }
         // Single-view offscreen render at the requested frame size.
@@ -2553,10 +2585,10 @@ impl FractadyneApp {
         let frames: u64 = if pb.total <= 0.0 { 1 } else { (pb.total * fps).round() as u64 + 1 };
         let last_frame = last_frame.min(frames.saturating_sub(1));
         let planned = (last_frame + 1).saturating_sub(first_frame);
-        println!(
+        say(&format!(
             "Rendering tour \"{}\": {planned} frames at {width}×{height} ss{}, {fps} fps ({:.1}s)…",
             pb.name, self.export.ss, pb.total
-        );
+        ));
         let meta = std::sync::Arc::new(self.view_metadata());
         // Encode PNGs on a small worker pool so compression overlaps the next frame's GPU render
         // (rendering a frame is CPU-bignum + GPU; PNG deflate is pure CPU — they run concurrently).
@@ -2739,11 +2771,11 @@ impl FractadyneApp {
                 let elapsed = started.elapsed().as_secs_f64();
                 let rate = if elapsed > 0.0 { done as f64 / elapsed } else { 0.0 };
                 let eta = if rate > 0.0 { (planned - done) as f64 / rate } else { 0.0 };
-                println!(
+                say(&format!(
                     "  frame {done}/{planned}  ({} elapsed, {} left, {rate:.2} fps)",
                     fmt_hms(elapsed),
                     fmt_hms(eta)
-                );
+                ));
             }
         }
         // Close the queue and wait for the encoder pool to drain the remaining frames.
@@ -2762,17 +2794,17 @@ impl FractadyneApp {
                 out_dir.display()
             ));
         }
-        println!(
+        say(&format!(
             "Rendered {planned} frame(s) in {} → {}",
             fmt_hms(render_secs),
             out_dir.display()
-        );
+        ));
 
         // Optionally assemble the PNG sequence into an mp4 via ffmpeg (kept separate from the
         // frames so a failed/absent ffmpeg never loses the render).
         let pattern = out_dir.join(format!("{prefix}_%05d.png"));
         if let Some(mp4_path) = mp4 {
-            println!("Encoding → {} (ffmpeg)…", mp4_path.display());
+            say(&format!("Encoding → {} (ffmpeg)…", mp4_path.display()));
             let enc = std::time::Instant::now();
             // `-vf pad…` rounds the frame up to even dimensions (yuv420p/H.264 requires it) without
             // resampling; `-crf 18` is visually near-lossless.
@@ -2817,6 +2849,14 @@ impl FractadyneApp {
              tour.mp4\n(or re-run with --mp4 to do this automatically)",
             pattern.display()
         ))
+        })();
+        // One writer, every exit path: the marker can never be stale-by-omission.
+        match &render_result {
+            Ok(m) if m.starts_with("Canceled") => write_render_status(&out_dir, "canceled"),
+            Ok(_) => write_render_status(&out_dir, "complete"),
+            Err(e) => write_render_status(&out_dir, &format!("failed: {e}")),
+        }
+        render_result
     }
 
     /// Advance the active camera tour by one frame; drives the view and, for a
