@@ -2565,6 +2565,19 @@ descent and the Tan Lei self-checking test).
 
 ### Testing & verification
 
+- [ ] **F3 goldens for the tours' key steps (user, 2026-08-10).** The grand tour's regression
+  holds (three-spar 1.7e55 → 6.5e94) and the ultra-dive's staged holds (e30 → e200) are verified
+  today only self-consistently (`--livetest`: live vs our own offline path). Add them as
+  Fraktaler-3 cross-check corpus rows so the tour's key views are pinned against an INDEPENDENT
+  renderer: new `[[location]]` entries in `validation/corpus/locations.toml` at each hold's
+  centre/zoom/iterations, F3 renders via `generate_corpus.py` → `--check` gates them like the
+  existing 20. Notes: the three-spar centre's 116 digits cover e55–e94 (not deeper); the
+  ultra-dive point is corpus `16-deep-2.1e250` already, so its waypoints are just extra
+  mag_log10 rows on a known-good coordinate; ⚠set F3's `maximum_reference_iterations` (the
+  missing-ceiling trap that once faked a "~1e13× depth wall"), and use `--normalize` at the
+  depths where the palette cycle aliases. Deep holds want the exact per-keyframe iteration
+  counts from the scripts, not auto.
+
 - [ ] **Tan Lei invariant goldens** (P0, §5.1 absent) — at a Misiurewicz landmark, render at
   magnification m and at m·|λ| rotated by arg λ, and assert the two images converge. A
   self-checking correctness invariant needing **no stored reference render** — all 17 goldens
