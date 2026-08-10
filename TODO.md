@@ -2550,6 +2550,59 @@ descent and the Tan Lei self-checking test).
 - [ ] **Interior colorings** (P2, §2.10 absent) — period coloring, atom domains, interior-coordinate
   (multiplier map) shading.
 
+### Arithmetic-dynamics research arc (user, 2026-08-10) — evaluated, sequenced
+
+Five research-mathematics features, evaluated against the existing machinery (Newton
+nucleus/Misiurewicz solvers, the bignum layer, the G-buffer, dual view, exact coordinate entry).
+Recommended order: 2 → 1 → 4 → 3 → 5 — item 2 is a cheap striking win, item 1 is the flagship,
+item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectural ask.
+
+- [ ] **(2) Bifurcation-measure coloring mode** — μ_bif = Δ G(c), and the G-buffer already holds
+  the smooth escape rate per pixel (`r = smooth`), so this is a coloring pass with neighbour
+  taps: a discrete Laplacian of G, concentrated on ∂M instead of smeared across the exterior —
+  the object the equidistribution theorems are actually about, and distinct from anything in
+  KF/UF. Effort SMALL-MEDIUM: one WGSL color-method variant + UI entry (`color_method` is in
+  `IterKey`, so switching re-iterates — acceptable). ⚠Numerical care: a Laplacian amplifies
+  noise, so it needs the normalized/high-precision smooth field (the DE channel is the related
+  regularised quantity — compare both); expect log-scaling of the density for display.
+- [ ] **(1) Galois orbits of PCF parameters — the flagship.** For fixed (k,n) the PCF parameters
+  are the full root set of a degree-2^(k+n−1) polynomial; solve ALL roots and overlay them on
+  the parameter plane, and raising the bound visibly fills in ∂M — equidistribution toward
+  μ_bif RENDERED rather than proved. Nothing does this. ⭐Key implementation insight: never
+  expand the polynomial — Aberth–Ehrlich needs only p(c)/p'(c), and both come from the forward
+  recurrence `z ← z² + c` with `dz/dc ← 2·z·dz/dc + 1` in O(k+n) per evaluation, which is
+  exactly the arithmetic the existing Newton solvers already do; the bignum layer covers the
+  precision the clustered boundary roots need. Effort MEDIUM-LARGE, cleanly STAGED: degree
+  ≤ 2^10 in f64 first (instant, proves the overlay), then 2^14 (~16k roots, routine), then
+  2^19 (~500k — the O(N²) pairwise repulsion term needs a tree/FMM approximation or an
+  overnight batch; per-sweep cost, not per-root). Renders as a point-overlay layer (the
+  orbit-overlay machinery is the template) with a period-bound slider; pairs naturally with the
+  bifurcation coloring as the background.
+- [ ] **(4) Unlikely-intersection explorer (DeMarco–Krieger–Ye)** — two parameters c₁, c₂;
+  compute each map's preperiodic points in the DYNAMICAL plane up to a (k,n) bound (the z-roots
+  of f^{k+n}(z) = f^k(z) — the SAME all-roots Aberth engine as item 1, applied in z instead of
+  c), overlay them in the dual view (which already renders two planes side by side), and
+  highlight near-coincidences at working precision. Experimental tooling for "two distinct
+  parameters share only boundedly many preperiodic points". Effort MEDIUM once item 1's engine
+  exists — sequence it after.
+- [ ] **(3) Exact rational critical-orbit arithmetic** — for c ∈ ℚ iterate the critical orbit in
+  exact rationals, show numerator/denominator (height) growth, factor numerators, and flag terms
+  with no primitive prime divisor (the Zsygmondy set). "Click a rational parameter in the
+  picture, read its arithmetic" exists nowhere. Two honest constraints: heights DOUBLE per step,
+  so ~30–45 iterations is the practical wall (numerators reach megabytes — the display should
+  say so rather than hang), and factoring wants Pollard-rho + trial division (implementable
+  in-repo) but ARBITRARY-PRECISION INTEGERS/RATIONALS are a new dependency decision —
+  astro-float is floats; `num-bigint`/`num-rational` (pure Rust) is the natural choice and the
+  first new numeric dep in the workspace. UI is a side panel/table, not an image; exact
+  coordinate entry already parses `p/q` verbatim, but the exact p/q must now be RETAINED, not
+  just converted to BigFloat.
+- [ ] **(5) Special curves / PCF loci in two-parameter families (André–Oort setting)** — the
+  locus where a marked point is preperiodic, over a 2-complex-parameter family. DEFERRED: the
+  entire view/render/reference stack is one-complex-parameter, so this is an architectural
+  generalization, not a feature. ⚠Cheaper entry when wanted: render 1-param SLICES of a
+  2-param family (fix one parameter per frame, tour over it with the existing script system) —
+  no new view model, and the tour render becomes the slice sweeper.
+
 ### Structural mathematics
 
 - [ ] **Live period readout in the HUD** (P0, §3.1 partial) — period is computed by the nucleus
