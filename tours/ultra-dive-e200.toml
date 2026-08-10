@@ -1,0 +1,103 @@
+# ULTRA DIVE e30 → e200 — a 60-second pipeline-exercise dive, not a demo reel.
+#
+# PURPOSE. Exercise the deep pipeline through the band the grand tour never reaches:
+# floatexp mode 2 end to end, precision growth ~164 → ~730 bits, the reference
+# lookahead under a fast glide (~3 decades/second — deliberately faster than the
+# renderer can follow, so the pacer, prefetch and reprojection machinery all engage),
+# long-partial installs, and the iteration boost at five staged holds. The holds are
+# the measurement points: run under `--livetest` and each one gets a live-vs-offline
+# verdict, which is what "confirm the boundaries of functionality" means here.
+#
+#   Exercise:  fractadyne --livetest tours/ultra-dive-e200.toml --size 480x270
+#   Live:      fractadyne --play tours/ultra-dive-e200.toml
+#
+# LOCATION. The F3 corpus point `16-deep-2.1e250` (262-digit centre, matched against
+# Fraktaler-3's me250.exr arm-for-arm at 2.86e250×), so every depth this dive visits
+# is on the approach to a verified feature and the coordinate stays pinned ~50 decades
+# past the deepest keyframe. The grand tour's three-spar centre would NOT work here —
+# its 116-digit string unpins past ~e116, and e95 is its known depth wall.
+#
+# ITERATIONS. The location resolves at ~600k at e250; per-keyframe budgets below scale
+# that back roughly linearly in depth (geometric interpolation along the glides).
+# All holds stay ≤ 500k, which the offline oracle renders in seconds at 480×270.
+#
+# The staged shape (glide → hold → glide) is deliberate: the user asked for boundary
+# confirmation, not a continuous cinematic dive, and a hold after each glide is what
+# separates "the dive outran the renderer" (fine, the pacer's job) from "this depth
+# cannot resolve" (a finding).
+format_version = 2
+name = "Ultra Dive e30-e200"
+
+[render]
+size = "1920x1080"
+fps = 30
+ss = 2
+
+[playback]
+pace = "settled"
+settle_timeout = 15
+
+# ============================================================ named coordinates
+[[location]]
+id = "deep-dendrite"
+re = "-1.187560615150653521418498907667140876919052569601017545182559391612675510148620357169088900686129279861651565486308681067781971510733848353870782814060711227770324291807284510948054721179414708227664373680870838993893618232931685469191839557941041475657053636601"
+im = "-0.3018168994715732164050004075273172840679325029393300682842262338318858410502532213359650477962054605582793370126610542572612338874753498817856934268064814045429700513387473824186875229256431620198944835658069812198166053125511035505041575385615626126716977814897"
+note = "F3 corpus 16-deep-2.1e250 (me250.exr, arm-for-arm match). 262 digits — pinned past e250."
+
+# ============================================================ the dive
+[[keyframe]]
+id = "hold-e30"
+t = 0
+location = "deep-dendrite"
+fractal = "Mandelbrot"
+zoom = "1e30"
+max_iter = 60000
+hold = 3
+
+[[keyframe]]
+id = "hold-e60"
+t = 12
+zoom = "1e60"
+max_iter = 130000
+ease = "linear"
+hold = 3
+
+[[keyframe]]
+id = "hold-e100"
+t = 24
+zoom = "1e100"
+max_iter = 220000
+ease = "linear"
+hold = 3
+
+[[keyframe]]
+id = "hold-e150"
+t = 38
+zoom = "1e150"
+max_iter = 350000
+ease = "linear"
+hold = 4
+
+[[keyframe]]
+id = "hold-e200"
+t = 52
+zoom = "1e200"
+max_iter = 500000
+ease = "linear"
+hold = 8
+
+[[segment]]
+id = "shallow-band"
+t = 0
+note = "e30-e100: the band the grand tour's dive covers (crossover at e28 is behind us)."
+
+[[segment]]
+id = "deep-band"
+t = 24
+note = "e100-e200: past every existing tour; precision ~400-730 bits, mode 2 throughout."
+
+[[annotation]]
+kind = "caption"
+text = "Ultra dive: 1e30 → 1e200 at ~3 decades/second"
+t = 1
+secs = 4.0

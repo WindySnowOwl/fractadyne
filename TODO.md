@@ -1116,6 +1116,14 @@ Mockups: [design/mockups/](design/mockups/).
   `[playback] pace = "settled"`, which stops the tour clock at a hold until the view resolves
   (bounded by `settle_timeout`), because at depth the budget needs more settled frames to converge
   than a few seconds of hold provides.
+- [ ] **A settled view re-dispatches identical frames instead of idling** (found 2026-08-09 by
+  the ultra-dive exercise): after `ultra-dive-e200.toml` ends, the settled e200 view keeps
+  submitting the SAME budget-sized dispatch (~234 ms, identical steps/rebase counts) at ~3.5/s
+  indefinitely — ~80% GPU duty to render a picture that is already on screen. Harmless for
+  correctness (frames are bounded, watchdog-safe) but a real power/thermals waste on laptops.
+  Suspect: the boost probe / quality-gate loop never concluding at a view whose budget sits at
+  the ceiling. `slow frame` lines with identical `steps`/`rebase` are the signature.
+
 - [ ] **Tour/offline render has no per-frame cost bound** — the TDR no longer reproduces, but the
   hole is still there. Found 2026-08-07 rendering `tours/grand-tour.toml` with a script-wide
   `max_iter = 2000000`: at frame 16 a 2,000,001-sample (non-escaping) reference installed and the

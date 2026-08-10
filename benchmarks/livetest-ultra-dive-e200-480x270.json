@@ -1,0 +1,82 @@
+{
+  "version": "0.2.40-beta.50 (build 1319)",
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "utc": "2026-08-10 03:14:24 UTC",
+  "tour": "tours/ultra-dive-e200.toml",
+  "size": [
+    480,
+    270
+  ],
+  "checkpoints": {
+    "hold-e100": {
+      "verdict": "ok",
+      "gpu_iter": 87041,
+      "eff_iter": 220000,
+      "boost": 1.0,
+      "orbit_len": 16221,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    },
+    "hold-e150": {
+      "verdict": "ok",
+      "gpu_iter": 129562,
+      "eff_iter": 350000,
+      "boost": 1.0,
+      "orbit_len": 19724,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    },
+    "hold-e200": {
+      "verdict": "ok",
+      "gpu_iter": 172082,
+      "eff_iter": 500000,
+      "boost": 1.0,
+      "orbit_len": 23847,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    },
+    "hold-e30": {
+      "verdict": "ok",
+      "gpu_iter": 27512,
+      "eff_iter": 60000,
+      "boost": 1.0,
+      "orbit_len": 5214,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    },
+    "hold-e60": {
+      "verdict": "ok",
+      "gpu_iter": 53024,
+      "eff_iter": 130000,
+      "boost": 1.0,
+      "orbit_len": 8186,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.0,
+      "truth_black": 0.0
+    }
+  }
+}
