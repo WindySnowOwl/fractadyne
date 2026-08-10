@@ -2661,6 +2661,26 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   correctness AND performance. ⚠F3's `maximum_reference_iterations` must be set or its deep cells
   bail early and flatter our ratio dishonestly.
 
+  ⭐**Two axes, not one — single frames AND multi-second zoom sequences (user, 2026-08-10):**
+  - **Static cells** (single `--render` per corpus coordinate): isolates cold reference build +
+    one frame. Fair to F3's model, but misses everything our architecture is built around.
+  - **Zoom-sequence cells** — render a multi-second continuous zoom (a `--render-tour` of a
+    straight dive) at THREE depth bands so each exercises a different arithmetic path:
+    **low** (~1e0→1e12, f64/df32 direct — no perturbation), **high** (~1e12→1e300, df32
+    perturbation + BLA), **ultrahigh** (~1e300→1e1000+, floatexp mode 2). This is where the real
+    comparison lives: F3 rebuilds a reference per keyframe on CPU; fractadyne extends one
+    reference in place, prefetches on idle cores, and reuses across the dive — the sequence is
+    what measures that, and a per-frame harness cannot. Report **sustained frames/sec** and **p95
+    frame time** per band (the metrics `--divetest` already produces live), plus the
+    reference-build COUNT (F3: ~one per keyframe; us: far fewer if reuse-extend works). ⚠F3's
+    zoom-video path is `zoomasm` over an EXR keyframe sequence, not a direct video render — the
+    fair unit is "wall-clock to produce N keyframes covering the band", each tool via its native
+    pipeline (F3 → EXR keyframes; us → `--render-tour` frames), stated as such. ⚠Pin the SAME
+    zoom rate (decades/second) for both so neither is measured doing more zooming than the other.
+  - The three bands double as a per-path coverage tripwire: a regression that bites only one
+    arithmetic path (the recurring shape in this repo) shows as one band's ratio moving while the
+    others hold.
+
 
 - [ ] **F3 goldens for the tours' key steps (user, 2026-08-10).** The grand tour's regression
   holds (three-spar 1.7e55 → 6.5e94) and the ultra-dive's staged holds (e30 → e200) are verified
