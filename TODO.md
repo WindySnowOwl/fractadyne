@@ -1177,7 +1177,7 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Script format — requested extensions (user, 2026-08-09)
 
-- [ ] ⭐**Tour renders alias at depth: the normalize option never reached the tour path**
+- [x] ⭐**Tour renders alias at depth — FIXED v0.2.40-beta.54: `[render] normalize` with temporal smoothing.**
   (user-reviewed 2026-08-10 on the 4K grand-tour frames: "large regions that simply look like
   noise" from ~e50 on). Verified by A/B at the same centre/depth/iterations: default coloring =
   confetti (escape values span ~1e5–1e6 against a few-hundred-entry palette cycle ⇒ adjacent
@@ -1191,6 +1191,13 @@ Mockups: [design/mockups/](design/mockups/).
   mapping the livetest oracle uses. This is also why the e94 livetest hold warns at sRGB Δ 29.6
   with identical blackness. Ties into the F3-goldens item: normalized deep corpus rows are the
   independent reference for what these holds should look like.
+  ✅**DONE**: `render_export_normalized` gained an EMA of the escape-value range across frames
+  (α=0.2; a single GUI export passes `None` → byte-identical output, goldens 17/17). The offline
+  tour frame loop uses it for single-view frames, carries the smoothed range, and reuses the
+  pipelined reference. Grand tour + ultra-dive set `normalize = true`; A/B verified at ~e160
+  (confetti → resolved dendrite). ⚠**Still open — the ~40 Mpx single-texture COLOR cap**: 4K ss4
+  (132 Mpx) exceeds it, so a big render warns ONCE and falls back to un-normalized. A tiled
+  normalized color pass is the remaining work before the parked 4K render resumes.
 
 - [ ] **Tour files should be able to set every rendering parameter the UI can.** Today `[render]`
   covers size/fps/ss/max_iter/auto_iter/out/prefix/mp4/show_location and keyframes carry
@@ -2637,6 +2644,23 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   writing them back, and `.kfb` map files, do not.
 
 ### Testing & verification
+
+- [ ] **F3 relative-performance benchmark matrix (user, 2026-08-10)** — a standardized head-to-head
+  wall-clock harness vs Fraktaler-3 across a location/zoom matrix, reporting the SPEED RATIO per
+  cell (not just correctness — that's the F3-goldens item below). Design notes: reuse the corpus
+  coordinates (same centres/zooms/iterations both tools already agree on) so performance is
+  measured on identical work; drive F3 headless (`fraktaler-3 --render` / its batch mode) and
+  fractadyne via `--render` with matched `--iter`/`--size`/`--ss`; separate the COLD (reference
+  build + first frame) from WARM (re-render) columns, since the cold `best_reference` cost and the
+  warm GPU iterate are different stories the current `--bench-matrix` already splits internally.
+  ⚠Fairness controls: pin CPU/GPU (F3 is CPU-tiled, fractadyne is GPU — the honest comparison is
+  "same machine, each tool's best path", stated as such, not apples-to-apples per-core); fixed
+  thread count; discard the first run (thermal/cache); report median of N. Output a markdown table
+  (location × [F3 s, Fd s, ratio]) like `benchmarks/bench-matrix-baseline.json`'s report. Ties into
+  the F3-goldens item (same corpus rows, same F3 invocation) — build the harness once, get
+  correctness AND performance. ⚠F3's `maximum_reference_iterations` must be set or its deep cells
+  bail early and flatter our ratio dishonestly.
+
 
 - [ ] **F3 goldens for the tours' key steps (user, 2026-08-10).** The grand tour's regression
   holds (three-spar 1.7e55 → 6.5e94) and the ultra-dive's staged holds (e30 → e200) are verified

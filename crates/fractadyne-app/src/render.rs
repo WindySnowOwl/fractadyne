@@ -1798,6 +1798,11 @@ impl FractadyneApp {
     /// `cycle = sweeps/range`, `offset = -min·cycle`, then color; supersampled and box-downsampled.
     /// Returns `None` (caller falls back to the normal export) for aux coloring, an all-interior
     /// frame (nothing to normalize), or a supersampled size past the single-texture color cap.
+    /// `prev_smoothed` carries the EMA of the escape-value range from earlier frames of a TOUR, so
+    /// the palette mapping does not BREATHE frame to frame: normalizing each frame to its own
+    /// independent min/max makes a video shimmer as the range wanders. `None` (a single GUI export)
+    /// colors with the frame's own measured range, unchanged. Returns the new smoothed range for
+    /// the caller to carry forward.
     pub(crate) fn render_export_normalized(
         &self,
         device: &eframe::wgpu::Device,
@@ -1807,7 +1812,9 @@ impl FractadyneApp {
         width: u32,
         height: u32,
         ss: u32,
-    ) -> Option<fractadyne_gpu::ExportResult> {
+        prev_smoothed: Option<(f32, f32)>,
+        precomputed: Option<RecomputeResult>,
+    ) -> Option<(fractadyne_gpu::ExportResult, (f32, f32))> {
         const MAX_PX: u64 = 40_000_000; // single-texture color pass (~6K·6K); above → fall back
         let ss = ss.max(1);
         let (iw, ih) = (width * ss, height * ss);
@@ -1819,7 +1826,9 @@ impl FractadyneApp {
         {
             return None;
         }
-        let mut req = self.current_export_request_for(vp, julia);
+        // Reuse the tour pipeline's precomputed reference when present (the normalized path builds
+        // the same reference the normal path would, so the pipeline's cost-hiding still applies).
+        let mut req = self.current_export_request_with_ref(vp, julia, precomputed);
         req.width = iw;
         req.height = ih;
         req.ss = 1;
@@ -1837,11 +1846,23 @@ impl FractadyneApp {
         if hi < lo {
             return None; // all-interior frame: nothing to normalize → normal path
         }
-        let range = (hi - lo).max(1.0);
+        // Temporal smoothing for tours (see `prev_smoothed`): exponential moving average of the
+        // range. α = 0.2 keeps the mapping stable across a fast dive (a few frames of lag on a
+        // range that only grows) while still tracking; a single export (prev = None) uses the
+        // frame's own range, so GUI/CLI output is byte-identical to before.
+        const NORM_EMA_ALPHA: f32 = 0.2;
+        let (clo, chi) = match prev_smoothed {
+            Some((plo, phi)) => (
+                plo + NORM_EMA_ALPHA * (lo - plo),
+                phi + NORM_EMA_ALPHA * (hi - phi),
+            ),
+            None => (lo, hi),
+        };
+        let range = (chi - clo).max(1.0);
         // With normalize on, the `cycle` slider means palette SWEEPS across the escape range.
         let sweeps = 0.5 + self.coloring.cycle * 6.0;
         req.cycle = sweeps / range;
-        req.offset = -lo * req.cycle + self.coloring.offset;
+        req.offset = -clo * req.cycle + self.coloring.offset;
         // Pass 2 — color the buffer with the normalized cycle.
         let mut res = fractadyne_gpu::color_iter_buffer(device, queue, &req, &iter.pixels).ok()?;
         // Box-downsample the supersampled colored buffer to the output resolution.
@@ -1870,7 +1891,7 @@ impl FractadyneApp {
         res.ss = ss;
         res.iterate_ms = iter.iterate_ms;
         res.counters = iter.counters;
-        Some(res)
+        Some((res, (clo, chi)))
     }
 
     /// Advance a view's tiled settle by one tile and return its rect (base px). Grid geometry is

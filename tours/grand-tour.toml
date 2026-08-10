@@ -36,6 +36,9 @@ name = "Fractadyne Grand Tour"
 size = "1920x1080"
 fps = 30
 ss = 2
+# Deep tours alias without this: past ~1e50x a fixed palette cycle turns the escape field to
+# confetti. Temporally smoothed across frames so the video does not shimmer.
+normalize = true
 
 # Live playback only; an offline render always computes every frame to completion regardless.
 # `settled` stops the tour clock at each hold until the view resolves, so a deep hold gets the

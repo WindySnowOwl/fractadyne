@@ -47,6 +47,7 @@ Output settings, so `--render-tour x.toml` with no flags reproduces the intended
 | `max_iter` | int | (session, min 500000) | Iteration budget for frames whose keyframes don't state their own. Deep tours SHOULD set a per-keyframe budget instead: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat. |
 | `auto_iter` | bool | true | Whether this `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false). Per-keyframe budgets are always exact. |
 | `show_location` | bool | false | Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag). |
+| `normalize` | bool | false | Auto-normalize the palette cycle to each frame's escape-value range, temporally smoothed so a video doesn't shimmer. Deep tours need it — past ~1e50x a fixed cycle aliases the escape field into confetti. (Colors up to ~40 Mpx/frame; above that the frame falls back to un-normalized with a logged warning, pending a tiled normalized color pass.) |
 
 ### `[playback]`
 

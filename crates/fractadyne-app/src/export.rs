@@ -590,7 +590,10 @@ impl FractadyneApp {
         // range so extreme-depth views don't alias into speckle. Falls through to the normal path for
         // aux coloring / all-interior frames / oversized supersampled buffers.
         if self.coloring.normalize {
-            if let Some(res) = self.render_export_normalized(device, queue, vp, julia, req.width, req.height, req.ss) {
+            // Single export: no prior-frame range to smooth against (`None`) → the frame's own range.
+            if let Some((res, _range)) = self
+                .render_export_normalized(device, queue, vp, julia, req.width, req.height, req.ss, None, None)
+            {
                 return Ok(res);
             }
         }

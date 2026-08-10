@@ -32,6 +32,9 @@ name = "Ultra Dive e30-e200"
 size = "1920x1080"
 fps = 30
 ss = 2
+# Deep tours alias without this: past ~1e50x a fixed palette cycle turns the escape field to
+# confetti. Temporally smoothed across frames so the video does not shimmer.
+normalize = true
 
 [playback]
 pace = "settled"

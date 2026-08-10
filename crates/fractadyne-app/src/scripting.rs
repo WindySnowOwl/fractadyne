@@ -154,6 +154,12 @@ struct RenderFile {
     /// Burn a small zoom/coordinate HUD into the top-left of every frame (also `--show-location`).
     #[serde(default)]
     show_location: Option<bool>,
+    /// Auto-normalize the palette cycle to each frame's escape-value range, temporally smoothed
+    /// across frames so a video doesn't shimmer (the `--normalize` idea, made tour-safe). Off by
+    /// default; deep tours want it on — a fixed cycle aliases the ~1e5–1e6 smooth-iter field into
+    /// per-pixel confetti past ~1e50×.
+    #[serde(default)]
+    normalize: Option<bool>,
 }
 
 /// A named coordinate — kills the 120-digit duplication when several keyframes and annotations
@@ -594,6 +600,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "max_iter", ty: "int", default: "(session, min 500000)", doc: "Iteration budget for frames whose keyframes don't state their own. Deep tours SHOULD set a per-keyframe budget instead: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat." },
             SchemaField { name: "auto_iter", ty: "bool", default: "true", doc: "Whether this `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false). Per-keyframe budgets are always exact." },
             SchemaField { name: "show_location", ty: "bool", default: "false", doc: "Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag)." },
+            SchemaField { name: "normalize", ty: "bool", default: "false", doc: "Auto-normalize the palette cycle to each frame's escape-value range, temporally smoothed so a video doesn't shimmer. Deep tours need it — past ~1e50x a fixed cycle aliases the escape field into confetti. (Colors up to ~40 Mpx/frame; above that the frame falls back to un-normalized with a logged warning, pending a tiled normalized color pass.)" },
         ],
     },
     SchemaTable {
@@ -878,6 +885,7 @@ pub(crate) struct TourRender {
     pub(crate) max_iter: Option<u32>,
     pub(crate) auto_iter: Option<bool>,
     pub(crate) show_location: bool,
+    pub(crate) normalize: bool,
 }
 
 /// The tour-render flags exactly as the CLI gave them. `None` means "not specified": the script's
@@ -2256,6 +2264,7 @@ fn resolve_render(r: &RenderFile) -> Result<TourRender, String> {
         max_iter: r.max_iter,
         auto_iter: r.auto_iter,
         show_location: r.show_location.unwrap_or(false),
+        normalize: r.normalize.unwrap_or(false),
     })
 }
 
@@ -2652,6 +2661,13 @@ impl FractadyneApp {
         // Overwrite policy: `overwrite_all` skips the per-frame prompt; `canceled` breaks the render.
         let mut overwrite_all = overwrite;
         let mut canceled = false;
+        // Tour normalize: the escape-value range smoothed across frames (see
+        // `render_export_normalized`), and a one-shot flag so an oversized frame warns once rather
+        // than per-frame. `resume` may start mid-tour with no prior range — the EMA simply seeds
+        // from the first rendered frame, which is what `None` does.
+        let mut norm_range: Option<(f32, f32)> = None;
+        let mut norm_oversize_warned = false;
+        let want_normalize = pb.render.normalize;
         let started = std::time::Instant::now();
         for fi in first_frame..=last_frame {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
@@ -2689,7 +2705,7 @@ impl FractadyneApp {
                 }
             }
             // Claim frame `fi`'s precomputed reference if the previous iteration started one for it.
-            let this_ref = match pending_ref.take() {
+            let mut this_ref = match pending_ref.take() {
                 Some((idx, rx)) if idx == fi => rx.recv().ok(),
                 _ => None,
             };
@@ -2739,16 +2755,49 @@ impl FractadyneApp {
                 self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
                 self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
                 let vg = vignette_for(&pb.spotlights, &self.viewport, t);
-                // Single view: use the pipelined precomputed reference (falls back to sync internally).
-                let mut req = self.current_export_request_with_ref(&self.viewport, self.julia_mode, this_ref);
-                req.width = width;
-                req.height = height;
-                req.ss = self.export.ss;
-                req.max_iter = req.max_iter.max(200);
-                req.vignette = vg;
-                let r = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
-                    .map_err(|e| format!("frame {fi}: {e}"))?;
-                (r.pixels, r.width, r.height)
+                let ss = self.export.ss;
+                // Only attempt the normalized path when the supersampled buffer fits its
+                // single-texture color cap — otherwise warn ONCE and render normally, so a big
+                // normalized render is never silently un-normalized (nor does it lose the
+                // pipelined reference to a `take()` that the fallback then can't use).
+                let over_cap = (width * ss) as u64 * (height * ss) as u64 > 40_000_000;
+                if want_normalize && over_cap && !norm_oversize_warned {
+                    say(&format!(
+                        "⚠ normalize: {width}×{height} ss{ss} exceeds the ~40 Mpx normalized color \
+                         cap — rendering this tour UN-normalized (deep frames may alias). Lower ss \
+                         or size, or wait for the tiled normalized color pass."
+                    ));
+                    norm_oversize_warned = true;
+                }
+                // The normalized path returns `None` for an all-interior frame or aux coloring; in
+                // that case fall through to the normal render (with the reference it handed back).
+                let normalized = if want_normalize && !over_cap {
+                    self.render_export_normalized(
+                        device, queue, &self.viewport, self.julia_mode, width, height, ss,
+                        norm_range, this_ref.take(),
+                    )
+                } else {
+                    None
+                };
+                match normalized {
+                    Some((r, range)) => {
+                        norm_range = Some(range);
+                        (r.pixels, r.width, r.height)
+                    }
+                    None => {
+                        // Single view: pipelined precomputed reference (falls back to sync internally).
+                        let mut req = self
+                            .current_export_request_with_ref(&self.viewport, self.julia_mode, this_ref);
+                        req.width = width;
+                        req.height = height;
+                        req.ss = self.export.ss;
+                        req.max_iter = req.max_iter.max(200);
+                        req.vignette = vg;
+                        let r = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
+                            .map_err(|e| format!("frame {fi}: {e}"))?;
+                        (r.pixels, r.width, r.height)
+                    }
+                }
             };
             self.apply_watermark(&mut px, rw, rh);
             let mut placed_labels: Vec<egui::Rect> = Vec::new();
