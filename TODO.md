@@ -4,8 +4,12 @@
 
 Goal restated by the user: a release **stable enough to announce publicly**, meaning (a) no easily
 reproducible bugs, (b) no fundamentally missing features, (c) something substantively new in the
-landscape, and (d) a runnable Linux build. Head is **v0.2.40-beta.46**, pushed; the latest
-*published* prerelease is still beta.27 (28–46 are untagged — GitHub builds fire only on request).
+landscape, and (d) a runnable Linux build. Head is **v0.2.40-beta.50**, pushed; the latest
+*published* prerelease is still beta.27 (28–50 are untagged — GitHub builds fire only on request).
+⭐Status 2026-08-09: the A-list is essentially clear — A2 fixed (beta.47), A3 downgraded, the 2:58
+device loss + black deep holds resolved (beta.49/50, livetest baseline all-green); A1's remaining
+half (explicit iteration count still capped live) and the A4 ghost are what is left. Windows is
+stable enough that **B (Linux) is unblocked** per the user's sequencing.
 
 ### A — BLOCKERS: easily reproducible bugs
 
@@ -87,6 +91,13 @@ Ordered by how fast a stranger hits them.
       to its widest form so the widget cannot change size mid-playback.
     ⚠A missing or moved file must fall back to the picker rather than erroring, and the stored
     path should not be treated as trusted input (same handling as any loaded `.toml`).
+    - **A progress bar in the Render Script dialog** (user, 2026-08-09). The 🎬 dialog launches
+      the render as a child process (`--render-tour`) and today shows only text; the child already
+      emits per-frame progress lines on stdout, so the dialog should parse them into a bar with
+      frames-done / total, elapsed, and an ETA. ⚠The same stdout pipe is implicated in the silent
+      4K render death (child died with `failed printing to stdout` when a parent went away —
+      Open bugs) — whatever reads the pipe must tolerate the child outliving the dialog and vice
+      versa, so do the two together.
 
 ### E — (b) fundamentally missing features: assessed, nothing blocking
 
@@ -1204,8 +1215,14 @@ future *export* if anyone wants to cut frames in an NLE, never the native format
   restart-loop. Verified live at the spar: derate fires on the big install, budget re-climbs to
   ceiling, 0 non-responding samples.
 
-- [ ] **Live pixel clamp for long-non-escaping references vs CLI** — residual of the beta.27/28
-  freeze-guard design, accepted for now. A reference still partial past `LIVE_REF_CAP` is refused
+- [x] **Live pixel clamp for long-non-escaping references vs CLI — RESOLVED v0.2.40-beta.49/50
+  (freeze guard v2: long partials now INSTALL at a re-measured budget; all grand-tour deep holds
+  render at +0.0 pt vs offline, baseline all-green).** What remains is only the honest device-cap
+  wall: a reference still partial at the full 7.45M-sample cap (the 2.05e95× spar) clamps pixels
+  there, live and CLI alike — tracked under the depth wall, not here. Historical entry follows;
+  ⚠its "the guard STAYS" conclusion was superseded once beta.48's budget floor made the install
+  frame cost-boundable (the condition its own text set).
+  ~~residual of the beta.27/28 freeze-guard design, accepted for now.~~ A reference still partial past `LIVE_REF_CAP` is refused
   (present-wedge safety, reproduced at e21000), leaving live pixels clamped at the last installed
   orbit (≤256k) while a CLI render of the same view clamps at the device cap — so live can
   under-resolve where an export succeeds. Bites when the picked reference's escape exceeds the
