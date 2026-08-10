@@ -1982,6 +1982,36 @@ impl FractadyneApp {
                 );
             }
 
+            // ✅A1's user-visible half, end to end: an EXPLICIT count must reach the shader
+            // params verbatim. Direct mode at a shallow view so no reference/pixel-clamp can
+            // confound the reading — the only thing between the Iterations box and the GPU here
+            // is the budget formula this pins. (Before beta.53: 10,000,000 in, ~2,800 out.)
+            self.render_cfg.max_iter = 10_000_000;
+            self.viewport.set_center_log2mag(
+                fractadyne_core::parse_bf("-0.5").unwrap(),
+                fractadyne_core::parse_bf("0.0").unwrap(),
+                (10.0f64).log2(),
+            );
+            let pr = {
+                let center_bf = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+                let center = self.viewport.center_f64();
+                let span = self.viewport.complex_span_fe();
+                let mag = self.viewport.magnification();
+                let l2 = self.viewport.log2_magnification();
+                self.build_params(
+                    center_bf, center, span, mag, l2, self.fractal, false, 10_000_000, false, 1,
+                    PANEL, 0, None,
+                )
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Live budget",
+                name: "explicit iteration count honoured verbatim".into(),
+                params: "auto off, 10,000,000 iterations, direct mode @10×".into(),
+                result: format!("params.max_iter = {}", pr.max_iter),
+                threshold: "== 10,000,000",
+                pass: pr.max_iter == 10_000_000,
+            });
+
             self.render_cfg.max_iter = saved_iter;
             self.render_cfg.auto_iter = saved_auto;
             self.render_cfg.aa = saved_aa;

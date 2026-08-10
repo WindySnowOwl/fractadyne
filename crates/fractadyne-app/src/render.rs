@@ -2111,9 +2111,8 @@ impl FractadyneApp {
             // "the raise didn't help" → the interior plateau latches and the view sticks black at
             // fully-starved views (observed live at a 100%-capped spar session).
             let boost_now = self.perf.iter_boost[vb];
-            let budget_now = eff_iter
-                .min(crate::MAX_ITER_LIMIT)
-                .min(((zoom_iter_cap(log2mag).max(256) as f64) * boost_now) as u32);
+            let budget_now =
+                live_iter_budget(eff_iter, log2mag, boost_now, !self.render_cfg.auto_iter);
             let (v, frac_bits) = match v {
                 u64::MAX => (u64::MAX, 0u32),
                 packed => {
@@ -2267,25 +2266,21 @@ impl FractadyneApp {
         // until settle re-boosted ("screen goes black until it repaints"). A boosted motion frame
         // costs up to boost× more, which the motion-res controller absorbs as resolution — softer
         // beats black. (ADAPTATION stays settled-only; this is only the budget's application.)
-        let boosted_cap = {
+        // ✅A1 RESOLVED (v0.2.40-beta.53): an explicit iteration count is honoured verbatim, in
+        // auto mode the zoom cap × boost applies as before — one shared formula with the boost
+        // probe's `budget_now`, so the two can never drift (`live_iter_budget`; the drift failure
+        // mode and the freeze-guard coupling that blocked this for two releases are documented on
+        // the function). `iter_cap` (= MAX_ITER_LIMIT on both branches) folds into it.
+        let gpu_iter = {
             let vb = (view_id as usize).min(1);
-            ((zoom_iter_cap(log2mag).max(256) as f64) * self.perf.iter_boost[vb]) as u32
+            live_iter_budget(
+                eff_iter,
+                log2mag,
+                self.perf.iter_boost[vb],
+                !self.render_cfg.auto_iter,
+            )
+            .min(iter_cap)
         };
-        // ⚠An EXPLICIT iteration count is still capped by `boosted_cap`, which is A1's
-        // remaining half. Honouring it (`if auto_iter || interacting { …min(boosted_cap) } else
-        // { … }`) WORKS in isolation — verified at an explicit 10,000,000 iterations rendering at
-        // full 1445×1134 — but it cannot ship yet: script playback sets `auto_iter = false` for
-        // every keyframe that carries a `max_iter`, so the branch lands on the flagship tour, and
-        // there it regressed the deep holds (1e61 went 42.1% → 100% black on `--livetest`). Two
-        // couplings have to be resolved first, both recorded in TODO.md:
-        //   · the boost probe's own `budget_now` (see the maxiter-counter drain above) recomputes
-        //     the cap with `boosted_cap` folded in, and compares it against the `armed_iter` the
-        //     GPU reports. Change one expression and the other silently discards every reading as
-        //     stale — two copies of the same formula that must agree, which is exactly the shape
-        //     this file keeps getting caught by.
-        //   · a higher honoured count raises `ref_build_iter` into the `LIVE_REF_CAP` refusal band
-        //     (A3), where the freeze guard declines the reference and pixels stay clamped short.
-        let gpu_iter = eff_iter.min(iter_cap).min(boosted_cap);
         // Build the reference orbit a bit longer than the pixels need (`zoom_iter_cap` grows 256
         // iters/octave). The spare length lets one reference serve ~32 more octaves of zoom before
         // its orbit is too short — so a continuous dive doesn't rebuild the (slow, bignum) orbit
@@ -3601,6 +3596,28 @@ pub(crate) fn wall_probe_step(
     }
 }
 
+/// The LIVE pixel iteration count for a frame — THE single source of truth for both the dispatch
+/// (`gpu_iter`) and the boost probe's staleness gate (`budget_now`). These used to be two copies
+/// of the same formula in one function, and the A1 comment warned that changing one without the
+/// other silently discards every maxiter-counter reading as stale (the armed value no longer
+/// matches) and freezes the adaptive boost. Now they cannot drift.
+///
+/// `explicit` (auto-iter OFF) is an instruction, not a request: the user's Iterations box and a
+/// tour keyframe's `max_iter` both mean THIS count — no depth cap, no boost multiplier. This was
+/// A1's remaining half ("an explicit iteration count is silently overridden": 10,000,000 in the
+/// UI rendered as `iter 82,741`). It could not ship before v0.2.40-beta.49/50 because an honoured
+/// count raises the reference ask past `LIVE_REF_CAP`, where the old freeze guard refused the
+/// build and pixels stayed clamped short (the measured 1e61 42.1% → 100% black regression);
+/// freeze guard v2 installs long partials, so an explicit ask can actually be served. In auto
+/// mode nothing changes: the zoom-appropriate cap × the adaptive boost, exactly as before.
+pub(crate) fn live_iter_budget(eff_iter: u32, log2mag: f64, boost: f64, explicit: bool) -> u32 {
+    let capped = eff_iter.min(crate::MAX_ITER_LIMIT);
+    if explicit {
+        return capped;
+    }
+    capped.min(((zoom_iter_cap(log2mag).max(256) as f64) * boost) as u32)
+}
+
 pub(crate) fn budget_base(fe_budget: u64) -> u64 {
     match fe_budget {
         0 => TDR_BOOTSTRAP_STEPS,
@@ -3718,6 +3735,26 @@ mod controller_props {
         // the budget stayed at 1.663e11, far above anything the GPU could finish.
         let (next, _) = budget_step(166_300_000_000, 10_300_000_000, 1451.4).unwrap();
         assert!(next <= 10_300_000_000, "budget must come down to the size that measured slow");
+    }
+
+    #[test]
+    fn an_explicit_iteration_count_is_honoured_verbatim() {
+        // A1's exact symptom: 10,000,000 in the Iterations box at ~1e9x read back as iter 82,741
+        // (zoom cap x boost). Explicit means THIS count.
+        assert_eq!(live_iter_budget(10_000_000, 30.0, 1.0, true), 10_000_000);
+        // ...bounded by the absolute limit only.
+        assert_eq!(
+            live_iter_budget(u32::MAX, 30.0, 1.0, true),
+            crate::MAX_ITER_LIMIT
+        );
+        // Auto mode: unchanged behaviour — the zoom-appropriate cap times the boost binds.
+        let auto = live_iter_budget(10_000_000, 30.0, 1.0, false);
+        assert!(auto < 20_000, "auto at 1e9x should sit near the zoom cap, got {auto}");
+        let boosted = live_iter_budget(10_000_000, 30.0, 4.0, false);
+        assert_eq!(boosted, auto * 4, "the boost is a plain multiplier on the cap");
+        // And an ask below every cap passes through untouched in both modes.
+        assert_eq!(live_iter_budget(2_000, 30.0, 1.0, false), 2_000);
+        assert_eq!(live_iter_budget(2_000, 30.0, 1.0, true), 2_000);
     }
 
     #[test]

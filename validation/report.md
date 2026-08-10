@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.51 (build 1324)
-- **Generated:** 2026-08-10 03:41:04 UTC (unix 1786333264)
+- **Version:** 0.2.40-beta.52 (build 1330)
+- **Generated:** 2026-08-10 03:53:13 UTC (unix 1786333993)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -74,6 +74,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Catalog | deep minibrot nucleus interior (full precision) | interior expected true | oracle says interior=true | matches catalog | ✅ PASS |
 | Live budget | unmeasured budget bounds the FIRST dispatch | 1445×1134 panel, 2000 iter, fe_budget=0 | arm frame 504×396 ss1 = 3.992e8 steps | ≤ TDR_BOOTSTRAP_STEPS | ✅ PASS |
 | Live budget | unmeasured budget does NOT bind settled resolution | 1445×1134 panel, 2000 iter, fe_budget=0 | settled width 1445/1445 (100% of panel) | ≥90% of panel width | ✅ PASS |
+| Live budget | explicit iteration count honoured verbatim | auto off, 10,000,000 iterations, direct mode @10× | params.max_iter = 10000000 | == 10,000,000 | ✅ PASS |
 | Iter-budget | probe reach resolves a starved spar | 3.3e61× three-spar, cap 54315 → reach 848671 | flat 100.0% at cap → 0.2% at reach | >99% flat at cap, <10% at reach | ✅ PASS |
 | NR-zoom | atom size vs exactly-known components | period 1, 2 + home-view identity | all exact | exact to 1e-9 | ✅ PASS |
 | NR-zoom | deep minibrot: size, framing, center accuracy | seahorse 1e6× → period 998 | size 2^-50.505, frame 2^50.505, center err 2^-194, moved 7.0e-31 | period 998, size 2^-50.5, err < size/2^100 | ✅ PASS |
@@ -121,7 +122,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**106/106 checks passed.**
+**107/107 checks passed.**
 
 ## Coverage & scope
 

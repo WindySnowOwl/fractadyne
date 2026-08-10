@@ -15,13 +15,16 @@ stable enough that **B (Linux) is unblocked** per the user's sequencing.
 
 Ordered by how fast a stranger hits them.
 
-1. **An explicit iteration count is silently overridden** — PARTLY FIXED v0.2.40-beta.47; the
-   remaining half is blocked, see the open item below. The cost model no longer collapses the
-   frame: at an explicit 10,000,000 iterations the view now renders at full native resolution
-   (measured 1445×1134, budget climbing 4.0e8 → 3.0e11 across ~160 readings) instead of the 16×16
-   shrink floor an earlier attempt produced. What is still capped is `gpu_iter` itself — the status
-   bar still reads `iter 82,741` — because removing the `boosted_cap` clamp lands on scripted
-   playback, which sets `auto_iter = false` for every keyframe carrying a `max_iter`.
+1. **An explicit iteration count is silently overridden — ✅RESOLVED v0.2.40-beta.53** (resolution
+   half beta.47, count half beta.53). Auto-iter OFF now means the count reaches the shader
+   verbatim (`live_iter_budget` — ONE formula shared by the dispatch and the boost probe's
+   staleness gate, so the two can never drift; that drift plus the old freeze guard's refusal
+   band were the two couplings that blocked this, and beta.49/50 dissolved the second). Selftest
+   `Live budget / explicit iteration count honoured verbatim` pins it end to end (10,000,000 in →
+   `params.max_iter` 10,000,000 out; before: ~2,800). Side effect, deliberate: tour keyframes'
+   `max_iter` is now honoured immediately too — the grand tour's holds run at the script's exact
+   asks (e72 at 1,200,000 where boost-climbing gave 647,464) with byte-identical outcomes
+   (livetest 0 drifted on both tours), boost ×1.00 at every scripted hold.
 2. **A GPU without `TIMESTAMP_QUERY` renders at ~1/3 resolution forever — FIXED
    v0.2.40-beta.47.** Reproduced on the dev 3080 via the new `FRACTADYNE_NO_TIMESTAMPS=1`, which
    declines the feature the adapter offers: a 1445×1134 panel at 2,000 iterations rendered at
