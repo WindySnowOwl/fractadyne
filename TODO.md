@@ -1172,6 +1172,21 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Script format — requested extensions (user, 2026-08-09)
 
+- [ ] ⭐**Tour renders alias at depth: the normalize option never reached the tour path**
+  (user-reviewed 2026-08-10 on the 4K grand-tour frames: "large regions that simply look like
+  noise" from ~e50 on). Verified by A/B at the same centre/depth/iterations: default coloring =
+  confetti (escape values span ~1e5–1e6 against a few-hundred-entry palette cycle ⇒ adjacent
+  pixels at random cycle phases; ss4 averages it to flat grain), `--normalize` = the same view
+  resolves into spar arcs on a coherent field. The live view has "Normalize deep colors"
+  (beta.19–21) and `--render`/corpus have `--normalize`; `--render-tour` has neither a flag nor a
+  `[render]` field. Fix wants more than plumbing the flag: **per-frame normalization in a video
+  breathes** (the frame's escape range shifts every frame ⇒ the palette mapping flickers), so the
+  tour path needs temporal smoothing — an EMA of the range across frames (the live path already
+  EMAs exactly this) or per-segment fixed ranges, and the hold frames must land on the same
+  mapping the livetest oracle uses. This is also why the e94 livetest hold warns at sRGB Δ 29.6
+  with identical blackness. Ties into the F3-goldens item: normalized deep corpus rows are the
+  independent reference for what these holds should look like.
+
 - [ ] **Tour files should be able to set every rendering parameter the UI can.** Today `[render]`
   covers size/fps/ss/max_iter/auto_iter/out/prefix/mp4/show_location and keyframes carry
   palette/max_iter — but UI-reachable settings like supersampling mode, glitch correction,
