@@ -223,7 +223,7 @@ impl FractadyneApp {
         // before the report is written. Doing it post-hoc matches on what actually ran, so
         // it can't drift from the group/golden name lists the way a pre-flight check would.)
         let want = |tag: &str| -> bool {
-            filter.as_ref().map_or(true, |f| tag.to_ascii_lowercase().contains(f.as_str()))
+            filter.as_ref().is_none_or(|f| tag.to_ascii_lowercase().contains(f.as_str()))
         };
         if let Some(f) = &filter {
             eprintln!("[selftest] FILTERED RUN (--selftest-filter {f}): group state is shared — use full runs for verdicts");

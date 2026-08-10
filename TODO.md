@@ -82,13 +82,17 @@ Ordered by how fast a stranger hits them.
     "Compose in Gmail" fallback currently points at `fractadyne@rithea.com` → change to
     `feedback@fractadyne.org`), the Help/About text, README, and the release-notes footer. Do this
     once the site/mailbox actually exist — a dead support address is worse than none.
-13. **Pre-announce code hygiene review (user, 2026-08-09)** — a dedicated pass for dead code paths
-    and refactoring opportunities for readability/maintainability. Natural candidates already
-    known: the retired refusal machinery around `ref_ext_refused` (freeze guard v2 made the
-    writer unreachable — the readers and `refusal_survives_install` are now vestigial), the
-    `REFACTOR-PLAN` Phase 2/4 `too_many_arguments` markers, `cargo +nightly udeps` /
-    `cargo-machete` for unused deps, and a `#[allow(dead_code)]` sweep. Run clippy at a stricter
-    level and read what it says rather than silencing it.
+13. **Pre-announce code hygiene review (user, 2026-08-09) — DONE 2026-08-10 (beta.56).**
+    ✅**Dead code removed**: the entire `ref_ext_refused` refusal apparatus (field + 2 pure
+    functions + 7 tests + all reads), orphaned by freeze guard v2 — the one genuine dead path.
+    The e95 depth-limit status diagnostic was re-keyed off it onto the state v2 produces. Survey
+    findings, all confirmed INTENTIONAL (no action): the 5 `#[allow(dead_code)]` in scripting.rs
+    are serde schema fields parsed for round-trip/forward-compat (`format_version`, `editor`,
+    `thumb`, `note`, annotation `id`); the 2 `too_many_arguments` are pure classifiers with a
+    documented "a struct would just rename the args" rationale. Clippy: one real readability win
+    applied (`map_or(true, …)` → `is_none_or`); the 2 negated-float-comparison warnings are
+    intentional NaN-rejecting guards (`!(x > t)`) left as-is; the rest are rustdoc-markdown
+    cosmetics that don't affect code readability. Zero compiler warnings workspace-wide.
 
 ### D — STRONGLY RECOMMENDED, not blocking
 
