@@ -836,29 +836,6 @@ impl FractadyneApp {
             }
         }
         let vc = &mut self.ref_cache[vi];
-        // ⭐The refusal record is only obsolete once something SUPERSEDES it. Clearing it on every
-        // install made the freeze guard amnesiac, and that is the mechanism behind "a reference the
-        // freeze guard refuses is re-requested forever":
-        //   · the settled extension asks for 258,192 iterations, comes back partial at 258,193
-        //     samples — 2,192 over `LIVE_REF_CAP` — and is refused; `ref_ext_refused` = 258,193.
-        //   · the quality gate is correctly quiet after that (it re-fires only for STRICTLY more).
-        //   · but the PRECISION and `bla_out_of_range` triggers do not consult the refusal, so they
-        //     rebuild anyway — at a SHORTER length, which passes the cap and installs.
-        //   · that install cleared the record, the ask grew back past it, and the doomed extension
-        //     was requested again. Traced on the grand tour's gauntlet: refusals at 258,193 →
-        //     408,193 → 508,193 → 2,008,193, each with a stream of shorter installs in between.
-        //
-        // A shorter install contradicts nothing — the refusal says "an orbit this long at this
-        // point was STILL partial", and a shorter one cannot disprove that. Keep it unless the new
-        // orbit actually reaches past the refused attempt, or the reference POINT moved (a re-anchor
-        // is a different orbit, so the old verdict does not apply). View/formula changes clear it
-        // separately via `invalidate_refs`, and the appetite growing past the refused length is
-        // still the designed way out — the 6.5e94× spar needs exactly that, refused at 256k and
-        // 1.33M before a 3.63M attempt escaped.
-        let point_moved = vc.ref_pt.as_ref().is_none_or(|p| p != &res.rp);
-        if !refusal_survives_install(vc.ref_ext_refused, res.orbit_len, point_moved) {
-            vc.ref_ext_refused = 0;
-        }
         vc.ref_pt = Some(res.rp);
         vc.orbit = res.orbit;
         vc.orbit_len = res.orbit_len;
@@ -1157,7 +1134,6 @@ impl FractadyneApp {
             return false;
         };
         let vc = &mut self.ref_cache[vi];
-        vc.ref_ext_refused = 0; // fresh cache state — mirrors install_recompute's clear
         vc.ref_pt = Some([rx, ry]);
         vc.orbit = s.orbit;
         vc.orbit_len = s.orbit_len;
@@ -1409,28 +1385,11 @@ impl FractadyneApp {
     /// or its first settled frame hasn't landed), which is never "resolved".
     pub(crate) fn view_resolved(&self, view: usize) -> bool {
         let v = view.min(1);
-        // TERMINALLY clamped: the largest reference this view will ever ask for has already been
-        // refused by the freeze guard, so the pixel clamp can never lift and waiting cannot change
-        // the picture. The ask is bounded by the iteration appetite (and by the device cap), so a
-        // refusal at or above that bound means no bigger attempt is coming.
-        //
-        // The qualifier matters both ways, and both were measured. A refusal BELOW the appetite
-        // proves nothing — at the 6.5e94× spar, extensions were refused at 256k and 1.33M and then
-        // a 3.63M attempt ESCAPED and installed, and at 2.6e72× exactly that sequence takes the
-        // view from 100% black to fully resolved. But at 3.3e61×, a 408,193-sample refusal against
-        // a 400,000 appetite is the end of the road, and treating it as anything else made the
-        // hold sit out its entire settle timeout for a picture that could not improve.
-        if self.ref_cache[v].partial && self.ref_cache[v].ref_ext_refused > 0 {
-            // View 0's appetite: playback pacing (this method's only caller) drives the main view.
-            let appetite = if self.render_cfg.auto_iter {
-                self.viewport.recommended_max_iter(self.render_cfg.max_iter)
-            } else {
-                self.render_cfg.max_iter
-            };
-            if self.ref_cache[v].ref_ext_refused >= appetite.min(orbit_len_cap()) {
-                return true;
-            }
-        }
+        // (A view whose reference is terminally clamped once short-circuited to `true` here, from a
+        // freeze-guard REFUSAL record. Guard v2 (v0.2.40-beta.49/50) installs long partial
+        // references at a floor budget instead of refusing them, so nothing is ever refused and
+        // that path is gone; a clamped-but-improving view now resolves through the normal settled
+        // reading below. See git history / TODO.md for the refusal-loop saga.)
         match self.perf.capped_frac[v] {
             None => false,
             Some(frac) => {
@@ -3049,15 +3008,14 @@ impl FractadyneApp {
             let cap_now = live_orbit_cap(interacting, ref_build_iter);
             // The device cap bounds what any build can store: without it in the comparison, a
             // budget above the hardware limit (e.g. 2M at extreme depth vs the ~928k binding cap)
-            // re-fires forever against an orbit that can never get longer. `ref_ext_refused`
-            // likewise floors the ask: re-fire only for strictly more than a refused attempt.
-            // The extension ask uses `ref_build_iter` (the settled build target, appetite-based),
-            // not `gpu_iter`: at a clamped view the budget is pinned by the clamp itself, and an
-            // ask that waits for the budget can never grow (see `ref_build_iter`).
+            // re-fires forever against an orbit that can never get longer. The extension ask uses
+            // `ref_build_iter` (the settled build target, appetite-based), not `gpu_iter`: at a
+            // clamped view the budget is pinned by the clamp itself, and an ask that waits for the
+            // budget can never grow (see `ref_build_iter`).
             let needs_quality = precision > self.ref_cache[vi].orbit_prec + prec_headroom
                 || (self.ref_cache[vi].partial
                     && ref_build_iter.min(cap_now).min(orbit_len_cap())
-                        > self.ref_cache[vi].orbit_len.max(self.ref_cache[vi].ref_ext_refused));
+                        > self.ref_cache[vi].orbit_len);
             // Refresh whenever the reference has left the view or the depth/iters outgrew it. The
             // old motion throttle is gone: the recompute is now off-thread and gated to one job per
             // view (`recompute_rx`), so spawns are naturally paced by the compute itself — no need
@@ -3077,37 +3035,7 @@ impl FractadyneApp {
             //     above the measured 0.69 tiling onset so it rebuilds before artifacts show. Zoom-IN
             //     never drops below 1.0, so this leaves the dive path untouched.)
             let bla_out_of_range = bla_active && !(0.85..=1.1).contains(&depth_lag);
-            // ⭐And the refusal is AUTHORITATIVE at the spawn, not merely advice to the quality
-            // gate. `needs_quality`'s partial branch already respects it, but the PRECISION branch
-            // and `bla_out_of_range` do not — so at a hold whose extension is refused they kept
-            // spawning the identical doomed build. Making the record persist (see
-            // `refusal_survives_install`) without this turned four one-off refusals on the
-            // gauntlet into ten repeats of `len=258193`: the amnesia had been hiding the loop by
-            // letting the ask drift instead of repeating.
-            //
-            // Nothing is lost by suppressing. A rebuild asking for no more than the refused length
-            // at the same point returns the same still-partial orbit and is refused again — the
-            // picture cannot improve, only the core burns. A re-anchor (`out_of_view`) is a
-            // different orbit and still fires, which is the path by which the 6.5e94x spar
-            // eventually escapes.
-            let refused_again = extension_is_futile(
-                self.ref_cache[vi].partial,
-                self.ref_cache[vi].ref_ext_refused,
-                ref_build_iter.min(cap_now).min(orbit_len_cap()),
-                cap_now,
-            );
-            let recompute =
-                out_of_view || ((needs_quality || bla_out_of_range) && !refused_again);
-            if refused_again && (needs_quality || bla_out_of_range) && crate::diag::trace_on("ref") {
-                crate::diag::trace(
-                    "ref",
-                    format!(
-                        "rebuild suppressed: ask {} ≤ refused {} at the same reference — the                          result would be dropped again",
-                        ref_build_iter.min(cap_now).min(orbit_len_cap()),
-                        self.ref_cache[vi].ref_ext_refused
-                    ),
-                );
-            }
+            let recompute = out_of_view || needs_quality || bla_out_of_range;
             // Whether the series approximation applies to this view (bundled into the recompute).
             // BLA subsumes SA (see `export_reference_inputs`): when this view builds a BLA tree,
             // skip the SA coefficient pass — it's the dominant deep build cost (~9.4 s at 1e1105×)
@@ -3547,30 +3475,6 @@ impl FractadyneApp {
     }
 }
 
-/// Would a rebuild here just be refused again? True when the reference is still partial, an
-/// extension has already been dropped, and the new ask is no larger than the one that was dropped.
-/// The caller must exclude a re-anchor (`out_of_view`), which is a different orbit entirely.
-pub(crate) fn extension_is_futile(partial: bool, refused: u32, ask: u32, cap_now: u32) -> bool {
-    // ⚠`cap_now > LIVE_REF_CAP` is load-bearing, and leaving it out is a regression that reads as
-    // a fix. Only a SETTLED extension builds past the cap and can therefore be refused; a rebuild
-    // capped at `LIVE_REF_CAP` always installs, and those installs are what keep the BLA fresh and
-    // the view re-iterating. Suppressing them too made the 1e61 hold stop rebuilding altogether:
-    // its black fraction "improved" 42.1% → 0.1% purely because the screen froze on a 31.7-SECOND
-    // stale reprojection at 144×81, with the sRGB difference from the offline truth nearly doubling
-    // (33.4 → 60.2). Caught by the livetest baseline; the black metric alone called it a win.
-    partial && refused > 0 && cap_now > crate::LIVE_REF_CAP && ask <= refused
-}
-
-/// Does a recorded extension refusal survive this install? Pure so the rule is pinned by tests
-/// rather than by re-reading `install_recompute`.
-///
-/// `refused` is the length of the attempt the freeze guard dropped (0 = none on record),
-/// `installed_len` the length now going in, `point_moved` whether this install re-anchored to a
-/// different reference point.
-pub(crate) fn refusal_survives_install(refused: u32, installed_len: u32, point_moved: bool) -> bool {
-    refused > 0 && !point_moved && installed_len < refused
-}
-
 /// One step of the frame-budget search, as a pure function so it can be property-tested.
 ///
 /// `cur` is the current budget (already floored at the bootstrap), `steps` the nominal size of the
@@ -3678,65 +3582,6 @@ mod controller_props {
     //! something, and a slow dispatch failing to bring the budget down — rather than one past
     //! incident at a time.
     use super::*;
-
-    #[test]
-    fn a_repeat_of_a_refused_extension_is_futile() {
-        // hold-e55: ref_build_iter 258,192 against a refusal recorded at 258,193 samples.
-        assert!(extension_is_futile(true, 258_193, 258_192, 258_192));
-        assert!(extension_is_futile(true, 258_193, 133_498, 258_192));
-    }
-
-    #[test]
-    fn a_bigger_ask_is_not_futile() {
-        // The designed way out, and the 6.5e94x spar depends on it: refused at 256k and 1.33M,
-        // then a 3.63M attempt escaped and installed.
-        assert!(!extension_is_futile(true, 258_193, 408_192, 408_192));
-        assert!(!extension_is_futile(true, 1_330_000, 3_631_055, 3_631_055));
-    }
-
-    #[test]
-    fn a_complete_reference_is_never_futile_to_rebuild() {
-        // `partial == false` means the orbit escaped; the refusal cannot apply to it.
-        assert!(!extension_is_futile(false, 258_193, 1_000, 258_192));
-        assert!(!extension_is_futile(true, 0, 1_000, 258_192));
-    }
-
-    #[test]
-    fn a_rebuild_capped_at_live_ref_cap_is_never_futile() {
-        // It cannot be refused (the guard only drops a partial LONGER than the cap), it installs,
-        // and those installs are what keep the BLA fresh and the view re-iterating. Suppressing
-        // them froze the 1e61 hold on a 31.7 s stale reprojection at 144×81.
-        assert!(!extension_is_futile(true, 258_193, 250_000, crate::LIVE_REF_CAP));
-    }
-
-    #[test]
-    fn a_shorter_install_does_not_erase_a_refusal() {
-        // The A3 mechanism: the extension is refused at 258,193, then the precision /
-        // bla-out-of-range triggers rebuild at a SHORTER length that passes the cap and installs.
-        // Clearing the record there let the doomed extension be asked for again, forever.
-        assert!(refusal_survives_install(258_193, 133_499, false));
-        assert!(refusal_survives_install(258_193, 258_192, false));
-    }
-
-    #[test]
-    fn reaching_past_the_refusal_clears_it() {
-        // An orbit at least as long as the refused attempt supersedes its verdict.
-        assert!(!refusal_survives_install(258_193, 258_193, false));
-        assert!(!refusal_survives_install(258_193, 3_631_055, false));
-    }
-
-    #[test]
-    fn a_re_anchor_clears_it() {
-        // The refusal is about one orbit at one point; a different point is a different orbit,
-        // and the 6.5e94x spar depends on a later, bigger attempt being allowed to escape.
-        assert!(!refusal_survives_install(258_193, 1_000, true));
-    }
-
-    #[test]
-    fn no_refusal_on_record_is_a_no_op() {
-        assert!(!refusal_survives_install(0, 1_000, false));
-        assert!(!refusal_survives_install(0, 1_000, true));
-    }
 
     #[test]
     fn slow_reading_always_lowers_the_budget() {

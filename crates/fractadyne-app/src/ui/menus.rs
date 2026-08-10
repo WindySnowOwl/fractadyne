@@ -657,15 +657,15 @@ impl FractadyneApp {
     /// `LIVE_REF_CAP`, nothing refused) is transient machinery, not a limit the user needs to
     /// hear about. The conditions, in priority order, are the three walls actually measured on
     /// the Misiurewicz spar family:
-    /// 1. reference refused AT the GPU buffer cap (2e95×: nothing deeper is computable),
-    /// 2. reference clamped below the iteration budget after a declined extension (e21000),
-    /// 3. pixels exhausting a budget the app cannot raise further, with escapes pressing the
+    /// 1. the reference is still PARTIAL at the GPU buffer cap (2e95×: nothing deeper is
+    ///    computable) — since v0.2.40-beta.49/50 the freeze guard INSTALLS this partial at a floor
+    ///    budget rather than refusing it, so the wall is read off the installed length,
+    /// 2. pixels exhausting a budget the app cannot raise further, with escapes pressing the
     ///    ceiling (starvation — as opposed to ordinary in-set pixels, which always cap).
     #[allow(clippy::too_many_arguments)] // a pure classifier over independent state — a struct would just rename the args
     pub(crate) fn limit_status(
         partial: bool,
         orbit_len: u32,
-        refused: u32,
         dev_cap: u32,
         eff_iter: u32,
         capped: Option<f64>,
@@ -676,7 +676,11 @@ impl FractadyneApp {
         exhausted: bool,
     ) -> Option<(&'static str, String, bool)> {
         let clamp_px = orbit_len.saturating_sub(1);
-        if refused >= dev_cap {
+        // The reference is still partial (never escaped) at the GPU buffer cap: pixels are limited
+        // to that length and nothing deeper is computable at this view. Guard v2 installs this
+        // partial (at a floor budget) rather than refusing it, so the wall shows as `partial` with
+        // `orbit_len` at the device cap — no refusal record involved.
+        if partial && orbit_len >= dev_cap {
             return Some((
                 "⚠ depth limit",
                 format!(
@@ -688,21 +692,6 @@ impl FractadyneApp {
                     commas(&clamp_px.to_string())
                 ),
                 true,
-            ));
-        }
-        if partial && refused > 0 && clamp_px < eff_iter {
-            return Some((
-                "⚠ ref clamped",
-                format!(
-                    "Pixels are limited to {} iterations (budget {}): the reference orbit does \
-                     not escape within the length the app can safely use live — a {}-sample \
-                     extension was built and declined (it would freeze the GPU present). The \
-                     view may under-resolve; an export can push further.",
-                    commas(&clamp_px.to_string()),
-                    commas(&eff_iter.to_string()),
-                    commas(&refused.to_string())
-                ),
-                false,
             ));
         }
         // Pixels exhausting the budget only means STARVATION if raising would help. In-set
@@ -815,7 +804,6 @@ impl FractadyneApp {
                 if let Some((label, detail, severe)) = Self::limit_status(
                     vc.partial,
                     vc.orbit_len,
-                    vc.ref_ext_refused,
                     crate::render::orbit_len_cap(),
                     eff_iter,
                     self.perf.capped_frac[0],
@@ -1186,47 +1174,45 @@ mod tests {
     fn limit_status_matches_measured_regimes() {
         const DEV: u32 = 7_452_444;
         const MAX: u32 = crate::MAX_ITER_LIMIT;
-        // 2e95× spar: refusal AT the device cap → the red depth-limit wall.
-        let s = FractadyneApp::limit_status(true, 256_001, DEV + 1, DEV, MAX, None, 0, false, None, false, false)
-            .expect("device-cap refusal must warn");
+        // 2e95× spar: the reference is still partial AT the device cap → the red depth-limit wall.
+        let s = FractadyneApp::limit_status(true, DEV, DEV, MAX, None, 0, false, None, false, false)
+            .expect("partial-at-device-cap must warn");
         assert!(s.0.contains("depth limit") && s.2, "want severe depth limit, got {s:?}");
-        // e21000: extension declined below the device cap, pixels clamped under the budget.
-        let s = FractadyneApp::limit_status(true, 256_001, 508_193, DEV, 500_000, None, 0, false, None, false, false)
-            .expect("declined extension must warn");
-        assert!(s.0.contains("ref clamped") && !s.2, "want amber ref clamp, got {s:?}");
+        // A partial BELOW the device cap is an ordinary motion/clamp state, not the wall — quiet.
+        assert!(FractadyneApp::limit_status(true, 256_001, DEV, 500_000, None, 0, false, None, false, false).is_none());
         // The 6.5e94× black screen: probe climbed to the full appetite, frame stayed all-capped.
-        let s = FractadyneApp::limit_status(false, 3_631_055, 0, DEV, MAX, Some(1.0), MAX, true, None, true, true)
+        let s = FractadyneApp::limit_status(false, 3_631_055, DEV, MAX, Some(1.0), MAX, true, None, true, true)
             .expect("exhausted must warn");
         assert!(s.0.contains("iter exhausted"), "got {s:?}");
         // Starved at the app maximum: most pixels capped AND escapes pressing the ceiling.
         let s = FractadyneApp::limit_status(
-            false, 900_000, 0, DEV, MAX, Some(0.60), MAX, true, Some(MAX as f64 * 0.97), false, false,
+            false, 900_000, DEV, MAX, Some(0.60), MAX, true, Some(MAX as f64 * 0.97), false, false,
         )
         .expect("starved-at-ceiling must warn");
         assert!(s.0.contains("iter capped") && s.1.contains("already at the maximum"), "got {s:?}");
 
         // Quiet: an ordinary dive's motion partial (nothing refused)…
-        assert!(FractadyneApp::limit_status(true, 256_001, 0, DEV, 500_000, None, 0, false, None, false, false).is_none());
+        assert!(FractadyneApp::limit_status(true, 256_001, DEV, 500_000, None, 0, false, None, false, false).is_none());
         // …the user's 6.9e94× view — a minibrot in frame caps its in-set core (measured 3 px of
         // 2304 = 0.13%) while escapes finish ~1.1M under a 10M budget: resolved, must stay quiet…
         assert!(FractadyneApp::limit_status(
-            false, 2_848_721, 0, DEV, MAX, Some(0.0013), MAX, true, Some(1_120_000.0), false, false
+            false, 2_848_721, DEV, MAX, Some(0.0013), MAX, true, Some(1_120_000.0), false, false
         )
         .is_none());
         // …a BIG minibrot (30% of frame in-set) with escapes far below the ceiling: still quiet —
         // in-set pixels always exhaust the budget and raising cannot help them…
         assert!(FractadyneApp::limit_status(
-            false, 2_848_721, 0, DEV, MAX, Some(0.30), MAX, true, Some(1_500_000.0), false, false
+            false, 2_848_721, DEV, MAX, Some(0.30), MAX, true, Some(1_500_000.0), false, false
         )
         .is_none());
         // …mid-climb capping (the app can still raise the budget itself — transient)…
         assert!(FractadyneApp::limit_status(
-            false, 900_000, 0, DEV, 1_000_000, Some(0.5), 82_640 * 6, false, Some(490_000.0), false, false
+            false, 900_000, DEV, 1_000_000, Some(0.5), 82_640 * 6, false, Some(490_000.0), false, false
         )
         .is_none());
         // …and a latched plateau that did NOT exhaust the appetite (partial-frame interior).
         assert!(FractadyneApp::limit_status(
-            false, 900_000, 0, DEV, MAX, Some(0.9), MAX, true, Some(MAX as f64), true, false
+            false, 900_000, DEV, MAX, Some(0.9), MAX, true, Some(MAX as f64), true, false
         )
         .is_none());
     }

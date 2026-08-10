@@ -1620,14 +1620,6 @@ struct RefCache {
     /// behind the dive" signal — script playback reads it to DILATE the tour clock (slow the dive)
     /// instead of zooming into an ever-staler reprojection (the deep-dive monocolor blur).
     last_depth_lag: f64,
-    /// Longest settled-extension length (samples) the install freeze guard has REFUSED for this
-    /// view (still-partial past `LIVE_REF_CAP`; 0 = none). The quality gate only re-requests an
-    /// extension when it can ask for STRICTLY MORE than this — so each refusal quiets the gate
-    /// until the budget outgrows the failed attempt (no refusal loop), a bigger attempt is never
-    /// blocked (the 2.6e72× spar escapes past a refused 405k attempt), and a refusal AT the
-    /// device cap is terminal by construction (nothing can ever ask for more). Cleared with the
-    /// view (`invalidate_refs`) and by any successful install.
-    ref_ext_refused: u32,
 }
 
 impl Default for RefCache {
@@ -1654,7 +1646,6 @@ impl Default for RefCache {
             frozen_at: None,
             frozen_upp_l2: 0.0,
             last_depth_lag: 0.0,
-            ref_ext_refused: 0,
         }
     }
 }
@@ -3160,8 +3151,6 @@ impl FractadyneApp {
         self.ref_cache[0].ref_pt = None;
         self.ref_cache[1].ref_pt = None;
         // A new view's reference may escape where the old one didn't — retry extensions there.
-        self.ref_cache[0].ref_ext_refused = 0;
-        self.ref_cache[1].ref_ext_refused = 0;
         // Drop any in-flight recompute — its result is for the old fractal/mode and must not
         // install (would render the wrong formula until the next recompute).
         self.recompute_rx = [None, None];
