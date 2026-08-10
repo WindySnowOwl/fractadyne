@@ -525,6 +525,11 @@ struct KeyframeFile {
     /// Overlay the escape-time orbit (the path of z under iteration).
     #[serde(default)]
     orbits: Option<bool>,
+    /// Show the minimap overview overlay (live playback; inherited forward until changed).
+    /// Offline renders ignore it — the minimap is a navigation aid, not frame content. The
+    /// viewer's own toggle is restored when the tour ends.
+    #[serde(default)]
+    minimap: Option<bool>,
     /// The point whose orbit to draw (when `orbits` is on). Both components required.
     #[serde(default)]
     orbit_re: Option<f64>,
@@ -654,6 +659,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "julia_re", ty: "float", default: "(inherit)", doc: "Pin the Julia parameter c (real part). Both julia_re and julia_im are required; interpolated between keyframes." },
             SchemaField { name: "julia_im", ty: "float", default: "(inherit)", doc: "Julia parameter c (imaginary part)." },
             SchemaField { name: "orbits", ty: "bool", default: "(inherit)", doc: "Overlay the escape-time orbit (the path of z under iteration)." },
+            SchemaField { name: "minimap", ty: "bool", default: "(inherit)", doc: "Show the minimap overview overlay (live playback only; offline renders ignore it). The viewer's own setting is restored when the tour ends." },
             SchemaField { name: "orbit_re", ty: "float", default: "(inherit)", doc: "The point whose orbit to draw, real part (both components required; interpolated)." },
             SchemaField { name: "orbit_im", ty: "float", default: "(inherit)", doc: "Orbit point imaginary part." },
         ],
@@ -955,6 +961,10 @@ pub(crate) struct PlaybackRestore {
     pub(crate) use_custom_palette: bool,
     pub(crate) use_binary: bool,
     pub(crate) use_duotone: bool,
+    /// Overlay toggles a script may drive (`minimap`, `orbits` keyframe fields) — the viewer's
+    /// own settings, handed back when the tour ends like the budget and palette above.
+    pub(crate) minimap: bool,
+    pub(crate) show_orbits: bool,
 }
 
 /// A resolved chapter: `[start, end)` in tour seconds.
@@ -982,6 +992,7 @@ struct Kf {
     dual: bool,
     julia_c: Option<(f64, f64)>,
     orbits: bool,
+    minimap: bool,
     orbit: Option<(f64, f64)>,
     /// Exact iteration budget at this keyframe (interpolated geometrically along a glide), or
     /// `None` to leave the budget to `[render]` / the session.
@@ -1152,6 +1163,7 @@ pub(crate) struct Sampled {
     pub(crate) dual: bool,
     pub(crate) julia_c: Option<(f64, f64)>,
     pub(crate) orbits: bool,
+    pub(crate) minimap: bool,
     pub(crate) orbit: Option<(f64, f64)>,
     /// Exact iteration budget this frame wants, when the script states one.
     pub(crate) max_iter: Option<u32>,
@@ -1280,6 +1292,7 @@ impl Playback {
             dual: a.dual,
             julia_c,
             orbits: a.orbits,
+            minimap: a.minimap,
             orbit,
             max_iter,
             palette,
@@ -1952,6 +1965,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
     // State inherited forward until a keyframe changes it.
     let mut fractal = FractalKind::Mandelbrot;
     let (mut julia, mut dual, mut julia_c, mut orbits, mut orbit) = (false, false, None, false, None);
+    let mut minimap = false;
     let (mut max_iter, mut palette): (Option<u32>, Option<usize>) = (None, None);
     for (i, k) in sf.keyframe.iter().enumerate() {
         let id = k.id.clone().unwrap_or_else(|| format!("#{}", i + 1));
@@ -2032,6 +2046,9 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         if let Some(o) = k.orbits {
             orbits = o;
         }
+        if let Some(m) = k.minimap {
+            minimap = m;
+        }
         if let (Some(r), Some(i)) = (k.orbit_re, k.orbit_im) {
             orbit = Some((r, i));
         }
@@ -2065,6 +2082,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             dual,
             julia_c,
             orbits,
+            minimap,
             orbit,
             max_iter,
             palette,
@@ -2317,6 +2335,8 @@ impl FractadyneApp {
             self.coloring.use_custom_palette = r.use_custom_palette;
             self.coloring.use_binary = r.use_binary;
             self.coloring.use_duotone = r.use_duotone;
+            self.dialogs.minimap = r.minimap;
+            self.anim.show_orbits = r.show_orbits;
         }
     }
 
@@ -2353,6 +2373,8 @@ impl FractadyneApp {
                     use_custom_palette: self.coloring.use_custom_palette,
                     use_binary: self.coloring.use_binary,
                     use_duotone: self.coloring.use_duotone,
+                    minimap: self.dialogs.minimap,
+                    show_orbits: self.anim.show_orbits,
                 });
                 self.playback = Some(pb);
             }
@@ -2995,6 +3017,10 @@ impl FractadyneApp {
         }
         self.anim.show_orbits = s.orbits;
         self.anim.tour_orbit = s.orbit;
+        // Minimap is script-driven during a tour (a navigation aid while the script pans between
+        // locations); the viewer's own toggle is in `PlaybackRestore`, so this never leaks past
+        // the tour's end. Offline renders never reach this path.
+        self.dialogs.minimap = s.minimap;
         // Per-keyframe iteration budget + palette (restored when the tour ends).
         self.apply_sampled_settings(&s);
         // log2 path so playback stays exact past f64's 1e308× ceiling.

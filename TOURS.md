@@ -112,6 +112,7 @@ A camera waypoint. The view eases from the previous keyframe to this one, ARRIVI
 | `julia_re` | float | (inherit) | Pin the Julia parameter c (real part). Both julia_re and julia_im are required; interpolated between keyframes. |
 | `julia_im` | float | (inherit) | Julia parameter c (imaginary part). |
 | `orbits` | bool | (inherit) | Overlay the escape-time orbit (the path of z under iteration). |
+| `minimap` | bool | (inherit) | Show the minimap overview overlay (live playback only; offline renders ignore it). The viewer's own setting is restored when the tour ends. |
 | `orbit_re` | float | (inherit) | The point whose orbit to draw, real part (both components required; interpolated). |
 | `orbit_im` | float | (inherit) | Orbit point imaginary part. |
 

@@ -156,6 +156,8 @@ hold = 5
 id = "approach-seahorse"
 t = 9
 location = "seahorse"
+# Minimap on for the location-hopping chapters: the overview shows WHERE each pan lands.
+minimap = true
 zoom = 1.33333
 max_iter = 2000
 [[keyframe]]
@@ -269,6 +271,8 @@ max_iter = 2000
 id = "dual-open"
 t = 100
 location = "home"
+# Off for the dual/Julia chapter (the split screen is busy; the minimap hides in Julia anyway).
+minimap = false
 max_iter = 2000
 dual = true
 julia_re = -0.122561
@@ -312,6 +316,8 @@ id = "back-out-2"
 t = 136
 fractal = "Mandelbrot"
 location = "home"
+# Back on for the pan home -> three-spar…
+minimap = true
 max_iter = 2000
 hold = 2
 
@@ -322,6 +328,8 @@ hold = 2
 id = "dive-start"
 t = 143
 location = "three-spar"
+# …and off once the descent pins the centre (a static dot tells the viewer nothing).
+minimap = false
 zoom = 8
 max_iter = 3000
 hold = 2

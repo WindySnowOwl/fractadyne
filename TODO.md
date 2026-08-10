@@ -2111,6 +2111,15 @@ perturbation + series approximation + glitch correction. The headline feature.
 - [x] **Animated relief lighting** — "Rotate light" spins the light direction over time
       (shares the Speed slider), complementing the animated distance glow + palette cycle.
 - [ ] **Theme polish** — optional light/preset themes, custom font, accent picker.
+- [ ] **Navigable minimap (user, 2026-08-09)** — dragging (or clicking) the "you are here"
+  marker inside the minimap overlay moves the CENTRE of the current view. `draw_minimap`
+  (`ui/central.rs`) already knows the fixed complex region ↔ pixel mapping, so the hit-test and
+  the inverse map exist; wire pointer events on the overlay rect to `set_center` + a re-render,
+  and suppress the main-canvas drag handler while the pointer is captured by the minimap.
+  ⚠At deep zoom a minimap pixel is astronomically larger than the view — a naive click would
+  teleport the camera off the feature; either scale drag sensitivity to the CURRENT span (pan in
+  view-spans, not minimap pixels) or disable navigation past the zoom where one minimap pixel
+  exceeds the whole view, with a tooltip saying why.
 - [ ] **Internationalization (user, 2026-08-09)** — externalize user-facing strings and support
   translated UI. Substantial: strings are inline across `ui/`, help.rs, dialogs, tooltips, and
   the status-bar diagnostics. Sequence AFTER the announce (an English-only announce is fine; a

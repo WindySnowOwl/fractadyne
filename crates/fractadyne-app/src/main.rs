@@ -5542,6 +5542,8 @@ impl eframe::App for FractadyneApp {
                             use_custom_palette: self.coloring.use_custom_palette,
                             use_binary: self.coloring.use_binary,
                             use_duotone: self.coloring.use_duotone,
+                            minimap: self.dialogs.minimap,
+                            show_orbits: self.anim.show_orbits,
                         });
                         self.playback = Some(pb);
                     }
