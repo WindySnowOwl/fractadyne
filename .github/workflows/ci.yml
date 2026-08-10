@@ -54,14 +54,18 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
-            mesa-vulkan-drivers vulkan-tools
+            mesa-vulkan-drivers vulkan-tools xvfb
       - run: cargo build --workspace --release
       # INFORMATIONAL, never a gate. Software Vulkan is not the target and the goldens are exact
       # image comparisons, so failures here say "this is what a GPU-less Linux run looks like",
       # not "the port is broken". `|| true` keeps the job's verdict about COMPILATION.
-      - name: Smoke test (software Vulkan, informational)
+      # The selftest builds an eframe event loop, which needs a DISPLAY even though the render
+      # target is offscreen — xvfb-run provides one. Software Vulkan (lavapipe) is slow, so the
+      # timeout is generous; the exact-image goldens may legitimately differ on a software
+      # rasterizer, which is one more reason this step stays informational.
+      - name: Smoke test (xvfb + software Vulkan, informational)
         continue-on-error: true
         run: |
           vulkaninfo --summary 2>&1 | head -30 || true
-          ./target/release/fractadyne --version || true
-          timeout 600 ./target/release/fractadyne --selftest 2>&1 | tail -40 || true
+          ./target/release/fractadyne --version
+          timeout 1200 xvfb-run -a ./target/release/fractadyne --selftest 2>&1 | tail -40 || true

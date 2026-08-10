@@ -1386,6 +1386,7 @@ dependencies = [
  "fractadyne-export",
  "fractadyne-gpu",
  "fractadyne-state",
+ "libc",
  "log",
  "rfd",
  "serde",

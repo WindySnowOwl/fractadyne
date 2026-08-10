@@ -44,8 +44,9 @@ Ordered by how fast a stranger hits them.
 
 ### B — BLOCKERS: runnable Linux build (d)
 
-5. **Release artifacts** — `release.yml` needs an `ubuntu-22.04` job producing tar.gz + sha256.
-   CI now proves the full workspace *compiles* there (2026-08-08, all jobs green, no code changes).
+5. **Release artifacts — ✅DONE 2026-08-10**: `release.yml` gained a `linux` job (ubuntu-22.04,
+   tar.gz + sha256, uploads to the same release with retry-for-race; manual runs upload an
+   artifact). ⚠Untested until the next dispatch/tag — workflows only fire at the user's request.
 6. **Real-hardware validation** on the new rig, across the swappable GPUs — this is where (2) and
    the orbit-cap differences surface. ✅**The Linux machine is AVAILABLE as of 2026-08-09**, so this
    is unblocked and waiting on the Windows build stabilising first (the user's sequencing). Highest
@@ -54,14 +55,17 @@ Ordered by how fast a stranger hits them.
    fallback and settled-resolution invariant have only ever been exercised there via
    `FRACTADYNE_NO_TIMESTAMPS=1` on an NVIDIA card. Run `--selftest --selftest-filter live-res` and
    a `--play` of the grand tour on each GPU, and record adapter + resolved tunables per card.
-7. **Four diagnostics are Windows-only stubs** — `process_memory`, `free_disk_bytes`,
-   `cpu_topology`, `gpu_vram_bytes` return zero/None on Linux, so crash reports lose their memory
-   line and the new disk-space warning never fires. Shipping Linux without these means shipping the
-   platform where we are blind.
-8. **`--version` is unrecognized** — prints `unrecognized option` then help. Trivial; it is also the
-   first thing anyone types.
-9. **CI cannot run the selftest** — the harness builds an eframe event loop, so it needs a display
-   (`xvfb-run`). Until that lands, the Linux job gates compilation only.
+7. **Four diagnostics are Windows-only stubs — ✅DONE 2026-08-10**: Linux implementations for
+   `process_memory` (/proc/self/status VmRSS/VmHWM), `free_disk_bytes` (libc statvfs, same
+   ancestor-walk semantics), `cpu_topology` (/proc/cpuinfo core pairs + /sys cache dirs with
+   shared-cache dedup), `gpu_vram_bytes` (amdgpu sysfs, nvidia-smi fallback). All four verified
+   to COMPILE for x86_64-unknown-linux-gnu (scratch-crate cross-check; the full workspace
+   cross-check needs a cross C toolchain → CI's job covers it). ⚠Values unverified on real
+   Linux until the rig runs them.
+8. **`--version` is unrecognized — ✅DONE beta.51** (`--version`/`-V`, one line on stdout).
+9. **CI cannot run the selftest — ✅DONE 2026-08-10**: the build-linux smoke step now installs
+   xvfb and runs `xvfb-run -a … --selftest` (timeout 1200 for lavapipe), still informational —
+   exact-image goldens may legitimately differ on a software rasterizer.
 
 ### C — BLOCKERS: announce hygiene
 

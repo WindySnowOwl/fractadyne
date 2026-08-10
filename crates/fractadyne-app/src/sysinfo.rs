@@ -73,7 +73,23 @@ pub(crate) fn process_memory() -> (u64, u64) {
         }
     }
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub(crate) fn process_memory() -> (u64, u64) {
+    // `/proc/self/status`: `VmRSS` (resident now) and `VmHWM` (peak resident), both in kB.
+    let Ok(st) = std::fs::read_to_string("/proc/self/status") else {
+        return (0, 0);
+    };
+    let grab = |key: &str| -> u64 {
+        st.lines()
+            .find(|l| l.starts_with(key))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|kb| kb * 1024)
+            .unwrap_or(0)
+    };
+    (grab("VmRSS:"), grab("VmHWM:"))
+}
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn process_memory() -> (u64, u64) {
     (0, 0)
 }
@@ -110,7 +126,31 @@ pub(crate) fn free_disk_bytes(path: &std::path::Path) -> Option<u64> {
     (ok != 0).then_some(free)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub(crate) fn free_disk_bytes(path: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    // Same ancestor walk as the Windows arm: the target may not exist yet (renders create their
+    // output folder), and the volume is the same for any existing ancestor.
+    let mut probe = if path.as_os_str().is_empty() {
+        std::path::Path::new(".")
+    } else {
+        path
+    };
+    while !probe.exists() {
+        probe = probe.parent()?;
+    }
+    let c = std::ffi::CString::new(probe.as_os_str().as_bytes()).ok()?;
+    // SAFETY: `c` is a NUL-terminated path that outlives the call; `st` is zeroed storage the
+    // call fills. A non-zero return means failure, in which case nothing is read. `f_bavail`
+    // (blocks available to an unprivileged caller) × `f_frsize` is the caller's usable quota —
+    // the same semantic the Windows arm's `free_to_caller` reports.
+    unsafe {
+        let mut st: libc::statvfs = std::mem::zeroed();
+        (libc::statvfs(c.as_ptr(), &mut st) == 0)
+            .then(|| st.f_bavail as u64 * st.f_frsize as u64)
+    }
+}
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn free_disk_bytes(_path: &std::path::Path) -> Option<u64> {
     None
 }
@@ -228,7 +268,74 @@ fn cpu_topology() -> (usize, u64, u64) {
         (physical, l2 / 1024, l3 / 1024)
     }
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn cpu_topology() -> (usize, u64, u64) {
+    // Physical cores: distinct (physical id, core id) pairs in /proc/cpuinfo — hyperthreads
+    // share the pair, sockets differ in physical id.
+    let physical = std::fs::read_to_string("/proc/cpuinfo")
+        .map(|s| {
+            let mut phys = 0u64;
+            let mut set = std::collections::HashSet::new();
+            for l in s.lines() {
+                if let Some((k, v)) = l.split_once(':') {
+                    match k.trim() {
+                        "physical id" => phys = v.trim().parse().unwrap_or(0),
+                        "core id" => {
+                            set.insert((phys, v.trim().parse::<u64>().unwrap_or(u64::MAX)));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            set.len()
+        })
+        .unwrap_or(0);
+    // L2/L3 totals: walk /sys/devices/system/cpu/cpu*/cache/index*, counting each cache ONCE —
+    // a cache shared by several CPUs appears under each of them, so only the CPU that is first
+    // in its `shared_cpu_list` counts it (the list's first entry is canonical).
+    let (mut l2, mut l3) = (0u64, 0u64);
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap_or_default();
+    if let Ok(rd) = std::fs::read_dir("/sys/devices/system/cpu") {
+        for e in rd.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            let Some(cpu_n) = name.strip_prefix("cpu").and_then(|n| n.parse::<u64>().ok()) else {
+                continue;
+            };
+            let cache = e.path().join("cache");
+            let Ok(idx) = std::fs::read_dir(&cache) else { continue };
+            for c in idx.flatten() {
+                if !c.file_name().to_string_lossy().starts_with("index") {
+                    continue;
+                }
+                let dir = c.path();
+                let first_sharer = read(&dir.join("shared_cpu_list"));
+                let first: Option<u64> = first_sharer
+                    .trim()
+                    .split(&[',', '-'][..])
+                    .next()
+                    .and_then(|v| v.parse().ok());
+                if first != Some(cpu_n) {
+                    continue; // another CPU owns this (shared) cache's count
+                }
+                let size = read(&dir.join("size"));
+                let size = size.trim();
+                let kb = if let Some(m) = size.strip_suffix('M') {
+                    m.parse::<u64>().unwrap_or(0) * 1024
+                } else {
+                    size.strip_suffix('K').unwrap_or(size).parse::<u64>().unwrap_or(0)
+                };
+                match read(&dir.join("level")).trim() {
+                    "2" => l2 += kb,
+                    "3" => l3 += kb,
+                    _ => {}
+                }
+            }
+        }
+    }
+    (physical, l2, l3)
+}
+#[cfg(not(any(windows, target_os = "linux")))]
 fn cpu_topology() -> (usize, u64, u64) {
     (0, 0, 0)
 }
@@ -283,7 +390,33 @@ fn gpu_vram_bytes() -> u64 {
     }
     best
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn gpu_vram_bytes() -> u64 {
+    // amdgpu/i915 expose VRAM bytes directly in sysfs; take the largest card.
+    let mut best = 0u64;
+    if let Ok(rd) = std::fs::read_dir("/sys/class/drm") {
+        for e in rd.flatten() {
+            let p = e.path().join("device/mem_info_vram_total");
+            if let Ok(v) = std::fs::read_to_string(&p) {
+                best = best.max(v.trim().parse::<u64>().unwrap_or(0));
+            }
+        }
+    }
+    if best > 0 {
+        return best;
+    }
+    // NVIDIA has no sysfs equivalent — ask nvidia-smi (absent ⇒ 0; this is diagnostics-grade,
+    // best-effort by design, and runs once at startup).
+    std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.lines().filter_map(|l| l.trim().parse::<u64>().ok()).max())
+        .map(|mib| mib * 1024 * 1024)
+        .unwrap_or(0)
+}
+#[cfg(not(any(windows, target_os = "linux")))]
 fn gpu_vram_bytes() -> u64 {
     0
 }

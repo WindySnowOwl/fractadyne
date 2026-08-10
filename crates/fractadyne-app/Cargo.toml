@@ -30,3 +30,9 @@ serde_json = "1"
 
 [lints]
 workspace = true
+
+# Linux-only: statvfs for the free-disk diagnostics (crash reports + render size estimates).
+# The Windows arms use raw Win32 FFI; glibc is linked on Linux regardless, this just adds the
+# bindings.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
