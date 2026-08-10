@@ -2671,6 +2671,80 @@ Non-goals restated from the proposal: 3D/DE fractals, flame fractals, built-in v
 
 ## Performance & throughput (M7)
 
+### Reference-orbit parallelism & structural shortcuts (analysis 2026-08-10) — to explore
+
+The serial chain `z ← z² + c` is why KF/F3/Imagina keep references on CPU, but four levels of
+extractable parallelism + structural tricks exist. Ranked by payoff-per-risk, with the honest
+current-state notes (two of the analysis' premises are ALREADY SHIPPED: candidate scoring went
+all-core in beta.7 — the old "9.3 s scoring vs 1.2 s orbit" is now ~0.6 s at 1e1216× — and
+phase-1 scoring is already capped at `REF_SCORE_SCAN = 4096`):
+
+- [ ] **Periodic references for nucleus-centred views** — the autopilot/NR-zoom deliberately
+  lands on period-P nuclei, where the true orbit is periodic: compute P samples, index mod P. A
+  period-10⁴ nucleus under a 10⁶ cap = 100× less serial work, zero threads. ⭐Extra prize the
+  analysis missed: a mod-P reference CANNOT NUMERICALLY ESCAPE, so the entire precision-cliff
+  bug class (`escape_length_vs_precision`) is structurally impossible for these views — but the
+  P samples must be verified genuinely periodic at build precision (ball-arithmetic check), or
+  the wrap re-injects the very rounding drift the cliffs taught us about. Newton machinery
+  already yields P.
+- [ ] **One reference per zoom sequence (offline tours)** — a zoom toward a fixed centre uses
+  ONE orbit at every depth; compute once at final depth, every frame reads a prefix. Converts N
+  serial builds into one AND retires the tour renderer's two-references-in-flight OOM (the item
+  gating the e94 8M bump) — the next frame's "build" becomes a prefix slice. The live path
+  already extends-in-place; this ports that fact to the offline per-frame path.
+- [ ] **Level 1: three-thread complex squaring** — (x+iy)² = three independent bignum mults (or
+  two via (x+y)(x−y)); FractalShark ships this (2 squaring threads + 1 coordinator optimal on a
+  5950X). Bounded ~2× minus sync cost; proven in production, small blast radius.
+- [ ] **Level 2 groundwork: bignum backend benchmark** — cheap and decisive: bench astro-float
+  vs rug/GMP on the orbit recurrence at 1e300/e21000/validate-deep precisions; GMP's assembly
+  may be 2–4× single-thread before any threading. Note AVX-512 IFMA ≈ 2× multiply throughput
+  (Zen 4/5 yes, Zen 2 no — a CPU-upgrade data point); GMP does not thread single mults, so
+  intra-mult parallelism (Toom/FFT range, ≥~70k bits) needs a custom path — only relevant at
+  extreme-zoom depths.
+- [ ] **Level 3 (research): precision-cascade with parallel residuals** — run the serial chain at
+  half precision; the exact rounding residuals r_n are independent across n (embarrassingly
+  parallel, even GPU-batchable) and a p-bit serial sweep propagates the correction δ:
+  perturbation theory applied to the reference itself, recursable down the precision ladder
+  (serial work → ~P²/3 schoolbook). No known published implementation — requires rounding-error
+  analysis before trusting; publishable if it works.
+- [ ] **Precision ramp-down along the orbit (research)** — later iterations may tolerate less
+  precision (the same Lyapunov factor that amplifies errors grows |δ|); adjacent to why rebasing
+  works. Needs the error analysis WRITTEN DOWN first — the cliff saga is what happens when
+  reference precision is guessed.
+- ⛔**Anti-pattern, recorded so nobody retries it: Parareal/parallel-in-time.** Chaotic dynamics
+  amplify a one-ulp coarse-solve error by the Lyapunov factor, so the parallel correction sweep
+  serializes. Level 3 survives only because its coarse solution is never wrong, merely rounded,
+  with residuals tracked exactly.
+
+### Distributed / multi-machine rendering (analysis 2026-08-10) — to explore
+
+- [ ] **By-frame render farm = a documented script, not a subsystem.** Frames are independent and
+  `--render-tour --resume` already renders only missing frames — a shared filesystem + N hosts
+  running the same command is accidental work-stealing TODAY. Deliberate version:
+  `scripts/farm` shards frame ranges across hosts, gathers, encodes once. Prereqs worth one
+  line each: frame writes must be ATOMIC (write-temp-then-rename, or two hosts can each see the
+  other's half-written frame as "present"), and the script asserts identical `--version` on
+  every host before dispatch (beta.51 made that possible; version skew silently mixes renderer
+  behaviour mid-video). UF sells network rendering as a paid headline; KF/F3 users script it by
+  hand — a shipped script is a differentiator at near-zero risk. ⚠In-app cluster orchestration
+  stays OUT (DESIGN.md was right): discovery/scheduling/fault-tolerance is a permanent tax.
+- [ ] **By-keyframe distribution once exponential-map export lands** — one keyframe per factor
+  of e, thousands of self-contained jobs assembled by zoomasm; the natural distribution grain
+  (gated on the existing exp-map P1 item).
+- [ ] **Shippable reference files** — the head node computes the sequence reference once and
+  ships orbit+BLA to workers, retiring the per-job cold setup. `refcache_persist::SavedRef`
+  already serializes exactly this per-session; the work is formatting it as a versioned,
+  validated file (and it doubles as the warm-start-export item). Zhuoran compression (sparse
+  anchors, per-segment reconstruction — segments parallel) is the scale-up path when orbits hit
+  gigabytes.
+- [ ] **Distributed normalize coherence** — per-machine `--normalize` ranges flicker at shard
+  boundaries; ranges must come from a shared pass or keyframe interpolation. Same design work as
+  the tour-normalize temporal-smoothing item — solve once, serve both.
+- ⛔**Anti-pattern: tiling ONE image across machines.** Requires bit-compatible FP32 across
+  vendors/drivers, which does not exist — seams land exactly at tile boundaries in high-gradient
+  filaments. (Byte-identical goldens hold per-GPU, not across GPUs.) Tiling stays within one
+  host; only a fleet of identical GPUs could ever justify it.
+
 - [ ] **GPU-assisted reference-candidate scoring (the practical "bignum on GPU").** Full GPU bignum
   is a poor fit for the reference ORBIT itself — `z_{n+1} = z_n² + c` is inherently sequential, and
   WGSL lacks 64-bit ints / add-with-carry / extended-mul (16-bit-limb schoolbook arithmetic is
