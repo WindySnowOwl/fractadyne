@@ -64,8 +64,23 @@ Ordered by how fast a stranger hits them.
 
 10. **CHANGELOG stale** — the `0.2.40-beta` entry stops at beta.15; ~30 betas undocumented,
     including everything a reader cares about. Release notes come from here.
-11. **Fresh-install smoke test** — never run this cycle. Wipe the config dir, boot, confirm a
-    stranger gets a sane first view and working menus.
+11. **Fresh-install smoke test** — ✅RUN 2026-08-09 (beta.51): wiped config dir, booted, verified
+    classic home view (session records center (-0.5, 0) at classic zoom), all menus present,
+    responsive, clean exit writes a valid session. ⚠A PrintWindow capture of the wgpu surface can
+    show the view composited off-centre — capture artefact (endemic DWM), the session/viewport is
+    correct; don't chase it from screenshots alone.
+12. **Support website + email (user, 2026-08-09): `fractadyne.org` / `feedback@fractadyne.org`.**
+    Update the in-app issue reporting (`ISSUES_URL` flow keeps GitHub Issues primary; the mailto /
+    "Compose in Gmail" fallback currently points at `fractadyne@rithea.com` → change to
+    `feedback@fractadyne.org`), the Help/About text, README, and the release-notes footer. Do this
+    once the site/mailbox actually exist — a dead support address is worse than none.
+13. **Pre-announce code hygiene review (user, 2026-08-09)** — a dedicated pass for dead code paths
+    and refactoring opportunities for readability/maintainability. Natural candidates already
+    known: the retired refusal machinery around `ref_ext_refused` (freeze guard v2 made the
+    writer unreachable — the readers and `refusal_survives_install` are now vestigial), the
+    `REFACTOR-PLAN` Phase 2/4 `too_many_arguments` markers, `cargo +nightly udeps` /
+    `cargo-machete` for unused deps, and a `#[allow(dead_code)]` sweep. Run clippy at a stricter
+    level and read what it says rather than silencing it.
 
 ### D — STRONGLY RECOMMENDED, not blocking
 
@@ -642,7 +657,15 @@ Mockups: [design/mockups/](design/mockups/).
 
 
 - [ ] ⭐**PRIORITY: tunables + hardware-dependent factors are individually well-reasoned and
-  collectively fragile.** Raised 2026-08-08 after a week in which most incidents came from this
+  collectively fragile.** ⭐**USER REQUIREMENT (2026-08-09): centralize the constants — "I don't
+  like having critical numbers buried in random blocks of code."** Concretely: gather the fixed
+  constants below into one `tunables` module (each with its doc comment, unit, and the incident
+  that set it — the per-site comments move with the values), and allow OVERRIDING them for
+  debugging via CLI (`--set TDR_BUDGET_MS=500`), an advanced settings file, and/or a diagnostics
+  UI panel — overrides logged loudly at startup and stamped into crash-report manifests so a
+  report from an overridden run can never masquerade as stock behaviour. ⚠Overrides are a
+  debugging tool, not a supported configuration surface: defaults stay the only tested path, and
+  the selftest/bench gates run at defaults. Raised 2026-08-08 after a week in which most incidents came from this
   machinery. An inventory first — three tiers:
   - **Fixed constants**: `TDR_BUDGET_MS` 900, `TDR_BOOTSTRAP_STEPS` 4e8, `TDR_STEPS_CEIL` 3e11,
     `TDR_GROW_MAX` 1.5 / `TDR_SHRINK_MAX` 0.5, `TDR_MAX_TILES`, `LIVE_REF_CAP` 256k,
@@ -1143,6 +1166,26 @@ Mockups: [design/mockups/](design/mockups/).
   failed`, after 221 of 233 frames). The grand tour's deepest hold is set to 4M as a result, which
   leaves it a few percent capped. Worth bounding the lookahead by available memory, or at least
   failing with a diagnosis instead of an allocator abort.
+
+## Script format — requested extensions (user, 2026-08-09)
+
+- [ ] **Tour files should be able to set every rendering parameter the UI can.** Today `[render]`
+  covers size/fps/ss/max_iter/auto_iter/out/prefix/mp4/show_location and keyframes carry
+  palette/max_iter — but UI-reachable settings like supersampling mode, glitch correction,
+  series approx / BLA toggles, normalize-deep-colors, stripe/trap coloring parameters, and the
+  watermark are not scriptable. Rule: **anything unset in the script defaults to the current UI
+  settings** (already the effective behaviour for the unlisted ones — make that a documented
+  contract rather than an accident, and emit each resolved value into the render log so a report
+  shows what actually applied).
+- [ ] **Tour-driven debug logging for remote diagnosis.** The ability to annotate a tour with
+  debug/log directives — e.g. a `[[log]]` block (`t`, `note`, optional `dump = ["budget",
+  "reference", "counters", "timings"]`) that appends structured lines to a per-run tour log file
+  (`logs/tour-<name>-<timestamp>.jsonl`). Purpose stated by the user: **build tools that help
+  debug issues on OTHER USERS' machines** — a bug reporter plays a diagnostic tour and sends one
+  file back, giving us budget/reference/counter state at scripted moments without access to the
+  hardware. The `--livetest` checkpoint machinery already gathers exactly this state at holds;
+  this item is about exposing it to any tour, on any machine, from the script itself. Pairs with
+  the in-app issue reporting (attach the newest tour log).
 
 ## Playback player — v0.2.40-beta.39 (2026-08-07)
 
@@ -2068,6 +2111,13 @@ perturbation + series approximation + glitch correction. The headline feature.
 - [x] **Animated relief lighting** — "Rotate light" spins the light direction over time
       (shares the Speed slider), complementing the animated distance glow + palette cycle.
 - [ ] **Theme polish** — optional light/preset themes, custom font, accent picker.
+- [ ] **Internationalization (user, 2026-08-09)** — externalize user-facing strings and support
+  translated UI. Substantial: strings are inline across `ui/`, help.rs, dialogs, tooltips, and
+  the status-bar diagnostics. Sequence AFTER the announce (an English-only announce is fine; a
+  half-translated UI is not). Groundwork that is cheap now and pays later: route new user-facing
+  strings through a single `tr!`-style shim instead of bare literals, and keep formatting
+  (`format!` argument order) locale-safe. egui has no built-in i18n — likely `fluent` or a thin
+  key→string table with a language picker in Preferences.
 
 ## Survey-driven roadmap (2026-06-28)
 
