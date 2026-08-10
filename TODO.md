@@ -97,21 +97,12 @@ Ordered by how fast a stranger hits them.
 13. **Script playback is buried and forgets what you played.** Two small UX fixes to the feature
     that is one of the announce pitch's headline items (F), currently reachable only via
     *Tools → Play script…* (`ui/menus.rs`, `load_script()`), which opens a file dialog every time:
-    - **A play-script button on the toolbar**, beside the existing icon actions in `ui/menus.rs`.
-      The tours are the most demo-able thing in the app and right now nothing on screen suggests
-      they exist.
-    - **Default to the last script played.** Persist the path in `fractadyne-state` (the
-      `export_dir: Option<String>` field is the precedent) so the toolbar button replays it with
-      one click, and the menu item's dialog opens in its directory. Re-playing the same tour is
-      the overwhelmingly common case — during this session's crash-hunting it meant a file dialog
-      per attempt.
-    - **A playback-speed control beside it.** ⚠One already exists — a `1×` button in the floating
-      transport that CYCLES through speeds (`draw_playback_transport`, `ui/menus.rs`) — so this is
-      about reach, not capability: the speed is only available once a script is already playing and
-      only by clicking through values. Wanted on the toolbar, and worth reconsidering as a direct
-      picker rather than a cycle. ⚠The transport's layout rule still applies to anything added
-      there: nothing inside it may be sized from the available width, and the speed label is padded
-      to its widest form so the widget cannot change size mid-playback.
+    - ✅**A play-script button on the toolbar** (`▶`, beta.55) — replays the last script in one
+      click, falls back to the picker, hover names the script.
+    - ✅**Default to the last script played** (beta.55) — `SessionState::last_script` persists the
+      path; the `▶` button replays it, the picker opens in its directory.
+    - ✅**A playback-speed control** (beta.55) — a direct combo picker (0.25×–8×) on the toolbar,
+      shown while a tour plays, sharing `pb.speed` with the transport's cycle button.
     ⚠A missing or moved file must fall back to the picker rather than erroring, and the stored
     path should not be treated as trusted input (same handling as any loaded `.toml`).
     - **A progress bar in the Render Script dialog** (user, 2026-08-09). The 🎬 dialog launches

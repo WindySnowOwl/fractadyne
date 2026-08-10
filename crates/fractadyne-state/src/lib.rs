@@ -93,6 +93,10 @@ pub struct SessionState {
     /// Last directory an export was saved to; `None` until the first export.
     #[serde(default)]
     pub export_dir: Option<String>,
+    /// Path of the last camera-tour script played, so the toolbar button and menu can default to
+    /// it. `None` until the first script is played; a missing file falls back to the picker.
+    #[serde(default)]
+    pub last_script: Option<String>,
     /// Dual-view export layout: "side" | "separate" | "active".
     #[serde(default = "default_export_dual_mode")]
     pub export_dual_mode: String,
@@ -372,6 +376,7 @@ impl Default for SessionState {
             export_ss: default_export_ss(),
             export_format: default_export_format(),
             export_dir: None,
+            last_script: None,
             export_dual_mode: default_export_dual_mode(),
             export_aspect: default_export_aspect(),
             show_location: false,

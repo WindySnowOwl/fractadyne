@@ -2204,6 +2204,9 @@ struct FractadyneApp {
     /// The viewer's own iteration budget + coloring, saved while a tour overrides them and
     /// restored when it ends (a script's settings are the script's, not the session's).
     playback_restore: Option<crate::scripting::PlaybackRestore>,
+    /// Path of the last tour script played (persisted): the toolbar ▶ button and the menu default
+    /// to it, so replaying the same tour — the common case — is one click, not a file dialog.
+    last_script: Option<std::path::PathBuf>,
     /// "Render script…" dialog + the child process doing the work (see `TourRenderUi`).
     tour_render: TourRenderUi,
     /// Last benchmark report text + whether its window is open.
@@ -2637,6 +2640,7 @@ impl FractadyneApp {
             },
             orbit_cache: std::cell::RefCell::new(None),
             playback: None,
+            last_script: s.last_script.clone().map(std::path::PathBuf::from),
             playback_restore: None,
             tour_render: TourRenderUi::default(),
             bench_report: None,
@@ -3031,6 +3035,7 @@ impl FractadyneApp {
                 .export.last_dir
                 .as_ref()
                 .map(|p| p.display().to_string()),
+            last_script: self.last_script.as_ref().map(|p| p.display().to_string()),
             export_dual_mode: match self.export.dual_mode {
                 DualExport::SideBySide => "side".to_string(),
                 DualExport::Separate => "separate".to_string(),

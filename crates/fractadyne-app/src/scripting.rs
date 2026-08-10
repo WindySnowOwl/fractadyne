@@ -2363,16 +2363,38 @@ impl FractadyneApp {
     }
 
     /// Load a camera-tour script (TOML) via a file dialog and start playing it.
+    /// Menu / picker entry: choose a script file and play it. The picker opens in the last
+    /// script's directory when there is one.
     pub(crate) fn load_script(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("Fractadyne script (TOML)", &["toml"])
-            .pick_file()
-        else {
+        let mut dialog = rfd::FileDialog::new().add_filter("Fractadyne script (TOML)", &["toml"]);
+        if let Some(dir) = self.last_script.as_ref().and_then(|p| p.parent()) {
+            if dir.is_dir() {
+                dialog = dialog.set_directory(dir);
+            }
+        }
+        let Some(path) = dialog.pick_file() else {
             return;
         };
+        self.start_script(path);
+    }
+
+    /// Toolbar ▶ entry: replay the last script with one click, falling back to the picker when
+    /// there is none or the remembered file has moved. The common case — re-playing the same tour
+    /// (during this session's crash hunting it meant a file dialog per attempt) — is now one click.
+    pub(crate) fn play_last_or_pick_script(&mut self) {
+        match self.last_script.clone() {
+            Some(path) if path.is_file() => self.start_script(path),
+            _ => self.load_script(),
+        }
+    }
+
+    /// Load `path`, remember it as the last script (for the toolbar/menu default), and start
+    /// playback. A parse error reports through the same panel the picker used.
+    pub(crate) fn start_script(&mut self, path: std::path::PathBuf) {
         match read_script(&path).and_then(|sf| resolve_script(sf, None)) {
             Ok(mut pb) => {
                 pb.source = Some(path.clone());
+                self.last_script = Some(path);
                 // Restore the viewer's own iteration/palette settings when the tour ends — a
                 // script's budget is the script's, not a permanent change to the session.
                 self.playback_restore = Some(PlaybackRestore {

@@ -238,7 +238,14 @@ impl FractadyneApp {
                             self.dialogs.bench_dialog_open = true;
                             ui.close_menu();
                         }
-                        if ui.button("Play script…").clicked() {
+                        if ui
+                            .button("Play script…")
+                            .on_hover_text(
+                                "Pick a tour script to play. The toolbar ▶ replays the last one \
+                                 with a single click.",
+                            )
+                            .clicked()
+                        {
                             self.load_script();
                             ui.close_menu();
                         }
@@ -594,6 +601,40 @@ impl FractadyneApp {
                     .clicked()
                 {
                     self.perf.enabled = !self.perf.enabled;
+                }
+                ui.separator();
+                // ── Tours: play a script, then a speed control while one runs ─────────────
+                // The tours are the most demo-able thing in the app and nothing on screen used to
+                // suggest they exist. ▶ replays the last script in one click (falling back to the
+                // picker); the hover names it.
+                let play_hover = match self.last_script.as_ref() {
+                    Some(p) => format!(
+                        "Play tour — {} (click) · replays the last script; pick another via Tools ▸ Play script…",
+                        p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+                    ),
+                    None => "Play a tour script… (Tools ▸ Play script)".to_string(),
+                };
+                if ui
+                    .add_enabled(!self.tour_playing(), egui::Button::new("▶"))
+                    .on_hover_text(play_hover)
+                    .clicked()
+                {
+                    self.play_last_or_pick_script();
+                }
+                // Speed picker: only meaningful while a tour plays. A direct picker (not the
+                // transport's cycle button) so the whole set is one click away. The transport's
+                // own `1×` button still exists and stays in sync (both read/write `pb.speed`).
+                if let Some(pb) = self.playback.as_mut() {
+                    egui::ComboBox::from_id_salt("toolbar_tour_speed")
+                        .selected_text(format!("{}×", crate::fmt_speed(pb.speed)))
+                        .width(52.0)
+                        .show_ui(ui, |ui| {
+                            for &sp in &[0.25f64, 0.5, 1.0, 2.0, 4.0, 8.0] {
+                                ui.selectable_value(&mut pb.speed, sp, format!("{}×", crate::fmt_speed(sp)));
+                            }
+                        })
+                        .response
+                        .on_hover_text("Playback speed");
                 }
                 if ui
                     .selectable_label(self.fullscreen, "🖥")
