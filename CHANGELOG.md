@@ -12,11 +12,41 @@ detail is in the git history.
 
 ## 0.2.40-beta (in progress)
 
-The post-0.2.36 series (**0.2.37 – 0.2.40-beta.34**, published as `v0.2.40-beta.N`
-pre-releases on the Beta update track). Per-version detail is in the git history.
-**Incomplete:** beta.16 – beta.33 are not yet written up here (Newton-Raphson zoom, exact
-rational/complex coordinate entry, the multiplier λ, the 500k → 10M iteration ceiling, live
-limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — see TODO.md.
+The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-beta.N`
+pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
+in the git history.
+
+- **The 2:58 device loss and the black deep holds — one root cause** (beta.48–50). The tour
+  camera ROUNDED a pinned-centre glide's coordinates to the current depth's precision
+  (`lerp(x, x)` is not the identity), and a rounded centre is a genuinely different point whose
+  orbit spuriously escapes at a precision-set length — every mysterious reference length of the
+  release cycle (626, 602,516) was `escape(round(centre, bits)) + 1`, and the deep holds only
+  ever looked healthy when such a numerically-escaped orbit slipped past the freeze guard. Three
+  coupled fixes: exact pinned-centre glides; a cliff rescue in reference selection (rescan at the
+  build precision when no candidate survives — with a selftest pinning the exact bad pick); and
+  the freeze guard now INSTALLS long partial references at a floor frame budget instead of
+  refusing them, which retired the refused-extension rebuild loop and turned every known-black
+  deep hold (1e61 / 1e63 / 1e82) green against the offline oracle. The frame-budget controller
+  can also finally shrink below its own opening guess (its clamp used the bootstrap constant as a
+  FLOOR — a safety valve that could not move toward safety), and the install derate no longer
+  fires on ordinary partial-orbit growth, which had pinned the budget at its floor and rendered
+  the whole deep chapter pixellated. Verified end to end: 0 device losses across the repro
+  battery, the grand-tour live baseline all-green for the first time, and a 60-second
+  `ultra-dive-e200` exercise tour (e30 → e200, five staged holds, all matching the offline
+  oracle exactly) blessed as a standing gate.
+- **An explicit iteration count is honoured verbatim** (beta.53). Auto-iter OFF now means the
+  count reaches the GPU untouched — 10,000,000 in the Iterations box used to render as ~82,000
+  (the zoom cap × the adaptive boost silently applied). One shared formula now feeds both the
+  dispatch and the adaptive probe's staleness gate, so the two can never drift; tour keyframes
+  get their scripted budgets immediately instead of boost-climbing toward them.
+- **`--version`, and a tour render that survives its parent** (beta.51). `--version`/`-V` prints
+  one parseable line. The tour renderer's progress printing is pipe-safe (a parent GUI exiting
+  used to PANIC the child mid-render), and the output directory now carries `render-status.txt`
+  (`running` with pid → `complete`/`canceled`/`failed: why`), so an interrupted render is
+  diagnosable from the frames folder alone.
+- **Tours: `minimap` keyframe field** (beta.52) — scripts can show the minimap overlay while
+  panning between locations (the grand tour now does); the viewer's own minimap/orbit toggles
+  are restored when the tour ends.
 
 - **A refused reference extension is no longer forgotten** (beta.47). The freeze guard drops a
   reference that is still partial past `LIVE_REF_CAP`, and recorded why — but any later install
@@ -48,6 +78,18 @@ limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — s
     froze. A settled view now ratchets to native resolution instead of stalling part-way.
   - `FRACTADYNE_NO_TIMESTAMPS=1` makes the whole path reproducible on hardware that has the
     feature, and `render::controller_props` pins the controller's properties in `cargo test`.
+- **Playback & render reliability** (beta.37–46):
+  - Tour centres parse at the tour's deepest precision (beta.37), and the lookahead no longer
+    spins re-spawning builds (a live device-loss class, beta.38).
+  - **A playback player**: scrub bar, width-stable transport, outlives the tour (beta.39).
+  - **Frame cost is bounded in every arithmetic mode**, not just floatexp (beta.40); the budget
+    can bootstrap on a static view instead of leaving it coarse forever (beta.41); a tour hold
+    can no longer stall the clock indefinitely when a reference is refused (beta.42).
+  - **Silent deaths are visible** (beta.43): aborts and out-of-memory kills now leave a crash
+    report (allocator hook + unclean-exit marker + `--oomtest`).
+  - Export/render dialogs gained standard size presets incl. ultrawide/DCI (beta.44–45), renders
+    report failure reasons and disk-cost estimates up front (beta.45), and tour renders are
+    RESUMABLE — re-run with `--resume` and only missing frames render (beta.46).
 - **Live deep-dive pipeline** — a scripted dive now stays smooth to extreme depth:
   - `best_reference` candidate scoring **parallelized across all cores** (result-identical;
     ~12–14× — 796→55 ms at 1e400×, 7.6 s→0.6 s at 1e1216×), removing the stall that blurred
@@ -177,6 +219,27 @@ limit diagnostics, GPU device-loss recovery, the spar-family render fixes) — s
   - New `script` selftest group (5 checks): every shipped tour resolves, absolute timing and
     the geometric budget ramp, deep zoom strings past f64 range, ten malformed scripts
     rejected, and `--segment` lookup.
+- **The deep-view rendering arc** (beta.19–33) — one Misiurewicz location family exposed eight
+  distinct depth bugs; fixing them produced the adaptive machinery:
+  - **Adaptive live iteration budget** (beta.19): the view measures its own capped-pixel fraction
+    on the GPU and raises the iteration budget until the image resolves — no other renderer
+    self-corrects a starved view live. Applied on motion frames too (beta.22), taught to climb
+    through plateaus (beta.26) and not to give up on views needing a large boost (beta.32).
+  - **Live palette auto-normalization** (beta.20) and **WYSIWYG exports** (beta.21): deep views
+    stopped aliasing into noise live, and a GUI export now matches what the screen shows.
+  - **The iteration ceiling lifted 500k → 10,000,000** (beta.28) with references that follow the
+    budget (beta.27), a **1 GiB orbit binding (7.4M samples)** (beta.30), and **status-bar
+    diagnostics that say which limit binds** — depth wall, reference clamp, iteration cap —
+    instead of leaving a black screen unexplained (beta.31).
+  - **GPU device-loss recovery** (beta.29–30): a lost device writes a crash report and restarts
+    the app with the session intact; in-app issue reporting points at GitHub Issues.
+  - **The grand tour** (beta.33): a 5½-minute scripted demo whose final chapter holds at every
+    depth that ever broke the renderer — the demo reel is the regression gauntlet.
+- **Navigation & mathematics** (beta.23–25): exact rational/complex coordinate entry
+  (`-3/4`, `(1+i)*(1-i)/2`); **Newton–Raphson zoom** — jump straight to a minibrot's own scale
+  with the atom-size estimate; **multiplier λ at Misiurewicz points**.
+- **Window resize correctness** (beta.16–18): the "squashed view" resize regression fixed, with
+  `--resizetest` and a real-window smoke test to keep it fixed.
 - **Dev tooling** — `--bench-matrix`: a 22-segment path-coverage perf + regression suite
   (deterministic GPU-counter signatures vs a blessed baseline; its 20 fast segments joined
   `--selftest`, growing it 63 → **83 checks**) (beta.3); `--divetest`: a headless live-dive

@@ -65,8 +65,9 @@ Ordered by how fast a stranger hits them.
 
 ### C — BLOCKERS: announce hygiene
 
-10. **CHANGELOG stale** — the `0.2.40-beta` entry stops at beta.15; ~30 betas undocumented,
-    including everything a reader cares about. Release notes come from here.
+10. **CHANGELOG stale — ✅DONE 2026-08-10**: the `0.2.40-beta` section now covers beta.16–53,
+    grouped by theme (deep-view rendering arc, the 2:58 root cause, playback/render reliability,
+    navigation & mathematics, resize correctness). Release notes come from here.
 11. **Fresh-install smoke test** — ✅RUN 2026-08-09 (beta.51): wiped config dir, booted, verified
     classic home view (session records center (-0.5, 0) at classic zoom), all menus present,
     responsive, clean exit writes a valid session. ⚠A PrintWindow capture of the wgpu surface can
