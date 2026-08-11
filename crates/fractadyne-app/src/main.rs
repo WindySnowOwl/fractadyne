@@ -5781,13 +5781,27 @@ impl eframe::App for FractadyneApp {
         }
         if self.perf.enabled {
             // Refresh the readouts without pegging the GPU. A bare `request_repaint()` here forces a
-            // full re-render every frame even on a completely static view, so at deep zoom with high
-            // AA the per-panel color/downsample pass runs continuously and the whole system goes
-            // laggy (the app never idles — the overlay is on by default). A throttled repaint keeps
-            // the metrics live (~4 Hz) while letting egui idle when nothing changes; interaction,
-            // settling, panning and in-flight recomputes still request immediate repaints elsewhere,
-            // so this floor never slows an active frame.
-            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            // full re-render every frame even on a completely static view, so at deep zoom the
+            // per-panel color/downsample pass runs continuously and the whole system goes laggy
+            // (the app never idles — the overlay is on by default). ⭐**The refresh interval MUST
+            // scale with the frame's cost.** A fixed ~4 Hz (250 ms) looked idle only because a
+            // cheap frame is <10 ms; at a deep view whose COLOR pass alone is ~234 ms (measured on
+            // the three-spar at 1e98× with the distance-estimate glow on), 4 Hz means a 234 ms GPU
+            // frame every 250 ms — the GPU pegged ~94% to redraw a static picture, which reads as
+            // "the app is always recalculating" and makes any interaction feel heavy. The metrics
+            // are constant on a static view anyway, so back the refresh off to at most one frame
+            // per ~4 frame-times: ~4 Hz when frames are cheap, ~1 Hz when a frame costs 234 ms —
+            // capping the overlay's idle GPU duty near 25% instead of 94%. Interaction, settling,
+            // panning and in-flight recomputes still request immediate repaints elsewhere, so this
+            // floor never slows an ACTIVE frame; it only governs the static-view heartbeat.
+            // ⚠Bounded 250 ms .. 1000 ms. `frame_ms` is an EMA of the frame-to-frame interval,
+            // which now INCLUDES this idle wait — so scaling the interval by it is a positive
+            // feedback loop (slower refresh → longer dt → larger EMA → slower refresh …). The
+            // 1000 ms cap breaks the loop: the heartbeat settles at ~1 Hz on an expensive static
+            // view (≈20–25% GPU duty at a 234 ms frame) and never drifts past it, while cheap
+            // frames keep the full ~4 Hz.
+            let refresh_ms = (self.perf.frame_ms * 4.0).clamp(250.0, 1000.0);
+            ctx.request_repaint_after(std::time::Duration::from_millis(refresh_ms as u64));
         }
         // Keep repainting while an off-thread reference recompute is in flight, so its result is
         // polled and installed (and the view sharpens) as soon as it lands. Repaint immediately while

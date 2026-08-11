@@ -1142,9 +1142,28 @@ Mockups: [design/mockups/](design/mockups/).
   `[playback] pace = "settled"`, which stops the tour clock at a hold until the view resolves
   (bounded by `settle_timeout`), because at depth the budget needs more settled frames to converge
   than a few seconds of hold provides.
-- [ ] ⭐**A settled deep view never idles — it pegs the GPU redrawing a static frame** (user
-  report 2026-08-10 "mousing over seems to cause it to recalculate"; first seen 2026-08-09 in the
-  ultra-dive). ROOT-CAUSED at the user's exact view (three-spar, ~1e98×/upp_e=-327, 4M iter, ss2,
+- [~] ⭐**A settled deep view pegs the GPU redrawing a static frame — MOSTLY FIXED beta.57**
+  (user report 2026-08-10 "mousing over seems to cause it to recalculate"; first seen 2026-08-09
+  in the ultra-dive).
+  ✅**Root cause + fix**: at true steady state the ONLY repaint driver is the **performance
+  overlay, which is ON BY DEFAULT** (`enabled: !--no-perf`) and forced a fixed 4 Hz repaint. A
+  repaint re-runs the un-cached COLOR pass, and at the user's exact view (three-spar 1e98×, ss2,
+  **distance-estimate glow on**) that pass is ~234 ms — so 4 Hz pegged the GPU ~94% redrawing a
+  static picture (the reference builds/installs fine and is stable after ~22 s — NOT the reproject
+  deadlock, NOT a respawn loop; 6 builds total, 0 after settle). Fix: the overlay heartbeat now
+  scales with frame cost, `(frame_ms·4).clamp(250, 1000)` ms — ~4 Hz on cheap frames, ~1 Hz on a
+  234 ms frame (the 1000 ms cap breaks the EMA feedback loop). Measured: idle cadence 234 ms → 984
+  ms, GPU idle duty ~94% → ~24%. Suite 107/107, goldens 17/17.
+  ⚠**Two follow-ups remain** (why this is `[~]` not `[x]`): (a) **mouse MOTION still re-runs the
+  234 ms color pass per event** — the deep "mousing recalculates" — because `paint()` re-colors
+  the iteration texture on every egui repaint; the real fix is caching the COLORED output (render
+  color→offscreen only when a color-key changes, blit it on repaint) so a content-unchanged
+  repaint is a cheap re-blit. Gate it OFF during interaction/reproject (those legitimately
+  re-color per frame). No golden coverage on the live paint path — verify by eye + the e98
+  session. (b) **the DE-glow color pass is expensive** (~234 ms at ss2/e98; frames are cheap with
+  it off) — worth profiling the DE shader / skipping the ×ss² recompute where possible.
+  ⚠**Sandbox note preserved**: `FRACTADYNE_CONFIG_DIR=$D` reads `$D/session.toml` DIRECTLY (not
+  `$D/config/`); a misplaced copy silently loads the home view and hides this entirely. ROOT-CAUSED at the user's exact view (three-spar, ~1e98×/upp_e=-327, 4M iter, ss2,
   normalize on): when settled AND untouched, the view renders at REDUCED resolution (1236×970, not
   native 1445×1134 — the settled frame budget 3e11 can't afford a native ss2 dispatch, which needs
   4.8e12) and repaints continuously at ~4.4 fps, **234 ms/frame, `repaint_requested=true` every
