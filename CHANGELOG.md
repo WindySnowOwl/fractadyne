@@ -16,6 +16,15 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **`--uitest`: scripted UI + live-render validation bundle** (beta.62). A new dev mode walks
+  every UI screen (menus, all dialogs, panels, minimap, palette editor) and the live-render path at
+  each mode band (Direct / df32 / floatexp), screenshots each via egui's viewport-screenshot
+  round-trip, and writes a review bundle — `NN-screen.png` + `report.md`/`report.json` + `log.txt`
+  — with a verdict per step (screenshot captured, frame not blank, live RenderMode matches the
+  depth, a real iterate ran). It also resizes the window wide/medium/narrow and checks the status
+  bar's height is **stable** at a fixed width (catching the one-line/two-line waver) and reports
+  where it wraps. Runs under the real eframe loop (wrap with `xvfb-run` when headless); defaults its
+  output to the mounted share, else `logs/`. Wired into `scripts/linux-report.sh --uitest`.
 - **File dialogs remember the last directory** (beta.61). Every open/save dialog now seeds from
   a shared, persisted last-used directory and updates it on each pick, so opening a script, saving
   a `.fdn`, importing a `.kfr`, saving a report/benchmark, or choosing a render folder all reopen

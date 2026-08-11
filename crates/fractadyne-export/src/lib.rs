@@ -247,6 +247,34 @@ pub fn write_png(
     Ok(())
 }
 
+/// Write already-sRGB 8-bit RGBA pixels straight to a PNG (no linear→sRGB conversion). Use this
+/// for pixels that are ALREADY in display space — e.g. an egui `ColorImage` framebuffer capture,
+/// where `write_png`'s `quantize8` (which applies the sRGB transfer curve) would double-encode.
+pub fn write_png_rgba8(
+    path: &Path,
+    width: u32,
+    height: u32,
+    rgba8: &[u8],
+    metadata: Option<&str>,
+) -> Result<(), ExportError> {
+    let expected = width as usize * height as usize * 4;
+    if rgba8.len() < expected {
+        return Err(ExportError::SizeMismatch { expected, got: rgba8.len() });
+    }
+    let file = std::fs::File::create(path)?;
+    let w = std::io::BufWriter::new(file);
+    let mut encoder = png::Encoder::new(w, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+    if let Some(meta) = metadata {
+        encoder.add_text_chunk(META_KEYWORD.to_string(), meta.to_string())?;
+    }
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(&rgba8[..expected])?;
+    Ok(())
+}
+
 /// Decode a PNG and box-downsample it to a thumbnail (≤ `max` px on the long edge).
 /// Returns `(width, height, rgba8)`. Currently PNG only (EXR thumbnails: future).
 pub fn read_thumbnail(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportError> {

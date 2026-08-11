@@ -760,7 +760,7 @@ impl FractadyneApp {
     /// a control placed here slides horizontally under the cursor. The playback transport lives in
     /// `draw_playback_transport` for exactly that reason.
     pub(crate) fn draw_status_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+        let resp = egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             // WRAPPED, not a single row: at depth the centre coordinates alone can be most of the
             // width, and a plain `horizontal` silently CLIPS whatever doesn't fit — the limit
             // diagnostics on the right would vanish on a narrow window, which is precisely when a
@@ -842,6 +842,9 @@ impl FractadyneApp {
                 }
             });
         });
+        // Expose the panel's height so the UI-test harness can detect the status bar wrapping to a
+        // second line (or wavering between one and two at a fixed width — a repaint-storm smell).
+        self.perf.status_bar_h = resp.response.rect.height();
     }
 
     /// Floating playback transport — scrubber, restart / back / pause / stop / forward, speed,

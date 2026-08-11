@@ -66,6 +66,7 @@ mod selftest;
 mod sysinfo;
 mod theme;
 mod ui;
+mod uitest;
 pub(crate) use fractal::FractalKind;
 pub(crate) use scripting::{BenchDepth, BenchRes, Playback, StdBench};
 pub(crate) use sysinfo::*;
@@ -82,6 +83,9 @@ static GLOBAL: alloc::ReportingAlloc = alloc::ReportingAlloc;
 /// On by default for now; toggle via the View menu or the `--no-perf` CLI flag.
 struct Perf {
     enabled: bool,
+    /// Height (px) of the bottom status bar as of the last frame — instrumentation for `--uitest`,
+    /// which watches it wrap to a second line (or waver between one and two) across window widths.
+    status_bar_h: f32,
     last_frame: Option<Instant>,
     /// Smoothed wall-clock interval between frames (ms) → FPS.
     frame_ms: f64,
@@ -298,6 +302,7 @@ impl Default for Perf {
     fn default() -> Self {
         Self {
             enabled: true,
+            status_bar_h: 0.0,
             last_frame: None,
             frame_ms: 0.0,
             cpu_ms: 0.0,
@@ -2272,6 +2277,9 @@ struct FractadyneApp {
     /// CLI `--livetest FILE`: headless live-OUTPUT harness — plays a tour through the live
     /// pipeline and validates the frames it shows against offline renders of the same views.
     livetest: Option<std::path::PathBuf>,
+    /// CLI `--uitest [DIR]`: scripted walk through every UI screen + the live-render bands,
+    /// screenshotting each and writing a review bundle (see `mod uitest`), then exit.
+    uitest: Option<uitest::UiTest>,
     /// CLI `--play FILE`: start the GUI with this tour already playing in the LIVE view. The only
     /// way to exercise the on-screen playback path (present, watchdog budget, tiled settle) from a
     /// command line — a headless harness cannot reach it.
@@ -2552,6 +2560,14 @@ impl FractadyneApp {
         let profile_regions = val("--regions").cloned();
         let divetest = val("--divetest").map(std::path::PathBuf::from);
         let livetest = val("--livetest").map(std::path::PathBuf::from);
+        // --uitest [DIR]: presence enables the UI walk; a following non-flag token is the output
+        // base directory (else the share/logs default). Built lazily so a normal launch pays nothing.
+        let uitest = if args.iter().any(|a| a == "--uitest") {
+            let out = val("--uitest").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
+            Some(uitest::UiTest::new(out))
+        } else {
+            None
+        };
         let play_tour = val("--play").map(std::path::PathBuf::from);
         let livetest_quick = args.iter().any(|a| a == "--quick");
         let frametest_steps = val("--steps").and_then(|s| s.parse().ok()).unwrap_or(40u32);
@@ -2698,6 +2714,7 @@ impl FractadyneApp {
             resizetest,
             divetest,
             livetest,
+            uitest,
             livetest_quick,
             play_tour,
             play_tour_done: false,
@@ -5187,6 +5204,8 @@ impl eframe::App for FractadyneApp {
         let gpu = frame
             .wgpu_render_state()
             .map(|rs| (rs.device.clone(), rs.queue.clone()));
+        // Adapter name for the --uitest report header (once is enough; cheap to read each frame).
+        let gpu_name = frame.wgpu_render_state().map(|rs| rs.adapter.get_info().name);
         // Capability probe, once. Recorded for the crash report and the perf HUD only — the
         // wall-clock fallback trips on observed starvation, not on this bit, so a device that
         // advertises the feature but never delivers a reading is covered too. Deliberately NOT
@@ -5288,6 +5307,13 @@ impl eframe::App for FractadyneApp {
             }
         }
         self.update_minimap(ctx, &gpu);
+
+        // --uitest: advance the scripted UI/live walk. Runs each frame and does NOT exit early —
+        // the flags it sets (which dialog is open, which view) must be drawn by the rest of this
+        // update(); it screenshots and exits itself once the walk is done. Gated on GPU being up.
+        if self.uitest.is_some() && gpu.is_some() {
+            self.uitest_frame(ctx, gpu_name.as_deref());
+        }
 
         // Ctrl+S → quick export (no dialog) to the last folder.
         if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
@@ -5752,7 +5778,7 @@ impl eframe::App for FractadyneApp {
         self.perf.frame_idx += 1;
         self.perf.last_frame = Some(frame_start);
 
-        if !self.auto_benchmark && !self.auto_stdbench && !self.auto_render && !self.selftest && !self.profile && !self.reusetest && self.render_tour.is_none() && self.std_bench.is_none() {
+        if !self.auto_benchmark && !self.auto_stdbench && !self.auto_render && !self.selftest && !self.profile && !self.reusetest && self.render_tour.is_none() && self.std_bench.is_none() && !self.uitest_active() {
             self.autosave(ctx); // don't let a CLI run (or a transient benchmark override) overwrite the saved session
         }
 

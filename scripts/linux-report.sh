@@ -21,6 +21,7 @@
 #
 # Options:
 #   --selftest         run `--selftest` (under xvfb if headless) and capture its output.
+#   --uitest           run the scripted UI + live-render walk (screenshots + checks) into uitest/.
 #   --out DIR          staging base directory. Default: /mnt/vger/Fractadyne/reports when the
 #                      \\vger\share mount is present (dev box reads it directly, no scp), else
 #                      ~/fractadyne-reports (then scp-pull).
@@ -42,6 +43,7 @@ OUT_BASE=""   # empty ⇒ auto-detect
 CONFIG_DIR="${FRACTADYNE_CONFIG_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/fractadyne}"
 REPO_DIR="${HOME}/fractadyne"
 DO_SELFTEST=0
+DO_UITEST=0
 DO_TAR=0
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -50,11 +52,12 @@ say() { echo -e "\033[1;36m==>\033[0m $*"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --selftest) DO_SELFTEST=1 ;;
+    --uitest)   DO_UITEST=1 ;;
     --tar)      DO_TAR=1 ;;
     --out)      shift; OUT_BASE="${1:?--out needs a path}" ;;
     --config)   shift; CONFIG_DIR="${1:?--config needs a path}" ;;
     --repo)     shift; REPO_DIR="${1:?--repo needs a path}" ;;
-    -h|--help)  sed -n '2,31p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,32p' "$0"; exit 0 ;;
     --*)        die "unknown option: $1 (try --help)" ;;
     *)          NOTE="${NOTE:+$NOTE }$1" ;;   # accumulate free-text description
   esac
@@ -165,6 +168,26 @@ if [ "$DO_SELFTEST" = "1" ]; then
     tail -1 "${RUN}/selftest.txt" | sed 's/^/    /'
   else
     echo "(no built binary under ${REPO_DIR}/target — build first with linux-build.sh)" > "${RUN}/selftest.txt"
+  fi
+fi
+
+# ---------------------------------------------------------------- optional UI walk
+# Runs the scripted UI + live-render walk (screenshots every screen, checks each) and drops its
+# review bundle inside this report. Needs a display, so wrap it in xvfb-run when headless.
+if [ "$DO_UITEST" = "1" ]; then
+  BIN="${REPO_DIR}/target/release/fractadyne"
+  [ -x "$BIN" ] || BIN="${REPO_DIR}/target/debug/fractadyne"
+  if [ -x "$BIN" ]; then
+    say "Running --uitest (screenshots + checks → uitest/)…"
+    if command -v xvfb-run >/dev/null; then
+      # A generous virtual screen so the wide-window step isn't clamped by the display size.
+      xvfb-run -a -s "-screen 0 2560x1600x24" "$BIN" --uitest "${RUN}/uitest" > "${RUN}/uitest.log" 2>&1 || true
+    else
+      "$BIN" --uitest "${RUN}/uitest" > "${RUN}/uitest.log" 2>&1 || true
+    fi
+    grep -m1 "complete:" "${RUN}/uitest.log" | sed 's/^/    /' || true
+  else
+    echo "(no built binary under ${REPO_DIR}/target — build first with linux-build.sh)" > "${RUN}/uitest.log"
   fi
 fi
 
