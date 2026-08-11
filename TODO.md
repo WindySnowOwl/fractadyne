@@ -96,8 +96,11 @@ Ordered by how fast a stranger hits them.
 
 ### D — STRONGLY RECOMMENDED, not blocking
 
-12. **First-run overlay** (design already agreed) — deep-zoom apps are opaque to newcomers and this
-    is exactly the first-two-minutes friction a forum reader hits.
+12. **First-run overlay — ✅DONE beta.59.** A compact welcome modal on a fresh install: the
+    essential controls (drag/scroll/Space/click-to-zoom/M) + three one-click landmarks
+    (Seahorse/Elephant/Deep Seahorse) + "Open full help (F1)". Dismissal persists
+    (`SessionState::welcome_seen`); re-openable via Help → "Welcome / quick start…". Nothing
+    hidden, no mode flag.
 13. **Script playback is buried and forgets what you played.** Two small UX fixes to the feature
     that is one of the announce pitch's headline items (F), currently reachable only via
     *Tools → Play script…* (`ui/menus.rs`, `load_script()`), which opens a file dialog every time:
@@ -2450,7 +2453,9 @@ for fun, informative value, and ease of use.
   NVIDIA drivers and the widest wgpu/Vulkan testing. Work is mostly `release.yml` (add a
   ubuntu-22.04 job producing a tar.gz + sha256) plus whatever the first real run turns up
   (file dialogs via rfd need a portal/GTK dep; check the icon/font loading paths).
-- [ ] **First-run experience** — AGREED DESIGN (2026-08-07): a welcome overlay on first launch
+- [x] **First-run experience — DONE beta.59** (welcome overlay, see triage C12). Remaining
+  half of the agreed design (collapse advanced Controls sections by default) is separate and
+  still open. Original spec: a welcome overlay on first launch
   covering navigation (drag to pan, wheel to zoom, click-to-zoom, `M` for the minibrot jump) and
   a couple of preset destinations, since deep-zoom apps are opaque to newcomers and this is the
   friction a forum reader hits in the first two minutes. ⚠**Not** a Simple/Advanced *mode*:

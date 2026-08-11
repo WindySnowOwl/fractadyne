@@ -913,5 +913,6 @@ impl FractadyneApp {
 
         // ---- keyboard / help overlay ----
         self.help_window(ctx);
+        self.draw_welcome_dialog(ctx);
     }
 }

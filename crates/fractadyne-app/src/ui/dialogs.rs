@@ -12,6 +12,87 @@ fn default_dive_secs(log10mag: f64) -> f64 {
 }
 
 impl FractadyneApp {
+    /// First-run welcome overlay: a short quick-start shown once on a fresh install (and
+    /// re-openable from Help). Deep-zoom explorers are opaque to newcomers — this covers the
+    /// first-two-minutes controls and offers a couple of one-click destinations, then gets out of
+    /// the way. Deliberately NOT a tutorial or a "simple mode": nothing is hidden, and the full
+    /// Help (F1) is one click away. Dismissing it persists `welcome_seen` so it never nags.
+    pub(crate) fn draw_welcome_dialog(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.welcome_open {
+            return;
+        }
+        let mut open = self.dialogs.welcome_open;
+        let (mut dismiss, mut open_help) = (false, false);
+        let mut goto: Option<(&str, &str, &str, f64)> = None;
+        egui::Window::new("Welcome to Fractadyne")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(460.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(
+                    "A deep-zoom explorer for the Mandelbrot set and its relatives. \
+                     A few controls to get you moving:",
+                );
+                ui.add_space(6.0);
+                let row = |ui: &mut egui::Ui, k: &str, d: &str| {
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            [96.0, ui.spacing().interact_size.y],
+                            egui::Label::new(egui::RichText::new(k).monospace().strong())
+                                .halign(egui::Align::LEFT),
+                        );
+                        ui.label(d);
+                    });
+                };
+                row(ui, "drag", "pan the view");
+                row(ui, "scroll", "zoom in / out toward the cursor");
+                row(ui, "hold Space", "smooth continuous zoom (Shift+Space out)");
+                row(ui, "🎯 then click", "dive into the clicked point (toolbar)");
+                row(ui, "M", "jump to the nearest minibrot at its own scale");
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Jump to a landmark to start:").weak().small());
+                ui.horizontal_wrapped(|ui| {
+                    // A few shallow, striking destinations (see `FAMOUS`).
+                    for entry in &[FAMOUS[0], FAMOUS[1], FAMOUS[6]] {
+                        if ui.button(entry.0).clicked() {
+                            goto = Some(*entry);
+                        }
+                    }
+                });
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Open full help  (F1)").clicked() {
+                        open_help = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(egui::Button::new(
+                                egui::RichText::new("Get started").color(egui::Color32::WHITE),
+                            ).fill(egui::Color32::from_rgb(0x3A, 0x7A, 0xB0)))
+                            .clicked()
+                        {
+                            dismiss = true;
+                        }
+                    });
+                });
+            });
+        // A landmark button both jumps AND dismisses — the user is off exploring.
+        if let Some((name, cx, cy, mag)) = goto {
+            self.goto_location(cx, cy, mag, name, ctx);
+            dismiss = true;
+        }
+        if open_help {
+            self.dialogs.help_open = true;
+            dismiss = true;
+        }
+        // The window's own [x], "Get started", a landmark, or opening Help all dismiss it. Persist
+        // happens via the session save (welcome_seen = !welcome_open).
+        self.dialogs.welcome_open = open && !dismiss;
+    }
+
     /// "Go to location" dialog — jump to a pasted center/zoom, or copy the current one to share.
     pub(crate) fn draw_goto_dialog(&mut self, ctx: &egui::Context) {
         if !self.goto.open {

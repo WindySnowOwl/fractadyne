@@ -2135,6 +2135,8 @@ struct DialogState {
     bookmarks_open: bool,
     /// "Reset application state" confirmation dialog open.
     reset_confirm_open: bool,
+    /// First-run welcome overlay open (shown once on a fresh install; re-openable from Help).
+    welcome_open: bool,
     /// Keyboard/help overlay window open.
     help_open: bool,
     /// Selected Help section index.
@@ -2640,6 +2642,7 @@ impl FractadyneApp {
                 bench_dialog_open: false,
                 bookmarks_open: false,
                 reset_confirm_open: false,
+                welcome_open: !s.welcome_seen,
                 help_open: false,
                 help_section: 0,
                 right_panel_open: s.right_panel_open,
@@ -3027,6 +3030,7 @@ impl FractadyneApp {
                 .as_ref()
                 .map(|p| p.display().to_string()),
             last_script: self.last_script.as_ref().map(|p| p.display().to_string()),
+            welcome_seen: !self.dialogs.welcome_open,
             export_dual_mode: match self.export.dual_mode {
                 DualExport::SideBySide => "side".to_string(),
                 DualExport::Separate => "separate".to_string(),

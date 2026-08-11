@@ -97,6 +97,10 @@ pub struct SessionState {
     /// it. `None` until the first script is played; a missing file falls back to the picker.
     #[serde(default)]
     pub last_script: Option<String>,
+    /// Whether the first-run welcome overlay has been dismissed. `false` (the default, and the
+    /// state of a fresh install with no session file) shows the overlay once on launch.
+    #[serde(default)]
+    pub welcome_seen: bool,
     /// Dual-view export layout: "side" | "separate" | "active".
     #[serde(default = "default_export_dual_mode")]
     pub export_dual_mode: String,
@@ -377,6 +381,7 @@ impl Default for SessionState {
             export_format: default_export_format(),
             export_dir: None,
             last_script: None,
+            welcome_seen: false,
             export_dual_mode: default_export_dual_mode(),
             export_aspect: default_export_aspect(),
             show_location: false,

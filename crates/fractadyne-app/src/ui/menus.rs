@@ -411,6 +411,14 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui
+                            .button("Welcome / quick start…")
+                            .on_hover_text("The first-run overview: the essential controls and a few landmarks.")
+                            .clicked()
+                        {
+                            self.dialogs.welcome_open = true;
+                            ui.close_menu();
+                        }
+                        if ui
                             .button("Report an issue…")
                             .on_hover_text(
                                 "File a GitHub issue (or email) with a crash report, log, and \
