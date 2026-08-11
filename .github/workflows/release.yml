@@ -45,13 +45,14 @@ jobs:
           # The binary (self-contained: shaders + window icon are embedded).
           Copy-Item target/release/fractadyne.exe -Destination $dir/
           # Docs + licenses (incl. third-party dependency notices).
-          Copy-Item README.md, CHANGELOG.md, TOURS.md, THIRD-PARTY-NOTICES.md, LICENSE-APACHE, LICENSE-MIT -Destination $dir/
+          Copy-Item README.md, CHANGELOG.md, TOURS.md, DIAGNOSTICS.md, THIRD-PARTY-NOTICES.md, LICENSE-APACHE, LICENSE-MIT -Destination $dir/
           # Example guided-tour scripts (play in-app, or render headless with --render-tour).
           New-Item -ItemType Directory -Force -Path "$dir/tours" | Out-Null
           Copy-Item tours/*.toml -Destination "$dir/tours/"
           # Example scripting / profiling-region files.
           New-Item -ItemType Directory -Force -Path "$dir/scripts" | Out-Null
           Copy-Item scripts/*.example.toml -Destination "$dir/scripts/"
+          Copy-Item scripts/deep-sample.fdn -Destination "$dir/scripts/"
           # Validation data so `--selftest` / `--bench-matrix` work from the extracted install:
           # `anchored()` walks up from the binary and finds this `validation/` tree beside it.
           # (The goldens are blessed on the dev RTX 3080; an exact match confirms the GPU produces
@@ -124,9 +125,10 @@ jobs:
           dir="fractadyne-$tag-linux-x64"
           mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/benchmarks"
           cp target/release/fractadyne "$dir/"
-          cp README.md CHANGELOG.md TOURS.md THIRD-PARTY-NOTICES.md LICENSE-APACHE LICENSE-MIT "$dir/"
+          cp README.md CHANGELOG.md TOURS.md DIAGNOSTICS.md THIRD-PARTY-NOTICES.md LICENSE-APACHE LICENSE-MIT "$dir/"
           cp tours/*.toml "$dir/tours/"
           cp scripts/*.example.toml "$dir/scripts/"
+          cp scripts/deep-sample.fdn "$dir/scripts/"
           # Validation data so `--selftest` / `--bench-matrix` work from the extracted install:
           # `anchored()` walks up from the binary and finds this `validation/` tree beside it.
           # (Goldens are blessed on the dev RTX 3080 — an exact match confirms identical GPU
