@@ -1142,13 +1142,28 @@ Mockups: [design/mockups/](design/mockups/).
   `[playback] pace = "settled"`, which stops the tour clock at a hold until the view resolves
   (bounded by `settle_timeout`), because at depth the budget needs more settled frames to converge
   than a few seconds of hold provides.
-- [ ] **A settled view re-dispatches identical frames instead of idling** (found 2026-08-09 by
-  the ultra-dive exercise): after `ultra-dive-e200.toml` ends, the settled e200 view keeps
-  submitting the SAME budget-sized dispatch (~234 ms, identical steps/rebase counts) at ~3.5/s
-  indefinitely — ~80% GPU duty to render a picture that is already on screen. Harmless for
-  correctness (frames are bounded, watchdog-safe) but a real power/thermals waste on laptops.
-  Suspect: the boost probe / quality-gate loop never concluding at a view whose budget sits at
-  the ceiling. `slow frame` lines with identical `steps`/`rebase` are the signature.
+- [ ] ⭐**A settled deep view never idles — it pegs the GPU redrawing a static frame** (user
+  report 2026-08-10 "mousing over seems to cause it to recalculate"; first seen 2026-08-09 in the
+  ultra-dive). ROOT-CAUSED at the user's exact view (three-spar, ~1e98×/upp_e=-327, 4M iter, ss2,
+  normalize on): when settled AND untouched, the view renders at REDUCED resolution (1236×970, not
+  native 1445×1134 — the settled frame budget 3e11 can't afford a native ss2 dispatch, which needs
+  4.8e12) and repaints continuously at ~4.4 fps, **234 ms/frame, `repaint_requested=true` every
+  frame, `iterates=false` (the iterate IS IterKey-deduped), `body 1 ms`** — so the GPU is pegged
+  ~100% by the per-frame COLOR/present pass alone, redrawing a picture already on screen. The
+  reference builds and installs fine (NOT the reproject deadlock); the tiled settle is NOT running
+  (`tile=` empty) even though `can_tile` should hold, so the view never ratchets to native and
+  never concludes → never goes quiescent. Mousing over doesn't *cause* the recompute; the app is
+  already working continuously and the motion/readout updates make it perceptible.
+  ⚠**Two coupled defects**: (a) the settled deep view doesn't reach native res (budget too small
+  for one dispatch, and the tiled settle that exists for exactly this isn't engaging here), and
+  (b) a settled, cannot-further-improve view keeps requesting immediate repaints instead of
+  idling. Fix (b) first (biggest win, lowest risk): when settled, not interacting, nothing in
+  flight, IterKey stable (iterates=false) AND the coloring is stable (normalize EMA converged, no
+  palette animation), stop requesting repaints and let egui idle — a genuine input/settle event
+  still wakes it. ⚠Touches the delicate settle/repaint loop that the device-loss and black-view
+  fixes live in — verify with the full suite + a fresh-dir grand tour + this exact e98 session.
+  ⚠**Sandbox note**: `FRACTADYNE_CONFIG_DIR=$D` reads `$D/session.toml` DIRECTLY (not
+  `$D/config/`); a misplaced copy silently loads the home view and hides this entirely.
 
 - [ ] **Tour/offline render has no per-frame cost bound** — the TDR no longer reproduces, but the
   hole is still there. Found 2026-08-07 rendering `tours/grand-tour.toml` with a script-wide
