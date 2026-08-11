@@ -766,12 +766,22 @@ impl FractadyneApp {
                     fmt_coord_deep(&self.viewport.center_y, l2),
                 ));
                 ui.separator();
-                match self.pointer.pointer_complex {
-                    Some((mx, my)) => {
-                        ui.monospace(format!("cursor {}, {}", fmt_coord(mx), fmt_coord(my)))
-                    }
-                    None => ui.monospace("cursor —"),
+                // ⭐The cursor readout is reserved at a CONSTANT width. It only appears when the
+                // pointer is over the view, and this bar is content-sized and WRAPPING — so on a
+                // narrow window, moving the mouse onto the canvas popped a wide `cursor x, y` in,
+                // wrapped the bar to a second line, grew its height, shrank the canvas, and forced
+                // a full re-render on every mouse-move (a wide window, which never wraps, never
+                // did). Both `fmt_coord` values are right-padded to a fixed field so neither the
+                // presence of the readout nor the pointer's position changes where the bar breaks:
+                // a narrow window now wraps identically whether the mouse is on the view or off it,
+                // so hovering no longer reflows the layout. `—` fills the field when the pointer is
+                // elsewhere. (21 chars holds a grouped 15-dp coord: sign + up-to-1 int digit + `.`
+                // + 15 fractional + 2 group spaces ≈ 20.)
+                let (cx_s, cy_s) = match self.pointer.pointer_complex {
+                    Some((mx, my)) => (fmt_coord(mx), fmt_coord(my)),
+                    None => ("—".to_string(), "—".to_string()),
                 };
+                ui.monospace(format!("cursor {cx_s:>21}, {cy_s:>21}"));
                 ui.separator();
                 if self.dual {
                     ui.monospace(format!(

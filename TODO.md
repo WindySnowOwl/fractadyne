@@ -1154,14 +1154,19 @@ Mockups: [design/mockups/](design/mockups/).
   scales with frame cost, `(frame_ms·4).clamp(250, 1000)` ms — ~4 Hz on cheap frames, ~1 Hz on a
   234 ms frame (the 1000 ms cap breaks the EMA feedback loop). Measured: idle cadence 234 ms → 984
   ms, GPU idle duty ~94% → ~24%. Suite 107/107, goldens 17/17.
-  ⚠**Two follow-ups remain** (why this is `[~]` not `[x]`): (a) **mouse MOTION still re-runs the
-  234 ms color pass per event** — the deep "mousing recalculates" — because `paint()` re-colors
-  the iteration texture on every egui repaint; the real fix is caching the COLORED output (render
-  color→offscreen only when a color-key changes, blit it on repaint) so a content-unchanged
-  repaint is a cheap re-blit. Gate it OFF during interaction/reproject (those legitimately
-  re-color per frame). No golden coverage on the live paint path — verify by eye + the e98
-  session. (b) **the DE-glow color pass is expensive** (~234 ms at ss2/e98; frames are cheap with
-  it off) — worth profiling the DE shader / skipping the ×ss² recompute where possible.
+  ✅**The mouse-motion repaint was a SEPARATE, simpler bug — FIXED beta.58 (user diagnosis).**
+  On a NARROW window, moving the pointer onto the view popped the `cursor x, y` readout into the
+  content-sized, WRAPPING status bar, which wrapped it to a second line, grew the bar's height,
+  shrank the canvas → a resize → a full re-render on every mouse-move (a wide window never wraps,
+  so never repainted). Fix: the cursor field is reserved at a constant width (`{:>21}` per coord,
+  `—` when the pointer is off the view), so a narrow window wraps identically whether the mouse is
+  on the view or off — hovering no longer reflows the layout. The color-pass-caching idea is NOT
+  needed for this after all.
+  ⚠**One follow-up remains** (why `[~]` not `[x]`): **the DE-glow color pass is expensive**
+  (~234 ms at ss2/e98; frames are cheap with it off) — worth profiling the DE shader / skipping
+  the ×ss² recompute where possible. A repaint at a deep view with DE on is still a costly frame;
+  the beta.57 heartbeat throttle keeps it from PEGGING when idle, but each genuine repaint (a real
+  interaction) still pays it.
   ⚠**Sandbox note preserved**: `FRACTADYNE_CONFIG_DIR=$D` reads `$D/session.toml` DIRECTLY (not
   `$D/config/`); a misplaced copy silently loads the home view and hides this entirely. ROOT-CAUSED at the user's exact view (three-spar, ~1e98×/upp_e=-327, 4M iter, ss2,
   normalize on): when settled AND untouched, the view renders at REDUCED resolution (1236×970, not
