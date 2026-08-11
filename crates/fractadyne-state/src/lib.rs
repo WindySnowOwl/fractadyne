@@ -93,6 +93,11 @@ pub struct SessionState {
     /// Last directory an export was saved to; `None` until the first export.
     #[serde(default)]
     pub export_dir: Option<String>,
+    /// Last directory any open/save file dialog landed in — the shared fallback so a dialog opens
+    /// where the user last browsed, across categories and across restarts. `None` on a fresh
+    /// install (dialogs then fall back to a sensible per-category default like Pictures).
+    #[serde(default)]
+    pub last_dir: Option<String>,
     /// Path of the last camera-tour script played, so the toolbar button and menu can default to
     /// it. `None` until the first script is played; a missing file falls back to the picker.
     #[serde(default)]
@@ -380,6 +385,7 @@ impl Default for SessionState {
             export_ss: default_export_ss(),
             export_format: default_export_format(),
             export_dir: None,
+            last_dir: None,
             last_script: None,
             welcome_seen: false,
             export_dual_mode: default_export_dual_mode(),

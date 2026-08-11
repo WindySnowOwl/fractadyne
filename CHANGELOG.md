@@ -16,6 +16,11 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **File dialogs remember the last directory** (beta.61). Every open/save dialog now seeds from
+  a shared, persisted last-used directory and updates it on each pick, so opening a script, saving
+  a `.fdn`, importing a `.kfr`, saving a report/benchmark, or choosing a render folder all reopen
+  where you last were instead of resetting to a fixed default. Category memories (image-export
+  directory, the last script's own folder) still take precedence when set.
 - **"Script to current view" produced an unloadable file past ~1e19×** (beta.60). The zoom was
   written with a bare `{magnification}`, and Rust's `f64` Display never uses exponent form — so
   1e87 became an 88-digit integer literal that TOML rejects as an i64 overflow ("zoom too large

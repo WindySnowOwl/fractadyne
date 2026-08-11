@@ -445,10 +445,12 @@ impl FractadyneApp {
         }
         if save {
             if let Some(path) = rfd::FileDialog::new()
+                .set_directory(self.dialog_dir_default())
                 .set_file_name("fractadyne-report.txt")
                 .add_filter("Text", &["txt"])
                 .save_file()
             {
+                self.remember_dir(&path);
                 match std::fs::write(&path, self.build_report().as_bytes()) {
                     Ok(()) => self.report.msg = Some(format!("Saved to {}", path.display())),
                     Err(e) => self.report.msg = Some(format!("Save failed: {e}")),
@@ -670,9 +672,11 @@ impl FractadyneApp {
         let toml = self.build_dive_script(&note, secs);
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Fractadyne script (TOML)", &["toml"])
+            .set_directory(self.dialog_dir_default())
             .set_file_name("dive-to-view.toml")
             .save_file()
         {
+            self.remember_dir(&path);
             let ctx_msg = match std::fs::write(&path, toml.as_bytes()) {
                 Ok(()) => format!(
                     "Saved script → {}. Play it via Tools → Play script, or render with \
@@ -1086,7 +1090,11 @@ impl FractadyneApp {
         let mut open = self.dialogs.bench_open;
         let mut run_again = false;
         // Captured inside the egui closure (which borrows `self`), surfaced as a toast after it.
+        // The saved directory is likewise captured out and folded into the shared dialog memory
+        // once the closure's borrow of `self` ends.
         let mut bench_save: Option<std::io::Result<()>> = None;
+        let mut bench_save_dir: Option<std::path::PathBuf> = None;
+        let start_dir = self.dialog_dir_default();
         egui::Window::new("Benchmark results")
             .open(&mut open)
             .resizable(false)
@@ -1101,9 +1109,11 @@ impl FractadyneApp {
                         if ui.button("Save…").clicked() {
                             if let Some(path) = rfd::FileDialog::new()
                                 .add_filter("Text", &["txt"])
+                                .set_directory(&start_dir)
                                 .set_file_name("fractadyne_benchmark.txt")
                                 .save_file()
                             {
+                                bench_save_dir = path.parent().map(|p| p.to_path_buf());
                                 bench_save = Some(std::fs::write(path, &r));
                             }
                         }
@@ -1116,6 +1126,9 @@ impl FractadyneApp {
                 }
             });
         self.dialogs.bench_open = open;
+        if let Some(d) = bench_save_dir {
+            self.remember_dir(&d);
+        }
         if let Some(res) = bench_save {
             self.set_toast(
                 match res {
@@ -1150,6 +1163,7 @@ impl FractadyneApp {
                             .set_directory(&self.gallery.dir)
                             .pick_folder()
                         {
+                            self.remember_dir(&d);
                             self.gallery.dir = d;
                             do_rescan = true;
                         }
@@ -1412,6 +1426,7 @@ impl FractadyneApp {
                         .clicked()
                     {
                         if let Some(d) = rfd::FileDialog::new().set_directory(&target_dir).pick_folder() {
+                            self.remember_dir(&d);
                             self.export.last_dir = Some(d);
                         }
                     }

@@ -120,6 +120,33 @@ Ordered by how fast a stranger hits them.
       Open bugs) — whatever reads the pipe must tolerate the child outliving the dialog and vice
       versa, so do the two together.
 
+    - **Progressive (preview-first) render order** (user, 2026-08-11). Today a tour renders frame
+      0, 1, 2, … in order, so you don't see how the *end* of the tour looks until the whole thing
+      is done — an expensive way to discover that a deep keyframe is mis-framed or the palette
+      drifts. Add a **render-order option** so a "preview-first" pass renders the keyframes first,
+      then repeatedly **bisects the largest unrendered gap** between already-rendered frames until
+      every frame exists. The result is a coarse flip-book of the *entire* timeline within seconds,
+      refining to full temporal resolution — you can eyeball the whole arc and stop/redo before
+      committing the full render.
+      - **Name.** Recommend **"Progressive"** as the user-facing render-order label (vs the
+        default **"Sequential"**), with a subtitle like *"preview the whole tour first, refine to
+        full detail"*. The underlying schedule is a **temporal bisection** (a.k.a. binary
+        subdivision / interleaved order) — the same idea as a progressive/interlaced JPEG, applied
+        to the time axis rather than scanlines. ("Interleaved" and "coarse-to-fine" are accurate
+        alternates; "Progressive" reads most clearly to a non-specialist.)
+      - **Scheduling.** Emit frame indices as: all keyframe times (snapped to frame indices),
+        then a max-gap bisection queue (repeatedly split the widest rendered-neighbour interval at
+        its midpoint). Naturally yields the powers-of-two refinement (½, ¼+¾, ⅛…) between each
+        keyframe pair.
+      - **Muxing caveat.** The out-of-order frames must still be written to their correct
+        `frame_%05d` indices on disk; the preview is browsed as stills (or a low-fps proxy) —
+        MP4 assembly still happens once at the end from the completed, in-order set. If a partial
+        stop is allowed, a "preview proxy" MP4 could be assembled from whatever's rendered so far
+        by holding each frame until its next rendered successor (nearest-rendered hold).
+      - **Interlocks.** Reuses the resumable-render machinery (already skips frames present on
+        disk) and the per-keyframe budgets; independent of the per-frame cost/memory bounds
+        (Open bugs) since it only reorders *which* frame renders when, not how each is costed.
+
 ### E — (b) fundamentally missing features: assessed, nothing blocking
 
 Nothing *fundamental* is absent for a deep-zoom explorer. The honest gaps, all defensible to name

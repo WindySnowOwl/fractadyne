@@ -2373,14 +2373,19 @@ impl FractadyneApp {
     /// script's directory when there is one.
     pub(crate) fn load_script(&mut self) {
         let mut dialog = rfd::FileDialog::new().add_filter("Fractadyne script (TOML)", &["toml"]);
-        if let Some(dir) = self.last_script.as_ref().and_then(|p| p.parent()) {
-            if dir.is_dir() {
-                dialog = dialog.set_directory(dir);
-            }
-        }
+        // Prefer the last script's own directory; otherwise the shared last-used directory.
+        let seed = self
+            .last_script
+            .as_ref()
+            .and_then(|p| p.parent())
+            .filter(|d| d.is_dir())
+            .map(|d| d.to_path_buf())
+            .unwrap_or_else(|| self.dialog_dir_default());
+        dialog = dialog.set_directory(seed);
         let Some(path) = dialog.pick_file() else {
             return;
         };
+        self.remember_dir(&path);
         self.start_script(path);
     }
 

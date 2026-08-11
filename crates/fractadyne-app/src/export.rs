@@ -432,9 +432,10 @@ impl FractadyneApp {
             .add_filter("Fractadyne view or location", &["png", "exr", "fdn", "kfr"])
             .add_filter("Image (PNG / EXR)", &["png", "exr"])
             .add_filter("Location (.fdn / .kfr)", &["fdn", "kfr"])
-            .set_directory(Self::pictures_dir())
+            .set_directory(self.dialog_dir(Self::pictures_dir))
             .pick_file();
         let Some(path) = path else { return };
+        self.remember_dir(&path);
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -533,7 +534,7 @@ impl FractadyneApp {
             .export.last_dir
             .clone()
             .filter(|d| d.is_dir())
-            .unwrap_or_else(Self::pictures_dir);
+            .unwrap_or_else(|| self.dialog_dir(Self::pictures_dir));
         let path = rfd::FileDialog::new()
             .set_directory(start_dir)
             .set_file_name(self.export_default_name())
@@ -866,6 +867,7 @@ impl FractadyneApp {
         if let Some(parent) = path.parent() {
             self.export.last_dir = Some(parent.to_path_buf());
         }
+        self.remember_dir(&path);
         // Deep export: build the (slow, bignum) MAP reference orbit OFF the main thread so the UI
         // stays responsive instead of freezing (at extreme depth the reference build alone is
         // minutes). The render dispatches once it lands — see the `export_prep` poll in `update()`.

@@ -2204,6 +2204,10 @@ struct FractadyneApp {
     /// Path of the last tour script played (persisted): the toolbar ▶ button and the menu default
     /// to it, so replaying the same tour — the common case — is one click, not a file dialog.
     last_script: Option<std::path::PathBuf>,
+    /// Last directory any open/save dialog landed in — the shared fallback so the next dialog
+    /// opens where the user last browsed (persisted). Category memories (`export.last_dir`, the
+    /// script's own parent) take precedence when set; this catches everything else.
+    last_dir: Option<std::path::PathBuf>,
     /// "Render script…" dialog + the child process doing the work (see `TourRenderUi`).
     tour_render: TourRenderUi,
     /// Last benchmark report text + whether its window is open.
@@ -2638,6 +2642,7 @@ impl FractadyneApp {
             orbit_cache: std::cell::RefCell::new(None),
             playback: None,
             last_script: s.last_script.clone().map(std::path::PathBuf::from),
+            last_dir: s.last_dir.clone().map(std::path::PathBuf::from),
             playback_restore: None,
             tour_render: TourRenderUi::default(),
             bench_report: None,
@@ -3034,6 +3039,7 @@ impl FractadyneApp {
                 .export.last_dir
                 .as_ref()
                 .map(|p| p.display().to_string()),
+            last_dir: self.last_dir.as_ref().map(|p| p.display().to_string()),
             last_script: self.last_script.as_ref().map(|p| p.display().to_string()),
             welcome_seen: !self.dialogs.welcome_open,
             export_dual_mode: match self.export.dual_mode {
@@ -3234,6 +3240,43 @@ impl FractadyneApp {
         directories::UserDirs::new()
             .and_then(|u| u.picture_dir().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::path::PathBuf::from("."))
+    }
+
+    /// Directory to open a file dialog in: the last one the user browsed to (if it still exists),
+    /// else `fallback`. Gives every open/save dialog a shared, persisted memory. `fallback` is a
+    /// closure so the per-category default (e.g. Pictures) is only computed on a fresh install.
+    fn dialog_dir(&self, fallback: impl FnOnce() -> std::path::PathBuf) -> std::path::PathBuf {
+        self.last_dir
+            .as_ref()
+            .filter(|d| d.is_dir())
+            .cloned()
+            .unwrap_or_else(fallback)
+    }
+
+    /// The process's current directory, or `.` if it can't be read — a neutral dialog fallback
+    /// for non-image categories (scripts, locations) with no natural home like Pictures.
+    fn cwd_dir() -> std::path::PathBuf {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    }
+
+    /// [`Self::dialog_dir`] with the neutral current-directory fallback — for dialogs with no
+    /// category-specific default.
+    fn dialog_dir_default(&self) -> std::path::PathBuf {
+        self.dialog_dir(Self::cwd_dir)
+    }
+
+    /// Record the directory a dialog just landed in, so the next one opens there. `picked` may be
+    /// a chosen file (remember its parent) or a chosen folder (remember it directly); a save
+    /// target need not exist yet, so a non-directory path is treated as a file.
+    fn remember_dir(&mut self, picked: &std::path::Path) {
+        let dir = if picked.is_dir() {
+            Some(picked.to_path_buf())
+        } else {
+            picked.parent().map(|p| p.to_path_buf())
+        };
+        if let Some(d) = dir.filter(|d| !d.as_os_str().is_empty()) {
+            self.last_dir = Some(d);
+        }
     }
 
     /// Path to the bookmarks file in the config dir (honours `FRACTADYNE_CONFIG_DIR`).
@@ -4712,9 +4755,11 @@ impl FractadyneApp {
     fn save_share_file(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Fractadyne location", &["fdn"])
+            .set_directory(self.dialog_dir_default())
             .set_file_name("location.fdn")
             .save_file()
         {
+            self.remember_dir(&path);
             match std::fs::write(&path, self.share.text.as_bytes()) {
                 Ok(()) => self.share.msg = Some("Saved.".into()),
                 Err(e) => self.share.msg = Some(format!("Save failed: {e}")),
@@ -4727,10 +4772,12 @@ impl FractadyneApp {
     fn load_share_file(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Fractadyne location", &["fdn"])
+            .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
             return;
         };
+        self.remember_dir(&path);
         match std::fs::metadata(&path) {
             Ok(m) if (m.len() as usize) <= SHARE_MAX => match std::fs::read_to_string(&path) {
                 Ok(t) => {
@@ -4748,10 +4795,12 @@ impl FractadyneApp {
     fn import_kfr(&mut self, ctx: &egui::Context) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Kalles Fraktaler location", &["kfr"])
+            .set_directory(self.dialog_dir_default())
             .pick_file()
         else {
             return;
         };
+        self.remember_dir(&path);
         match self.load_kfr_file(&path) {
             Ok(m) => self.set_toast(m, ctx),
             Err(e) => self.set_toast(format!("Import failed: {e}"), ctx),

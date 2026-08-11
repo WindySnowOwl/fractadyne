@@ -405,7 +405,12 @@ impl FractadyneApp {
         self.tour_render.open = open;
 
         if browse {
-            if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+            // Seed at the current output path if it exists, else the shared last-used directory.
+            let seed = Some(std::path::PathBuf::from(&self.tour_render.out))
+                .filter(|p| p.is_dir())
+                .unwrap_or_else(|| self.dialog_dir_default());
+            if let Some(dir) = rfd::FileDialog::new().set_directory(seed).pick_folder() {
+                self.remember_dir(&dir);
                 self.tour_render.out = dir.display().to_string();
             }
         }
