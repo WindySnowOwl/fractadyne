@@ -148,29 +148,26 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] ⭐**Speckle at very-high-iteration deep views (f32 smooth-iteration precision) — user report
-  2026-08-10, ROOT-CAUSED.** At the three-spar ~1e103× (4M iter, normalize on) the frame is
-  uniform white speckle EXCEPT a clean central diamond. Diagnosis, all measured:
-  - **NOT a live bug** — the OFFLINE `--render --normalize` (glitch correction ON) reproduces it
-    identically. **NOT glitches** (`glitch=0`), **NOT clamping** (`maxiter=0`, all escaped),
-    **NOT the reproject/settle machinery**, **NOT a precision cliff** — the escape length is
-    **exactly 3,631,054 at every precision 408→900 bits** (dead stable ⇒ a genuine escape, this
-    location's real nature).
-  - **Cause: the escape counts cluster at ~3.6 MILLION, and the smooth-iteration value is f32 on
-    the GPU.** At 3.6e6 (~2^21.8) f32's 24-bit mantissa leaves ~0.4 resolution, so the FRACTIONAL
-    part (what makes smooth coloring smooth) is quantized to noise; `--normalize` maps a tight
-    range across the palette and amplifies it to per-pixel speckle. The clean diamond is where
-    counts are LOWER (near the central minibrot) so f32 still has fractional precision. Confirmed
-    by the corollary: the e250 F3-corpus points stay clean because they escape at only ~600k
-    iterations — it is the ITERATION COUNT, not the depth, that triggers it.
-  - **Fix direction: preserve smooth-iteration fractional precision at high counts.** Compute/
-    store `smooth − baseline` (subtract a per-frame or per-tile integer baseline before the f32
-    store, add it back / let normalize absorb it) so the fractional survives; or carry the count
-    as (u32 integer, f32 fractional). This is the concrete instance of the deferred "per-frame GPU
-    range reduction / live deep-alias" item. ⚠**Golden blast radius** — the smooth-iter field
-    feeds every coloring; land against goldens + the F3 corpus + a `ref-pick`-style pinned check
-    at this view. ⚠Distance-estimate / other color methods that don't use the raw count fraction
-    may sidestep it — worth checking whether DE coloring is speckle-free here as a workaround.
+- [~] **Speckle at deep, high-detail views — DIAGNOSED, it is ANTI-ALIASING, not a bug (user
+  report 2026-08-10).** At the three-spar ~1e103× the live view (ss2, ~1236 px wide) shows uniform
+  speckle with one clean central diamond. ⛔**My first diagnosis (f32 smooth-iteration precision)
+  was WRONG and is retracted** — f32 quantization of a smooth field causes BANDING (patches of one
+  colour), whereas this is salt-and-pepper. Decisive test: **`--render --ss 8` renders it clean**
+  (coherent four-armed spar structure), `--ss 1/2` speckles; a precision problem would survive
+  supersampling. So the escape-time field here has genuine sub-pixel structure (finer than the
+  pixel grid), and low supersampling aliases it. Higher output RESOLUTION aliases MORE (each pixel
+  spans finer detail — the user's 1236-px live view speckles where a 480-px ss1 render shows the
+  structure); higher SS aliases less. The clean diamond is the lower-frequency region near the
+  central minibrot. Escape length is a stable 3,631,054 across 408→900 bits, so it is not a cliff
+  and not the reference.
+  **There is no coloring code fix; the resolution is supersampling.** User guidance: EXPORT at
+  ss 4–8 for a clean image; for the LIVE view, raise Anti-alias (Rendering panel) — the settled
+  tiled render refines toward that ss, cleaner but slower to settle, and bounded so deep ss stays
+  watchdog-safe. ⚠**Possible real improvement to explore (why `[~]`)**: at extreme depth the
+  settled live view is budget-capped near ss2 and cannot reach ss8, so it can't self-clean these
+  fields — a settled-only, tile-bounded higher-ss pass (already the tiled-settle's job, just
+  capped low here) or an averaging deep-color mode would help. Not a defect, a quality ceiling.
+
 
 
 - [x] ⭐⭐⭐**RESOLVED v0.2.40-beta.49 (2026-08-09): the 2:58 device loss AND the black deep holds
