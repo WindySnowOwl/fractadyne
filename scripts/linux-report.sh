@@ -21,7 +21,9 @@
 #
 # Options:
 #   --selftest         run `--selftest` (under xvfb if headless) and capture its output.
-#   --out DIR          staging base directory (default: ~/fractadyne-reports).
+#   --out DIR          staging base directory. Default: /mnt/vger/Fractadyne/reports when the
+#                      \\vger\share mount is present (dev box reads it directly, no scp), else
+#                      ~/fractadyne-reports (then scp-pull).
 #   --config DIR       app config dir to harvest (default: $FRACTADYNE_CONFIG_DIR, else
 #                      ${XDG_CONFIG_HOME:-~/.config}/fractadyne).
 #   --repo DIR         Fractadyne working copy, for git info + the built binary (default: ~/fractadyne).
@@ -31,7 +33,12 @@
 set -euo pipefail
 
 NOTE=""
-OUT_BASE="${HOME}/fractadyne-reports"
+# Default staging base is resolved AFTER arg parsing (see below) so an explicit --out wins. When
+# the Windows share //vger/share is mounted at /mnt/vger, its Fractadyne folder is the natural
+# home — reports land at \\vger\share\Fractadyne\reports\<ts>\ and the Windows box reads them
+# directly, no scp. Off the share, fall back to a home-dir folder (then scp-pull).
+SHARE_BASE="/mnt/vger/Fractadyne/reports"
+OUT_BASE=""   # empty ⇒ auto-detect
 CONFIG_DIR="${FRACTADYNE_CONFIG_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/fractadyne}"
 REPO_DIR="${HOME}/fractadyne"
 DO_SELFTEST=0
@@ -47,12 +54,22 @@ while [ $# -gt 0 ]; do
     --out)      shift; OUT_BASE="${1:?--out needs a path}" ;;
     --config)   shift; CONFIG_DIR="${1:?--config needs a path}" ;;
     --repo)     shift; REPO_DIR="${1:?--repo needs a path}" ;;
-    -h|--help)  sed -n '2,40p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,31p' "$0"; exit 0 ;;
     --*)        die "unknown option: $1 (try --help)" ;;
     *)          NOTE="${NOTE:+$NOTE }$1" ;;   # accumulate free-text description
   esac
   shift
 done
+
+# Resolve the default staging base if --out wasn't given: the mounted share when present (so the
+# Windows box sees the report with no transfer), else a home-dir folder for the scp-pull path.
+if [ -z "$OUT_BASE" ]; then
+  if [ -d "/mnt/vger/Fractadyne" ]; then
+    OUT_BASE="$SHARE_BASE"
+  else
+    OUT_BASE="${HOME}/fractadyne-reports"
+  fi
+fi
 
 # Timestamped run folder. `date` is fine here (this runs on the rig, not in a resumable harness).
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -159,5 +176,16 @@ fi
 
 say "Done. Bundle ready at: ${RUN}"
 echo
-echo "Pull it to the Windows box with (run there):"
-echo "    scripts\\pull-linux-reports.ps1 -From ${USER:-user}@$(hostname) -Latest"
+case "${RUN}" in
+  /mnt/vger/*)
+    # Landed on the mounted Windows share — the dev box already sees it, no transfer needed.
+    win_sub="${RUN#/mnt/vger/}"                       # path under the share root
+    win_sub="${win_sub//\//\\}"                       # forward slashes → backslashes
+    echo "On the share — the Windows box can read it directly at:"
+    echo "    \\\\vger\\share\\${win_sub}"
+    ;;
+  *)
+    echo "Not on the share. Pull it to the Windows box with (run there):"
+    echo "    scripts\\pull-linux-reports.ps1 -From ${USER:-user}@$(hostname) -Latest"
+    ;;
+esac
