@@ -16,6 +16,14 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **"Script to current view" produced an unloadable file past ~1e19×** (beta.60). The zoom was
+  written with a bare `{magnification}`, and Rust's `f64` Display never uses exponent form — so
+  1e87 became an 88-digit integer literal that TOML rejects as an i64 overflow ("zoom too large
+  to fit in the target type"). It is now emitted as a quoted scientific string (`zoom = "5.4e87"`)
+  at every depth. The generator round-trip self-check gained a mid-depth (~1e85×) case that
+  exercises the finite-magnitude branch the old past-f64 case skipped. Also: a script that fails
+  to load now opens a dialog titled **"Could not load script"** instead of borrowing the
+  benchmark window's "Benchmark results" title.
 - **The 2:58 device loss and the black deep holds — one root cause** (beta.48–50). The tour
   camera ROUNDED a pinned-centre glide's coordinates to the current depth's precision
   (`lerp(x, x)` is not the identity), and a rounded centre is a genuinely different point whose

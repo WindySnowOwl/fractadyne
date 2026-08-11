@@ -701,9 +701,13 @@ impl FractadyneApp {
         let cy = fractadyne_core::to_decimal_string(&self.viewport.center_y);
         let (hx, hy) = self.fractal.default_center();
         let target_mag = self.viewport.magnification(); // saturates to ∞ past ~1e308×
-        // Target zoom: a plain number below f64's ~1e308 ceiling, scientific notation past it.
+        // Target zoom, always emitted as a QUOTED scientific string. A bare `{target_mag}` is a
+        // trap: Rust's f64 Display never uses exponent form, so 1e87 prints as an 88-digit integer
+        // literal — which TOML parses as an i64 and rejects ("too large to fit in the target type")
+        // for any dive past ~1e19. `{:e}` gives the shortest round-tripping form; past f64's ~1e308
+        // ceiling `target_mag` saturates to ∞ (Display "inf"), so fall back to the log10 magnitude.
         let target_zoom = if log10mag < 300.0 {
-            format!("{target_mag}")
+            format!("\"{target_mag:e}\"")
         } else {
             format!("\"1e{log10mag:.6}\"")
         };
@@ -1041,6 +1045,36 @@ impl FractadyneApp {
                     self.dialogs.bench_open = true;
                 }
             }
+        }
+    }
+
+    /// Generic titled-message dialog (`dialogs.notice`) — a one-off notice with a Copy button and
+    /// a Close. Used for errors that warrant a dialog over a fleeting toast (e.g. a script that
+    /// fails to load), so the message no longer has to borrow an unrelated window's title.
+    pub(crate) fn draw_notice_dialog(&mut self, ctx: &egui::Context) {
+        let Some((title, body)) = self.dialogs.notice.clone() else {
+            return;
+        };
+        let mut open = true; // the window's own [x] close button
+        let mut close_clicked = false; // the explicit Close button inside the body
+        egui::Window::new(&title)
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.monospace(&body);
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(body.clone());
+                    }
+                    if ui.button("Close").clicked() {
+                        close_clicked = true;
+                    }
+                });
+            });
+        if !open || close_clicked {
+            self.dialogs.notice = None;
         }
     }
 

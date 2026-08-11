@@ -2416,8 +2416,10 @@ impl FractadyneApp {
                 self.playback = Some(pb);
             }
             Err(e) => {
-                self.bench_report = Some(format!("Could not load {}:\n\n{e}", path.display()));
-                self.dialogs.bench_open = true;
+                self.dialogs.notice = Some((
+                    "Could not load script".to_string(),
+                    format!("{}\n\n{e}", path.display()),
+                ));
             }
         }
     }

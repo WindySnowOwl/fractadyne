@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.58 (build 1372)
-- **Generated:** 2026-08-11 02:50:20 UTC (unix 1786416620)
+- **Version:** 0.2.40-beta.60 (build 1377)
+- **Generated:** 2026-08-11 11:40:35 UTC (unix 1786448435)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -93,7 +93,8 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Script | malformed scripts rejected | 11 scripts | all rejected | all rejected | ✅ PASS |
 | Script | playback pacing | pace = settled / default | settled parsed=true, default adaptive=true | settled honored, default adaptive | ✅ PASS |
 | Script | palette definition + morph | custom stops → Ember over 2s | start=2 stops, mid=8 blended stops, end=preset 0 | stops verbatim, blend at the midpoint, preset verbatim | ✅ PASS |
-| Script | generated dive script round-trips | "Script to current view" at 2^1200× | 68.0s, ends 1e358.8× (view 1e358.8×) | resolves, 68s, ends at the view's depth | ✅ PASS |
+| Script | generated dive script round-trips | "Script to current view" at 2^289× (1e85×) | 68.0s, ends 1e84.5× (view 1e84.5×) | resolves, 68s, ends at the view's depth | ✅ PASS |
+| Script | generated dive script round-trips | "Script to current view" at 2^1200× (1e359×) | 68.0s, ends 1e358.8× (view 1e358.8×) | resolves, 68s, ends at the view's depth | ✅ PASS |
 | Script | shallow keyframe keeps deep-neighbour precision | rational centre on a 1e8× keyframe, tour reaches 1e94× | centre drift 8.46e-117 | < 1e-110 (the 1e94× view span is ~1e-95) | ✅ PASS |
 | Script | segment lookup | grand-tour chapters | gauntlet 132–331s of 331s, prefix→landmarks, #1→whole-set | id / prefix / index resolve, unknown errors | ✅ PASS |
 | View format | metadata round-trips a deep view | serialize → scramble → load | iter 1234 aa 3 upp_log2 -120.000 cx -0.743643887037151 | clean load; fractal/iter/aa/zoom/center preserved | ✅ PASS |
@@ -122,7 +123,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**107/107 checks passed.**
+**108/108 checks passed.**
 
 ## Coverage & scope
 

@@ -2629,15 +2629,19 @@ impl FractadyneApp {
 
             // "Script to current view" writes a script the app then has to read back. A generator
             // emitting a shape the reader rejects is invisible until someone tries to play the
-            // file, so generate one at a past-f64 depth and resolve it here.
-            {
+            // file, so generate one and resolve it here — at TWO depths, because the writer picks
+            // the zoom's format by depth. The 2^-289 case sits in f64 range (~1e85×) and exercises
+            // the finite-magnitude branch; a bare `{mag}` there prints an ~85-digit integer that
+            // TOML rejects as an i64 overflow (the "zoom too large" bug). The 2^-1200 case is past
+            // f64's ceiling and exercises the log10 string branch. Both must round-trip.
+            for octaves in [289.0_f64, 1200.0] {
                 let saved = (self.viewport.clone(), self.render_cfg.max_iter);
                 self.viewport.center_x = fractadyne_core::parse_bf("-0.101096363845622131810062").unwrap();
                 self.viewport.center_y = fractadyne_core::parse_bf("0.956286510809141471316047").unwrap();
-                self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(-1200.0);
-                self.viewport.precision = fractadyne_core::precision_for_octaves(1200);
+                self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(-octaves);
+                self.viewport.precision = fractadyne_core::precision_for_octaves(octaves as u64);
                 // The view's own depth is the target: `log2_magnification` folds in the viewport
-                // size, so it is NOT simply the 1200 in `units_per_pixel = 2^-1200`.
+                // size, so it is NOT simply the octaves in `units_per_pixel = 2^-octaves`.
                 let want_l10 = self.viewport.log2_magnification() / std::f64::consts::LOG2_10;
                 let text = self.build_dive_script("Zoom to a deep view", 60.0);
                 let got = crate::scripting::parse_tour_text(&text)
@@ -2654,7 +2658,7 @@ impl FractadyneApp {
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Script",
                     name: "generated dive script round-trips".into(),
-                    params: "\"Script to current view\" at 2^1200×".into(),
+                    params: format!("\"Script to current view\" at 2^{octaves}× (1e{want_l10:.0}×)"),
                     result: desc,
                     threshold: "resolves, 68s, ends at the view's depth",
                     pass: ok,

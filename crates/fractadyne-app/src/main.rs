@@ -2150,6 +2150,10 @@ struct DialogState {
     script_export_open: bool,
     script_export_note: String,
     script_export_secs: f64,
+    /// A generic titled message dialog: `Some((title, body))` while shown. Used for one-off
+    /// notices (e.g. a script that fails to load) that deserve a dialog rather than a fleeting
+    /// toast, without borrowing an unrelated window's title.
+    notice: Option<(String, String)>,
 }
 
 struct FractadyneApp {
@@ -2650,6 +2654,7 @@ impl FractadyneApp {
                 script_export_open: false,
                 script_export_note: String::new(),
                 script_export_secs: 30.0,
+                notice: None,
             },
             bench_cfg: BenchConfig::default(),
             std_bench: None,
@@ -5747,6 +5752,7 @@ impl eframe::App for FractadyneApp {
         self.draw_bench_config_dialog(ctx);
         self.draw_bench_progress_dialog(ctx);
         self.draw_bench_results_dialog(ctx);
+        self.draw_notice_dialog(ctx);
 
         self.draw_gallery_dialog(ctx);
 
