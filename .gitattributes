@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings — a CRLF in the shebang (`#!/usr/bin/env bash\r`) makes
+# Linux refuse to run them ("bad interpreter"). This holds regardless of a committer's platform
+# or core.autocrlf setting.
+*.sh text eol=lf
