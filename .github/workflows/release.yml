@@ -52,6 +52,15 @@ jobs:
           # Example scripting / profiling-region files.
           New-Item -ItemType Directory -Force -Path "$dir/scripts" | Out-Null
           Copy-Item scripts/*.example.toml -Destination "$dir/scripts/"
+          # Validation data so `--selftest` / `--bench-matrix` work from the extracted install:
+          # `anchored()` walks up from the binary and finds this `validation/` tree beside it.
+          # (The goldens are blessed on the dev RTX 3080; an exact match confirms the GPU produces
+          # identical output, so small deltas on other hardware are expected FP32 variance.)
+          New-Item -ItemType Directory -Force -Path "$dir/validation/golden" | Out-Null
+          Copy-Item validation/golden/*.png -Destination "$dir/validation/golden/"
+          Copy-Item validation/catalog.toml -Destination "$dir/validation/"
+          New-Item -ItemType Directory -Force -Path "$dir/benchmarks" | Out-Null
+          Copy-Item benchmarks/bench-matrix-baseline.json -Destination "$dir/benchmarks/"
           Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
           $hash = (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $dir.zip" | Out-File -FilePath "$dir.zip.sha256" -Encoding ascii
@@ -113,11 +122,18 @@ jobs:
           fi
           [ -z "$tag" ] && tag="dev"
           dir="fractadyne-$tag-linux-x64"
-          mkdir -p "$dir/tours" "$dir/scripts"
+          mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/benchmarks"
           cp target/release/fractadyne "$dir/"
           cp README.md CHANGELOG.md TOURS.md THIRD-PARTY-NOTICES.md LICENSE-APACHE LICENSE-MIT "$dir/"
           cp tours/*.toml "$dir/tours/"
           cp scripts/*.example.toml "$dir/scripts/"
+          # Validation data so `--selftest` / `--bench-matrix` work from the extracted install:
+          # `anchored()` walks up from the binary and finds this `validation/` tree beside it.
+          # (Goldens are blessed on the dev RTX 3080 — an exact match confirms identical GPU
+          # output; small deltas on other hardware are expected FP32 variance.)
+          cp validation/golden/*.png "$dir/validation/golden/"
+          cp validation/catalog.toml "$dir/validation/"
+          cp benchmarks/bench-matrix-baseline.json "$dir/benchmarks/"
           tar czf "$dir.tar.gz" "$dir"
           sha256sum "$dir.tar.gz" > "$dir.tar.gz.sha256"
           echo "ASSET=$dir.tar.gz" >> "$GITHUB_ENV"
