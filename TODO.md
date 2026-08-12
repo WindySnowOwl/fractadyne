@@ -1263,25 +1263,32 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**Sandbox note**: `FRACTADYNE_CONFIG_DIR=$D` reads `$D/session.toml` DIRECTLY (not
   `$D/config/`); a misplaced copy silently loads the home view and hides this entirely.
 
-- [ ] **Tour/offline render has no per-frame cost bound** — the TDR no longer reproduces, but the
-  hole is still there. Found 2026-08-07 rendering `tours/grand-tour.toml` with a script-wide
-  `max_iter = 2000000`: at frame 16 a 2,000,001-sample (non-escaping) reference installed and the
-  next frame lost the device (`DEVICE LOST (Unknown)`), even at 240x135. beta.34's per-keyframe
-  budgets removed the trigger — that frame is a 1.33x home view and now asks for 2 000 iterations,
-  and the full tour renders end to end — but nothing *bounds* a tour frame's cost, so a script
-  that asks for millions at a shallow view can still do it. The LIVE path bounds per-frame cost
-  (`fe_budget` + tiled settle + motion-res); the tour path has none of that, and `render_export`'s
-  `TILE_WORK_BUDGET` evidently wasn't bounding that dispatch (240·135·2e6 = 6.5e10 nominal steps
-  vs a 2e10 tile budget — check whether the tour render path actually goes through the tiled
-  export). Fix direction unchanged: route tour frames through the tiled export path with a budget
-  calibrated like the live one.
-- [ ] **A deep tour frame's memory is unbounded too** (measured 2026-08-07). The offline path
-  builds frame N+1's reference while frame N renders, so the peak is two references at once: at
-  the 6.5e94x spar an 8M-sample reference is ~2.3 GB at 379-bit precision plus its BLA tables, and
-  the pair OOM-killed the render mid-dive on a 32 GB machine (`memory allocation of 6520976 bytes
-  failed`, after 221 of 233 frames). The grand tour's deepest hold is set to 4M as a result, which
-  leaves it a few percent capped. Worth bounding the lookahead by available memory, or at least
-  failing with a diagnosis instead of an allocator abort.
+- [x] **Tour/offline render has no per-frame cost bound — FIXED v0.2.40-beta.64.** Root cause was
+  exactly the suspicion: `render_export` DOES tile, but its per-tile `TILE_WORK_BUDGET` is a fixed
+  2e10 *nominal* steps with a 64² floor, and for a shallow/all-interior frame (Direct mode, BLA
+  skips nothing → nominal ≈ real) that is ~2e10 REAL steps in one dispatch ≈ 2 s → TDR. Fix:
+  `ExportRequest` gained a `work_budget: Option<u64>` the tiler honours (with a 16² floor when set),
+  and the offline tour path sets `TOUR_WORK_BUDGET = 2e9` on every frame (normal, normalized via
+  `render_export_normalized`, and dual). 2e9 real ≈ 0.2 s/tile even in the no-skip worst case, safe
+  on any discrete GPU. Verified: the exact 240×135 / 1.3× / `max_iter=2e6` all-interior repro that
+  lost the device now renders 19/19 frames; a 480×270 normalized dive to e30 renders 61/61.
+  ⚠**Tradeoff (why it's `[x]` with a caveat, not a follow-up bug): a fixed NOMINAL budget
+  over-tiles deep BLA-skipping frames** — at a 4M-iter deep hold, 2e9 forces ~22 px tiles (nominal
+  ≫ real there), so a deep hold renders slower (more, tinier dispatches). The impossible case
+  (deep interior, no skip, 4M iters) never rendered in any finite time regardless, so over-tiling
+  only adds overhead to the tractable (skipping) holds. **Proper optimization for later: measure
+  the first tile's wall time and size the rest to a ~500 ms target (mirror the live path's
+  `fe_budget` ms-per-step calibration) so deep frames aren't needlessly split.**
+- [x] **A deep tour frame's memory is unbounded too — FIXED v0.2.40-beta.64.** The lookahead now
+  gates the `spawn_export_reference` prefetch on a new `sysinfo::available_memory()`
+  (Windows `GlobalMemoryStatusEx` `ullAvailPhys`, Linux `/proc/meminfo MemAvailable`, stub `None`):
+  it only prefetches frame N+1's reference if a conservative estimate of its build footprint
+  (`≈ max_iter × (prec/8·4 + 128)` bytes) plus a 1.5 GB working margin fits in available RAM;
+  otherwise it skips the lookahead and builds N+1 synchronously (one reference resident at a time —
+  slower, never the two-references-at-once OOM). Warns once when it falls back. The genuinely
+  too-big single-reference case still hits the allocator hook (`diag::on_alloc_fail` writes a crash
+  report before the abort), so it's diagnosable either way. The grand tour's deepest hold can be
+  raised back toward 8M once real-memory numbers from the rig confirm the estimate is calibrated.
 
 ## Script format — requested extensions (user, 2026-08-09)
 

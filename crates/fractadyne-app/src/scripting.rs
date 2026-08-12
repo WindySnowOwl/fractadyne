@@ -2703,6 +2703,22 @@ impl FractadyneApp {
         let mut norm_range: Option<(f32, f32)> = None;
         let mut norm_oversize_warned = false;
         let want_normalize = pb.render.normalize;
+        // Per-tile nominal-work cap for tour frames — conservatively below the interactive export's
+        // 2e10 so that even a shallow, all-interior frame (BLA skips nothing there, so nominal work
+        // ≈ real GPU steps) keeps each dispatch well under the ~2 s OS watchdog. It over-splits a
+        // deep frame (nominal ≫ real), but many short tiles are safe; one long dispatch is not.
+        const TOUR_WORK_BUDGET: u64 = 2_000_000_000;
+        // Headroom to leave free beyond the references — in-flight encode buffers (~1 GB), GPU
+        // staging, general slack. The reference lookahead is skipped when the next one would eat in.
+        const TOUR_MEM_MARGIN: u64 = 1_500_000_000;
+        // Conservative peak-build footprint of one reference: the CPU bignum orbit (length ≈
+        // max_iter, ~prec bits/sample + Vec/enum overhead) plus its BLA table. Deliberately high —
+        // over-estimating only costs a little pipelining, under-estimating risks the OOM this fixes.
+        fn est_ref_bytes(max_iter: u32, prec: usize) -> u64 {
+            let per_sample = (prec as u64 / 8) * 4 + 128;
+            (max_iter as u64).saturating_mul(per_sample)
+        }
+        let mut low_mem_warned = false;
         let started = std::time::Instant::now();
         for fi in first_frame..=last_frame {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
@@ -2754,8 +2770,27 @@ impl FractadyneApp {
                 if !s2.dual && s2.fractal == s.fractal && s2.julia == s.julia && s2.julia_c == s.julia_c {
                     let mut vp2 = fractadyne_core::Viewport::new(width as f64, height as f64);
                     vp2.set_center_log2mag(s2.cx, s2.cy, s2.logmag / std::f64::consts::LN_2);
-                    if let Some(rx) = self.spawn_export_reference(&vp2, self.julia_mode) {
-                        pending_ref = Some((fi + 1, rx));
+                    // Only prefetch the NEXT reference if it will fit alongside the one still
+                    // resident for THIS frame — otherwise two big bignum references at once OOM the
+                    // process (measured: an 8M-sample pair ~2.3 GB each killed a 32 GB render at
+                    // frame 221/233). When memory is tight, skip the lookahead and let frame N+1
+                    // build synchronously (one reference resident at a time) — slower, never fatal.
+                    let est = est_ref_bytes(self.render_cfg.max_iter, vp2.precision);
+                    let room = crate::sysinfo::available_memory()
+                        .map_or(true, |avail| est.saturating_add(TOUR_MEM_MARGIN) < avail);
+                    if room {
+                        if let Some(rx) = self.spawn_export_reference(&vp2, self.julia_mode) {
+                            pending_ref = Some((fi + 1, rx));
+                        }
+                    } else if !low_mem_warned {
+                        let avail = crate::sysinfo::available_memory().unwrap_or(0);
+                        say(&format!(
+                            "⚠ low memory (~{:.1} GB free, next reference ~{:.1} GB) — building \
+                             references synchronously to avoid an out-of-memory abort",
+                            avail as f64 / 1e9,
+                            est as f64 / 1e9,
+                        ));
+                        low_mem_warned = true;
                     }
                 }
             }
@@ -2769,6 +2804,7 @@ impl FractadyneApp {
                 req.ss = app.export.ss;
                 req.max_iter = req.max_iter.max(200);
                 req.vignette = vg;
+                req.work_budget = Some(TOUR_WORK_BUDGET); // bound each tile's dispatch (TDR-safe)
                 fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
                     .map_err(|e| format!("frame {fi}: {e}"))
             };
@@ -2809,7 +2845,7 @@ impl FractadyneApp {
                 let normalized = if want_normalize && !over_cap {
                     self.render_export_normalized(
                         device, queue, &self.viewport, self.julia_mode, width, height, ss,
-                        norm_range, this_ref.take(),
+                        norm_range, this_ref.take(), TOUR_WORK_BUDGET,
                     )
                 } else {
                     None
@@ -2828,6 +2864,7 @@ impl FractadyneApp {
                         req.ss = self.export.ss;
                         req.max_iter = req.max_iter.max(200);
                         req.vignette = vg;
+                        req.work_budget = Some(TOUR_WORK_BUDGET); // bound each tile's dispatch (TDR-safe)
                         let r = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
                             .map_err(|e| format!("frame {fi}: {e}"))?;
                         (r.pixels, r.width, r.height)

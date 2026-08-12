@@ -16,6 +16,16 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Offline tour render: per-frame cost and lookahead memory are now bounded** (beta.64). Two
+  latent ways a long render could die are closed. (1) A tour frame's GPU dispatch is now split into
+  tiles capped at a TDR-safe work budget — a shallow, all-interior keyframe asking millions of
+  iterations previously issued one multi-second dispatch and lost the device; it now renders as many
+  short tiles instead. (`ExportRequest` gained an optional `work_budget`.) (2) The reference
+  lookahead (which builds frame N+1 while N renders) now checks available system memory first — a
+  new `sysinfo::available_memory()` — and builds synchronously when a second big bignum reference
+  wouldn't fit, instead of OOM-killing the render (which previously happened at frame 221/233 of a
+  deep 4K tour). Deep BLA-skipping holds render a little slower as a result (the fixed budget
+  over-tiles them); a measurement-based tile budget is TODO'd.
 - **`--uitest` deep-band capture is now reference-complete** (beta.63). The live bands wait to
   screenshot until the progressive reference orbit stops growing (build finished) rather than on a
   capped-fraction heuristic, so the capture point is machine-independent. This surfaced a real

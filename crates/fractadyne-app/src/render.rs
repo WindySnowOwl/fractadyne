@@ -1510,6 +1510,7 @@ impl FractadyneApp {
         fractadyne_gpu::ExportRequest {
             width,
             height,
+            work_budget: None, // default export tile budget; the tour path overrides per frame
             ss: self.export.ss.max(1),
             span_mantissa: scale.span_mantissa,
             center,
@@ -1773,6 +1774,7 @@ impl FractadyneApp {
         ss: u32,
         prev_smoothed: Option<(f32, f32)>,
         precomputed: Option<RecomputeResult>,
+        work_budget: u64,
     ) -> Option<(fractadyne_gpu::ExportResult, (f32, f32))> {
         const MAX_PX: u64 = 40_000_000; // single-texture color pass (~6K·6K); above → fall back
         let ss = ss.max(1);
@@ -1791,8 +1793,10 @@ impl FractadyneApp {
         req.width = iw;
         req.height = ih;
         req.ss = 1;
-        // Pass 1 — supersampled iteration buffer (tiled → bounded dispatches, any size).
-        let iter = fractadyne_gpu::render_iter_tiled(device, queue, &req, 20_000_000_000, None).ok()?;
+        // Pass 1 — supersampled iteration buffer (tiled → bounded dispatches, any size). The
+        // caller-supplied `work_budget` keeps each tile's dispatch under the OS watchdog for a
+        // shallow-view/high-iter tour frame (see `render_export`'s `work_budget`).
+        let iter = fractadyne_gpu::render_iter_tiled(device, queue, &req, work_budget, None).ok()?;
         // Escape-value range over escaped pixels (channel 0 = smooth iter; < 0 = interior).
         let (mut lo, mut hi) = (f32::MAX, f32::MIN);
         for px in iter.pixels.chunks_exact(4) {

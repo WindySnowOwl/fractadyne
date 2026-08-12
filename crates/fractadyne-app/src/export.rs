@@ -593,7 +593,9 @@ impl FractadyneApp {
         if self.coloring.normalize {
             // Single export: no prior-frame range to smooth against (`None`) → the frame's own range.
             if let Some((res, _range)) = self
-                .render_export_normalized(device, queue, vp, julia, req.width, req.height, req.ss, None, None)
+                // Interactive single export: the standard export tile budget (not the tour's tighter
+                // one — an on-screen export is a one-off, not a many-frame sequence).
+                .render_export_normalized(device, queue, vp, julia, req.width, req.height, req.ss, None, None, 20_000_000_000)
             {
                 return Ok(res);
             }

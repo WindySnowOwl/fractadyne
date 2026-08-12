@@ -155,6 +155,55 @@ pub(crate) fn free_disk_bytes(_path: &std::path::Path) -> Option<u64> {
     None
 }
 
+/// Available PHYSICAL memory in bytes — memory that could be allocated right now without paging,
+/// or `None` when it can't be determined (the caller must treat `None` as "unknown", never as
+/// "plenty"). Used to gate the tour render's reference lookahead so it never builds a second
+/// bignum reference that won't fit alongside the one already resident.
+#[cfg(windows)]
+pub(crate) fn available_memory() -> Option<u64> {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        length: u32,
+        memory_load: u32,
+        total_phys: u64,
+        avail_phys: u64,
+        total_page_file: u64,
+        avail_page_file: u64,
+        total_virtual: u64,
+        avail_virtual: u64,
+        avail_extended_virtual: u64,
+    }
+    extern "system" {
+        fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusEx) -> i32;
+    }
+    // SAFETY: `status` is zeroed storage with `length` set to its own size, as the API requires;
+    // the call fills it and a non-zero return means the `avail_phys` field is valid.
+    unsafe {
+        let mut status: MemoryStatusEx = std::mem::zeroed();
+        status.length = std::mem::size_of::<MemoryStatusEx>() as u32;
+        (GlobalMemoryStatusEx(&mut status) != 0).then_some(status.avail_phys)
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn available_memory() -> Option<u64> {
+    // `MemAvailable` (kernel's own estimate of allocatable-without-swapping, in kB) is the right
+    // signal — better than MemFree, which omits reclaimable cache. Present since Linux 3.14.
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb * 1024);
+        }
+    }
+    None
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub(crate) fn available_memory() -> Option<u64> {
+    None
+}
+
 /// Host system facts shown in benchmark reports (gathered once at startup).
 pub(crate) struct SysInfo {
     pub(crate) cpu: String,

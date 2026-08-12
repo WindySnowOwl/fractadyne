@@ -96,6 +96,12 @@ pub struct ExportRequest {
     pub trap_type: u32,
     pub aa_filter: u32,
     pub interior_col: [f32; 4],
+    /// Per-tile nominal-work cap (`tile²·ss²·max_iter`) overriding the default `TILE_WORK_BUDGET`.
+    /// `None` keeps the export default; a smaller value forces smaller tiles so no single GPU
+    /// submission runs long enough to trip the OS watchdog. The offline tour path sets this
+    /// (a shallow keyframe asking millions of iterations would otherwise issue one multi-second
+    /// dispatch and lose the device — the live path bounds this via `fe_budget`, the tour didn't).
+    pub work_budget: Option<u64>,
 }
 
 /// The actual `(width, height)` an export produced after clamping to the GPU's
@@ -146,10 +152,15 @@ pub fn render_export(
     // to trip the OS watchdog (TDR ≈ 2 s → device-lost) or monopolize the shared device
     // and freeze the live UI — the render stays responsive across many short tiles.
     const TILE_WORK_BUDGET: u64 = 20_000_000_000;
+    // A caller may cap per-tile work below the default (the tour path does). A smaller budget also
+    // lowers the tile-size floor so the cap is actually honoured — at extreme `max_iter` a 64²
+    // floor tile could still exceed a small budget, so drop the floor to 16² when one is set.
+    let budget = req.work_budget.unwrap_or(TILE_WORK_BUDGET);
+    let work_floor = if req.work_budget.is_some() { 16 } else { 64 };
     let by_tex = (max_dim / ss).max(1);
     let by_buf = (((max_buf / 16) as f64).sqrt() as u32).max(256);
     let work_per_px = (ss as u64 * ss as u64) * (req.max_iter.max(1) as u64);
-    let by_work = (((TILE_WORK_BUDGET / work_per_px.max(1)) as f64).sqrt() as u32).max(64);
+    let by_work = (((budget / work_per_px.max(1)) as f64).sqrt() as u32).max(work_floor);
     let tile = by_tex.min(by_buf).min(by_work).clamp(1, 2048);
 
     let shader = shader_module(device);

@@ -724,6 +724,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
     fractadyne_gpu::ExportRequest {
         width: p.resolution[0].max(1),
         height: p.resolution[1].max(1),
+        work_budget: None,
         ss: p.ss.max(1),
         span_mantissa: p.span_mantissa,
         center: p.center,
