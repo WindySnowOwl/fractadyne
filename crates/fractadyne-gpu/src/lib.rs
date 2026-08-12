@@ -383,6 +383,20 @@ struct ViewResources {
     rendered: bool,
     last_orbit_id: u64,
     last_iter_key: Option<IterKey>,
+    /// Iteration-range tiling: ping-pong per-pixel state (z / dz / info ×2) + bind groups, created
+    /// lazily on the first chunked frame and dropped when a normal frame renders (they are ~96
+    /// bytes/px — significant VRAM, only held while a chunked progression is actually running).
+    chunk_state: Option<ChunkState>,
+    /// The chunk range rendered last — a chunked progression re-encodes when the RANGE advances
+    /// even though the key (view/orbit/size) is unchanged (same idea as `last_tile`).
+    last_chunk: Option<[u32; 2]>,
+}
+
+/// Ping-pong state for a live chunked progression (see `MandelbrotParams::chunk_range`).
+struct ChunkState {
+    tex: [[wgpu::TextureView; 3]; 2],
+    bg: [wgpu::BindGroup; 2],
+    size: [u32; 2],
 }
 
 struct Renderer {
@@ -393,6 +407,12 @@ struct Renderer {
     seed_pipeline: wgpu::RenderPipeline,
     iter_bgl: wgpu::BindGroupLayout,
     color_bgl: wgpu::BindGroupLayout,
+    /// Iteration-range tiling (direct mode): the resumable chunk pass, the state→G-buffer resolve,
+    /// and the state-texture bind-group layout. `None` when the device couldn't grant the 48-byte
+    /// color-attachment limit the three state targets need — the app then falls back to clamping.
+    chunk_pipeline: Option<wgpu::RenderPipeline>,
+    resolve_pipeline: Option<wgpu::RenderPipeline>,
+    state_bgl: wgpu::BindGroupLayout,
     /// 4-byte u32::MAX source for seeding the escape-range MIN counter slot per frame.
     esc_min_seed: wgpu::Buffer,
     views: std::collections::HashMap<u32, ViewResources>,
@@ -702,6 +722,32 @@ impl Renderer {
             "fractadyne.seed_pipeline",
         );
 
+        // Iteration-range tiling (see `MandelbrotParams::chunk_range`). The chunk pass writes three
+        // Rgba32Float state attachments = 48 bytes/sample; only build the pipelines when the device
+        // granted that limit (requested at creation; a lesser device leaves these `None` and the
+        // caller clamps instead).
+        let state_bgl = state_bind_group_layout(device);
+        let (chunk_pipeline, resolve_pipeline) =
+            if device.limits().max_color_attachment_bytes_per_sample >= 48 {
+                let chunk_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("fractadyne.chunk_layout"),
+                    bind_group_layouts: &[&iter_bgl, &state_bgl],
+                    push_constant_ranges: &[],
+                });
+                (
+                    Some(fullscreen_pipeline(
+                        device, &shader, &chunk_layout, "fs_iterate_chunk",
+                        &[ITER_FORMAT, ITER_FORMAT, ITER_FORMAT], "fractadyne.chunk_pipeline",
+                    )),
+                    Some(fullscreen_pipeline(
+                        device, &shader, &chunk_layout, "fs_resolve",
+                        &[ITER_FORMAT, ITER_FORMAT], "fractadyne.resolve_pipeline",
+                    )),
+                )
+            } else {
+                (None, None)
+            };
+
         // 4-byte constant source used to seed the escape-range MIN counter slot to u32::MAX via an
         // in-encoder copy each frame (the per-frame clear zeroes it, and a zero floor would make
         // the shader's atomicMin a no-op).
@@ -719,6 +765,9 @@ impl Renderer {
             seed_pipeline,
             iter_bgl,
             color_bgl,
+            chunk_pipeline,
+            resolve_pipeline,
+            state_bgl,
             esc_min_seed,
             views: std::collections::HashMap::new(),
         }
@@ -773,6 +822,8 @@ impl ViewResources {
             rendered: false,
             last_orbit_id: u64::MAX,
             last_iter_key: None,
+            chunk_state: None,
+            last_chunk: None,
         }
     }
 
@@ -790,6 +841,8 @@ impl ViewResources {
         self.size = size;
         self.last_iter_key = None;
         self.last_tile = None;
+        self.chunk_state = None; // state textures are size-matched; a resized view restarts
+        self.last_chunk = None;
         self.rendered = false; // the new texture is blank until re-iterated
     }
 
@@ -836,6 +889,8 @@ impl ViewResources {
         self.size = size;
         self.last_iter_key = None;
         self.last_tile = None;
+        self.chunk_state = None; // state textures are size-matched; a resized view restarts
+        self.last_chunk = None;
     }
 
     fn ensure_orbit_capacity(
@@ -931,6 +986,17 @@ pub struct MandelbrotParams {
     /// render nothing, keep the texture (used when another view owns this frame's tile slot).
     /// `None` = the ordinary full-frame path, unchanged.
     pub tile: Option<[u32; 4]>,
+    /// Iteration-range tiling (direct mode): `Some([start, end))` encodes ONE bounded resumable
+    /// pass over that iteration range this frame (plus a resolve into the display G-buffer),
+    /// carrying per-pixel state between frames in ping-pong textures — so an arbitrarily high
+    /// explicit iteration count is honoured across frames instead of running as a single
+    /// watchdog-tripping dispatch. The APP owns the cursor: it advances `start` each frame while
+    /// settled, and resets to 0 on interaction/view change. `start == 0` initializes from scratch.
+    /// `None` = the ordinary single-pass iterate. Not combined with `tile` (full-frame only).
+    pub chunk_range: Option<[u32; 2]>,
+    /// Which chunk pass this is (0-based) — selects the ping-pong read/write sets. Pass k writes
+    /// set `k % 2` and reads set `(k + 1) % 2` (pass 0 reads nothing).
+    pub chunk_idx: u32,
     pub orbit: Arc<Vec<[f32; 4]>>,
     /// Changes whenever `orbit` changes — triggers a GPU re-upload.
     pub orbit_id: u64,
@@ -1037,6 +1103,9 @@ impl CallbackTrait for MandelbrotParams {
         let color_bgl = &r.color_bgl;
         let iter_pipeline = &r.iter_pipeline;
         let seed_pipeline = &r.seed_pipeline;
+        let chunk_pipeline = r.chunk_pipeline.as_ref();
+        let resolve_pipeline = r.resolve_pipeline.as_ref();
+        let state_bgl = &r.state_bgl;
         let esc_min_seed = &r.esc_min_seed;
         let view = r.views.get_mut(&self.view_id).unwrap();
 
@@ -1172,9 +1241,15 @@ impl CallbackTrait for MandelbrotParams {
             bla_on: self.bla_on,
         };
         // Re-render when the key changed (new view/orbit/size) OR when a tiled settle advanced to a
-        // new rect under an unchanged key. A completed grid keeps sending its final rect, so
-        // `(key, tile)` stops changing and the frame is served from the texture like any cached one.
-        if !reproject && !hold && (view.last_iter_key != Some(key) || view.last_tile != self.tile) {
+        // new rect under an unchanged key — OR when a chunked progression advanced its iteration
+        // range (same idea, on the iteration axis). A completed grid/progression keeps sending its
+        // final rect/range, so the triple stops changing and the frame is served from the texture.
+        if !reproject
+            && !hold
+            && (view.last_iter_key != Some(key)
+                || view.last_tile != self.tile
+                || view.last_chunk != self.chunk_range)
+        {
             // Per-texel step *mantissa*: span_mantissa (= span · 2^-delta_exp, already O(1))
             // divided by the texture dim. The shared exponent carries the true scale, so no
             // tiny span / huge 2^-delta_exp ever appears here → no underflow/overflow at depth.
@@ -1184,7 +1259,7 @@ impl CallbackTrait for MandelbrotParams {
             };
             let (sxh, sxl) = split(self.span_mantissa.x / size[0] as f64);
             let (syh, syl) = split(self.span_mantissa.y / size[1] as f64);
-            let iu = IterUniforms {
+            let mut iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
                 ref_offset: self.ref_offset.to_array(),
                 center: self.center,
@@ -1214,6 +1289,22 @@ impl CallbackTrait for MandelbrotParams {
                 end_iter: 0,
                 _pad_ir: [0; 2],
             };
+            // Effective chunk: requested AND the resumable pipelines exist (the device granted the
+            // 48-byte color-attachment limit). A device that couldn't grant it clamps THIS dispatch
+            // to the app's per-frame step instead — a capped image beats a lost device, and the
+            // app repeats the (reset) range each frame so the display stays live.
+            let chunk = match (self.chunk_range, chunk_pipeline, resolve_pipeline) {
+                (Some(cr), Some(_), Some(_)) => Some(cr),
+                (Some(cr), _, _) => {
+                    iu.max_iter = iu.max_iter.min(cr[1].max(1));
+                    None
+                }
+                _ => None,
+            };
+            if let Some([cs, ce]) = chunk {
+                iu.start_iter = cs;
+                iu.end_iter = ce;
+            }
             queue.write_buffer(&view.iter_uniform, 0, bytemuck::bytes_of(&iu));
             // Bracket the iterate with GPU timestamps when nothing is already in flight. This is the
             // only measurement of the deep iterate that isn't contaminated by vsync, repaint
@@ -1250,7 +1341,80 @@ impl CallbackTrait for MandelbrotParams {
                 let h = t[3].saturating_mul(ss).min(size[1] - y);
                 [x, y, w, h]
             });
-            {
+            if let Some([_, _]) = chunk {
+                // -------- chunked resumable iterate (iteration-range tiling) --------
+                // One bounded pass over [start_iter, end_iter) into the ping-pong state, then a
+                // cheap resolve of the settled state into the display G-buffer. Full-frame only
+                // (`tile` is ignored on chunked frames — chunking bounds the iteration axis, which
+                // is the axis a scissor can't). Ensure the state pair exists at this size.
+                let need = view.chunk_state.as_ref().is_none_or(|s| s.size != size);
+                if need {
+                    let tex = [make_state_textures(device, size), make_state_textures(device, size)];
+                    let bg = [
+                        make_state_bg(device, state_bgl, &tex[0]),
+                        make_state_bg(device, state_bgl, &tex[1]),
+                    ];
+                    view.chunk_state = Some(ChunkState { tex, bg, size });
+                }
+                let st = view.chunk_state.as_ref().unwrap();
+                let write = (self.chunk_idx % 2) as usize;
+                let read = 1 - write;
+                {
+                    let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                        view: v,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    });
+                    // Timestamps bracket the CHUNK pass — the cost the budget controller adapts.
+                    let ts_writes = arm_ts.then(|| wgpu::RenderPassTimestampWrites {
+                        query_set: &view.timing.as_ref().unwrap().qs,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    });
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("fractadyne.chunk_pass"),
+                        color_attachments: &[
+                            attach(&st.tex[write][0]),
+                            attach(&st.tex[write][1]),
+                            attach(&st.tex[write][2]),
+                        ],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: ts_writes,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(chunk_pipeline.unwrap());
+                    pass.set_bind_group(0, &view.iter_bg, &[]);
+                    pass.set_bind_group(1, &st.bg[read], &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                {
+                    let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                        view: v,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    });
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("fractadyne.resolve_pass"),
+                        color_attachments: &[attach(&view.tex_view), attach(&view.aux_view)],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(resolve_pipeline.unwrap());
+                    pass.set_bind_group(0, &view.iter_bg, &[]);
+                    pass.set_bind_group(1, &st.bg[write], &[]);
+                    pass.draw(0..3, 0..1);
+                }
+            } else {
+                // -------- ordinary single-pass iterate --------
+                // A normal frame ends any chunked progression; free its state textures (~96 B/px).
+                view.chunk_state = None;
                 // A tile must compose with the tiles (and seed) already in the texture, so it loads
                 // rather than clears. Full frames clear, as before. (`view.rendered` guards the
                 // cold-start corner: a brand-new texture is zero-initialized either way.)
@@ -1304,6 +1468,7 @@ impl CallbackTrait for MandelbrotParams {
             }
             view.last_iter_key = Some(key);
             view.last_tile = self.tile;
+            view.last_chunk = self.chunk_range;
             view.last_ss = ss; // remember the ss this texture was built at (for reprojection)
             view.rendered = true; // the texture now holds a real frame (survives orbit swaps)
         }
@@ -1325,6 +1490,13 @@ impl CallbackTrait for MandelbrotParams {
             }
         }
     }
+}
+
+/// Whether this device can run the live chunked (iteration-range) path — it granted the 48-byte
+/// color-attachment limit the three state targets need. The app gates `chunk_range` on this;
+/// below it, `prepare` clamps a chunk-requesting dispatch to its per-frame step instead.
+pub fn chunking_available(device: &wgpu::Device) -> bool {
+    device.limits().max_color_attachment_bytes_per_sample >= 48
 }
 
 pub fn install_renderer(render_state: &egui_wgpu::RenderState) {

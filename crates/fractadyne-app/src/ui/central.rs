@@ -838,8 +838,9 @@ impl FractadyneApp {
                     reproject,
                 );
                 self.allow_tiled_settle = false;
-                // A settle grid in progress needs the next frame promptly — one tile per frame.
-                if self.perf.tile_pending[0] {
+                // A settle grid (or a chunked iteration progression) in progress needs the next
+                // frame promptly — one tile / one iteration range per frame.
+                if self.perf.tile_pending[0] || self.perf.chunk_pending[0] {
                     self.schedule_repaint(ctx);
                 }
                 add_mandelbrot(ui.painter(), rect, params);

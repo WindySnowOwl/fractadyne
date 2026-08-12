@@ -16,6 +16,23 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Iteration-range tiling: the zoom-out-from-deep device loss is fixed, and any explicit
+  iteration count now renders safely** (beta.65). Zooming out from a deep multi-million-iteration
+  view to a shallow one killed the GPU: the shallow view switches to Direct mode (no reference, no
+  BLA skip), the huge count came with it, and one dispatch of `16×16 × 4M` real steps tripped the
+  OS watchdog — the live cost-bound could shrink resolution and supersampling but never the
+  iteration count, and capping the count would break the "explicit count honoured verbatim"
+  guarantee. The fix honours the count **across frames** instead: a Direct frame whose cost exceeds
+  the budget renders through a new resumable path — one bounded pass over an iteration range per
+  frame at FULL resolution (no more 16×16 collapse), carrying per-pixel state (z, dz, iteration,
+  status) in ping-pong textures, the cursor advancing while the view holds still and restarting on
+  interaction. Escaped pixels appear progressively; a settled view runs to completion and is then
+  exact. The offline `render_iter_chunked` variant is verified **bit-identical** to the single-pass
+  render (new `iter-chunk` selftest group, 3 cases, 0 texels differ). Verified live at the exact
+  crash configuration (shallow view, 4,000,000 explicit iterations): no device loss, responsive
+  throughout, the progression completes in ~22 bounded chunks. Suite 111/111, goldens 17/17,
+  livetest 22/22, A1 verbatim intact. Devices that can't grant the 48-byte color-attachment limit
+  the state textures need fall back to a bounded-and-capped dispatch (safe, capped image).
 - **Offline tour render: per-frame cost and lookahead memory are now bounded** (beta.64). Two
   latent ways a long render could die are closed. (1) A tour frame's GPU dispatch is now split into
   tiles capped at a TDR-safe work budget — a shallow, all-interior keyframe asking millions of

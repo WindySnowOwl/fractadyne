@@ -218,6 +218,17 @@ struct Perf {
     mode_switch_frame: [u64; 2],
     /// Tiled-settle progress per view (see `render::TileGrid`); `None` = no grid armed or running.
     tile_state: [Option<render::TileGrid>; 2],
+    /// Iteration-range tiling (direct mode). `chunk_ok`: the device granted the 48-byte
+    /// color-attachment limit the resumable pass needs (probed once). `chunk_cursor`: the next
+    /// iteration to resume from per view (0 = fresh). `chunk_idx`: pass counter (ping-pong
+    /// parity). `chunk_sig`: the view identity the cursor belongs to — any change restarts the
+    /// progression. `chunk_pending`: a progression is mid-flight (drives repaints, like
+    /// `tile_pending`).
+    chunk_ok: bool,
+    chunk_cursor: [u32; 2],
+    chunk_idx: [u32; 2],
+    chunk_sig: [(u64, u32, [u32; 2], u32); 2],
+    chunk_pending: [bool; 2],
     /// True while a view's settle grid has tiles left — holds the AA ramp and keeps repaints coming.
     tile_pending: [bool; 2],
     /// `frame_idx` of the last frame that spent its tile: one budget-sized tile per submission, so
@@ -341,6 +352,11 @@ impl Default for Perf {
             mode_switch_frame: [u64::MAX, u64::MAX],
             tile_state: [None, None],
             tile_pending: [false, false],
+            chunk_ok: false,
+            chunk_cursor: [0, 0],
+            chunk_idx: [0, 0],
+            chunk_sig: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
+            chunk_pending: [false, false],
             tile_turn: u64::MAX,
             interact_frame: [0, 0],
             fe_iter_frame: [0, 0],
@@ -3759,8 +3775,9 @@ impl FractadyneApp {
             reproject,
         );
         self.allow_tiled_settle = false;
-        // A settle grid in progress needs the next frame promptly — each frame renders one tile.
-        if self.perf.tile_pending[view_id as usize] {
+        // A settle grid (or a chunked iteration progression) in progress needs the next frame
+        // promptly — each frame renders one tile / one iteration range.
+        if self.perf.tile_pending[view_id as usize] || self.perf.chunk_pending[view_id as usize] {
             self.schedule_repaint(ctx);
         }
         add_mandelbrot(ui.painter(), rect, params);
@@ -5225,6 +5242,8 @@ impl eframe::App for FractadyneApp {
             if let Some((dev, _)) = &gpu {
                 self.perf.ts_supported =
                     dev.features().contains(eframe::wgpu::Features::TIMESTAMP_QUERY);
+                // Whether the live iteration-range (chunked) path can run — see `Perf::chunk_ok`.
+                self.perf.chunk_ok = fractadyne_gpu::chunking_available(dev);
                 diag::log_line(
                     "wgpu",
                     &format!("capability: TIMESTAMP_QUERY={}", self.perf.ts_supported),

@@ -199,8 +199,25 @@ Mockups: [design/mockups/](design/mockups/).
   the centre — the same live deep-zoom aliasing, captured as a reviewable PNG. A good regression
   witness for whenever the settled higher-ss pass lands.**
 
-- [ ] ⭐**PRIORITY (device loss, announce-blocking): zooming OUT from a deep view to a shallow one
-  loses the GPU (crash `crash-1786499093`, beta.64, 2026-08-12).** `wgpu device lost` on
+- [x] ⭐**RESOLVED v0.2.40-beta.65 — ITERATION-RANGE TILING: zooming OUT from a deep view loses the
+  GPU (crash `crash-1786499093`).** Fixed the fundamental way (option B): a Direct frame whose cost
+  exceeds the budget renders through a resumable chunked path — one bounded pass over
+  `[cursor, cursor+step)` per frame at FULL resolution, per-pixel state (z df32, dz df32,
+  iter/status/smit) ping-ponged between passes in three Rgba32Float textures; the cursor advances
+  while the view holds still (restarts on interaction/view change) until the FULL explicit count is
+  honoured — A1's verbatim guarantee intact (`params.max_iter` untouched; selftest still pins 10M).
+  Verified: offline `render_iter_chunked` **bit-identical** to single-pass (`iter-chunk` group, 3
+  cases, 0 texels differ); live soak at the exact crash config (shallow, 4M explicit) — no device
+  loss, responsive 150s+, cursor trace shows a clean climb 0→4M in ~22 budget-adaptive chunks then
+  a quiet cached tail; suite 111/111 + goldens 17/17 + livetest grand-tour 22/22. Scope: Direct
+  mode, formulas 0..3 (Mandelbrot/Multibrot — where the crash lives); other formulas/aux keep
+  single-pass (they don't hit this: their counts stay sane). Devices without the 48-byte
+  color-attachment limit (requested at creation; default is 32) fall back to a bounded capped
+  dispatch. ⚠Groundwork detail in the WIP commits a69e10c/416d633/f3be008; the `chunk f=` trace
+  (`FRACTADYNE_TRACE=tile`) shows the live cursor. ⚠Follow-up candidates (not bugs): extend to
+  formulas 4..8 + aux if ever needed; the beta.57 1Hz idle heartbeat makes "slow frame" log lines
+  fire on IDLE gaps (body 3ms) — cosmetic, pre-existing, easy to misread as churn (it fooled this
+  investigation for an hour). `wgpu device lost` on
   `queue.submit`. Manifest: `LIVE mode=1 (Direct) 16x16 ss=1 iter=4000000 gpu_iter=4000000
   steps=1.024e9 budget=4.000e8 since_mode_switch=0`. Mechanism: the user was deep at ~4M iterations
   and zoomed out; the moment the view got shallow it switched to **Direct** mode, but the 4M count

@@ -2701,6 +2701,19 @@ impl FractadyneApp {
             tdr_steps
         };
         let spx = (resolution[0] as u64) * (resolution[1] as u64);
+        // Iteration-range tiling eligibility: a DIRECT frame whose cost exceeds the budget even at
+        // ss=1 cannot be bounded by any spatial split — no reference, no BLA skip, so its cost axis
+        // is per-pixel iteration DEPTH, and both the resolution shrink below (floors 16×16) and the
+        // settle tiles (side floors 16) leave `16·16·iter` unbounded. That is the zoom-out-from-deep
+        // crash: a huge explicit count carried onto a shallow Direct view (crash-1786499093). Such a
+        // frame renders through the resumable CHUNKED path instead (see the block after the tile
+        // decision): full resolution, one bounded pass over an iteration RANGE per frame — so skip
+        // the shrink (it would defeat the full-res payoff) and the settle tiling (wrong axis).
+        let direct_over = RenderMode::select(fractal.supports_perturbation(), magnification)
+            .is_direct()
+            && self.perf.chunk_ok
+            && !offscreen
+            && spx.saturating_mul(gpu_iter.max(1) as u64) > tdr_allowed;
         // First line of defence is lowering ss (`max_ss_tdr` below), but that floors at 1. If even ss=1
         // would blow the budget — `spx·gpu_iter` alone > the budget, i.e. a large floatexp panel at
         // a high fixed iteration count — the ss cap can't help, so shrink the render RESOLUTION too.
@@ -2718,7 +2731,7 @@ impl FractadyneApp {
             let iter_cost = spx.saturating_mul(gpu_iter.max(1) as u64);
             // Every mode, not just floatexp — see `can_tile`. `tdr_allowed` is now measured on all
             // of them, so this is the same bound applied to the same kind of frame.
-            if iter_cost > tdr_allowed {
+            if iter_cost > tdr_allowed && !direct_over {
                 let f = (tdr_allowed as f64 / iter_cost as f64).sqrt();
                 let r = [
                     ((resolution[0] as f64 * f) as u32).max(16),
@@ -2812,7 +2825,7 @@ impl FractadyneApp {
         // dispatch. `tile` travels into `MandelbrotParams` below; a real (non-hold) rect also
         // reprices the timing sink, since the timestamped dispatch is the tile, not a full frame.
         let mut tile: Option<[u32; 4]> = None;
-        if tiling {
+        if tiling && !direct_over {
             let total = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
@@ -2834,6 +2847,69 @@ impl FractadyneApp {
                 // The budget grew enough that the whole frame fits one dispatch after all.
                 self.perf.tile_state[vidx] = None;
                 self.perf.tile_pending[vidx] = false;
+            }
+        }
+        // ---- iteration-range tiling (direct mode; see `direct_over` above) ----
+        // One bounded resumable pass over [cursor, cursor+step) per frame at FULL resolution; the
+        // cursor advances while the view holds still and restarts on any view change or
+        // interaction. Escaped pixels appear progressively (a moving frame shows everything that
+        // escapes within one step — visually what a capped render would show); a settled view runs
+        // the cursor to max_iter and is then EXACT, honouring the explicit count across frames
+        // instead of in one watchdog-tripping dispatch.
+        let mut chunk_range: Option<[u32; 2]> = None;
+        let mut chunk_idx = 0u32;
+        self.perf.chunk_pending[vs] = false;
+        if direct_over {
+            let ss2 = (ss as u64).saturating_mul(ss as u64);
+            // Per-frame iteration step that keeps this frame's dispatch inside the budget.
+            let step = ((tdr_allowed / spx.saturating_mul(ss2).max(1)) as u32)
+                .clamp(256, gpu_iter.max(256));
+            // View signature: anything that shapes the render restarts the progression.
+            let sig = (
+                center.0.to_bits()
+                    ^ center.1.to_bits().rotate_left(17)
+                    ^ magnification.to_bits().rotate_left(34),
+                gpu_iter,
+                resolution,
+                ss,
+            );
+            if self.perf.chunk_sig[vs] != sig || interacting {
+                self.perf.chunk_sig[vs] = sig;
+                self.perf.chunk_cursor[vs] = 0;
+                self.perf.chunk_idx[vs] = 0;
+            }
+            let cur = self.perf.chunk_cursor[vs];
+            if crate::diag::trace_on("tile") {
+                crate::diag::trace(
+                    "tile",
+                    format!(
+                        "chunk f={} vs={vs} cur={cur} step={step} gpu_iter={gpu_iter} \
+                         sig=({:x},{},{}x{},{}) interacting={interacting}",
+                        self.perf.frame_idx, sig.0, sig.1, sig.2[0], sig.2[1], sig.3
+                    ),
+                );
+            }
+            if cur < gpu_iter {
+                let end = cur.saturating_add(step).min(gpu_iter);
+                chunk_range = Some([cur, end]);
+                chunk_idx = self.perf.chunk_idx[vs];
+                // Moving frames restart at 0 next frame (the sig reset above); settled frames
+                // advance until the full count is honoured.
+                if !interacting {
+                    self.perf.chunk_cursor[vs] = end;
+                    self.perf.chunk_idx[vs] = chunk_idx.wrapping_add(1);
+                    self.perf.chunk_pending[vs] = end < gpu_iter;
+                }
+                // This frame runs a real bounded pass; pair the measurement with ITS cost.
+                self.perf.fe_steps_last[vs] =
+                    spx.saturating_mul(ss2).saturating_mul((end - cur).max(1) as u64);
+                self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
+            } else {
+                // Progression complete: emit the empty tail range — the (key, tile, chunk) triple
+                // stops changing after one cheap pass-through frame, and the view is served from
+                // the texture like any settled one.
+                chunk_range = Some([gpu_iter, gpu_iter]);
+                chunk_idx = self.perf.chunk_idx[vs];
             }
         }
         // Every mode — this trace is how a frame's cost bound is inspected, and the df32 path is
@@ -3402,13 +3478,20 @@ impl FractadyneApp {
             .unwrap_or_else(|| (self.color_cycle(), self.coloring.offset));
 
         // This dispatch's nominal cost: the TILE's pixels under a settle grid, the whole frame
-        // otherwise. Travels with the pass so the timing comes back already paired.
-        let nominal_steps = match tile {
-            Some(r) => (r[2] as u64).saturating_mul(r[3] as u64),
-            None => spx,
-        }
-        .saturating_mul((ss as u64).saturating_mul(ss as u64))
-        .saturating_mul(gpu_iter.max(1) as u64);
+        // otherwise; a CHUNKED frame's cost is the whole frame over its iteration RANGE, not the
+        // full count. Travels with the pass so the timing comes back already paired.
+        let nominal_steps = match (chunk_range, tile) {
+            (Some([cs, ce]), _) => spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul((ce.saturating_sub(cs)).max(1) as u64),
+            (None, Some(r)) => (r[2] as u64)
+                .saturating_mul(r[3] as u64)
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64),
+            (None, None) => spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64),
+        };
         let params = MandelbrotParams {
             iterate_ms,
             iterate_steps,
@@ -3417,6 +3500,8 @@ impl FractadyneApp {
             norm_range,
             work_counters,
             tile,
+            chunk_range,
+            chunk_idx,
             orbit: self.ref_cache[vi].orbit.clone(),
             orbit_id: self.ref_cache[vi].orbit_id,
             orbit_len: self.ref_cache[vi].orbit_len,
