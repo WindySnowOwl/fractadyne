@@ -208,8 +208,8 @@ impl FractadyneApp {
         let filter: Option<String> = self.selftest_filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "iter-budget", "nr-zoom", "coords", "ref-pick", "script",
-            "metadata",
+            "consistency", "counters", "iter-budget", "iter-chunk", "nr-zoom", "coords",
+            "ref-pick", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res",
         ];
         if self.selftest_list {
@@ -342,6 +342,57 @@ impl FractadyneApp {
 
         let mut checks: Vec<SelfCheck> = Vec::new();
         let mut last_check_t = std::time::Instant::now();
+
+        // ---- iteration-range tiling: the chunked resumable path must be BIT-IDENTICAL to the
+        // single-pass fs_iterate for direct mode (it replicates the arithmetic and order exactly,
+        // carrying full df32 state between bounded dispatches). An odd chunk size forces many
+        // passes plus a partial final one; the home view mixes interior (full-count grind) and
+        // escaped pixels, the seahorse is escape-heavy. This is what makes it safe to route a
+        // watchdog-threatening direct frame through the chunked path: same picture, many short
+        // dispatches. ----
+        if want("iter-chunk") {
+            let bit_exact = |a: &[f32], b: &[f32]| -> (usize, f32) {
+                let mut diffs = 0usize;
+                let mut maxd = 0.0f32;
+                for (x, y) in a.iter().zip(b.iter()) {
+                    if x.to_bits() != y.to_bits() {
+                        diffs += 1;
+                        maxd = maxd.max((x - y).abs());
+                    }
+                }
+                (diffs, maxd)
+            };
+            // (view, mag, max_iter, chunk) — all direct mode (mag < 1e4).
+            let cases: &[(&str, &str, f64, u32, u32, &str)] = &[
+                ("-0.5", "0.0", 1.0, 2_000, 137, "home 1×, 2000 iter, chunk 137"),
+                (SX, SY, 2.0e3, 2_000, 137, "seahorse 2e3×, 2000 iter, chunk 137"),
+                ("-0.5", "0.0", 1.0, 50_000, 7_000, "home 1×, 50k iter, chunk 7000"),
+            ];
+            for (cx, cy, mag, max_iter, chunk, desc) in cases {
+                let mut req = make(self, cx, cy, *mag);
+                req.max_iter = *max_iter;
+                let single = render(&req);
+                let chunked = fractadyne_gpu::render_iter_chunked(device, queue, &req, *chunk)
+                    .map(|r| r.pixels)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_chunked): {e}"))
+                    .ok();
+                let (pass, result) = match (&single, &chunked) {
+                    (Some(a), Some(b)) if a.len() == b.len() => {
+                        let (diffs, maxd) = bit_exact(a, b);
+                        (diffs == 0, format!("{diffs} texels differ (max Δ {maxd:.3e})"))
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "IterChunk",
+                    name: "chunked direct render is bit-identical".into(),
+                    params: (*desc).into(),
+                    result,
+                    threshold: "0 texels differ",
+                    pass,
+                });
+            }
+        }
 
         // ---- numeric & render-path checks (local closures borrow self immutably) ----
         if want("numeric") {

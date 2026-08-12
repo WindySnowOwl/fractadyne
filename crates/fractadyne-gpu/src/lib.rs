@@ -608,6 +608,68 @@ pub(crate) fn color_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupL
     })
 }
 
+/// Bind-group layout for the iteration-range state inputs (`@group(1)` in the chunk/resolve
+/// entries): the three per-pixel state textures a resumable pass reads — z (df32), dz (df32),
+/// and (iter, status, smit). Bound alongside the normal iterate group(0).
+pub(crate) fn state_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("fractadyne.state_bgl"),
+        entries: &[tex_entry(0), tex_entry(1), tex_entry(2)],
+    })
+}
+
+/// One set of iteration-range state textures (z / dz / info), sized to the iteration grid.
+/// Written as render attachments by `fs_iterate_chunk`, read via `textureLoad` by the next
+/// chunk and by `fs_resolve` — the same attachment+sampled ping-pong `seeded_resize` uses
+/// (no STORAGE_BINDING, so no extra device features).
+pub(crate) fn make_state_textures(device: &wgpu::Device, size: [u32; 2]) -> [wgpu::TextureView; 3] {
+    let mk = |label: &str| {
+        device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: size[0].max(1),
+                    height: size[1].max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: ITER_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default())
+    };
+    [mk("fractadyne.state_z"), mk("fractadyne.state_dz"), mk("fractadyne.state_info")]
+}
+
+pub(crate) fn make_state_bg(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    state: &[wgpu::TextureView; 3],
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("fractadyne.state_bg"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&state[0]) },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&state[1]) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&state[2]) },
+        ],
+    })
+}
+
 impl Renderer {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, target_format: wgpu::TextureFormat) -> Self {
         let shader = shader_module(device);

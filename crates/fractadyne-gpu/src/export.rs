@@ -1042,6 +1042,247 @@ pub fn render_iter(
     Ok(ExportResult { width: w, height: h, ss: 1, pixels, iterate_ms, color_ms: 0.0, counters })
 }
 
+/// `render_iter`, but with **iteration-range tiling**: the `0..max_iter` loop is split across
+/// `ceil(max_iter / chunk_iters)` bounded GPU submissions, carrying per-pixel state (z, dz, iter,
+/// status) between passes in ping-pong textures — so an arbitrarily high iteration count can never
+/// run as a single watchdog-tripping dispatch. Output is bit-identical to `render_iter` for the
+/// supported scope (the resumable shader replicates the direct branch's arithmetic and order
+/// exactly, and the state carries full df32 precision). Scope: DIRECT mode (`mode == 1`),
+/// holomorphic formulas 0..=3; anything else falls back to plain `render_iter`. Always `ss = 1`,
+/// like `render_iter`. `iterate_ms` is not measured on this path (0.0).
+pub fn render_iter_chunked(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    chunk_iters: u32,
+) -> Result<ExportResult, GpuError> {
+    // The chunk pass writes three Rgba32Float state attachments (48 bytes/sample); a device that
+    // only granted the default 32 can't run it — fall back to the single-pass render (the caller's
+    // TDR exposure is then what it always was; the app requests 48 at device creation).
+    if req.mode != 1
+        || req.formula > 3
+        || chunk_iters == 0
+        || device.limits().max_color_attachment_bytes_per_sample < 48
+    {
+        return render_iter(device, queue, req);
+    }
+    let max_dim = device.limits().max_texture_dimension_2d;
+    let w = req.width.clamp(1, max_dim);
+    let h = req.height.clamp(1, max_dim);
+
+    let shader = shader_module(device);
+    let iter_bgl = iter_bind_group_layout(device);
+    let state_bgl = crate::state_bind_group_layout(device);
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("chunked.layout"),
+        bind_group_layouts: &[&iter_bgl, &state_bgl],
+        push_constant_ranges: &[],
+    });
+    let chunk_pipeline = fullscreen_pipeline(
+        device, &shader, &layout, "fs_iterate_chunk",
+        &[ITER_FORMAT, ITER_FORMAT, ITER_FORMAT], "chunked.chunk_pipeline",
+    );
+    let resolve_pipeline = fullscreen_pipeline(
+        device, &shader, &layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
+        "chunked.resolve_pipeline",
+    );
+
+    let iter_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("chunked.iter_uniform"),
+        size: std::mem::size_of::<IterUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    // Direct mode uses no reference, but the layout still binds one — a 1-slot placeholder.
+    let orbit_buf = make_orbit_buffer(device, 1);
+    let counters_buf = crate::make_counters_buf(device);
+    let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("chunked.counters_read"),
+        size: (crate::COUNTER_SLOTS * 4) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
+
+    // Ping-pong state: pass k reads set (k % 2) and writes set ((k+1) % 2).
+    let state = [crate::make_state_textures(device, [w, h]), crate::make_state_textures(device, [w, h])];
+    let state_bg = [
+        crate::make_state_bg(device, &state_bgl, &state[0]),
+        crate::make_state_bg(device, &state_bgl, &state[1]),
+    ];
+
+    let split = |v: f64| -> (f32, f32) {
+        let hi = v as f32;
+        (hi, (v - hi as f64) as f32)
+    };
+    let (sxh, sxl) = split(req.span_mantissa.x / w as f64);
+    let (syh, syl) = split(req.span_mantissa.y / h as f64);
+    let mut iu = IterUniforms {
+        step: [sxh, sxl, syh, syl],
+        ref_offset: req.ref_offset.to_array(),
+        center: req.center,
+        julia_c: req.julia_c,
+        res: [w as f32, h as f32],
+        px_offset: [0.0, 0.0],
+        max_iter: req.max_iter,
+        orbit_len: 0,
+        mode: req.mode,
+        formula: req.formula,
+        julia: req.julia,
+        delta_exp: req.delta_exp,
+        color_method: 0,
+        stripe_freq: 1.0,
+        trap_type: 0,
+        aux_on: 0,
+        sa_skip: 0,
+        glitch_on: 0,
+        sa_a: req.sa_a,
+        sa_b: req.sa_b,
+        sa_c: req.sa_c,
+        sa_a_exp: req.sa_a_exp,
+        sa_b_exp: req.sa_b_exp,
+        sa_c_exp: req.sa_c_exp,
+        bla_on: 0,
+        start_iter: 0,
+        end_iter: 0,
+        _pad_ir: [0; 2],
+    };
+
+    // One bounded submission per iteration range; poll-wait between them so each stays a short,
+    // watchdog-friendly unit of GPU work (the entire point of this path).
+    let chunks = req.max_iter.div_ceil(chunk_iters.max(1)).max(1);
+    let mut read_set = 0usize;
+    for k in 0..chunks {
+        iu.start_iter = k * chunk_iters;
+        iu.end_iter = iu.start_iter.saturating_add(chunk_iters).min(req.max_iter);
+        queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
+        let write_set = 1 - read_set;
+        let mut enc = device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("chunked.enc") });
+        {
+            let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                view: v,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            });
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("chunked.chunk_pass"),
+                color_attachments: &[
+                    attach(&state[write_set][0]),
+                    attach(&state[write_set][1]),
+                    attach(&state[write_set][2]),
+                ],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&chunk_pipeline);
+            pass.set_bind_group(0, &iter_bg, &[]);
+            pass.set_bind_group(1, &state_bg[read_set], &[]);
+            pass.draw(0..3, 0..1);
+        }
+        queue.submit(std::iter::once(enc.finish()));
+        let _ = device.poll(wgpu::Maintain::Wait);
+        read_set = write_set;
+    }
+
+    // Resolve the settled state into the normal iteration G-buffer and read it back.
+    let mk_out = |label: &str| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: ITER_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    };
+    let main_tex = mk_out("chunked.iter_main");
+    let main_view = main_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let aux_view = mk_out("chunked.iter_aux").create_view(&wgpu::TextureViewDescriptor::default());
+
+    let bpp = 16u32;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let unpadded_bpr = w * bpp;
+    let padded_bpr = unpadded_bpr.div_ceil(align) * align;
+    let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("chunked.readback"),
+        size: (padded_bpr * h) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut enc = device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("chunked.resolve_enc") });
+    {
+        let attach = |v| Some(wgpu::RenderPassColorAttachment {
+            view: v,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: wgpu::StoreOp::Store,
+            },
+        });
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("chunked.resolve_pass"),
+            color_attachments: &[attach(&main_view), attach(&aux_view)],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&resolve_pipeline);
+        pass.set_bind_group(0, &iter_bg, &[]);
+        pass.set_bind_group(1, &state_bg[read_set], &[]);
+        pass.draw(0..3, 0..1);
+    }
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &main_tex,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &out_buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bpr),
+                rows_per_image: Some(h),
+            },
+        },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+    );
+    queue.submit(std::iter::once(enc.finish()));
+
+    let slice = out_buf.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    let _ = device.poll(wgpu::Maintain::Wait);
+    rx.recv()
+        .map_err(|e| GpuError::Readback(e.to_string()))?
+        .map_err(|e| GpuError::Readback(e.to_string()))?;
+    let data = slice.get_mapped_range();
+    let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
+    let row_floats = (w * 4) as usize;
+    for r in 0..h {
+        let src = (r * padded_bpr) as usize;
+        let src_row: &[f32] = bytemuck::cast_slice(&data[src..src + unpadded_bpr as usize]);
+        let dst = (r as usize) * row_floats;
+        pixels[dst..dst + row_floats].copy_from_slice(src_row);
+    }
+    drop(data);
+    out_buf.unmap();
+
+    let counters = read_counters(device, queue, &counters_buf, &counters_read);
+    Ok(ExportResult { width: w, height: h, ss: 1, pixels, iterate_ms: 0.0, color_ms: 0.0, counters })
+}
+
 /// Color an already-computed iteration buffer (main target, `w*h*4` floats: smooth-iter, normal.x,
 /// normal.y, DE) into a linear-RGBA image. The multi-reference glitch corrector merges several
 /// `render_iter` passes into one glitch-free buffer, then hands it here to be colored. Supports the

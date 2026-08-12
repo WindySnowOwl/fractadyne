@@ -1188,6 +1188,12 @@ fn main() -> eframe::Result<()> {
                         let adapter_limits = adapter.limits();
                         let binding = adapter_limits.max_storage_buffer_binding_size.min(want_binding);
                         let buffer = adapter_limits.max_buffer_size.min(want_binding as u64);
+                        // Iteration-range tiling writes THREE Rgba32Float state attachments per
+                        // chunk pass (48 bytes/sample; the default limit is 32). Ask for 48 where
+                        // the adapter offers it; a lesser adapter grants what it has and the
+                        // chunked path gates itself off (`render_iter_chunked` falls back to the
+                        // single-pass render) — nothing here assumes a big GPU.
+                        let attach_bytes = adapter_limits.max_color_attachment_bytes_per_sample.min(48);
                         eframe::wgpu::DeviceDescriptor {
                             label: Some("fractadyne device"),
                             required_features: features,
@@ -1195,6 +1201,8 @@ fn main() -> eframe::Result<()> {
                                 max_texture_dimension_2d: 8192,
                                 max_storage_buffer_binding_size: binding.max(base_limits.max_storage_buffer_binding_size),
                                 max_buffer_size: buffer.max(base_limits.max_buffer_size),
+                                max_color_attachment_bytes_per_sample: attach_bytes
+                                    .max(base_limits.max_color_attachment_bytes_per_sample),
                                 ..base_limits
                             },
                             memory_hints: eframe::wgpu::MemoryHints::default(),
