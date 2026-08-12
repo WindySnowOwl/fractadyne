@@ -1215,6 +1215,177 @@ fn fs_iterate(in: VsOut) -> FragOut {
     }
 }
 
+// ---------------- iteration-range tiling (direct mode, resumable) ----------------
+// Splits a pixel's 0..max_iter loop across several bounded dispatches so an arbitrarily high
+// EXPLICIT iteration count can't run as one watchdog-tripping submission (zooming OUT from a deep
+// ~4M-iter view to a shallow Direct one killed the device: no reference, no BLA skip, every in-set
+// pixel grinds the full count — crash-1786499093). `fs_iterate_chunk` iterates only
+// `[start_iter, min(end_iter, max_iter))` per dispatch, carrying per-pixel state between passes in
+// three ping-pong textures; `fs_resolve` converts settled state into the normal iteration
+// G-buffer that the color pass consumes. Scope: DIRECT mode, holomorphic formulas 0..3
+// (Mandelbrot / Multibrot — the crash case), aux off; everything else keeps single-pass
+// `fs_iterate`, whose behaviour is untouched.
+//
+// State layout (all Rgba32Float):
+//   st_z    = (z.re.hi,  z.re.lo,  z.im.hi,  z.im.lo)     — running value, full df32
+//   st_dz   = (dz.re.hi, dz.re.lo, dz.im.hi, dz.im.lo)    — derivative (DE/normal lighting)
+//   st_meta = (iter_hi, iter_lo, status, smit)            — iteration count split into two small
+//             integers (each exact in f32; a u32 bitcast could be flushed as a denormal by a
+//             render target), settle status, and the smooth value computed AT escape.
+// Counters: esc_range_commit / CTR_MAXITER fire exactly once per pixel, at the settle transition
+// inside the chunk pass — so `fs_resolve` is pure and safe to run after every batch (progressive
+// display). During progression a frame's escape-range only covers newly-escaped pixels; the
+// normalize EMA absorbs that.
+@group(1) @binding(0) var st_z: texture_2d<f32>;
+@group(1) @binding(1) var st_dz: texture_2d<f32>;
+@group(1) @binding(2) var st_meta: texture_2d<f32>;
+
+struct ChunkOut {
+    @location(0) z: vec4<f32>,
+    @location(1) dz: vec4<f32>,
+    // ⚠`meta` is a WGSL reserved word (like `smooth`) — hence `info`.
+    @location(2) info: vec4<f32>,
+};
+
+const ST_RUNNING: f32 = 0.0;
+const ST_ESCAPED: f32 = 1.0;
+const ST_INTERIOR: f32 = 2.0;
+
+fn meta_iter(m: vec4<f32>) -> u32 {
+    return (u32(m.x) << 12u) | u32(m.y);
+}
+fn meta_pack(iter: u32, status: f32, smit: f32) -> vec4<f32> {
+    return vec4<f32>(f32(iter >> 12u), f32(iter & 4095u), status, smit);
+}
+
+@fragment
+fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
+    // Pixel coordinate mapping — identical to fs_iterate's prologue.
+    let step_re = iu.step.xy;
+    let step_im = iu.step.zw;
+    let gx = iu.px_offset.x + in.pos.x;
+    let gy = iu.px_offset.y + in.pos.y;
+    let coord_re = gx - iu.res.x * 0.5;
+    let coord_im = iu.res.y * 0.5 - gy;
+    let off_re = df_mul_f32(step_re, coord_re);
+    let off_im = df_mul_f32(step_im, coord_im);
+
+    let bail2 = 256.0 * 256.0;
+    let zero = vec2<f32>(0.0, 0.0);
+    let one = cset(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 0.0));
+    // Same point derivation as the direct branch: restore the true offset from the shared
+    // delta_exp scaling and place c (Mandelbrot) or z0 (Julia) at the texel.
+    let dsc = exp2(f32(iu.delta_exp));
+    let pr = df_add(vec2<f32>(iu.center.x, iu.center.z), df_mul_f32(off_re, dsc));
+    let pi = df_add(vec2<f32>(iu.center.y, iu.center.w), df_mul_f32(off_im, dsc));
+    var z: Cdf;
+    var c: Cdf;
+    if (iu.julia == 1u) {
+        z = cset(pr, pi);
+        c = cset(vec2<f32>(iu.julia_c.x, iu.julia_c.z), vec2<f32>(iu.julia_c.y, iu.julia_c.w));
+    } else {
+        z = cset(zero, zero);
+        c = cset(pr, pi);
+    }
+    var dz: Cdf;
+    if (iu.julia == 1u) { dz = one; } else { dz = cset(zero, zero); }
+    var iter: u32 = 0u;
+    var status: f32 = ST_RUNNING;
+    var smit: f32 = 0.0;
+    if (iu.start_iter > 0u) {
+        // Resume from the previous chunk's state (texel-aligned: state textures match the
+        // iteration texture's size, and this pass draws at that same size).
+        let p = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
+        let sz = textureLoad(st_z, p, 0);
+        let sdz = textureLoad(st_dz, p, 0);
+        let sm = textureLoad(st_meta, p, 0);
+        if (sm.z != ST_RUNNING) {
+            // Already settled (escaped or interior) — pass state through unchanged.
+            return ChunkOut(sz, sdz, sm);
+        }
+        z = cset(vec2<f32>(sz.x, sz.y), vec2<f32>(sz.z, sz.w));
+        dz = cset(vec2<f32>(sdz.x, sdz.y), vec2<f32>(sdz.z, sdz.w));
+        iter = meta_iter(sm);
+        smit = sm.w;
+    }
+    var power_f = 2.0;
+    if (iu.formula == 1u) { power_f = 3.0; }
+    else if (iu.formula == 2u) { power_f = 4.0; }
+    else if (iu.formula == 3u) { power_f = 5.0; }
+    var zf = vec2<f32>(z.re.x, z.im.x);
+    var escaped = false;
+    let stop = min(iu.end_iter, iu.max_iter);
+    loop {
+        if (iter >= stop) { break; }
+        // Formula step + derivative update — the exact arithmetic and ORDER of the direct
+        // branch in fs_iterate (derivative uses the CURRENT z, before z advances), so a chunked
+        // render is bit-identical to the single-pass one.
+        var zn: Cdf;
+        if (iu.formula == 0u) {
+            zn = c_sqr(z);
+        } else if (iu.formula == 1u) {
+            zn = c_mul(c_sqr(z), z);
+        } else if (iu.formula == 2u) {
+            zn = c_sqr(c_sqr(z));
+        } else {
+            zn = c_mul(c_sqr(c_sqr(z)), z);
+        }
+        var fp: Cdf;
+        if (iu.formula == 0u) {
+            fp = c_two(z);
+        } else if (iu.formula == 1u) {
+            fp = c_scale(c_sqr(z), 3.0);
+        } else if (iu.formula == 2u) {
+            fp = c_scale(c_mul(c_sqr(z), z), 4.0);
+        } else {
+            fp = c_scale(c_sqr(c_sqr(z)), 5.0);
+        }
+        dz = c_mul(fp, dz);
+        if (iu.julia == 0u) { dz = c_add(dz, one); }
+        zn = c_add(zn, c);
+        z = zn;
+        iter = iter + 1u;
+        zf = vec2<f32>(z.re.x, z.im.x);
+        if (dot(zf, zf) > bail2) { escaped = true; break; }
+    }
+    if (escaped) {
+        status = ST_ESCAPED;
+        let mag2 = dot(zf, zf);
+        let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+        smit = f32(iter) + 1.0 - nu;
+        esc_range_commit(smit);
+    } else if (iter >= iu.max_iter) {
+        status = ST_INTERIOR;
+        atomicAdd(&counters[CTR_MAXITER], 1u);
+    }
+    return ChunkOut(
+        vec4<f32>(z.re.x, z.re.y, z.im.x, z.im.y),
+        vec4<f32>(dz.re.x, dz.re.y, dz.im.x, dz.im.y),
+        meta_pack(iter, status, smit),
+    );
+}
+
+// State → the normal iteration G-buffer (smooth/normal/DE + aux), same contract as fs_iterate's
+// output, so the untouched color pass shades a chunked render identically. Pixels still RUNNING
+// mid-progression display as interior (black) until their chunk settles them — the progressive
+// display the host loop refreshes after each batch.
+@fragment
+fn fs_resolve(in: VsOut) -> FragOut {
+    let p = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
+    let sz = textureLoad(st_z, p, 0);
+    let sdz = textureLoad(st_dz, p, 0);
+    let sm = textureLoad(st_meta, p, 0);
+    if (sm.z != ST_ESCAPED) {
+        return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);
+    }
+    let zf = vec2<f32>(sz.x, sz.z);
+    let d = vec2<f32>(sdz.x, sdz.z);
+    let mag2 = dot(zf, zf);
+    let nrm = slope_normal(zf, d);
+    let de = de_log2(mag2, d.x * d.x + d.y * d.y, 0.0);
+    return FragOut(vec4<f32>(sm.w, nrm.x, nrm.y, de), AUX_NONE);
+}
+
 // ---------------- coloring pass (samples the iteration texture) ----------------
 struct ColorU {
     stop_count: u32,
