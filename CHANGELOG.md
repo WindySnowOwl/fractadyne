@@ -16,6 +16,19 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Explicit-count dispatch cap — the third device-loss shape is closed, and deep explicit views
+  render native via many safe tiles** (beta.69). A zooming crash on beta.68 revealed the mode-2
+  (floatexp) sibling of the class: at a deep view with an explicit 4M count, the settle was
+  composing the frame from budget-sized tiles that had converged to ~900 ms of unpreemptible GPU
+  work each — the same intermittently-lethal regime proven twice on beta.67's climb soaks. The fix
+  generalizes what those fixes learned: with auto-iteration OFF, **every single dispatch — tiles,
+  chunks, and frames alike — is capped at ~2e10 nominal steps** (~60–200 ms real even with zero
+  skip), replacing the narrower rebase-grind cap. Because the 900 ms convergence band is now
+  unreachable by design, the tiled settle arms on a capped budget ("as converged as allowed") and
+  its tile allowance grows to the full ceiling, so the native frame is composed from ~240 cap-sized
+  tiles instead of resting at a coarse single-dispatch resolution. Verified at the exact crash
+  view: native 1445×1134, six-minute soak, zero device loss. Auto-iteration views are untouched;
+  the grand-tour livetest (tours run explicit counts) stays 22/22.
 - **Iteration-range tiling extended to df32 perturbation — the pixellated spar view now renders
   at native resolution** (beta.68). beta.67 left a view with a huge explicit count over a short
   escaped reference resting at a safe but coarse resolution (79×62); the resumable chunked path now

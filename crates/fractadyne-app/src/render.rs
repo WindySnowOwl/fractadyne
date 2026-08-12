@@ -62,6 +62,17 @@ pub(crate) const TDR_BOOTSTRAP_STEPS: u64 = 400_000_000;
 /// far enough to reach single-digit milliseconds in the worst regime measured, and the resolution
 /// shrink's own 16×16 floor still bounds how small a frame can get.
 pub(crate) const TDR_MIN_STEPS: u64 = 4_000_000;
+
+/// Per-dispatch nominal-step ceiling for EXPLICIT iteration counts (auto-iter off). Three device
+/// losses in one release cycle shared the shape "controller converges explicit-count dispatches
+/// toward the 900 ms target; ~0.9–1.3 s of unpreemptible fragment work intermittently loses the
+/// device" (crash-1786499093 Direct, crash-1786506241 mode-0 rebase-grind, crash-1786538140
+/// mode-2 settle tiles) — the `nvlddmkm` Event-153 marginality of the beta.48 saga, reproduced at
+/// will. 2e10 nominal is ~60–200 ms real even with ZERO skip — safely under any watchdog. Applied
+/// to `tdr_steps` (so tiles, chunks, and single frames all obey it), to the budget-climb probe's
+/// stop, and to the tiling gate's "as converged as the cap allows" arm. Auto-iter views are
+/// untouched.
+pub(crate) const EXPLICIT_DISPATCH_CAP: u64 = 20_000_000_000;
 /// Never exceed this even if a view measures absurdly cheap (a lone quick interval shouldn't uncork a
 /// multi-second dispatch).
 pub(crate) const TDR_STEPS_CEIL: u64 = 300_000_000_000;
@@ -1920,12 +1931,20 @@ impl FractadyneApp {
         // quickly, and completing is what lets the geometry pin step aside and re-form sharper at
         // the larger budget. Handing a still-climbing budget the full allowance would spend
         // hundreds of frames perfecting a resolution that is already known to be too low.
-        // ⚠Held at the fixed count for now. Scaling it from measured tile cost is A1's other
-        // half and it works — but it only pays off together with the honoured iteration count
-        // above, and on its own it still shifts the resolution/boost balance on scripted playback
-        // (which runs `auto_iter = false`). Kept as the single seam where that decision lives.
-        let _ = (TDR_SETTLE_BUDGET_MS, TDR_TILES_CEIL, TDR_TILE_VSYNC_MS);
+        //
+        // EXPLICIT counts whose budget sits at the per-dispatch cap get the full allowance: the
+        // cap deliberately forbids the bigger dispatches that used to make 16 tiles enough (three
+        // device losses — see EXPLICIT_DISPATCH_CAP), so native resolution is reachable only as
+        // MORE cap-sized tiles (native at 4M ≈ 240 of them, one per frame, each ~60–200 ms real
+        // worst-case and far less when BLA skips). The budget is pinned there, so the "climbing
+        // budget wastes frames on known-low resolution" concern doesn't apply.
+        let _ = (TDR_SETTLE_BUDGET_MS, TDR_TILE_VSYNC_MS);
         let _ = self.perf.last_iterate_ms[vidx];
+        if !self.render_cfg.auto_iter
+            && budget_base(self.perf.fe_budget[vidx]) >= EXPLICIT_DISPATCH_CAP
+        {
+            return TDR_TILES_CEIL;
+        }
         TDR_MAX_TILES
     }
 
@@ -2586,6 +2605,24 @@ impl FractadyneApp {
             // Zero until the first probe resolves; the loop in `update` maintains it thereafter.
             budget_base(self.perf.fe_budget[vidx])
         };
+        // EXPLICIT-count dispatch cap. Three device losses this release cycle share one shape:
+        // with auto-iter OFF and a huge explicit count, the ratio controller converges dispatches
+        // toward its 900 ms target, and ~0.9–1.3 s of unpreemptible fragment work per submission
+        // intermittently loses the device on this hardware class (`nvlddmkm` Event 153) — as a
+        // shrunk single frame (crash-1786499093, Direct), as a rebase-grind frame
+        // (crash-1786506241, mode 0), and as budget-sized settle TILES at a deep floatexp view
+        // (crash-1786538140, mode 2, ~1.5e11-nominal ≈ 900 ms per tile, one per frame). So when
+        // the count is EXPLICIT, cap every single dispatch — tiles and chunks alike — at ~2e10
+        // nominal (~60–200 ms real even with zero skip): the user asked for extreme work, and the
+        // app spreads it across more dispatches instead of gambling the device on big ones.
+        // Auto-iter views (sane counts, the normal case) are untouched, so nothing here changes
+        // ordinary perf. This subsumes the narrower short-escaped-reference (rebase-grind) cap it
+        // replaces, and it is what sizes the chunked paths' per-frame iteration ranges too.
+        let tdr_steps = if !offscreen && !self.render_cfg.auto_iter {
+            tdr_steps.min(EXPLICIT_DISPATCH_CAP)
+        } else {
+            tdr_steps
+        };
         if !offscreen && !will_reproject {
             self.perf.frozen_budget[vidx] = tdr_steps;
         }
@@ -2704,7 +2741,17 @@ impl FractadyneApp {
                 // to 100%. So an auto-budgeted view keeps waiting for convergence exactly as it
                 // shipped; only a never-measurable budget and a user-typed iteration count take
                 // the new path.
-                _ if self.perf.fe_budget_ok[vidx] || self.perf.fe_budget[vidx] == 0 => {
+                // An EXPLICIT count whose measured budget has climbed to (or past) the per-dispatch
+                // cap can never satisfy `fe_budget_ok` — the controller's 900 ms convergence band
+                // is exactly what the cap forbids (that band is what lost the device three times).
+                // A capped budget is as converged as it is allowed to get, so arm on it: the settle
+                // then composes the native frame from cap-sized (~60–200 ms) tiles instead of the
+                // view resting at the cap's single-dispatch resolution forever.
+                _ if self.perf.fe_budget_ok[vidx]
+                    || self.perf.fe_budget[vidx] == 0
+                    || (!self.render_cfg.auto_iter
+                        && budget_base(self.perf.fe_budget[vidx]) >= EXPLICIT_DISPATCH_CAP) =>
+                {
                     // ARM: this frame renders the coarse single-dispatch full frame; the grid may
                     // start next frame, seeded from it. Once armed/running, an `ok` flap must NOT
                     // tear the grid down — that threw away completed near-native frames whenever a
@@ -2727,25 +2774,6 @@ impl FractadyneApp {
             tdr_steps.saturating_mul(max_tiles)
         } else {
             tdr_steps
-        };
-        // Rebase-grind cap: an EXPLICIT count far beyond a short ESCAPED reference has no BLA
-        // coverage — every in-set pixel runs the full count through constant rebasing, so nominal
-        // steps ≈ real steps — and letting the ratio controller climb such frames toward its
-        // 900 ms target reproducibly loses the device on this hardware class (the 197k× spar at
-        // an explicit 4M: two climb soaks died at ~1–1.3 s dispatches; the Event-153 marginality
-        // of the beta.48 saga, made reliable). Cap the single-dispatch allowance so the settled
-        // view rests at a safe sub-resolution (~60–90 ms dispatches) instead of climbing into the
-        // lethal band. Deep views (long references, BLA effective — nominal ≫ real) and auto-iter
-        // views (counts stay sane) never meet the condition. Native rendering of such an ask
-        // needs iteration-range chunking extended to perturbation modes — TODO.
-        let rebase_grind = !self.render_cfg.auto_iter
-            && !self.ref_cache[vidx].partial
-            && self.ref_cache[vidx].orbit_len > 0
-            && (self.ref_cache[vidx].orbit_len as u64) * 64 < gpu_iter as u64;
-        let tdr_allowed = if rebase_grind {
-            tdr_allowed.min(20_000_000_000)
-        } else {
-            tdr_allowed
         };
         let spx = (resolution[0] as u64) * (resolution[1] as u64);
         // Iteration-range tiling eligibility: a frame whose cost exceeds the budget even at ss=1
@@ -3027,7 +3055,7 @@ impl FractadyneApp {
             // reproducible. Below the ceiling the deadlock is still broken (16×16 → ~84×66 at a
             // 4M explicit ask, stable and alive); a native-res render of such an ask needs the
             // chunked path extended to perturbation modes (TODO), not bigger single dispatches.
-            && budget_base(self.perf.fe_budget[vidx]) < 20_000_000_000
+            && budget_base(self.perf.fe_budget[vidx]) < EXPLICIT_DISPATCH_CAP
         {
             self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
             // This frame now runs a real pass under an unchanged key — pair the measurement
