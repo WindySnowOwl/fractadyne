@@ -16,6 +16,13 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Spinner during long refinements, and the warning label moves as one unit** (beta.72). The
+  "working" spinner previously showed only while a reference orbit was building — during the
+  minutes-long capped settle/chunk refinement of an explicit-count view (reference done, tiles
+  still landing) the view looked stalled; the spinner now also shows for those progressions
+  (auto-iteration settles are sub-second and keep the old behavior). And the status bar's
+  diagnostic label no longer breaks internally at the panel edge (the ⚠ stranded on one line,
+  "iter capped" on the next) — it extends/moves as a single unit in both of its states.
 - **The status-bar/settle feedback loop is fully closed** (beta.71). beta.70's reserved slot was
   not enough: an empty reserved allocation's height in a wrapped layout still differs from a
   rendered label's (measured: the bar oscillating 34↔41 px), and every bar-height change resizes

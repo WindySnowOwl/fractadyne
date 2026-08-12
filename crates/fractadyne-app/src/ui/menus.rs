@@ -857,7 +857,13 @@ impl FractadyneApp {
                     ),
                     None => (SLOT.to_string(), egui::Color32::TRANSPARENT, None),
                 };
-                let r = ui.colored_label(color, egui::RichText::new(text).monospace());
+                // Extend, not wrap: a Label in a wrapped layout otherwise breaks its own text at
+                // the panel edge — the ⚠ stranded at the end of one line, "iter capped" on the
+                // next. Extend makes the label move (or overflow) as ONE unit, in both states.
+                let r = ui.add(
+                    egui::Label::new(egui::RichText::new(text).monospace().color(color))
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                );
                 if let Some(detail) = detail {
                     r.on_hover_text(detail);
                 }

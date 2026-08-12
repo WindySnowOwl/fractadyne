@@ -420,7 +420,13 @@ impl FractadyneApp {
         // a deep pan/zoom refreshing its reference. The SHOW_DELAY below keeps quick (shallow) builds
         // unmarked so it never strobes, and consecutive frames of one build re-use the same start. Tour
         // playback re-invalidates the reference every keyframe, so suppress there rather than strobe.
-        let busy = self.recompute_rx[vi].is_some() && !self.tour_playing();
+        // Also busy during a long EXPLICIT-count refinement: the capped settle grid / chunked
+        // iteration progression renders for minutes after the reference lands (~240 cap-sized
+        // tiles at a 4M ask), and without a cue the view looks stalled mid-composite. Auto-iter
+        // views keep the old behavior — their settles are sub-second and would strobe.
+        let refining = !self.render_cfg.auto_iter
+            && (self.perf.tile_pending[vi] || self.perf.chunk_pending[vi]);
+        let busy = (self.recompute_rx[vi].is_some() || refining) && !self.tour_playing();
         if busy {
             // A real gap since the last in-flight frame re-arms the delay, so each fresh build must
             // again outlast it (a quick one never shows); consecutive frames of one build do not. The
