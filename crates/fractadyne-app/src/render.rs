@@ -2728,6 +2728,25 @@ impl FractadyneApp {
         } else {
             tdr_steps
         };
+        // Rebase-grind cap: an EXPLICIT count far beyond a short ESCAPED reference has no BLA
+        // coverage — every in-set pixel runs the full count through constant rebasing, so nominal
+        // steps ≈ real steps — and letting the ratio controller climb such frames toward its
+        // 900 ms target reproducibly loses the device on this hardware class (the 197k× spar at
+        // an explicit 4M: two climb soaks died at ~1–1.3 s dispatches; the Event-153 marginality
+        // of the beta.48 saga, made reliable). Cap the single-dispatch allowance so the settled
+        // view rests at a safe sub-resolution (~60–90 ms dispatches) instead of climbing into the
+        // lethal band. Deep views (long references, BLA effective — nominal ≫ real) and auto-iter
+        // views (counts stay sane) never meet the condition. Native rendering of such an ask
+        // needs iteration-range chunking extended to perturbation modes — TODO.
+        let rebase_grind = !self.render_cfg.auto_iter
+            && !self.ref_cache[vidx].partial
+            && self.ref_cache[vidx].orbit_len > 0
+            && (self.ref_cache[vidx].orbit_len as u64) * 64 < gpu_iter as u64;
+        let tdr_allowed = if rebase_grind {
+            tdr_allowed.min(20_000_000_000)
+        } else {
+            tdr_allowed
+        };
         let spx = (resolution[0] as u64) * (resolution[1] as u64);
         // Iteration-range tiling eligibility: a DIRECT frame whose cost exceeds the budget even at
         // ss=1 cannot be bounded by any spatial split — no reference, no BLA skip, so its cost axis
@@ -2969,6 +2988,49 @@ impl FractadyneApp {
                     self.allow_tiled_settle,
                 ),
             );
+        }
+        // Budget-climb probe: on a settled view whose budget hasn't converged and where NOTHING
+        // else will dispatch this frame, force a re-measure. Without this the climb deadlocks at
+        // the resolution floor: one ×1.5 budget step is too small to unfloor a 16×16 frame under a
+        // huge iteration count, so the key never changes → no dispatch → no measurement → the
+        // budget freezes one step off the bootstrap and the view stays pixellated forever (seen
+        // at the 197k× spar with an explicit 4M count after restart — interaction used to mask it
+        // by re-keying every frame, and before beta.65/66 this state usually crashed first).
+        // Each forced dispatch is budget-sized by the shrink above, so it is TDR-safe by
+        // construction; convergence (`fe_budget_ok`) stops the probe and hands off to the settle.
+        if !interacting
+            && !offscreen
+            && !will_reproject
+            && !self.tour_playing()
+            && !key_changed
+            && tile.is_none()
+            && chunk_range.is_none()
+            && !self.perf.fe_budget_ok[vidx]
+            // PACED: at least 3 frames since the last real dispatch. An unpaced probe re-created
+            // the beta.48 death — near convergence each dispatch is ~TDR_BUDGET_MS (900 ms), and
+            // firing one EVERY frame ran ~1 s dispatches back-to-back with zero idle → device lost
+            // at f=68 of the first climb soak. The gap leaves present-able frames between
+            // dispatches (~⅓ duty), which is the profile the converged controller already runs.
+            && self.perf.frame_idx.saturating_sub(self.perf.fe_dispatch_frame[vs]) >= 3
+            // CEILINGED: the probe stops growing the budget at ~2e10 nominal (~60–90 ms real in
+            // the no-skip regime) instead of riding the controller to its 900 ms target. The
+            // second climb soak PROVED the target is lethal in this regime even paced: at a
+            // 99-sample escaped reference with bla_skip=0 (nominal = real, zero preemption inside
+            // the fullscreen draw), the ×1.5 growth step from ~600 ms landed a ~1.3 s dispatch and
+            // lost the device — the intermittent Event-153 marginality of the beta.48 saga, made
+            // reproducible. Below the ceiling the deadlock is still broken (16×16 → ~84×66 at a
+            // 4M explicit ask, stable and alive); a native-res render of such an ask needs the
+            // chunked path extended to perturbation modes (TODO), not bigger single dispatches.
+            && budget_base(self.perf.fe_budget[vidx]) < 20_000_000_000
+        {
+            self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
+            // This frame now runs a real pass under an unchanged key — pair the measurement
+            // with its cost (the same bookkeeping the `key_changed` block below does).
+            self.perf.fe_steps_last[vs] = spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64);
+            self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
+            self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
         }
         let bootstrap =
             self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none();
@@ -3530,6 +3592,7 @@ impl FractadyneApp {
             tile,
             chunk_range,
             chunk_idx,
+            probe_nonce: self.perf.probe_nonce[vs],
             orbit: self.ref_cache[vi].orbit.clone(),
             orbit_id: self.ref_cache[vi].orbit_id,
             orbit_len: self.ref_cache[vi].orbit_len,

@@ -245,6 +245,18 @@ Mockups: [design/mockups/](design/mockups/).
   fixes live there) — verify any fix with the full suite + `--livetest` grand tour + a fresh-dir
   zoom-OUT-from-deep repro. Note: the device-lost handler DID write this report + should auto-restart
   (uptime 135.9s > 60s guard), so the app likely recovered the session.
+- [ ] ⭐**Extend iteration-range chunking to perturbation modes (0/2) — the native-res answer for
+  explicit mega-counts on short references (2026-08-12).** The beta.65 chunked path covers Direct
+  only. The 197k× spar at an explicit 4M (user session): the reference escapes at 99 samples,
+  `bla_skip=0`, so nominal = real ≈ 6.2e12 steps for a native frame — no single-dispatch budget can
+  render it, and beta.67's rebase-grind cap rests the view at a safe 79×62 instead. Chunking the
+  mode-0/2 δ-iteration (resumable state: δz, dz, ref_n + rebase bookkeeping) would render it at
+  native progressively, like Direct. ⚠While building beta.67, two climb soaks PROVED the ratio
+  controller's 900 ms dispatch target reproducibly loses the device in this regime on the dev 3080
+  (~1–1.3 s dispatches after the ×1.5 growth step; `nvlddmkm` Event-153 class made reliable) — the
+  strongest evidence yet for the open "tunables/hardware-resilience" item: the SAFE single-dispatch
+  ceiling on this box is nearer 100–200 ms than 900 in no-preemption regimes. Any future budget
+  work should treat `TDR_BUDGET_MS=900` as suspect on marginal hardware.
 - [ ] **The deep LIVE view is strongly hardware/OS-dependent — same view, very different render
   (found via `--uitest`, 2026-08-11).** At the canonical seahorse point, `zoom=1e30×`,
   `precision=164` bits (identical on both), the live floatexp view resolves completely differently

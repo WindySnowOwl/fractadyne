@@ -16,6 +16,21 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The startup pixellation deadlock is fixed, and the rebase-grind regime is capped safely**
+  (beta.67). Restarting into a view with a huge explicit iteration count left the screen at giant
+  pixels forever: the frame budget can only climb when a measurement arrives, a measurement needs a
+  dispatch, and a dispatch needs the frame to re-key — but at the 16×16 resolution floor one ×1.5
+  budget step is too small to change the resolution, so the climb froze one step off the bootstrap
+  (interaction used to mask this by re-keying every frame; before beta.65/66 this state usually
+  crashed first). A paced budget-climb probe now forces re-measures on settled unconverged views,
+  and the ratchet runs 16×16 → full budget-afforded resolution. Two climb soaks also proved that in
+  the **rebase-grind regime** — an explicit count far beyond a short escaped reference, where BLA
+  covers nothing and nominal cost is real cost — the controller's 900 ms dispatch target is
+  reproducibly lethal on this hardware class, so that regime's single-dispatch allowance is capped
+  at ~2e10 nominal (~60–90 ms): the view rests at a safe sub-resolution (79×62 at a 4M ask)
+  instead of climbing into the device-loss band. Deep views (long references, BLA effective) and
+  auto-iteration views are untouched. Native rendering of such an ask needs iteration-range
+  chunking extended to perturbation modes — tracked.
 - **Budget derate on reference-length collapse** (beta.66). A sibling of the beta.65 crash, hit
   while wheel-zooming on beta.65 itself: a multi-octave interactive jump re-picks the reference
   from millions of samples down to a short escaped one (90), per-step cost explodes (rebase every

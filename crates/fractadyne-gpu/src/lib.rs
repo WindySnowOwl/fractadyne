@@ -390,6 +390,8 @@ struct ViewResources {
     /// The chunk range rendered last — a chunked progression re-encodes when the RANGE advances
     /// even though the key (view/orbit/size) is unchanged (same idea as `last_tile`).
     last_chunk: Option<[u32; 2]>,
+    /// The budget-climb probe nonce rendered last (see `MandelbrotParams::probe_nonce`).
+    last_probe: u32,
 }
 
 /// Ping-pong state for a live chunked progression (see `MandelbrotParams::chunk_range`).
@@ -824,6 +826,7 @@ impl ViewResources {
             last_iter_key: None,
             chunk_state: None,
             last_chunk: None,
+            last_probe: 0,
         }
     }
 
@@ -997,6 +1000,12 @@ pub struct MandelbrotParams {
     /// Which chunk pass this is (0-based) — selects the ping-pong read/write sets. Pass k writes
     /// set `k % 2` and reads set `(k + 1) % 2` (pass 0 reads nothing).
     pub chunk_idx: u32,
+    /// Budget-climb probe: a CHANGED value forces a re-iterate even under an unchanged key. The
+    /// app bumps it on settled frames while the frame budget is unconverged, so measurements keep
+    /// arriving and the budget can climb — without it, a view pinned at the resolution floor by a
+    /// huge iteration count deadlocks (budget growth too small to change the resolution → key
+    /// never changes → no dispatch → no measurement → budget frozen one step off the floor).
+    pub probe_nonce: u32,
     pub orbit: Arc<Vec<[f32; 4]>>,
     /// Changes whenever `orbit` changes — triggers a GPU re-upload.
     pub orbit_id: u64,
@@ -1248,7 +1257,8 @@ impl CallbackTrait for MandelbrotParams {
             && !hold
             && (view.last_iter_key != Some(key)
                 || view.last_tile != self.tile
-                || view.last_chunk != self.chunk_range)
+                || view.last_chunk != self.chunk_range
+                || view.last_probe != self.probe_nonce)
         {
             // Per-texel step *mantissa*: span_mantissa (= span · 2^-delta_exp, already O(1))
             // divided by the texture dim. The shared exponent carries the true scale, so no
@@ -1469,6 +1479,7 @@ impl CallbackTrait for MandelbrotParams {
             view.last_iter_key = Some(key);
             view.last_tile = self.tile;
             view.last_chunk = self.chunk_range;
+            view.last_probe = self.probe_nonce;
             view.last_ss = ss; // remember the ss this texture was built at (for reprojection)
             view.rendered = true; // the texture now holds a real frame (survives orbit swaps)
         }

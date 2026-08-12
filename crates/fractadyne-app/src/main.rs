@@ -229,6 +229,10 @@ struct Perf {
     chunk_idx: [u32; 2],
     chunk_sig: [(u64, u32, [u32; 2], u32); 2],
     chunk_pending: [bool; 2],
+    /// Budget-climb probe (see `MandelbrotParams::probe_nonce`): bumped on settled frames while
+    /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
+    /// where budget growth is too small to re-key the frame and the climb freezes.
+    probe_nonce: [u32; 2],
     /// True while a view's settle grid has tiles left — holds the AA ramp and keeps repaints coming.
     tile_pending: [bool; 2],
     /// `frame_idx` of the last frame that spent its tile: one budget-sized tile per submission, so
@@ -357,6 +361,7 @@ impl Default for Perf {
             chunk_idx: [0, 0],
             chunk_sig: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
             chunk_pending: [false, false],
+            probe_nonce: [0, 0],
             tile_turn: u64::MAX,
             interact_frame: [0, 0],
             fe_iter_frame: [0, 0],
