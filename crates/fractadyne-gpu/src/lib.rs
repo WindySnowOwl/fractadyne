@@ -48,6 +48,15 @@ pub(crate) struct IterUniforms {
     pub(crate) sa_b_exp: i32,
     pub(crate) sa_c_exp: i32,
     pub(crate) bla_on: u32,       // 1 = use the BLA tree (appended after the orbit at index orbit_len)
+    // Iteration-range tiling (direct mode): a resumable pass iterates only `[start_iter, end_iter)`
+    // this dispatch, carrying per-pixel state between passes, so an arbitrarily high count can't run
+    // as one watchdog-tripping dispatch. `fs_iterate` (the single-pass path) ignores these; the
+    // resumable `fs_iterate_chunk` uses them. `start_iter == 0` means "initialize from scratch".
+    pub(crate) start_iter: u32,
+    pub(crate) end_iter: u32,
+    // Pad the uniform to a 16-byte multiple so the Rust `#[repr(C)]` size matches WGSL's std140
+    // struct size (WGSL rounds a struct up to its 16-byte alignment; Rust does not).
+    pub(crate) _pad_ir: [u32; 2],
 }
 
 #[repr(C)]
@@ -1139,6 +1148,9 @@ impl CallbackTrait for MandelbrotParams {
                 sa_b_exp: self.sa_b_exp,
                 sa_c_exp: self.sa_c_exp,
                 bla_on: self.bla_on,
+                start_iter: 0,
+                end_iter: 0,
+                _pad_ir: [0; 2],
             };
             queue.write_buffer(&view.iter_uniform, 0, bytemuck::bytes_of(&iu));
             // Bracket the iterate with GPU timestamps when nothing is already in flight. This is the

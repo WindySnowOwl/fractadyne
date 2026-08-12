@@ -301,6 +301,9 @@ pub fn render_export(
                 sa_b_exp: req.sa_b_exp,
                 sa_c_exp: req.sa_c_exp,
                 bla_on: req.bla_on,
+                start_iter: 0,
+                end_iter: 0,
+                _pad_ir: [0; 2],
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -635,6 +638,9 @@ pub fn render_iter_tiled(
                 sa_b_exp: req.sa_b_exp,
                 sa_c_exp: req.sa_c_exp,
                 bla_on: req.bla_on,
+                start_iter: 0,
+                end_iter: 0,
+                _pad_ir: [0; 2],
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -875,6 +881,9 @@ pub fn render_iter(
         sa_b_exp: req.sa_b_exp,
         sa_c_exp: req.sa_c_exp,
         bla_on: req.bla_on,
+        start_iter: 0,
+        end_iter: 0,
+        _pad_ir: [0; 2],
     };
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 

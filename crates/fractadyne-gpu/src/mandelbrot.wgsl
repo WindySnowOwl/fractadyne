@@ -424,6 +424,10 @@ struct IterU {
     sa_b_exp: i32,
     sa_c_exp: i32,
     bla_on: u32,           // 1 = use the BLA tree (appended after the orbit at index orbit_len)
+    start_iter: u32,       // iteration-range tiling (direct mode): resume the loop at this iteration
+    end_iter: u32,         // ...and stop this dispatch here (fs_iterate_chunk); fs_iterate ignores both
+    _pad_ir0: u32,         // pad to a 16-byte multiple (matches the Rust IterUniforms mirror)
+    _pad_ir1: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
