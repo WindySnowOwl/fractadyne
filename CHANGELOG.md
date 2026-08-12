@@ -16,6 +16,12 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The status bar's limit diagnostic no longer reflows the view** (beta.70). The "⚠ iter capped"
+  (and siblings) label appears and disappears with live counters; at a window width where the bar
+  just fit one line, its arrival wrapped the bar to two, shrank the view, and forced a re-render —
+  whose counters then moved the label again (the same reflow family as the beta.58 cursor-readout
+  fix). The diagnostic slot is now always present at a constant width, sized to the longest label
+  via font metrics, blank when nothing binds.
 - **Explicit-count dispatch cap — the third device-loss shape is closed, and deep explicit views
   render native via many safe tiles** (beta.69). A zooming crash on beta.68 revealed the mode-2
   (floatexp) sibling of the class: at a deep view with an explicit 4M count, the settle was

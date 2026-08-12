@@ -819,7 +819,7 @@ impl FractadyneApp {
                 // Misiurewicz-spar reports arrived as mystery screenshots precisely because the
                 // app knew it was clamped and said nothing).
                 let vc = &self.ref_cache[0];
-                if let Some((label, detail, severe)) = Self::limit_status(
+                let limit = Self::limit_status(
                     vc.partial,
                     vc.orbit_len,
                     crate::render::orbit_len_cap(),
@@ -830,16 +830,38 @@ impl FractadyneApp {
                     self.perf.norm_range[0].map(|(_, mx)| mx as f64),
                     self.perf.iter_plateau[0],
                     self.perf.iter_exhausted[0],
-                ) {
-                    ui.separator();
-                    let color = if severe {
-                        egui::Color32::from_rgb(0xE0, 0x6C, 0x60)
-                    } else {
-                        egui::Color32::from_rgb(0xE0, 0xA0, 0x30)
-                    };
-                    ui.colored_label(color, egui::RichText::new(label).monospace())
-                        .on_hover_text(detail);
-                }
+                );
+                // ⭐The diagnostic slot is ALWAYS present, reserved at a CONSTANT width — like the
+                // cursor readout above. The label comes and goes with live counters, and on a
+                // width where the bar just fits one line its arrival wrapped the bar to two,
+                // shrank the view, and forced a re-render — whose counters then moved the label
+                // again (the beta.58 reflow bug, third verse). Sized to the longest label via
+                // font metrics so DPI/scale can't drift it; blank when nothing binds.
+                ui.separator();
+                let font = egui::TextStyle::Monospace.resolve(ui.style());
+                let reserve = ui.fonts(|f| {
+                    f.layout_no_wrap(
+                        "⚠ iter exhausted".to_string(),
+                        font.clone(),
+                        egui::Color32::WHITE,
+                    )
+                    .size()
+                });
+                ui.allocate_ui_with_layout(
+                    reserve,
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        if let Some((label, detail, severe)) = limit {
+                            let color = if severe {
+                                egui::Color32::from_rgb(0xE0, 0x6C, 0x60)
+                            } else {
+                                egui::Color32::from_rgb(0xE0, 0xA0, 0x30)
+                            };
+                            ui.colored_label(color, egui::RichText::new(label).monospace())
+                                .on_hover_text(detail);
+                        }
+                    },
+                );
             });
         });
         // Expose the panel's height so the UI-test harness can detect the status bar wrapping to a
