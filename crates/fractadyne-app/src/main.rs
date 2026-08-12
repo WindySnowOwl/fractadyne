@@ -6004,6 +6004,28 @@ impl eframe::App for FractadyneApp {
 mod tests {
     use super::*;
 
+    // Reference-length collapse trigger (crash-1786506241): a long orbit collapsing to a short
+    // ESCAPED one must derate the budget; the smooth paths must never trip it. Pure-predicate
+    // pin — the interactive wheel-jump that produces a collapse has no scripted repro.
+    #[test]
+    fn install_collapse_trigger() {
+        use crate::render::install_collapse;
+        // The crash: millions → 90, escaped. MUST fire.
+        assert!(install_collapse(3_730_527, 90, false));
+        // Escaped→escaped big shrink (fast interactive zoom-out): fires.
+        assert!(install_collapse(20_000, 5_000, false));
+        // Smooth zoom-out re-pick (~×0.85): must NOT fire (inside the ×1.5 margin).
+        assert!(!install_collapse(5_000, 4_200, false));
+        // Exactly at the boundary (new = old/1.5): not a collapse (strict inequality).
+        assert!(!install_collapse(3_000, 2_000, false));
+        // Shrinking PARTIAL: exempt (the pixel clamp scales cost down with it).
+        assert!(!install_collapse(1_000_000, 90, true));
+        // Growth of any size: never a collapse (the jump trigger owns that direction).
+        assert!(!install_collapse(90, 3_730_527, false));
+        // Cold start (no previous orbit): never.
+        assert!(!install_collapse(0, 90, false));
+    }
+
     // The go-to / metadata zoom string must round-trip through log2(magnification) at any
     // depth — including past f64's 1e308× range, where a plain f64 zoom would be ∞.
     #[test]

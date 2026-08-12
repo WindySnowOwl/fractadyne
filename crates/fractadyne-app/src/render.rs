@@ -815,9 +815,31 @@ impl FractadyneApp {
             // (partial → complete, BLA character changes end-to-end) and length jumps between
             // ESCAPED orbits (a different orbit shape under the same BLA machinery).
             let growth_only = old.partial && res.partial;
-            if clamp_lifted || (big_jump && !growth_only) {
+            // The mirror-image discontinuity, found by crash-1786506241 (beta.65, mid-zoom):
+            // a long reference COLLAPSING to a short ESCAPED one (millions → 90 samples) while the
+            // pixel ask stays huge (explicit 4M). Per-step cost EXPLODES — pixels rebase every
+            // ≤90 steps with zero BLA coverage — so a budget measured at deep skip-effectiveness
+            // (it was at the 3e11 ceiling) misprices the next frame by an order of magnitude or
+            // more: one 2.99e11-nominal dispatch at rebase-grind cost → device lost. The growth
+            // trigger above can never see this (new < old), and partial→partial shrink is exempt
+            // for the same reason growth is: a shorter PARTIAL lowers the pixel clamp, so cost
+            // scales DOWN with it — the danger is specifically short-and-COMPLETE (rebase machinery
+            // live, pixels run the full budget). ×1.5 margin mirrors `big_jump`: smooth zoom-out
+            // re-picks shrink ~×0.85 per install and never trip it. (Pinned as the pure predicate
+            // `install_collapse` — a scripted glide can't reproduce the interactive wheel-jump
+            // that trips it, so the unit checks are its regression net.)
+            let big_collapse = install_collapse(old.orbit_len, res.orbit_len, res.partial);
+            if clamp_lifted || (big_jump && !growth_only) || big_collapse {
                 let cur = self.perf.fe_budget[vb];
-                let derated = (cur / 8).max(TDR_MIN_STEPS);
+                // A collapse invalidates the measured cost model WHOLESALE (the beta.47 precedent:
+                // "mode switch ⇒ budget unmeasured"), so it caps at the bootstrap opening guess,
+                // not merely ÷8 — the mispricing scales with the collapse ratio (3,333× here),
+                // and the budget re-climbs within a few measured frames if the frame is cheap.
+                let derated = if big_collapse {
+                    (cur / 8).min(TDR_BOOTSTRAP_STEPS).max(TDR_MIN_STEPS)
+                } else {
+                    (cur / 8).max(TDR_MIN_STEPS)
+                };
                 if cur == 0 || derated < cur {
                     self.perf.fe_budget[vb] = derated;
                     self.perf.fe_budget_ok[vb] = false; // tiling re-arms once re-converged
@@ -827,7 +849,13 @@ impl FractadyneApp {
                             "install derate: orbit {}→{} ({}) — budget {:.2e}→{:.2e}, re-converging",
                             old.orbit_len,
                             res.orbit_len,
-                            if clamp_lifted { "clamp lifted" } else { "length jump" },
+                            if clamp_lifted {
+                                "clamp lifted"
+                            } else if big_collapse {
+                                "length collapse"
+                            } else {
+                                "length jump"
+                            },
                             cur as f64,
                             derated as f64
                         ),
@@ -3637,6 +3665,18 @@ pub(crate) fn budget_base(fe_budget: u64) -> u64 {
         0 => TDR_BOOTSTRAP_STEPS,
         b => b.clamp(TDR_MIN_STEPS, TDR_STEPS_CEIL),
     }
+}
+
+/// Reference-length COLLAPSE: the new orbit is short-and-COMPLETE (`!partial` — the rebase
+/// machinery is live and pixels run their full budget through it) at under 1/1.5 of the old
+/// length. Such an install invalidates the measured cost model wholesale — per-step cost explodes
+/// when a 90-sample escaped orbit serves a millions-deep pixel ask (crash-1786506241) — so
+/// `install_recompute` derates the budget to at most the bootstrap. Smooth zoom-out re-picks
+/// shrink ~×0.85 per install and stay under the margin; a shrinking PARTIAL lowers the pixel
+/// clamp (cost scales down with it) and is exempt. Pure so the unit checks below can pin it —
+/// the interactive wheel-jump that trips it has no scripted repro.
+pub(crate) fn install_collapse(old_len: u32, new_len: u32, new_partial: bool) -> bool {
+    old_len > 0 && !new_partial && (new_len as u64) * 3 < (old_len as u64) * 2
 }
 
 pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64) -> Option<(u64, bool)> {

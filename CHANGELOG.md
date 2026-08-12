@@ -16,6 +16,15 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Budget derate on reference-length collapse** (beta.66). A sibling of the beta.65 crash, hit
+  while wheel-zooming on beta.65 itself: a multi-octave interactive jump re-picks the reference
+  from millions of samples down to a short escaped one (90), per-step cost explodes (rebase every
+  ≤90 steps, no BLA coverage), and the frame budget — measured at deep skip-effectiveness, sitting
+  at its ceiling — mispriced the next dispatch into a device loss. The install derate now also
+  fires on a length **collapse** (it previously only saw growth), dropping the budget to at most
+  the bootstrap so the next frames re-measure from safe ground. Pinned by a pure-predicate unit
+  test (the interactive jump has no scripted repro); a 60s scripted zoom-out at 4M iterations runs
+  clean with no false trigger.
 - **Iteration-range tiling: the zoom-out-from-deep device loss is fixed, and any explicit
   iteration count now renders safely** (beta.65). Zooming out from a deep multi-million-iteration
   view to a shallow one killed the GPU: the shallow view switches to Direct mode (no reference, no
