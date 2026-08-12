@@ -194,6 +194,28 @@ Mockups: [design/mockups/](design/mockups/).
   settled live view is budget-capped near ss2 and cannot reach ss8, so it can't self-clean these
   fields — a settled-only, tile-bounded higher-ss pass (already the tiled-settle's job, just
   capped low here) or an averaging deep-color mode would help. Not a defect, a quality ceiling.
+  ⭐**`--uitest` now REPRODUCES this visually (2026-08-11): its `live-floatexp-1e30` screenshot on
+  the Linux rig shows clean seahorse filaments at the edges with a salt-and-pepper speckle field in
+  the centre — the same live deep-zoom aliasing, captured as a reviewable PNG. A good regression
+  witness for whenever the settled higher-ss pass lands.**
+
+- [ ] **The deep LIVE view is strongly hardware/OS-dependent — same view, very different render
+  (found via `--uitest`, 2026-08-11).** At the canonical seahorse point, `zoom=1e30×`,
+  `precision=164` bits (identical on both), the live floatexp view resolves completely differently
+  by machine: **RTX 3080 / Windows → reference orbit `len=30,379`, adaptive `eff_iter=22,180`,
+  frame all-black (in-set/capped)**; **RTX 3070 / Linux → reference `len=2,008,193` (66× longer),
+  `eff_iter=44,019`, rich structure.** Both were release builds; the 3080's was not debug-throttled
+  (frame ~17.8 ms). Two adaptive quantities diverge: (a) the **reference-orbit length** — a 66× gap
+  for the same point/precision is not explained by perf-scaled iteration alone; suspect the live
+  reference build is being cut off early on one setup (freeze-guard floor budget / time-slice —
+  see `design/reference-lifecycle.md`), so the perturbation base is far shorter and the deep view
+  can't resolve. (b) The **adaptive iteration budget** plateaus at 22k on the 3080 where 44k is
+  needed to escape this field. Net: a user on some hardware sees a black deep view where another
+  sees detail. Investigate whether the reference build starves on Windows/this GPU, and whether the
+  iter-boost plateau gives up too early on a near-interior deep field. (`--uitest`'s deep band is
+  WARN-not-FAIL precisely because of this hardware dependence; the harness's capture point is now
+  deterministic — it waits for the reference build to stop growing — but the built length itself
+  differs by machine, which is the bug.)
 
 
 
@@ -2868,6 +2890,26 @@ phase-1 scoring is already capped at `REF_SCORE_SCAN = 4096`):
   behaviour mid-video). UF sells network rendering as a paid headline; KF/F3 users script it by
   hand — a shipped script is a differentiator at near-zero risk. ⚠In-app cluster orchestration
   stays OUT (DESIGN.md was right): discovery/scheduling/fault-tolerance is a permanent tax.
+- [ ] ⭐**Render-by-segment for multi-machine parallelism: `--segments N --segment-index K`** (user,
+  2026-08-11). Split ONE tour render's whole frame sequence into `N` contiguous, non-overlapping,
+  gap-free ranges and render only range `K` — so `N` machines each run one range and the frames
+  union to exactly the full video. **Distinct from the existing `--segment NAME`** (which renders a
+  named *chapter*); this shards the *whole* timeline by frame count. **The correctness crux the user
+  called out is the boundary math — it MUST partition `[0, F)` exactly, no missing or duplicated
+  frames at the seams.** The one right way: compute the SAME total frame count `F` on every host
+  (`F = round(fps × total_duration)` from the identical resolved script — assert equal `--version`
+  and identical script hash across hosts first, per the farm item), then segment `k` (0-based,
+  `k ∈ [0, N)`) renders the half-open range **`[floor(k·F/N), floor((k+1)·F/N))`**. That formula is
+  what guarantees exactness: consecutive segments share a boundary (`floor((k+1)·F/N)` is the next
+  segment's start), the union is `[0, F)` with no overlap, and the `F mod N` remainder frames spread
+  one-each across the low segments — no off-by-one, no double-render, no gap. Frame NUMBERING stays
+  GLOBAL/absolute (each frame writes its true index `frame_%05d`), so a naive `--resume`/gather sees
+  one complete contiguous set and the MP4 mux at the end is unchanged. Reuse the atomic
+  write-temp-then-rename and the identical-version assertion from the farm item above. Add a
+  `--dry-run` that just prints this host's `[start, end)` and count so a farm script can verify the
+  shards tile before committing hours of GPU. ⚠Validate with a selftest that, for assorted `(F, N)`
+  incl. `F < N` and `F` not divisible by `N`, the `N` computed ranges are contiguous, disjoint, and
+  cover `[0, F)` exactly (a pure integer-math check — no rendering needed).
 - [ ] **By-keyframe distribution once exponential-map export lands** — one keyframe per factor
   of e, thousands of self-contained jobs assembled by zoomasm; the natural distribution grain
   (gated on the existing exp-map P1 item).

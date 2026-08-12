@@ -149,6 +149,13 @@ pub(crate) struct UiTest {
     // bar wavered between one and two lines at a fixed width (a repaint storm).
     sb_min: f32,
     sb_max: f32,
+    // Reference-orbit length last seen, and when it last changed — a live view screenshots only
+    // once this stops growing (the progressive reference build has finished), so a deep band lands
+    // on the SAME resolved frame regardless of how fast the machine builds it. (On a 3070 the ref
+    // reached 2.0M and showed structure; on a 3080 a capped-fraction gate fired the hard cap at a
+    // partial 30k ref and captured black — this makes it machine-independent.)
+    ref_len_seen: u32,
+    ref_changed_at: Instant,
 }
 
 // The canonical Seahorse-Valley deep-zoom point, to ~33 digits — self-similar structure from the
@@ -184,6 +191,8 @@ impl UiTest {
             gpu_name: None,
             sb_min: f32::INFINITY,
             sb_max: 0.0,
+            ref_len_seen: 0,
+            ref_changed_at: Instant::now(),
         }
     }
 }
@@ -277,7 +286,9 @@ impl FractadyneApp {
                 // re-lay-out. Hard caps keep a wedged build from ever hanging the harness.
                 let (settle_ms, hard_ms) = match step.kind {
                     StepKind::Screen(_) => (250u64, 3_000u64),
-                    StepKind::Live(_) => (2_500, 15_000),
+                    // Live: a generous hard cap so even a slow box's progressive reference build can
+                    // finish (ref-settled gate) before the cap forces a capture.
+                    StepKind::Live(_) => (2_500, 30_000),
                     StepKind::Window(_) => (1_800, 5_000),
                 };
                 ut.step_start = Instant::now();
@@ -285,6 +296,8 @@ impl FractadyneApp {
                 ut.hard_until = ut.step_start + std::time::Duration::from_millis(hard_ms);
                 ut.sb_min = f32::INFINITY;
                 ut.sb_max = 0.0;
+                ut.ref_len_seen = 0;
+                ut.ref_changed_at = ut.step_start;
                 ut.phase = Phase::Settle;
             }
             Phase::Settle => {
@@ -299,19 +312,25 @@ impl FractadyneApp {
                     ut.sb_min = ut.sb_min.min(sb);
                     ut.sb_max = ut.sb_max.max(sb);
                 }
+                // Track the progressive reference build: note when its length last changed, so we
+                // can tell when it has stopped growing (build finished).
+                let ol = self.perf.last_orbit_len;
+                if ol != ut.ref_len_seen {
+                    ut.ref_len_seen = ol;
+                    ut.ref_changed_at = now;
+                }
                 // A step is ready to screenshot once its minimum settle has elapsed AND, for a
-                // perturbation live view, the adaptive budget has climbed far enough that the view
-                // shows escaped structure (capped fraction below ~60% — otherwise it's a mid-ramp
-                // all-interior black frame). Direct mode has no reference and escapes immediately;
-                // screens/windows just wait out the settle. The hard cap forces progress regardless
-                // so a genuinely in-set view (or a wedge) can never hang the harness.
+                // perturbation live view, the reference orbit has FINISHED building — its length
+                // has held steady for ~700ms. Waiting on build completeness (not on capped
+                // fraction) makes the deep bands machine-independent: a slower box just takes longer
+                // to reach the same resolved frame instead of screenshotting a half-built black one.
+                // Direct mode has no reference and escapes immediately; screens/windows just wait
+                // out the settle. The hard cap forces progress so a wedge can never hang the harness.
+                let ref_settled = ol > 0
+                    && now.duration_since(ut.ref_changed_at) >= std::time::Duration::from_millis(700);
                 let ready = now >= ut.settle_until
                     && match &ut.steps[ut.idx].kind {
-                        StepKind::Live(v) => {
-                            v.expect == RenderMode::Direct
-                                || (self.perf.last_orbit_len > 0
-                                    && self.perf.capped_frac[0].is_some_and(|c| c < 0.6))
-                        }
+                        StepKind::Live(v) => v.expect == RenderMode::Direct || ref_settled,
                         _ => true,
                     };
                 if ready || now >= ut.hard_until {

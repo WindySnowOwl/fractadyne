@@ -16,6 +16,12 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **`--uitest` deep-band capture is now reference-complete** (beta.63). The live bands wait to
+  screenshot until the progressive reference orbit stops growing (build finished) rather than on a
+  capped-fraction heuristic, so the capture point is machine-independent. This surfaced a real
+  finding — the deep floatexp view's reference length and iteration budget vary sharply by hardware
+  (3080/Windows builds a 30k reference / 22k-iter budget → dark; 3070/Linux a 2M reference / 44k
+  budget → detailed, same point + precision) — now tracked in TODO's Open bugs.
 - **`--uitest`: scripted UI + live-render validation bundle** (beta.62). A new dev mode walks
   every UI screen (menus, all dialogs, panels, minimap, palette editor) and the live-render path at
   each mode band (Direct / df32 / floatexp), screenshots each via egui's viewport-screenshot
