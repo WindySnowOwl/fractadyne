@@ -362,15 +362,31 @@ impl FractadyneApp {
                 }
                 (diffs, maxd)
             };
-            // (view, mag, max_iter, chunk) — all direct mode (mag < 1e4).
-            let cases: &[(&str, &str, f64, u32, u32, &str)] = &[
-                ("-0.5", "0.0", 1.0, 2_000, 137, "home 1×, 2000 iter, chunk 137"),
-                (SX, SY, 2.0e3, 2_000, 137, "seahorse 2e3×, 2000 iter, chunk 137"),
-                ("-0.5", "0.0", 1.0, 50_000, 7_000, "home 1×, 50k iter, chunk 7000"),
+            // (view, mag, max_iter, chunk) — direct mode (mag < 1e4) AND df32 perturbation
+            // (mag ≥ 1e4; mode 0 resumes δz + the floatexp derivative + ref_n, rebasing across
+            // chunk boundaries). The truncated-orbit case forces an end-of-orbit rebase STORM —
+            // the 99-sample-reference grind regime of the 197k× spar, in miniature.
+            let cases: &[(&str, &str, f64, u32, u32, bool, &str)] = &[
+                ("-0.5", "0.0", 1.0, 2_000, 137, false, "home 1×, 2000 iter, chunk 137"),
+                (SX, SY, 2.0e3, 2_000, 137, false, "seahorse 2e3×, 2000 iter, chunk 137"),
+                ("-0.5", "0.0", 1.0, 50_000, 7_000, false, "home 1×, 50k iter, chunk 7000"),
+                (SX, SY, 2.0e4, 3_000, 517, false, "mode0 seahorse 2e4×, 3000 iter, chunk 517"),
+                (SX, SY, 2.0e4, 20_000, 700, true, "mode0 97-sample ref (rebase storm), 20k iter, chunk 700"),
             ];
-            for (cx, cy, mag, max_iter, chunk, desc) in cases {
+            for (cx, cy, mag, max_iter, chunk, truncate, desc) in cases {
                 let mut req = make(self, cx, cy, *mag);
                 req.max_iter = *max_iter;
+                if *truncate {
+                    // A deliberately useless reference: every pixel rebases at the orbit end
+                    // every ~97 steps, in BOTH renders — the chunked path must reproduce the
+                    // storm bit-for-bit across chunk boundaries.
+                    let short: Vec<[f32; 4]> = req.orbit.iter().take(97).copied().collect();
+                    req.orbit = std::sync::Arc::new(short);
+                    req.orbit_len = 97;
+                    req.sa_skip = 0;
+                    req.bla = std::sync::Arc::new(Vec::new());
+                    req.bla_on = 0;
+                }
                 let single = render(&req);
                 let chunked = fractadyne_gpu::render_iter_chunked(device, queue, &req, *chunk)
                     .map(|r| r.pixels)
@@ -1968,7 +1984,7 @@ impl FractadyneApp {
             // exactly ONE tile and then holds forever — which looks identical to the bug under
             // test. Start clear of the `frame_idx - interact_frame[other] <= 1` window too.
             self.perf.frame_idx = 100;
-            let build = |app: &mut Self| -> (u32, u32, u32) {
+            let build = |app: &mut Self| -> (u32, u32, u32, u32) {
                 app.perf.frame_idx += 1;
                 let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
                 let center = app.viewport.center_f64();
@@ -1979,7 +1995,10 @@ impl FractadyneApp {
                     center_bf, center, span, mag, l2, app.fractal, false, ITER, false, 1, PANEL,
                     0, None,
                 );
-                (pr.resolution[0], pr.resolution[1], pr.ss)
+                // A chunked frame's dispatch runs only its iteration RANGE — that is the count
+                // the budget bound applies to (the full ask is honoured across frames).
+                let disp_iter = pr.chunk_range.map(|[s, e]| e.saturating_sub(s).max(1)).unwrap_or(ITER);
+                (pr.resolution[0], pr.resolution[1], pr.ss, disp_iter)
             };
 
             // WARM UP until the reference orbit exists. `build_params` starts the bignum build
@@ -1999,8 +2018,9 @@ impl FractadyneApp {
 
             // Frame 1 ARMS the grid: it is the coarse single-dispatch full frame, so it MUST be
             // bounded — this is the half that keeps an unknown GPU safe.
-            let (arm_w, arm_h, arm_ss) = build(self);
-            let arm_steps = (arm_w as u64) * (arm_h as u64) * (arm_ss as u64).pow(2) * ITER as u64;
+            let (arm_w, arm_h, arm_ss, arm_iter) = build(self);
+            let arm_steps =
+                (arm_w as u64) * (arm_h as u64) * (arm_ss as u64).pow(2) * arm_iter as u64;
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "Live budget",
                 name: "unmeasured budget bounds the FIRST dispatch".into(),
@@ -2015,7 +2035,7 @@ impl FractadyneApp {
             // The grid needs one frame per tile; this geometry is ~15 tiles, so give it room.
             let mut best_w = arm_w;
             for _ in 0..40 {
-                let (w, _, _) = build(self);
+                let (w, _, _, _) = build(self);
                 best_w = best_w.max(w);
             }
             let frac = best_w as f64 / PANEL[0] as f64;

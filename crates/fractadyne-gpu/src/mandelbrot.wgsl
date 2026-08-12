@@ -1222,9 +1222,10 @@ fn fs_iterate(in: VsOut) -> FragOut {
 // pixel grinds the full count — crash-1786499093). `fs_iterate_chunk` iterates only
 // `[start_iter, min(end_iter, max_iter))` per dispatch, carrying per-pixel state between passes in
 // three ping-pong textures; `fs_resolve` converts settled state into the normal iteration
-// G-buffer that the color pass consumes. Scope: DIRECT mode, holomorphic formulas 0..3
-// (Mandelbrot / Multibrot — the crash case), aux off; everything else keeps single-pass
-// `fs_iterate`, whose behaviour is untouched.
+// G-buffer that the color pass consumes. Scope: DIRECT mode (1) and DF32-PERTURBATION mode (0),
+// holomorphic formulas 0..3, aux/glitch off; everything else keeps single-pass `fs_iterate`,
+// whose behaviour is untouched. Mode 0 carries δz + the floatexp derivative + ref_n between
+// passes, rebasing across chunk boundaries exactly as the single pass would.
 //
 // State layout (all Rgba32Float):
 //   st_z    = (z.re.hi,  z.re.lo,  z.im.hi,  z.im.lo)     — running value, full df32
@@ -1251,11 +1252,22 @@ const ST_RUNNING: f32 = 0.0;
 const ST_ESCAPED: f32 = 1.0;
 const ST_INTERIOR: f32 = 2.0;
 
-fn meta_iter(m: vec4<f32>) -> u32 {
-    return (u32(m.x) << 12u) | u32(m.y);
+// Unified info-channel layout (direct AND mode-0 perturbation):
+//   ch0 = status·2^20 + (iter >> 12)   — both small integers, exact in f32
+//   ch1 = iter & 4095
+//   ch2 = smit when ESCAPED; ref_n while RUNNING (mode 0; direct stores 0)
+//   ch3 = derivative EXPONENT (mode 0 carries D as floatexp; direct stores 0)
+// iter is split so each part stays a small exact integer — a u32 bitcast could be flushed as a
+// denormal by a render target. ref_n ≤ the 7.45M orbit cap and D.e are exact in f32 directly.
+fn info_iter(m: vec4<f32>) -> u32 {
+    let hi = u32(m.x) & 1048575u; // strip the status field
+    return (hi << 12u) | u32(m.y);
 }
-fn meta_pack(iter: u32, status: f32, smit: f32) -> vec4<f32> {
-    return vec4<f32>(f32(iter >> 12u), f32(iter & 4095u), status, smit);
+fn info_status(m: vec4<f32>) -> f32 {
+    return floor(m.x / 1048576.0);
+}
+fn info_pack(iter: u32, status: f32, ch2: f32, dexp: f32) -> vec4<f32> {
+    return vec4<f32>(status * 1048576.0 + f32(iter >> 12u), f32(iter & 4095u), ch2, dexp);
 }
 
 @fragment
@@ -1273,96 +1285,233 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
     let bail2 = 256.0 * 256.0;
     let zero = vec2<f32>(0.0, 0.0);
     let one = cset(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 0.0));
-    // Same point derivation as the direct branch: restore the true offset from the shared
-    // delta_exp scaling and place c (Mandelbrot) or z0 (Julia) at the texel.
     let dsc = exp2(f32(iu.delta_exp));
-    let pr = df_add(vec2<f32>(iu.center.x, iu.center.z), df_mul_f32(off_re, dsc));
-    let pi = df_add(vec2<f32>(iu.center.y, iu.center.w), df_mul_f32(off_im, dsc));
-    var z: Cdf;
-    var c: Cdf;
-    if (iu.julia == 1u) {
-        z = cset(pr, pi);
-        c = cset(vec2<f32>(iu.julia_c.x, iu.julia_c.z), vec2<f32>(iu.julia_c.y, iu.julia_c.w));
-    } else {
-        z = cset(zero, zero);
-        c = cset(pr, pi);
-    }
-    var dz: Cdf;
-    if (iu.julia == 1u) { dz = one; } else { dz = cset(zero, zero); }
-    var iter: u32 = 0u;
-    var status: f32 = ST_RUNNING;
-    var smit: f32 = 0.0;
+    let stop = min(iu.end_iter, iu.max_iter);
+    // Prior state, when resuming. The settled pass-through is common to both modes.
+    let p = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
+    var sz = vec4<f32>(0.0);
+    var sdz = vec4<f32>(0.0);
+    var sm = vec4<f32>(0.0);
     if (iu.start_iter > 0u) {
-        // Resume from the previous chunk's state (texel-aligned: state textures match the
-        // iteration texture's size, and this pass draws at that same size).
-        let p = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
-        let sz = textureLoad(st_z, p, 0);
-        let sdz = textureLoad(st_dz, p, 0);
-        let sm = textureLoad(st_meta, p, 0);
-        if (sm.z != ST_RUNNING) {
+        sz = textureLoad(st_z, p, 0);
+        sdz = textureLoad(st_dz, p, 0);
+        sm = textureLoad(st_meta, p, 0);
+        if (info_status(sm) != ST_RUNNING) {
             // Already settled (escaped or interior) — pass state through unchanged.
             return ChunkOut(sz, sdz, sm);
         }
-        z = cset(vec2<f32>(sz.x, sz.y), vec2<f32>(sz.z, sz.w));
-        dz = cset(vec2<f32>(sdz.x, sdz.y), vec2<f32>(sdz.z, sdz.w));
-        iter = meta_iter(sm);
-        smit = sm.w;
     }
-    var power_f = 2.0;
-    if (iu.formula == 1u) { power_f = 3.0; }
-    else if (iu.formula == 2u) { power_f = 4.0; }
-    else if (iu.formula == 3u) { power_f = 5.0; }
-    var zf = vec2<f32>(z.re.x, z.im.x);
-    var escaped = false;
-    let stop = min(iu.end_iter, iu.max_iter);
-    loop {
-        if (iter >= stop) { break; }
-        // Formula step + derivative update — the exact arithmetic and ORDER of the direct
-        // branch in fs_iterate (derivative uses the CURRENT z, before z advances), so a chunked
-        // render is bit-identical to the single-pass one.
-        var zn: Cdf;
-        if (iu.formula == 0u) {
-            zn = c_sqr(z);
-        } else if (iu.formula == 1u) {
-            zn = c_mul(c_sqr(z), z);
-        } else if (iu.formula == 2u) {
-            zn = c_sqr(c_sqr(z));
+
+    if (iu.mode == 1u) {
+        // ---------------- direct (mode 1): z carried in full df32 ----------------
+        // Same point derivation as fs_iterate's direct branch.
+        let pr = df_add(vec2<f32>(iu.center.x, iu.center.z), df_mul_f32(off_re, dsc));
+        let pi = df_add(vec2<f32>(iu.center.y, iu.center.w), df_mul_f32(off_im, dsc));
+        var z: Cdf;
+        var c: Cdf;
+        if (iu.julia == 1u) {
+            z = cset(pr, pi);
+            c = cset(vec2<f32>(iu.julia_c.x, iu.julia_c.z), vec2<f32>(iu.julia_c.y, iu.julia_c.w));
         } else {
-            zn = c_mul(c_sqr(c_sqr(z)), z);
+            z = cset(zero, zero);
+            c = cset(pr, pi);
         }
-        var fp: Cdf;
-        if (iu.formula == 0u) {
-            fp = c_two(z);
-        } else if (iu.formula == 1u) {
-            fp = c_scale(c_sqr(z), 3.0);
-        } else if (iu.formula == 2u) {
-            fp = c_scale(c_mul(c_sqr(z), z), 4.0);
+        var dz: Cdf;
+        if (iu.julia == 1u) { dz = one; } else { dz = cset(zero, zero); }
+        var iter: u32 = 0u;
+        var status: f32 = ST_RUNNING;
+        var smit: f32 = 0.0;
+        if (iu.start_iter > 0u) {
+            z = cset(vec2<f32>(sz.x, sz.y), vec2<f32>(sz.z, sz.w));
+            dz = cset(vec2<f32>(sdz.x, sdz.y), vec2<f32>(sdz.z, sdz.w));
+            iter = info_iter(sm);
+        }
+        var power_f = 2.0;
+        if (iu.formula == 1u) { power_f = 3.0; }
+        else if (iu.formula == 2u) { power_f = 4.0; }
+        else if (iu.formula == 3u) { power_f = 5.0; }
+        var zf = vec2<f32>(z.re.x, z.im.x);
+        var escaped = false;
+        loop {
+            if (iter >= stop) { break; }
+            // Formula step + derivative update — the exact arithmetic and ORDER of the direct
+            // branch in fs_iterate (derivative uses the CURRENT z, before z advances), so a
+            // chunked render is bit-identical to the single-pass one.
+            var zn: Cdf;
+            if (iu.formula == 0u) {
+                zn = c_sqr(z);
+            } else if (iu.formula == 1u) {
+                zn = c_mul(c_sqr(z), z);
+            } else if (iu.formula == 2u) {
+                zn = c_sqr(c_sqr(z));
+            } else {
+                zn = c_mul(c_sqr(c_sqr(z)), z);
+            }
+            var fp: Cdf;
+            if (iu.formula == 0u) {
+                fp = c_two(z);
+            } else if (iu.formula == 1u) {
+                fp = c_scale(c_sqr(z), 3.0);
+            } else if (iu.formula == 2u) {
+                fp = c_scale(c_mul(c_sqr(z), z), 4.0);
+            } else {
+                fp = c_scale(c_sqr(c_sqr(z)), 5.0);
+            }
+            dz = c_mul(fp, dz);
+            if (iu.julia == 0u) { dz = c_add(dz, one); }
+            zn = c_add(zn, c);
+            z = zn;
+            iter = iter + 1u;
+            zf = vec2<f32>(z.re.x, z.im.x);
+            if (dot(zf, zf) > bail2) { escaped = true; break; }
+        }
+        var smit_out = smit;
+        if (escaped) {
+            status = ST_ESCAPED;
+            let mag2 = dot(zf, zf);
+            let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+            smit_out = f32(iter) + 1.0 - nu;
+            esc_range_commit(smit_out);
+        } else if (iter >= iu.max_iter) {
+            status = ST_INTERIOR;
+            atomicAdd(&counters[CTR_MAXITER], 1u);
+        }
+        return ChunkOut(
+            vec4<f32>(z.re.x, z.re.y, z.im.x, z.im.y),
+            vec4<f32>(dz.re.x, dz.re.y, dz.im.x, dz.im.y),
+            info_pack(iter, status, smit_out, 0.0),
+        );
+    } else {
+        // ---------------- df32 perturbation (mode 0): δz vs the reference orbit ----------------
+        // The exact arithmetic and ORDER of fs_iterate's mode-0 branch (derivative first, using
+        // Z[ref_n] + δz; then the formula δ-update; then advance and rebase-check), restricted to
+        // the holomorphic formulas 0..3 with aux/glitch off — the app gates activation to that
+        // scope. State: δz (df32) in st_z, the floatexp derivative's MANTISSA in st_dz and its
+        // EXPONENT in info ch3, the reference position ref_n in info ch2 while running.
+        let pert = cset(
+            df_mul_f32(df_add(off_re, vec2<f32>(iu.ref_offset.x, iu.ref_offset.z)), dsc),
+            df_mul_f32(df_add(off_im, vec2<f32>(iu.ref_offset.y, iu.ref_offset.w)), dsc),
+        );
+        var dz: Cdf;
+        var dc: Cdf;
+        if (iu.julia == 1u) {
+            dz = pert;
+            dc = cset(zero, zero);
         } else {
-            fp = c_scale(c_sqr(c_sqr(z)), 5.0);
+            dz = cset(zero, zero);
+            dc = pert;
         }
-        dz = c_mul(fp, dz);
-        if (iu.julia == 0u) { dz = c_add(dz, one); }
-        zn = c_add(zn, c);
-        z = zn;
-        iter = iter + 1u;
-        zf = vec2<f32>(z.re.x, z.im.x);
-        if (dot(zf, zf) > bail2) { escaped = true; break; }
+        var D: Fe;
+        if (iu.julia == 1u) { D = fe_one(); } else { D = fe_zero(); }
+        var iter: u32 = 0u;
+        var ref_n: u32 = 0u;
+        var status: f32 = ST_RUNNING;
+        var smit: f32 = 0.0;
+        if (iu.start_iter > 0u) {
+            dz = cset(vec2<f32>(sz.x, sz.y), vec2<f32>(sz.z, sz.w));
+            D.m = cset(vec2<f32>(sdz.x, sdz.y), vec2<f32>(sdz.z, sdz.w));
+            D.e = i32(sm.w);
+            iter = info_iter(sm);
+            ref_n = u32(sm.z);
+        } else if (iu.sa_skip > 0u && iu.julia == 0u) {
+            // Series-approximation seeding, exactly as the single-pass branch does it.
+            let A = fe_norm(cset(iu.sa_a.xy, iu.sa_a.zw), iu.sa_a_exp);
+            let B = fe_norm(cset(iu.sa_b.xy, iu.sa_b.zw), iu.sa_b_exp);
+            let C = fe_norm(cset(iu.sa_c.xy, iu.sa_c.zw), iu.sa_c_exp);
+            let dcf = fe_from_cdf(dc);
+            let dc2 = fe_sqr(dcf);
+            let dc3 = fe_mul(dc2, dcf);
+            dz = fe_to_cdf(fe_add(fe_add(fe_mul(A, dcf), fe_mul(B, dc2)), fe_mul(C, dc3)));
+            D = fe_add(fe_add(A, fe_scale(fe_mul(B, dcf), 2.0)), fe_scale(fe_mul(C, dc2), 3.0));
+            iter = iu.sa_skip;
+            ref_n = iu.sa_skip;
+        }
+        var power_f = 2.0;
+        if (iu.formula == 1u) { power_f = 3.0; }
+        else if (iu.formula == 2u) { power_f = 4.0; }
+        else if (iu.formula == 3u) { power_f = 5.0; }
+        var zf = vec2<f32>(0.0, 0.0);
+        var z_full_re = vec2<f32>(0.0, 0.0); // full z, df32 — stored at escape for the resolve
+        var z_full_im = vec2<f32>(0.0, 0.0);
+        var escaped = false;
+        var n_rebase: u32 = 0u;
+        loop {
+            if (iter >= stop) { break; }
+            let z = orbit_cdf(reference[ref_n]);
+            // Derivative update using the CURRENT full z (before the δ advances).
+            let zfn = vec2<f32>(z.re.x + dz.re.x, z.im.x + dz.im.x);
+            let fp = deriv_factor(iu.formula, zfn);
+            D = fe_mul_c(D, fp.x, fp.y);
+            if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
+            // Formula δ-update (holomorphic families only — the app gates to formula ≤ 3).
+            if (iu.formula == 1u) {
+                let z2 = c_sqr(z); let dz2 = c_sqr(dz); let dz3 = c_mul(dz2, dz);
+                var t = c_add(c_scale(c_mul(z2, dz), 3.0), c_scale(c_mul(z, dz2), 3.0));
+                t = c_add(t, dz3); dz = c_add(t, dc);
+            } else if (iu.formula == 2u) {
+                let z2 = c_sqr(z); let z3 = c_mul(z2, z);
+                let dz2 = c_sqr(dz); let dz3 = c_mul(dz2, dz); let dz4 = c_sqr(dz2);
+                var t = c_scale(c_mul(z3, dz), 4.0);
+                t = c_add(t, c_scale(c_mul(z2, dz2), 6.0));
+                t = c_add(t, c_scale(c_mul(z, dz3), 4.0));
+                t = c_add(t, dz4); dz = c_add(t, dc);
+            } else if (iu.formula == 3u) {
+                let z2 = c_sqr(z); let z3 = c_mul(z2, z); let z4 = c_sqr(z2);
+                let dz2 = c_sqr(dz); let dz3 = c_mul(dz2, dz); let dz4 = c_sqr(dz2); let dz5 = c_mul(dz4, dz);
+                var t = c_scale(c_mul(z4, dz), 5.0);
+                t = c_add(t, c_scale(c_mul(z3, dz2), 10.0));
+                t = c_add(t, c_scale(c_mul(z2, dz3), 10.0));
+                t = c_add(t, c_scale(c_mul(z, dz4), 5.0));
+                t = c_add(t, dz5); dz = c_add(t, dc);
+            } else {
+                dz = c_add(c_add(c_two(c_mul(z, dz)), c_sqr(dz)), dc);
+            }
+            ref_n = ref_n + 1u;
+            iter = iter + 1u;
+            let rn = orbit_cdf(reference[ref_n]);
+            z_full_re = df_add(rn.re, dz.re);
+            z_full_im = df_add(rn.im, dz.im);
+            zf = vec2<f32>(z_full_re.x, z_full_im.x);
+            let z2m = dot(zf, zf);
+            if (z2m > bail2) { escaped = true; break; }
+            // Zhuoran rebase: the δ overtook the reference (or the orbit ran out) — fold the
+            // full value back onto the orbit start. Identical to the single-pass branch.
+            let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
+            if (z2m < dzmag2 || ref_n + 1u >= iu.orbit_len) {
+                n_rebase = n_rebase + 1u;
+                let r0 = orbit_cdf(reference[0]);
+                dz = cset(
+                    df_sub(z_full_re, r0.re),
+                    df_sub(z_full_im, r0.im),
+                );
+                ref_n = 0u;
+            }
+        }
+        ctr_commit(n_rebase, 0u, 0u);
+        if (escaped) {
+            status = ST_ESCAPED;
+            let mag2 = dot(zf, zf);
+            let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+            smit = f32(iter) + 1.0 - nu;
+            esc_range_commit(smit);
+            // At escape the δ is no longer needed — store the FULL z so the resolve can shade
+            // without knowing the reference, plus the derivative mantissa/exponent for DE.
+            return ChunkOut(
+                vec4<f32>(z_full_re.x, z_full_re.y, z_full_im.x, z_full_im.y),
+                vec4<f32>(D.m.re.x, D.m.re.y, D.m.im.x, D.m.im.y),
+                info_pack(iter, status, smit, f32(D.e)),
+            );
+        }
+        if (iter >= iu.max_iter) {
+            status = ST_INTERIOR;
+            atomicAdd(&counters[CTR_MAXITER], 1u);
+        }
+        return ChunkOut(
+            vec4<f32>(dz.re.x, dz.re.y, dz.im.x, dz.im.y),
+            vec4<f32>(D.m.re.x, D.m.re.y, D.m.im.x, D.m.im.y),
+            info_pack(iter, status, f32(ref_n), f32(D.e)),
+        );
     }
-    if (escaped) {
-        status = ST_ESCAPED;
-        let mag2 = dot(zf, zf);
-        let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
-        smit = f32(iter) + 1.0 - nu;
-        esc_range_commit(smit);
-    } else if (iter >= iu.max_iter) {
-        status = ST_INTERIOR;
-        atomicAdd(&counters[CTR_MAXITER], 1u);
-    }
-    return ChunkOut(
-        vec4<f32>(z.re.x, z.re.y, z.im.x, z.im.y),
-        vec4<f32>(dz.re.x, dz.re.y, dz.im.x, dz.im.y),
-        meta_pack(iter, status, smit),
-    );
 }
 
 // State → the normal iteration G-buffer (smooth/normal/DE + aux), same contract as fs_iterate's
@@ -1375,15 +1524,18 @@ fn fs_resolve(in: VsOut) -> FragOut {
     let sz = textureLoad(st_z, p, 0);
     let sdz = textureLoad(st_dz, p, 0);
     let sm = textureLoad(st_meta, p, 0);
-    if (sm.z != ST_ESCAPED) {
+    if (info_status(sm) != ST_ESCAPED) {
         return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);
     }
+    // Both modes store the FULL z (df32) in st_z at escape and the display derivative's mantissa
+    // in st_dz; info ch2 = smit, ch3 = the derivative's floatexp exponent (0 for direct, whose
+    // derivative is plain df32) — so the shading below is mode-agnostic and matches fs_iterate's.
     let zf = vec2<f32>(sz.x, sz.z);
     let d = vec2<f32>(sdz.x, sdz.z);
     let mag2 = dot(zf, zf);
     let nrm = slope_normal(zf, d);
-    let de = de_log2(mag2, d.x * d.x + d.y * d.y, 0.0);
-    return FragOut(vec4<f32>(sm.w, nrm.x, nrm.y, de), AUX_NONE);
+    let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w);
+    return FragOut(vec4<f32>(sm.z, nrm.x, nrm.y, de), AUX_NONE);
 }
 
 // ---------------- coloring pass (samples the iteration texture) ----------------

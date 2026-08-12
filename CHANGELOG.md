@@ -16,6 +16,19 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Iteration-range tiling extended to df32 perturbation — the pixellated spar view now renders
+  at native resolution** (beta.68). beta.67 left a view with a huge explicit count over a short
+  escaped reference resting at a safe but coarse resolution (79×62); the resumable chunked path now
+  covers mode 0 as well as Direct, carrying δz, the floatexp derivative, and the reference position
+  (rebasing across chunk boundaries) between bounded passes. The 197k× spar session at an explicit
+  4,000,000 iterations now climbs to full 1445×1134 progressively — ~400 self-sized chunks
+  (~12k iterations each, ~60 ms dispatches under the rebase-grind cap) — then rests quietly, with
+  zero device loss over a 3-minute soak. Verified bit-identical to the single-pass render offline,
+  including a deliberate 97-sample-reference rebase-storm case (5 `iter-chunk` checks, 0 texels
+  differ). Also fixed two latent gates in the beta.65 direct chunking: non-holomorphic formulas
+  (Tricorn/Ship/Celtic/Buffalo/Phoenix/Newton) and aux coloring methods (stripe/TIA/trap/
+  decomposition) now correctly fall back to the single-pass path instead of chunking with wrong
+  math. Floatexp (mode 2) chunking remains future work — its rebase-grind case stays safely capped.
 - **The startup pixellation deadlock is fixed, and the rebase-grind regime is capped safely**
   (beta.67). Restarting into a view with a huge explicit iteration count left the screen at giant
   pixels forever: the frame budget can only climb when a measurement arrives, a measurement needs a

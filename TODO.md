@@ -245,8 +245,16 @@ Mockups: [design/mockups/](design/mockups/).
   fixes live there) — verify any fix with the full suite + `--livetest` grand tour + a fresh-dir
   zoom-OUT-from-deep repro. Note: the device-lost handler DID write this report + should auto-restart
   (uptime 135.9s > 60s guard), so the app likely recovered the session.
-- [ ] ⭐**Extend iteration-range chunking to perturbation modes (0/2) — the native-res answer for
-  explicit mega-counts on short references (2026-08-12).** The beta.65 chunked path covers Direct
+- [~] ⭐**Extend iteration-range chunking to perturbation modes — MODE 0 DONE v0.2.40-beta.68;
+  mode 2 (floatexp) remains (2026-08-12).** Mode 0 ships: resumable δz (df32) + floatexp
+  derivative (mantissa in st_dz, exponent in info ch3) + ref_n, rebasing across chunk boundaries;
+  SA seeding replicated in the chunk init; bit-identical to single-pass incl. a 97-sample-ref
+  rebase-storm case. The user's 197k×/4M spar session renders native 1445×1134 progressively
+  (~400 × 12k-iter chunks under the rebase-grind cap) with zero device loss. Two beta.65 gate
+  misses fixed alongside (formula>3 and aux methods no longer chunk with wrong math). Remaining:
+  **mode 2 (floatexp)** — more state (δz as floatexp mantissa+exponent pairs, BLA-walk position),
+  needed only if the grind regime surfaces at extreme depth; its case stays safely capped by the
+  beta.67 rebase-grind allowance meanwhile. The beta.65 chunked path covers Direct
   only. The 197k× spar at an explicit 4M (user session): the reference escapes at 99 samples,
   `bla_skip=0`, so nominal = real ≈ 6.2e12 steps for a native frame — no single-dispatch budget can
   render it, and beta.67's rebase-grind cap rests the view at a safe 79×62 instead. Chunking the

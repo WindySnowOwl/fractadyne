@@ -1058,8 +1058,10 @@ pub fn render_iter_chunked(
 ) -> Result<ExportResult, GpuError> {
     // The chunk pass writes three Rgba32Float state attachments (48 bytes/sample); a device that
     // only granted the default 32 can't run it — fall back to the single-pass render (the caller's
-    // TDR exposure is then what it always was; the app requests 48 at device creation).
-    if req.mode != 1
+    // TDR exposure is then what it always was; the app requests 48 at device creation). Scope:
+    // direct (1) and df32 perturbation (0) with aux/glitch off, holomorphic formulas 0..3.
+    let mode_ok = req.mode == 1 || (req.mode == 0 && req.glitch_on == 0);
+    if !mode_ok
         || req.formula > 3
         || chunk_iters == 0
         || device.limits().max_color_attachment_bytes_per_sample < 48
@@ -1093,8 +1095,12 @@ pub fn render_iter_chunked(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    // Direct mode uses no reference, but the layout still binds one — a 1-slot placeholder.
-    let orbit_buf = make_orbit_buffer(device, 1);
+    // Mode 0 iterates against the reference orbit; direct mode binds a 1-slot placeholder.
+    check_orbit_binding(device, req.orbit.len(), 0)?;
+    let orbit_buf = make_orbit_buffer(device, req.orbit.len().max(1) as u32);
+    if !req.orbit.is_empty() {
+        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
+    }
     let counters_buf = crate::make_counters_buf(device);
     let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("chunked.counters_read"),
@@ -1125,7 +1131,7 @@ pub fn render_iter_chunked(
         res: [w as f32, h as f32],
         px_offset: [0.0, 0.0],
         max_iter: req.max_iter,
-        orbit_len: 0,
+        orbit_len: req.orbit_len, // mode 0 iterates + rebases against the reference
         mode: req.mode,
         formula: req.formula,
         julia: req.julia,
@@ -1134,7 +1140,7 @@ pub fn render_iter_chunked(
         stripe_freq: 1.0,
         trap_type: 0,
         aux_on: 0,
-        sa_skip: 0,
+        sa_skip: req.sa_skip, // mode 0's SA seeding is replicated in the chunk init
         glitch_on: 0,
         sa_a: req.sa_a,
         sa_b: req.sa_b,

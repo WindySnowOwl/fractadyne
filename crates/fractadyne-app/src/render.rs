@@ -2748,16 +2748,22 @@ impl FractadyneApp {
             tdr_allowed
         };
         let spx = (resolution[0] as u64) * (resolution[1] as u64);
-        // Iteration-range tiling eligibility: a DIRECT frame whose cost exceeds the budget even at
-        // ss=1 cannot be bounded by any spatial split — no reference, no BLA skip, so its cost axis
-        // is per-pixel iteration DEPTH, and both the resolution shrink below (floors 16×16) and the
-        // settle tiles (side floors 16) leave `16·16·iter` unbounded. That is the zoom-out-from-deep
-        // crash: a huge explicit count carried onto a shallow Direct view (crash-1786499093). Such a
-        // frame renders through the resumable CHUNKED path instead (see the block after the tile
-        // decision): full resolution, one bounded pass over an iteration RANGE per frame — so skip
-        // the shrink (it would defeat the full-res payoff) and the settle tiling (wrong axis).
-        let direct_over = RenderMode::select(fractal.supports_perturbation(), magnification)
-            .is_direct()
+        // Iteration-range tiling eligibility: a frame whose cost exceeds the budget even at ss=1
+        // and whose mode cannot skip — DIRECT (no reference at all) or DF32-PERTURBATION (no BLA
+        // in mode 0; every pixel walks the orbit step by step) — cannot be bounded by any spatial
+        // split: its cost axis is per-pixel iteration DEPTH, and both the resolution shrink below
+        // (floors 16×16) and the settle tiles (side floors 16) leave `16·16·iter` unbounded. That
+        // was the zoom-out-from-deep crash (Direct, crash-1786499093) and the 197k× spar's capped
+        // pixellation (mode 0, 99-sample reference at an explicit 4M). Such frames render through
+        // the resumable CHUNKED path instead (the block after the tile decision): full resolution,
+        // one bounded pass over an iteration RANGE per frame — so skip the shrink (it would defeat
+        // the full-res payoff) and the settle tiling (wrong axis). Gated to the chunk shader's
+        // scope: holomorphic formulas 0..3, aux coloring off (the chunk pass carries no orbit
+        // statistics), and mode 0 additionally glitch-free (live never runs glitch detection).
+        let chunk_mode = RenderMode::select(fractal.supports_perturbation(), magnification);
+        let chunk_over = (chunk_mode.is_direct() || chunk_mode == RenderMode::Df32Pert)
+            && fractal.formula_id() <= 3
+            && !self.coloring.color_method.needs_aux()
             && self.perf.chunk_ok
             && !offscreen
             && spx.saturating_mul(gpu_iter.max(1) as u64) > tdr_allowed;
@@ -2778,7 +2784,7 @@ impl FractadyneApp {
             let iter_cost = spx.saturating_mul(gpu_iter.max(1) as u64);
             // Every mode, not just floatexp — see `can_tile`. `tdr_allowed` is now measured on all
             // of them, so this is the same bound applied to the same kind of frame.
-            if iter_cost > tdr_allowed && !direct_over {
+            if iter_cost > tdr_allowed && !chunk_over {
                 let f = (tdr_allowed as f64 / iter_cost as f64).sqrt();
                 let r = [
                     ((resolution[0] as f64 * f) as u32).max(16),
@@ -2872,7 +2878,7 @@ impl FractadyneApp {
         // dispatch. `tile` travels into `MandelbrotParams` below; a real (non-hold) rect also
         // reprices the timing sink, since the timestamped dispatch is the tile, not a full frame.
         let mut tile: Option<[u32; 4]> = None;
-        if tiling && !direct_over {
+        if tiling && !chunk_over {
             let total = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
@@ -2896,7 +2902,7 @@ impl FractadyneApp {
                 self.perf.tile_pending[vidx] = false;
             }
         }
-        // ---- iteration-range tiling (direct mode; see `direct_over` above) ----
+        // ---- iteration-range tiling (direct + df32-perturbation; see `chunk_over` above) ----
         // One bounded resumable pass over [cursor, cursor+step) per frame at FULL resolution; the
         // cursor advances while the view holds still and restarts on any view change or
         // interaction. Escaped pixels appear progressively (a moving frame shows everything that
@@ -2906,7 +2912,7 @@ impl FractadyneApp {
         let mut chunk_range: Option<[u32; 2]> = None;
         let mut chunk_idx = 0u32;
         self.perf.chunk_pending[vs] = false;
-        if direct_over {
+        if chunk_over {
             let ss2 = (ss as u64).saturating_mul(ss as u64);
             // Per-frame iteration step that keeps this frame's dispatch inside the budget.
             let step = ((tdr_allowed / spx.saturating_mul(ss2).max(1)) as u32)
