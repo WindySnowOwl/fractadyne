@@ -199,6 +199,35 @@ Mockups: [design/mockups/](design/mockups/).
   the centre — the same live deep-zoom aliasing, captured as a reviewable PNG. A good regression
   witness for whenever the settled higher-ss pass lands.**
 
+- [ ] ⭐**PRIORITY (device loss, announce-blocking): zooming OUT from a deep view to a shallow one
+  loses the GPU (crash `crash-1786499093`, beta.64, 2026-08-12).** `wgpu device lost` on
+  `queue.submit`. Manifest: `LIVE mode=1 (Direct) 16x16 ss=1 iter=4000000 gpu_iter=4000000
+  steps=1.024e9 budget=4.000e8 since_mode_switch=0`. Mechanism: the user was deep at ~4M iterations
+  and zoomed out; the moment the view got shallow it switched to **Direct** mode, but the 4M count
+  came with it. Direct has **no reference and no BLA skip**, so every in-set (cardioid) pixel grinds
+  the full 4M — `16×16 × 4M = 1.0e9` real steps in ONE dispatch > the (just-reset bootstrap) budget
+  `4e8` → OS watchdog → device lost. The live cost-bound can only shrink resolution (floors at
+  16×16, render.rs:2724) and ss (floors at 1) — **never the iteration count** — so a `16×16 × 4M`
+  Direct frame is unbounded; the code comment at render.rs:2740 even says "could never bound the
+  ss=1 frame that lost the device anyway." Requires `auto_iter` OFF with a high explicit count (auto
+  applies `zoom_iter_cap` and would scale down when zooming out; explicit bypasses it — the A1 fix).
+  ⛔**FUNDAMENTAL CONFLICT found while fixing: `params.max_iter` IS `gpu_iter` IS the shader loop
+  bound — ONE value.** A1 (beta.53, selftest "explicit iteration count honoured verbatim" at 10× **
+  Direct**) guarantees that value == the user's explicit count; TDR-safety needs that same value
+  bounded. Can't do both for one number. A trial cap on `gpu_iter` in Direct mode (lossless at a
+  shallow view — escaped pixels already escaped, in-set stays black at any count) worked but flipped
+  the A1 selftest to `1562500` — proving the conflict, then reverted. **Two real options, a product
+  call:** (A) **Cap the explicit count at shallow Direct views** (apply `zoom_iter_cap`/the TDR
+  budget even to explicit counts when Direct) — small, lossless where it triggers, but A1 no longer
+  honours a huge count at a shallow view (update its selftest; a shallow view never needs millions)
+  ⚠may leave the frame at 16×16 until `auto_iter` re-adapts or the user lowers the count (the
+  "collapse to 16×16" the memory notes was previously seen/reverted). (B) **Iteration-range tiling**
+  — split the N-iteration loop across several dispatches carrying per-pixel state (z, iter) in
+  textures, so the full count is honoured AND each dispatch is bounded. The correct fix; a
+  significant shader change. ⚠Touches the delicate settle/budget path (device-loss + black-view
+  fixes live there) — verify any fix with the full suite + `--livetest` grand tour + a fresh-dir
+  zoom-OUT-from-deep repro. Note: the device-lost handler DID write this report + should auto-restart
+  (uptime 135.9s > 60s guard), so the app likely recovered the session.
 - [ ] **The deep LIVE view is strongly hardware/OS-dependent — same view, very different render
   (found via `--uitest`, 2026-08-11).** At the canonical seahorse point, `zoom=1e30×`,
   `precision=164` bits (identical on both), the live floatexp view resolves completely differently
