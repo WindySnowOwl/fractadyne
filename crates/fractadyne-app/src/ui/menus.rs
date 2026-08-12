@@ -831,37 +831,36 @@ impl FractadyneApp {
                     self.perf.iter_plateau[0],
                     self.perf.iter_exhausted[0],
                 );
-                // ⭐The diagnostic slot is ALWAYS present, reserved at a CONSTANT width — like the
-                // cursor readout above. The label comes and goes with live counters, and on a
-                // width where the bar just fits one line its arrival wrapped the bar to two,
-                // shrank the view, and forced a re-render — whose counters then moved the label
-                // again (the beta.58 reflow bug, third verse). Sized to the longest label via
-                // font metrics so DPI/scale can't drift it; blank when nothing binds.
+                // ⭐The diagnostic slot is ALWAYS the SAME WIDGET with the SAME METRICS — like the
+                // cursor readout above, but stricter. The label comes and goes with live counters;
+                // on a width where the bar just fits, its arrival wrapped the bar to two lines,
+                // which resized the central panel, which the resize-detector treated as an
+                // INTERACTION — bumping the view generation, tearing down the settle grid, and
+                // re-rendering forever (whose counters then moved the label again). A reserved
+                // empty `allocate_ui_with_layout` was NOT enough: an empty allocation's height in
+                // a wrapped layout differs from a rendered label's (measured 34.0↔41.3 px bar
+                // oscillation). So both states render the identical monospace label — the text
+                // padded to the widest variant's length when a diagnostic binds, and the widest
+                // variant drawn fully TRANSPARENT when none does. Same glyph count, same ⚠, same
+                // row metrics: the bar's layout is invariant by construction.
+                const SLOT: &str = "⚠ iter exhausted"; // the widest label variant
                 ui.separator();
-                let font = egui::TextStyle::Monospace.resolve(ui.style());
-                let reserve = ui.fonts(|f| {
-                    f.layout_no_wrap(
-                        "⚠ iter exhausted".to_string(),
-                        font.clone(),
-                        egui::Color32::WHITE,
-                    )
-                    .size()
-                });
-                ui.allocate_ui_with_layout(
-                    reserve,
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        if let Some((label, detail, severe)) = limit {
-                            let color = if severe {
-                                egui::Color32::from_rgb(0xE0, 0x6C, 0x60)
-                            } else {
-                                egui::Color32::from_rgb(0xE0, 0xA0, 0x30)
-                            };
-                            ui.colored_label(color, egui::RichText::new(label).monospace())
-                                .on_hover_text(detail);
-                        }
-                    },
-                );
+                let (text, color, detail) = match limit {
+                    Some((label, detail, severe)) => (
+                        format!("{label:<width$}", width = SLOT.chars().count()),
+                        if severe {
+                            egui::Color32::from_rgb(0xE0, 0x6C, 0x60)
+                        } else {
+                            egui::Color32::from_rgb(0xE0, 0xA0, 0x30)
+                        },
+                        Some(detail),
+                    ),
+                    None => (SLOT.to_string(), egui::Color32::TRANSPARENT, None),
+                };
+                let r = ui.colored_label(color, egui::RichText::new(text).monospace());
+                if let Some(detail) = detail {
+                    r.on_hover_text(detail);
+                }
             });
         });
         // Expose the panel's height so the UI-test harness can detect the status bar wrapping to a

@@ -575,6 +575,18 @@ impl FractadyneApp {
                 let (nw, nh) = (rect.width() as f64 * ppp, rect.height() as f64 * ppp);
                 if (nw - self.viewport.width_px).abs() > 0.5 || (nh - self.viewport.height_px).abs() > 0.5 {
                     self.pointer.settle_t[0] = ctx.input(|i| i.time);
+                    // Diagnostic (tile trace): a panel-size change on an untouched window means
+                    // some bar/panel reflowed — the phantom-interaction driver of settle-grid churn.
+                    if crate::diag::trace_on("tile") {
+                        crate::diag::trace(
+                            "tile",
+                            format!(
+                                "panel resize: {:.0}x{:.0} -> {nw:.0}x{nh:.0} (status_bar_h={:.1})",
+                                self.viewport.width_px, self.viewport.height_px,
+                                self.perf.status_bar_h
+                            ),
+                        );
+                    }
                     // FRACTADYNE_PERF=1: one record per RESIZE frame — the raw interval since the
                     // previous frame is the present cadence the OS resize stream sees. If these sit
                     // at ~vsync, the live-resize "stretch" is the endemic compositor scale of the
@@ -760,6 +772,20 @@ impl FractadyneApp {
                     || space;
                 if active {
                     self.pointer.settle_t[0] = now;
+                    // Diagnostic (tile trace): WHICH term claims activity — a phantom "interaction"
+                    // on an untouched view bumps the view generation and tears down settle grids.
+                    if crate::diag::trace_on("tile") {
+                        crate::diag::trace(
+                            "tile",
+                            format!(
+                                "active: zoom_vel={:.3e} dragged={} scroll_y={} space={}",
+                                self.pointer.zoom_vel,
+                                response.dragged() && !zoom_boxing && self.pointer.box_start.is_none(),
+                                scroll_y,
+                                space
+                            ),
+                        );
+                    }
                 }
                 let interacting = now - self.pointer.settle_t[0] < SETTLE_DELAY;
                 // Progressive settle AA (see `nav_and_draw`): refine 1×→2×→4×→… over settled frames.

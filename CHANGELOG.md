@@ -16,6 +16,18 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The status-bar/settle feedback loop is fully closed** (beta.71). beta.70's reserved slot was
+  not enough: an empty reserved allocation's height in a wrapped layout still differs from a
+  rendered label's (measured: the bar oscillating 34↔41 px), and every bar-height change resizes
+  the central panel — which the resize-detector rightly treats as an interaction, bumping the view
+  generation and tearing down the settle grid. The result was a perpetual loop: label toggles → bar
+  reflows → "interaction" → grid dies → re-render → counters flap → label toggles. The slot now
+  renders the IDENTICAL monospace widget in both states — the label padded to the widest variant's
+  length when a diagnostic binds, the widest variant drawn fully transparent when none does — so
+  the bar's layout is invariant by construction. Soak at the affected view: zero panel resizes
+  after startup, the settle grid completes to native and goes quiet. Two new gated diagnostics
+  (`FRACTADYNE_TRACE=tile`: "active:" and "panel resize:" lines) make any future phantom
+  interaction immediately visible.
 - **The status bar's limit diagnostic no longer reflows the view** (beta.70). The "⚠ iter capped"
   (and siblings) label appears and disappears with live counters; at a window width where the bar
   just fit one line, its arrival wrapped the bar to two, shrank the view, and forced a re-render —
