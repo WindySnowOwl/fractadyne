@@ -1461,6 +1461,25 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Script format — requested extensions (user, 2026-08-09)
 
+- [ ] **CSV point list → generated tour** (user, 2026-08-13): import a set of points from a CSV
+  and generate a full playback script from the list — building a multi-stop tour by hand means
+  writing one `[[keyframe]]` block per point, which "Tour from current view" (one destination)
+  doesn't help with. Shape:
+  - **CSV rows**: `re, im, zoom` minimum; optional columns picked up by header name — `name`
+    (keyframe id + caption), `max_iter`, `hold`, `t`/`duration`, `ease`, `palette`. Full-precision
+    decimal strings for re/im (the same parser the script's `re`/`im` fields use — never f64).
+  - **Optional script HEADER file**: a tour-script fragment (TOML) providing everything that
+    isn't per-point — `[render]`, `[playback]` (pace/loop), `[[palette]]` defs, annotations,
+    default per-glide seconds — which the generator merges with the generated `[[keyframe]]`
+    list. No header ⇒ sensible defaults (the "Tour from current view" generator's).
+  - **Generation semantics**: points become keyframes in row order; timing from `t` when given,
+    else accumulated from a default glide duration (depth-scaled like `dive_secs`) + `hold`.
+    Deep-to-deep hops should pan at LOW zoom between distant points (the generator's existing
+    "zoom out → recenter → dive" pattern per hop) rather than panning at depth — reuse
+    `build_dive_script`'s phase logic per point.
+  - **Surface**: CLI `--tour-from-csv points.csv [--header base.toml] [--out tour.toml]` first
+    (scriptable, testable — generator round-trip selftest like the dive generator's); a GUI
+    entry (Tools) can follow.
 - [x] ⭐**Tour renders alias at depth — FIXED v0.2.40-beta.54: `[render] normalize` with temporal smoothing.**
   (user-reviewed 2026-08-10 on the 4K grand-tour frames: "large regions that simply look like
   noise" from ~e50 on). Verified by A/B at the same centre/depth/iterations: default coloring =
@@ -2674,9 +2693,16 @@ for fun, informative value, and ease of use.
 
 ## Feature gaps vs. peer renderers (survey 2026-08-05: KF2 / Fraktaler-3 / Ultra Fractal / XaoS / Imagina)
 
-- [ ] **KF `.map` palette import** — cheapest high-value gap: connects Fractadyne to the large
-  existing KF palette culture (plain 256-entry RGB text files). Import into the custom-gradient
-  editor; offer as a palette source alongside presets.
+- [ ] **Palette import from other sources** (scope broadened per user 2026-08-13; was "KF `.map`
+  only") — connect Fractadyne to the existing palette cultures instead of growing presets alone.
+  Import into the custom-gradient editor and offer as a palette source alongside presets:
+  - **KF / Fractint `.map`** (plain 256-entry RGB text) — cheapest, largest culture; still
+    blocked on gathering reference `.map` files + KF-rendered images to verify colours against.
+  - **UltraFractal `.ugr` gradients** (text, gradient stops — closer to our stop-based custom
+    palette than `.map`'s baked 256 entries).
+  - **Generic fallbacks**: a plain hex list / CSS-style stop list paste box in the gradient
+    editor (covers "I found a palette on the web" without a format war), and image-strip
+    sampling (load a PNG gradient strip, sample N stops) if it stays cheap.
 - [ ] **Custom formula / coloring scripting** — Ultra Fractal's killer feature (user-written
   formulas, layered coloring, transform stacks, community formula DB). Ours: 10 fixed families +
   6 coloring methods. A big lift (needs a shader-codegen or interpreter story for the deep-zoom
