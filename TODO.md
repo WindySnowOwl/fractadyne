@@ -185,6 +185,40 @@ Ordered by how fast a stranger hits them.
         disk) and the per-keyframe budgets; independent of the per-frame cost/memory bounds
         (Open bugs) since it only reorders *which* frame renders when, not how each is costed.
 
+### T — Testing gaps (external review 2026-08-13, evaluated + sequenced)
+
+The review's frame: strong at the integration level (F3 corpus = cross-implementation oracle to
+4.6e1105×, livetest live-vs-truth with drift baselines, `--uitest`/`--juliadive` scenario
+harnesses, bench-matrix determinism), thin at the unit/property level — and structurally blind
+to HARDWARE VARIANCE (everything blessed on one RTX 3080). Sequenced by announce value:
+
+1. [ ] ⭐**Shader-vs-oracle primitive harness + golden tolerance mode** — the B6/hardware pair.
+   (a) A dev harness (e.g. `--gputest`) evaluates the WGSL df32/floatexp primitives (add, mul,
+   square, split/renorm, the floatexp exponent ops) on chosen inputs — including the regimes the
+   17 goldens never visit — against the CPU implementations, reporting per-op max error. This is
+   the tool that would LOCALIZE the open 3080-vs-3070 deep-view divergence instead of inferring
+   it from screenshots. (b) Goldens gain a TOLERANCE mode for non-reference GPUs (exact match
+   stays for the blessed 3080): cross-vendor FMA contraction/rounding legitimately differ, so
+   exact-elsewhere would cry wolf and mask real breaks. Together these make "run the self-test
+   on your GPU" (the Diagnostics dialog plan) meaningful on stranger hardware.
+2. [ ] **Parser panic-fuzz extension** — strangers on fractalforums WILL send files. Extend the
+   existing `fuzz_metadata_parser_panic_free` pattern (random + mutated bytes must not panic,
+   in-tree, no nightly/cargo-fuzz friction on this setup) to `.fdn`, `.kfr`, and the tour-TOML
+   read/resolve path. Before the announce.
+3. [ ] **Export writer unit tests** — the byte-level writers have zero direct coverage (the
+   goldens exercise the pipeline incidentally, end-to-end): PNG encode + metadata embed →
+   read-back roundtrip (pixels AND metadata), EXR write/read, the resume-vetting reader.
+   Pure functions, no GPU, half a day; corruption there eats user work silently.
+4. [ ] **proptest adoption** on the pure functions whose properties are already stated in
+   prose: `progressive_frame_order` (any range + seeds ⇒ exact permutation),
+   `segment_range` (shards tile [0,F) exactly), `budget_step` (slow always shrinks; clamps
+   hold; convergence reachable). One dev-dependency; the `controller_props` are currently
+   example-based despite the name.
+5. [ ] **Coverage measurement** as a local script (`cargo llvm-cov`) — CI is manual-only, so a
+   local report is the honest version; today's gaps are inferred from structure, not measured.
+   Deprioritized: egui_kittest widget tests (highest cost; the scenario harnesses have caught
+   the recent UI bugs faster than widget-level tests would have).
+
 ### E — (b) fundamentally missing features: assessed, nothing blocking
 
 Nothing *fundamental* is absent for a deep-zoom explorer. The honest gaps, all defensible to name
