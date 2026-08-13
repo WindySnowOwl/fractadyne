@@ -227,6 +227,24 @@ Mockups: [design/mockups/](design/mockups/).
   over this. Repro: `--livetest tours\grand-tour.toml --size 480x270 --segment gauntlet` with
   `FRACTADYNE_TRACE=gpu` (harness budget-walk "lt" lines now exist, beta.80).
 
+- [ ] ⭐**Julia direct-mode precision collapses from ~300× — speckle, then iteration-plateau
+  patches (found 2026-08-13 while fixing the dual-Julia freeze; the freeze had been MASKING it
+  by showing a stale-but-clean frozen texture instead).** Deterministic repro: `--juliadive`
+  (dev harness, boots dual + zooms the Julia in-app with per-octave screenshots). Evidence: at
+  J 134× the Julia renders crisp; at ~530× it decorrelates into salt-and-pepper speckle; by
+  ~1000–2000× it congeals into hard-edged patches (pixels sharing one quantized orbit) with a
+  bilinear bullseye at the anchor. The main view is immune at the same magnifications.
+  Suspected mechanism: a JULIA carries its per-pixel identity only in `z0` (c is constant),
+  while Mandelbrot re-injects the df32 per-pixel `c` EVERY iteration — so any f32 truncation in
+  the direct shader's iteration arithmetic swamps the Julia's per-pixel δ (pixel step ~6e-9 at
+  500× vs ~2e-7 f32 rounding noise at |z|≈2) but leaves Mandelbrot's intact. Fix directions,
+  in preference order: (a) verify/repair the direct shader's df32 iteration path for the
+  z0-varying case; (b) lower the Julia view's perturbation threshold (Julia references — the
+  z0 orbit under fixed c — already exist; mode select's 1e4 assumes direct-df32 exactness that
+  only holds for the Mandelbrot form); (c) at minimum warn. Also verify against an OFFLINE
+  render of the same Julia view (the export path renders dual/julia) to pin exactly where live
+  and truth diverge.
+
 - [~] **Speckle at deep, high-detail views — DIAGNOSED, it is ANTI-ALIASING, not a bug (user
   report 2026-08-10).** At the three-spar ~1e103× the live view (ss2, ~1236 px wide) shows uniform
   speckle with one clean central diamond. ⛔**My first diagnosis (f32 smooth-iteration precision)

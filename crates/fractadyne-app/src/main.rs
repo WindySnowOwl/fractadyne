@@ -2336,6 +2336,10 @@ struct FractadyneApp {
     /// CLI `--uitest [DIR]`: scripted walk through every UI screen + the live-render bands,
     /// screenshotting each and writing a review bundle (see `mod uitest`), then exit.
     uitest: Option<uitest::UiTest>,
+    /// CLI `--juliadive [DIR]`: dev harness — dual view, continuous in-app Julia zoom to ~1400×
+    /// with periodic screenshots (see `uitest::JuliaDive`). Reproduces the dual-view Julia motion
+    /// path deterministically (synthetic OS input proved unreliable for wheel/focus).
+    juliadive: Option<uitest::JuliaDive>,
     /// CLI `--play FILE`: start the GUI with this tour already playing in the LIVE view. The only
     /// way to exercise the on-screen playback path (present, watchdog budget, tiled settle) from a
     /// command line — a headless harness cannot reach it.
@@ -2450,14 +2454,14 @@ struct FractadyneApp {
     /// `playback_ref_prefetch`). Purely additive — a missed window is dropped and the reactive
     /// rebuild path covers it. Cleared on tour start/end and `invalidate_refs`.
     ref_prefetch: Vec<crate::render::RefPrefetchSlot>,
-    /// One dedicated build for the NEXT HOLD keyframe's reference at the hold's own explicit ask
-    /// and destination precision, started DURING the glide toward it. The ordinary lookahead
-    /// deliberately builds with the short motion cap (`LIVE_REF_CAP`), so a deep hold's 25–90 s
-    /// reference extension could not even START until the camera arrived and `interacting`
-    /// dropped — the hold then spent its whole window clamped at the previous ask (livetest
-    /// e82: 20.6 s stale; e94: 100% capped-black at the stale 2M orbit). See
+    /// Dedicated builds (≤2: one ready + one building) for upcoming HOLD keyframes' references
+    /// at each hold's own explicit ask and destination precision, started DURING the glide. The
+    /// ordinary lookahead deliberately builds with the short motion cap (`LIVE_REF_CAP`), so a
+    /// deep hold's 8–90 s reference extension could not even START until the camera arrived and
+    /// `interacting` dropped — the hold then spent its whole window clamped at the previous ask
+    /// (livetest e82: 20.6 s stale; e94: 100% capped-black at the stale 2M orbit). See
     /// `playback_hold_prefetch`.
-    hold_prefetch: Option<crate::render::HoldPrefetch>,
+    hold_prefetch: Vec<crate::render::HoldPrefetch>,
     /// Last snapshot used for change detection (debounced auto-save).
     last_state: fractadyne_state::SessionState,
     /// App-time (s) of the last change while unsaved; `None` when clean.
@@ -2650,6 +2654,13 @@ impl FractadyneApp {
         } else {
             None
         };
+        let juliadive = if args.iter().any(|a| a == "--juliadive") {
+            let out =
+                val("--juliadive").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
+            Some(uitest::JuliaDive::new(out))
+        } else {
+            None
+        };
         let play_tour = val("--play").map(std::path::PathBuf::from);
         let livetest_quick = args.iter().any(|a| a == "--quick");
         let frametest_steps = val("--steps").and_then(|s| s.parse().ok()).unwrap_or(40u32);
@@ -2797,6 +2808,7 @@ impl FractadyneApp {
             divetest,
             livetest,
             uitest,
+            juliadive,
             livetest_quick,
             play_tour,
             play_tour_done: false,
@@ -2919,7 +2931,7 @@ impl FractadyneApp {
             ref_save_pending: None,
             recompute_rx: [None, None],
             ref_prefetch: Vec::new(),
-            hold_prefetch: None,
+            hold_prefetch: Vec::new(),
             last_state: s,
             dirty_since: None,
         };
@@ -3274,7 +3286,7 @@ impl FractadyneApp {
         // Same for the playback lookahead: a prefetched reference for the old fractal/params
         // must never install after a change.
         self.ref_prefetch.clear();
-        self.hold_prefetch = None;
+        self.hold_prefetch.clear();
         // A new view's iteration needs are unrelated — restart the adaptive budget probe.
         self.perf.iter_boost = [1.0, 1.0];
         self.perf.iter_probe = [None, None];
@@ -5442,6 +5454,10 @@ impl eframe::App for FractadyneApp {
         // update(); it screenshots and exits itself once the walk is done. Gated on GPU being up.
         if self.uitest.is_some() && gpu.is_some() {
             self.uitest_frame(ctx, gpu_name.as_deref());
+        }
+        // --juliadive: dev harness for the dual-view Julia motion path (same in-loop pattern).
+        if self.juliadive.is_some() && gpu.is_some() {
+            self.juliadive_frame(ctx);
         }
 
         // Ctrl+S → quick export (no dialog) to the last folder.

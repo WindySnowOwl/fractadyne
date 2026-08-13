@@ -1208,19 +1208,25 @@ impl FractadyneApp {
     /// showed extensions during the approach returning UNCHANGED in ~5 ms (`n >= max_iter`
     /// against the 256k motion cap; the 2M orbit was grandfathered, never growable mid-glide).
     ///
-    /// One dedicated slot, independent of the queue and its in-flight bound: find the next hold
-    /// with an explicit ask above the motion cap that the cached orbit cannot serve, and build it
-    /// at DESTINATION precision/ask with the cached orbit as an extension seed. Install inside
-    /// the hold window (the destination centre may differ from the current view mid-glide, so
-    /// installing early would hand the live path an out-of-view reference); a build that misses
-    /// its window is orphaned exactly like a missed queue slot.
+    /// Up to TWO entries, independent of the queue and its in-flight bound — one READY result
+    /// waiting for its window while the NEXT hold's build already runs. With a single slot held
+    /// until install, each hold's build could not start until the previous hold was served, so
+    /// mid-gauntlet holds (every ~20 tour-seconds, asks growing 500k → 1.2M → 2M) got only the
+    /// inter-hold gap of lead where the build needs 8–20 s of wall clock — hold-e72 lost that
+    /// race on a livetest re-run (captured at the PREVIOUS ask's 508k clamp, 27.6% black). One
+    /// build in flight at a time (a bignum build fans out across cores); install inside the hold
+    /// window (the destination centre may differ from the current view mid-glide, so installing
+    /// early would hand the live path an out-of-view reference); a build that misses its window
+    /// is orphaned exactly like a missed queue slot.
     fn playback_hold_prefetch(&mut self, pb: &crate::scripting::Playback, e: f64) {
         const LN_2: f64 = std::f64::consts::LN_2;
         /// How far ahead (tour seconds) a hold build may start. Deep extensions cost 25–90 s of
         /// wall clock; the pacer only ever DILATES tour time, so the real lead is at least this.
         const HOLD_PREFETCH_LEAD_S: f64 = 120.0;
-        // Poll → install-in-window → expire the dedicated slot.
-        if let Some(mut hp) = self.hold_prefetch.take() {
+        // Poll every entry, install the one whose window the clock is inside, drop expired ones.
+        let mut entries = std::mem::take(&mut self.hold_prefetch);
+        let mut install: Option<RecomputeResult> = None;
+        entries.retain_mut(|hp| {
             if let Some(rx) = hp.slot.rx.take() {
                 match rx.try_recv() {
                     Ok(res) => hp.slot.ready = Some(res),
@@ -1229,31 +1235,52 @@ impl FractadyneApp {
                 }
             }
             if e > hp.until {
-                // Window passed unserved — drop; the reactive path at the (already past) hold
-                // covered what it could, and the next call finds the next hold.
-            } else if hp.slot.ready.is_some() && e >= hp.at {
+                // Window passed unserved — the reactive path at the (already past) hold covered
+                // what it could.
+                return false;
+            }
+            if hp.slot.ready.is_some() && e >= hp.at && install.is_none() {
                 let res = hp.slot.ready.take().unwrap();
-                if res.prec >= self.viewport.precision {
-                    if crate::diag::trace_on("ref") {
-                        crate::diag::trace(
-                            "ref",
-                            format!(
-                                "hold-prefetch install: len={} prec={} (window {:.1}..{:.1}s)",
-                                res.orbit_len, res.prec, hp.at, hp.until
-                            ),
-                        );
-                    }
-                    self.install_recompute(0, res);
+                if crate::diag::trace_on("ref") {
+                    crate::diag::trace(
+                        "ref",
+                        format!(
+                            "hold-prefetch install: len={} prec={} (window {:.1}..{:.1}s)",
+                            res.orbit_len, res.prec, hp.at, hp.until
+                        ),
+                    );
                 }
-            } else if hp.slot.ready.is_some() || hp.slot.rx.is_some() {
-                self.hold_prefetch = Some(hp); // building, or ready and waiting for the window
+                install = Some(res);
+                return false;
+            }
+            hp.slot.ready.is_some() || hp.slot.rx.is_some()
+        });
+        self.hold_prefetch = entries;
+        if let Some(res) = install {
+            if res.prec >= self.viewport.precision {
+                self.install_recompute(0, res);
             }
         }
-        if self.hold_prefetch.is_some() || self.dual || self.julia_mode {
+        // Spawn the next build: at most 3 entries (up to two READY results waiting for their
+        // windows + one building), only one BUILDING at a time, never a duplicate of a hold
+        // already covered. Two was one window too tight: the next build could not start until
+        // the previous hold INSTALLED, so a deep mid-gauntlet build (e72: ~52 s wall) raced the
+        // checkpoint against the oracle renders' all-core reference scoring and lost by seconds
+        // — deterministically, twice, at 27.6% black on the full livetest.
+        if self.dual
+            || self.julia_mode
+            || self.hold_prefetch.len() >= 3
+            || self.hold_prefetch.iter().any(|h| h.slot.rx.is_some())
+        {
             return;
         }
-        // Next hold worth a dedicated build.
-        let Some((at, until)) = pb.next_hold_after(e) else { return };
+        // The next hold NOT already covered: search past the latest covered window.
+        let from = self
+            .hold_prefetch
+            .iter()
+            .map(|h| h.until)
+            .fold(e, f64::max);
+        let Some((at, until)) = pb.next_hold_after(from) else { return };
         if at - e > HOLD_PREFETCH_LEAD_S {
             return;
         }
@@ -1270,10 +1297,17 @@ impl FractadyneApp {
             return;
         }
         // Nothing to gain when the cache already serves the ask (or escaped below it — complete
-        // references are final; pixels past the escape rebase).
+        // references are final; pixels past the escape rebase). A READY-but-uninstalled entry
+        // counts as prospective cache.
+        let best_ready = self
+            .hold_prefetch
+            .iter()
+            .filter_map(|h| h.slot.ready.as_ref())
+            .max_by_key(|r| r.orbit_len);
+        let have_len = best_ready.map(|r| r.orbit_len).unwrap_or(0).max(self.ref_cache[0].orbit_len);
         let vc = &self.ref_cache[0];
         let needed = vc.ref_pt.is_none()
-            || (vc.partial && ref_build_iter.min(orbit_len_cap()) > vc.orbit_len);
+            || (vc.partial && ref_build_iter.min(orbit_len_cap()) > have_len);
         if !needed {
             return;
         }
@@ -1295,14 +1329,32 @@ impl FractadyneApp {
             && !self.coloring.color_method.blocks_iter_skip()
             && self.render_cfg.series_approx
             && !bla_will_build;
-        let reuse = match (vc.ref_pt.clone(), vc.orbit_tail.clone()) {
-            (Some(point), Some(tail)) if !vc.orbit.is_empty() => Some(ReuseRef {
-                point,
-                prefix: vc.orbit.clone(),
+        // Seed the extension from the LONGEST orbit available — a ready-but-uninstalled entry
+        // beats the cache (e.g. e82's 2M build seeding from e72's ready 1.2M instead of redoing
+        // the 508k→1.2M stretch from the installed cache).
+        let seed_ready = self
+            .hold_prefetch
+            .iter()
+            .filter_map(|h| h.slot.ready.as_ref())
+            .filter(|r| r.orbit_len > vc.orbit_len)
+            .max_by_key(|r| r.orbit_len);
+        let reuse = if let Some(r) = seed_ready {
+            r.orbit_tail.clone().map(|tail| ReuseRef {
+                point: r.rp.clone(),
+                prefix: r.orbit.clone(),
                 tail,
-                prec: vc.orbit_prec,
-            }),
-            _ => None,
+                prec: r.prec,
+            })
+        } else {
+            match (vc.ref_pt.clone(), vc.orbit_tail.clone()) {
+                (Some(point), Some(tail)) if !vc.orbit.is_empty() => Some(ReuseRef {
+                    point,
+                    prefix: vc.orbit.clone(),
+                    tail,
+                    prec: vc.orbit_prec,
+                }),
+                _ => None,
+            }
         };
         let inputs = RecomputeInputs {
             origin: "hold",
@@ -1338,7 +1390,7 @@ impl FractadyneApp {
             let _ = tx.send(recompute_worker(inputs));
         });
         self.perf.build_count += 1;
-        self.hold_prefetch = Some(HoldPrefetch {
+        self.hold_prefetch.push(HoldPrefetch {
             at,
             until,
             slot: RefPrefetchSlot { rx: Some(rx), ready: None, target_l2 },
@@ -2706,9 +2758,19 @@ impl FractadyneApp {
         // amplifying the pan translation by 1/fit (the "drag is exaggerated / double acceleration"
         // at deep zoom). Keep native resolution on a held frame so fit ≈ 1; a mode-0 REFRESH frame
         // (reuse_hold false) re-iterates and is res-scaled like the old behaviour, so it stays cheap.
+        // ⚠A missing reference forces reprojection ONLY in modes that NEED one. Direct mode
+        // renders referenceless, so `ref_pt.is_none()` is its PERMANENT state — with the old
+        // unconditional term, a direct view that never crossed a perturbation depth (the
+        // dual-view Julia panel is the standing case: Julia builds no reference) was
+        // `will_reproject` forever: the view generation bumped every frame, the settle never
+        // armed, and after the first settle captured a frozen texture the panel latched onto
+        // reprojecting IT — zooming magnified that one stale texture into giant blocks with a
+        // bilinear-smeared bullseye at the anchor, and it never re-iterated again (2026-08-13
+        // dual-Julia report; reproduced deterministically by `--juliadive`: 375/375 frames
+        // `reproj=true`, `iterates=false` from frame 3).
         let will_reproject = reproject.is_some()
             || reuse_hold
-            || self.ref_cache[view_id as usize].ref_pt.is_none();
+            || (is_pert && self.ref_cache[view_id as usize].ref_pt.is_none());
         let resolution = if res_scale < 1.0 && !will_reproject {
             [
                 ((resolution[0] as f64 * res_scale) as u32).max(16),

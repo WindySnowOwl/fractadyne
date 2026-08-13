@@ -16,6 +16,17 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The dual-view Julia no longer freezes onto a stale texture** (beta.87). Reported as
+  "blockiness and an odd artifact at the center while zooming the Julia": the missing-reference
+  test in the live path forced reprojection unconditionally — but a Direct-mode view never
+  builds a reference, so the Julia panel (which renders Direct at these depths) was
+  `will_reproject` from its very first frame, never re-iterated after its first settle, and
+  every zoom just magnified that one frozen texture into giant blocks with a bilinear-smeared
+  bullseye at the anchor. The test now applies only to modes that need a reference. Reproduced
+  and verified with a new dev harness (`--juliadive`: boots dual view and zooms the Julia
+  in-app with per-octave screenshots — synthetic OS input proved unreliable). Remaining,
+  now-unmasked and filed separately: Julia direct-mode precision degrades from ~300×
+  (speckle → patches) — the freeze had been hiding it behind stale-but-clean frames.
 - **Share location joins Navigate; menus no longer drive the dual-view Julia** (beta.86).
   "Share location…" moved from File to Navigate — it shares *where you are*, kin to Import .kfr
   and Go to location. And a real bug from the reorg review pass: in dual view, moving the cursor

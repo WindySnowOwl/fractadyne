@@ -3211,7 +3211,7 @@ impl FractadyneApp {
         if !pb.started {
             pb.started = true;
             self.ref_prefetch.clear();
-            self.hold_prefetch = None;
+            self.hold_prefetch.clear();
         }
         // Pipeline-paced clock: at extreme depth the async reference rebuild can fall behind a fast
         // dive (a fresh `best_reference` costs seconds past ~1e400×) — the screen then reprojects an

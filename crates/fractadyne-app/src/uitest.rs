@@ -197,6 +197,139 @@ impl UiTest {
     }
 }
 
+/// `--juliadive [DIR]` — dev harness for the DUAL-VIEW JULIA motion path (reported 2026-08-13:
+/// blockiness + a center artifact while zooming the Julia panel). Boots into dual view with a
+/// pinned spiral `c` and the reporter's settings (explicit 2000 iterations, prefer-detail on),
+/// then zooms the Julia viewport in-app at ~2 octaves/s to ~2^11 (≈2000×), screenshotting every
+/// octave IN MOTION plus a stopped and a settled frame. In-app because synthetic OS input
+/// (wheel/focus routing) proved unreliable; this drives the same viewport + interaction stamps
+/// the real wheel path does.
+pub(crate) struct JuliaDive {
+    out_dir: PathBuf,
+    frame: u64,
+    /// Next log2-magnification at which to take an in-motion screenshot.
+    next_shot_l2: f64,
+    /// A screenshot request is in flight (the reply arrives as `Event::Screenshot` next frame).
+    pending: Option<String>,
+    /// Set when the target depth is reached: the settle clock for the final two shots.
+    stopped_at: Option<Instant>,
+    settled_shot_done: bool,
+}
+
+impl JuliaDive {
+    pub(crate) fn new(out_base: Option<PathBuf>) -> Self {
+        let base = out_base.unwrap_or_else(|| PathBuf::from("logs"));
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let out_dir = base.join(format!("juliadive-{}", crate::FractadyneApp::file_stamp(secs)));
+        if let Err(e) = std::fs::create_dir_all(&out_dir) {
+            eprintln!("--juliadive: could not create {}: {e}", out_dir.display());
+        }
+        Self {
+            out_dir,
+            frame: 0,
+            next_shot_l2: 3.0,
+            pending: None,
+            stopped_at: None,
+            settled_shot_done: false,
+        }
+    }
+}
+
+impl FractadyneApp {
+    pub(crate) fn juliadive_frame(&mut self, ctx: &egui::Context) {
+        const TARGET_L2: f64 = 11.0; // ≈ 2000×, past the reported 1041×
+        const OCTAVES_PER_S: f64 = 2.0;
+        let Some(jd) = self.juliadive.as_mut() else { return };
+        jd.frame += 1;
+        if jd.frame == 1 {
+            // The reporter's setup: dual view, a BOUNDARY Julia c (dense structure at every
+            // depth — a bulb-interior c goes smooth by ~1000× and hides resolution artifacts),
+            // PINNED so the cursor is irrelevant, explicit 2000 iterations, prefer-detail on.
+            self.dual = true;
+            self.julia_c = (-0.743643887037158, 0.131825904205311);
+            self.julia_pin = Some(self.julia_c);
+            self.render_cfg.max_iter = 2000;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.prefer_detail = true;
+            self.julia_viewport.reset();
+            self.julia_viewport.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
+            self.julia_viewport.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
+            self.invalidate_refs();
+            ctx.request_repaint();
+            return;
+        }
+        // Harvest a pending screenshot reply.
+        if let Some(name) = self.juliadive.as_ref().and_then(|j| j.pending.clone()) {
+            let shot = ctx.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(image) = shot {
+                let (w, h) = (image.size[0] as u32, image.size[1] as u32);
+                let mut bytes = Vec::with_capacity(image.pixels.len() * 4);
+                for px in &image.pixels {
+                    bytes.extend_from_slice(&[px.r(), px.g(), px.b(), px.a()]);
+                }
+                let jd = self.juliadive.as_mut().unwrap();
+                let path = jd.out_dir.join(&name);
+                if let Err(e) = fractadyne_export::write_png_rgba8(&path, w, h, &bytes, None) {
+                    eprintln!("--juliadive: write {name}: {e}");
+                } else {
+                    println!("--juliadive: {name}");
+                }
+                let was_settled = name.starts_with("settled");
+                jd.pending = None;
+                if was_settled {
+                    println!("--juliadive: done → {}", jd.out_dir.display());
+                    crate::exit(0);
+                }
+            } else {
+                ctx.request_repaint();
+                return; // wait for the reply before advancing the zoom (shot = one moment)
+            }
+        }
+        let l2 = self.julia_viewport.log2_magnification();
+        let jd = self.juliadive.as_mut().unwrap();
+        if jd.stopped_at.is_none() {
+            if l2 < TARGET_L2 {
+                // Zoom about the Julia panel centre, with the same interaction stamp the real
+                // wheel/Space path applies (settle_t[1] ⇒ view 1 is "interacting").
+                let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
+                let factor = (-(OCTAVES_PER_S * std::f64::consts::LN_2) * dt).exp();
+                let (w, h) = (self.julia_viewport.width_px, self.julia_viewport.height_px);
+                self.julia_viewport.zoom_at(w * 0.5, h * 0.5, factor);
+                self.pointer.settle_t[1] = ctx.input(|i| i.time);
+                let jd = self.juliadive.as_mut().unwrap();
+                if l2 >= jd.next_shot_l2 && jd.pending.is_none() {
+                    let name = format!("mid-l2-{:04.1}.png", l2);
+                    jd.pending = Some(name);
+                    jd.next_shot_l2 += 1.0;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
+                        egui::UserData::default(),
+                    ));
+                }
+            } else {
+                jd.stopped_at = Some(Instant::now());
+                jd.pending = Some("stopped.png".into());
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            }
+        } else if !jd.settled_shot_done
+            && jd.pending.is_none()
+            && jd.stopped_at.unwrap().elapsed().as_secs_f64() > 3.0
+        {
+            jd.settled_shot_done = true;
+            jd.pending = Some("settled.png".into());
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        ctx.request_repaint();
+    }
+}
+
 /// Default staging base: the mounted Windows share when present (the dev box reads it directly),
 /// else the repo/cwd `logs/` dir.
 fn default_out_base() -> PathBuf {
