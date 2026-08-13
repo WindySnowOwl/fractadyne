@@ -1,8 +1,8 @@
 {
-  "version": "0.2.40-beta.50 (build 1319)",
+  "version": "0.2.40-beta.80 (build 1468)",
   "gpu": "NVIDIA GeForce RTX 3080",
-  "utc": "2026-08-10 02:35:09 UTC",
-  "tour": "tours/grand-tour.toml",
+  "utc": "2026-08-13 12:17:09 UTC",
+  "tour": "tours\\grand-tour.toml",
   "size": [
     480,
     270
@@ -12,7 +12,7 @@
       "verdict": "ok",
       "gpu_iter": 3000,
       "eff_iter": 3000,
-      "boost": 1.6,
+      "boost": 1.0,
       "orbit_len": 3090,
       "partial": false,
       "res": [
@@ -26,7 +26,7 @@
       "verdict": "ok",
       "gpu_iter": 6000,
       "eff_iter": 6000,
-      "boost": 1.6,
+      "boost": 1.0,
       "orbit_len": 3090,
       "partial": false,
       "res": [
@@ -38,17 +38,17 @@
     },
     "back-out-1": {
       "verdict": "ok",
-      "gpu_iter": 2000,
-      "eff_iter": 2000,
-      "boost": 1.6,
+      "gpu_iter": 2001,
+      "eff_iter": 2001,
+      "boost": 1.0,
       "orbit_len": 3090,
       "partial": false,
       "res": [
         480,
         270
       ],
-      "live_black": 0.09416666666666666,
-      "truth_black": 0.09416666666666666
+      "live_black": 0.09450617283950617,
+      "truth_black": 0.09450617283950617
     },
     "back-out-2": {
       "verdict": "ok",
@@ -82,7 +82,7 @@
       "verdict": "ok",
       "gpu_iter": 3000,
       "eff_iter": 3000,
-      "boost": 1.6,
+      "boost": 1.0,
       "orbit_len": 3090,
       "partial": false,
       "res": [
@@ -96,7 +96,7 @@
       "verdict": "ok",
       "gpu_iter": 6000,
       "eff_iter": 6000,
-      "boost": 1.6,
+      "boost": 1.0,
       "orbit_len": 3090,
       "partial": false,
       "res": [
@@ -110,7 +110,7 @@
       "verdict": "ok",
       "gpu_iter": 3000,
       "eff_iter": 3000,
-      "boost": 1.6,
+      "boost": 1.0,
       "orbit_len": 3090,
       "partial": false,
       "res": [
@@ -152,7 +152,7 @@
       "verdict": "ok",
       "gpu_iter": 4000,
       "eff_iter": 4000,
-      "boost": 1.6,
+      "boost": 1.0,
       "orbit_len": 3090,
       "partial": false,
       "res": [
@@ -164,94 +164,94 @@
     },
     "hold-e55": {
       "verdict": "ok",
-      "gpu_iter": 124856,
+      "gpu_iter": 250000,
       "eff_iter": 250000,
-      "boost": 2.5600000000000005,
+      "boost": 1.0,
       "orbit_len": 258193,
       "partial": true,
       "res": [
         480,
         270
       ],
-      "live_black": 7.71604938271605e-6,
+      "live_black": 0.0,
       "truth_black": 0.0
     },
     "hold-e61": {
       "verdict": "ok",
-      "gpu_iter": 344800,
+      "gpu_iter": 400000,
       "eff_iter": 400000,
-      "boost": 6.400000000000001,
+      "boost": 1.0,
       "orbit_len": 408193,
       "partial": true,
       "res": [
         480,
         270
       ],
-      "live_black": 0.00016975308641975308,
+      "live_black": 0.0001080246913580247,
       "truth_black": 0.0001080246913580247
     },
     "hold-e63": {
       "verdict": "ok",
       "gpu_iter": 500000,
       "eff_iter": 500000,
-      "boost": 10.240000000000002,
+      "boost": 1.0,
       "orbit_len": 508193,
       "partial": true,
       "res": [
-        480,
-        270
+        395,
+        222
       ],
-      "live_black": 0.014853395061728395,
-      "truth_black": 0.014853395061728395
+      "live_black": 0.0149161820047896,
+      "truth_black": 0.0149161820047896
     },
     "hold-e72": {
       "verdict": "ok",
-      "gpu_iter": 647464,
+      "gpu_iter": 1200000,
       "eff_iter": 1200000,
-      "boost": 10.240000000000002,
+      "boost": 1.0,
       "orbit_len": 1208193,
       "partial": true,
       "res": [
-        480,
-        270
+        295,
+        166
       ],
       "live_black": 0.0,
       "truth_black": 0.0
     },
     "hold-e82": {
       "verdict": "ok",
-      "gpu_iter": 1836364,
+      "gpu_iter": 2000000,
       "eff_iter": 2000000,
-      "boost": 25.600000000000005,
+      "boost": 1.0,
       "orbit_len": 2008193,
       "partial": true,
       "res": [
-        480,
-        270
+        24,
+        16
       ],
       "live_black": 0.0,
       "truth_black": 0.0
     },
     "hold-e94": {
-      "verdict": "warn",
+      "verdict": "ok",
       "gpu_iter": 4000000,
       "eff_iter": 4000000,
-      "boost": 64.00000000000001,
-      "orbit_len": 3631055,
-      "partial": false,
+      "boost": 1.0,
+      "orbit_len": 4008193,
+      "partial": true,
       "res": [
-        365,
-        205
+        16,
+        16
       ],
-      "live_black": 0.0027129969929836286,
-      "truth_black": 0.0027129969929836286
+      "live_black": 0.00390625,
+      "truth_black": 0.00390625
     },
     "open": {
       "verdict": "ok",
       "gpu_iter": 2000,
       "eff_iter": 2000,
       "boost": 1.0,
-      "orbit_len": 3631055,
+      "orbit_len": 0,
       "partial": false,
       "res": [
         480,
@@ -279,7 +279,7 @@
       "gpu_iter": 4000,
       "eff_iter": 4000,
       "boost": 1.0,
-      "orbit_len": 3631055,
+      "orbit_len": 0,
       "partial": false,
       "res": [
         480,
@@ -292,21 +292,21 @@
       "verdict": "ok",
       "gpu_iter": 12000,
       "eff_iter": 12000,
-      "boost": 1.6,
+      "boost": 1.0,
       "orbit_len": 3090,
       "partial": false,
       "res": [
-        100,
-        56
+        480,
+        270
       ],
-      "live_black": 0.6991071428571428,
-      "truth_black": 0.6996428571428571
+      "live_black": 0.7008024691358025,
+      "truth_black": 0.7007484567901234
     },
     "triple-spiral": {
       "verdict": "ok",
       "gpu_iter": 4000,
       "eff_iter": 4000,
-      "boost": 1.6,
+      "boost": 1.0,
       "orbit_len": 3090,
       "partial": false,
       "res": [

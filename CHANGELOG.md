@@ -16,6 +16,19 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Deep holds get their reference built BEFORE the camera arrives — the grand-tour livetest is
+  clean for the first time ever (22 ok / 0 warn / 0 FAIL)** (beta.81). A hold keyframe with a
+  large explicit `max_iter` needs a reference extension costing 25–90 s of bignum — and it could
+  not even START until arrival: the lookahead deliberately builds with the short motion cap, and
+  the reactive path's settled extension only fires once `interacting` drops at the hold, so the
+  hold spent its whole window clamped at the previous keyframe's ask (hold-e82: a 20.6 s-stale
+  reprojection; hold-e94: 100% capped-black at the stale 2M orbit while its reference was still
+  building). A dedicated hold-prefetch slot now finds the next hold with an explicit ask past the
+  motion cap, builds it at destination precision/ask during the glide (seeded from the cached
+  orbit), and installs it inside the hold window. hold-e94 now renders BETTER than the old
+  baseline (its higher-precision reference survives to the full 4M ask instead of a
+  precision-cliff escape at 3.63M); baseline re-blessed. Also: every reference install is now
+  traceable (`FRACTADYNE_TRACE=ref` "install v0:" lines).
 - **The explicit budget respects latency floors — beta.79's deep-hold regression fixed**
   (beta.80). `--livetest` (its first run since beta.69) caught beta.79's 200 ms explicit target
   collapsing the grand tour's six deep holds from 480×270 to 16×16: a 16×16 mode-2 dispatch at a

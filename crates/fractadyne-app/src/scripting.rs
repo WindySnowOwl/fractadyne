@@ -1416,6 +1416,14 @@ impl Playback {
     /// A hold is the only part of a tour where the view is meant to be LOOKED at rather than
     /// travelled through, which is why it gets settled rendering and (under `Settled` pacing) as
     /// much time as it needs.
+    /// The next keyframe HOLD whose window starts after `e`: its `(at, until)` in tour seconds.
+    /// The hold-prefetch (`playback_hold_prefetch`) uses this to start the hold's full-ask
+    /// reference build DURING the glide toward it; `sample(at)` supplies the destination camera
+    /// and per-keyframe iteration ask, so `Kf` itself stays private to this module.
+    pub(crate) fn next_hold_after(&self, e: f64) -> Option<(f64, f64)> {
+        self.kfs.iter().find(|k| k.at > e && k.hold > 0.0).map(|k| (k.at, k.at + k.hold))
+    }
+
     pub(crate) fn holding_at(&self, e: f64) -> (bool, usize) {
         let n = self.kfs.len();
         let mut i = 0;
@@ -3091,6 +3099,7 @@ impl FractadyneApp {
         if !pb.started {
             pb.started = true;
             self.ref_prefetch.clear();
+            self.hold_prefetch = None;
         }
         // Pipeline-paced clock: at extreme depth the async reference rebuild can fall behind a fast
         // dive (a fresh `best_reference` costs seconds past ~1e400×) — the screen then reprojects an

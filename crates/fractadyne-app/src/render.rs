@@ -240,6 +240,16 @@ pub(crate) struct RefPrefetchSlot {
     target_l2: f64,
 }
 
+/// The NEXT HOLD keyframe's reference, building at the hold's own explicit ask and destination
+/// precision DURING the glide toward it — see [`FractadyneApp::playback_hold_prefetch`].
+pub(crate) struct HoldPrefetch {
+    /// The hold's window `[at, until]` in tour seconds: the build installs from `at` (or as soon
+    /// as it lands inside the window) and is orphaned once `until` passes unserved.
+    at: f64,
+    until: f64,
+    slot: RefPrefetchSlot,
+}
+
 /// Owned, `Send` inputs for an off-thread reference recompute.
 struct RecomputeInputs {
     /// Which path asked for this build (`live` / `lookahead` / `export`), for the breadcrumb only.
@@ -824,6 +834,23 @@ impl FractadyneApp {
                 ),
             );
         }
+        // Every install, traced: the e82/e94 livetest drift shows a reference that was BUILT
+        // ~100 s before the checkpoint yet absent at capture — whether it was never installed,
+        // installed late, or installed and then overwritten by a shorter rebuild is exactly what
+        // this line disambiguates.
+        if crate::diag::trace_on("ref") {
+            crate::diag::trace(
+                "ref",
+                format!(
+                    "install v{vi}: len={} partial={} prec={} (was len={} partial={})",
+                    res.orbit_len,
+                    res.partial,
+                    res.prec,
+                    self.ref_cache[vi].orbit_len,
+                    self.ref_cache[vi].partial,
+                ),
+            );
+        }
         // A reference install that changes the pixel COST MODEL discontinuously invalidates the
         // measured frame budget. The budget controller sizes dispatches in NOMINAL steps against
         // measured GPU time; BLA/SA skip-effectiveness and the partial-clamp make real cost per
@@ -1024,6 +1051,9 @@ impl FractadyneApp {
                 self.install_recompute(0, res); // seamless swap — no reactive stall
             }
         }
+        // The upcoming HOLD's full-ask reference (the queue above deliberately builds with the
+        // short motion cap — see `playback_hold_prefetch` for why holds need their own build).
+        self.playback_hold_prefetch(pb, e);
         // 3) Top the queue back up (single main view only; a future fractal/julia/dual switch
         //    means a prefetched reference wouldn't match — stop at those segments).
         if self.dual || self.julia_mode {
@@ -1163,6 +1193,156 @@ impl FractadyneApp {
             self.perf.prefetch_count += 1;
             self.ref_prefetch.push(RefPrefetchSlot { rx: Some(rx), ready: None, target_l2 });
         }
+    }
+
+    /// Build the NEXT HOLD keyframe's reference at the hold's OWN explicit ask, during the glide.
+    ///
+    /// The ordinary lookahead queue keeps the short motion cap (`live_orbit_cap(true, ..)` =
+    /// `LIVE_REF_CAP`) so its stream of 0.5-octave builds stays cheap — correct for the dive, and
+    /// exactly wrong for a deep HOLD with a large per-keyframe `max_iter`: the reference
+    /// extension a hold needs (2M → 4M ≈ 25–90 s of bignum at deep precision) could not even
+    /// START until the camera arrived and `interacting` dropped, so the hold spent its window
+    /// clamped at the previous ask. Measured on the grand-tour gauntlet (livetest, 2026-08-13):
+    /// hold-e82 showed a 20.6 s-stale reprojection; hold-e94 rendered 100% capped-black at the
+    /// stale 2M orbit while its 3.63M reference was still building — and at capture the trace
+    /// showed extensions during the approach returning UNCHANGED in ~5 ms (`n >= max_iter`
+    /// against the 256k motion cap; the 2M orbit was grandfathered, never growable mid-glide).
+    ///
+    /// One dedicated slot, independent of the queue and its in-flight bound: find the next hold
+    /// with an explicit ask above the motion cap that the cached orbit cannot serve, and build it
+    /// at DESTINATION precision/ask with the cached orbit as an extension seed. Install inside
+    /// the hold window (the destination centre may differ from the current view mid-glide, so
+    /// installing early would hand the live path an out-of-view reference); a build that misses
+    /// its window is orphaned exactly like a missed queue slot.
+    fn playback_hold_prefetch(&mut self, pb: &crate::scripting::Playback, e: f64) {
+        const LN_2: f64 = std::f64::consts::LN_2;
+        /// How far ahead (tour seconds) a hold build may start. Deep extensions cost 25–90 s of
+        /// wall clock; the pacer only ever DILATES tour time, so the real lead is at least this.
+        const HOLD_PREFETCH_LEAD_S: f64 = 120.0;
+        // Poll → install-in-window → expire the dedicated slot.
+        if let Some(mut hp) = self.hold_prefetch.take() {
+            if let Some(rx) = hp.slot.rx.take() {
+                match rx.try_recv() {
+                    Ok(res) => hp.slot.ready = Some(res),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => hp.slot.rx = Some(rx),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {} // worker died → culled
+                }
+            }
+            if e > hp.until {
+                // Window passed unserved — drop; the reactive path at the (already past) hold
+                // covered what it could, and the next call finds the next hold.
+            } else if hp.slot.ready.is_some() && e >= hp.at {
+                let res = hp.slot.ready.take().unwrap();
+                if res.prec >= self.viewport.precision {
+                    if crate::diag::trace_on("ref") {
+                        crate::diag::trace(
+                            "ref",
+                            format!(
+                                "hold-prefetch install: len={} prec={} (window {:.1}..{:.1}s)",
+                                res.orbit_len, res.prec, hp.at, hp.until
+                            ),
+                        );
+                    }
+                    self.install_recompute(0, res);
+                }
+            } else if hp.slot.ready.is_some() || hp.slot.rx.is_some() {
+                self.hold_prefetch = Some(hp); // building, or ready and waiting for the window
+            }
+        }
+        if self.hold_prefetch.is_some() || self.dual || self.julia_mode {
+            return;
+        }
+        // Next hold worth a dedicated build.
+        let Some((at, until)) = pb.next_hold_after(e) else { return };
+        if at - e > HOLD_PREFETCH_LEAD_S {
+            return;
+        }
+        let s = pb.sample((at + 1e-3).min(pb.total));
+        if s.fractal != self.fractal || s.julia || s.dual {
+            return;
+        }
+        // Only holds with an EXPLICIT per-keyframe ask past the motion cap need this: auto-iter
+        // holds climb via the boost (extensions amortized), and asks under the cap are what the
+        // ordinary lookahead already builds.
+        let Some(ask) = s.max_iter else { return };
+        let ref_build_iter = ask.saturating_add(32 * 256).min(crate::MAX_ITER_LIMIT);
+        if ref_build_iter <= crate::LIVE_REF_CAP {
+            return;
+        }
+        // Nothing to gain when the cache already serves the ask (or escaped below it — complete
+        // references are final; pixels past the escape rebase).
+        let vc = &self.ref_cache[0];
+        let needed = vc.ref_pt.is_none()
+            || (vc.partial && ref_build_iter.min(orbit_len_cap()) > vc.orbit_len);
+        if !needed {
+            return;
+        }
+        let target_l2 = s.logmag / LN_2;
+        let mut vp = fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
+        vp.set_center_log2mag(s.cx, s.cy, target_l2);
+        let mag = vp.magnification();
+        let mode = RenderMode::select(self.fractal.supports_perturbation(), mag);
+        if mode.is_direct() {
+            return;
+        }
+        let l2 = vp.log2_magnification();
+        let precision = fractadyne_core::precision_for_octaves(l2.max(0.0).ceil() as u64);
+        let span = vp.complex_span_fe();
+        let scale = vp.gpu_scale();
+        let (span_mantissa, delta_exp) = (scale.span_mantissa, scale.delta_exp);
+        let bla_will_build = self.bla_eligible(mode, false);
+        let do_sa = self.fractal.formula_id() <= 3
+            && !self.coloring.color_method.blocks_iter_skip()
+            && self.render_cfg.series_approx
+            && !bla_will_build;
+        let reuse = match (vc.ref_pt.clone(), vc.orbit_tail.clone()) {
+            (Some(point), Some(tail)) if !vc.orbit.is_empty() => Some(ReuseRef {
+                point,
+                prefix: vc.orbit.clone(),
+                tail,
+                prec: vc.orbit_prec,
+            }),
+            _ => None,
+        };
+        let inputs = RecomputeInputs {
+            origin: "hold",
+            center_bf: [vp.center_x.clone(), vp.center_y.clone()],
+            span,
+            span_mantissa,
+            delta_exp,
+            gpu_iter: ref_build_iter,
+            // SETTLED semantics — the whole point: the hold's ask, not the motion cap.
+            orbit_len_cap: live_orbit_cap(false, ref_build_iter),
+            precision,
+            julia: false,
+            formula: self.fractal.formula_id(),
+            julia_c: self.julia_c,
+            do_sa,
+            bla_dc_max: bla_will_build
+                .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
+            stripe_freq: self.coloring.stripe_freq as f64,
+            trap_type: self.coloring.trap_type as u32,
+            reuse,
+        };
+        if crate::diag::trace_on("ref") {
+            crate::diag::trace(
+                "ref",
+                format!(
+                    "hold-prefetch spawn: ask={ask} (build {ref_build_iter}) for hold at {at:.1}s \
+                     (e={e:.1}, target 2^{target_l2:.0})"
+                ),
+            );
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(recompute_worker(inputs));
+        });
+        self.perf.build_count += 1;
+        self.hold_prefetch = Some(HoldPrefetch {
+            at,
+            until,
+            slot: RefPrefetchSlot { rx: Some(rx), ready: None, target_l2 },
+        });
     }
 
     /// Snapshot view 0's FULL reference for on-disk persistence (see `refcache_persist`), or `None`

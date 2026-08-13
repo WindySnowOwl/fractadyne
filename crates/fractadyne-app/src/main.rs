@@ -440,6 +440,10 @@ pub(crate) struct TourRenderUi {
     pub(crate) resume: bool,
     /// Latest line from the child (its "frame N/M …" progress), and the finished-run summary.
     pub(crate) progress: String,
+    /// `(done, planned)` parsed from the latest progress line — drives the progress BAR; the raw
+    /// line stays underneath for the elapsed/left/fps detail. `None` until the first frame line
+    /// (or when a line doesn't parse — the bar simply holds its last state).
+    pub(crate) progress_frames: Option<(u64, u64)>,
     /// First error line the child wrote to stderr — the reason a render stopped.
     pub(crate) error: Option<String>,
     pub(crate) status: Option<String>,
@@ -463,6 +467,7 @@ impl Default for TourRenderUi {
             overwrite: true,
             resume: false,
             progress: String::new(),
+            progress_frames: None,
             error: None,
             status: None,
             child: None,
@@ -2441,6 +2446,14 @@ struct FractadyneApp {
     /// `playback_ref_prefetch`). Purely additive — a missed window is dropped and the reactive
     /// rebuild path covers it. Cleared on tour start/end and `invalidate_refs`.
     ref_prefetch: Vec<crate::render::RefPrefetchSlot>,
+    /// One dedicated build for the NEXT HOLD keyframe's reference at the hold's own explicit ask
+    /// and destination precision, started DURING the glide toward it. The ordinary lookahead
+    /// deliberately builds with the short motion cap (`LIVE_REF_CAP`), so a deep hold's 25–90 s
+    /// reference extension could not even START until the camera arrived and `interacting`
+    /// dropped — the hold then spent its whole window clamped at the previous ask (livetest
+    /// e82: 20.6 s stale; e94: 100% capped-black at the stale 2M orbit). See
+    /// `playback_hold_prefetch`.
+    hold_prefetch: Option<crate::render::HoldPrefetch>,
     /// Last snapshot used for change detection (debounced auto-save).
     last_state: fractadyne_state::SessionState,
     /// App-time (s) of the last change while unsaved; `None` when clean.
@@ -2889,6 +2902,7 @@ impl FractadyneApp {
             ref_save_pending: None,
             recompute_rx: [None, None],
             ref_prefetch: Vec::new(),
+            hold_prefetch: None,
             last_state: s,
             dirty_since: None,
         };
@@ -3243,6 +3257,7 @@ impl FractadyneApp {
         // Same for the playback lookahead: a prefetched reference for the old fractal/params
         // must never install after a change.
         self.ref_prefetch.clear();
+        self.hold_prefetch = None;
         // A new view's iteration needs are unrelated — restart the adaptive budget probe.
         self.perf.iter_boost = [1.0, 1.0];
         self.perf.iter_probe = [None, None];
