@@ -373,6 +373,18 @@ impl FractadyneApp {
                      image or exports.",
                 );
 
+                // KF-style stepping: hold the last detailed frame (geometrically tracked) through
+                // motion instead of rendering coarse intermediate frames.
+                ui.checkbox(&mut self.render_cfg.prefer_detail, "Prefer detail while zooming")
+                    .on_hover_text(
+                        "While zooming or panning, keep showing the last fully detailed frame — \
+                         scaled and tracked to follow the motion — instead of re-rendering at \
+                         reduced quality every frame. The view renders in full when the motion \
+                         pauses. Off: motion renders live at reduced resolution (smoother, \
+                         coarser). Shallow views (direct mode) always render live — they are \
+                         cheap and sharp every frame either way.",
+                    );
+
                 });
                 // Performance section, docked at the bottom of this same panel
                 // (toggle via the Perf button or the View menu).

@@ -75,6 +75,10 @@ pub struct SessionState {
     /// Default 0.30. `serde(default)` keeps older session files loadable.
     #[serde(default = "default_min_motion_res")]
     pub min_motion_res: f32,
+    /// Prefer detail over motion smoothness while zooming (reproject the last detailed frame
+    /// during motion instead of re-iterating coarse). Default off.
+    #[serde(default)]
+    pub prefer_detail: bool,
     /// Supersampling / anti-alias factor (1 = off, 2/3/4/8 = N×N).
     #[serde(default = "default_aa")]
     pub aa: u32,
@@ -379,6 +383,7 @@ impl Default for SessionState {
             autopilot_dive_log2: default_autopilot_dive_log2(),
             work_budget_scale: default_work_budget_scale(),
             min_motion_res: default_min_motion_res(),
+            prefer_detail: false,
             aa: default_aa(),
             fps_cap: default_fps_cap(), // 60 (0 = uncapped)
             export_width: default_export_width(),

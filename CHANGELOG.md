@@ -16,6 +16,13 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **"Prefer detail while zooming" (stage A)** (beta.76). A new Navigation toggle: while zooming or
+  panning, the view keeps showing the last fully detailed frame — scaled and panned to follow the
+  motion via the existing zoom-reprojection path — instead of re-rendering at reduced motion
+  quality every frame (KF-style stepping). Rendering resumes in full when the motion pauses.
+  Perturbation modes only (shallow direct views are cheap and sharp live either way); default off.
+  The follow-up stage will present-gate the settle composite too (render the complete frame
+  offscreen, swap it in whole).
 - **Segment rendering for multiple machines: `--segments N --segment-index K`** (beta.75). Shard a
   tour's whole timeline into N contiguous, gap-free frame ranges and render only range K — run one
   shard per machine and the frames union to exactly the full video. Shard k covers

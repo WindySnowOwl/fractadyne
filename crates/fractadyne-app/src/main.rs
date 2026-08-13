@@ -1946,6 +1946,13 @@ struct RenderConfig {
     /// a moving/frozen deep-zoom frame may shrink to. Higher caps blockiness during a continuous
     /// zoom (sharper) at the cost of frame rate. Default 0.30 (matches the old fixed floor).
     min_motion_res: f32,
+    /// Prefer detail over motion smoothness while zooming: motion frames REPROJECT the last fully
+    /// detailed frame (geometrically tracked — the existing freeze path) instead of re-iterating
+    /// at reduced quality; the view re-renders in full when motion pauses. KF-style stepping.
+    /// Default off (today's coarse-but-live motion). Stage A of the "prefer detail" mode: the
+    /// settle composite is still visible as it lands; present-gating (back-buffer swap) is the
+    /// follow-up stage.
+    prefer_detail: bool,
     /// Supersampling / anti-alias factor (1 = off, 2 = 2×2, 3 = 3×3).
     aa: u32,
 }
@@ -2839,6 +2846,7 @@ impl FractadyneApp {
                 click_zoom_factor: s.click_zoom_factor.clamp(1.5, 1000.0),
                 work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
                 min_motion_res: s.min_motion_res.clamp(0.30, 1.0),
+                prefer_detail: s.prefer_detail,
                 aa: s.aa,
             },
             effects: EffectsConfig {
@@ -3078,6 +3086,7 @@ impl FractadyneApp {
             autopilot_dive_log2: self.autopilot.dive_log2,
             work_budget_scale: self.render_cfg.work_budget_scale,
             min_motion_res: self.render_cfg.min_motion_res,
+            prefer_detail: self.render_cfg.prefer_detail,
             aa: self.render_cfg.aa,
             fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
             export_width: self.export.width,

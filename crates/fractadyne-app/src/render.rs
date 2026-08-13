@@ -3361,6 +3361,14 @@ impl FractadyneApp {
             //    re-renders every frame — cheap, sharp, no frozen texture to reproject.)
             const DEEP_LAG_HOLD: f64 = 1.8;
             too_stale = too_stale || reuse_hold || depth_lag > DEEP_LAG_HOLD;
+            // "Prefer detail while zooming" (Stage A): treat EVERY interacting frame as a freeze —
+            // the reprojection below shows the last fully detailed frame, scaled and panned to
+            // follow the motion (KF-style stepping), instead of re-iterating at reduced motion
+            // quality. Rendering resumes in full the frame after interaction ends, through the
+            // normal settle path. Perturbation modes only (this whole block is `!is_direct`):
+            // shallow direct frames are cheap and sharp every frame, so holding them would only
+            // add blur. Present-gating of the SETTLE composite (back-buffer swap) is Stage B.
+            too_stale = too_stale || (self.render_cfg.prefer_detail && interacting);
             // At extreme depth the recompute can take long enough that a fast/continuous dive
             // drifts the cached reference too far off-centre before a fresh one lands — rendering
             // with it is dark/glitchy (the "screen goes black" while zooming). Instead freeze the
