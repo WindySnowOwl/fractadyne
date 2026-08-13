@@ -120,6 +120,25 @@ Ordered by how fast a stranger hits them.
       Open bugs) — whatever reads the pipe must tolerate the child outliving the dialog and vice
       versa, so do the two together.
 
+    - **"Prefer detail" zoom mode** (user, 2026-08-12): a Navigation toggle — *prefer zoom speed*
+      (today's behavior: coarse motion frames, sharpen on settle) vs *prefer detail* (each
+      presented frame is FULLY detailed; the screen only updates when a complete frame exists).
+      ⚠"No matter how long it takes" must NOT mean bigger dispatches — the 2026-08-12 arc proved
+      >~1 s single submissions intermittently lose the device; it means **present-gating**:
+      compose the complete frame OFFSCREEN from the existing bounded tiles/chunks, and swap it in
+      whole. Design: (1) double-buffer the iteration G-buffer (`ViewResources` gains a back
+      tex/aux pair; settle tiles + chunk resolves target the BACK buffer; the color pass samples
+      the FRONT; swap + re-bind on grid/progression completion); (2) while composing, display the
+      front frame via the existing reproject/freeze path so it still tracks motion geometrically
+      (KF-style stepping — familiar to deep-zoom users); (3) zoom input during composition either
+      queues one step (discrete, click-to-zoom pairing) or restarts composition at the new view
+      (continuous; restarts are cheap since tiles are bounded); (4) the toggle also implies
+      min-motion-res 100% and full AA target for composed frames. Ingredients all exist
+      post-beta.69 (bounded tiles, chunked progressions, reproject-hold, explicit-count caps);
+      the new work is the back-buffer swap — which touches the color-pass binding and the
+      reproject aspect-fit logic, i.e. the delicate zone: verify with the full suite + livetest +
+      `--uitest` + a fresh-dir deep-zoom soak. Related: the "Min motion resolution" slider at
+      100% is the crude half of this (native-res motion frames, but no present-gating).
     - **Progressive (preview-first) render order** (user, 2026-08-11). Today a tour renders frame
       0, 1, 2, … in order, so you don't see how the *end* of the tour looks until the whole thing
       is done — an expensive way to discover that a deep keyframe is mis-framed or the palette
