@@ -365,8 +365,23 @@ Mockups: [design/mockups/](design/mockups/).
     incumbent/challenger cache (adopt-if-strictly-better; no destruction, so the e72 deadlock is
     structurally impossible) → L3 test/protocol hardening. Acceptance gates in the doc.
 
-- [ ] ⭐**PRIORITY: live device loss with a 626-sample reference — EIGHT instances, still not
-  root-caused, but now REPRODUCIBLE ON DEMAND in ~205 s.** Field report 2026-08-09 (two crashes
+- [x] ⭐**RETIRED 2026-08-13 — SUBSUMED: both halves of this crash class were fixed by later
+  work, and the trigger state can no longer occur.** (1) The shared state itself — a 626-sample
+  ESCAPED reference on a pinned-centre glide — was the beta.49 spar-family root cause:
+  `626 = escape(round(centre, 78 bits)) + 1`, an orbit computed for a ROUNDED destination centre
+  (`Playback::sample`'s `lerp_bf(a,a,ease,p)` non-identity). Exact pinned glides (beta.49) make
+  that reference unconstructible; verified then by 0/4 fresh-dir losses (was 3/4), 0 Event 153,
+  and the e21000 soak. (2) The cost-side marginality it exposed (~0.5–1.3 s dispatches around
+  the df32→floatexp crossover, Event-153 1:1) was closed stepwise: TDR_MIN_STEPS + the deferred
+  wall probe (beta.48), the climb-probe pacing (beta.67), the explicit dispatch cap (beta.69),
+  and the measured 400 ms explicit regime + latency-floor guard (beta.79/80). The related "2:58
+  device loss" item above is `[x]` beta.49 for the same reason. The forensic ledger below is
+  kept verbatim — its Event-153 methodology (empty message body; filter by ID, not regex) and
+  its "do not trust a clean run" reliability model remain the reference for any future
+  intermittent GPU-loss investigation.
+
+  ~~PRIORITY: live device loss with a 626-sample reference — EIGHT instances, still not
+  root-caused, but now REPRODUCIBLE ON DEMAND in ~205 s.~~ Field report 2026-08-09 (two crashes
   at 250 s and 342 s of live tour playback) plus a deliberate A/B that crashed both builds. Every
   manifest across all eight shares one STATE, never one size:
 
@@ -972,8 +987,17 @@ Mockups: [design/mockups/](design/mockups/).
   never investigated. Distinct from the abort class above (a segfault, not a controlled exit), so
   it needs its own look once (c) above makes silent deaths visible.
 
-- [~] **The live view cannot honour a high explicit iteration count — the COST MODEL half is FIXED
-  (v0.2.40-beta.47); honouring the count itself is blocked on two couplings.**
+- [x] **RETIRED 2026-08-13 — the live view now honours a high explicit iteration count; the one
+  remaining gap has its own item.** The count reaches the shader verbatim (A1, beta.53). What
+  this item actually tracked — the COST of honouring it — resolved in layers: Direct and mode-0
+  render the exact count at native via iteration-range chunking (beta.65/68); mode-2 single
+  dispatches are bounded by the measured 400 ms explicit budget (beta.79/80) with the tiled
+  settle composing native from bounded tiles; and deep-hold references now build to the full ask
+  ahead of arrival (the hold prefetch). Residual: mode-2 chunking (its own `[~]` item above) for
+  exact-count-at-native in the one regime tiles can't fully serve (>600 ms latency floors).
+  Original account kept below.
+  ~~The live view cannot honour a high explicit iteration count — the COST MODEL half is FIXED
+  (v0.2.40-beta.47); honouring the count itself is blocked on two couplings.~~
   ⭐**UPDATE v0.2.40-beta.79/80 — the explicit regime is now measured, and its worst field case is
   fixed.** Point 3 below ("the cost bound counts NOMINAL steps") is addressed for explicit counts:
   `budget_step` runs a separate explicit regime converging on 400 ms REAL (measured, ×1.5-paced,
