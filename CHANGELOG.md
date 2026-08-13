@@ -16,6 +16,10 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Settings moved from View to File** (beta.83) — File → ⚙ Settings, above "Reset application
+  state". View keeps only display toggles (panels, minimap, orbits, dual view), which is what a
+  View menu is for; app-wide preferences (frame-rate cap, UI scale, theme, update track) belong
+  where users look for them first.
 - **The Render Script dialog has a real progress bar** (beta.82), parsed from the child's
   `frame K/N` lines, with the elapsed/remaining/fps detail line kept underneath; non-progress
   lines (resume notes, the ffmpeg step) leave the bar in place instead of blanking a long

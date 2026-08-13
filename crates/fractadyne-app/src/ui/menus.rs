@@ -53,6 +53,64 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         ui.separator();
+                        // Settings live under File — the conventional home users reach for first
+                        // (File → Preferences/Settings); they sat under View until 2026-08-13,
+                        // where only display TOGGLES belong.
+                        ui.menu_button("⚙  Settings", |ui| {
+                            ui.label("Frame-rate cap");
+                            for (label, val) in [
+                                ("Uncapped", None),
+                                ("30 FPS", Some(30.0)),
+                                ("60 FPS", Some(60.0)),
+                                ("120 FPS", Some(120.0)),
+                            ] {
+                                if ui.selectable_label(self.fps_cap == val, label).clicked() {
+                                    self.fps_cap = val;
+                                }
+                            }
+                            ui.separator();
+                            ui.label("UI scale (font size)");
+                            for (label, val) in [
+                                ("80%", 0.8_f32),
+                                ("90%", 0.9),
+                                ("100%", 1.0),
+                                ("110%", 1.1),
+                                ("125%", 1.25),
+                                ("150%", 1.5),
+                            ] {
+                                if ui
+                                    .selectable_label((self.ui_scale - val).abs() < 0.01, label)
+                                    .clicked()
+                                {
+                                    self.ui_scale = val;
+                                }
+                            }
+                            ui.separator();
+                            ui.label("Theme");
+                            for m in [ThemeMode::Dark, ThemeMode::Light] {
+                                if ui.selectable_label(self.theme == m, m.label()).clicked() {
+                                    self.theme = m;
+                                    apply_theme(ui.ctx(), m);
+                                }
+                            }
+                            ui.separator();
+                            ui.label("Updates");
+                            ui.horizontal(|ui| {
+                                for t in crate::update::UpdateTrack::ALL {
+                                    ui.selectable_value(&mut self.update_track, t, t.label())
+                                        .on_hover_text(match t {
+                                            crate::update::UpdateTrack::Stable => "Latest stable release",
+                                            crate::update::UpdateTrack::Beta => "Latest build including pre-releases",
+                                        });
+                                }
+                            });
+                            ui.checkbox(
+                                &mut self.update_check_on_launch,
+                                "Check for updates on launch",
+                            )
+                            .on_hover_text("Otherwise, check manually via Help → Check for updates.");
+                        });
+                        ui.separator();
                         if ui
                             .button("♻  Reset application state…")
                             .on_hover_text(
@@ -168,61 +226,6 @@ impl FractadyneApp {
                                     .text("Orbit speed")
                                     .suffix("/s"),
                             );
-                        });
-                        ui.separator();
-                        ui.menu_button("Settings", |ui| {
-                            ui.label("Frame-rate cap");
-                            for (label, val) in [
-                                ("Uncapped", None),
-                                ("30 FPS", Some(30.0)),
-                                ("60 FPS", Some(60.0)),
-                                ("120 FPS", Some(120.0)),
-                            ] {
-                                if ui.selectable_label(self.fps_cap == val, label).clicked() {
-                                    self.fps_cap = val;
-                                }
-                            }
-                            ui.separator();
-                            ui.label("UI scale (font size)");
-                            for (label, val) in [
-                                ("80%", 0.8_f32),
-                                ("90%", 0.9),
-                                ("100%", 1.0),
-                                ("110%", 1.1),
-                                ("125%", 1.25),
-                                ("150%", 1.5),
-                            ] {
-                                if ui
-                                    .selectable_label((self.ui_scale - val).abs() < 0.01, label)
-                                    .clicked()
-                                {
-                                    self.ui_scale = val;
-                                }
-                            }
-                            ui.separator();
-                            ui.label("Theme");
-                            for m in [ThemeMode::Dark, ThemeMode::Light] {
-                                if ui.selectable_label(self.theme == m, m.label()).clicked() {
-                                    self.theme = m;
-                                    apply_theme(ui.ctx(), m);
-                                }
-                            }
-                            ui.separator();
-                            ui.label("Updates");
-                            ui.horizontal(|ui| {
-                                for t in crate::update::UpdateTrack::ALL {
-                                    ui.selectable_value(&mut self.update_track, t, t.label())
-                                        .on_hover_text(match t {
-                                            crate::update::UpdateTrack::Stable => "Latest stable release",
-                                            crate::update::UpdateTrack::Beta => "Latest build including pre-releases",
-                                        });
-                                }
-                            });
-                            ui.checkbox(
-                                &mut self.update_check_on_launch,
-                                "Check for updates on launch",
-                            )
-                            .on_hover_text("Otherwise, check manually via Help → Check for updates.");
                         });
                     });
                     ui.menu_button("Tools", |ui| {
