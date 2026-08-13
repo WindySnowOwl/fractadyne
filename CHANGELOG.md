@@ -16,6 +16,12 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Share location joins Navigate; menus no longer drive the dual-view Julia** (beta.86).
+  "Share location…" moved from File to Navigate — it shares *where you are*, kin to Import .kfr
+  and Go to location. And a real bug from the reorg review pass: in dual view, moving the cursor
+  through an open menu re-rendered the Julia panel underneath — the live cursor-follows-c update
+  was driven by raw pointer geometry; it now requires the Mandelbrot panel to be genuinely
+  hovered (layer-occlusion-aware), so menus, popups, and dialogs over the view no longer steer c.
 - **Menu reorganization** (beta.85, from an external UI review). **Navigate** replaces the
   Bookmarks/Locations split ("where can I go?" is one question — famous points, random, .kfr
   import, and a Bookmarks submenu together); **Color** is new (method, palette, gradient editor,

@@ -41,17 +41,6 @@ impl FractadyneApp {
                             }
                             ui.close_menu();
                         }
-                        if ui
-                            .button("🔗  Share location…")
-                            .on_hover_text(
-                                "Copy / paste / save / load a self-contained location \
-                                 (.fdn): fractal, full-precision center, zoom, coloring.",
-                            )
-                            .clicked()
-                        {
-                            self.open_share();
-                            ui.close_menu();
-                        }
                         ui.separator();
                         // Settings live under File — the conventional home users reach for first
                         // (File → Preferences/Settings); they sat under View until 2026-08-13,
@@ -474,6 +463,19 @@ impl FractadyneApp {
                             .clicked()
                         {
                             self.import_kfr(&ctx);
+                            ui.close_menu();
+                        }
+                        // Sharing a location is a PLACES concern (moved from File 2026-08-13):
+                        // it shares where you are, like the .kfr import shares where someone was.
+                        if ui
+                            .button("🔗  Share location…")
+                            .on_hover_text(
+                                "Copy / paste / save / load a self-contained location \
+                                 (.fdn): fractal, full-precision center, zoom, coloring.",
+                            )
+                            .clicked()
+                        {
+                            self.open_share();
                             ui.close_menu();
                         }
                         ui.separator();

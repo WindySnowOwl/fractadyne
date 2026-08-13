@@ -121,7 +121,7 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     );
     help_p(
         ui,
-        "File → \"Share location…\" captures the whole view — fractal, full-precision center, zoom, \
+        "Navigate → \"Share location…\" captures the whole view — fractal, full-precision center, zoom, \
          and coloring — as a compact \".fdn\" snippet you can Copy, paste back and Apply, or \
          Save/Load as a file, to reproduce a spot exactly (or send it to someone).",
     );

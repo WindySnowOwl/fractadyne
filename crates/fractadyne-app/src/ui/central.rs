@@ -118,7 +118,12 @@ impl FractadyneApp {
                     .complex_at_pixel_f64(l.x as f64 * ppp, l.y as f64 * ppp)
             };
             pc = Some(coord);
-            if !is_julia && self.julia_pin.is_none() && coord != self.julia_c {
+            // `panel` is raw pointer GEOMETRY, so on its own it also fires while an open menu
+            // hangs over the Mandelbrot panel — moving through the menu was re-rendering the
+            // Julia view underneath (reported 2026-08-13). `Response::hovered()` respects layer
+            // occlusion (false when a menu/popup/dialog is on top at the pointer), so it is the
+            // "the pointer really is on the fractal" signal.
+            if !is_julia && self.julia_pin.is_none() && coord != self.julia_c && resp_l.hovered() {
                 self.julia_c = coord; // live: cursor over Mandelbrot drives the Julia
                 self.pointer.settle_t[1] = ctx.input(|i| i.time); // only the Julia panel is changing
                 self.ref_cache[1].ref_pt = None;
