@@ -233,6 +233,15 @@ struct Perf {
     /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
     /// where budget growth is too small to re-key the frame and the climb freezes.
     probe_nonce: [u32; 2],
+    /// Present-gating ("prefer detail" stage B): the view's display is currently serving the hold
+    /// snapshot while a composite builds invisibly. Engaged when compose work starts on a settled
+    /// prefer-detail view; dropped — revealing the completed frame whole — when nothing composes.
+    hold_active: [bool; 2],
+    /// The hold snapshot's display transform `(uv_off_x, uv_off_y, uv_scale)`, captured ONCE at
+    /// snapshot time from the frozen-frame bookkeeping (the snapshot holds the PRE-motion frame,
+    /// but `frozen_center` is overwritten by the very first compose iterate — so the transform
+    /// must be pinned here or later gate frames would mis-place the hold at identity).
+    hold_uv: [[f32; 3]; 2],
     /// True while a view's settle grid has tiles left — holds the AA ramp and keeps repaints coming.
     tile_pending: [bool; 2],
     /// `frame_idx` of the last frame that spent its tile: one budget-sized tile per submission, so
@@ -362,6 +371,8 @@ impl Default for Perf {
             chunk_sig: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
             chunk_pending: [false, false],
             probe_nonce: [0, 0],
+            hold_active: [false, false],
+            hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
             tile_turn: u64::MAX,
             interact_frame: [0, 0],
             fe_iter_frame: [0, 0],

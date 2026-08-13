@@ -392,6 +392,18 @@ struct ViewResources {
     last_chunk: Option<[u32; 2]>,
     /// The budget-climb probe nonce rendered last (see `MandelbrotParams::probe_nonce`).
     last_probe: u32,
+    /// Present-gating hold: a snapshot of the iteration G-buffer (tex, aux) taken at compose
+    /// start, plus the (size, ss) it was built at — the color pass samples it while a composite
+    /// builds invisibly in the live buffer. Dropped when a normal (ungated) frame renders.
+    hold: Option<HoldState>,
+}
+
+/// Snapshot bind group for present-gated composition (see `MandelbrotParams::hold_copy`).
+/// The bind group owns the snapshot textures (wgpu keeps bound resources alive).
+struct HoldState {
+    bg: wgpu::BindGroup,
+    size: [u32; 2],
+    ss: u32,
 }
 
 /// Ping-pong state for a live chunked progression (see `MandelbrotParams::chunk_range`).
@@ -827,6 +839,7 @@ impl ViewResources {
             chunk_state: None,
             last_chunk: None,
             last_probe: 0,
+            hold: None,
         }
     }
 
@@ -1006,6 +1019,14 @@ pub struct MandelbrotParams {
     /// huge iteration count deadlocks (budget growth too small to change the resolution → key
     /// never changes → no dispatch → no measurement → budget frozen one step off the floor).
     pub probe_nonce: u32,
+    /// Present-gating ("prefer detail", stage B). `hold_copy`: snapshot the CURRENT iteration
+    /// G-buffer into the view's hold pair this frame (drawn via the seed pipeline — a copy), BEFORE
+    /// any compose pass lands. `display_hold`: the color pass samples the HOLD pair instead of the
+    /// live G-buffer (with this frame's uv transform), so a settle grid / chunk progression can
+    /// compose into the live buffer invisibly; when the app drops the flag, the completed frame
+    /// reveals whole. The compose paths themselves are untouched.
+    pub hold_copy: bool,
+    pub display_hold: bool,
     pub orbit: Arc<Vec<[f32; 4]>>,
     /// Changes whenever `orbit` changes — triggers a GPU re-upload.
     pub orbit_id: u64,
@@ -1162,10 +1183,54 @@ impl CallbackTrait for MandelbrotParams {
                 view.resize(device, color_bgl, size);
             }
         }
-        // A held frame (reprojection or tile-hold) displays the EXISTING texture, so it must be
-        // colored at the ss and size it was built with, not this frame's request.
+        // Present-gating ("prefer detail" stage B): snapshot the current — complete — frame into
+        // the hold pair BEFORE any compose pass lands this frame. A seed-pipeline draw is the
+        // copy (the seeded_resize idiom; at equal size it is 1:1), so no texture-usage changes.
+        // The compose passes below then rebuild the LIVE buffer invisibly while the color pass
+        // serves the hold; when the app drops `display_hold`, the finished frame reveals whole.
+        if self.hold_copy && view.rendered {
+            let ht = make_iter_texture(device, view.size);
+            let ha = make_iter_texture(device, view.size);
+            {
+                let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("fractadyne.hold_copy"),
+                    color_attachments: &[attach(&ht), attach(&ha)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(seed_pipeline);
+                pass.set_bind_group(0, &view.color_bg, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            let bg = make_color_bg(device, color_bgl, &view.color_uniform, &ht, &ha);
+            view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1) });
+        }
+        // The gate only engages while the app asserts it AND a snapshot exists (a cold start has
+        // nothing to hold — composition shows live, the graceful fallback). A frame without the
+        // flag drops the snapshot: memory back, display live.
+        let gate = self.display_hold && view.hold.is_some();
+        if !self.display_hold {
+            view.hold = None;
+        }
+        // A held frame (reprojection, tile-hold, or the present-gate) displays an EXISTING
+        // texture, so it must be colored at the ss and size that texture was built with.
         let held = reproject || hold;
-        let color_ss = if held { view.last_ss.max(1) } else { ss };
+        let color_ss = if gate {
+            view.hold.as_ref().map(|h| h.ss).unwrap_or(1).max(1)
+        } else if held {
+            view.last_ss.max(1)
+        } else {
+            ss
+        };
 
         // Coloring uniform is cheap — refresh every frame so recolor is instant.
         let cu = ColorUniforms {
@@ -1182,7 +1247,9 @@ impl CallbackTrait for MandelbrotParams {
             de_phase: self.de_phase,
             color_method: self.color_method,
             aa_filter: self.aa_filter.max(1),
-            reproject: reproject as u32,
+            // The present-gate displays the hold snapshot exactly like a reprojection — the
+            // app supplies the uv transform that tracks the (frozen) view it was taken at.
+            reproject: (reproject || gate) as u32,
             uv_offset: self.uv_offset,
             uv_scale: if self.uv_scale > 0.0 { self.uv_scale } else { 1.0 },
             vig_on: self.vignette.on,
@@ -1204,7 +1271,13 @@ impl CallbackTrait for MandelbrotParams {
             // fill the view. Native (settled) frozen frames are unchanged. (Trade-off: a window
             // resize *during* a reprojection no longer aspect-fits until the next real frame — rare
             // and self-correcting.)
-            out_res: if held {
+            out_res: if gate {
+                let h = view.hold.as_ref().unwrap();
+                [
+                    (h.size[0] as f32 / color_ss as f32).max(1.0),
+                    (h.size[1] as f32 / color_ss as f32).max(1.0),
+                ]
+            } else if held {
                 [
                     (view.size[0] as f32 / color_ss as f32).max(1.0),
                     (view.size[1] as f32 / color_ss as f32).max(1.0),
@@ -1495,8 +1568,14 @@ impl CallbackTrait for MandelbrotParams {
     ) {
         if let Some(r) = resources.get::<Renderer>() {
             if let Some(view) = r.views.get(&self.view_id) {
+                // Present-gate: while a composite builds invisibly in the live G-buffer, the
+                // screen samples the HOLD snapshot instead (see `MandelbrotParams::display_hold`).
+                let bg = match (&view.hold, self.display_hold) {
+                    (Some(h), true) => &h.bg,
+                    _ => &view.color_bg,
+                };
                 render_pass.set_pipeline(&r.color_pipeline);
-                render_pass.set_bind_group(0, &view.color_bg, &[]);
+                render_pass.set_bind_group(0, bg, &[]);
                 render_pass.draw(0..3, 0..1);
             }
         }

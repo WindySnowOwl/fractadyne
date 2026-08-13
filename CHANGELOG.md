@@ -16,6 +16,14 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **"Prefer detail while zooming" is complete — the settle is present-gated too (stage B)**
+  (beta.77). With the toggle on, the view now never shows a partial composite: when rendering
+  resumes after motion (or any refinement runs — settle tiles, chunked iteration, budget probes),
+  the display keeps serving a snapshot of the last complete frame, geometrically tracked, while
+  the new frame builds invisibly underneath — and reveals it whole when it finishes. Across the
+  anti-alias ramp each revealed image is complete at its quality level. Interaction hands off to
+  stage A's motion reprojection; everything stays within the bounded-dispatch machinery, so the
+  wait is exactly as long as the render — never a risk.
 - **"Prefer detail while zooming" (stage A)** (beta.76). A new Navigation toggle: while zooming or
   panning, the view keeps showing the last fully detailed frame — scaled and panned to follow the
   motion via the existing zoom-reprojection path — instead of re-rendering at reduced motion

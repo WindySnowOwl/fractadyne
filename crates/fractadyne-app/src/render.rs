@@ -3023,6 +3023,7 @@ impl FractadyneApp {
                 ),
             );
         }
+        let mut probe_fired = false;
         // Budget-climb probe: on a settled view whose budget hasn't converged and where NOTHING
         // else will dispatch this frame, force a re-measure. Without this the climb deadlocks at
         // the resolution floor: one ×1.5 budget step is too small to unfloor a 16×16 frame under a
@@ -3058,6 +3059,7 @@ impl FractadyneApp {
             && budget_base(self.perf.fe_budget[vidx]) < EXPLICIT_DISPATCH_CAP
         {
             self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
+            probe_fired = true;
             // This frame now runs a real pass under an unchanged key — pair the measurement
             // with its cost (the same bookkeeping the `key_changed` block below does).
             self.perf.fe_steps_last[vs] = spx
@@ -3066,6 +3068,38 @@ impl FractadyneApp {
             self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
             self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
         }
+        // ---- present-gating ("prefer detail", stage B) ----
+        // While ANY compose work runs on a settled prefer-detail view — a settle tile, an armed
+        // grid's coarse full frame, a chunk range, or a climb-probe re-measure — the display
+        // serves a snapshot of the last complete frame (`hold_copy` takes it on the FIRST such
+        // frame, before the compose pass lands) and the composite builds invisibly underneath.
+        // When nothing composes, the flag drops and the finished frame reveals whole. Interaction
+        // breaks the gate (Stage A's motion reprojection takes over); direct mode is excluded
+        // (cheap and sharp live). Between ss-ramp stages the gate re-engages per stage, so each
+        // REVEALED image is complete at its quality level — a stage-wise progressive reveal.
+        let gate_capable = self.render_cfg.prefer_detail
+            && !offscreen
+            && !interacting
+            && !chunk_mode.is_direct();
+        let composing = tile.is_some()
+            || chunk_range.is_some_and(|[s, e]| e > s)
+            || probe_fired
+            || self.perf.tile_state[vidx].as_ref().is_some_and(|g| match g.geo {
+                None => true, // armed — the coarse arm frame is about to render
+                Some((gres, _, side)) => {
+                    let total =
+                        gres[0].div_ceil(side).max(1) * gres[1].div_ceil(side).max(1);
+                    g.next < total
+                }
+            });
+        let (hold_copy, display_hold) = if gate_capable && composing {
+            let fresh = !self.perf.hold_active[vs];
+            self.perf.hold_active[vs] = true;
+            (fresh, true)
+        } else {
+            self.perf.hold_active[vs] = false;
+            (false, false)
+        };
         let bootstrap =
             self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none();
         // Armed on EVERY mode. While this was floatexp-only, a df32 view's budget never left the
@@ -3422,6 +3456,29 @@ impl FractadyneApp {
                     None => reproject = Some([0.0, 0.0]), // nothing rendered yet → static hold
                 }
             }
+            // Present-gate snapshot transform: captured ONCE from the same math as the freeze —
+            // the snapshot holds the frame `frozen_center` still describes at this instant, and
+            // the very next block overwrites that bookkeeping with the current view. The view is
+            // static while gated (interaction breaks the gate), so the stored transform stays
+            // valid for the whole composition.
+            if hold_copy {
+                self.perf.hold_uv[vs] = match self.ref_cache[vi].frozen_center.clone() {
+                    Some(fc) => {
+                        let scale = ((self.ref_cache[vi].frozen_l2 - log2mag) as f32)
+                            .exp2()
+                            .clamp(9.094_947e-13, 1.099_512e12); // 2^-40 .. 2^40 (see the freeze)
+                        let px = fractadyne_core::ref_offset_mantissa(
+                            &center_bf[0], &fc[0], delta_exp, precision,
+                        ) / span_mantissa.x;
+                        let py = fractadyne_core::ref_offset_mantissa(
+                            &center_bf[1], &fc[1], delta_exp, precision,
+                        ) / span_mantissa.y;
+                        [(-px as f32) * scale, (py as f32) * scale, scale]
+                    }
+                    // Nothing frozen (e.g. the very first render): the snapshot IS this view — 1:1.
+                    None => [0.0, 0.0, 1.0],
+                };
+            }
             // When this frame will actually re-iterate (not a freeze/pan reprojection), remember the
             // view it renders — the next freeze reprojects the resulting texture relative to it —
             // and WHEN, so the reuse-hold's time floor can age it (see `REFRESH_MAX_SECS`).
@@ -3675,8 +3732,18 @@ impl FractadyneApp {
             resolution,
             ss,
             reproject: reproject.is_some() as u32,
-            uv_offset: reproject.unwrap_or([0.0, 0.0]),
-            uv_scale: reproject_scale,
+            // A gated frame's DISPLAY samples the hold snapshot with its pinned transform;
+            // reproject frames keep their own. (The two never co-assert meaningfully: the gate
+            // requires a settled view, and a settled freeze frame just pauses composition for a
+            // frame while the display stays on the hold.)
+            uv_offset: if display_hold {
+                [self.perf.hold_uv[vs][0], self.perf.hold_uv[vs][1]]
+            } else {
+                reproject.unwrap_or([0.0, 0.0])
+            },
+            uv_scale: if display_hold { self.perf.hold_uv[vs][2] } else { reproject_scale },
+            hold_copy,
+            display_hold,
             // Guided-tour spotlight (main view only), anchored to its fractal coordinate.
             vignette: if view_id == 0 {
                 self.playback
