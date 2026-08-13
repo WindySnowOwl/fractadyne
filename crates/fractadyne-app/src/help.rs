@@ -76,7 +76,7 @@ pub(crate) fn help_overview(ui: &mut egui::Ui) {
     help_sub(ui, "First steps");
     help_p(
         ui,
-        "Open the Locations menu and pick \"Seahorse Valley\", then roll the mouse wheel to \
+        "Open the Navigate menu and pick \"Seahorse Valley\", then roll the mouse wheel to \
          zoom in. Drag to pan. Or just press A and let the autopilot dive for you. Press F1 \
          at any time to return to this help.",
     );
@@ -111,12 +111,12 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
          as new structure appears. Any navigation input — or Esc — stops it.",
     );
     help_sub(ui, "History & precise moves");
-    help_kv(ui, "Backspace", "Undo the previous view.");
-    help_kv(ui, "Shift+Backspace / Ctrl+Y", "Redo.");
+    help_kv(ui, "Ctrl+Z / Backspace", "Undo the previous view.");
+    help_kv(ui, "Ctrl+Y / Shift+Backspace", "Redo.");
     help_p(
         ui,
-        "Locations → \"Go to location…\" lets you read, type, paste, or copy the exact center and zoom \
-         (full precision, any depth) — handy for revisiting a spot. The Bookmarks menu saves and \
+        "Navigate → \"Go to location…\" lets you read, type, paste, or copy the exact center and zoom \
+         (full precision, any depth) — handy for revisiting a spot. Navigate → Bookmarks saves and \
          recalls locations.",
     );
     help_p(
@@ -134,7 +134,7 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     help_p(
         ui,
         "Minibrots are tiny copies of the whole set hidden along the boundary. Center one roughly \
-         and press M (or Locations → \"Find minibrot center\") to Newton-snap exactly onto its center, \
+         and press M (or Tools → \"Find minibrot + zoom to it\") to Newton-snap exactly onto its center, \
          read its period, and zoom straight to its own scale — often many orders of magnitude in \
          one step. If you are already deeper than the minibrot, only the center moves.",
     );
@@ -447,7 +447,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--segments N --segment-index K [--dry-run]", "With --render-tour: shard the whole timeline into N contiguous, gap-free frame ranges and render only range K (0-based) — run one shard per machine and the frames union to exactly the full video (shard k = [floor(k*F/N), floor((k+1)*F/N)); global frame numbering kept; combines with --segment NAME by intersection). --dry-run prints this invocation's frame range and exits without rendering, so a farm script can verify the shards tile first."),
         Flag("--order sequential|progressive", "With --render-tour: the ORDER frames render in (default sequential). `progressive` renders the keyframes first, then repeatedly bisects the largest temporal gap — a coarse flip-book of the whole tour appears within minutes and refines to full rate, so a mis-framed deep keyframe is visible before hours of GPU are spent. Frames land at their correct indices either way (--resume and mp4 assembly unchanged); note that a normalized render's palette smoothing follows render order, so prefer sequential for final normalized delivery."),
         Flag("--uitest [DIR]", "Dev: scripted walk through every UI screen + the live-render bands (Direct/df32/floatexp), screenshotting each and writing a review bundle (screenshots + report.md/json + log.txt) to DIR (default: the mounted share, else logs/). Runs under the real eframe loop — on a headless box wrap it with xvfb-run. Exit 1 if any step FAILs."),
-        Flag("--play FILE", "Start with a tour script already playing in the live view (Tools -> Play script, from the command line). Useful for reproducing live-playback behaviour that headless harnesses cannot reach."),
+        Flag("--play FILE", "Start with a tour already playing in the live view (Tools -> Play tour, from the command line). Useful for reproducing live-playback behaviour that headless harnesses cannot reach."),
         Flag("--oomtest", "Dev: request an unsatisfiable allocation to prove the out-of-memory path writes a crash report. Exits 0xC0000409 (abort) by design — an OOM skips the panic hook, so this is the only way to exercise that reporting."),
         Flag("--dump-tour-schema", "Print the tour-script (.toml) schema reference as Markdown and exit (generates TOURS.md)."),
         Section("Examples"),

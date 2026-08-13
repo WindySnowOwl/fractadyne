@@ -16,6 +16,19 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Menu reorganization** (beta.85, from an external UI review). **Navigate** replaces the
+  Bookmarks/Locations split ("where can I go?" is one question — famous points, random, .kfr
+  import, and a Bookmarks submenu together); **Color** is new (method, palette, gradient editor,
+  normalize — coloring is what users do most and the menu bar said nothing about it); **Tools**
+  now leads with the mathematical differentiators (find-minibrot, the Newton/Misiurewicz solver
+  — previously buried in a dialog tooltip) and groups the tour actions, including a new "Render
+  tour…" entry; **Fractal** gains Dual view (it selects *what* renders, like Julia mode); the
+  **View** menu is decluttered to view/panel concerns, with the orbit overlay's options moved to
+  a new control-panel "Overlays" section. Language: "script" → "tour" throughout the UI
+  (Play tour, Tour from current view, Render tour), matching the docs. Also: **Ctrl+Z /
+  Ctrl+Shift+Z now undo/redo the view** alongside the KF-style Backspace bindings, "Home view" /
+  "Reset view" are renamed to say what they do ("Zoom out to full view" / "Reset to default
+  view"), and shortcut hints are shown consistently.
 - **Progressive (preview-first) render order** (beta.84). `--order progressive` (and "Render
   order: Progressive" in the Render Script dialog) renders the keyframes first, then repeatedly
   bisects the largest temporal gap — a coarse flip-book of the whole tour exists within minutes

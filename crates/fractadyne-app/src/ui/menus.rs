@@ -148,12 +148,30 @@ impl FractadyneApp {
                             {
                                 self.invalidate_refs();
                             }
+                            // Beside Julia mode, not in View: both select WHAT renders.
+                            if ui
+                                .checkbox(&mut self.dual, "Dual view (Mandelbrot ↔ Julia)")
+                                .on_hover_text(
+                                    "Split the window: the parameter set on the left, the Julia \
+                                     set of the cursor's c on the right.",
+                                )
+                                .clicked()
+                                && self.dual
+                            {
+                                self.julia_viewport.reset();
+                                self.julia_viewport.center_x =
+                                    fractadyne_core::BigFloat::from_f64(0.0, 64);
+                                self.julia_viewport.center_y =
+                                    fractadyne_core::BigFloat::from_f64(0.0, 64);
+                            }
                         });
                     });
                     ui.menu_button("View", |ui| {
                         let now = ui.ctx().input(|i| i.time);
+                        // "Home view" vs "Reset view" were near-synonyms distinguishable only by
+                        // tooltip (2026-08-13 UI review) — the labels now say what each does.
                         if ui
-                            .button("🏠  Home view")
+                            .button("🏠  Zoom out to full view")
                             .on_hover_text("Zoom out to the full home view (animated)")
                             .clicked()
                         {
@@ -161,7 +179,7 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui
-                            .button("🔄  Reset view")
+                            .button("🔄  Reset to default view")
                             .on_hover_text("Reset to the fractal's default view (instant)")
                             .clicked()
                         {
@@ -169,13 +187,13 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         ui.add_enabled_ui(self.nav.undo.len() > 1, |ui| {
-                            if ui.button("Undo view  (Backspace)").clicked() {
+                            if ui.button("Undo view  (Ctrl+Z / Backspace)").clicked() {
                                 self.undo_view();
                                 ui.close_menu();
                             }
                         });
                         ui.add_enabled_ui(!self.nav.redo.is_empty(), |ui| {
-                            if ui.button("Redo view  (Shift+Backspace)").clicked() {
+                            if ui.button("Redo view  (Ctrl+Y / Shift+Backspace)").clicked() {
                                 self.redo_view();
                                 ui.close_menu();
                             }
@@ -188,81 +206,143 @@ impl FractadyneApp {
                                 "Show a small home-view overview with a \"you are here\" \
                                  marker and the zoom depth. Click it to jump to a region.",
                             );
-                        ui.checkbox(&mut self.watermark, "Fd watermark")
+                        ui.checkbox(&mut self.perf.enabled, "Performance panel");
+                        ui.checkbox(&mut self.watermark, "Show \"Fd\" watermark")
                             .on_hover_text(
                                 "Draw a discreet \"Fd\" brand mark in the lower-right corner of the \
                                  live view and exported images. On by default.",
                             );
-                        if ui
-                            .checkbox(&mut self.dual, "Dual view (Mandelbrot ↔ Julia)")
-                            .clicked()
-                            && self.dual
-                        {
-                            self.julia_viewport.reset();
-                            self.julia_viewport.center_x =
-                                fractadyne_core::BigFloat::from_f64(0.0, 64);
-                            self.julia_viewport.center_y =
-                                fractadyne_core::BigFloat::from_f64(0.0, 64);
-                        }
-                        ui.checkbox(&mut self.perf.enabled, "Performance panel");
-                        ui.checkbox(&mut self.anim.show_orbits, "Show orbits")
-                            .on_hover_text(
-                                "Draw the iteration path of the point under the cursor.",
-                            );
-                        ui.add_enabled_ui(self.anim.show_orbits, |ui| {
-                            ui.checkbox(&mut self.anim.orbit_normalize, "    Normalize (fit to view)")
-                                .on_hover_text(
-                                    "Fit the orbit to the whole view so it stays well-framed \
-                                     at any zoom (instead of mapped through the viewport, \
-                                     where it flies off-screen when deep).",
-                                );
-                            ui.checkbox(&mut self.anim.orbit_anim, "    Animate (racing dot)")
-                                .on_hover_text(
-                                    "Send a color-cycling dot racing out along the orbit.",
-                                );
-                            ui.add_enabled(
-                                self.anim.orbit_anim,
-                                egui::Slider::new(&mut self.anim.orbit_anim_speed, 1.0..=40.0)
-                                    .text("Orbit speed")
-                                    .suffix("/s"),
-                            );
+                        // Dual view moved to Fractal (it selects WHAT renders, like Julia mode);
+                        // the orbit overlay's toggle lives in Tools with its options in the
+                        // control panel's Overlays section (2026-08-13 UI review: View mixed four
+                        // unrelated concerns).
+                    });
+                    // Coloring is where users spend the most time, and until 2026-08-13 the menu
+                    // bar said nothing about it (UI review). This mirrors the control panel's
+                    // essentials; the sliders (cycle/offset/animation) stay in the panel, where
+                    // continuous adjustment belongs.
+                    ui.menu_button("Color", |ui| {
+                        ui.menu_button("Method", |ui| {
+                            for m in crate::ColorMethod::ALL {
+                                if ui
+                                    .selectable_label(self.coloring.color_method == m, m.label())
+                                    .clicked()
+                                {
+                                    self.coloring.color_method = m;
+                                    ui.close_menu();
+                                }
+                            }
                         });
+                        ui.menu_button("Palette", |ui| {
+                            let is_preset = !self.coloring.use_custom_palette
+                                && !self.coloring.use_duotone
+                                && !self.coloring.use_binary;
+                            for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
+                                if ui
+                                    .selectable_label(
+                                        is_preset && self.coloring.palette_idx == i,
+                                        p.name,
+                                    )
+                                    .clicked()
+                                {
+                                    self.coloring.palette_idx = i;
+                                    self.coloring.use_custom_palette = false;
+                                    self.coloring.use_duotone = false;
+                                    self.coloring.use_binary = false;
+                                    ui.close_menu();
+                                }
+                            }
+                            ui.separator();
+                            if ui
+                                .selectable_label(self.coloring.use_custom_palette, "Custom ✎")
+                                .clicked()
+                            {
+                                if self.coloring.custom_palette.is_empty() {
+                                    self.coloring.custom_palette =
+                                        self.preset_as_stops(self.coloring.palette_idx);
+                                }
+                                self.coloring.use_custom_palette = true;
+                                self.coloring.use_duotone = false;
+                                self.coloring.use_binary = false;
+                                ui.close_menu();
+                            }
+                            if ui
+                                .selectable_label(self.coloring.use_duotone, "Duotone")
+                                .clicked()
+                            {
+                                self.coloring.use_duotone = true;
+                                self.coloring.use_custom_palette = false;
+                                self.coloring.use_binary = false;
+                                ui.close_menu();
+                            }
+                            if ui
+                                .selectable_label(self.coloring.use_binary, "Binary (set)")
+                                .on_hover_text("Flat two-color: in-set vs out-of-set, no gradient.")
+                                .clicked()
+                            {
+                                self.coloring.use_binary = true;
+                                self.coloring.use_custom_palette = false;
+                                self.coloring.use_duotone = false;
+                                ui.close_menu();
+                            }
+                        });
+                        if ui.button("Edit gradient…").clicked() {
+                            if self.coloring.custom_palette.is_empty() {
+                                self.coloring.custom_palette =
+                                    self.preset_as_stops(self.coloring.palette_idx);
+                            }
+                            self.coloring.use_custom_palette = true;
+                            self.coloring.palette_editor_open = true;
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        ui.checkbox(&mut self.coloring.normalize_live, "Normalize deep colors")
+                            .on_hover_text(
+                                "Remap the palette to the view's measured escape range at extreme \
+                                 depth, so dense fields read as structure instead of speckle. \
+                                 Smooth method only; ordinary views are unaffected.",
+                            );
+                        ui.label(
+                            egui::RichText::new(
+                                "Cycle, offset, animation and effects: Controls panel ▸ Coloring",
+                            )
+                            .weak()
+                            .small(),
+                        );
                     });
                     ui.menu_button("Tools", |ui| {
-                        if ui
-                            .button("Benchmark…")
-                            .on_hover_text(
-                                "Measure rendering speed — current settings, or a standardized \
-                                 run (fixed resolution + settings) comparable across machines. \
-                                 Burn-in repeats it to check stability / thermal throttling.",
-                            )
-                            .clicked()
-                        {
-                            self.dialogs.bench_dialog_open = true;
-                            ui.close_menu();
-                        }
-                        if ui
-                            .button("Play script…")
-                            .on_hover_text(
-                                "Pick a tour script to play. The toolbar ▶ replays the last one \
-                                 with a single click.",
-                            )
-                            .clicked()
-                        {
-                            self.load_script();
-                            ui.close_menu();
-                        }
-                        if ui
-                            .button("Script to current view…")
-                            .on_hover_text(
-                                "Create a tour script that zooms from the full view down to the \
-                                 current view — add a caption and set the dive duration.",
-                            )
-                            .clicked()
-                        {
-                            self.open_script_export();
-                            ui.close_menu();
-                        }
+                        let ctx = ui.ctx().clone();
+                        // The mathematical tools lead: they are what distinguishes this app from
+                        // every other deep-zoom explorer, and until 2026-08-13 they were filed
+                        // under Locations / buried in a dialog tooltip (UI review).
+                        ui.add_enabled_ui(matches!(self.fractal.formula_id(), 0..=3), |ui| {
+                            if ui
+                                .button("Find minibrot + zoom to it  (M)")
+                                .on_hover_text(
+                                    "Newton-snap the view center to the nearby minibrot's exact \
+                                     center, report its period, and zoom to the minibrot's own \
+                                     scale — often many orders of magnitude in one step. Already \
+                                     deeper than it? Only the center moves.",
+                                )
+                                .clicked()
+                            {
+                                self.find_minibrot(&ctx);
+                                ui.close_menu();
+                            }
+                            if ui
+                                .button("Newton / Misiurewicz solver…")
+                                .on_hover_text(
+                                    "Solve for the exact minibrot center (period + size) or the \
+                                     Misiurewicz point nearest the view — Newton's method at full \
+                                     precision, with the repelling multiplier λ. Opens the \
+                                     location dialog, which hosts the solvers.",
+                                )
+                                .clicked()
+                            {
+                                self.open_goto();
+                                ui.close_menu();
+                            }
+                        });
                         ui.add_enabled_ui(!self.dual, |ui| {
                             let label = if self.autopilot.active {
                                 "Stop autopilot  (A)"
@@ -278,21 +358,54 @@ impl FractadyneApp {
                                 )
                                 .clicked()
                             {
-                                let ctx = ui.ctx().clone();
                                 self.toggle_autopilot(&ctx);
                                 ui.close_menu();
                             }
                         });
-                        if self.bench_report.is_some()
-                            && ui.button("Show last benchmark").clicked()
+                        ui.checkbox(&mut self.anim.show_orbits, "Orbit overlay")
+                            .on_hover_text(
+                                "Draw the iteration path of the point under the cursor. \
+                                 Fit/animation options: Controls panel ▸ Overlays.",
+                            );
+                        ui.separator();
+                        if ui
+                            .button("Play tour…")
+                            .on_hover_text(
+                                "Pick a tour script to play. The toolbar ▶ replays the last one \
+                                 with a single click.",
+                            )
+                            .clicked()
                         {
-                            self.dialogs.bench_open = true;
+                            self.load_script();
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button("Tour from current view…")
+                            .on_hover_text(
+                                "Create a tour that zooms from the full view down to the current \
+                                 view — add a caption and set the dive duration. Saved as a tour \
+                                 script (.toml) you can edit, play, or render.",
+                            )
+                            .clicked()
+                        {
+                            self.open_script_export();
                             ui.close_menu();
                         }
                         ui.add_enabled_ui(self.playback.is_some(), |ui| {
+                            if ui
+                                .button("Render tour…")
+                                .on_hover_text(
+                                    "Render the loaded tour to a PNG frame sequence (and \
+                                     optionally an mp4) in a separate process.",
+                                )
+                                .clicked()
+                            {
+                                self.open_tour_render();
+                                ui.close_menu();
+                            }
                             // Same thing the player's ✖ does — the transport's own ⏹ only rewinds.
                             if ui
-                                .button("Close player")
+                                .button("Close tour player")
                                 .on_hover_text(
                                     "Stop the tour, close its player, and restore your own \
                                      iteration and coloring settings",
@@ -303,8 +416,68 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         });
+                        ui.separator();
+                        if ui
+                            .button("Benchmark…")
+                            .on_hover_text(
+                                "Measure rendering speed — current settings, or a standardized \
+                                 run (fixed resolution + settings) comparable across machines. \
+                                 Burn-in repeats it to check stability / thermal throttling.",
+                            )
+                            .clicked()
+                        {
+                            self.dialogs.bench_dialog_open = true;
+                            ui.close_menu();
+                        }
+                        if self.bench_report.is_some()
+                            && ui.button("Show last benchmark").clicked()
+                        {
+                            self.dialogs.bench_open = true;
+                            ui.close_menu();
+                        }
                     });
-                    ui.menu_button("Bookmarks", |ui| {
+                    // "Where can I go?" is ONE question: the canonical places (famous points,
+                    // random, .kfr import) and the personal ones (bookmarks) were split across
+                    // two menus until 2026-08-13 (UI review). Merged; bookmarks are the submenu.
+                    ui.menu_button("Navigate", |ui| {
+                        let ctx = ui.ctx().clone();
+                        if ui
+                            .button("Go to location…")
+                            .on_hover_text(
+                                "Enter a center/zoom, jump to a well-known point, or Newton-solve \
+                                 a Misiurewicz / minibrot feature near the view.",
+                            )
+                            .clicked()
+                        {
+                            self.open_goto();
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        for (name, cx, cy, mag) in FAMOUS {
+                            if ui.button(*name).clicked() {
+                                self.goto_location(cx, cy, *mag, name, &ctx);
+                                ui.close_menu();
+                            }
+                        }
+                        ui.separator();
+                        if ui
+                            .button("🎲  Random location")
+                            .on_hover_text("Jump to a random detail-rich boundary point")
+                            .clicked()
+                        {
+                            self.random_location(&ctx);
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button("Import .kfr…")
+                            .on_hover_text("Load a Kalles Fraktaler location file")
+                            .clicked()
+                        {
+                            self.import_kfr(&ctx);
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        ui.menu_button("★  Bookmarks", |ui| {
                         if ui.button("★  Add current view").clicked() {
                             self.add_bookmark("");
                             ui.close_menu();
@@ -323,7 +496,7 @@ impl FractadyneApp {
                                 .iter()
                                 .map(|&i| {
                                     let id = self.bookmarks[i].thumb.clone();
-                                    self.bookmark_thumb_texture(ctx, &id)
+                                    self.bookmark_thumb_texture(&ctx, &id)
                                 })
                                 .collect();
                             let mut jump: Option<usize> = None;
@@ -353,60 +526,7 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         }
-                    });
-                    ui.menu_button("Locations", |ui| {
-                        let ctx = ui.ctx().clone();
-                        if ui
-                            .button("Go to location…")
-                            .on_hover_text(
-                                "Enter a center/zoom, jump to a well-known point, or Newton-solve \
-                                 a Misiurewicz / minibrot feature near the view.",
-                            )
-                            .clicked()
-                        {
-                            self.open_goto();
-                            ui.close_menu();
-                        }
-                        ui.add_enabled_ui(matches!(self.fractal.formula_id(), 0..=3), |ui| {
-                            if ui
-                                .button("Find minibrot + zoom to it  (M)")
-                                .on_hover_text(
-                                    "Newton-snap the view center to the nearby minibrot's exact \
-                                     center, report its period, and zoom to the minibrot's own \
-                                     scale — often many orders of magnitude in one step. Already \
-                                     deeper than it? Only the center moves.",
-                                )
-                                .clicked()
-                            {
-                                self.find_minibrot(&ctx);
-                                ui.close_menu();
-                            }
                         });
-                        ui.separator();
-                        for (name, cx, cy, mag) in FAMOUS {
-                            if ui.button(*name).clicked() {
-                                self.goto_location(cx, cy, *mag, name, &ctx);
-                                ui.close_menu();
-                            }
-                        }
-                        ui.separator();
-                        if ui
-                            .button("🎲  Random location")
-                            .on_hover_text("Jump to a random detail-rich boundary point")
-                            .clicked()
-                        {
-                            self.random_location(&ctx);
-                            ui.close_menu();
-                        }
-                        ui.separator();
-                        if ui
-                            .button("Import .kfr…")
-                            .on_hover_text("Load a Kalles Fraktaler location file")
-                            .clicked()
-                        {
-                            self.import_kfr(&ctx);
-                            ui.close_menu();
-                        }
                     });
                     ui.menu_button("Help", |ui| {
                         if ui.button("Help & reference…  (F1)").clicked() {
@@ -620,10 +740,10 @@ impl FractadyneApp {
                 // picker); the hover names it.
                 let play_hover = match self.last_script.as_ref() {
                     Some(p) => format!(
-                        "Play tour — {} (click) · replays the last script; pick another via Tools ▸ Play script…",
+                        "Play tour — {} (click) · replays the last tour; pick another via Tools ▸ Play tour…",
                         p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
                     ),
-                    None => "Play a tour script… (Tools ▸ Play script)".to_string(),
+                    None => "Play a tour… (Tools ▸ Play tour)".to_string(),
                 };
                 if ui
                     .add_enabled(!self.tour_playing(), egui::Button::new("▶"))

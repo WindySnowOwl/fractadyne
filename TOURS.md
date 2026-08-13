@@ -4,7 +4,7 @@
 
 # Fractadyne tour scripts
 
-A **tour** is a TOML script describing an eased camera path — plus optional captions, callouts, and spotlights — through a fractal. Play one live via **Tools -> Play script...**, or render it headless to a PNG frame sequence (and, with ffmpeg, straight to an mp4):
+A **tour** is a TOML script describing an eased camera path — plus optional captions, callouts, and spotlights — through a fractal. Play one live via **Tools -> Play tour...**, or render it headless to a PNG frame sequence (and, with ffmpeg, straight to an mp4):
 
 ```sh
 fractadyne --render-tour my-tour.toml --size 1920x1080 --fps 30 --ss 2 --out frames --mp4
@@ -22,7 +22,7 @@ Script-wide settings.
 |---|---|---|---|
 | `format_version` | int | (required) | Schema version the script targets. Must be 2 — v1 scripts (cumulative `secs`, `mag`, separate caption/callout/spotlight arrays) are rejected with a migration message rather than mis-played. A version newer than this build warns that some annotations may not render. |
 | `name` | string | "" | Display name (shown in render progress and the end-of-script toast). |
-| `loop` | bool | false | Loop the tour during live playback (Tools -> Play script). |
+| `loop` | bool | false | Loop the tour during live playback (Tools -> Play tour). |
 | `render` | [render] | {} | How the tour is meant to be rendered — see below. |
 | `playback` | [playback] | {} | How the tour behaves in the LIVE view — see below. |
 | `location` | [[location]] | [] | Named coordinates, referenced by `location = "id"`. |
@@ -51,7 +51,7 @@ Output settings, so `--render-tour x.toml` with no flags reproduces the intended
 
 ### `[playback]`
 
-How the tour behaves during LIVE playback (Tools -> Play script). None of this affects an offline render, which always computes every frame to completion.
+How the tour behaves during LIVE playback (Tools -> Play tour). None of this affects an offline render, which always computes every frame to completion.
 
 | Field | Type | Default | Description |
 |---|---|---|---|

@@ -1,4 +1,4 @@
-//! Scripting & benchmark: TOML keyframe camera tours (`Tools -> Play script`) and the
+//! Scripting & benchmark: TOML keyframe camera tours (`Tools -> Play tour`) and the
 //! built-in benchmark tour, plus the playback engine that glides center+zoom along the
 //! timeline and samples FPS/CPU/RAM. `Playback`/`Bench` are pub(crate) (held as app state).
 
@@ -82,7 +82,7 @@ enum Mp4Spec {
     Path(String),
 }
 
-/// The `[playback]` table: how the tour behaves in the LIVE view (`Tools -> Play script`).
+/// The `[playback]` table: how the tour behaves in the LIVE view (`Tools -> Play tour`).
 /// Nothing here affects an offline render, which always renders every frame to completion.
 #[derive(Deserialize, Default, Clone)]
 struct PlaybackFile {
@@ -575,7 +575,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
         fields: &[
             SchemaField { name: "format_version", ty: "int", default: "(required)", doc: "Schema version the script targets. Must be 2 — v1 scripts (cumulative `secs`, `mag`, separate caption/callout/spotlight arrays) are rejected with a migration message rather than mis-played. A version newer than this build warns that some annotations may not render." },
             SchemaField { name: "name", ty: "string", default: "\"\"", doc: "Display name (shown in render progress and the end-of-script toast)." },
-            SchemaField { name: "loop", ty: "bool", default: "false", doc: "Loop the tour during live playback (Tools -> Play script)." },
+            SchemaField { name: "loop", ty: "bool", default: "false", doc: "Loop the tour during live playback (Tools -> Play tour)." },
             SchemaField { name: "render", ty: "[render]", default: "{}", doc: "How the tour is meant to be rendered — see below." },
             SchemaField { name: "playback", ty: "[playback]", default: "{}", doc: "How the tour behaves in the LIVE view — see below." },
             SchemaField { name: "location", ty: "[[location]]", default: "[]", doc: "Named coordinates, referenced by `location = \"id\"`." },
@@ -606,7 +606,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
     SchemaTable {
         toml: "[playback]",
         repeatable: false,
-        summary: "How the tour behaves during LIVE playback (Tools -> Play script). None of this affects an offline render, which always computes every frame to completion.",
+        summary: "How the tour behaves during LIVE playback (Tools -> Play tour). None of this affects an offline render, which always computes every frame to completion.",
         fields: &[
             SchemaField { name: "pace", ty: "string", default: "adaptive", doc: "realtime = run on the wall clock and show whatever is ready (what a benchmark wants — the measurement IS what the machine got done in real time). adaptive = slow the tour while the reference pipeline lags, so a deep dive degrades in duration rather than into a stale blur. settled = adaptive, plus stop the clock at every keyframe HOLD until the view has actually resolved. Deep tours want settled: the live iteration budget only climbs on settled frames and needs more of them than a few seconds of hold provides, so without it the tour walks past its own destination while the screen is still starved." },
             SchemaField { name: "settle_timeout", ty: "float", default: "20", doc: "With pace = \"settled\": seconds a hold may wait for the view to resolve before giving up and moving on, so an unresolvable view cannot stall the tour forever." },
@@ -706,7 +706,7 @@ pub(crate) fn tour_schema_markdown() -> String {
     s.push_str("# Fractadyne tour scripts\n\n");
     s.push_str(
         "A **tour** is a TOML script describing an eased camera path — plus optional captions, \
-         callouts, and spotlights — through a fractal. Play one live via **Tools -> Play script...**, \
+         callouts, and spotlights — through a fractal. Play one live via **Tools -> Play tour...**, \
          or render it headless to a PNG frame sequence (and, with ffmpeg, straight to an mp4):\n\n",
     );
     s.push_str(

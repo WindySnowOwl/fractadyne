@@ -181,7 +181,7 @@ impl FractadyneApp {
         // caption drew straight over this dialog. `Order::Foreground` puts the dialog where a
         // dialog belongs: above the content it is about. (The playback transport is already
         // Foreground for the same reason.)
-        egui::Window::new("Render script")
+        egui::Window::new("Render tour")
             .open(&mut open)
             .resizable(false)
             .default_width(460.0)

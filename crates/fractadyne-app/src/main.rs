@@ -5465,13 +5465,18 @@ impl eframe::App for FractadyneApp {
             }
         }
 
-        // Navigation undo/redo (Backspace / Shift+Backspace or Ctrl+Y), unless typing.
+        // Navigation undo/redo, unless typing. Backspace / Shift+Backspace is the Kalles
+        // Fraktaler convention; Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z) are what everyone tries
+        // first (2026-08-13 UI review) — both work.
         if !ctx.wants_keyboard_input() {
             let (undo, redo) = ctx.input(|i| {
                 let bs = i.key_pressed(egui::Key::Backspace);
+                let z = i.modifiers.command && i.key_pressed(egui::Key::Z);
                 (
-                    bs && !i.modifiers.shift,
-                    (bs && i.modifiers.shift) || (i.modifiers.command && i.key_pressed(egui::Key::Y)),
+                    (bs && !i.modifiers.shift) || (z && !i.modifiers.shift),
+                    (bs && i.modifiers.shift)
+                        || (z && i.modifiers.shift)
+                        || (i.modifiers.command && i.key_pressed(egui::Key::Y)),
                 )
             });
             if undo {

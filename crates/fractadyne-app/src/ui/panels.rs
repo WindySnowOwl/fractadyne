@@ -201,6 +201,33 @@ impl FractadyneApp {
                         .on_hover_text("Flow the glow bands over time (uses the Speed slider).");
                 });
                 });
+                // The orbit overlay's options lived as an indented block inside the View MENU
+                // until 2026-08-13 (UI review: a panel's worth of controls in a dropdown). The
+                // toggle is mirrored in Tools ▸ Orbit overlay.
+                egui::CollapsingHeader::new("Overlays").default_open(false).show(ui, |ui| {
+                ui.checkbox(&mut self.anim.show_orbits, "Orbit overlay")
+                    .on_hover_text("Draw the iteration path of the point under the cursor.");
+                ui.add_enabled_ui(self.anim.show_orbits, |ui| {
+                    ui.checkbox(&mut self.anim.orbit_normalize, "Normalize (fit to view)")
+                        .on_hover_text(
+                            "Fit the orbit to the whole view so it stays well-framed at any zoom \
+                             (instead of mapped through the viewport, where it flies off-screen \
+                             when deep).",
+                        );
+                    ui.checkbox(&mut self.anim.orbit_anim, "Animate (racing dot)")
+                        .on_hover_text("Send a color-cycling dot racing out along the orbit.");
+                    ui.add_enabled(
+                        self.anim.orbit_anim,
+                        egui::Slider::new(&mut self.anim.orbit_anim_speed, 1.0..=40.0)
+                            .text("Orbit speed")
+                            .suffix("/s"),
+                    );
+                });
+                ui.checkbox(&mut self.dialogs.minimap, "Minimap overview").on_hover_text(
+                    "A small home-view overview with a \"you are here\" marker and the zoom \
+                     depth. Click it to jump to a region.",
+                );
+                });
                 egui::CollapsingHeader::new("Rendering").default_open(true).show(ui, |ui| {
                 ui.checkbox(&mut self.render_cfg.auto_iter, "Auto-scale iterations with zoom");
                 let label = if self.render_cfg.auto_iter { "Iterations (base)" } else { "Iterations" };
