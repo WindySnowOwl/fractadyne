@@ -194,6 +194,20 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] ⭐**Deep-hold reference install races (or stalls behind) the hold — livetest e82/e94 drift
+  vs the beta.50 baseline, found 2026-08-13 while fixing the beta.79 budget regression.** Both
+  remaining drifted checkpoints captured with the PREVIOUS hold's reference still installed:
+  hold-e82 showed a 20.6 s-stale reprojection (its 2M ref still building), and hold-e94 captured
+  a real frame with every pixel clamped at the stale 2M orbit (→ 100% interior-colored = FAIL)
+  **even though its 3.63M reference had finished building ~100 s earlier** — built but never
+  installed (watch lines: "reference built [live]: len=3631055" at wall 573 s, capture ~690 s,
+  orbit at capture 2008193). At the beta.50 baseline the right refs were in place at the same
+  checkpoints. Suspects: the install path needs a frame that never comes at an idle hold, the
+  pacer/sticky-give-up (beta.42) moving the clock on before the install, or the freeze-guard
+  path for a COMPLETE 3.63M ref (escaped < the 4M ask). Baseline deliberately NOT re-blessed
+  over this. Repro: `--livetest tours\grand-tour.toml --size 480x270 --segment gauntlet` with
+  `FRACTADYNE_TRACE=gpu` (harness budget-walk "lt" lines now exist, beta.80).
+
 - [~] **Speckle at deep, high-detail views — DIAGNOSED, it is ANTI-ALIASING, not a bug (user
   report 2026-08-10).** At the three-spar ~1e103× the live view (ss2, ~1236 px wide) shows uniform
   speckle with one clean central diamond. ⛔**My first diagnosis (f32 smooth-iteration precision)
