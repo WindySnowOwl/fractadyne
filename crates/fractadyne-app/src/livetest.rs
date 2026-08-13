@@ -358,7 +358,12 @@ impl FractadyneApp {
                 let steps = self.perf.fe_steps_last[0];
                 if ms > 0.01 && steps > 0 {
                     let cur = crate::render::budget_base(self.perf.fe_budget[0]);
-                    if let Some((next, ok)) = crate::render::budget_step(cur, steps, ms) {
+                    if let Some((next, ok)) = crate::render::budget_step(
+                        cur,
+                        steps,
+                        ms,
+                        !self.render_cfg.auto_iter,
+                    ) {
                         self.perf.fe_budget_ok[0] = ok;
                         self.perf.fe_budget[0] = next;
                     }

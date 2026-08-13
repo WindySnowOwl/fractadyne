@@ -16,6 +16,18 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Explicit-count dispatches are now priced by MEASURED cost, not worst-case nominal**
+  (beta.79). A scripted deep dive (5111×2158 window, ~1.29M explicit iterations at e216) rendered
+  ~26-pixel blocks for most of the descent: the flat per-dispatch nominal cap (a device-loss
+  guard) priced every dispatch at its zero-skip worst case, so cap-sized dispatches measuring
+  54 ms real wasted 4× of safe headroom — while the frame budget sat frozen above the cap
+  discarding every reading as undersized ("(settling)" forever). The budget controller now runs a
+  separate explicit regime: it converges on 200 ms real (4.5× under the reproduced ~0.9 s lethal
+  band), every growth step paced by a real measurement, ceilinged at 3× the old cap so even a
+  total skip collapse between readings prices under ~600 ms. Same view: 3× the per-dispatch work,
+  ~1.7× finer resolution, and the budget readout actually converges. Also: an unmeasured chunked
+  opening dispatch no longer overshoots the bootstrap bound on large panels (the 256-iteration
+  anti-thrash floor now applies only once a measurement exists).
 - **"Prefer detail" no longer pixelates on a long dive** (beta.78). The stage-A cut froze every
   moving frame, which disabled the existing refresh-every-half-octave cadence — so a continuous
   zoom just magnified the frozen frame into ever-larger blocks (worse than the toggle off).

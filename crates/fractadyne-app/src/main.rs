@@ -5172,7 +5172,8 @@ impl FractadyneApp {
         // The arithmetic lives in `render::budget_step` as a pure function so the properties that
         // matter — a slow reading always shrinks, growth is bounded, the clamps hold — are pinned
         // by tests rather than by re-reading this block.
-        let Some((next, ok)) = render::budget_step(cur, steps, ms) else {
+        let Some((next, ok)) = render::budget_step(cur, steps, ms, !self.render_cfg.auto_iter)
+        else {
             if diag::trace_on("gpu") {
                 diag::trace(
                     "gpu",

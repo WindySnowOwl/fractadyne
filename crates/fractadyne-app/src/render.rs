@@ -63,16 +63,35 @@ pub(crate) const TDR_BOOTSTRAP_STEPS: u64 = 400_000_000;
 /// shrink's own 16×16 floor still bounds how small a frame can get.
 pub(crate) const TDR_MIN_STEPS: u64 = 4_000_000;
 
-/// Per-dispatch nominal-step ceiling for EXPLICIT iteration counts (auto-iter off). Three device
-/// losses in one release cycle shared the shape "controller converges explicit-count dispatches
-/// toward the 900 ms target; ~0.9–1.3 s of unpreemptible fragment work intermittently loses the
-/// device" (crash-1786499093 Direct, crash-1786506241 mode-0 rebase-grind, crash-1786538140
-/// mode-2 settle tiles) — the `nvlddmkm` Event-153 marginality of the beta.48 saga, reproduced at
-/// will. 2e10 nominal is ~60–200 ms real even with ZERO skip — safely under any watchdog. Applied
-/// to `tdr_steps` (so tiles, chunks, and single frames all obey it), to the budget-climb probe's
-/// stop, and to the tiling gate's "as converged as the cap allows" arm. Auto-iter views are
-/// untouched.
+/// Nominal-step bound for EXPLICIT-count dispatches (auto-iter off) while the cost model is still
+/// UNMEASURED. Three device losses in one release cycle shared the shape "controller converges
+/// explicit-count dispatches toward the 900 ms target; ~0.9–1.3 s of unpreemptible fragment work
+/// intermittently loses the device" (crash-1786499093 Direct, crash-1786506241 mode-0
+/// rebase-grind, crash-1786538140 mode-2 settle tiles) — the `nvlddmkm` Event-153 marginality of
+/// the beta.48 saga, reproduced at will. 2e10 nominal is ~60–200 ms real even with ZERO skip —
+/// safely under any watchdog — which is exactly the guarantee an unmeasured dispatch needs.
+/// Applied to the budget-climb probe's stop and to the tiling gate's "arm once the cap region is
+/// reached" predicate. Auto-iter views are untouched.
+///
+/// ⚠It is NOT the bound on a MEASURED explicit budget. Shipped as a flat cap on `tdr_steps`, it
+/// silently priced every skip-heavy dispatch at its zero-skip worst case: a scripted dive at a
+/// 5111×2158 window (2026-08-12 field report) ran cap-sized dispatches that measured **54.3 ms**
+/// against the ~900 ms target — 4× of safe headroom spent rendering 26-pixel blocks — while the
+/// frame budget sat frozen above the cap discarding every reading as undersized (`(settling)`
+/// forever). Measured cost is the real currency: `budget_step` in the explicit regime converges
+/// on `TDR_EXPLICIT_BUDGET_MS` real and is ceilinged by `EXPLICIT_STEPS_CEIL`.
 pub(crate) const EXPLICIT_DISPATCH_CAP: u64 = 20_000_000_000;
+/// Real-milliseconds target for MEASURED explicit-count dispatches. The lethal band starts around
+/// ~0.9 s (three reproduced Event-153 losses); 200 ms keeps a 4.5× margin while quadrupling the
+/// resolution the old flat nominal cap allowed in skip-heavy regimes. Deliberately far below the
+/// auto-iter `TDR_BUDGET_MS`: explicit counts are the regime where skip effectiveness is least
+/// predictable (that unpredictability is what the three crashes were), so the margin is wider.
+pub(crate) const TDR_EXPLICIT_BUDGET_MS: f64 = 200.0;
+/// Nominal ceiling for a MEASURED explicit budget: 3× `EXPLICIT_DISPATCH_CAP`, so even a total
+/// skip collapse between one measurement and the next (nominal = real, the worst case nominal
+/// denomination guarantees) prices at ~180–600 ms — under the lethal band with margin. Growth
+/// from the cap to here takes ~3 measured readings at ×1.5, each a real timing.
+pub(crate) const EXPLICIT_STEPS_CEIL: u64 = 60_000_000_000;
 /// Never exceed this even if a view measures absurdly cheap (a lone quick interval shouldn't uncork a
 /// multi-second dispatch).
 pub(crate) const TDR_STEPS_CEIL: u64 = 300_000_000_000;
@@ -1932,12 +1951,13 @@ impl FractadyneApp {
         // the larger budget. Handing a still-climbing budget the full allowance would spend
         // hundreds of frames perfecting a resolution that is already known to be too low.
         //
-        // EXPLICIT counts whose budget sits at the per-dispatch cap get the full allowance: the
-        // cap deliberately forbids the bigger dispatches that used to make 16 tiles enough (three
-        // device losses — see EXPLICIT_DISPATCH_CAP), so native resolution is reachable only as
-        // MORE cap-sized tiles (native at 4M ≈ 240 of them, one per frame, each ~60–200 ms real
-        // worst-case and far less when BLA skips). The budget is pinned there, so the "climbing
-        // budget wastes frames on known-low resolution" concern doesn't apply.
+        // EXPLICIT budgets in the cap region get the full allowance: the explicit regime's 200 ms
+        // real target deliberately forbids the ~900 ms dispatches that used to make 16 tiles
+        // enough (three device losses — see EXPLICIT_DISPATCH_CAP / TDR_EXPLICIT_BUDGET_MS), so
+        // native resolution is reachable only as MORE modestly-sized tiles (native at 4M ≈ 80–240
+        // of them, one per frame, each bounded ≤ ~600 ms real worst-case and far less when BLA
+        // skips). The budget converges within a few tiles of arriving here, so the "climbing
+        // budget wastes frames on known-low resolution" concern is bounded to those few.
         let _ = (TDR_SETTLE_BUDGET_MS, TDR_TILE_VSYNC_MS);
         let _ = self.perf.last_iterate_ms[vidx];
         if !self.render_cfg.auto_iter
@@ -2611,21 +2631,29 @@ impl FractadyneApp {
             // Zero until the first probe resolves; the loop in `update` maintains it thereafter.
             budget_base(self.perf.fe_budget[vidx])
         };
-        // EXPLICIT-count dispatch cap. Three device losses this release cycle share one shape:
+        // EXPLICIT-count dispatch bound. Three device losses this release cycle share one shape:
         // with auto-iter OFF and a huge explicit count, the ratio controller converges dispatches
         // toward its 900 ms target, and ~0.9–1.3 s of unpreemptible fragment work per submission
         // intermittently loses the device on this hardware class (`nvlddmkm` Event 153) — as a
         // shrunk single frame (crash-1786499093, Direct), as a rebase-grind frame
         // (crash-1786506241, mode 0), and as budget-sized settle TILES at a deep floatexp view
-        // (crash-1786538140, mode 2, ~1.5e11-nominal ≈ 900 ms per tile, one per frame). So when
-        // the count is EXPLICIT, cap every single dispatch — tiles and chunks alike — at ~2e10
-        // nominal (~60–200 ms real even with zero skip): the user asked for extreme work, and the
-        // app spreads it across more dispatches instead of gambling the device on big ones.
-        // Auto-iter views (sane counts, the normal case) are untouched, so nothing here changes
-        // ordinary perf. This subsumes the narrower short-escaped-reference (rebase-grind) cap it
-        // replaces, and it is what sizes the chunked paths' per-frame iteration ranges too.
+        // (crash-1786538140, mode 2, ~1.5e11-nominal ≈ 900 ms per tile, one per frame). The
+        // explicit regime therefore converges on TDR_EXPLICIT_BUDGET_MS (200 ms real, 4.5× under
+        // the lethal band) inside `budget_step` — every step of growth above the bootstrap is
+        // paced by a real measurement at ×1.5 — and this bound is only its worst-case backstop:
+        // EXPLICIT_STEPS_CEIL nominal is ~180–600 ms real even with ZERO skip, so a stale budget
+        // carried across the auto→explicit toggle (measured toward 900 ms, up to 3e11) can never
+        // size a lethal dispatch here. Applied to tiles and chunks alike; it is what sizes the
+        // chunked paths' per-frame iteration ranges too. Auto-iter views (sane counts, the normal
+        // case) are untouched, so nothing here changes ordinary perf.
+        //
+        // ⚠This was a flat min(EXPLICIT_DISPATCH_CAP): safe, but priced every dispatch at its
+        // zero-skip worst case — a scripted deep dive (2026-08-12 field report) ran 54 ms
+        // dispatches it could have quadrupled, rendering 26-px blocks at a 5111×2158 window while
+        // the budget froze above the cap discarding every undersized reading ("(settling)"
+        // forever). Measured real cost is the currency; nominal is only the worst-case backstop.
         let tdr_steps = if !offscreen && !self.render_cfg.auto_iter {
-            tdr_steps.min(EXPLICIT_DISPATCH_CAP)
+            tdr_steps.min(EXPLICIT_STEPS_CEIL)
         } else {
             tdr_steps
         };
@@ -2747,12 +2775,14 @@ impl FractadyneApp {
                 // to 100%. So an auto-budgeted view keeps waiting for convergence exactly as it
                 // shipped; only a never-measurable budget and a user-typed iteration count take
                 // the new path.
-                // An EXPLICIT count whose measured budget has climbed to (or past) the per-dispatch
-                // cap can never satisfy `fe_budget_ok` — the controller's 900 ms convergence band
-                // is exactly what the cap forbids (that band is what lost the device three times).
-                // A capped budget is as converged as it is allowed to get, so arm on it: the settle
-                // then composes the native frame from cap-sized (~60–200 ms) tiles instead of the
-                // view resting at the cap's single-dispatch resolution forever.
+                // An EXPLICIT budget in the cap region arms early. The explicit regime now
+                // CONVERGES (`budget_step` targets 200 ms real, and a ceiling-pinned budget reads
+                // as `ok`), so the plain `fe_budget_ok` arm above eventually fires on its own —
+                // but the climb-probe stops growing an unmeasured budget at the cap, so a STATIC
+                // view can reach 2e10 with `ok` still false and no dispatches left to measure.
+                // Arming here bridges that: the settle's tiles are real measured dispatches, and
+                // they carry the budget the rest of the way to its converged size (the grid
+                // re-forms sharper as it grows — the 9/8 ratchet bounds the restarts).
                 _ if self.perf.fe_budget_ok[vidx]
                     || self.perf.fe_budget[vidx] == 0
                     || (!self.render_cfg.auto_iter
@@ -2948,9 +2978,16 @@ impl FractadyneApp {
         self.perf.chunk_pending[vs] = false;
         if chunk_over {
             let ss2 = (ss as u64).saturating_mul(ss as u64);
+            // The 256-iteration floor keeps a MEASURED progression from thrashing in slivers, but
+            // an UNMEASURED opening dispatch must honour the bootstrap bound at ANY panel size —
+            // floor × a large panel exceeds it severalfold (1445×1134 × 256 = 4.195e8 vs the 4e8
+            // bootstrap, caught by the "unmeasured budget bounds the FIRST dispatch" selftest; a
+            // 4K panel would be 5×). Until a measurement exists the plain division is the bound;
+            // the floor applies from the first measured budget onward.
+            let floor = if self.perf.fe_budget[vidx] == 0 { 1 } else { 256 };
             // Per-frame iteration step that keeps this frame's dispatch inside the budget.
             let step = ((tdr_allowed / spx.saturating_mul(ss2).max(1)) as u32)
-                .clamp(256, gpu_iter.max(256));
+                .clamp(floor, gpu_iter.max(floor));
             // View signature: anything that shapes the render restarts the progression.
             let sig = (
                 center.0.to_bits()
@@ -3856,16 +3893,30 @@ pub(crate) fn install_collapse(old_len: u32, new_len: u32, new_partial: bool) ->
     old_len > 0 && !new_partial && (new_len as u64) * 3 < (old_len as u64) * 2
 }
 
-pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64) -> Option<(u64, bool)> {
-    let slow = ms > TDR_BUDGET_MS;
+pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Option<(u64, bool)> {
+    // Two regimes, one arithmetic. `explicit` (auto-iter off, incl. script playback) converges on
+    // a much shorter real target with a hard nominal ceiling — skip effectiveness is least
+    // predictable there and ~900 ms real is the reproduced lethal band (see
+    // TDR_EXPLICIT_BUDGET_MS). The regime lives INSIDE this function so the app controller, the
+    // livetest harness, and the tests cannot select it differently (the beta.40 lesson: a harness
+    // whose controller differs from the app's measures a view the app never renders).
+    let (target_ms, ceil) = if explicit {
+        (TDR_EXPLICIT_BUDGET_MS, EXPLICIT_STEPS_CEIL)
+    } else {
+        (TDR_BUDGET_MS, TDR_STEPS_CEIL)
+    };
+    let slow = ms > target_ms;
     // A fast dispatch far under budget size finished quickly because it is SMALL. One-sided: a
     // SLOW undersized dispatch is the strongest evidence the budget is too high.
     if (steps as f64) < cur as f64 * 0.7 && !slow {
         return None;
     }
-    let factor = (TDR_BUDGET_MS / ms).clamp(TDR_SHRINK_MAX, TDR_GROW_MAX);
+    let factor = (target_ms / ms).clamp(TDR_SHRINK_MAX, TDR_GROW_MAX);
     let base = if slow { cur.min(steps.max(1)) } else { cur };
-    let next = ((base as f64 * factor) as u64).clamp(TDR_MIN_STEPS, TDR_STEPS_CEIL);
+    let next = ((base as f64 * factor) as u64).clamp(TDR_MIN_STEPS, ceil);
+    // Converged when the factor sits in the dead band — or when the clamp pinned `next` at `cur`
+    // (a ceiling-pinned explicit budget is as converged as it is allowed to get; this is what
+    // lets `fe_budget_ok` arm the tiled settle without a special case).
     Some((next, next == cur || (0.8..=1.25).contains(&factor)))
 }
 
@@ -3894,9 +3945,14 @@ mod controller_props {
         // Whatever the dispatch's nominal size, taking longer than the target must shrink.
         for &cur in &[TDR_BOOTSTRAP_STEPS * 4, 1_000_000_000, 50_000_000_000, TDR_STEPS_CEIL] {
             for &steps in &[1u64, cur / 3, cur, cur * 4] {
-                let (next, _) = budget_step(cur, steps, TDR_BUDGET_MS * 2.0)
-                    .expect("a slow reading is never discarded");
-                assert!(next < cur, "slow reading grew the budget: cur={cur} steps={steps} -> {next}");
+                for explicit in [false, true] {
+                    let (next, _) = budget_step(cur, steps, TDR_BUDGET_MS * 2.0, explicit)
+                        .expect("a slow reading is never discarded");
+                    assert!(
+                        next < cur,
+                        "slow reading grew the budget: cur={cur} steps={steps} -> {next}"
+                    );
+                }
             }
         }
     }
@@ -3905,7 +3961,7 @@ mod controller_props {
     fn a_slow_small_dispatch_pulls_the_budget_to_its_own_size() {
         // The beta.40 defect: a 1451 ms dispatch of 1.03e10 steps was DISCARDED as undersized and
         // the budget stayed at 1.663e11, far above anything the GPU could finish.
-        let (next, _) = budget_step(166_300_000_000, 10_300_000_000, 1451.4).unwrap();
+        let (next, _) = budget_step(166_300_000_000, 10_300_000_000, 1451.4, false).unwrap();
         assert!(next <= 10_300_000_000, "budget must come down to the size that measured slow");
     }
 
@@ -3965,12 +4021,12 @@ mod controller_props {
         // The floor used to be TDR_BOOTSTRAP_STEPS, so a regime where the opening guess is itself
         // too expensive (measured: 4e8 steps = 780 ms at mode 2 with orbit_len=626) left the
         // controller with nowhere to go. A safety valve has to move toward safety.
-        let (next, _) = budget_step(TDR_BOOTSTRAP_STEPS, TDR_BOOTSTRAP_STEPS, 780.0)
+        let (next, _) = budget_step(TDR_BOOTSTRAP_STEPS, TDR_BOOTSTRAP_STEPS, 780.0, false)
             .expect("a reading at the opening guess is usable");
         // 780 ms is under the 900 ms target, so this one still grows — the point is the next ones.
         let mut b = TDR_BOOTSTRAP_STEPS;
         for _ in 0..8 {
-            b = budget_step(b, b, 2_000.0).expect("a slow reading is never discarded").0;
+            b = budget_step(b, b, 2_000.0, false).expect("a slow reading is never discarded").0;
         }
         assert!(
             b < TDR_BOOTSTRAP_STEPS,
@@ -3984,8 +4040,11 @@ mod controller_props {
     fn budget_never_leaves_its_clamps() {
         for &ms in &[0.05, 1.0, TDR_BUDGET_MS, 5_000.0] {
             for &cur in &[TDR_MIN_STEPS, TDR_BOOTSTRAP_STEPS, TDR_STEPS_CEIL] {
-                if let Some((next, _)) = budget_step(cur, cur, ms) {
+                if let Some((next, _)) = budget_step(cur, cur, ms, false) {
                     assert!((TDR_MIN_STEPS..=TDR_STEPS_CEIL).contains(&next));
+                }
+                if let Some((next, _)) = budget_step(cur, cur, ms, true) {
+                    assert!((TDR_MIN_STEPS..=EXPLICIT_STEPS_CEIL).contains(&next));
                 }
             }
         }
@@ -3994,8 +4053,34 @@ mod controller_props {
     #[test]
     fn growth_is_bounded_so_one_reading_cannot_reach_the_watchdog() {
         let cur = 1_000_000_000;
-        let (next, _) = budget_step(cur, cur, 0.01).unwrap();
+        let (next, _) = budget_step(cur, cur, 0.01, false).unwrap();
         assert!(next as f64 <= cur as f64 * TDR_GROW_MAX + 1.0);
+    }
+
+    #[test]
+    fn explicit_budget_measures_past_the_nominal_cap_and_stops_at_its_ceiling() {
+        // The 2026-08-12 field report (scripted dive, 5111×2158 window, ~1.29M explicit iters at
+        // e216): cap-sized dispatches (2e10 nominal) measured 54.3 ms real — 4× of safe headroom
+        // the flat cap wasted on 26-pixel blocks — while the frozen budget above the cap ignored
+        // every reading. Measured growth must walk past the old cap and pin at the explicit
+        // ceiling, converged (`ok`), with the real cost still far under the ~0.9 s lethal band.
+        let skip_rate = EXPLICIT_DISPATCH_CAP as f64 / 54.3; // nominal steps per real ms, measured
+        let mut b = EXPLICIT_DISPATCH_CAP;
+        for _ in 0..16 {
+            let ms = b as f64 / skip_rate; // cost tracks nominal size at a fixed skip rate
+            assert!(ms < 300.0, "explicit dispatches must stay far under the lethal band: {ms}");
+            let (next, ok) =
+                budget_step(b, b, ms, true).expect("a budget-sized reading is never discarded");
+            if next == b {
+                assert!(ok, "a pinned explicit budget must read as converged");
+                break;
+            }
+            b = next;
+        }
+        assert_eq!(b, EXPLICIT_STEPS_CEIL, "growth stops exactly at the explicit ceiling");
+        // And the regime still shrinks on a genuinely slow reading (skip collapse).
+        let (next, _) = budget_step(EXPLICIT_STEPS_CEIL, EXPLICIT_STEPS_CEIL, 700.0, true).unwrap();
+        assert!(next < EXPLICIT_STEPS_CEIL);
     }
 
     #[test]
