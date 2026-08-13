@@ -16,6 +16,15 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Segment rendering for multiple machines: `--segments N --segment-index K`** (beta.75). Shard a
+  tour's whole timeline into N contiguous, gap-free frame ranges and render only range K — run one
+  shard per machine and the frames union to exactly the full video. Shard k covers
+  `[⌊k·F/N⌋, ⌊(k+1)·F/N⌋)`, the formula that guarantees no missing or duplicated frames at the
+  boundaries (pinned by a unit test across divisible, non-divisible, and more-shards-than-frames
+  cases). Global frame numbering is kept, so the collected shards drop into one folder and the
+  usual MP4 assembly works unchanged; combines with the chapter-level `--segment NAME` by
+  intersection. `--dry-run` prints an invocation's exact frame range and exits without touching
+  disk, so a farm script can verify its shards tile before committing hours of GPU.
 - **Space no longer zooms while typing, and the player can switch scripts** (beta.74). The
   hold-Space continuous zoom read the key even while a dialog's text field owned the keyboard —
   typing a space into the "Script to current view" note nudged the zoom underneath; both Space

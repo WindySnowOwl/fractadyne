@@ -2643,6 +2643,24 @@ descent and the Tan Lei self-checking test).
 
 ### Sequenced first — small, high-value, hard to get wrong
 
+- [ ] **Coordinate-expression entry: functions, constants, and polar form** (user, 2026-08-12).
+  Extend the beta.23 rational evaluator (`parse_bf` / `parse_complex_prec` — today: `+ - * /`,
+  parentheses, exact rationals) into a small arbitrary-precision expression language for
+  coordinates, everywhere they're entered (Go-to dialog, script `re`/`im`, `.fdn`):
+  - **Functions**: `sqrt`, cube/n-th roots (`cbrt`, `root(x,n)` or `x^(1/n)`), `sin cos tan`
+    (+ inverses), `ln log exp`, `abs`, powers `^`. astro-float provides all of these at caller
+    precision — the evaluator must thread the SAME precision floor the rational path already
+    honours (the beta.23 lesson: an inexact value must carry digits for the target depth).
+  - **Constants**: `pi`, `e` (astro-float supplies both at precision), maybe `tau`, `phi`.
+  - **Polar form with cartesian offset**: enter a centre as `x0, y0 + r ∠ θ` — i.e.
+    `re = x0 + r·cos(θ)`, `im = y0 + r·sin(θ)`, all evaluated at target precision. UI shape: a
+    mode switch (x,y ↔ offset+polar) in the Go-to dialog with fields (x0, y0, r, θ) and a
+    degrees/radians/turns selector; script form could be `polar = "x0, y0, r, theta"` or
+    functions alone already cover it (`re = "x0 + r*cos(theta)"`) once functions land — the
+    dedicated UI is the discoverable half. ⚠Grammar stays small and total (no variables beyond
+    the polar fields, no user functions); reuse the shape-validation + precision-floor plumbing;
+    extend selftest group `coords` (exact values vs known identities, e.g. `cos(pi/3) = 1/2`
+    to N bits, polar round-trip).
 - [x] **Exact rational / complex coordinate entry** (P0, §4.1) — v0.2.40-beta.23. `parse_bf` now
   evaluates rational expressions (`-3/4`, `(1+2)/8`), and `parse_complex_prec` parses complex ones
   (`(37+16i)/100`) — the Go-to dialog's real field accepts a whole complex value and fills both
@@ -2982,8 +3000,12 @@ phase-1 scoring is already capped at `REF_SCORE_SCAN = 4096`):
   behaviour mid-video). UF sells network rendering as a paid headline; KF/F3 users script it by
   hand — a shipped script is a differentiator at near-zero risk. ⚠In-app cluster orchestration
   stays OUT (DESIGN.md was right): discovery/scheduling/fault-tolerance is a permanent tax.
-- [ ] ⭐**Render-by-segment for multi-machine parallelism: `--segments N --segment-index K`** (user,
-  2026-08-11). Split ONE tour render's whole frame sequence into `N` contiguous, non-overlapping,
+- [x] ⭐**Render-by-segment for multi-machine parallelism: `--segments N --segment-index K`** (user,
+  2026-08-11). ✅**SHIPPED v0.2.40-beta.75** exactly as specified: `segment_range` pure fn
+  (`[⌊k·F/N⌋, ⌊(k+1)·F/N⌋)`), unit test `segment_ranges_tile_exactly` (10 (F,N) cases incl. F<N
+  and non-divisible), `--dry-run` prints the plan before touching disk, chapter `--segment NAME`
+  composes by intersection, empty shards exit cleanly. Smoke: 19-frame tour × 3 shards → 6+6+7,
+  19 unique files, 0 gaps. Split ONE tour render's whole frame sequence into `N` contiguous, non-overlapping,
   gap-free ranges and render only range `K` — so `N` machines each run one range and the frames
   union to exactly the full video. **Distinct from the existing `--segment NAME`** (which renders a
   named *chapter*); this shards the *whole* timeline by frame count. **The correctness crux the user

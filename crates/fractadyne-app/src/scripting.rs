@@ -903,8 +903,30 @@ pub(crate) struct TourRenderConfig {
     pub(crate) mp4: Option<Option<std::path::PathBuf>>,
     /// `--segment NAME`: render only that `[[segment]]` chapter (global frame numbering kept).
     pub(crate) segment: Option<String>,
+    /// `--segments N --segment-index K`: shard the WHOLE timeline into `N` contiguous, gap-free
+    /// frame ranges and render only range `K` (0-based) — so `N` machines each take one range and
+    /// the frames union to exactly the full video. Distinct from `segment` (a named chapter);
+    /// both may combine (the shard intersects the chapter). Global frame numbering kept.
+    pub(crate) segments: Option<u32>,
+    pub(crate) segment_index: Option<u32>,
+    /// `--dry-run`: print the resolved plan — total frames and THIS invocation's `[start, end)`
+    /// range — and exit without rendering, so a farm script can verify shards tile before
+    /// committing hours of GPU.
+    pub(crate) dry_run: bool,
     pub(crate) overwrite: bool,
     pub(crate) resume: bool,
+}
+
+/// The half-open frame range `[start, end)` of shard `k` of `n` over `frames` total frames:
+/// `[⌊k·F/N⌋, ⌊(k+1)·F/N⌋)`. This exact formula is what guarantees the shards TILE: consecutive
+/// shards share a boundary (this shard's `end` is the next one's `start`), their union is
+/// `[0, F)` with no overlap, and the `F mod N` remainder frames spread one-each across the low
+/// shards — no off-by-one, no double-render, no gap (the multi-machine correctness the feature
+/// exists for). Pure, so the unit test below can pin the tiling property outright.
+pub(crate) fn segment_range(frames: u64, n: u64, k: u64) -> (u64, u64) {
+    let n = n.max(1);
+    let k = k.min(n - 1);
+    (k * frames / n, (k + 1) * frames / n)
 }
 
 /// Everything the tour renderer needs, after merging the CLI over the script's `[render]` block.
@@ -2620,6 +2642,48 @@ impl FractadyneApp {
             }
             None => (0, u64::MAX),
         };
+        // Total frame count — the SAME formula on every machine, which is what the sharding below
+        // depends on (all hosts must agree on F for the ranges to tile).
+        let frames: u64 = if pb.total <= 0.0 { 1 } else { (pb.total * fps).round() as u64 + 1 };
+        let last_frame = last_frame.min(frames.saturating_sub(1));
+        // --segments N --segment-index K: intersect the (possibly chapter-restricted) range with
+        // this shard's half-open `[start, end)` — see `segment_range` for why the formula tiles.
+        let (first_frame, last_frame) = if let Some(n) = cli.segments {
+            if n == 0 {
+                return Err("--segments must be at least 1".into());
+            }
+            let k = cli.segment_index.unwrap_or(0);
+            if k >= n {
+                return Err(format!(
+                    "--segment-index {k} is out of range for --segments {n} (valid: 0..={})",
+                    n - 1
+                ));
+            }
+            let (s, e) = segment_range(frames, n as u64, k as u64);
+            say(&format!(
+                "Shard {k} of {n}: frames [{s}, {e}) of {frames} total ({} in this shard)",
+                e - s
+            ));
+            if e <= s {
+                return Ok(format!(
+                    "Shard {k}/{n} is empty ({frames} frames split {n} ways) — nothing to render."
+                ));
+            }
+            (first_frame.max(s), last_frame.min(e - 1))
+        } else {
+            (first_frame, last_frame)
+        };
+        // --dry-run: report the plan and stop BEFORE touching the output directory, so a farm
+        // script can verify its shards tile across hosts before committing hours of GPU.
+        if cli.dry_run {
+            let planned = (last_frame + 1).saturating_sub(first_frame);
+            return Ok(format!(
+                "Dry run: would render frames {first_frame}..={last_frame} ({planned} of {frames} \
+                 total) at {width}×{height} ss{} to {}",
+                cfg.ss,
+                out_dir.display()
+            ));
+        }
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
         write_render_status(&out_dir, "running");
@@ -2648,8 +2712,6 @@ impl FractadyneApp {
         self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
         self.export.width = width;
         self.export.ss = cfg.ss;
-        let frames: u64 = if pb.total <= 0.0 { 1 } else { (pb.total * fps).round() as u64 + 1 };
-        let last_frame = last_frame.min(frames.saturating_sub(1));
         let planned = (last_frame + 1).saturating_sub(first_frame);
         say(&format!(
             "Rendering tour \"{}\": {planned} frames at {width}×{height} ss{}, {fps} fps ({:.1}s)…",

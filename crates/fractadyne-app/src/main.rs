@@ -2580,6 +2580,11 @@ impl FractadyneApp {
             }),
             // --segment NAME: render only that chapter, keeping the global frame numbering.
             segment: val("--segment").cloned(),
+            // --segments N --segment-index K: shard the timeline for multi-machine rendering.
+            segments: val("--segments").and_then(|s| s.parse::<u32>().ok()),
+            segment_index: val("--segment-index").and_then(|s| s.parse::<u32>().ok()),
+            // --dry-run: print the resolved frame plan and exit without rendering.
+            dry_run: args.iter().any(|a| a == "--dry-run"),
             // --overwrite / -y: replace existing frames without prompting.
             overwrite: args.iter().any(|a| a == "--overwrite" || a == "-y"),
             // --resume: keep already-rendered frames and render only the missing ones (restart).
@@ -6068,6 +6073,27 @@ mod tests {
         assert!(!install_collapse(90, 3_730_527, false));
         // Cold start (no previous orbit): never.
         assert!(!install_collapse(0, 90, false));
+    }
+
+    // Multi-machine sharding correctness: for any (frames, segments), the N ranges must be
+    // contiguous, disjoint, and cover [0, F) exactly — a missing or duplicated frame at a shard
+    // boundary silently corrupts a video assembled from several machines' output.
+    #[test]
+    fn segment_ranges_tile_exactly() {
+        use crate::scripting::segment_range;
+        for &(frames, n) in &[
+            (0u64, 1u64), (1, 1), (1, 4), (7, 3), (100, 7), (9931, 4), (9931, 16),
+            (233, 233), (233, 500), (1_000_000, 13),
+        ] {
+            let mut expected_start = 0u64;
+            for k in 0..n {
+                let (s, e) = segment_range(frames, n, k);
+                assert_eq!(s, expected_start, "F={frames} N={n} k={k}: gap or overlap at start");
+                assert!(e >= s, "F={frames} N={n} k={k}: negative range");
+                expected_start = e;
+            }
+            assert_eq!(expected_start, frames, "F={frames} N={n}: union does not cover [0, F)");
+        }
     }
 
     // The go-to / metadata zoom string must round-trip through log2(magnification) at any
