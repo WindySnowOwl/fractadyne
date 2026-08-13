@@ -438,6 +438,9 @@ pub(crate) struct TourRenderUi {
     pub(crate) overwrite: bool,
     /// Keep frames already on disk and render only what's missing (`--resume`).
     pub(crate) resume: bool,
+    /// Render order: progressive (keyframes first, then bisect the largest gaps — preview the
+    /// whole tour early) vs the default sequential. Maps to `--order progressive`.
+    pub(crate) progressive: bool,
     /// Latest line from the child (its "frame N/M …" progress), and the finished-run summary.
     pub(crate) progress: String,
     /// `(done, planned)` parsed from the latest progress line — drives the progress BAR; the raw
@@ -466,6 +469,7 @@ impl Default for TourRenderUi {
             mp4: false,
             overwrite: true,
             resume: false,
+            progressive: false,
             progress: String::new(),
             progress_frames: None,
             error: None,
@@ -2616,6 +2620,19 @@ impl FractadyneApp {
             segment_index: val("--segment-index").and_then(|s| s.parse::<u32>().ok()),
             // --dry-run: print the resolved frame plan and exit without rendering.
             dry_run: args.iter().any(|a| a == "--dry-run"),
+            // --order sequential|progressive: which ORDER frames render in (indices unchanged).
+            // A typo must not silently fall back to sequential — a farm script would then lose
+            // the preview it asked for without a trace.
+            progressive: match val("--order").map(|s| s.to_ascii_lowercase()).as_deref() {
+                None | Some("sequential") => false,
+                Some("progressive") => true,
+                Some(other) => {
+                    eprintln!(
+                        "--order must be `sequential` or `progressive` (got \"{other}\")"
+                    );
+                    crate::exit(2);
+                }
+            },
             // --overwrite / -y: replace existing frames without prompting.
             overwrite: args.iter().any(|a| a == "--overwrite" || a == "-y"),
             // --resume: keep already-rendered frames and render only the missing ones (restart).

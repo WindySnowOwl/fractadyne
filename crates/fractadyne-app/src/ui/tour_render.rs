@@ -342,6 +342,37 @@ impl FractadyneApp {
                              stepping back until a good one is found; a folder holding frames at a \
                              different size is refused rather than mixed into this sequence.",
                         );
+                    ui.horizontal(|ui| {
+                        ui.label("Render order");
+                        egui::ComboBox::from_id_salt("tour_render_order")
+                            .selected_text(if self.tour_render.progressive {
+                                "Progressive"
+                            } else {
+                                "Sequential"
+                            })
+                            .width(140.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.tour_render.progressive,
+                                    false,
+                                    "Sequential",
+                                )
+                                .on_hover_text("Frame 0, 1, 2, … in order (the default).");
+                                ui.selectable_value(
+                                    &mut self.tour_render.progressive,
+                                    true,
+                                    "Progressive",
+                                )
+                                .on_hover_text(
+                                    "Preview the whole tour first, refine to full detail: the \
+                                     keyframes render first, then the largest temporal gaps are \
+                                     bisected until every frame exists. Frames land at their \
+                                     correct indices either way, so Resume and the mp4 work \
+                                     unchanged — you can stop early, eyeball the coarse \
+                                     flip-book, and restart with Resume in either order.",
+                                );
+                            });
+                    });
                 });
 
                 // What this is about to cost, before committing to it.
@@ -516,6 +547,10 @@ impl FractadyneApp {
         }
         if t.mp4 {
             a.push("--mp4".to_string());
+        }
+        if t.progressive {
+            a.push("--order".to_string());
+            a.push("progressive".to_string());
         }
         if t.resume {
             a.push("--resume".to_string());

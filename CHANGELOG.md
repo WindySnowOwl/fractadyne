@@ -16,6 +16,14 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Progressive (preview-first) render order** (beta.84). `--order progressive` (and "Render
+  order: Progressive" in the Render Script dialog) renders the keyframes first, then repeatedly
+  bisects the largest temporal gap — a coarse flip-book of the whole tour exists within minutes
+  and refines toward full frame rate, so a mis-framed deep keyframe or palette drift is caught
+  before hours of GPU are committed. Every frame still lands at its correct `frame_%05d` index,
+  so Resume and mp4 assembly are order-blind; stop early, eyeball the arc, resume in either
+  order. One caveat, warned at render time: a normalized render's palette smoothing follows
+  render order, so prefer sequential for final normalized delivery.
 - **Settings moved from View to File** (beta.83) — File → ⚙ Settings, above "Reset application
   state". View keeps only display toggles (panels, minimap, orbits, dual view), which is what a
   View menu is for; app-wide preferences (frame-rate cap, UI scale, theme, update track) belong

@@ -139,7 +139,13 @@ Ordered by how fast a stranger hits them.
       reproject aspect-fit logic, i.e. the delicate zone: verify with the full suite + livetest +
       `--uitest` + a fresh-dir deep-zoom soak. Related: the "Min motion resolution" slider at
       100% is the crude half of this (native-res motion frames, but no present-gating).
-    - **Progressive (preview-first) render order** (user, 2026-08-11). Today a tour renders frame
+    - [x] **SHIPPED v0.2.40-beta.84** — `--order progressive` / dialog "Render order: Progressive";
+      temporal bisection exactly as specced below (`progressive_frame_order`, permutation-pinned
+      by unit test; smoke: grand tour 34/34 frames, write order = keyframe seed pass then gap
+      bisection, `--resume`/mp4/status-marker unchanged). Normalize caveat handled as a warning
+      (palette EMA follows render order — sequential recommended for final normalized delivery;
+      time-keyed normalize ranges would lift this, noted as a possible follow-up).
+      **Progressive (preview-first) render order** (user, 2026-08-11). Today a tour renders frame
       0, 1, 2, … in order, so you don't see how the *end* of the tour looks until the whole thing
       is done — an expensive way to discover that a deep keyframe is mis-framed or the palette
       drifts. Add a **render-order option** so a "preview-first" pass renders the keyframes first,

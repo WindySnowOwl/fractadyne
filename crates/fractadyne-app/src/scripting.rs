@@ -913,6 +913,11 @@ pub(crate) struct TourRenderConfig {
     /// range — and exit without rendering, so a farm script can verify shards tile before
     /// committing hours of GPU.
     pub(crate) dry_run: bool,
+    /// `--order progressive`: render the keyframes first, then repeatedly bisect the largest
+    /// unrendered temporal gap — a coarse flip-book of the WHOLE tour within minutes, refining
+    /// to full frame rate. Every frame still lands at its correct global index; only the ORDER
+    /// changes, so `--resume` and mp4 assembly work unchanged.
+    pub(crate) progressive: bool,
     pub(crate) overwrite: bool,
     pub(crate) resume: bool,
 }
@@ -923,6 +928,80 @@ pub(crate) struct TourRenderConfig {
 /// `[0, F)` with no overlap, and the `F mod N` remainder frames spread one-each across the low
 /// shards — no off-by-one, no double-render, no gap (the multi-machine correctness the feature
 /// exists for). Pure, so the unit test below can pin the tiling property outright.
+/// The PROGRESSIVE (preview-first) render order over `[first, last]`: the seed frames — the
+/// endpoints plus every keyframe arrival snapped to a frame index — in time order, then the
+/// midpoint of the largest gap between already-scheduled frames, repeated until every frame is
+/// scheduled. A temporal bisection: within seconds the whole tour exists as a coarse flip-book
+/// (one frame per keyframe), then ½, then ¼ and ¾ of each interval, … down to full rate — so a
+/// mis-framed deep keyframe or a palette drift is visible before hours of GPU are committed.
+/// Ties break toward the EARLIER gap, so the refinement sweeps left-to-right at each level and
+/// the schedule is deterministic. Emits every frame in `[first, last]` exactly once (the unit
+/// test pins the permutation property, which is what `--resume`/mp4 correctness rests on).
+pub(crate) fn progressive_frame_order(first: u64, last: u64, keyframes: &[u64]) -> Vec<u64> {
+    use std::cmp::Reverse;
+    let (first, last) = (first.min(last), first.max(last));
+    let mut seeds: std::collections::BTreeSet<u64> =
+        keyframes.iter().copied().filter(|f| (first..=last).contains(f)).collect();
+    seeds.insert(first);
+    seeds.insert(last);
+    let seeds: Vec<u64> = seeds.into_iter().collect();
+    let mut out: Vec<u64> = seeds.clone();
+    // Max-heap of gaps (length, Reverse(start)): between consecutive scheduled frames `a` and
+    // `b`, a gap of length `b − a ≥ 2` still holds unscheduled frames strictly between them.
+    fn push_gap(heap: &mut std::collections::BinaryHeap<(u64, Reverse<u64>)>, a: u64, b: u64) {
+        if b - a >= 2 {
+            heap.push((b - a, Reverse(a)));
+        }
+    }
+    let mut heap = std::collections::BinaryHeap::new();
+    for w in seeds.windows(2) {
+        push_gap(&mut heap, w[0], w[1]);
+    }
+    while let Some((len, Reverse(a))) = heap.pop() {
+        let b = a + len;
+        let m = a + len / 2;
+        out.push(m);
+        push_gap(&mut heap, a, m);
+        push_gap(&mut heap, m, b);
+    }
+    out
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::progressive_frame_order;
+
+    #[test]
+    fn progressive_order_is_an_exact_permutation() {
+        // The property `--resume` and mp4 assembly rest on: every frame exactly once.
+        for (first, last, kfs) in [
+            (0u64, 0u64, vec![]),
+            (0, 8, vec![]),
+            (0, 232, vec![0, 45, 135, 232]),
+            (17, 41, vec![3, 20, 20, 99]), // out-of-range + duplicate seeds must not corrupt it
+        ] {
+            let order = progressive_frame_order(first, last, &kfs);
+            assert_eq!(order.len() as u64, last - first + 1, "wrong count for kfs={kfs:?}");
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            assert_eq!(
+                sorted,
+                (first..=last).collect::<Vec<_>>(),
+                "not a permutation for [{first},{last}] kfs={kfs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn progressive_order_bisects_coarse_to_fine() {
+        // No keyframes: endpoints, then the classic ½ → ¼,¾ → ⅛… refinement.
+        assert_eq!(progressive_frame_order(0, 8, &[]), vec![0, 8, 4, 2, 6, 1, 3, 5, 7]);
+        // Keyframe seeds lead, in time order, before any bisection.
+        let order = progressive_frame_order(0, 100, &[60, 30]);
+        assert_eq!(&order[..4], &[0, 30, 60, 100]);
+    }
+}
+
 pub(crate) fn segment_range(frames: u64, n: u64, k: u64) -> (u64, u64) {
     let n = n.max(1);
     let k = k.min(n - 1);
@@ -2789,8 +2868,36 @@ impl FractadyneApp {
             (max_iter as u64).saturating_mul(per_sample)
         }
         let mut low_mem_warned = false;
+        // Render ORDER. Sequential is the plain range; progressive is the temporal bisection
+        // (keyframes first, then the largest gaps) — every frame still lands at its correct
+        // `frame_%05d` index, so `--resume` and the final mp4 assembly are order-blind.
+        let order: Vec<u64> = if cli.progressive {
+            let kf_frames: Vec<u64> = pb
+                .kfs
+                .iter()
+                .map(|k| ((k.at * fps).round() as u64).min(last_frame))
+                .collect();
+            say(
+                "Render order: progressive — keyframes first, then bisecting the largest gaps; \
+                 a coarse flip-book of the whole tour appears first and refines to full rate",
+            );
+            if want_normalize {
+                // The normalize range is smoothed frame-to-frame IN RENDER ORDER (an EMA, to stop
+                // the palette breathing). Under bisection, frames adjacent in TIME render far
+                // apart in the walk, so the assembled video can shimmer at refinement
+                // boundaries. Fine for previewing; re-render sequentially for final delivery.
+                say(
+                    "⚠ progressive + normalize: palette smoothing follows RENDER order, so the \
+                     assembled video may shimmer between refinement passes — use the default \
+                     sequential order for a final normalized render",
+                );
+            }
+            progressive_frame_order(first_frame, last_frame, &kf_frames)
+        } else {
+            (first_frame..=last_frame).collect()
+        };
         let started = std::time::Instant::now();
-        for fi in first_frame..=last_frame {
+        for (pos, &fi) in order.iter().enumerate() {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
             let s = pb.sample(t);
             self.fractal = s.fractal;
@@ -2830,12 +2937,15 @@ impl FractadyneApp {
                 Some((idx, rx)) if idx == fi => rx.recv().ok(),
                 _ => None,
             };
-            // Kick off frame `fi+1`'s reference now (overlaps this frame's render + encode). Only when
-            // both this frame and its successor are single-view with the same fractal/Julia state, so
-            // `self`'s current fractal/julia_c (set above) validly describe the successor's reference.
+            // Kick off the NEXT frame's reference now (overlaps this frame's render + encode) —
+            // the next frame IN RENDER ORDER, which under `--order progressive` is not `fi + 1`.
+            // Only when both this frame and its successor are single-view with the same
+            // fractal/Julia state, so `self`'s current fractal/julia_c (set above) validly
+            // describe the successor's reference.
             pending_ref = None;
-            if !s.dual && fi + 1 < frames {
-                let t2 = if pb.total <= 0.0 { 0.0 } else { ((fi + 1) as f64 / fps).min(pb.total) };
+            let next_fi = order.get(pos + 1).copied();
+            if let (false, Some(nfi)) = (s.dual, next_fi) {
+                let t2 = if pb.total <= 0.0 { 0.0 } else { (nfi as f64 / fps).min(pb.total) };
                 let s2 = pb.sample(t2);
                 if !s2.dual && s2.fractal == s.fractal && s2.julia == s.julia && s2.julia_c == s.julia_c {
                     let mut vp2 = fractadyne_core::Viewport::new(width as f64, height as f64);
@@ -2850,7 +2960,7 @@ impl FractadyneApp {
                         .map_or(true, |avail| est.saturating_add(TOUR_MEM_MARGIN) < avail);
                     if room {
                         if let Some(rx) = self.spawn_export_reference(&vp2, self.julia_mode) {
-                            pending_ref = Some((fi + 1, rx));
+                            pending_ref = Some((nfi, rx));
                         }
                     } else if !low_mem_warned {
                         let avail = crate::sysinfo::available_memory().unwrap_or(0);
@@ -2979,8 +3089,10 @@ impl FractadyneApp {
             enc_tx
                 .send(EncodeJob { path: frame_path, w: rw, h: rh, px, fi })
                 .map_err(|_| format!("frame {fi}: encoder thread stopped"))?;
-            if fi % 10 == 0 || fi == last_frame {
-                let done = fi + 1 - first_frame;
+            // Position in the ORDER, not the frame index — under progressive order `fi` says
+            // nothing about how much work is done.
+            if (pos + 1) % 10 == 0 || pos + 1 == order.len() {
+                let done = (pos + 1) as u64;
                 let elapsed = started.elapsed().as_secs_f64();
                 let rate = if elapsed > 0.0 { done as f64 / elapsed } else { 0.0 };
                 let eta = if rate > 0.0 { (planned - done) as f64 / rate } else { 0.0 };
