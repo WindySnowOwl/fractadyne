@@ -139,6 +139,19 @@ Ordered by how fast a stranger hits them.
       reproject aspect-fit logic, i.e. the delicate zone: verify with the full suite + livetest +
       `--uitest` + a fresh-dir deep-zoom soak. Related: the "Min motion resolution" slider at
       100% is the crude half of this (native-res motion frames, but no present-gating).
+    - **Help → Diagnostics… dialog: run the user-safe tests from the UI** (user, 2026-08-13).
+      Audience is issue reporters and other-hardware testers, NOT the developer — so it is
+      always available (no CLI gate; the people who benefit are exactly those who won't pass a
+      flag), and scoped to the tests meaningful without context: **Run self-test** (progress
+      streamed, pass/fail summary, "Open report") and **Run UI test** (screenshot bundle), plus
+      **attach results to an issue report** — upgrading "Report an issue…" from "crash log" to
+      "crash log + machine-validated test result" (this is how B6's more-GPUs validation gets
+      crowdsourced from fractalforums). Constraints: run as CHILD PROCESSES exactly like the
+      Render-tour dialog (`current_exe --selftest`, piped stdout, progress parsing — the pattern,
+      including the progress bar, generalizes from `ui/tour_render.rs`); a lost GPU device in a
+      test kills the child, never the session. Dev harnesses (`--livetest`/`--bless`,
+      `--divetest`, `--bench-matrix`, `--frametest`…) stay CLI-only — a UI for those adds
+      confused-bug-report surface, not value; if ever wanted, gate THAT half behind `--devtools`.
     - [x] **SHIPPED v0.2.40-beta.84** — `--order progressive` / dialog "Render order: Progressive";
       temporal bisection exactly as specced below (`progressive_frame_order`, permutation-pinned
       by unit test; smoke: grand tour 34/34 frames, write order = keyframe seed pass then gap
