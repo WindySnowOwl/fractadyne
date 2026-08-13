@@ -16,6 +16,13 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **"Prefer detail" no longer pixelates on a long dive** (beta.78). The stage-A cut froze every
+  moving frame, which disabled the existing refresh-every-half-octave cadence — so a continuous
+  zoom just magnified the frozen frame into ever-larger blocks (worse than the toggle off).
+  Corrected semantics: the reuse-hold keeps reprojecting between refreshes exactly as before, and
+  prefer-detail pins those periodic REFRESH frames to native resolution (instead of the adaptive
+  motion resolution) — full-detail frames streamed at their real cost, with the hold never more
+  than half an octave (~1.4×) past a sharp frame.
 - **"Prefer detail while zooming" is complete — the settle is present-gated too (stage B)**
   (beta.77). With the toggle on, the view now never shows a partial composite: when rendering
   resumes after motion (or any refinement runs — settle tiles, chunked iteration, budget probes),

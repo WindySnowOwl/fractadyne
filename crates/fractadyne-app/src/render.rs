@@ -2392,6 +2392,12 @@ impl FractadyneApp {
         // "playing", so a parked tour sharpens — which is the reported case.
         let res_scale = if !interacting && !self.tour_playing() {
             1.0
+        } else if interacting && is_pert && self.render_cfg.prefer_detail {
+            // "Prefer detail while zooming": the periodic refresh frames (REFRESH_OCTAVES cadence,
+            // below) render at NATIVE resolution instead of the AIMD-adapted motion resolution —
+            // full-detail frames streamed at their real cost, the hold reprojecting between them.
+            // The budget shrink stays as the safety net if a native refresh can't fit one dispatch.
+            1.0
         } else if interacting && is_pert {
             if view_id == 0 {
                 // Adapt ONLY on the interval following a REAL re-iterate frame. During a dive most
@@ -3395,14 +3401,13 @@ impl FractadyneApp {
             //    re-renders every frame — cheap, sharp, no frozen texture to reproject.)
             const DEEP_LAG_HOLD: f64 = 1.8;
             too_stale = too_stale || reuse_hold || depth_lag > DEEP_LAG_HOLD;
-            // "Prefer detail while zooming" (Stage A): treat EVERY interacting frame as a freeze —
-            // the reprojection below shows the last fully detailed frame, scaled and panned to
-            // follow the motion (KF-style stepping), instead of re-iterating at reduced motion
-            // quality. Rendering resumes in full the frame after interaction ends, through the
-            // normal settle path. Perturbation modes only (this whole block is `!is_direct`):
-            // shallow direct frames are cheap and sharp every frame, so holding them would only
-            // add blur. Present-gating of the SETTLE composite (back-buffer swap) is Stage B.
-            too_stale = too_stale || (self.render_cfg.prefer_detail && interacting);
+            // ⚠"Prefer detail" does NOT add a freeze here. Its first cut did — every interacting
+            // frame froze — which disabled the reuse-hold's REFRESH_OCTAVES cadence entirely, so a
+            // continuous dive just magnified the frozen frame into ever-larger blocks (field
+            // report: giant pixels at 3.5e12× despite the toggle). The existing reuse-hold already
+            // holds + reprojects between refreshes; prefer-detail instead pins the REFRESH frames
+            // to native resolution (see `res_scale`), so the streamed detail is full-res and the
+            // hold never magnifies more than REFRESH_OCTAVES (×1.4) past a sharp frame.
             // At extreme depth the recompute can take long enough that a fast/continuous dive
             // drifts the cached reference too far off-centre before a fresh one lands — rendering
             // with it is dark/glitchy (the "screen goes black" while zooming). Instead freeze the
