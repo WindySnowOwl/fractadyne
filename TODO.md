@@ -796,7 +796,17 @@ Mockups: [design/mockups/](design/mockups/).
   motion-res AIMD changes resolution constantly, and `ensure_orbit_capacity` only ever grows),
   bind-group and buffer churn, VRAM.
 
-- [ ] **A 4K tour render died silently at frame 5682/9931 (~t=3:09), 2026-08-08.**
+- [x] **RESOLVED (hardening shipped; the exact killer is unprovable post-hoc): a 4K tour render
+  died silently at frame 5682/9931 (~t=3:09), 2026-08-08.** The prime suspect — `println!`
+  panicking with "failed printing to stdout: The pipe is being closed" when the GUI parent (which
+  also ended uncleanly) went away — is exactly the failure a beta.45 report shows verbatim, and
+  every hole it needs is now closed: the render path prints through pipe-safe `say()` (write,
+  ignore a dead pipe, mirror to the render log), and the output directory carries its own
+  `render-status.txt` marker (`running` + pid → `complete`/`canceled`/`failed: why`), so a future
+  silent death is diagnosable from the frames folder alone — a stale `running` whose pid is gone
+  IS the signature. The Render Script dialog now also has a real progress bar parsed from the
+  frame lines. Original report:
+  ~~A 4K tour render died silently at frame 5682/9931 (~t=3:09), 2026-08-08.~~
   `--render-tour grand-tour.toml --out H:\frames --size 3840x2160 --fps 30 --ss 4 --resume -y`,
   beta.46. Ran 70 minutes, wrote 5,681 frames (24 GB), then vanished between two progress lines.
   Both known render failure modes are excluded: **not disk** (H: had 159 GB free — the beta.45

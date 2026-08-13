@@ -27,6 +27,42 @@ pub(crate) enum RenderLine {
     Error(String),
 }
 
+/// Parse `frame K/N` out of a child progress line (`"  frame 123/9931  (2m03s elapsed, …)"`) —
+/// the pair that drives the dialog's progress bar. Tolerant of leading whitespace; `None` for
+/// lines that aren't per-frame progress (the summary, ffmpeg output, resume notes), which simply
+/// leave the bar where it was.
+pub(crate) fn parse_frame_progress(line: &str) -> Option<(u64, u64)> {
+    let rest = line.trim_start().strip_prefix("frame ")?;
+    let mut it = rest.split_whitespace().next()?.split('/');
+    let done: u64 = it.next()?.parse().ok()?;
+    let planned: u64 = it.next()?.parse().ok()?;
+    if it.next().is_some() || planned == 0 || done > planned {
+        return None;
+    }
+    Some((done, planned))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_frame_progress;
+
+    #[test]
+    fn frame_progress_lines_parse() {
+        // The exact shape `render_tour_to_dir` emits.
+        assert_eq!(
+            parse_frame_progress("  frame 5682/9931  (1h10m02s elapsed, 52m18s left, 1.35 fps)"),
+            Some((5682, 9931))
+        );
+        assert_eq!(parse_frame_progress("frame 1/1"), Some((1, 1)));
+        // Non-progress lines leave the bar alone.
+        assert_eq!(parse_frame_progress("tour render: 233 frames → frames"), None);
+        assert_eq!(parse_frame_progress("Encoding → out.mp4 (ffmpeg)…"), None);
+        assert_eq!(parse_frame_progress("frame 12: There is not enough space"), None);
+        assert_eq!(parse_frame_progress("frame 0/0"), None);
+        assert_eq!(parse_frame_progress("frame 5/3"), None);
+    }
+}
+
 impl FractadyneApp {
     /// Open the render dialog for the currently loaded script, seeding it from the script's own
     /// `[render]` block so the defaults are what the author intended rather than what this app
@@ -59,6 +95,7 @@ impl FractadyneApp {
         }
         self.tour_render.segment = 0;
         self.tour_render.progress.clear();
+        self.tour_render.progress_frames = None;
         self.tour_render.status = None;
         self.tour_render.open = true;
     }
@@ -69,7 +106,12 @@ impl FractadyneApp {
         if let Some(rx) = &self.tour_render.rx {
             while let Ok(line) = rx.try_recv() {
                 match line {
-                    RenderLine::Progress(l) => self.tour_render.progress = l,
+                    RenderLine::Progress(l) => {
+                        if let Some(fp) = parse_frame_progress(&l) {
+                            self.tour_render.progress_frames = Some(fp);
+                        }
+                        self.tour_render.progress = l;
+                    }
                     // Keep the FIRST error: the one that stopped the render. Later lines are
                     // usually consequences of it.
                     RenderLine::Error(l) => {
@@ -361,6 +403,21 @@ impl FractadyneApp {
                 if running || !self.tour_render.progress.is_empty() {
                     ui.add_space(4.0);
                     ui.separator();
+                    // The BAR carries the fraction; the raw child line underneath carries the
+                    // elapsed/remaining/fps detail the bar can't. A line that isn't per-frame
+                    // progress (resume notes, the ffmpeg step) leaves the bar at its last value
+                    // rather than blanking a 70-minute render's only visual anchor.
+                    if let Some((done, planned)) = self.tour_render.progress_frames {
+                        ui.add(
+                            egui::ProgressBar::new((done as f32 / planned as f32).clamp(0.0, 1.0))
+                                .desired_height(14.0)
+                                .text(
+                                    egui::RichText::new(format!("{done} / {planned} frames"))
+                                        .monospace()
+                                        .small(),
+                                ),
+                        );
+                    }
                     ui.horizontal(|ui| {
                         if running {
                             ui.add(egui::Spinner::new().size(12.0));
@@ -481,7 +538,11 @@ impl FractadyneApp {
         };
         let args = self.tour_render_args(script, chapters);
         self.tour_render.progress.clear();
+        self.tour_render.progress_frames = None;
         self.tour_render.status = None;
+        // A fresh run must not inherit the previous run's failure reason — `poll_tour_render`
+        // quotes the FIRST error it has, which would otherwise be last run's.
+        self.tour_render.error = None;
         // STDERR IS PIPED, not discarded. The child reports why it failed through `diag::log_line`,
         // which writes to stderr — so throwing stderr away meant the dialog could only ever repeat
         // the last progress line. Measured: a 4K render died at frame 1091 with the child saying

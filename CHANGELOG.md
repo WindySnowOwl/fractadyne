@@ -16,6 +16,14 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The Render Script dialog has a real progress bar** (beta.82), parsed from the child's
+  `frame K/N` lines, with the elapsed/remaining/fps detail line kept underneath; non-progress
+  lines (resume notes, the ffmpeg step) leave the bar in place instead of blanking a long
+  render's only visual anchor. Also fixed: a new run no longer inherits the previous run's
+  failure reason in its status. This closes the 4K-silent-death item: the hardening it asked for
+  (pipe-safe progress prints, the on-disk `render-status.txt` marker with `running` + pid →
+  `complete`/`canceled`/`failed: why`) already shipped, so a future silent death is diagnosable
+  from the frames folder alone.
 - **Deep holds get their reference built BEFORE the camera arrives — the grand-tour livetest is
   clean for the first time ever (22 ok / 0 warn / 0 FAIL)** (beta.81). A hold keyframe with a
   large explicit `max_iter` needs a reference extension costing 25–90 s of bignum — and it could
