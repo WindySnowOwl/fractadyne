@@ -16,6 +16,14 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The Performance panel's FPS is now state-aware** (beta.73). The number was the raw repaint
+  cadence — truthful about the UI loop, misleading about rendering: an idle settled view showed
+  "1.0 FPS" (the heartbeat) while computing nothing, and a long capped refinement showed tile
+  cadence as if it were completed frames. The line now says what the renderer is doing: `refining
+  k/N (~m:ss)` during a settle grid (with progress and an ETA), `refining NN%` during a chunked
+  progression, `building reference` while the orbit builds, `idle` when settled and quiet, and a
+  real frames-per-second number only when frames genuinely render (interaction, palette/orbit
+  animation, motion) — where the old number was already correct.
 - **Spinner during long refinements, and the warning label moves as one unit** (beta.72). The
   "working" spinner previously showed only while a reference orbit was building — during the
   minutes-long capped settle/chunk refinement of an explicit-count view (reference done, tiles

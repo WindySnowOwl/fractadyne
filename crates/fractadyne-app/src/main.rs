@@ -3815,7 +3815,46 @@ impl FractadyneApp {
             2 => "perturb floatexp",
             _ => "perturb df32",
         };
-        ui.monospace(format!("FPS        {fps:6.1}"));
+        // State-aware activity line. The raw repaint cadence (1000/frame_ms) is what a user
+        // reads as "FPS", but it only MEANS frames-per-second while frames genuinely render:
+        // an idle settled view repaints on the ~1 Hz heartbeat (showing "1.0" while computing
+        // nothing), and a long capped refinement shows tile cadence (each frame is 1/Nth of a
+        // composite, not a completed frame). So say what the renderer is actually doing:
+        //   refining k/N (~m:ss) — a settle grid / chunked progression is composing the frame
+        //   building reference   — the bignum orbit is still building (spinner shows too)
+        //   idle                 — settled and quiet; no number pretending otherwise
+        //   NN.N                 — real frames per second (interaction, animation, motion)
+        let mmss = |secs: f64| -> String {
+            let s = secs.max(0.0) as u64;
+            format!("{}:{:02}", s / 60, s % 60)
+        };
+        let animating = self.anim.palette_anim != PaletteAnim::Off
+            || (self.anim.show_orbits && self.anim.orbit_anim);
+        let grid = p.tile_state[0].as_ref().filter(|_| p.tile_pending[0]);
+        let line = if let Some(g) = grid {
+            match g.geo {
+                Some((gres, _, side)) => {
+                    let total = gres[0].div_ceil(side).max(1) * gres[1].div_ceil(side).max(1);
+                    let done = g.next.min(total);
+                    let eta = (total.saturating_sub(done)) as f64 * p.frame_ms / 1000.0;
+                    format!("FPS        refining {done}/{total} (~{})", mmss(eta))
+                }
+                None => "FPS        refining (arming)".to_string(),
+            }
+        } else if p.chunk_pending[0] {
+            let ask = p.chunk_sig[0].1.max(1);
+            let pct = 100.0 * p.chunk_cursor[0].min(ask) as f64 / ask as f64;
+            format!("FPS        refining {pct:4.1}%")
+        } else if self.recompute_rx[0].is_some() {
+            "FPS        building reference".to_string()
+        } else if !animating && p.frame_idx.saturating_sub(p.fe_dispatch_frame[0]) > 8 {
+            // Nothing dispatched for a while and nothing animating: the repaint cadence is just
+            // the idle heartbeat — don't dress it up as a framerate.
+            "FPS        idle".to_string()
+        } else {
+            format!("FPS        {fps:6.1}")
+        };
+        ui.monospace(line);
         ui.monospace(format!("frame      {:6.2} ms", p.frame_ms));
         ui.monospace(format!("cpu        {:6.2} ms", p.cpu_ms));
         ui.monospace(format!("gpu/idle   {gpu_idle:6.2} ms"));
