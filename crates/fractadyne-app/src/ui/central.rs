@@ -36,7 +36,11 @@ impl FractadyneApp {
         // Continuous zoom (hold Space / Shift+Space) toward the cursor, on the panel
         // it is over. Applied before drawing so this frame reflects it.
         let pointer = ctx.input(|i| i.pointer.hover_pos());
+        // Space is a HOLD hotkey, so it must yield whenever the keyboard belongs to a widget —
+        // typing a space into a dialog's text field (e.g. the script-export note) was zooming
+        // the view underneath. Same gate the discrete hotkeys use.
         let (space, shift) = ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
+        let space = space && !ctx.wants_keyboard_input();
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
         let panel = pointer.and_then(|p| {
             if left.contains(p) {
@@ -684,6 +688,9 @@ impl FractadyneApp {
                 }
                 let (space, shift) =
                     ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
+                // Yield while a widget owns the keyboard (typing spaces into a dialog's text
+                // field must not zoom the view underneath) — same gate as the discrete hotkeys.
+                let space = space && !ctx.wants_keyboard_input();
                 let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
                 let target_vel = if space {
                     if shift { -rate } else { rate }

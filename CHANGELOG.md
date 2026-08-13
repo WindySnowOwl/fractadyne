@@ -16,6 +16,12 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Space no longer zooms while typing, and the player can switch scripts** (beta.74). The
+  hold-Space continuous zoom read the key even while a dialog's text field owned the keyboard —
+  typing a space into the "Script to current view" note nudged the zoom underneath; both Space
+  readers now yield whenever any widget wants keyboard input, like the discrete hotkeys already
+  did. And the playback transport gained a 📂 button: play a different script via the same picker
+  as Tools → Play script, without closing the player first.
 - **The Performance panel's FPS is now state-aware** (beta.73). The number was the raw repaint
   cadence — truthful about the UI loop, misleading about rendering: an idle settled view showed
   "1.0 FPS" (the heartbeat) while computing nothing, and a long capped refinement showed tile

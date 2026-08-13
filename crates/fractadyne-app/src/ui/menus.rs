@@ -906,7 +906,7 @@ impl FractadyneApp {
         // `stop_playback` needs it mutably.
         let (mut seek, mut toggle_pause, mut stop, mut cycle_speed, mut toggle_loop) =
             (None::<f64>, false, false, false, false);
-        let (mut open_render, mut close) = (false, false);
+        let (mut open_render, mut close, mut pick_script) = (false, false, false);
         let has_source = self.playback.as_ref().is_some_and(|p| p.source.is_some());
         // `available_rect` is what the panels left over — the fractal view, below the menu bar and
         // inside the right panel — so the transport centres on the VIEW, not on the window.
@@ -1046,6 +1046,11 @@ impl FractadyneApp {
                                     open_render = true;
                                 }
                             });
+                            // Change the script without leaving the player: same picker as
+                            // Tools → Play script, starting in the current script's folder.
+                            if btn(ui, "📂", "Play a different script…") {
+                                pick_script = true;
+                            }
                             let loop_fill = if looping {
                                 crate::theme::BRAND_ACCENT.gamma_multiply(0.35)
                             } else {
@@ -1164,6 +1169,12 @@ impl FractadyneApp {
 
         if open_render {
             self.open_tour_render();
+        }
+        if pick_script {
+            // Same picker as Tools → Play script (opens in the current script's folder). A chosen
+            // file replaces this playback; a cancelled picker leaves it exactly as it was.
+            self.load_script();
+            return;
         }
         if close {
             self.stop_playback();
