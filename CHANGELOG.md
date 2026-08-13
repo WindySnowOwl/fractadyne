@@ -16,6 +16,23 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The explicit budget respects latency floors — beta.79's deep-hold regression fixed**
+  (beta.80). `--livetest` (its first run since beta.69) caught beta.79's 200 ms explicit target
+  collapsing the grand tour's six deep holds from 480×270 to 16×16: a 16×16 mode-2 dispatch at a
+  250k+ iteration ask measures ~250–330 ms **no matter how few pixels** (256 threads on
+  quarter-million-step dependent chains are latency-bound — the codebase's oldest lesson, met
+  from the shrink side), so every reading at the floor read "slow" and the controller cornered
+  itself at the 4e6-step minimum with the pinned budget masquerading as converged. Two changes:
+  the explicit target is now 400 ms (above every floor measured, still >2× under the ~0.9 s
+  lethal band), and a latency-floor guard holds position — converged — when a small slow
+  dispatch sits inside a 600 ms accept window, instead of shrinking into the corner. Floors past
+  the accept window still shrink (a near-watchdog floor held in place is the beta.48 death loop;
+  the honest fix for that regime is iteration chunking for floatexp, still open), and the
+  auto-iter regime is untouched by construction. Also attempted and REVERTED same-day: pricing
+  tour-glide frames at the depth cap — it rendered hard spar holds 100% black on `--livetest`
+  (per-keyframe budgets exist precisely because the depth formula under-budgets hard fields).
+  The livetest harness's budget walk is now traceable (`FRACTADYNE_TRACE=gpu` "lt" lines) — the
+  regression was undiagnosable without it.
 - **Explicit-count dispatches are now priced by MEASURED cost, not worst-case nominal**
   (beta.79). A scripted deep dive (5111×2158 window, ~1.29M explicit iterations at e216) rendered
   ~26-pixel blocks for most of the descent: the flat per-dispatch nominal cap (a device-loss

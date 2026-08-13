@@ -959,8 +959,25 @@ Mockups: [design/mockups/](design/mockups/).
   it needs its own look once (c) above makes silent deaths visible.
 
 - [~] **The live view cannot honour a high explicit iteration count — the COST MODEL half is FIXED
-  (v0.2.40-beta.47); honouring the count itself is blocked on two couplings.** What landed, all
-  measured at an explicit 10,000,000 iterations on a 1445×1134 panel:
+  (v0.2.40-beta.47); honouring the count itself is blocked on two couplings.**
+  ⭐**UPDATE v0.2.40-beta.79/80 — the explicit regime is now measured, and its worst field case is
+  fixed.** Point 3 below ("the cost bound counts NOMINAL steps") is addressed for explicit counts:
+  `budget_step` runs a separate explicit regime converging on 400 ms REAL (measured, ×1.5-paced,
+  ceilinged at 6e10 nominal so a total skip collapse still prices well under the watchdog)
+  instead of the flat 2e10 nominal cap — the 2026-08-12 e231 dive report (26-px blocks at a
+  5111×2158 window, budget frozen "(settling)") was this cap wasting 4× of measured headroom plus
+  the discard-rule deadlock. ⚠beta.79 shipped the target at 200 ms and `--livetest` (first run
+  since beta.69!) caught it UNDER the deep view's ~250–330 ms per-dispatch LATENCY floor — six
+  deep holds collapsed to 16×16 with the pinned budget reading as converged; beta.80 = 400 ms +
+  a latency-floor guard (hold, converged, when a sub-bootstrap dispatch measures slow within a
+  600 ms accept window; past it shrink proceeds — holding a near-watchdog floor is the beta.48
+  death loop). ⛔Also attempted and REVERTED (beta.80): tour glides priced at depth cap × boost —
+  hard spar holds went 100% black (the depth formula under-budgets hard fields; that is what
+  per-keyframe budgets are FOR). Remaining here: the AUTO settled path still prices nominally
+  (its 900 ms target has its own open tunables item), a huge explicit count at native still needs
+  chunking extended to mode 2, and >600 ms latency floors (16×16 at multi-million asks) stay
+  low-res until that chunking exists. Original account, all measured at an explicit 10,000,000
+  iterations on a 1445×1134 panel:
   1. ⭐**The timing was being paired with the wrong dispatch's step count** — the defect under
      everything else here. `IterTiming` publishes ~2–3 frames after the pass it measured, while
      `fe_steps_last` is a single app-side slot overwritten by every dispatch; a tiled settle

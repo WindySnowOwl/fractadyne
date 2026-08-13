@@ -82,11 +82,26 @@ pub(crate) const TDR_MIN_STEPS: u64 = 4_000_000;
 /// on `TDR_EXPLICIT_BUDGET_MS` real and is ceilinged by `EXPLICIT_STEPS_CEIL`.
 pub(crate) const EXPLICIT_DISPATCH_CAP: u64 = 20_000_000_000;
 /// Real-milliseconds target for MEASURED explicit-count dispatches. The lethal band starts around
-/// ~0.9 s (three reproduced Event-153 losses); 200 ms keeps a 4.5× margin while quadrupling the
-/// resolution the old flat nominal cap allowed in skip-heavy regimes. Deliberately far below the
-/// auto-iter `TDR_BUDGET_MS`: explicit counts are the regime where skip effectiveness is least
-/// predictable (that unpredictability is what the three crashes were), so the margin is wider.
-pub(crate) const TDR_EXPLICIT_BUDGET_MS: f64 = 200.0;
+/// ~0.9 s (three reproduced Event-153 losses); 400 ms keeps a >2× margin while roughly tripling
+/// the per-dispatch work the old flat nominal cap allowed in skip-heavy regimes. Deliberately
+/// below the auto-iter `TDR_BUDGET_MS`: explicit counts are the regime where skip effectiveness
+/// is least predictable (that unpredictability is what the three crashes were).
+///
+/// ⚠It MUST sit above the deep view's per-dispatch LATENCY FLOOR. Shipped first at 200 ms and
+/// caught by `--livetest` (the grand tour's six deep holds collapsed 480×270 → 16×16): a 16×16
+/// mode-2 dispatch at a 250k pixel ask measures ~250–330 ms *no matter how few pixels* — 256
+/// threads on 250k-step dependent chains is latency-bound, the codebase's oldest banked lesson —
+/// so every reading at the floor read "slow", the controller shrank to `TDR_MIN_STEPS`, and the
+/// pinned budget read back as converged (`next == cur ⇒ ok`). 400 ms clears the floor measured
+/// here; the floor GUARD in `budget_step` is what keeps a deeper/slower view from cornering
+/// itself when even 400 ms is below its floor.
+pub(crate) const TDR_EXPLICIT_BUDGET_MS: f64 = 400.0;
+/// Ceiling on a latency floor the guard in `budget_step` may HOLD at (rather than shrink away
+/// from). Between the explicit target (400 ms) and here, a small slow dispatch is treated as an
+/// accepted latency floor; past here it is watchdog-relevant and the shrink proceeds. Sits well
+/// under the ~0.9 s lethal band and above every floor measured so far (250–330 ms at the grand
+/// tour's 250k–1.2M holds).
+pub(crate) const TDR_LATENCY_ACCEPT_MS: f64 = 600.0;
 /// Nominal ceiling for a MEASURED explicit budget: 3× `EXPLICIT_DISPATCH_CAP`, so even a total
 /// skip collapse between one measurement and the next (nominal = real, the worst case nominal
 /// denomination guarantees) prices at ~180–600 ms — under the lethal band with margin. Growth
@@ -2322,6 +2337,12 @@ impl FractadyneApp {
         // probe's `budget_now`, so the two can never drift (`live_iter_budget`; the drift failure
         // mode and the freeze-guard coupling that blocked this for two releases are documented on
         // the function). `iter_cap` (= MAX_ITER_LIMIT on both branches) folds into it.
+        // ⛔TOUR GLIDES MUST PRICE THE SCRIPT'S ASK TOO (attempted beta.80, REVERTED same day):
+        // pricing glide frames at the zoom cap × boost rendered the grand tour's hard spar holds
+        // 100% BLACK on `--livetest` (hold-e82: cap ~80k where the field needs the scripted 2M —
+        // per-keyframe budgets exist precisely because the depth formula under-budgets hard
+        // fields), and an ease-out approach is nominally "gliding" while visually parked, so the
+        // starved frames are exactly the ones the viewer stares at.
         let gpu_iter = {
             let vb = (view_id as usize).min(1);
             live_iter_budget(
@@ -3911,6 +3932,25 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     if (steps as f64) < cur as f64 * 0.7 && !slow {
         return None;
     }
+    // ⭐LATENCY-FLOOR GUARD. A dispatch that is already SMALL (sub-bootstrap nominal) and still
+    // measures slow is latency-bound, not over-sized — a 16×16 frame at a deep iteration ask
+    // runs a few hundred dependent-chain milliseconds *no matter how few pixels*, so shrinking
+    // further buys nothing and corners the controller at the floor (measured on `--livetest`:
+    // six deep holds pinned at TDR_MIN_STEPS/16×16 with every reading 250–330 ms "slow"; the
+    // pre-existing "steps ∝ time is FALSE at latency-bound frames" lesson, met from the shrink
+    // side). Hold position and report converged: the view is as good as this target allows, and
+    // anything that grows the frame (a settle tile, a regime change, motion) re-measures.
+    //
+    // ⚠BOUNDED by TDR_LATENCY_ACCEPT_MS: a floor NEAR the watchdog band must NOT be held — a
+    // 16×16 dispatch at a 2–4M ask has a multi-second chain latency, and "hold position" there
+    // is the beta.48 death loop (sub-bootstrap dispatches at ~1 s, back to back, until Event
+    // 153). Past the accept bound the shrink proceeds: it may not beat chain latency, but fewer
+    // resident warps is the only safe direction, and the honest fix for that regime is iteration
+    // CHUNKING (mode-2 extension, TODO), not bigger holds. The accept bound also keeps this
+    // guard out of the AUTO regime entirely: auto's `slow` starts at 900 ms, already past it.
+    if slow && steps <= TDR_BOOTSTRAP_STEPS && ms <= TDR_LATENCY_ACCEPT_MS {
+        return Some((cur, true));
+    }
     let factor = (target_ms / ms).clamp(TDR_SHRINK_MAX, TDR_GROW_MAX);
     let base = if slow { cur.min(steps.max(1)) } else { cur };
     let next = ((base as f64 * factor) as u64).clamp(TDR_MIN_STEPS, ceil);
@@ -4055,6 +4095,25 @@ mod controller_props {
         let cur = 1_000_000_000;
         let (next, _) = budget_step(cur, cur, 0.01, false).unwrap();
         assert!(next as f64 <= cur as f64 * TDR_GROW_MAX + 1.0);
+    }
+
+    #[test]
+    fn a_latency_floor_is_held_not_shrunk_into_the_corner() {
+        // The 16×16 deep-hold collapse (grand tour, six checkpoints 480×270 → 16×16): a small
+        // mode-2 dispatch measures ~250–450 ms regardless of pixel count (chain latency), and a
+        // target below that floor shrank the budget to TDR_MIN_STEPS and pinned it there. A
+        // small slow dispatch inside the accept window must HOLD, converged.
+        let (next, ok) = budget_step(20_000_000, 50_000_000, 450.0, true)
+            .expect("a small slow reading is never discarded");
+        assert_eq!(next, 20_000_000, "the floor is held, not shrunk");
+        assert!(ok, "an accepted floor reads as converged so the settle can take over");
+        // But a floor NEAR the watchdog band is the beta.48 death loop — shrink proceeds.
+        let (next, _) = budget_step(400_000_000, 400_000_000, 1500.0, true).unwrap();
+        assert!(next < 400_000_000, "a watchdog-relevant floor must still shrink");
+        // And the AUTO regime is untouched: its slow threshold (900 ms) is already past the
+        // accept bound, so the exact beta.48 shape keeps shrinking as beta.48 fixed it to.
+        let (next, _) = budget_step(400_000_000, 400_000_000, 1070.0, false).unwrap();
+        assert!(next < 400_000_000);
     }
 
     #[test]

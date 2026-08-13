@@ -358,14 +358,34 @@ impl FractadyneApp {
                 let steps = self.perf.fe_steps_last[0];
                 if ms > 0.01 && steps > 0 {
                     let cur = crate::render::budget_base(self.perf.fe_budget[0]);
-                    if let Some((next, ok)) = crate::render::budget_step(
+                    let stepped = crate::render::budget_step(
                         cur,
                         steps,
                         ms,
                         !self.render_cfg.auto_iter,
-                    ) {
+                    );
+                    if let Some((next, ok)) = stepped {
                         self.perf.fe_budget_ok[0] = ok;
                         self.perf.fe_budget[0] = next;
+                    }
+                    // The harness's budget walk is otherwise invisible (it bypasses the app's
+                    // traced controller); the 16×16 deep-hold regression was undiagnosable
+                    // without frame-level sight of it.
+                    if crate::diag::trace_on("gpu") {
+                        crate::diag::trace(
+                            "gpu",
+                            format!(
+                                "lt e={e:.1} res={}x{} iter={} steps={:.2e} ms={ms:.1} \
+                                 cur={cur:.2e} -> {:?} tiling={} tile={:?}",
+                                params.resolution[0],
+                                params.resolution[1],
+                                params.max_iter,
+                                steps as f64,
+                                stepped.map(|(n, ok)| format!("{:.2e} ok={ok}", n as f64)),
+                                self.perf.tile_state[0].is_some(),
+                                params.tile,
+                            ),
+                        );
                     }
                 }
             }
@@ -396,7 +416,17 @@ impl FractadyneApp {
                     self.export.width = live_res[0];
                     self.export.ss = 1;
                     let vp = self.viewport.clone();
-                    let req = self.current_export_request_for(&vp, false);
+                    let mut req = self.current_export_request_for(&vp, false);
+                    // The live buffer's height comes from the res-shrink's TRUNCATION
+                    // (`(panel_h × f) as u32`); the export request re-derives height by ROUNDING
+                    // the viewport aspect. At a native capture the two agree, but a hold captured
+                    // mid-climb at shrunk res can differ by one row (298×167 live vs 298×168
+                    // request) — and coloring the live buffer with the request's dims overruns
+                    // `write_texture` with an uncaptured validation error that kills the whole
+                    // run (seen at hold-e61/e72 on two builds). The buffer under comparison is
+                    // the authority on its own dimensions.
+                    req.width = live_res[0];
+                    req.height = live_res[1];
                     if let Ok(t) = fractadyne_gpu::render_iter(device, queue, &req) {
                         truth_black = interior_frac(&t.pixels);
                         truth_ran = true;
