@@ -172,3 +172,19 @@ should preserve every arrow above. The suite is an unusually good guard for that
 - `--livetest` — catches the live view disagreeing with an offline render of the same view.
 
 Run all four before and after. A refactor that leaves this document accurate is a good one.
+
+> ### ⚠ One of those four gates is currently unusable for this purpose
+>
+> `--livetest`'s `hold-e72` checkpoint fails on **any** perturbation of `render.rs`, including
+> arithmetic-identical ones. Measured 2026-08-14 over six runs: the pre-refactor baseline and one
+> extraction pass three times (`orbit_len` 1,208,193), while two different semantically neutral
+> extractions fail three times (`orbit_len` 508,193, hold renders 27% black) — with `eff_iter`
+> identical at 1,200,000 throughout, so the decision never changed, only how far the reference got
+> in the seconds the hold allows.
+>
+> The cause is stage 2 racing a wall clock: the hold either finishes a 1.2M-sample reference or
+> installs a partial. Frame pacing sits upstream of that race, so a recompile can decide it.
+>
+> Until that cliff is fixed (TODO.md, "the e72 reference build is on a knife edge"), treat the
+> other three gates as the refactor guard and read `hold-e72` as unresolved rather than as a
+> verdict. It is a product bug first: a user parked at e72 is one hiccup from the same 27% black.

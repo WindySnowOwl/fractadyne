@@ -279,6 +279,46 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] ⭐⭐**BLOCKER FOR THE `render.rs` REFACTOR — the e72 reference build sits on a knife edge, and
+  the livetest gate cannot tell a recompile from a regression** (measured 2026-08-14).
+  **What happens.** At the grand tour's `hold-e72`, the hold has a few seconds to build a
+  1,208,193-sample reference. It either makes it, or it lands on a **508,193-sample partial** — and
+  then the live view renders **27% black** where the offline truth is 0%. `eff_iter` is
+  **identical (1,200,000) in both outcomes**: the DECISION never changes, only how far the
+  reference gets in the time the hold allows. 508,193 is the same partial-install value this
+  ledger already knows from the beta.29/49 family.
+  **Why it blocks the refactor.** Six runs, alternating and with the machine idle for the
+  contested ones:
+
+  | state | `hold-e72` | `orbit_len` |
+  |---|---|---|
+  | pre-refactor baseline | ok | 1,208,193 |
+  | slice 1 (`frame_cost`) | ok | 1,208,193 |
+  | slice 1, re-run idle | ok | 1,208,193 |
+  | slice 2 (`motion_res_step`) | **FAIL** | 508,193 |
+  | slice 2, re-run idle | **FAIL** | 508,193 |
+  | slice 3 (`dispatch_steps`) | **FAIL** | 508,193 |
+
+  Slices 2 and 3 are **arithmetic-identical** refactors of different kinds — one extracts an AIMD
+  controller step, the other collapses eleven copies of `px·ss²·iter` into one function — and
+  `git diff` confirms neither changed anything else. Two semantically neutral changes both flip
+  it; slice 1 passes three times including a mid-sequence control. So the flip tracks *codegen and
+  frame pacing*, not behaviour. ⚠**Consequence: this checkpoint currently fails ANY perturbation
+  of `render.rs`, which means it also cannot report a REAL regression — a genuine break would
+  arrive wearing the same 508,193 signature.** A gate that reddens on every recompile has stopped
+  measuring.
+  **This is a product bug before it is a test bug.** A user parked at e72 is one timing hiccup
+  away from a 27%-black frame. Fixing the cliff fixes the gate as a side effect.
+  **Fix first, then resume the refactor.** Options, roughly in order of appeal: (a) let a settled
+  HOLD wait for the reference build to finish rather than installing a partial and rendering (the
+  hold has time — it is the dive that does not); (b) give the hold's reference build a budget
+  scaled to the hold's own duration instead of a fixed slice; (c) if a partial must install, keep
+  showing the previous good frame rather than rendering 27% black. ⚠Do NOT re-bless the livetest
+  baseline to make this green — that converts a real cliff into a permanently hidden one.
+  **Refactor status:** slice 1 is committed and green. Slices 2 and 3 are REVERTED and not lost —
+  both are described in full in the commit message trail and in the `⚠DO NOT extract` note left at
+  the AIMD call site, so they can be re-applied unchanged once the cliff is gone.
+
 - [ ] ⭐**The F3 corpus gate is RED — but it is a COLOUR-MAPPING change, not a maths regression**
   (found + characterized 2026-08-14). `generate_corpus.py --check --only 01,02,03` gives **0/3
   MATCH**, maxΔ 169, meanΔ 26.9 / 46.9 / 23.6, including `01-home` (1.3×, 512 iters, direct
