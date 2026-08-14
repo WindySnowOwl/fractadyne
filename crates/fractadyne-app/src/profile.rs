@@ -731,6 +731,10 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         ref_offset: p.ref_offset,
         delta_exp: p.delta_exp,
         sa_skip: p.sa_skip,
+        // Profiling measures cost, not colour: the mapping never affects iterate time, so this
+        // path stays on the classic linear map regardless of the session's setting.
+        norm_mode: 0,
+        norm_lo: 0.0,
         glitch_on: 0,
         vignette: p.vignette,
         sa_a: p.sa_a,

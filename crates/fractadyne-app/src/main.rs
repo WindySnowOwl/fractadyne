@@ -2052,6 +2052,10 @@ struct ColoringConfig {
     /// a fixed cycle makes of dense 1e5-scale escape fields. Only active for the Smooth method
     /// and only past a range threshold, so ordinary views keep classic coloring. Persisted.
     normalize_live: bool,
+    /// Log-scaled palette mapping. Applies wherever normalization is active (live or
+    /// `--normalize`): escape values crowd towards the high end at depth, so a linear map spends
+    /// most of the palette on a thin shell. Persisted.
+    log_palette: bool,
 }
 
 /// Time-varying visual overlays advanced per-frame: the orbit racing-dot (enable / normalize /
@@ -2936,6 +2940,7 @@ impl FractadyneApp {
                 trap_type: TrapType::from_key(&s.trap_type),
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.normalize_live,
+                log_palette: s.log_palette || args.iter().any(|a| a == "--log-palette"),
             },
             perf: Perf {
                 // Default on; `--no-perf` disables, `--perf` forces on.
@@ -3187,6 +3192,7 @@ impl FractadyneApp {
             cycle: self.coloring.cycle,
             offset: self.coloring.offset,
             normalize_live: self.coloring.normalize_live,
+            log_palette: self.coloring.log_palette,
             zoom_rate: self.render_cfg.zoom_rate,
             click_zoom: self.click_zoom,
             click_zoom_factor: self.render_cfg.click_zoom_factor,

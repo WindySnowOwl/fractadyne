@@ -82,6 +82,9 @@ pub struct ExportRequest {
     pub julia: u32,
     pub cycle: f32,
     pub offset: f32,
+    /// Palette-range mapping: 0 = linear (`cycle`/`offset` alone), 1 = log about `norm_lo`.
+    pub norm_mode: u32,
+    pub norm_lo: f32,
     pub stop_count: u32,
     pub stops: [[f32; 4]; 8],
     pub light: u32,
@@ -241,7 +244,8 @@ pub fn render_export(
         interior_col: req.interior_col,
         stops: req.stops,
         out_res: [w as f32, h as f32],
-        _pad_out: [0.0, 0.0],
+        norm_mode: req.norm_mode,
+        norm_lo: req.norm_lo,
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
     let split = |v: f64| -> (f32, f32) {
@@ -1346,7 +1350,8 @@ pub fn color_iter_buffer(
         interior_col: req.interior_col,
         stops: req.stops,
         out_res: [w as f32, h as f32],
-        _pad_out: [0.0, 0.0],
+        norm_mode: req.norm_mode,
+        norm_lo: req.norm_lo,
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
 

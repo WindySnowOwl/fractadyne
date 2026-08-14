@@ -87,7 +87,11 @@ pub(crate) struct ColorUniforms {
     pub(crate) interior_col: [f32; 4],
     pub(crate) stops: [[f32; 4]; 8],
     pub(crate) out_res: [f32; 2], // output rect size in px; with `reproject`, aspect-fits a frozen frame
-    pub(crate) _pad_out: [f32; 2],
+    /// Palette-range mapping: 0 = linear, 1 = log (see `ColorU` in the WGSL). These reuse what
+    /// was `_pad_out`, so the uniform's size and alignment are unchanged — keep them last and
+    /// keep the two structs in the same order.
+    pub(crate) norm_mode: u32,
+    pub(crate) norm_lo: f32,
 }
 
 /// Spotlight vignette parameters (dim outside a soft circle), shared by the live and export paths.
@@ -1063,6 +1067,10 @@ pub struct MandelbrotParams {
     pub max_iter: u32,
     pub cycle: f32,
     pub offset: f32,
+    /// Palette-range mapping: 0 = linear (`cycle`/`offset` alone), 1 = log about `norm_lo`.
+    /// Defaults to 0, so every existing caller keeps the classic affine mapping untouched.
+    pub norm_mode: u32,
+    pub norm_lo: f32,
     pub stop_count: u32,
     pub stops: [[f32; 4]; 8],
     /// Slope/relief lighting from the distance-estimate normal.
@@ -1285,7 +1293,8 @@ impl CallbackTrait for MandelbrotParams {
             } else {
                 [base[0] as f32, base[1] as f32]
             },
-            _pad_out: [0.0, 0.0],
+            norm_mode: self.norm_mode,
+            norm_lo: self.norm_lo,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
 

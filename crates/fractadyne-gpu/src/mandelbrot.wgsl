@@ -1565,7 +1565,11 @@ struct ColorU {
     interior_col: vec4<f32>, // color for in-set (non-escaping) pixels; rgb in xyz
     stops: array<vec4<f32>, 8>, // rgb + position
     out_res: vec2<f32>, // output rect size (px); with reproject, aspect-fits a frozen (old-size) frame
-    _pad_out: vec2<f32>,
+    // Palette-range mapping. 0 = linear (`cycle`/`offset` alone, the classic affine map);
+    // 1 = LOG, where the escape value is compressed as log(v - norm_lo + 1) BEFORE the affine map.
+    // Occupies what used to be `_pad_out`, so the uniform's size and alignment are unchanged.
+    norm_mode: u32,
+    norm_lo: f32,   // range floor the log is measured from (the frame's minimum escape value)
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -1633,7 +1637,17 @@ fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
         pv = m.r;                                  // smooth iteration count
     }
     if (interior) { return cu.interior_col.xyz; }
-    return palette(pv * cu.cycle + cu.offset);
+    // Log range mapping. Escape values crowd towards the high end at depth — most of a deep
+    // frame's pixels sit in the last few percent of the range — so a linear map spends nearly the
+    // whole palette on a thin shell and flattens everything else. Compressing with log spreads
+    // the palette over the range as the eye reads it, which is what keeps colour stable through a
+    // zoom video rather than washing out as the range grows.
+    // `+ 1` keeps the argument ≥ 1 (log ≥ 0) so the floor of the range maps to 0 exactly.
+    var pv_mapped = pv;
+    if (cu.norm_mode == 1u) {
+        pv_mapped = log(max(pv - cu.norm_lo, 0.0) + 1.0);
+    }
+    return palette(pv_mapped * cu.cycle + cu.offset);
 }
 
 // Average color of the frozen frame, from a coarse grid over the iteration texture. Used to

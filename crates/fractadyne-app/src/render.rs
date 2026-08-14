@@ -755,6 +755,16 @@ fn assemble_ref_fields(vp: &Viewport, precision: usize, delta_exp: i32, res: Rec
     }
 }
 
+/// A resolved palette-range mapping: the affine `cycle`/`offset` the shader applies, plus which
+/// transform to apply first (`mode` 0 = linear, 1 = log about `lo`).
+#[derive(Clone, Copy)]
+pub(crate) struct NormMap {
+    pub(crate) cycle: f32,
+    pub(crate) offset: f32,
+    pub(crate) mode: u32,
+    pub(crate) lo: f32,
+}
+
 impl FractadyneApp {
     /// The live auto-normalized `(cycle, offset)` for view `vi`, when active: "Normalize deep
     /// colors" on, Smooth method, and a live-measured escaped smooth-iter range wider than the
@@ -763,7 +773,7 @@ impl FractadyneApp {
     /// when building EXPORT requests so a GUI export matches the screen (WYSIWYG); headless CLI
     /// runs never render live frames, so `norm_range` stays `None` there and CLI/corpus renders
     /// keep their explicit `--normalize`-only semantics.
-    pub(crate) fn live_norm_cycle_offset(&self, vi: usize) -> Option<(f32, f32)> {
+    pub(crate) fn live_norm_cycle_offset(&self, vi: usize) -> Option<NormMap> {
         const NORM_RANGE_MIN: f32 = 20_000.0;
         match self.perf.norm_range[vi.min(1)] {
             Some((mn, mx))
@@ -772,8 +782,17 @@ impl FractadyneApp {
                     && mx - mn > NORM_RANGE_MIN =>
             {
                 let sweeps = 0.5 + self.coloring.cycle * 6.0;
-                let c = sweeps / (mx - mn);
-                Some((c, self.coloring.offset - mn * c))
+                if self.coloring.log_palette {
+                    // LOG mapping: the shader compresses to log(v − mn + 1), so the range spans
+                    // log(mx − mn + 1) and the palette is spread over the values as the eye reads
+                    // them. The shader subtracts `mn` itself, so the offset here is the user's
+                    // phase alone — no `−mn·cycle` term as in the linear case.
+                    let span = ((mx - mn) + 1.0).ln().max(1.0e-6);
+                    Some(NormMap { cycle: sweeps / span, offset: self.coloring.offset, mode: 1, lo: mn })
+                } else {
+                    let c = sweeps / (mx - mn);
+                    Some(NormMap { cycle: c, offset: self.coloring.offset - mn * c, mode: 0, lo: 0.0 })
+                }
             }
             _ => None,
         }
@@ -1854,11 +1873,19 @@ impl FractadyneApp {
             // keeps its own exact two-pass path).
             cycle: {
                 let vi = (self.dual && julia) as usize;
-                self.live_norm_cycle_offset(vi).map_or_else(|| self.color_cycle(), |(c, _)| c)
+                self.live_norm_cycle_offset(vi).map_or_else(|| self.color_cycle(), |m| m.cycle)
             },
             offset: {
                 let vi = (self.dual && julia) as usize;
-                self.live_norm_cycle_offset(vi).map_or(self.coloring.offset, |(_, o)| o)
+                self.live_norm_cycle_offset(vi).map_or(self.coloring.offset, |m| m.offset)
+            },
+            norm_mode: {
+                let vi = (self.dual && julia) as usize;
+                self.live_norm_cycle_offset(vi).map_or(0, |m| m.mode)
+            },
+            norm_lo: {
+                let vi = (self.dual && julia) as usize;
+                self.live_norm_cycle_offset(vi).map_or(0.0, |m| m.lo)
             },
             stop_count,
             stops,
@@ -2139,8 +2166,17 @@ impl FractadyneApp {
         let range = (chi - clo).max(1.0);
         // With normalize on, the `cycle` slider means palette SWEEPS across the escape range.
         let sweeps = 0.5 + self.coloring.cycle * 6.0;
-        req.cycle = sweeps / range;
-        req.offset = -clo * req.cycle + self.coloring.offset;
+        if self.coloring.log_palette {
+            // Log mapping — the shader compresses to log(v − lo + 1), so the span is measured in
+            // log space and it subtracts `lo` itself (hence no −clo·cycle term here).
+            req.norm_mode = 1;
+            req.norm_lo = clo;
+            req.cycle = sweeps / (range + 1.0).ln().max(1.0e-6);
+            req.offset = self.coloring.offset;
+        } else {
+            req.cycle = sweeps / range;
+            req.offset = -clo * req.cycle + self.coloring.offset;
+        }
         // Pass 2 — color the buffer with the normalized cycle.
         let mut res = fractadyne_gpu::color_iter_buffer(device, queue, &req, &iter.pixels).ok()?;
         // Box-downsample the supersampled colored buffer to the output resolution.
@@ -3981,9 +4017,13 @@ impl FractadyneApp {
         // adjacent pixels and a CORRECT dense escape field reads as speckle "noise pools" (the
         // corpus-14/15 aliasing, now surfacing live since the adaptive budget resolves these
         // fields). Smooth method only; range-thresholded so ordinary views keep classic coloring.
-        let (cycle_eff, offset_eff) = self
-            .live_norm_cycle_offset(vs)
-            .unwrap_or_else(|| (self.color_cycle(), self.coloring.offset));
+        let nm = self.live_norm_cycle_offset(vs).unwrap_or(NormMap {
+            cycle: self.color_cycle(),
+            offset: self.coloring.offset,
+            mode: 0,
+            lo: 0.0,
+        });
+        let (cycle_eff, offset_eff) = (nm.cycle, nm.offset);
 
         // This dispatch's nominal cost: the TILE's pixels under a settle grid, the whole frame
         // otherwise; a CHUNKED frame's cost is the whole frame over its iteration RANGE, not the
@@ -4034,6 +4074,8 @@ impl FractadyneApp {
             max_iter: shader_iter,
             cycle: cycle_eff,
             offset: offset_eff,
+            norm_mode: nm.mode,
+            norm_lo: nm.lo,
             stop_count,
             stops,
             light: self.effects.light as u32,

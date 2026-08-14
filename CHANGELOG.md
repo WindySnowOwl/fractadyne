@@ -24,6 +24,16 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **Log-scaled palette mapping** (beta.96) — *Color → Log color scale*, or `--log-palette`.
+  Escape values crowd towards the high end at depth: most of a deep frame's pixels sit in the last
+  few percent of the range, so mapping the palette linearly spends nearly all of it on a thin
+  shell hugging the boundary and flattens everything outside into near-darkness. Compressing with
+  `log(v − lo + 1)` first spreads the palette across the range as the eye actually reads it. On a
+  1e6× view the difference is stark — the linear render keeps its bright end in a few tight rings
+  while the log render opens the whole field up — and it is what keeps colour stable through a
+  zoom video instead of washing out as the measured range grows. Applies wherever normalization is
+  active (the live "Normalize deep colors" path and `--normalize`); the classic linear mapping
+  remains the default and is bit-identical to before.
 - **Dithered 8-bit export — banding is gone from smooth gradients** (beta.95). Fractal exteriors
   are enormous, very shallow ramps, which is the worst case for 8-bit output: rounding maps a wide
   span of colour onto one byte value and leaves a visible contour where it steps. That is the

@@ -45,6 +45,10 @@ pub struct SessionState {
     pub palette_idx: usize,
     pub cycle: f32,
     pub offset: f32,
+    /// Log-scaled palette mapping (default off) — applies wherever normalization is active.
+    /// `serde(default)` keeps older session files loadable.
+    #[serde(default)]
+    pub log_palette: bool,
     /// Live deep-palette auto-normalization (default on). `serde(default)` keeps older files loadable.
     #[serde(default = "default_true")]
     pub normalize_live: bool,
@@ -375,6 +379,7 @@ impl Default for SessionState {
             auto_iter: true,
             palette_idx: 0,
             cycle: 0.27,
+            log_palette: false,
             normalize_live: true,
             offset: 0.1,
             zoom_rate: default_zoom_rate(),

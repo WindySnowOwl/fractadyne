@@ -130,6 +130,13 @@ impl FractadyneApp {
                 }
                 ui.add(egui::Slider::new(&mut self.coloring.cycle, 0.0..=1.0).text("Cycle"));
                 ui.add(egui::Slider::new(&mut self.coloring.offset, 0.0..=1.0).text("Offset"));
+                ui.checkbox(&mut self.coloring.log_palette, "Log color scale")
+                    .on_hover_text(
+                        "Spread the palette by the logarithm of the escape value rather than \
+                         linearly. Escape counts crowd towards the high end at depth, so a linear \
+                         map spends most of the palette on a thin shell near the boundary and \
+                         flattens everything else. Applies wherever normalization is active.",
+                    );
                 ui.checkbox(&mut self.coloring.normalize_live, "Normalize deep colors")
                     .on_hover_text(
                         "At extreme depth, escape counts span hundreds of thousands and a fixed \

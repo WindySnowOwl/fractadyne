@@ -430,6 +430,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot."),
         Flag("--glitch / --no-glitch", "Force multi-reference glitch correction on / off for the export (default on)."),
         Flag("--normalize", "Auto-normalize the palette cycle to the frame's escape-value range on export — prevents smooth-coloring aliasing (speckle) at extreme depth; the cycle slider then means palette sweeps. Falls back to normal coloring for aux methods / huge supersampled sizes."),
+        Flag("--log-palette", "Spread the palette by the LOGARITHM of the escape value rather than linearly, wherever normalization is active. Escape counts crowd towards the high end at depth, so a linear map spends most of the palette on a thin shell near the boundary and flattens the rest; log keeps color readable and stable as a zoom video's range grows."),
         Flag("--no-perf / --perf", "Hide / show the performance panel."),
         Section("Validation & diagnostics"),
         Flag("--render-iter -o F.exr", "Export raw iteration data (EXR) instead of a colored image."),
