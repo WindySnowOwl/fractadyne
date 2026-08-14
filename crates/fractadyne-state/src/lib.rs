@@ -479,6 +479,13 @@ pub fn state_location_display() -> String {
 pub enum StateLoad {
     /// No saved state (fresh install / after a reset) — defaults returned.
     Fresh,
+    /// A session file EXISTS but does not parse, so defaults were returned instead — the settings
+    /// in that file had no effect at all. Split out from [`StateLoad::Fresh`] because the two are
+    /// indistinguishable to a caller that only sees the state, and for a HARNESS that stages a
+    /// session (the corpus generator) they mean opposite things: "fresh" is the intended sandbox,
+    /// "unreadable" is a silently-ignored staging and a wrong render. Not user-facing on its own —
+    /// an old/corrupt file is a normal thing to shrug off — but it is logged.
+    Unreadable,
     /// Loaded and the schema version is understood.
     Ok,
     /// Loaded best-effort, but the file was written by a **newer** Fractadyne
@@ -519,7 +526,7 @@ fn parse_with_status(text: &str) -> (SessionState, StateLoad) {
         // Unparseable: if the version says it's from the future, warn; otherwise treat as a
         // legacy/corrupt file and quietly fall back to defaults (no false alarm on old saves).
         Err(_) if probed > STATE_FORMAT_VERSION => (SessionState::default(), StateLoad::Newer(probed)),
-        Err(_) => (SessionState::default(), StateLoad::Fresh),
+        Err(_) => (SessionState::default(), StateLoad::Unreadable),
     }
 }
 
@@ -650,11 +657,21 @@ mod tests {
         assert_eq!(status, StateLoad::Ok);
     }
 
-    // Garbage that isn't valid TOML falls back to defaults without a scary version warning.
+    // Garbage that isn't valid TOML falls back to defaults without a scary version warning — but
+    // it reports UNREADABLE, not Fresh: a file that exists and was ignored is a different fact
+    // from no file at all, and a harness staging a session needs to tell them apart.
     #[test]
-    fn corrupt_file_falls_back_to_fresh() {
+    fn corrupt_file_falls_back_to_defaults_and_says_so() {
         let (_s, status) = parse_with_status("this is not : valid = toml [[[");
-        assert_eq!(status, StateLoad::Fresh);
+        assert_eq!(status, StateLoad::Unreadable);
+    }
+
+    // A session missing a REQUIRED field (one without `serde(default)`) is the harness hazard:
+    // it looks like a plausible file, parses as nothing, and renders with defaults.
+    #[test]
+    fn partial_session_is_unreadable_not_silently_default() {
+        let (_s, status) = parse_with_status("center_x = -0.5\ncenter_y = 0.0\n");
+        assert_eq!(status, StateLoad::Unreadable);
     }
 
     // reset_all removes the whole config dir, and is a no-op when there's nothing to remove.

@@ -1,0 +1,118 @@
+# The F3-corpus render session — the ONLY settings a corpus render sees.
+#
+# Every corpus render runs with FRACTADYNE_CONFIG_DIR pointed at a throwaway directory holding a
+# copy of THIS file, so a render depends on the exe, the --render command line, and this file --
+# nothing else. It used to be built by patching ~17 keys into the DEVELOPER'S live session and
+# inheriting the rest, which is why the July 2026 baselines could not be reproduced (the palette
+# `cycle`/`offset`, `de`, `use_binary`, `normalize_live` and friends all rode along unpinned).
+#
+# ⚠Keep every image-affecting key EXPLICIT here even when it equals the app default: the point is
+# that this file, not a default that may shift, is the contract. The catalog contract is
+# 1280x720 2xSS, Ember palette, smooth iteration, no DE/lighting/HUD, exact per-location iterations.
+# ⚠The location deliberately is NOT here -- it rides --center/--zoom-log2/--iter, and staging a
+# deep view would make the app BOOT on it (an e500 session boot once hung a render for an hour).
+# Regenerate/extend by hand; `generate_corpus.py` verifies the app actually LOADED it (the app
+# logs `session: <path> -- loaded`, and falls back to defaults on a file it cannot parse).
+
+state_version = 1
+center_x = -0.5
+center_y = 0.0
+center_x_str = "-0.5"
+center_y_str = "0.0"
+units_per_pixel = 0.005555555555555556
+units_per_pixel_e = 0
+max_iter = 1000
+auto_iter = true
+palette_idx = 0
+cycle = 0.27
+offset = 0.1
+log_palette = false
+normalize_live = true
+zoom_rate = 4.0
+click_zoom = true
+click_zoom_factor = 100.0
+autopilot_dive_log2 = 900.0
+work_budget_scale = 1.0
+min_motion_res = 1.0
+prefer_detail = false
+aa = 2
+fps_cap = 60.0
+export_width = 1280
+export_ss = 2
+export_format = "png"
+welcome_seen = true
+export_dual_mode = "side"
+export_aspect = "window"
+show_location = false
+palette_anim = "off"
+palette_anim_speed = 0.15
+light = false
+light_angle = 0.9425519704818726
+light_height = 1.2
+light_anim = false
+de = false
+de_strength = 0.6
+de_width = 1.0
+de_anim = false
+color_method = "smooth"
+stripe_freq = 6.0
+trap_type = "point"
+minimap = false
+custom_palette = [
+    [
+    0.4000000059604645,
+    0.8999999761581421,
+    0.30000001192092896,
+    0.019999999552965164,
+],
+    [
+    0.6200000047683716,
+    1.0,
+    0.699999988079071,
+    0.11999999731779099,
+],
+    [
+    0.8199999928474426,
+    1.0,
+    1.0,
+    0.8199999928474426,
+],
+    [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+],
+]
+use_custom_palette = false
+use_duotone = false
+use_binary = false
+duotone_lo = [
+    0.03999999910593033,
+    0.05000000074505806,
+    0.11999999731779099,
+]
+duotone_hi = [
+    0.949999988079071,
+    0.800000011920929,
+    0.44999998807907104,
+]
+right_panel_open = false
+fractal = "Mandelbrot"
+julia_mode = false
+julia_c_re = -0.743643
+julia_c_im = 0.131825
+dual = false
+dual_split = 0.5
+series_approx = false
+glitch_correct = false
+use_bla = true
+watermark = false
+ui_scale = 1.0
+theme = "dark"
+update_track = "stable"
+update_check_on_launch = false
+show_orbits = false
+orbit_normalize = true
+orbit_anim = false
+orbit_anim_speed = 10.0

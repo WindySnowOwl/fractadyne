@@ -18,14 +18,23 @@ REGRESSION GATE (run after a major change):
   comparison before re-blessing (regenerate + eyeball the catalog). Exits non-zero on any change.
   Does not modify the committed renders or catalog. See DIAGNOSTICS.md.
 
-The Fractadyne render goes through `--render` with a FULLY staged session (location,
-iterations, coloring), restored afterwards. It must NOT go through the tour renderer:
-render_tour_to_dir forces auto_iter=true, silently re-capping an explicit iteration
-count — deep corpus locations whose structure escapes above the cap rendered
-interior-black while Fraktaler-3 used the full count. And the staging must pin the
-COLORING too (Ember / smooth, no DE/lighting — the catalog contract): a partial staging
-inherits whatever stripe/relief config the live session happens to have, so the corpus
-renders weren't reproducible (the same hermeticity lesson as --selftest).
+The Fractadyne render goes through `--render` with the committed `session-template.toml` copied
+into a throwaway `FRACTADYNE_CONFIG_DIR`, so a render depends on the exe, the command line, and
+that file — nothing else. It must NOT go through the tour renderer: render_tour_to_dir forces
+auto_iter=true, silently re-capping an explicit iteration count — deep corpus locations whose
+structure escapes above the cap rendered interior-black while Fraktaler-3 used the full count.
+
+⚠HERMETICITY, the hard-won part (2026-08-14). This used to patch ~17 keys into the DEVELOPER'S
+live session and inherit the rest, which is not hermetic at all: `cycle`/`offset` (palette phase),
+`log_palette`, `normalize_live`, `use_binary`, `use_duotone`, `de_strength`, `stripe_freq` and
+friends all reach the render unpinned. That is why the July 2026 baselines could not be
+reproduced by ANY build — the July binary included (v0.2.20 renders `01-home` at meanD 27.98
+against its own baseline). The renderer never changed; the environment did.
+
+⚠COMPARE PIXELS, NEVER FILE BYTES. `--render` embeds metadata in the PNG, so two byte-different
+files routinely hold identical images — a sha256 over the file reports "nondeterministic" for a
+renderer that is bit-exact (measured: 4 runs, 4 hashes, maxD 0). `check_corpus` compares decoded
+RGB, and any new determinism probe must do the same.
 """
 
 import os
@@ -37,7 +46,9 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS = os.path.join(ROOT, "validation", "corpus")
 EXE = os.path.join(ROOT, "target", "release", "fractadyne.exe")
-SESSION = os.path.expandvars(r"%APPDATA%\Fractadyne\Fractadyne\config\session.toml")
+# The corpus render session, committed. Copied into a throwaway `FRACTADYNE_CONFIG_DIR` per run —
+# the developer's real session is never read or written (see `stage_config_dir`).
+TEMPLATE = os.path.join(CORPUS, "session-template.toml")
 
 # Render geometry — identical for both apps (set KF's image size to match).
 WIDTH, HEIGHT, SS = 1280, 720, 2
@@ -116,82 +127,56 @@ def write_fdn(loc):
     return text
 
 
-def stage_session(loc):
-    """Stage the session for one corpus render: pinned coloring + a LIGHT home view.
+def stage_config_dir():
+    """Create a throwaway config dir holding ONLY the committed corpus session; return its path.
 
-    Hermetic by design (the --selftest lesson): anything the render reads that is NOT staged
-    here silently inherits the user's live session, making the corpus unreproducible. The
-    catalog contract is 1280x720 2xSS, Ember palette, smooth iteration, no DE/lighting/HUD,
-    and the location's EXACT iteration count.
+    HERMETIC BY CONSTRUCTION, which is the whole point and was the bug. This used to read the
+    DEVELOPER'S live session (`%APPDATA%\\Fractadyne\\...\\session.toml`), patch ~17 keys into it,
+    write it back, render, and restore — so every key it did not think to pin rode along from
+    whatever the app last wrote. `cycle`/`offset` (palette phase!), `log_palette`,
+    `normalize_live`, `use_binary`, `use_duotone`, `de_strength`, `stripe_freq` and the rest all
+    reach the render, which is why the July 2026 baselines could not be reproduced by ANY build —
+    including the July binary that made them (verified: v0.2.20 renders `01-home` at meanD 27.98
+    against its own baseline). The variable was the environment, not the renderer.
 
-    The LOCATION deliberately does NOT go into the session: it rides the `--render` command
-    line (`--center`/`--zoom-log2`/`--iter`), which sets the viewport and its precision
-    (`set_center_log2mag` -> `refresh_precision`) exactly. Staging the deep view into the
-    session as well makes the app BOOT on it — and a live window booting an extreme-depth
-    session while the export runs hung the e500 render for over an hour (the identical CLI
-    render with a light session takes ~11 s). The session view is pinned to HOME with
-    auto-iteration on and a small cap, so the boot frame costs nothing.
+    Now: `FRACTADYNE_CONFIG_DIR` points the app at a fresh temp dir containing a copy of the
+    committed `session-template.toml`. The developer's real session is never read and never
+    written — no backup/restore dance, and nothing to clobber if the run dies mid-render.
+
+    The LOCATION deliberately does NOT go into the session: it rides the `--render` command line
+    (`--center`/`--zoom-log2`/`--iter`), which sets the viewport and its precision
+    (`set_center_log2mag` -> `refresh_precision`) exactly. Staging the deep view into the session
+    as well makes the app BOOT on it — and a live window booting an extreme-depth session while
+    the export runs hung the e500 render for over an hour (the identical CLI render with a light
+    session takes ~11 s). The template pins HOME with auto-iteration on and a small cap, so the
+    boot frame costs nothing.
     """
-    t = open(SESSION, encoding="utf-8").read()
-
-    def setk(t, key, val):
-        pat = r"^%s = .*$" % re.escape(key)
-        rep = "%s = %s" % (key, val)
-        if re.search(pat, t, re.M):
-            return re.sub(pat, rep.replace("\\", "\\\\"), t, count=1, flags=re.M)
-        return t + "\n" + rep + "\n"
-
-    del loc  # location intentionally unused here: it rides the CLI (see docstring)
-    for key, val in [
-        ("center_x", "-0.5"),
-        ("center_y", "0.0"),
-        ("center_x_str", '"-0.5"'),
-        ("center_y_str", '"0.0"'),
-        ("units_per_pixel", repr(4.0 / HEIGHT)),
-        ("units_per_pixel_e", "0"),
-        ("max_iter", "1000"),
-        ("auto_iter", "true"),
-        ("show_location", "false"),
-        ("color_method", '"smooth"'),
-        # SA and glitch correction off: a fixed-iteration comparison render wants the fewest
-        # approximations/post-passes in play — and the multi-reference glitch-correction pass goes
-        # pathological (>1 h) at extreme depth (it rebuilds ~1700-bit references per glitch; see
-        # TODO.md "Open bugs"). Stripe-method sessions never showed it because aux methods skip
-        # correction — which is why corpus renders inherited from a stripe session looked fine
-        # while hermetic smooth renders hung. BLA still accelerates the deep iterate.
-        ("series_approx", "false"),
-        ("glitch_correct", "false"),
-        ("palette_idx", "0"),  # Ember
-        ("de", "false"),
-        ("light", "false"),
-        ("palette_anim", '"off"'),
-        ("use_custom_palette", "false"),
-        ("export_ss", str(SS)),
-        ("fractal", '"Mandelbrot"'),
-        ("julia_mode", "false"),
-        ("dual", "false"),
-    ]:
-        t = setk(t, key, val)
-    open(SESSION, "w", encoding="utf-8", newline="\n").write(t)
+    import tempfile
+    d = tempfile.mkdtemp(prefix="fdcfg_")
+    shutil.copyfile(TEMPLATE, os.path.join(d, "session.toml"))
+    return d
 
 
-def render_location(loc, out_png=None):
+def render_location(loc, out_png=None, config_dir=None):
     """Render one location via `--render`; returns the output PNG path.
 
     The location goes on the COMMAND LINE (`--center`/`--zoom-log2`/`--iter`): `--render` is a
     one-shot CLI renderer that always resets center+zoom from its flags (defaulting to the HOME
     view when they are absent — a session-staged location is silently ignored, which once rendered
     the corpus as twenty copies of the full set). `--zoom-log2` carries arbitrary depth; `--iter`
-    is honored verbatim (auto-iter off). The session staging above still pins what has no CLI
-    flag: coloring method, DE/lighting, HUD.
+    is honored verbatim (auto-iter off). The staged session still supplies what has no CLI
+    flag: coloring method + phase, DE/lighting, HUD, SA/glitch correction.
 
     `out_png` overrides the destination (the corpus check renders to a temp file so it never
-    clobbers the committed render it is comparing against).
+    clobbers the committed render it is comparing against). `config_dir` is a staged throwaway
+    config dir (see `stage_config_dir`); one is made per call when omitted.
     """
     import math
     if out_png is None:
         out_png = os.path.join(CORPUS, "renders", loc["slug"] + "-fractadyne.png")
-    stage_session(loc)
+    own_dir = config_dir is None
+    if own_dir:
+        config_dir = stage_config_dir()
     cmd = [
         EXE, "--render", "--out", out_png, "--size", "%dx%d" % (WIDTH, HEIGHT),
         "--center", loc["center_x"], loc["center_y"],
@@ -202,9 +187,30 @@ def render_location(loc, out_png=None):
     ]
     if loc.get("normalize"):
         cmd.append("--normalize")  # escape-range -> palette (deep dense fields; see read_locations)
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=3600)
-    if not os.path.exists(out_png):
-        sys.exit("no render for %s\nstdout: %s\nstderr: %s" % (loc["slug"], r.stdout[-2000:], r.stderr[-2000:]))
+    env = dict(os.environ, FRACTADYNE_CONFIG_DIR=config_dir)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=3600, env=env)
+        if not os.path.exists(out_png):
+            sys.exit("no render for %s\nstdout: %s\nstderr: %s"
+                     % (loc["slug"], r.stdout[-2000:], r.stderr[-2000:]))
+        # ⚠VERIFY THE STAGING TOOK. The app falls back to DEFAULTS on a session file it cannot
+        # parse (`parse_with_status`) and says nothing to the caller, so a template that goes stale
+        # against the schema would silently render the whole corpus with default coloring — the
+        # same unreproducible-corpus failure in a new costume. The app logs the outcome; insist on
+        # it rather than trusting the file we just wrote.
+        blob = (r.stderr or "") + (r.stdout or "")
+        line = next((l for l in blob.splitlines() if "session:" in l), None)
+        # Match the WORD, never the punctuation: the app writes an em dash and this pipe is
+        # decoded with the console codepage on Windows, so any dash-matching check fails on a
+        # perfectly good render (it did, first try). "loaded" also covers "loaded, newer format";
+        # "none (defaults)" and "UNREADABLE, ignored (defaults)" are the two that must fail.
+        if line is not None and "loaded" not in line:
+            sys.exit("staged session was NOT loaded for %s -- the render used app defaults, so it "
+                     "is not the corpus contract.\n  %s\n  template: %s"
+                     % (loc["slug"], line.strip(), TEMPLATE))
+    finally:
+        if own_dir:
+            shutil.rmtree(config_dir, ignore_errors=True)
     return out_png
 
 
@@ -387,8 +393,7 @@ def check_corpus(locs, only=None):
             sys.exit("no locations match --only %s" % only)
     if not os.path.exists(EXE):
         sys.exit("build first: cargo build --release -p fractadyne-app")
-    backup = SESSION + ".checkbak"
-    shutil.copyfile(SESSION, backup)
+    cfg = stage_config_dir()
     tmpdir = tempfile.mkdtemp(prefix="fdcorpus_")
     results = []
     try:
@@ -400,7 +405,7 @@ def check_corpus(locs, only=None):
                 continue
             print("checking %s ..." % slug, flush=True)
             tmp = os.path.join(tmpdir, slug + ".png")
-            render_location(loc, out_png=tmp)
+            render_location(loc, out_png=tmp, config_dir=cfg)
             a, b = _img_rgb(committed), _img_rgb(tmp)
             if a.shape != b.shape:
                 results.append((slug, "SIZE", "shape %s vs committed %s" % (b.shape, a.shape)))
@@ -411,10 +416,8 @@ def check_corpus(locs, only=None):
             status = "MATCH" if maxd == 0 else "CHANGED"
             results.append((slug, status, "maxD %d meanD %.2f std %.1f%s" % (maxd, meand, std, blank)))
     finally:
-        shutil.copyfile(backup, SESSION)
-        os.remove(backup)
         shutil.rmtree(tmpdir, ignore_errors=True)
-        print("session restored")
+        shutil.rmtree(cfg, ignore_errors=True)
     ok = sum(1 for _, s, _ in results if s == "MATCH")
     print("\ncorpus check -- re-render vs committed (F3-confirmed) renders, %dx%d %dxSS:" % (WIDTH, HEIGHT, SS))
     for slug, status, detail in results:
@@ -440,17 +443,14 @@ def main():
     if not skip_renders:
         if not os.path.exists(EXE):
             sys.exit("build first: cargo build --release -p fractadyne-app")
-        backup = SESSION + ".corpusbak"
-        shutil.copyfile(SESSION, backup)
+        cfg = stage_config_dir()
         try:
             for loc in locs:
                 print("rendering %s ..." % loc["slug"], flush=True)
-                out = render_location(loc)
+                out = render_location(loc, config_dir=cfg)
                 print("  -> %s (%.1f MB)" % (os.path.basename(out), os.path.getsize(out) / 1e6))
         finally:
-            shutil.copyfile(backup, SESSION)
-            os.remove(backup)
-            print("session restored")
+            shutil.rmtree(cfg, ignore_errors=True)
     # .fdn reload files (extracted from each render's embedded metadata — needs the renders to exist)
     n_fdn = sum(1 for loc in locs if write_fdn(loc))
     print("wrote %d .fdn files (of %d)" % (n_fdn, len(locs)))

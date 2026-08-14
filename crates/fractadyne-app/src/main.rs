@@ -2736,6 +2736,27 @@ impl FractadyneApp {
         // full-precision decimal strings when present (deep-zoom locations survive
         // restart); older session files without them fall back to the f64 fields.
         let (s, state_load) = fractadyne_state::load_with_status();
+        // ⭐WHICH session this run is using, on the record. Every setting with no CLI flag —
+        // coloring method, DE/lighting, series approximation, glitch correction — comes from that
+        // file, so "which file, and did it actually load" is the first question behind any "why
+        // does this render look different" report. It is also what makes a staged session
+        // VERIFIABLE: `parse_with_status` falls back to defaults on an unparseable file, so a
+        // harness that stages one (the F3 corpus generator) would otherwise render with defaults
+        // and never know. `FRACTADYNE_CONFIG_DIR` relocates the file this names.
+        crate::diag::log_line(
+            "start",
+            &format!(
+                "session: {} — {}",
+                fractadyne_state::state_location_display(),
+                match &state_load {
+                    fractadyne_state::StateLoad::Ok => "loaded".to_string(),
+                    fractadyne_state::StateLoad::Fresh => "none (defaults)".to_string(),
+                    fractadyne_state::StateLoad::Unreadable =>
+                        "UNREADABLE, ignored (defaults)".to_string(),
+                    fractadyne_state::StateLoad::Newer(v) => format!("loaded, newer format v{v}"),
+                }
+            ),
+        );
         // Surface a warning (once the UI is up) if the session file was written by a newer build
         // than this one can fully account for.
         let pending_state_warning = match state_load {

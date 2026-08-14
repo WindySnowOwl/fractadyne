@@ -63,26 +63,34 @@ re-committed. The check exits non-zero on any change and never modifies the comm
 catalog. It is intentionally **not** part of the fast `--selftest` — a full 20-location re-render takes
 minutes (the deep locations dominate), so it is an on-demand gate.
 
-> ### ⚠ Known problem: this gate is currently RED, and the cause is the tooling, not the renderer
+> ### ✅ Fixed 2026-08-14: this gate was RED because the renders were not hermetic
 >
-> As of 2026-08-14 `--check` reports `0/3 MATCH` on the first three locations (maxΔ 169, meanΔ 27–47),
-> **including `01-home`** — the shallowest, simplest view in the set. Before treating that as a
-> rendering regression, know what was already established:
+> `--check` reported `0/3 MATCH` on the first three locations (maxΔ 169, meanΔ 27–47), **including
+> `01-home`** — the shallowest, simplest view in the set. It was never a rendering regression:
 >
-> - **The escape field is unchanged.** Bucketing every pixel by its old colour shows the new colours
->   cluster to a spread of 0.21 with an identical interior fraction — a one-to-one recolour, not
->   different mathematics.
-> - **It is not a code change.** The `--selftest` goldens were blessed *earlier* (2026-07-04) than
->   these renders (07-12) and still pass; and checking out the baseline-era commit and rendering
->   `01-home` with it reproduces the same ~28 mean delta against its own baseline. The July binary
->   cannot reproduce the July render, so the variable is the environment.
-> - **The cause is that corpus renders are not hermetic.** `stage_session` pins ~17 keys and inherits
->   every other one from the developer's live session, so output depends on whatever the app last
->   wrote. This is the very trap the generator's own docstring warns about for colouring — only
->   half-fixed. (`--selftest` *is* hermetic, which is why it stayed green throughout.)
+> - **The escape field was unchanged.** Bucketing every pixel by its old colour showed the new
+>   colours clustering to a spread of ~1/255 with an identical interior fraction (0.0933 vs
+>   0.0933) — a one-to-one recolour, not different mathematics.
+> - **It was not a code change.** The `--selftest` goldens were blessed *earlier* (2026-07-04) than
+>   those renders (07-12) and still pass; and the baseline-era commit, rebuilt, reproduced the same
+>   ~28 mean delta against its own baseline. The July binary could not reproduce the July render,
+>   so the variable was the environment.
+> - **The cause: corpus renders inherited the developer's live session.** The old `stage_session`
+>   pinned ~17 keys and let every other one ride along — `cycle`/`offset` (palette phase!),
+>   `log_palette`, `normalize_live`, `use_binary`, `use_duotone`, `de_strength`, `stripe_freq`.
+>   Exactly the trap the generator's own docstring warned about for colouring, only half-fixed.
 >
-> **Fix the hermeticity first, then re-bless deliberately.** Do not re-bless to make it green: that
-> is how these baselines stopped meaning anything in the first place.
+> **Now hermetic by construction**: renders run against the committed `session-template.toml`,
+> copied into a throwaway `FRACTADYNE_CONFIG_DIR`. Your own session is never read or written.
+> Verified by rendering `01-home` with a deliberately hostile live session (`cycle 3.5`,
+> `offset 0.77`, `de = true`, `use_binary = true`, `stripe`) — **maxΔ 0**. The app also logs which
+> session it used (`[fd-start] session: <path> — loaded`), and the generator fails loudly if the
+> staged one was not loaded, so a template gone stale against the schema cannot silently render the
+> corpus with defaults. The baselines were then re-blessed deliberately and `--check` is **20/20**.
+>
+> ⚠**Compare pixels, never file bytes.** `--render` embeds metadata, so identical images produce
+> different sha256s — four runs, four hashes, maxΔ 0. `--check` decodes and compares RGB; any new
+> determinism probe must do the same.
 
 ## The F3 references are for *visual* comparison, not pixel scoring
 
@@ -97,13 +105,14 @@ a non-empty F3 `.exr` (`diag/fraktaler/locations/`: `me30`, `me141`, `me1007`); 
 locations 11–20 are header-only, which is how their parameters were imported. Re-colouring those
 three through our palette would give a real numeric cross-check at three depths.
 
-Renders go through `--render` with a fully staged session per location — exact center strings +
-magnification, the location's verbatim iteration count (auto-scale off; `--render` honors an
-explicit count, unlike the tour renderer, which forces auto-iteration and silently re-caps it),
-and pinned coloring (Ember, smooth, no DE/lighting/HUD). Your session file is restored
-afterwards. Staging everything the render reads is what makes the corpus reproducible — a
-partial staging inherits the live session's coloring (the same hermeticity lesson as
-`--selftest`).
+Renders go through `--render` with the location on the command line — exact center strings +
+magnification and its verbatim iteration count (auto-scale off; `--render` honors an explicit
+count, unlike the tour renderer, which forces auto-iteration and silently re-caps it) — and
+everything else from the committed `session-template.toml`, copied into a throwaway
+`FRACTADYNE_CONFIG_DIR`. That file pins every image-affecting setting explicitly (Ember palette
+with its exact cycle/offset, smooth iteration, no DE/lighting/HUD, SA and glitch correction off),
+so a render depends on the exe, the command line, and that file — and on nothing about the machine
+it runs on. Your own session is neither read nor written.
 
 ## Producing the Fraktaler side
 

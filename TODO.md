@@ -96,6 +96,39 @@ Ordered by how fast a stranger hits them.
 
 ### D — STRONGLY RECOMMENDED, not blocking
 
+- [ ] ⭐**The scripted orbit overlay is hijacked by the viewer's mouse, and no tour ever moves it**
+  (user, 2026-08-14). Two halves, both small:
+  - **The cursor outranks the script.** `ui/central.rs` picks the orbit point as
+    `response.hover_pos().or_else(|| self.anim.tour_orbit)` (single view; the dual path at the top
+    of the same file is the same shape with the branches swapped) — so the scripted point is only
+    ever drawn when the pointer happens to be OFF the canvas. Watch a tour with the mouse resting
+    over the fractal, which is where a viewer's mouse IS, and the overlay follows the mouse instead
+    of the script. During playback the SCRIPT must win: gate the cursor branch on
+    `!self.tour_playing()` (a tour is a presentation, not an interaction), and consider whether a
+    deliberate hover should pause/override — but the default has to be the script.
+  - **The scripts barely use it.** The format already has `orbits` / `orbit_re` / `orbit_im`, and
+    the sampler INTERPOLATES the point between keyframes (`scripting.rs`), so a moving orbit is
+    purely an authoring job today. `tours/grand-tour.toml` sets one fixed point
+    (−0.743643 + 0.131825i, the classic seahorse Julia c) for a single 5 s hold and never moves it;
+    `tours/julia-and-mandelbrot.toml` has two static points. Give the grand tour a moving orbit
+    that shows the structure: interior → boundary → exterior (period-2 bulb cycle, a near-parabolic
+    point that crawls, then an escaping point), which is the one overlay that explains what the
+    picture MEANS. ⚠The offline twin (`stamp_orbit`) must show the same thing — the tour renders
+    to video as well as playing live, and the two paths draw the orbit separately.
+- [ ] ⭐**Scripts cannot set the dual-view split; the offline renderer hardcodes 50/50** (user,
+  2026-08-14). `dual_split` exists as a live, drag-resizable session value (`main.rs`, clamped
+  0.15..0.85 — the divider in `ui/central.rs`), but it is NOT in the keyframe schema, so a tour
+  cannot say "give the Julia panel two thirds while we explore it". Worse, the offline tour
+  renderer ignores the live value entirely: `scripting.rs` splits the frame at
+  `let half = (width / 2).max(1)`, so a rendered tour can never match what playback showed. Work:
+  add an interpolated `dual_split` keyframe field (same 0.15..0.85 clamp, `(inherit)` default, plus
+  a `SchemaField` entry so `--script-schema` documents it), honour it in both the live dual path
+  and the offline `s.dual` branch (two widths, not one `half` — mind that `stitch_side_by_side`
+  and the odd-pixel case both need the two panel widths to sum to `width`), and demonstrate it in
+  the grand tour's dual chapter by widening the Julia panel as the pinned c slides. ⚠A script that
+  sets it must not permanently overwrite the viewer's own divider position — restore on tour end,
+  as `PlaybackRestore` already does for the minimap and palette.
+
 12. **First-run overlay — ✅DONE beta.59.** A compact welcome modal on a fresh install: the
     essential controls (drag/scroll/Space/click-to-zoom/M) + three one-click landmarks
     (Seahorse/Elephant/Deep Seahorse) + "Open full help (F1)". Dismissal persists
@@ -551,6 +584,36 @@ Mockups: [design/mockups/](design/mockups/).
   matters; it is green. Fix the corpus the same way (render from a known session, not the live
   one), then re-bless deliberately. ⚠**No announce risk**: the shipped release gate (goldens
   17/17, suite 113/113) is unaffected.
+
+  ### ✅FIXED 2026-08-14 (beta.99) — hermetic by construction, and re-blessed
+
+  Corpus renders now run against a COMMITTED `validation/corpus/session-template.toml`, copied
+  into a throwaway `FRACTADYNE_CONFIG_DIR` per run. The developer's session is never read and
+  never written (the backup/restore dance is gone with it, and with it the risk of a dying run
+  leaving someone's session patched). The template pins every image-affecting key EXPLICITLY,
+  including the ones the old staging never knew it was inheriting — `cycle`/`offset` (palette
+  phase — the phase shift the earlier archaeology measured), `log_palette`, `normalize_live`,
+  `use_binary`, `use_duotone`, `de_strength`/`de_width`, `stripe_freq`, `trap_type`, `aa`,
+  `watermark`.
+  **Proof, not assertion**: rendering `01-home` twice with a deliberately HOSTILE live session in
+  between (`cycle 3.5`, `offset 0.77`, `de = true`, `use_binary = true`, `color_method =
+  "stripe"`) now gives **maxD 0**. Before the fix those settings would have landed in the image.
+  ⭐**The app now says which session it used**: `[fd-start] session: <path> — loaded / none
+  (defaults) / UNREADABLE, ignored (defaults)`, and `StateLoad` gained an `Unreadable` variant so
+  "a file that exists and was ignored" stops looking like "no file". This closes the loop the fix
+  would otherwise leave open: `parse_with_status` falls back to DEFAULTS on a session it cannot
+  parse, so a template gone stale against the schema would silently render the whole corpus with
+  default coloring — the same unreproducible corpus in a new costume. The generator now insists on
+  seeing "loaded" and fails loudly otherwise.
+  ⚠**A trap worth remembering: do not compare renders by FILE HASH.** `--render` embeds metadata
+  in the PNG, so four identical renders produced four different sha256s — I briefly "measured" the
+  renderer as nondeterministic on exactly that evidence. Decoded pixels: maxD 0 across all four.
+  `check_corpus` has always compared pixels; any new probe must too.
+  **Re-blessed deliberately** (all 20 renders + catalog), on the evidence that the maths is
+  unchanged: bucketing every pixel by its OLD colour gives a within-colour NEW spread of 1.2/255
+  and an identical interior fraction (0.0933 vs 0.0933) — a one-to-one colour remap, i.e. the
+  escape field is bit-unchanged and only the iteration→palette mapping moved. The F3 reference
+  images are untouched, so the structural side-by-side the corpus exists for is unaffected.
   ⚠**Context that reframes the severity: the baseline PNGs are dated 2026-07-12**, predating
   everything from v0.2.36 through beta.92 — so this is a month-stale reference, not a fresh
   regression, and the gate simply has not been run in that window. Next step is a bisect on

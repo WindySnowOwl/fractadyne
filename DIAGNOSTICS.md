@@ -124,8 +124,12 @@ Three properties worth preserving if you edit them:
 
 - **Hermetic.** Everything runs against a private config dir inside the bundle
   (`FRACTADYNE_CONFIG_DIR`), so the tester's own session is untouched *and* every machine renders
-  with identical settings. Without this, results are not comparable — the F3 corpus check inherits
-  the developer's live session and its baselines drifted into meaninglessness as a result.
+  with identical settings. Without this, results are not comparable — the F3 corpus check used to
+  inherit the developer's live session, and its baselines drifted into meaninglessness as a result
+  (fixed 2026-08-14 the same way: a committed session template copied into a throwaway
+  `FRACTADYNE_CONFIG_DIR`; `--check` is 20/20 again). The app now logs which session it loaded —
+  `[fd-start] session: <path> — loaded / none (defaults) / UNREADABLE, ignored (defaults)` — so a
+  harness can PROVE its staging took effect instead of assuming it.
 - **A failing step never aborts the battery.** A card can fail the goldens and still pass the
   live-resolution check; you want both. Hence `set -uo pipefail` (not `-e`) and
   `$ErrorActionPreference = "Continue"` — with `Stop`, the app's stderr banner alone kills the run.

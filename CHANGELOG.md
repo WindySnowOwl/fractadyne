@@ -24,6 +24,24 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **The Fraktaler-3 comparison corpus is reproducible again** (beta.99). Its regression check had
+  been red since July on every location including the simplest one, and the reason was the harness,
+  not the renderer: corpus renders patched a handful of settings into the developer's *live*
+  session and inherited everything else, so the palette phase, distance-estimate shading, binary
+  and duotone modes and half a dozen other image-affecting settings rode along from whatever the
+  app happened to be doing last. No build could reproduce those baselines — including the July
+  build that made them. Renders now run against a committed session file copied into a throwaway
+  config directory: they depend on the program, the command line, and that file, and on nothing
+  about the machine. Verified by rendering with a deliberately hostile live session and getting a
+  pixel-identical result; baselines re-blessed deliberately (the escape values were never in
+  question — the difference was a one-to-one recolour), and the check is 20/20 across depths to
+  1.2e1008x.
+  - The app now records which session it loaded, and says so when a session file exists but could
+    not be read — previously indistinguishable from having no session at all, which is precisely
+    how a harness ends up silently rendering with defaults. The corpus generator now insists on
+    seeing that its staged session was loaded.
+  - ⚠Note for anyone comparing renders: image files carry embedded metadata, so two identical
+    images have different checksums. Compare decoded pixels.
 - **A deep view no longer throws away the reference it is rendering with** (beta.98). Zooming or
   panning at extreme depth could leave the picture blank: a reference rebuild that happened while
   the view was moving was capped to a short "keep motion cheap" length, and once that cap sat below
