@@ -222,6 +222,55 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
         }
         out.push(OpCheck { name: r.name, max_err, tol: r.tol, fails, detail });
     }
+
+    // Row 12 — df_mul dissected. Not a tolerance check: it reports WHICH intermediate came back
+    // zero when it should not have, which is the difference between "multiplication is broken"
+    // and "this one line was optimized away". A stack that keeps all three is arithmetically
+    // sound here; a stack that zeroes any one of them tells us precisely what its compiler did.
+    {
+        let (mut py_zero, mut e_zero, mut lo_zero, mut nonzero_expected) = (0u32, 0u32, 0u32, 0u32);
+        for ix in 0..w {
+            let s = ix + 100003 * 12;
+            // Same operands the shader's row 12 uses: `ar` (seed +3) and `br` (seed +5).
+            let (a, b) = (gt_df(s * 8 + 3, -4, 8), gt_df(s * 8 + 5, -4, 8));
+            let got = texel(ix, 12);
+            // Exact f32 mirror (Rust neither reassociates nor auto-contracts).
+            let p_hi = a.0 * b.0;
+            let p_lo = a.0.mul_add(b.0, -p_hi);
+            let e = p_lo + (a.0 * b.1 + a.1 * b.0);
+            let s_hi = p_hi + e;
+            let r_lo = e - (s_hi - p_hi);
+            if p_lo != 0.0 || e != 0.0 || r_lo != 0.0 {
+                nonzero_expected += 1;
+            }
+            if p_lo != 0.0 && got[1] == 0.0 {
+                py_zero += 1;
+            }
+            if e != 0.0 && got[2] == 0.0 {
+                e_zero += 1;
+            }
+            if r_lo != 0.0 && got[3] == 0.0 {
+                lo_zero += 1;
+            }
+        }
+        let fails = py_zero + e_zero + lo_zero;
+        let detail = if fails == 0 {
+            String::new()
+        } else {
+            format!(
+                "of {nonzero_expected} sets expecting non-zero: two_prod residual p.y zeroed \
+                 {py_zero}x, cross-term sum e zeroed {e_zero}x, quick_two_sum residual zeroed \
+                 {lo_zero}x  <- the non-zero count names the folded step"
+            )
+        };
+        out.push(OpCheck {
+            name: "df_mul dissected (which intermediate got folded?)",
+            max_err: 0.0,
+            tol: 0.0,
+            fails,
+            detail,
+        });
+    }
     out
 }
 

@@ -1870,6 +1870,24 @@ fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             let r = quick_two_sum(hi, lo);
             return vec4<f32>(r.x, r.y, 0.0, 0.0);
         }
+        case 12u: {
+            // df_mul DISSECTED. Every primitive above passes in isolation on AMD, yet df_mul
+            // only reaches f32 accuracy there — so the precision is lost in the COMPOSITION, and
+            // guessing which step has already been wrong twice. This row re-implements df_mul
+            // inline and emits its three intermediates so the CPU side can say exactly which one
+            // died:
+            //   p.x  the rounded product          (always fine)
+            //   p.y  two_prod's residual          zero here => inlining let the optimizer
+            //                                     simplify fma(a,b,-(a*b)) to 0
+            //   e    p.y + the cross terms        zero here => the cross-term line collapsed
+            //   r.y  quick_two_sum's residual     zero here => the final renormalize folded
+            // Exactly one of these being zero identifies the culprit; the measured f32-level
+            // error is what you get if any of them is zero.
+            let p = two_prod(ar.x, br.x);
+            let e = p.y + (ar.x * br.y + ar.y * br.x);
+            let r = quick_two_sum(p.x, e);
+            return vec4<f32>(p.x, p.y, e, r.y);
+        }
         default: { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
     }
 }

@@ -24,6 +24,17 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **`--gputest` can now say *which line* a compiler folded** (beta.92). Testing primitives in
+  isolation had run out of explanatory power: on AMD every one of them — `two_sum`, `two_prod`,
+  the armored variant, and `quick_two_sum` — comes back exact, yet `df_mul` still only reaches
+  f32 accuracy, so the precision is lost somewhere in the composition. The new row re-implements
+  `df_mul` inline and emits its three intermediates (`two_prod`'s residual, the cross-term sum,
+  and the final renormalize's residual); whichever one comes back zero names the folded step,
+  and the reported error is exactly what any one of them being zero would produce. It paid for
+  itself immediately on the reference machine: NVIDIA preserves the first two and zeroes the
+  final `quick_two_sum` residual in all 256 cases, which is a complete account of why `df_mul`
+  degrades there. On AMD the isolated `quick_two_sum` passes, so if the inlined one is folded,
+  inlining itself is the trigger.
 - **`--gputest` gains a `quick_two_sum` probe, and stops feeding itself invalid inputs**
   (beta.91). The AMD RX 6800 XT result (Vulkan/OpenGL preserve the error-free transforms exactly,
   proving the shader arithmetic is correct and NVIDIA's compiler is the outlier) left one thing
