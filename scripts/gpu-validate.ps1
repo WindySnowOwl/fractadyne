@@ -197,14 +197,18 @@ gputest      A failing two_sum/two_prod means this stack's shader compiler folds
              transforms, so every extended-precision path silently degrades to plain f32. Known:
              all NVIDIA backends fold them; AMD Vulkan/OpenGL do not; AMD DX12 fails differently
              (fma not fused).
-selftest     The 17 goldens are compared EXACTLY and were blessed on an RTX 3080. Small deltas on
-             other hardware are expected and are NOT automatically bugs - cross-vendor rounding
-             legitimately differs. Judge by how many and how large (maxD/meanD per golden). The
-             113 non-golden checks SHOULD pass everywhere; those failing is a real signal.
+selftest     Should now pass on any card. The 17 goldens were blessed on an RTX 3080 and are
+             compared with a wider, measured tolerance on other hardware; the path-signature
+             checks likewise report cross-GPU differences rather than failing them. So a FAILURE
+             here is a real signal - it is no longer expected noise. (If your build predates
+             beta.94 you will instead see "goldens 0/17" and a dozen DRIFT lines, all of which
+             were expected cross-vendor differences rather than defects.)
 live-res     Must pass everywhere. This is the invariant that a GPU without TIMESTAMP_QUERY still
              settles at native resolution instead of being stuck at ~1/3 forever.
-bench-matrix Timings vary by card and mean nothing across machines. Exit 2 = algorithmic drift,
-             which does matter.
+bench-matrix Timings vary by card and mean nothing across machines. Signature differences against
+             a baseline recorded on another GPU are EXPECTED and are reported, not failed - the
+             escape decisions (and the rebase/skip counts that follow) legitimately differ between
+             vendors. Exit 2 means drift on the baseline's OWN card, which does matter.
 livetest     Self-contained: compares the live view against an offline render on THIS machine, so
              its pass/fail is meaningful here. "drift" lines compare against an RTX 3080 baseline
              and can be ignored on other hardware; FAIL lines cannot.

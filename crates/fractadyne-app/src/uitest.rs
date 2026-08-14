@@ -597,7 +597,13 @@ impl FractadyneApp {
                     "This is the generic titled-message dialog, shown by the UI walk.".to_string(),
                 ));
             }
-            Screen::PaletteEditor => self.coloring.palette_editor_open = true,
+            Screen::PaletteEditor => {
+                self.coloring.palette_editor_open = true;
+                // Expand the paste-import section and seed it, so the walk covers that UI too
+                // rather than only the stop rows it shares with every other run.
+                self.coloring.paste_open = true;
+                self.coloring.paste_text = "#000000, #8b1a1a, #ff8800, #ffe6b3".to_string();
+            }
         }
     }
 

@@ -374,18 +374,34 @@ impl crate::FractadyneApp {
         );
 
         let (mut drift, mut slower, mut missing) = (0u32, 0u32, 0u32);
+        // Segments whose signature differs only because this is a different GPU (see below).
+        let mut cross = 0u32;
         for r in results {
             let Some(b) = baseline.segments.get(&r.name) else {
                 println!("  ? {:<22} not in baseline (new segment)", r.name);
                 missing += 1;
                 continue;
             };
-            // Algorithmic (machine-independent) regression: any deterministic field changed.
+            // Path-signature regression. These fields are deterministic for a given BUILD on a
+            // given GPU, but they are NOT machine-independent, which this check assumed until an
+            // RX 6800 XT run proved otherwise (2026-08-14): its shader compiler preserves the
+            // df32 error-free transforms that NVIDIA folds, so escape decisions differ by a pixel
+            // here and there, and rebase/bla_skip/eff_iter counts move with them. Seven of
+            // twenty-two segments reported "ALGORITHMIC DRIFT" on a perfectly healthy card.
+            //
+            // So cross-GPU differences are reported but NOT counted as drift: on the blessing GPU
+            // this stays the exact tripwire it was built to be, and on any other card it becomes
+            // informational. (The same reasoning as the goldens' cross-GPU tolerance.)
             let cur_det = (r.mode, r.sa_skip, r.orbit_len, r.eff_iter, r.counters);
             let base_det = (b.mode, b.sa_skip, b.orbit_len, b.eff_iter, b.counters);
             if cur_det != base_det {
-                drift += 1;
-                println!("  ✗ {:<22} ALGORITHMIC DRIFT", r.name);
+                if same_gpu {
+                    drift += 1;
+                    println!("  ✗ {:<22} ALGORITHMIC DRIFT", r.name);
+                } else {
+                    cross += 1;
+                    println!("  ~ {:<22} differs (cross-GPU, expected)", r.name);
+                }
                 if r.mode != b.mode {
                     println!("      mode {} → {}", b.mode, r.mode);
                 }
@@ -423,9 +439,14 @@ impl crate::FractadyneApp {
         }
 
         println!(
-            "\n{} segments · {drift} algorithmic drift · {slower} slower{} · {missing} new",
+            "\n{} segments · {drift} algorithmic drift · {slower} slower{} · {missing} new{}",
             results.len(),
-            if same_gpu { "" } else { " (skipped — diff GPU)" }
+            if same_gpu { "" } else { " (skipped — diff GPU)" },
+            if cross > 0 {
+                format!(" · {cross} cross-GPU differences (expected)")
+            } else {
+                String::new()
+            }
         );
         if drift > 0 {
             println!(
@@ -434,6 +455,15 @@ impl crate::FractadyneApp {
             );
             2
         } else {
+            if cross > 0 {
+                println!(
+                    "The baseline was recorded on {}; this is {}. Signature differences on \
+                     another GPU are EXPECTED — escape decisions, and the rebase/skip counts that \
+                     follow from them, legitimately differ between vendors. This is not a \
+                     regression, and the tripwire remains exact on the baseline's own card.",
+                    baseline.gpu, self.gpu_name
+                );
+            }
             println!("No algorithmic regressions.{}", if slower > 0 { " (performance warnings above.)" } else { "" });
             0
         }
@@ -488,19 +518,38 @@ impl crate::FractadyneApp {
                 }]
             }
         };
+        let same_gpu = baseline.gpu == self.gpu_name;
         let mut out = Vec::new();
+        if !same_gpu {
+            out.push(MatrixCheck {
+                name: "bench-matrix baseline GPU".into(),
+                pass: true,
+                detail: format!(
+                    "baseline recorded on {}; this is {} — signature differences below are \
+                     EXPECTED and reported, not failed",
+                    baseline.gpu, self.gpu_name
+                ),
+            });
+        }
         for s in matrix().iter().filter(|s| s.deterministic) {
             let r = self.measure_segment(s, device, queue, 1);
             match baseline.segments.get(&r.name) {
                 Some(b) => {
                     let cur = (r.mode, r.sa_skip, r.orbit_len, r.eff_iter, r.counters);
                     let base = (b.mode, b.sa_skip, b.orbit_len, b.eff_iter, b.counters);
-                    let pass = cur == base;
-                    let detail = if pass {
+                    // Exact on the GPU that blessed the baseline; informational on any other.
+                    // These signatures are deterministic per build+GPU but NOT machine-
+                    // independent: an RX 6800 XT reported twelve of these as DRIFT purely because
+                    // its compiler keeps the df32 error-free transforms NVIDIA folds, moving
+                    // escape decisions and the counts that follow. See the `--bench-matrix`
+                    // comparison for the full reasoning.
+                    let pass = cur == base || !same_gpu;
+                    let detail = if cur == base {
                         format!("mode {} eff-it {} sa-skip {} counters ok", r.mode, r.eff_iter, r.sa_skip)
                     } else {
                         format!(
-                            "DRIFT mode {}→{} sa-skip {}→{} orbit {}→{} counters {:?}→{:?}",
+                            "{} mode {}→{} sa-skip {}→{} orbit {}→{} counters {:?}→{:?}",
+                            if same_gpu { "DRIFT" } else { "cross-GPU (expected)" },
                             b.mode, r.mode, b.sa_skip, r.sa_skip, b.orbit_len, r.orbit_len,
                             b.counters, r.counters
                         )

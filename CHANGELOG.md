@@ -24,6 +24,23 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **The path-signature tripwire stops crying wolf on other people's GPUs** (beta.94). The first
+  real cross-vendor validation run — an RX 6800 XT, hours after beta.93 shipped — reported seven
+  bench-matrix segments as "ALGORITHMIC DRIFT" and twelve self-test checks as DRIFT on a
+  perfectly healthy card. The signatures (mode, sa-skip, orbit length, effective iterations, GPU
+  event counters) are deterministic for a given build **on a given GPU**, but they were assumed
+  machine-*independent*, and they aren't: that card's compiler preserves the df32 error-free
+  transforms NVIDIA folds, so escape decisions move by a pixel here and there and the
+  rebase/skip counts follow. Differences against a baseline recorded on another GPU are now
+  reported rather than failed, and `--bench-matrix` no longer exits 2 for them. On the card that
+  blessed the baseline it remains exactly the tripwire it was built to be.
+- **Paste a palette into the gradient editor** (beta.94). A *Paste…* box that accepts what people
+  actually have: hex with or without `#`, 3- or 6-digit, and 0–255 RGB triples — the Fractint/KF
+  `.map` line shape — separated by commas, spaces or new lines, with `;` and `//` comments
+  ignored. Longer lists are sampled evenly down to the eight stops the gradient carries (keeping
+  both ends, so a 256-entry `.map` keeps its shape rather than importing only its dark end), and
+  sRGB is converted to linear on the way in. Deliberately format-tolerant rather than
+  format-specific: "I found a palette on the web" is defeated by a format war.
 - **Help → Diagnostics…: run the tests from the UI, and attach the result to an issue report**
   (beta.93). Two buttons — *Run self-test* (does the maths hold on this GPU?) and *Run UI test*
   (does it draw and lay out correctly?) — with live progress, the test's own verdict line, and

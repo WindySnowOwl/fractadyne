@@ -2023,6 +2023,11 @@ struct ColoringConfig {
     use_custom_palette: bool,
     /// Palette editor window open (transient UI).
     palette_editor_open: bool,
+    /// Gradient editor's "Paste…" section: expanded, the pasted text, and the last result
+    /// message. Session-transient by design — a half-typed import is not worth persisting.
+    paste_open: bool,
+    paste_text: String,
+    paste_msg: Option<String>,
     /// Bumps on every gradient/duotone edit so caches (e.g. the minimap thumbnail) refresh (transient).
     palette_rev: u32,
     /// Two-color palette modes sharing the `lo`/`hi` colors (linear RGB), overriding preset/custom:
@@ -2918,6 +2923,9 @@ impl FractadyneApp {
                 custom_palette: s.custom_palette.clone(),
                 use_custom_palette: s.use_custom_palette,
                 palette_editor_open: false,
+                paste_open: false,
+                paste_text: String::new(),
+                paste_msg: None,
                 palette_rev: 0,
                 use_duotone: s.use_duotone,
                 use_binary: s.use_binary,
@@ -4643,7 +4651,76 @@ impl FractadyneApp {
                             }
                         }
                     });
+                    ui.toggle_value(&mut self.coloring.paste_open, "Paste…")
+                        .on_hover_text("Import a palette from hex colours or 0–255 RGB triples");
                 });
+
+                // Paste-a-palette. The cheapest possible bridge to the existing palette cultures:
+                // no file format to agree on, no dialog, and it covers "I found a palette on the
+                // web" as well as pasting the body of a Fractint/KF `.map`.
+                if self.coloring.paste_open {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Paste hex colours (#ff8800) or 0–255 triples (255 136 0), separated \
+                             by commas, spaces or new lines:",
+                        )
+                        .weak()
+                        .small(),
+                    );
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.coloring.paste_text)
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("#000000, #8b1a1a, #ff8800, #ffe6b3"),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Apply").clicked() {
+                            match fractadyne_color::parse_palette_text(&self.coloring.paste_text) {
+                                Ok(colors) => {
+                                    let got = colors.len();
+                                    let used = fractadyne_color::resample_colors(
+                                        &colors,
+                                        fractadyne_color::MAX_STOPS,
+                                    );
+                                    // Spread the imported colours evenly; a single colour becomes
+                                    // one stop at 0 rather than dividing by zero.
+                                    let n = used.len();
+                                    self.coloring.custom_palette = used
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, c)| {
+                                            let pos = if n > 1 {
+                                                i as f32 / (n - 1) as f32
+                                            } else {
+                                                0.0
+                                            };
+                                            [pos, c[0], c[1], c[2]]
+                                        })
+                                        .collect();
+                                    self.coloring.paste_msg = Some(if got > n {
+                                        format!(
+                                            "Imported {n} of {got} colours — the gradient carries \
+                                             {} stops, sampled evenly across your list.",
+                                            fractadyne_color::MAX_STOPS
+                                        )
+                                    } else {
+                                        format!("Imported {n} colours.")
+                                    });
+                                    changed = true;
+                                }
+                                Err(e) => self.coloring.paste_msg = Some(format!("Couldn't read that: {e}")),
+                            }
+                        }
+                        if ui.button("Clear").clicked() {
+                            self.coloring.paste_text.clear();
+                            self.coloring.paste_msg = None;
+                        }
+                    });
+                    if let Some(m) = &self.coloring.paste_msg {
+                        ui.label(egui::RichText::new(m).weak().small());
+                    }
+                }
                 ui.label(
                     egui::RichText::new(format!(
                         "{}/{} stops · positions may overlap; they're sorted automatically.",
