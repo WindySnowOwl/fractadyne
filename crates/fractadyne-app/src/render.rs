@@ -12,6 +12,130 @@ use std::time::Instant;
 /// accurate but fewer/smaller skips; 1e-6 keeps pixel error negligible while still merging.
 const BLA_EPS: f64 = 1.0e-6;
 
+/// How a view is classified for cost purposes, and the per-frame GPU work budget that follows.
+///
+/// Split out of `build_params` so the classification is testable: `is_pert` **must** agree with
+/// [`crate::RenderMode::select`], because the motion/hold machinery (reuse-hold, `will_reproject`,
+/// prefer-detail) keys off it — if the two disagree, a view is treated as one regime by the
+/// renderer and the other by the pacer. That was previously guaranteed only by a comment; it is
+/// now pinned by `frame_cost_agrees_with_render_mode`.
+pub(crate) struct FrameCost {
+    /// Any perturbation regime (mode 0 or 2), i.e. not the cheap direct path.
+    pub(crate) is_pert: bool,
+    /// Nominal GPU work this frame may spend (texels × iterations).
+    pub(crate) budget: u64,
+    pub(crate) iter_cap: u32,
+}
+
+/// Is this view in the extended-range floatexp regime (mode 2, several× costlier per iteration)?
+///
+/// A free function rather than a `FrameCost` field: the caller no longer needs it — the two places
+/// that mention `is_fe` downstream do so to explain why they are deliberately NOT gated on it — so
+/// carrying it in the struct would be a dead field. It stays public to the crate because the
+/// agreement test below holds it against [`crate::RenderMode::select`].
+pub(crate) fn is_floatexp_regime(magnification: f64, supports_perturbation: bool) -> bool {
+    supports_perturbation && magnification >= PERT_FE_THRESHOLD
+}
+
+/// Classify a view and derive its per-frame work budget.
+///
+/// A *moving* frame gets a fraction of the budget so that RESOLUTION, not the iteration count,
+/// absorbs the cost — a hard cap on iterations starves deep views of the steps they need to
+/// escape, and past ~1e420× everything then reads as interior and the moving frame goes solid
+/// black. Settled frames get the full `wb·6`, so the final image is unaffected by any of this.
+pub(crate) fn frame_cost(
+    work_budget: u64,
+    magnification: f64,
+    julia: bool,
+    supports_perturbation: bool,
+    interacting: bool,
+) -> FrameCost {
+    let is_fe = is_floatexp_regime(magnification, supports_perturbation);
+    // Julia views cross into perturbation far earlier than Mandelbrot ones — mirror of the
+    // threshold pair in `RenderMode::select`, which the test below holds us to.
+    let pert_below = if julia { crate::PERT_JULIA_THRESHOLD } else { 1.0e4 };
+    let is_pert = supports_perturbation && magnification >= pert_below;
+    let budget = if interacting {
+        if is_fe {
+            work_budget / 6
+        } else if is_pert {
+            work_budget / 4
+        } else {
+            work_budget // direct/shallow: already cheap
+        }
+    } else {
+        work_budget.saturating_mul(6)
+    };
+    FrameCost { is_pert, budget, iter_cap: crate::MAX_ITER_LIMIT }
+}
+
+#[cfg(test)]
+mod frame_cost_tests {
+    use super::*;
+    use crate::RenderMode;
+
+    /// The invariant the extracted comment asserted and nothing enforced: this classification and
+    /// `RenderMode::select` must partition depth identically, for Mandelbrot and Julia alike.
+    /// Includes the exact threshold values, where an inclusive/exclusive slip would hide.
+    #[test]
+    fn frame_cost_agrees_with_render_mode() {
+        let depths = [
+            1.0, 99.0, 100.0, 101.0, 9.9e3, 1.0e4, 1.1e4, 1.0e20,
+            PERT_FE_THRESHOLD - 1.0, PERT_FE_THRESHOLD, PERT_FE_THRESHOLD * 10.0, 1.0e300,
+        ];
+        for &mag in &depths {
+            for julia in [false, true] {
+                let c = frame_cost(1_000, mag, julia, true, false);
+                let m = RenderMode::select(true, julia, mag);
+                assert_eq!(
+                    c.is_pert,
+                    !m.is_direct(),
+                    "perturbation classification disagrees at mag {mag:e} (julia {julia})"
+                );
+                assert_eq!(
+                    is_floatexp_regime(mag, true),
+                    m.is_floatexp(),
+                    "floatexp classification disagrees at mag {mag:e} (julia {julia})"
+                );
+            }
+        }
+    }
+
+    /// A formula without perturbation support is always the direct path, however deep.
+    #[test]
+    fn no_perturbation_support_is_never_perturbed() {
+        let c = frame_cost(1_000, 1.0e300, false, false, false);
+        assert!(!c.is_pert && !is_floatexp_regime(1.0e300, false));
+        assert!(!RenderMode::select(false, false, 1.0e300).is_floatexp());
+    }
+
+    /// Moving frames are throttled by regime; settled frames get the full budget regardless.
+    #[test]
+    fn moving_budget_is_throttled_by_regime() {
+        let wb = 6_000u64;
+        assert_eq!(frame_cost(wb, 1.0, false, true, true).budget, wb, "shallow moving: full");
+        assert_eq!(frame_cost(wb, 1.0e6, false, true, true).budget, wb / 4, "df32 moving: quarter");
+        assert_eq!(
+            frame_cost(wb, PERT_FE_THRESHOLD, false, true, true).budget,
+            wb / 6,
+            "floatexp moving: sixth"
+        );
+        for mag in [1.0, 1.0e6, PERT_FE_THRESHOLD] {
+            assert_eq!(
+                frame_cost(wb, mag, false, true, false).budget,
+                wb * 6,
+                "settled frames keep the full budget at every depth"
+            );
+        }
+    }
+
+    /// Saturating multiply: a pathological budget must not wrap into a tiny one.
+    #[test]
+    fn settled_budget_saturates() {
+        assert_eq!(frame_cost(u64::MAX, 1.0, false, true, false).budget, u64::MAX);
+    }
+}
+
 /// GPU time a settled floatexp frame is aimed at. Comfortably under the ~2 s GPU watchdog AND short
 /// enough that the UI thread keeps pumping messages between frames (Windows paints a window "Not
 /// Responding" after ~5 s), so an unaffordable view degrades in resolution instead of hanging.
@@ -2396,31 +2520,21 @@ impl FractadyneApp {
         // when a fast live dive crosses ~1e28×. Shrink the interacting budget for mode 2 so resolution
         // (not the watchdog) absorbs the cost. Settle frames keep the full budget: by then the
         // reference + BLA have landed and the frame is cheap even in floatexp.
-        let is_fe = fractal.supports_perturbation() && magnification >= PERT_FE_THRESHOLD;
         // Deep df32 *perturbation* (1e4× … 1e28×) is as GPU-heavy per moving frame as floatexp, so it
         // needs the same relief: without it a continuous zoom (esp. zoom-OUT, which gets neither
         // pan-reprojection nor the floatexp motion-freeze) renders full-budget ~150 ms frames that
         // pile into the vsync swapchain faster than the GPU drains — the event loop blocks on
         // present and the app hangs ("Not Responding"). Shrink the *moving* budget so resolution
         // absorbs the cost; settle frames keep the full `wb*6`, so the final image is unchanged.
-        // Julia views cross into perturbation far earlier (see PERT_JULIA_THRESHOLD) — this
-        // classification must agree with RenderMode::select or the motion/hold machinery
-        // (reuse-hold, will_reproject, prefer-detail) misclassifies the view's regime.
-        let pert_below = if julia { crate::PERT_JULIA_THRESHOLD } else { 1.0e4 };
-        let is_pert = fractal.supports_perturbation() && magnification >= pert_below;
-        let wb = self.effective_work_budget();
-        let (budget, iter_cap): (u64, u32) = if interacting {
-            let moving = if is_fe {
-                wb / 6
-            } else if is_pert {
-                wb / 4
-            } else {
-                wb // direct/shallow: already cheap
-            };
-            (moving, crate::MAX_ITER_LIMIT)
-        } else {
-            (wb.saturating_mul(6), crate::MAX_ITER_LIMIT)
-        };
+        // `is_fe` is deliberately not bound here: it now matters only inside `frame_cost`, and the
+        // two places downstream that mention it do so to explain why they are NOT gated on it.
+        let FrameCost { is_pert, budget, iter_cap, .. } = frame_cost(
+            self.effective_work_budget(),
+            magnification,
+            julia,
+            fractal.supports_perturbation(),
+            interacting,
+        );
         // ADAPTIVE LIVE ITERATION BUDGET (settled frames only). `zoom_iter_cap`'s 256/octave slope
         // under-budgets dense near-Misiurewicz fields (escape counts run ~226–300/octave there), so
         // a settled deep view can show smooth "capped blobs" where the export shows dendrites — at
