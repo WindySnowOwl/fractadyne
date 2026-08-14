@@ -270,9 +270,21 @@ Mockups: [design/mockups/](design/mockups/).
   and `normalize_live` (setting it false changes nothing — the CLI render path never applies it,
   as designed). A palette-phase scan shows the baseline is best approximated by today's render
   at offset ≈0.20 rather than 0.10 (meanΔ 31.5 → 11.6), i.e. roughly a constant phase shift plus
-  a residual, which smells like a changed smooth-iteration → palette-position mapping (suspect
-  the G-buffer packing from the beta.65/68 iteration-range tiling work, where `iter`/`smit` were
-  re-packed).
+  a residual, which smells like a changed smooth-iteration → palette-position mapping.
+  ⛔**Archaeology done, suspects eliminated — the next person should go straight to a bisect
+  rather than re-derive this.** The colour position is `palette(pv·cycle + offset)` with
+  `pv = smit`, so a ~0.1 phase shift at cycle 0.27 implies smit moved ~0.37 of an iteration.
+  But: the `nu` smoothing formula is **character-for-character identical** between the
+  baseline-era commit `a781f6e` (v0.2.21) and HEAD; `git log -L` over the smit computation
+  returns exactly ONE commit in that window, beta.20 `8639515`, and its diff only ADDS
+  `esc_range_commit(smit)` range-tracking calls without touching the formula. Live
+  normalization is excluded twice over — empirically (forcing `normalize_live=false` leaves the
+  render byte-identical) and by design (`live_norm_cycle_offset`'s doc: headless CLI runs never
+  render live frames, so `norm_range` stays `None` and CLI/corpus keep `--normalize`-only
+  semantics). ⚠Also note the best-fit phase match is only meanΔ 11.6, not ~0, so it is NOT a
+  pure phase shift — there is a scale/shape component too, and any single-constant explanation
+  should be treated with suspicion. Bisect `01-home` between `a781f6e` and HEAD (0.1 s per
+  render; the rebuild dominates each step).
   ⚠**Context that reframes the severity: the baseline PNGs are dated 2026-07-12**, predating
   everything from v0.2.36 through beta.92 — so this is a month-stale reference, not a fresh
   regression, and the gate simply has not been run in that window. Next step is a bisect on
