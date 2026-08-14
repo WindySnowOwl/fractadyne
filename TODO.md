@@ -326,6 +326,32 @@ Mockups: [design/mockups/](design/mockups/).
   and has exactly the foldable shape (`e = b - ((a+b) - a)`); df_mul depends on it. (Though note
   `df_add` uses it twice and PASSES, which argues against a simple fold — resolve before
   concluding.)
+  ⛔**beta.91 REFUTED the `quick_two_sum` suspect too: on AMD Vulkan it is EXACT**, alongside
+  two_sum, two_prod and the armored variant; `df_add` = 3.35e-15 and `fe_add` = 4.08e-15 both
+  PASS. Yet `df_mul` 5.45e-8, `df_div` 9.30e-8, `c_sqr` 5.74e-8, `fe_mul` 4.42e-8 and both
+  accumulations still fail at f32 magnitude. ⭐**The pattern is now sharp: everything that only
+  ADDS passes; everything that MULTIPLIES df32 values fails.** With every primitive exact in
+  isolation, the loss must happen in the COMPOSITION — `df_mul`'s only other line is
+  `e = p.y + (a.x*b.y + a.y*b.x)`, and the result is consistent with `e` collapsing to ~0 (that
+  alone turns the result into plain f32 = 2⁻²⁴ ≈ 5.4e-8, exactly what is measured). Leading
+  hypothesis: inlining `two_prod` into `df_mul` lets the optimizer simplify `fma(a,b,-(a*b))` to
+  0, a substitution it declines to make when the row is called in isolation. **NEXT PROBE (well
+  posed, cheap): emit `df_mul`'s INTERMEDIATES — p.x, p.y and e — from inside a df_mul-shaped
+  computation, and see which one is zero.** Do not guess a third time; instrument.
+  ⭐**FIRST CORRECTNESS DATA ON NON-NVIDIA (AMD selftest, beta.91): checks 101/113, goldens
+  0/17.** The 12 check failures are all counter DRIFT vs the NVIDIA-blessed bench-matrix baseline
+  (e.g. direct-1e2 58,130→58,132; df32-1e20 1,200,237→1,215,213) — expected, not defects. The
+  goldens are the useful number, because they quantify what the precision difference actually
+  costs in pixels: **meanΔ ≤ 0.1 for 7 of 17** (home, multibrot3/4/5, tricorn, phoenix, newton),
+  0.5–0.9 for 5, 2.8–4.6 for 3 — and **19.15 / 16.51 for multibrot4-1e6 and multibrot5-1e6**.
+  maxΔ is 150–255 nearly everywhere, which is the signature of boundary pixels flipping one
+  iteration and landing elsewhere in a cycling palette, not of a broken render. Note the two
+  large-meanΔ outliers are the DEEP (1e6) views — exactly where df32 precision bites, which is
+  what the theory predicts. ⚠This is the concrete justification for the golden TOLERANCE mode
+  (item T1b): exact comparison is only meaningful on the blessed GPU. A meanΔ threshold near 1.0
+  would pass 12/17 and correctly flag the deep multibrots as genuinely different. ⭐**Best way to
+  learn which output is RIGHT: run the F3 corpus check on AMD** — it is a cross-implementation
+  oracle, so it can say whether AMD matches Fraktaler-3 better than NVIDIA does.
   Remaining follow-ups: (b) ✅DONE (above);
   (c) upstream: ask whether naga can emit SPIR-V `NoContraction` / HLSL `precise` (check the
   wgpu tracker first, file if absent) — note NoContraction alone bars fma contraction, not
