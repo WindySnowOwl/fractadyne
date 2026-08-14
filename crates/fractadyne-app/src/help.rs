@@ -157,6 +157,15 @@ pub(crate) fn help_options(ui: &mut egui::Ui) {
     );
     help_p(
         ui,
+        "\"Paste…\" in the gradient editor imports a palette you found elsewhere. It accepts hex \
+         colors with or without a leading # (#ff8800, ff8800, or the short #f80) and plain 0–255 \
+         RGB triples such as \"255 136 0\" — the format Fractint and Kalles Fraktaler .map files \
+         use — separated by commas, spaces or new lines. Paste more than eight colors and they \
+         are sampled evenly down to eight, keeping the first and last so the gradient's shape \
+         survives.",
+    );
+    help_p(
+        ui,
         "Duotone maps the value to a smooth two-color ramp (Shadow → Highlight). Binary (set) \
          is a flat two-color view — one solid color for points inside the set and another for \
          outside, with no gradient — the clearest way to see the set's shape.",
@@ -165,6 +174,21 @@ pub(crate) fn help_options(ui: &mut egui::Ui) {
         ui,
         "Cycle sets how many times the gradient repeats across the iteration range (tighter or \
          looser bands). Offset rotates the whole gradient.",
+    );
+    help_p(
+        ui,
+        "\"Normalize deep colors\" fits the palette to the range of escape values actually present \
+         in the view. Deep views span hundreds of thousands of iterations, and without this a \
+         fixed cycle wraps the gradient thousands of times between neighboring pixels, turning \
+         correct detail into speckle.",
+    );
+    help_p(
+        ui,
+        "\"Log color scale\" spreads the palette by the logarithm of the escape value instead of \
+         linearly. Escape counts crowd toward the high end as you go deeper, so a linear fit \
+         spends most of the gradient on a thin shell hugging the boundary and leaves the rest \
+         nearly flat; the log scale opens that out, and keeps colors steadier through a zoom \
+         video as the range grows.",
     );
     help_p(
         ui,
@@ -558,6 +582,25 @@ pub(crate) fn help_hardware(ui: &mut egui::Ui) {
         "Deep references grow with depth (many iterations at high precision); huge exports hold \
          tiles in RAM. 8 GB is comfortable for everyday exploring; 16 GB+ suits extreme depth \
          and very large exports.",
+    );
+
+    help_sub(ui, "Checking your hardware");
+    help_p(
+        ui,
+        "Help → \"Diagnostics…\" runs the same tests the developers do, on your machine. \"Run \
+         self-test\" checks the mathematics and rendering against known-correct results in about \
+         fifteen seconds; \"Run UI test\" walks the interface and the live view at several zoom \
+         depths, capturing screenshots. Each runs as a separate process, so a test that upsets \
+         the graphics driver takes the test down rather than your session.",
+    );
+    help_p(
+        ui,
+        "If something looks wrong, run the self-test and use \"Attach to an issue report…\": the \
+         report then carries a machine-validated result from your own hardware, which is far more \
+         useful than a description alone. One caveat worth knowing — the reference images were \
+         produced on one particular graphics card, and different GPUs legitimately compute \
+         slightly different pixels, so image comparisons are checked against a wider tolerance on \
+         other hardware and small differences there are expected rather than faults.",
     );
 
     help_sub(ui, "Notes");

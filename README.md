@@ -27,7 +27,15 @@ zoom** and performance.
   Buffalo, Phoenix, Newton — each with an info panel; Julia mode for any family.
 - **Dual linked view** — Mandelbrot ↔ Julia, with click-to-pin Julia `c`.
 - **Coloring** — preset palettes, cycle/offset, animated cycling, and harmonious
-  randomized morphing gradients.
+  randomized morphing gradients. Six methods (smooth, stripe, triangle-inequality, orbit trap,
+  distance estimate, decomposition), a custom gradient editor that **imports a pasted palette**
+  (hex, or the 0–255 triples Fractint/KF `.map` files use), and two mappings for deep views:
+  **normalize** fits the gradient to the escape range actually present, and **log scale** spreads
+  it by the logarithm so the palette isn't spent on a thin shell at the boundary.
+- **8-bit output without banding** — every PNG is ordered-dithered on the way to 8 bits, so the
+  vast smooth gradients of a fractal exterior don't quantize into visible contours. The dither is
+  positional, not random, so renders stay bit-identical run to run and the pattern never crawls
+  across the frames of a zoom video.
 - **Interactive orbit overlay** — draws the iteration path under the cursor (high
   precision at depth), with an optional racing-dot animation and normalized view.
 - **Exact feature navigation** — Newton-snap onto the precise center of a **minibrot
@@ -119,6 +127,9 @@ fractadyne --render-tour tour.toml --out frames [--fps N --size WxH --height H -
            # render (keeps existing frames, renders only the missing ones). Prints live progress.
 fractadyne --find-minibrot --center X Y --zoom M   # print nearby minibrot period + nucleus
 fractadyne --selftest [--bless] [--out report.md]  # validation suite; exit 0 = all passed
+fractadyne --gputest                                # check this GPU's shader compiler preserves the
+                                                    # extended-precision arithmetic deep zoom needs;
+                                                    # sweeps every backend, headless (no window/display)
 fractadyne --render-iter --out img.exr [view opts] # export raw iteration data (EXR) for review
 fractadyne --compare A B [--out heatmap.png]       # diff two renders/EXRs: max/mean Δ + heatmap
 fractadyne --import-kfr loc.kfr [--render ...]      # load a Kalles Fraktaler location
@@ -136,6 +147,14 @@ fractadyne --bench-matrix [--bless] [--reps N]      # dev: 22-segment path-cover
 fractadyne --divetest tour.toml [--out log.json]    # dev: headless live-dive perf harness — real-time
                                                     # tour windows per depth band (fps/hitches/refresh)
 fractadyne @render.args                             # read the whole command line from a response file
+```
+
+Validating a machine end to end (six checks, one bundle to send back — see
+[DIAGNOSTICS.md](DIAGNOSTICS.md)):
+
+```sh
+./scripts/gpu-validate.ps1 -Label my-gpu          # Windows   (-Quick skips the two long steps)
+./scripts/gpu-validate.sh  --label my-gpu         # Linux, works over a bare SSH session
 ```
 
 ## File types
@@ -177,6 +196,17 @@ or internal cross-checks):
   verifiable report to `validation/report.md` with full provenance (version, GPU, CPU,
   OS), per-check parameters/thresholds/verdicts, golden checksums, and the exact
   `--render` command to reproduce each reference — so anyone can independently confirm.
+  The blessing GPU is recorded alongside the images: on that card the comparison is strict,
+  and on any other it uses a wider, measured tolerance, because cross-vendor floating point
+  legitimately disagrees and a check that cries wolf on every other GPU teaches people to
+  ignore it.
+- **Validation on your own hardware** — **Help → "Diagnostics…"** runs the self-test and the
+  UI test from the interface, streams progress, and can attach the result to an issue report,
+  so a bug report carries a machine-validated verdict rather than only a description. For a
+  full sweep, `scripts/gpu-validate.ps1` / `.sh` run six checks in a fixed order and leave a
+  single bundle to send back — the same steps and file names on Windows and Linux, run against
+  a private config directory so results are comparable between machines and nobody's settings
+  are touched. See [DIAGNOSTICS.md](DIAGNOSTICS.md).
 - **External checkability** — a committed location catalog (`validation/catalog.toml`)
   of full-precision coordinates with known answers; raw-iteration **EXR export**
   (`--render-iter`) so a reviewer can diff iteration data against their own renderer,
