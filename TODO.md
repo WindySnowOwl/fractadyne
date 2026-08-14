@@ -201,10 +201,19 @@ to HARDWARE VARIANCE (everything blessed on one RTX 3080). Sequenced by announce
    stays for the blessed 3080): cross-vendor FMA contraction/rounding legitimately differ, so
    exact-elsewhere would cry wolf and mask real breaks. Together these make "run the self-test
    on your GPU" (the Diagnostics dialog plan) meaningful on stranger hardware.
-2. [ ] **Parser panic-fuzz extension** — strangers on fractalforums WILL send files. Extend the
-   existing `fuzz_metadata_parser_panic_free` pattern (random + mutated bytes must not panic,
-   in-tree, no nightly/cargo-fuzz friction on this setup) to `.fdn`, `.kfr`, and the tour-TOML
-   read/resolve path. Before the announce.
+2. [x] **Parser panic-fuzz extension** — DONE beta.89. `.kfr` (`fuzz_parse_kfr_panic_free`) and
+   the `.fdn` value chain (`fuzz_metadata_parser_panic_free`) were already covered; the hole was
+   the tour-TOML read/resolve path, now fuzzed two ways (`fuzz_parse_tour_text_panic_free`:
+   random grammar tokens, plus byte mutation of a VALID script so it reaches deserialize +
+   cross-reference resolve — random bytes never get that far). No panic found in 8,000 samples.
+   ⭐**But reading the path for the fuzz found a real one**: an unbounded `zoom` exponent sized
+   `precision_for_octaves`, so `zoom = "1e1e999"` saturated the octave cast and asked astro-float
+   for a usize::MAX-bit BigFloat — death by allocation on opening a shared file. Bounded in
+   `parse_zoom_log10` (ceiling 1e1000000×, ~1000× past the deepest verified corpus location);
+   all nine shipped tours unchanged, hostile shapes pinned by test. ⚠Lesson: `.fdn` already had
+   `MAX_LOAD_OCTAVES` clamping with a "memory DoS" comment — the guard existed, the newer format
+   just never got it. **Worth auditing the remaining untrusted entry points for the same
+   asymmetry** rather than assuming the pattern was applied uniformly.
 3. [ ] **Export writer unit tests** — the byte-level writers have zero direct coverage (the
    goldens exercise the pipeline incidentally, end-to-end): PNG encode + metadata embed →
    read-back roundtrip (pixels AND metadata), EXR write/read, the resume-vetting reader.
@@ -265,16 +274,31 @@ Mockups: [design/mockups/](design/mockups/).
   precision (f32 mantissa suffices between rebases), floatexp matches F3 because F3 itself uses
   f32-mantissa floatexp by design, and the direct band was (evidently empirically) capped right
   at the f32 cliff. NOT an announce blocker — this is the status quo of every build ever
-  shipped. Follow-ups, in order: (a) get a DX12/FXC + DXC data point (needs code-level backend
-  forcing; env selection can't reach it) and a non-NVIDIA one (3070 is also NVIDIA; try the
-  Linux box's Mesa/radv if available — Mesa is expected to be strict, which would confirm
-  driver-specific); (b) if some stack preserves EFTs, weigh switching/offering that backend —
-  re-tune everything TDR-related first (all budget history was measured on this stack); (c)
-  upstream: naga could emit SPIR-V `NoContraction`/HLSL `precise` (check wgpu tracker, file if
-  absent); (d) if a strict stack materializes, re-derive `--gputest` oracle tolerances there,
-  re-widen the direct-mode switch + `PERT_JULIA_THRESHOLD`, and expect visible quality gains in
-  the 1e4–1e6 direct band. Meanwhile `--gputest` (exit 1 on this machine, by honest design)
-  documents the real arithmetic contract per machine — exactly its job.
+  shipped.
+  ⭐**2026-08-13, follow-up (a) DONE — ALL THREE Windows backends fold it, bit-identically.**
+  `--gputest` is now a headless multi-backend SWEEP; DX12 required compiling the backend in at
+  all (eframe asks wgpu for only `["metal","webgpu"]`, so this binary could never reach DX12 —
+  the earlier "no adapter"/surface failures were that, not a driver problem). Results on the
+  3080: DX12 (DXIL via FXC/DXC), Vulkan (SPIR-V), and OpenGL (GLSL) each fail 10/11 families
+  with **identical counts, identical worst-case indices, identical values**. naga's output is
+  verified clean for HLSL *and* GLSL (translated with a version-pinned `naga-cli` and read),
+  and the armor survives translation verbatim — so the folding is in the one component all
+  three share: **NVIDIA's common shader optimizer**, which reassociates through bitcast
+  round-trips. ⚠**Tension to resolve before treating this as settled**: KF/Fraktaler-3 use
+  float-float on GPUs successfully, so EFTs plainly survive *somewhere* on NVIDIA. Most likely
+  reconciliation — they go through CUDA/OpenCL, which are IEEE-strict by default, whereas the
+  GRAPHICS shader compilers have always been permitted to reassociate. The end-to-end evidence
+  says the effect is real regardless: direct-df32 Julia visibly quantizes at ~1e3× (user-
+  confirmed at J 4,362×), where honest 48-bit df32 would hold to ~1e11×.
+  Remaining follow-ups: (b) a NON-NVIDIA data point is now the decisive experiment (Linux box
+  Mesa/radv, or any AMD/Intel part) — `--gputest` runs headless over SSH, so it is one command;
+  (c) upstream: ask whether naga can emit SPIR-V `NoContraction` / HLSL `precise` (check the
+  wgpu tracker first, file if absent) — note NoContraction alone bars fma contraction, not
+  reassociation, so this may need a spec-level answer; (d) if any stack preserves EFTs, weigh
+  switching to it — but re-measure everything TDR-related first (all budget history, goldens,
+  and livetest baselines were measured on Vulkan; `native_options` now PINS the backend set for
+  exactly this reason), re-derive `--gputest` tolerances there, and re-widen the direct-mode
+  switch + `PERT_JULIA_THRESHOLD` for real quality gains in the 1e4–1e6 direct band.
 
 - [x] ⭐**Deep-hold reference install races (or stalls behind) the hold — RESOLVED beta.81 +
   beta.88 (2026-08-13).** Two coupled fixes: (1) beta.81's hold-prefetch pipeline builds each

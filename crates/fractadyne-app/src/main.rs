@@ -1209,6 +1209,21 @@ fn main() -> eframe::Result<()> {
             // — the app degrades cleanly (CPU-timed columns only) on adapters that lack it.
             wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
                 eframe::egui_wgpu::WgpuSetupCreateNew {
+                    // PIN the backend set to the one this build is validated on. eframe's default
+                    // is `PRIMARY | GL`, which includes DX12 — and since the app now compiles the
+                    // DX12 backend in (for `--gputest`, see Cargo.toml), leaving the default would
+                    // let a routine `cargo build` silently move every user onto a different shader
+                    // compiler and a different driver path. Everything cost-related is calibrated
+                    // against the current stack: the TDR step budgets, the dispatch caps, the
+                    // blessed goldens and livetest baselines. Switching backends is a deliberate,
+                    // re-measured decision, not a side effect. `WGPU_BACKEND` still overrides for
+                    // experiments, and `--gputest` grades every compiled-in backend regardless.
+                    instance_descriptor: eframe::wgpu::InstanceDescriptor {
+                        backends: eframe::wgpu::Backends::from_env().unwrap_or(
+                            eframe::wgpu::Backends::VULKAN | eframe::wgpu::Backends::GL,
+                        ),
+                        ..Default::default()
+                    },
                     device_descriptor: std::sync::Arc::new(|adapter: &eframe::wgpu::Adapter| {
                         let base_limits =
                             if adapter.get_info().backend == eframe::wgpu::Backend::Gl {
@@ -2349,9 +2364,6 @@ struct FractadyneApp {
     /// CLI `--livetest FILE`: headless live-OUTPUT harness — plays a tour through the live
     /// pipeline and validates the frames it shows against offline renders of the same views.
     livetest: Option<std::path::PathBuf>,
-    /// CLI `--gputest`: verify the shader's df32/floatexp primitives against CPU oracles on
-    /// THIS machine's GPU/driver (see `mod gputest`), print the verdict table, exit.
-    gputest: bool,
     /// CLI `--uitest [DIR]`: scripted walk through every UI screen + the live-render bands,
     /// screenshotting each and writing a review bundle (see `mod uitest`), then exit.
     uitest: Option<uitest::UiTest>,
@@ -2670,7 +2682,6 @@ impl FractadyneApp {
         let profile_regions = val("--regions").cloned();
         let divetest = val("--divetest").map(std::path::PathBuf::from);
         let livetest = val("--livetest").map(std::path::PathBuf::from);
-        let gputest = args.iter().any(|a| a == "--gputest");
         // --uitest [DIR]: presence enables the UI walk; a following non-flag token is the output
         // base directory (else the share/logs default). Built lazily so a normal launch pays nothing.
         let uitest = if args.iter().any(|a| a == "--uitest") {
@@ -2833,7 +2844,6 @@ impl FractadyneApp {
             resizetest,
             divetest,
             livetest,
-            gputest,
             uitest,
             juliadive,
             livetest_quick,
@@ -4869,7 +4879,7 @@ impl FractadyneApp {
         };
         let vram = if si.vram_mb > 0 { format!("{} MB", si.vram_mb) } else { "unknown".to_string() };
         format!(
-            "Fractadyne v{}\n{}\nOS:   {} / {}\nCPU:  {} ({} physical / {} logical, {})\nGPU:  {}\nVRAM: {}\n",
+            "Fractadyne v{}\n{}\nOS:   {} / {}\nCPU:  {} ({} physical / {} logical, {})\nGPU:  {} ({})\nVRAM: {}\n",
             version_string(),
             now_utc_string(),
             std::env::consts::OS,
@@ -4879,6 +4889,7 @@ impl FractadyneApp {
             si.logical,
             cache,
             self.gpu_name,
+            self.gpu_backend,
             vram,
         )
     }
@@ -5387,7 +5398,15 @@ impl eframe::App for FractadyneApp {
                 self.perf.chunk_ok = fractadyne_gpu::chunking_available(dev);
                 diag::log_line(
                     "wgpu",
-                    &format!("capability: TIMESTAMP_QUERY={}", self.perf.ts_supported),
+                    // The BACKEND belongs in every log (and so every crash report): it names the
+                    // shader compiler that built the running pipelines, and the arithmetic the
+                    // deep paths depend on is a property of that compiler, not just the GPU
+                    // (see `--gputest`). It is also the check that the pinned backend set in
+                    // `native_options` is doing what it claims.
+                    &format!(
+                        "adapter: {} · {} · capability: TIMESTAMP_QUERY={}",
+                        self.gpu_name, self.gpu_backend, self.perf.ts_supported
+                    ),
                 );
             }
         }
@@ -5624,18 +5643,6 @@ impl eframe::App for FractadyneApp {
                 });
                 self.run_divetest(dev, q, &tour, &out);
                 crate::exit(0);
-            }
-        }
-
-        // CLI GPU primitive self-test: run `fs_gputest` (the renderer's own df32/floatexp helper
-        // functions on hash-derived inputs) and grade every op family against CPU oracles — the
-        // per-machine answer to "is deep rendering trustworthy on THIS GPU/driver". Exit 1 if any
-        // family fails, so a user can paste the table into a bug report.
-        if self.gputest {
-            if let Some((dev, q)) = &gpu {
-                let name = format!("{} · {}", self.gpu_name, self.gpu_backend);
-                let fails = self.run_gputest(dev, q, Some(name.as_str()));
-                crate::exit(if fails > 0 { 1 } else { 0 });
             }
         }
 

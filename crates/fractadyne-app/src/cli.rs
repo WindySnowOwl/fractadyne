@@ -86,6 +86,15 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         }
         return true;
     }
+    // --gputest: verify the shader's extended-precision primitives against CPU oracles, on every
+    // backend this machine offers. Headless (the test renders offscreen), so it belongs here
+    // rather than in the app: no window flashes, it works over SSH, and it reaches backends the
+    // windowed path cannot create a surface for. Exit 1 if any backend's arithmetic is unsound.
+    if args.iter().any(|a| a == "--gputest") {
+        let fails = crate::gputest::run_gputest_sweep();
+        crate::exit(if fails > 0 { 1 } else { 0 });
+    }
+
     // An unrecognized option shouldn't silently launch the GUI — report it and print the reference
     // to stderr, then exit non-zero (like a conventional CLI).
     if let Some(bad) = first_unknown_flag(args) {

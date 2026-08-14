@@ -12,7 +12,7 @@
 //! Input construction uses integer hashing + bitcast only (no floating arithmetic), so this
 //! module reproduces the shader's inputs bit-exactly.
 
-use crate::FractadyneApp;
+use eframe::wgpu;
 
 /// Mirrors WGSL `gt_hash` (wrapping u32 arithmetic — identical on both sides).
 fn gt_hash(x0: u32) -> u32 {
@@ -218,62 +218,152 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
     out
 }
 
-impl FractadyneApp {
-    /// Run `fs_gputest` on this device and grade every op family. Returns the number of failing
-    /// op families (the caller turns it into an exit code / selftest checks).
-    pub(crate) fn run_gputest(
-        &self,
-        device: &eframe::wgpu::Device,
-        queue: &eframe::wgpu::Queue,
-        gpu_name: Option<&str>,
-    ) -> usize {
-        let (w, h, px) = match fractadyne_gpu::gputest(device, queue) {
-            Ok(r) => r,
+/// Grade one device's results and print the verdict table. Returns failing op-family count.
+fn report(w: u32, h: u32, px: &[f32]) -> usize {
+    println!("  {:<52} {:>12} {:>10} {:>6}", "op", "max rel err", "tolerance", "");
+    let checks = check_rows(w, h, px);
+    let mut failed = 0usize;
+    for c in &checks {
+        let ok = c.fails == 0;
+        if !ok {
+            failed += 1;
+        }
+        let verdict = if ok { "PASS" } else { "FAIL" };
+        if c.tol == 0.0 {
+            println!(
+                "  {:<52} {:>12} {:>10} {:>6}",
+                c.name,
+                if ok { "exact".to_string() } else { format!("{} wrong", c.fails) },
+                "exact",
+                verdict
+            );
+        } else {
+            println!("  {:<52} {:>12.2e} {:>10.1e} {:>6}", c.name, c.max_err, c.tol, verdict);
+        }
+        if !ok && !c.detail.is_empty() {
+            println!("      {}", c.detail);
+        }
+    }
+    if failed == 0 {
+        println!("  All {} op families within tolerance.", checks.len());
+    } else {
+        println!(
+            "  {failed} op FAMILY(IES) FAILED — the shader's extended-precision arithmetic does \
+             not hold on this stack."
+        );
+    }
+    failed
+}
+
+/// Block on a wgpu native future. Adapter/device requests resolve immediately on native, so a
+/// busy poll with a no-op waker is sufficient (and keeps the crate free of an async runtime).
+fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    let mut fut = std::pin::pin!(fut);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    loop {
+        match fut.as_mut().poll(&mut cx) {
+            std::task::Poll::Ready(v) => return v,
+            std::task::Poll::Pending => std::thread::yield_now(),
+        }
+    }
+}
+
+/// `--gputest`: run the shader's primitive self-test on EVERY backend this machine offers.
+///
+/// Headless by construction — the test renders to an offscreen texture, so it needs no window and
+/// no surface. That matters twice over: it runs on a build server or over SSH, and it can reach
+/// backends the windowed path cannot (DX12 surface creation fails under this app's eframe setup,
+/// which is why the 2026-08-13 folded-EFT investigation could not get a DX12 data point).
+///
+/// Sweeping rather than testing one device is the whole point: the arithmetic is compiled by the
+/// BACKEND's shader compiler (DX12 → HLSL via FXC/DXC, Vulkan → SPIR-V, GL → GLSL), so "is df32
+/// real on this machine" can have a different answer per backend, and the comparison localizes
+/// the blame to a specific compiler instead of "the GPU".
+///
+/// Returns the number of backends that failed (0 = every available backend is sound).
+pub(crate) fn run_gputest_sweep() -> usize {
+    let candidates: [(wgpu::Backends, &str); 3] = [
+        (wgpu::Backends::DX12, "DX12"),
+        (wgpu::Backends::VULKAN, "Vulkan"),
+        (wgpu::Backends::GL, "OpenGL"),
+    ];
+    // Which backends exist in THIS BINARY is a build-time fact (wgpu gates each behind a Cargo
+    // feature), and it is not obvious from the outside: a backend that was never compiled in
+    // looks exactly like a missing GPU at runtime. State it, so a report that omits a backend
+    // says which of the two happened.
+    let compiled = wgpu::Instance::enabled_backend_features();
+    println!(
+        "Fractadyne GPU primitive self-test — {} · sweeping every available backend\n\
+         Verifies the renderer's own df32/floatexp helpers against CPU oracles. The error-free\n\
+         transforms (two_sum/two_prod) must be EXACT: they are what makes df32 more than f32.\n\
+         Backends compiled into this binary: {compiled:?}\n",
+        crate::version_string()
+    );
+    let mut ran = 0usize;
+    let mut failed = 0usize;
+    for (backends, label) in candidates {
+        if !compiled.contains(backends) {
+            println!("{label}: not compiled into this binary — skipped\n");
+            continue;
+        }
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends,
+            ..Default::default()
+        });
+        let Some(adapter) = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        })) else {
+            println!("{label}: no adapter — skipped\n");
+            continue;
+        };
+        let info = adapter.get_info();
+        // Downlevel (GL) adapters cannot satisfy the default limits; ask for what they have.
+        let limits = wgpu::Limits::default().using_resolution(adapter.limits());
+        let dev = block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("gputest.device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: limits,
+                memory_hints: wgpu::MemoryHints::default(),
+            },
+            None,
+        ));
+        let (device, queue) = match dev {
+            Ok(d) => d,
             Err(e) => {
-                println!("gputest: GPU run failed: {e}");
-                return 1;
+                println!("{label}: device request failed ({e}) — skipped\n");
+                continue;
             }
         };
-        println!(
-            "Fractadyne GPU primitive self-test — {} · {} input sets per op",
-            gpu_name.unwrap_or("unknown GPU"),
-            w
-        );
-        println!("  {:<52} {:>12} {:>10} {:>6}", "op", "max rel err", "tolerance", "");
-        let checks = check_rows(w, h, &px);
-        let mut failed = 0usize;
-        for c in &checks {
-            let ok = c.fails == 0;
-            if !ok {
+        println!("── {label} · {} · driver: {} {}", info.name, info.driver, info.driver_info);
+        ran += 1;
+        match fractadyne_gpu::gputest(&device, &queue) {
+            Ok((w, h, px)) => {
+                if report(w, h, &px) > 0 {
+                    failed += 1;
+                }
+            }
+            Err(e) => {
+                println!("  GPU run failed: {e}");
                 failed += 1;
             }
-            let verdict = if ok { "PASS" } else { "FAIL" };
-            if c.tol == 0.0 {
-                println!(
-                    "  {:<52} {:>12} {:>10} {:>6}",
-                    c.name,
-                    if ok { "exact".to_string() } else { format!("{} wrong", c.fails) },
-                    "exact",
-                    verdict
-                );
-            } else {
-                println!(
-                    "  {:<52} {:>12.2e} {:>10.1e} {:>6}",
-                    c.name, c.max_err, c.tol, verdict
-                );
-            }
-            if !ok && !c.detail.is_empty() {
-                println!("      {}", c.detail);
-            }
         }
-        if failed == 0 {
-            println!("All {} op families within tolerance on this GPU.", checks.len());
-        } else {
-            println!(
-                "{failed} op FAMILY(IES) FAILED — deep rendering on this GPU/driver is suspect. \
-                 Include this output in a bug report."
-            );
-        }
-        failed
+        println!();
     }
+    if ran == 0 {
+        println!("No usable backend found — nothing tested.");
+        return 1;
+    }
+    if failed == 0 {
+        println!("{ran} backend(s) tested, all sound.");
+    } else {
+        println!(
+            "{failed} of {ran} backend(s) FAILED. Include this whole report in a bug report — a\n\
+             failing two_sum means the shader compiler is folding the error-free transforms, and\n\
+             every extended-precision path silently degrades to plain f32."
+        );
+    }
+    failed
 }

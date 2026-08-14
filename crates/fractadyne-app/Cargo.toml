@@ -28,6 +28,15 @@ thiserror.workspace = true
 ureq = "2"
 serde_json = "1"
 
+# Compile in the DX12 backend so `--gputest` can grade the HLSL/FXC-DXC shader compiler too.
+# eframe asks wgpu for only ["metal", "webgpu"], so on Windows this binary could reach Vulkan and
+# GL but NEVER DX12 — which is why the 2026-08-13 folded-EFT investigation could not get a DX12
+# data point at all (it looked like "no adapter" on a card that plainly has one). Enabling the
+# feature adds the backend to the build; it deliberately does NOT change which backend the app
+# runs on — see the pinned `backends:` in main.rs for why that pin is load-bearing.
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "24", default-features = false, features = ["dx12"] }
+
 [lints]
 workspace = true
 

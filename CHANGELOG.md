@@ -24,6 +24,35 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **A shared tour script could kill the app before it drew a frame — fixed** (beta.89). Tour
+  `zoom` is a string so a tour can go deeper than `f64`, but that value sizes the bignum
+  precision every centre in the script is parsed at, and is re-derived per frame while playing.
+  The exponent itself was read as an `f64`, so `zoom = "1e1e999"` produced an infinite log₁₀, the
+  octave count saturated on its cast, and the loader asked for a `usize::MAX`-bit number: the
+  process died allocating, on nothing worse than opening someone's file. A merely absurd finite
+  value like `1e999999999999` did the same thing more slowly (~415 GB per centre). Zoom is now
+  bounded at the parse boundary, which covers both the load-time and per-frame paths, with a
+  clean error instead of an abort. The ceiling (1e1000000×) is far past anything reachable — the
+  deepest verified corpus location is ~4.6e1105× and the extreme-zoom battery runs 1e21000× — and
+  all nine shipped tours load unchanged. The `.fdn` loader already clamped depth for exactly this
+  reason; the tour path never got the same guard. Pinned by regression tests for each hostile
+  shape and by a new tour-TOML fuzz (random grammar tokens, plus byte mutation of a *valid*
+  script so it reaches cross-reference resolution).
+- **`--gputest` sweeps every graphics backend, and the answer is the same on all of them**
+  (beta.89). The harness now runs headless (no window, works over SSH) and grades DX12, Vulkan
+  and OpenGL in one pass, because the arithmetic is compiled by the *backend's* shader compiler,
+  so "is extended precision real here" can have a different answer per backend. Getting the DX12
+  answer at all required compiling that backend in: eframe asks wgpu for only `metal` and
+  `webgpu`, so this binary could reach Vulkan and OpenGL but never DX12, which had looked like a
+  missing adapter on a card that plainly has one. The report now names the backends compiled into
+  the binary and distinguishes "not compiled in" from "no adapter", and every log and crash
+  report now names the running adapter and backend. Result on the reference machine: all three
+  backends fold the error-free transforms bit-identically — same counts, same worst cases — while
+  naga's translated HLSL and GLSL both preserve the arithmetic verbatim, which points at the one
+  component the three share. Because the DX12 backend is now in the build, `NativeOptions` **pins
+  the app's backend set** to the one this build is validated on: the TDR budgets, dispatch caps,
+  goldens and livetest baselines were all measured on it, and a routine rebuild must not silently
+  move users to a different shader compiler. `WGPU_BACKEND` still overrides.
 - **`--gputest`: per-machine verification of the shader's arithmetic primitives** (beta.88).
   Runs the renderer's own df32/floatexp helpers (error-free transforms, df add/mul/div, complex
   square, floatexp mul/add, 64-step Mandelbrot- and Julia-form accumulation) on hash-derived

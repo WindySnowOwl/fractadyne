@@ -867,7 +867,24 @@ fn parse_zoom_log10(s: &str) -> Result<f64, String> {
              scientific notation (e.g. \"6.5e94\")"
         ));
     }
-    Ok(m.log10() + exp)
+    let l10 = m.log10() + exp;
+    // BOUND the depth an untrusted script may ask for. Zoom is a string precisely so a tour can
+    // go deeper than f64 — but the value sizes `precision_for_octaves`, which is the precision
+    // EVERY centre in the tour is then parsed at (and re-derived per frame in `Playback::sample`).
+    // So an unbounded exponent is not a silly-zoom nuisance, it is an allocation vector: the
+    // exponent itself is parsed as f64, so `zoom = "1e1e999"` yields an infinite log10, the octave
+    // count saturates `as u64`, and astro-float is asked for a usize::MAX-bit BigFloat — the
+    // process dies allocating before a single frame is drawn. Tours are the artifact people will
+    // share on a forum, so this has to be a clean error, not an abort. The ceiling is far past
+    // anything reachable: the deepest verified corpus location is ~4.6e1105x and the extreme-zoom
+    // battery runs 1e21000x, against a limit of 1e1000000x (~3.3M octaves, ~415 KB per centre).
+    const MAX_ZOOM_LOG10: f64 = 1.0e6;
+    if !l10.is_finite() || l10 > MAX_ZOOM_LOG10 {
+        return Err(format!(
+            "zoom \"{s}\": magnification is beyond this build's limit of 1e{MAX_ZOOM_LOG10:.0}x"
+        ));
+    }
+    Ok(l10)
 }
 
 /// The resolved `[render]` block: what the script asks for. Every field is `None` when the script
@@ -999,6 +1016,106 @@ mod order_tests {
         // Keyframe seeds lead, in time order, before any bisection.
         let order = progressive_frame_order(0, 100, &[60, 30]);
         assert_eq!(&order[..4], &[0, 30, 60, 100]);
+    }
+
+    // ---- Tour scripts are UNTRUSTED input: they are the artifact people share on a forum ----
+
+    /// A hostile `zoom` must be REFUSED, not turned into an allocation. Every one of these
+    /// reaches `precision_for_octaves`, which sizes the BigFloat precision that every centre in
+    /// the tour is parsed at; before the bound in `parse_zoom_log10`, the infinite cases
+    /// saturated the octave count and asked astro-float for a usize::MAX-bit number, killing the
+    /// process during load. Regression pins for that class.
+    #[test]
+    fn hostile_zoom_is_refused_not_allocated() {
+        for z in [
+            "1e1e999",             // exponent itself overflows f64 -> inf log10
+            "1e999999999999",      // finite but absurd: ~3.3e12 octaves ~ 415 GB per centre
+            "1E1E999",             // same, upper case
+            "-1e1e999",            // negative mantissa (already refused, kept as a pin)
+            "1e-1e999",            // -inf log10
+            "inf",
+            "NaN",
+        ] {
+            assert!(
+                super::parse_zoom_log10(z).is_err(),
+                "hostile zoom {z:?} accepted — this sizes a BigFloat allocation"
+            );
+        }
+        // Depths that are real must still pass: the deepest verified corpus location, the
+        // extreme-zoom battery, a zoomed-OUT view, and the documented ceiling itself.
+        for z in ["4.6e1105", "1e21000", "6.5e94", "0.5", "1e1000000"] {
+            assert!(super::parse_zoom_log10(z).is_ok(), "legitimate zoom {z:?} refused");
+        }
+        // Pin the MECHANISM the bound exists to stop, without allocating it: an unbounded log10
+        // flows into this exact arithmetic, and a float→int cast SATURATES rather than wrapping,
+        // so the octave count lands at u64::MAX and the requested precision at usize::MAX bits.
+        // That is the allocation the loader used to attempt on a hostile tour.
+        let octaves = (f64::INFINITY / std::f64::consts::LN_2).max(0.0).ceil() as u64;
+        assert_eq!(octaves, u64::MAX, "cast no longer saturates — revisit the bound's rationale");
+        assert_eq!(fractadyne_core::precision_for_octaves(octaves), usize::MAX);
+    }
+
+    /// Random and mutated tour text must never panic the parser — only `Ok` or a `String` error.
+    /// Structured formats fail differently from flat ones: the mutation pass below starts from a
+    /// VALID script, so it reaches the resolve step (cross-references between keyframes,
+    /// locations, palettes and segments) that purely random bytes never get past.
+    #[test]
+    fn fuzz_parse_tour_text_panic_free() {
+        let mut s = 0xda3e_39cb_94b3_c83fu64;
+        let mut next = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        // Tokens drawn from the real grammar, so random input lands on plausible structures far
+        // more often than uniform bytes would.
+        let toks: [&str; 26] = [
+            "[[keyframe]]", "[[location]]", "[[palette]]", "[[segment]]", "[[annotation]]",
+            "[render]", "[playback]", "format_version", "t", "zoom", "re", "im", "id", "hold",
+            "ease", "location", "palette", "max_iter", "=", "\n", "\"", "0", "-1", "1e999",
+            "1e1e999", "\u{0}",
+        ];
+        for _ in 0..4_000 {
+            let n = (next() % 24) as usize;
+            let mut buf = String::new();
+            for _ in 0..n {
+                buf.push_str(toks[(next() as usize) % toks.len()]);
+                if next() % 3 == 0 {
+                    buf.push('\n');
+                }
+            }
+            let _ = super::parse_tour_text(&buf);
+        }
+        // Byte-level mutation of a VALID script — reaches deserialize + resolve.
+        let seed = "format_version = 2\n\
+                    [[location]]\nid = \"a\"\nre = \"-0.75\"\nim = \"0.1\"\nzoom = 1000.0\n\
+                    [[keyframe]]\nid = \"k0\"\nt = 0\nlocation = \"a\"\n\
+                    palette = \"Ember\"\nmax_iter = 500\nhold = 1\n\
+                    [[keyframe]]\nid = \"k1\"\nt = 5\nre = \"-0.75\"\nim = \"0.1\"\n\
+                    zoom = \"1e30\"\n\
+                    [[segment]]\nid = \"s\"\ntitle = \"S\"\nt = 0\n";
+        if let Err(e) = super::parse_tour_text(seed) {
+            panic!("seed script must be valid, else the mutation pass never reaches resolve: {e}");
+        }
+        let base = seed.as_bytes();
+        for _ in 0..4_000 {
+            let mut b = base.to_vec();
+            for _ in 0..1 + next() % 4 {
+                if b.is_empty() {
+                    break; // a truncation to nothing ends this sample (and guards the modulo)
+                }
+                let at = (next() as usize) % b.len();
+                match next() % 3 {
+                    0 => b[at] = (next() % 256) as u8,
+                    1 => b[at] = toks[(next() as usize) % toks.len()].as_bytes()[0],
+                    _ => b.truncate(at),
+                }
+            }
+            if let Ok(text) = std::str::from_utf8(&b) {
+                let _ = super::parse_tour_text(text);
+            }
+        }
     }
 }
 
