@@ -39,6 +39,30 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     h
 }
 
+/// Golden tolerances when running on the SAME GPU the goldens were blessed on: essentially
+/// exact, with just enough room for driver-level noise.
+const GOLDEN_MAX_STRICT: u32 = 10;
+const GOLDEN_MEAN_STRICT: f64 = 2.0;
+
+/// Golden tolerance when running on a DIFFERENT GPU from the one that blessed them.
+///
+/// Cross-vendor floating point legitimately disagrees: fma contraction, rounding, and — as the
+/// 2026-08-14 measurements showed — whether the shader compiler preserves the df32 error-free
+/// transforms at all. A pixel one iteration either side of an escape boundary lands somewhere
+/// else entirely in a cycling palette, so `maxΔ` saturates at 255 on a perfectly healthy render
+/// and is useless here; only the MEAN carries signal.
+///
+/// Calibrated against real hardware rather than guessed. An RX 6800 XT (whose Vulkan compiler
+/// keeps the transforms, so its arithmetic differs from the reference 3080's by more than
+/// rounding) produced meanΔ ≤ 0.1 on seven of the seventeen goldens, 0.5–0.9 on five, 2.8–4.6 on
+/// three, and 19.15 / 16.51 on the two deep multibrots. This threshold sits above that worst
+/// legitimate case while staying far below a structurally wrong render — an all-black or
+/// misframed image scores 100+, so the check still catches real breakage.
+///
+/// This mode is INFORMATIONAL, never a release gate: the gate is exact-on-the-reference-GPU, and
+/// the report always prints the numbers so a human can judge.
+const GOLDEN_MEAN_CROSS_GPU: f64 = 24.0;
+
 /// Per-channel 8-bit image difference: `(max abs, mean abs)`. Mismatched sizes → worst.
 fn img_diff(a: &[u8], b: &[u8]) -> (u32, f64) {
     if a.len() != b.len() || a.is_empty() {
@@ -2979,6 +3003,28 @@ zoom = \"1e94\"
         // compared golden (show maxΔ/meanΔ); otherwise a distinct reason (MISSING / SIZE MISMATCH /
         // RENDER ERROR) so those never masquerade as a pixel-diff failure.
         let mut goldens: Vec<(String, u32, f64, u64, bool, String, &'static str)> = Vec::new();
+        // Are we on the card these goldens were blessed on? An ABSENT marker means strict — a
+        // missing file must never silently loosen the release gate; it only ever loosens when we
+        // positively know the hardware differs. (Goldens blessed before this file existed simply
+        // stay strict until the next --bless, which is the safe direction.)
+        let blessed_gpu = std::fs::read_to_string(golden_dir.join("BLESSED-GPU.txt"))
+            .ok()
+            .map(|s| s.trim().to_string());
+        let cross_gpu = blessed_gpu
+            .as_deref()
+            .is_some_and(|g| g != self.gpu_name.trim());
+        if !bless {
+            if let Some(g) = &blessed_gpu {
+                if cross_gpu {
+                    eprintln!(
+                        "[selftest] goldens were blessed on {g}; this is {}. Comparing with the \
+                         cross-GPU tolerance (meanΔ ≤ {GOLDEN_MEAN_CROSS_GPU}) — differences \
+                         within it are EXPECTED, not defects.",
+                        self.gpu_name
+                    );
+                }
+            }
+        }
         for &(name, fractal, cx, cy, zoom, iter, method, palette) in specs {
             // A filter matches goldens by group tag or by individual spec name
             // (`--selftest-filter multibrot3-1e6` re-renders one golden in seconds).
@@ -3031,13 +3077,26 @@ zoom = \"1e94\"
                     if bless {
                         let _ = fractadyne_export::write_png(&png_path, r.width, r.height, &r.pixels, Some(&reproduce));
                         goldens.push((name.to_string(), 0, 0.0, sum, true, reproduce, ""));
+                        // Record WHICH GPU blessed these, so a later run on different hardware can
+                        // tell "this is a different card" from "this is broken" and widen its
+                        // tolerance accordingly. Written once per bless, beside the images.
+                        let _ = std::fs::write(golden_dir.join("BLESSED-GPU.txt"), &self.gpu_name);
                     } else {
                         let cur_path = current_dir.join(format!("{name}.png"));
                         let _ = fractadyne_export::write_png(&cur_path, r.width, r.height, &r.pixels, Some(&reproduce));
                         match fractadyne_export::read_png_rgba8(&png_path) {
                             Ok((w, h, gpx)) if w == r.width && h == r.height => {
                                 let (max, mean) = img_diff(&srgb, &gpx);
-                                goldens.push((name.to_string(), max, mean, sum, max <= 10 && mean <= 2.0, reproduce, ""));
+                                // On the blessing GPU, hold to the strict tolerance. On any other,
+                                // compare on the mean alone against the cross-GPU threshold — see
+                                // the constants for why maxΔ carries no signal off-reference, and
+                                // label the row so a pass is never mistaken for an exact match.
+                                let (pass, status) = if cross_gpu {
+                                    (mean <= GOLDEN_MEAN_CROSS_GPU, "CROSS-GPU")
+                                } else {
+                                    (max <= GOLDEN_MAX_STRICT && mean <= GOLDEN_MEAN_STRICT, "")
+                                };
+                                goldens.push((name.to_string(), max, mean, sum, pass, reproduce, status));
                             }
                             // Golden exists but was recorded at a different size — not a render diff.
                             Ok((w, h, _)) => goldens.push((

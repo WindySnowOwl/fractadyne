@@ -59,6 +59,12 @@ jobs:
           # identical output, so small deltas on other hardware are expected FP32 variance.)
           New-Item -ItemType Directory -Force -Path "$dir/validation/golden" | Out-Null
           Copy-Item validation/golden/*.png -Destination "$dir/validation/golden/"
+          # BLESSED-GPU.txt records which card produced these images. Without it a tester's
+          # self-test falls back to the strict tolerance and reports expected cross-vendor
+          # differences as failures - which is precisely the confusion the tolerance exists to
+          # prevent. (Falling back to strict is the SAFE direction, so a missing file degrades
+          # gracefully; it just wastes the feature.)
+          Copy-Item validation/golden/BLESSED-GPU.txt -Destination "$dir/validation/golden/" -ErrorAction SilentlyContinue
           Copy-Item validation/catalog.toml -Destination "$dir/validation/"
           New-Item -ItemType Directory -Force -Path "$dir/benchmarks" | Out-Null
           Copy-Item benchmarks/bench-matrix-baseline.json -Destination "$dir/benchmarks/"
