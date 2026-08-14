@@ -256,6 +256,29 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] ⭐**The F3 corpus regression gate is RED on the dev machine, and nobody noticed** (found
+  2026-08-14 while preparing an AMD comparison). `python validation/corpus/generate_corpus.py
+  --check --only 01,02,03` reports **0/3 MATCH** with maxΔ 169 and meanΔ 26.9 / 46.9 / 23.6 —
+  including `01-home`, the shallowest, simplest location in the set (1.3×, 512 iterations,
+  direct mode). That is far too large to be boundary-pixel noise; it is systematic. The gate is
+  manual ("run after a major change") and clearly has not been run in a long while, so the
+  renderer's output drifted from the committed F3-confirmed baselines at some unknown point.
+  Until it is explained, **the committed corpus renders cannot be trusted as a reference**.
+  First step is a bisect on `01-home` alone (it renders in ~0.1 s, so this is cheap): find the
+  commit that moved it, then decide whether the new output is better or worse against the F3
+  reference before re-blessing. ⚠Do NOT re-bless to make it green — that is how the baselines
+  stopped meaning anything.
+  ⛔**Related retraction: "score our render against F3 pixel-for-pixel" does NOT work**, and I
+  recommended it twice before checking. The F3 references carry Fraktaler-3's OWN colouring, so
+  a diff is dominated by palette, not precision — measured meanΔ **189** on `01-home`, where
+  precision cannot matter at all, and 125 averaged over all 20. The corpus is explicitly for
+  *visual, structural* side-by-side comparison (`catalog.html`), which is what its README says.
+  A true numeric F3 oracle would need raw escape data, and only **3 of the 20** locations have
+  a non-empty F3 `.exr` (`diag/fraktaler/locations/`: me30, me141, me1007 — the other eight are
+  header-only, which is how their parameters were imported). Recolouring those three through our
+  palette would give a genuine numeric comparison at three depths; that is the only honest
+  version of the idea.
+
 - [ ] ⭐⭐**The shader compiler FOLDS the df32 error-free transforms — "df32" has been ~f32 on
   the shipping configuration all along (found 2026-08-13 by the new `--gputest` harness, first
   run).** Evidence chain: `two_sum`'s residual comes back EXACTLY 0 on 216/256 hash-derived
