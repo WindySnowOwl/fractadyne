@@ -24,6 +24,21 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **Dithered 8-bit export — banding is gone from smooth gradients** (beta.95). Fractal exteriors
+  are enormous, very shallow ramps, which is the worst case for 8-bit output: rounding maps a wide
+  span of colour onto one byte value and leaves a visible contour where it steps. That is the
+  complaint newcomers raise first. Every PNG now goes through an ordered (Bayer 8×8) dither that
+  nudges the rounding threshold by up to half a level based on pixel position. Measured on the
+  home view, the mean run of identical horizontal pixels — the thing you actually see as a band —
+  falls from **4.89 px to 1.25 px**, and the image uses all 256 levels instead of 252.
+  The dither is **ordered, not random, and that is load-bearing**: a random or error-diffused
+  dither would make every render differ from the last, breaking the golden images and the corpus,
+  and would crawl as static noise over a zoom video — considerably worse than the banding it
+  replaces. Bayer is a pure function of `(x, y)`, so renders stay bit-identical run to run and the
+  pattern stays fixed to the image rather than swimming through it. Alpha is never dithered (stray
+  254s would make an apparently fine image no longer opaque). Verified as a pure ±1-level change:
+  before re-blessing, every golden differed by `maxΔ 1, meanΔ ~0.17` and still passed the existing
+  tolerance unaided.
 - **The path-signature tripwire stops crying wolf on other people's GPUs** (beta.94). The first
   real cross-vendor validation run — an RX 6800 XT, hours after beta.93 shipped — reported seven
   bench-matrix segments as "ALGORITHMIC DRIFT" and twelve self-test checks as DRIFT on a

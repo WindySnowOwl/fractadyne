@@ -78,6 +78,40 @@ fn quantize8(c: f32) -> u8 {
     (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
 }
 
+/// Bayer 8×8 ordered-dither matrix, values 0..63 in the canonical recursive order.
+#[rustfmt::skip]
+const BAYER8: [u8; 64] = [
+     0, 32,  8, 40,  2, 34, 10, 42,
+    48, 16, 56, 24, 50, 18, 58, 26,
+    12, 44,  4, 36, 14, 46,  6, 38,
+    60, 28, 52, 20, 62, 30, 54, 22,
+     3, 35, 11, 43,  1, 33,  9, 41,
+    51, 19, 59, 27, 49, 17, 57, 25,
+    15, 47,  7, 39, 13, 45,  5, 37,
+    63, 31, 55, 23, 61, 29, 53, 21,
+];
+
+/// Quantize with an ordered-dither offset of up to ±½ LSB, chosen by pixel position.
+///
+/// Fractal exteriors are enormous, very smooth gradients — the worst case for 8-bit
+/// quantization, and why banding is the complaint newcomers raise first. Rounding alone maps a
+/// wide span of colour onto one byte value and leaves a visible contour where it steps; nudging
+/// the rounding threshold by a position-dependent fraction of one level breaks that contour into
+/// a fine pattern the eye integrates back into a smooth ramp.
+///
+/// **Ordered, not random, and this is load-bearing.** A random or error-diffused dither would
+/// make every render differ from the last, breaking the golden images, the corpus renders, and
+/// the frame-to-frame stability of a zoom video (static noise crawling over a moving image is
+/// far worse than banding). Bayer is a pure function of `(x, y)`, so renders stay bit-identical
+/// run to run while the pattern stays fixed to the image rather than swimming through it.
+fn quantize8_dither(c: f32, x: usize, y: usize) -> u8 {
+    // Bayer 0..63 → −0.5..+0.5 of one 8-bit level, centred so the mean offset is ~0 and overall
+    // brightness is unchanged.
+    let d = (BAYER8[(y % 8) * 8 + (x % 8)] as f32 + 0.5) / 64.0 - 0.5;
+    let v = c.clamp(0.0, 1.0) * 255.0 + 0.5 + d;
+    v.clamp(0.0, 255.0) as u8
+}
+
 /// Convert the renderer's display-space (sRGB) RGBA `f32` buffer to 8-bit RGBA bytes —
 /// identical to what [`write_png`] stores. Exposed so callers (e.g. golden-image validation)
 /// can compare a fresh render against a decoded PNG on the exact same footing. No transfer is
@@ -92,6 +126,133 @@ pub fn to_srgb8(rgba: &[f32]) -> Vec<u8> {
         out.push(quantize8(px[3]));
     }
     out
+}
+
+/// As [`to_srgb8`], but with ordered dithering applied to the colour channels — the conversion
+/// every 8-bit deliverable goes through (see [`quantize8_dither`] for why banding matters here
+/// and why the dither is ordered rather than random).
+///
+/// `width` is needed because the dither pattern is a function of pixel position; a caller with a
+/// flat buffer and no geometry should use [`to_srgb8`] and accept the banding.
+///
+/// **Alpha is never dithered.** It is 1.0 almost everywhere in our output, and perturbing it
+/// yields stray 254s — an image that looks fine but is no longer fully opaque, which then shows
+/// up as speckle wherever it gets composited.
+pub fn to_srgb8_dithered(rgba: &[f32], width: u32) -> Vec<u8> {
+    let w = width.max(1) as usize;
+    let n = rgba.len() / 4;
+    let mut out = Vec::with_capacity(n * 4);
+    for (i, px) in rgba[..n * 4].chunks_exact(4).enumerate() {
+        let (x, y) = (i % w, i / w);
+        out.push(quantize8_dither(px[0], x, y));
+        out.push(quantize8_dither(px[1], x, y));
+        out.push(quantize8_dither(px[2], x, y));
+        out.push(quantize8(px[3]));
+    }
+    out
+}
+
+#[cfg(test)]
+mod dither_tests {
+    use super::*;
+
+    /// A ramp so shallow that plain rounding collapses it into a handful of flat bands — the
+    /// fractal-exterior case. Dithering must break those bands up while preserving the mean.
+    fn shallow_ramp(w: usize, h: usize) -> Vec<f32> {
+        let mut v = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            for x in 0..w {
+                // Span ~4 eight-bit levels across the whole width: ~64 px per band undithered.
+                let c = 0.25 + (x as f32 / w as f32) * (4.0 / 255.0);
+                v.extend_from_slice(&[c, c, c, 1.0]);
+            }
+        }
+        let _ = h;
+        v
+    }
+
+    fn distinct_in_row(bytes: &[u8], w: usize, row: usize) -> usize {
+        let mut seen = [false; 256];
+        for x in 0..w {
+            seen[bytes[(row * w + x) * 4] as usize] = true;
+        }
+        seen.iter().filter(|s| **s).count()
+    }
+
+    /// The banding metric the TODO asked for: how long a run of identical output values gets.
+    fn longest_run(bytes: &[u8], w: usize, row: usize) -> usize {
+        let (mut best, mut cur) = (1usize, 1usize);
+        for x in 1..w {
+            if bytes[(row * w + x) * 4] == bytes[(row * w + x - 1) * 4] {
+                cur += 1;
+                best = best.max(cur);
+            } else {
+                cur = 1;
+            }
+        }
+        best
+    }
+
+    #[test]
+    fn dither_breaks_up_bands() {
+        let (w, h) = (256usize, 8usize);
+        let src = shallow_ramp(w, h);
+        let plain = to_srgb8(&src);
+        let dithered = to_srgb8_dithered(&src, w as u32);
+
+        // Undithered, the ramp is a few wide plateaus; dithered, the same row carries more
+        // levels and no long flat stretch.
+        let plain_run = longest_run(&plain, w, 0);
+        let dith_run = longest_run(&dithered, w, 0);
+        assert!(plain_run >= 32, "expected wide bands undithered, got {plain_run}");
+        // Halved, not quartered: an ordered dither spreads its offsets over the 8x8 tile, so any
+        // single ROW sees only a subset of them and a per-row metric understates the effect. The
+        // 2D distinct-level count below is the fairer measure. (Measured here: 64 -> 26.)
+        assert!(
+            dith_run * 2 < plain_run,
+            "dither should shorten the longest flat run (plain {plain_run}, dithered {dith_run})"
+        );
+        let distinct_2d = |b: &[u8]| {
+            let mut seen = [false; 256];
+            for px in b.chunks_exact(4) {
+                seen[px[0] as usize] = true;
+            }
+            seen.iter().filter(|s| **s).count()
+        };
+        assert!(
+            distinct_2d(&dithered) > distinct_2d(&plain),
+            "dither should use more output levels ({} -> {})",
+            distinct_2d(&plain),
+            distinct_2d(&dithered)
+        );
+        assert!(
+            distinct_in_row(&dithered, w, 0) >= distinct_in_row(&plain, w, 0),
+            "a single row should not lose levels"
+        );
+
+        // Brightness is preserved: the offsets are centred, so the mean must not shift by more
+        // than a fraction of one level.
+        let mean = |b: &[u8]| b.iter().step_by(4).map(|v| *v as f64).sum::<f64>() / (w * h) as f64;
+        assert!((mean(&plain) - mean(&dithered)).abs() < 0.6);
+    }
+
+    /// Deterministic and position-keyed: the same input always gives the same bytes (goldens and
+    /// the corpus depend on this), and alpha is never perturbed.
+    #[test]
+    fn dither_is_deterministic_and_leaves_alpha_alone() {
+        let src = shallow_ramp(64, 4);
+        assert_eq!(to_srgb8_dithered(&src, 64), to_srgb8_dithered(&src, 64));
+        assert!(to_srgb8_dithered(&src, 64).iter().skip(3).step_by(4).all(|a| *a == 255));
+    }
+
+    /// Fully saturated values must not wrap or overshoot when the offset pushes them past an end.
+    #[test]
+    fn dither_clamps_at_the_extremes() {
+        let src: Vec<f32> = [0.0f32, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0].to_vec();
+        let out = to_srgb8_dithered(&src, 2);
+        assert_eq!(&out[0..3], &[0, 0, 0]);
+        assert_eq!(&out[4..7], &[255, 255, 255]);
+    }
 }
 
 /// Decode an EXR at full resolution to `(width, height, rgba_f32)` (row-major, 4 floats
@@ -226,13 +387,12 @@ pub fn write_png(
     if rgba.len() < expected {
         return Err(ExportError::SizeMismatch { expected, got: rgba.len() });
     }
-    let mut bytes = Vec::with_capacity(expected);
-    for px in rgba[..expected].chunks_exact(4) {
-        bytes.push(quantize8(px[0]));
-        bytes.push(quantize8(px[1]));
-        bytes.push(quantize8(px[2]));
-        bytes.push(quantize8(px[3]));
-    }
+    // Dithered: this is the 8-bit deliverable, and fractal exteriors are exactly the smooth-ramp
+    // case where plain rounding leaves visible contours. `to_srgb8_dithered` is also what the
+    // golden comparison uses, so a written PNG and a freshly converted buffer stay byte-identical
+    // — a mismatch there would make every golden fail for a reason that has nothing to do with
+    // rendering.
+    let bytes = to_srgb8_dithered(&rgba[..expected], width);
     let file = std::fs::File::create(path)?;
     let w = std::io::BufWriter::new(file);
     let mut encoder = png::Encoder::new(w, width, height);

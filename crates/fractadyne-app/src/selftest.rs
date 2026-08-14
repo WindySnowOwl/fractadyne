@@ -3071,7 +3071,9 @@ zoom = \"1e94\"
             let cancel = std::sync::atomic::AtomicBool::new(false);
             match fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel) {
                 Ok(r) => {
-                    let srgb = fractadyne_export::to_srgb8(&r.pixels);
+                    // Must match `write_png` exactly (same dither, same width) or every golden
+                    // fails on the conversion rather than on the render.
+                    let srgb = fractadyne_export::to_srgb8_dithered(&r.pixels, r.width);
                     let sum = fnv1a64(&srgb);
                     let png_path = golden_dir.join(format!("{name}.png"));
                     if bless {
