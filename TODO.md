@@ -290,8 +290,21 @@ Mockups: [design/mockups/](design/mockups/).
   GRAPHICS shader compilers have always been permitted to reassociate. The end-to-end evidence
   says the effect is real regardless: direct-df32 Julia visibly quantizes at ~1e3× (user-
   confirmed at J 4,362×), where honest 48-bit df32 would hold to ~1e11×.
-  Remaining follow-ups: (b) a NON-NVIDIA data point is now the decisive experiment (Linux box
-  Mesa/radv, or any AMD/Intel part) — `--gputest` runs headless over SSH, so it is one command;
+  ⭐**2026-08-13, second NVIDIA GPU + second OS: IDENTICAL.** RTX 3070 / Linux / driver 595.84
+  (vs 3080 / Windows / 596.21) folds the same 10 families with the SAME counts (216/210) and the
+  SAME first-failure values, bit for bit. So it is not one machine, one driver build, one OS, or
+  one GPU die (GA104 vs GA102) — it is NVIDIA's compiler. (Report: `gputest-rtx3070-linux.txt`
+  on the share. Confirms the windows-gated dx12 dep too: "Backends compiled: VULKAN | GL" there.
+  ⚠Minor: OpenGL on that box failed device request with "Parent device is lost" — headless GL
+  quirk, not arithmetic.) ⭐**A DX12 switch cannot rescue this anyway — DX12 folds identically,
+  and measured on the 3080 it is unusably slow for this app: a 320×240 render takes ~77 s (≈29 s
+  device/pipeline creation + 46 s render) vs 2.1 s on Vulkan, reproducible across five runs and
+  both build profiles, with identical escape counters (so it is cost, not correctness). Almost
+  certainly naga→HLSL + FXC/DXC compiling a large multi-entry-point module per pipeline.**
+  Remaining follow-ups: (b) a NON-NVIDIA data point is THE decisive experiment and is now the
+  only one left (AMD RX 6800 XT planned for the Linux box; Mesa/RADV compiles SPIR-V through ACO,
+  an independent stack expected to honour IEEE semantics) — `--gputest` runs headless over SSH,
+  so it is one command;
   (c) upstream: ask whether naga can emit SPIR-V `NoContraction` / HLSL `precise` (check the
   wgpu tracker first, file if absent) — note NoContraction alone bars fma contraction, not
   reassociation, so this may need a spec-level answer; (d) if any stack preserves EFTs, weigh
@@ -430,6 +443,28 @@ Mockups: [design/mockups/](design/mockups/).
   WARN-not-FAIL precisely because of this hardware dependence; the harness's capture point is now
   deterministic — it waits for the reference build to stop growing — but the built length itself
   differs by machine, which is the bug.)
+  ⚠**UPDATE 2026-08-13 (beta.89, both boxes re-measured): the divergence did not resolve — it
+  FLIPPED, and the two sides moved for DIFFERENT reasons.**
+
+  | build | 3080 / Windows | 3070 / Linux |
+  |---|---|---|
+  | beta.62 | `len 30,379` — BLACK | `len 2,008,193` — rich |
+  | beta.89 | `len 32,117` — **rich (PASS)** | `len 16,385` — **BLACK (WARN)** |
+
+  Read the rows, not the verdicts. On the **3080 the reference length barely moved** (30.4k →
+  32.1k) yet the frame went from black to detailed — so what fixed it was NOT reference length
+  but the other adaptive quantity, the iteration budget / boost plateau (or the beta.63 capture
+  gate finally sampling after the climb). On the **3070 the reference length collapsed 122×**,
+  which is a different failure entirely. ⭐**Sharpest clue: 16,385 = 2¹⁴ + 1.** Orbit length is
+  `escape + 1`, so that orbit stopped at EXACTLY 16,384 samples — a power of two is a cap or a
+  chunk boundary, not a coincidence of dynamics. Find what caps a live reference build at 2¹⁴ on
+  that path (freeze-guard floor budget / time-sliced build / a chunked build step) and this
+  probably falls out. ⚠Confound to control first: the two runs are at different window sizes
+  (1920×1200 here vs 1280×800 under xvfb), which changes per-pixel cost and hence the adaptive
+  budget — though note the SMALLER window is the one that went black, which is backwards for a
+  pure cost explanation, so resolution alone does not explain it. ⚠Do not "fix" this by declaring
+  the machines consistent; they are not, and the harness verdicts (PASS here, WARN there) now
+  point the opposite way they did in August.
 
 
 
