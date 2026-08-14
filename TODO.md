@@ -139,7 +139,20 @@ Ordered by how fast a stranger hits them.
       reproject aspect-fit logic, i.e. the delicate zone: verify with the full suite + livetest +
       `--uitest` + a fresh-dir deep-zoom soak. Related: the "Min motion resolution" slider at
       100% is the crude half of this (native-res motion frames, but no present-gating).
-    - **Help → Diagnostics… dialog: run the user-safe tests from the UI** (user, 2026-08-13).
+    - [x] ✅**SHIPPED v0.2.40-beta.93** — `ui/diagnostics.rs`: Help → Diagnostics… with *Run
+      self-test* / *Run UI test* as child processes, live progress, the test's own verdict, "Open
+      results", and "Attach to an issue report…" (report gains `include_test`, offered only once
+      a run exists). Covered by a new `--uitest` screenshot step (26/26) and 3 parser unit tests.
+      ⭐**Two implementation facts worth keeping**: the self-test writes per-check lines to
+      STDERR and its verdict to STDOUT, so both streams are pumped and lines classified by
+      CONTENT not by pipe; and pass/fail comes from the test's own summary rather than the exit
+      code, because the self-test exits non-zero on golden mismatches that are EXPECTED off the
+      reference GPU. The uitest walk opens the dialog but never starts a test (GPU contention
+      would make a UI check a flaky perf test). Paired with `scripts/gpu-validate.ps1/.sh` (full
+      battery, hermetic, same steps/file names on both OSes) and the cross-GPU golden tolerance
+      above — together these are what make B6 crowdsourceable instead of hardware-gated.
+      ⚠Not automated: the click-through itself (the spawn machinery is the proven tour-render path).
+      **Help → Diagnostics… dialog: run the user-safe tests from the UI** (user, 2026-08-13).
       Audience is issue reporters and other-hardware testers, NOT the developer — so it is
       always available (no CLI gate; the people who benefit are exactly those who won't pass a
       flag), and scoped to the tests meaningful without context: **Run self-test** (progress
@@ -192,7 +205,17 @@ The review's frame: strong at the integration level (F3 corpus = cross-implement
 harnesses, bench-matrix determinism), thin at the unit/property level — and structurally blind
 to HARDWARE VARIANCE (everything blessed on one RTX 3080). Sequenced by announce value:
 
-1. [ ] ⭐**Shader-vs-oracle primitive harness + golden tolerance mode** — the B6/hardware pair.
+1. [x] ✅**DONE — (a) beta.89–92, (b) beta.93.** (a) `--gputest` ships and answered the question it
+   was built for: NVIDIA folds the error-free transforms on all three backends, AMD's Vulkan/GL
+   preserve them, AMD's DX12 fails differently again. (b) Goldens now carry a **cross-GPU
+   tolerance**: `validation/golden/BLESSED-GPU.txt` records the blessing card, and on any other
+   card the comparison uses meanΔ alone against 24.0 — calibrated from the RX 6800 XT's real
+   spread (≤0.1 on seven goldens, 0.5–0.9 on five, 2.8–4.6 on three, 19.15/16.51 on the two deep
+   multibrots) and far below a structurally wrong render (100+). maxΔ is deliberately ignored
+   off-reference: one iteration either side of an escape boundary lands anywhere in a cycling
+   palette, so it saturates at 255 on a healthy image. ⚠An ABSENT marker means STRICT — a missing
+   file must never silently loosen the release gate.
+   **Shader-vs-oracle primitive harness + golden tolerance mode** — the B6/hardware pair.
    (a) A dev harness (e.g. `--gputest`) evaluates the WGSL df32/floatexp primitives (add, mul,
    square, split/renorm, the floatexp exponent ops) on chosen inputs — including the regimes the
    17 goldens never visit — against the CPU implementations, reporting per-op max error. This is
