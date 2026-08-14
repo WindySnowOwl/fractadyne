@@ -24,6 +24,26 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **Help → Diagnostics…: run the tests from the UI, and attach the result to an issue report**
+  (beta.93). Two buttons — *Run self-test* (does the maths hold on this GPU?) and *Run UI test*
+  (does it draw and lay out correctly?) — with live progress, the test's own verdict line, and
+  **Open results**. A finished run can be attached to *Report an issue…*, upgrading a report from
+  "here is my crash log" to "here is my crash log **and** a machine-validated test result from my
+  hardware". The dialog is always available: the people it helps most are exactly the ones who
+  will never pass a command-line flag, and that is what makes validation on GPUs we don't own
+  something a stranger can contribute. Tests run as child processes, so a device loss during one
+  kills the test rather than the session you were about to file a report from. The developer
+  harnesses (`--livetest`, `--bench-matrix`, `--divetest`, `--juliadive`) stay deliberately
+  CLI-only — buttons for those generate confused bug reports, not information. A pass/fail is
+  taken from the test's own summary rather than its exit code, because the self-test exits
+  non-zero on golden mismatches that are *expected* off the reference GPU, and a red banner there
+  would teach testers to ignore it.
+- **`scripts/gpu-validate.ps1` / `.sh`: one command to validate a machine, one bundle back**
+  (beta.93). The power-user counterpart to the dialog: the same six steps in the same order on
+  Windows and Linux, writing the same file names so two machines' bundles diff directly. Runs
+  hermetically against a private config directory, so the tester's own settings are untouched and
+  every machine renders identically. `summary.txt` leads with the results table and then explains
+  which failures are *expected* on hardware other than the reference card.
 - **`--gputest` can now say *which line* a compiler folded** (beta.92). Testing primitives in
   isolation had run out of explanatory power: on AMD every one of them — `two_sum`, `two_prod`,
   the armored variant, and `quick_two_sum` — comes back exact, yet `df_mul` still only reaches

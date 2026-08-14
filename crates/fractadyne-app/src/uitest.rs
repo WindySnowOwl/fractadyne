@@ -33,6 +33,7 @@ enum Screen {
     Goto,
     Share,
     Report,
+    Diagnostics,
     Export,
     ScriptExport,
     TourRender,
@@ -363,6 +364,7 @@ fn build_steps() -> Vec<Step> {
         screen("goto", Screen::Goto),
         screen("share", Screen::Share),
         screen("report-issue", Screen::Report),
+        screen("diagnostics", Screen::Diagnostics),
         screen("export", Screen::Export),
         screen("script-to-view", Screen::ScriptExport),
         screen("tour-render", Screen::TourRender),
@@ -581,6 +583,10 @@ impl FractadyneApp {
             Screen::Goto => self.goto.open = true,
             Screen::Share => self.share.open = true,
             Screen::Report => self.report.open = true,
+            // Opened only — the walk must NOT start a test. A self-test child inside the UI walk
+            // would contend for the same GPU the walk is rendering with, and turn a UI check into
+            // a flaky performance test.
+            Screen::Diagnostics => self.diagnostics.open = true,
             Screen::Export => self.export.open = true,
             Screen::ScriptExport => self.dialogs.script_export_open = true,
             Screen::TourRender => self.tour_render.open = true,

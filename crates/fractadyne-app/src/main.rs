@@ -2193,6 +2193,10 @@ struct ReportState {
     include_location: bool,
     include_log: bool,
     include_crash: bool,
+    /// Include the most recent Diagnostics test result. Off unless a test has actually been run
+    /// and the user chose to attach it — an issue that claims a test result it doesn't have is
+    /// worse than one that claims nothing.
+    include_test: bool,
     msg: Option<String>,
 }
 impl Default for ReportState {
@@ -2208,6 +2212,7 @@ impl Default for ReportState {
             include_location: true,
             include_log: true,
             include_crash: true,
+            include_test: false,
             msg: None,
         }
     }
@@ -2300,6 +2305,8 @@ struct FractadyneApp {
     last_dir: Option<std::path::PathBuf>,
     /// "Render script…" dialog + the child process doing the work (see `TourRenderUi`).
     tour_render: TourRenderUi,
+    /// Help → Diagnostics…: run the user-safe tests from the UI (see `ui::diagnostics`).
+    diagnostics: crate::ui::diagnostics::DiagnosticsUi,
     /// Last benchmark report text + whether its window is open.
     bench_report: Option<String>,
     bench_cfg: BenchConfig,
@@ -2790,6 +2797,7 @@ impl FractadyneApp {
             last_dir: s.last_dir.clone().map(std::path::PathBuf::from),
             playback_restore: None,
             tour_render: TourRenderUi::default(),
+            diagnostics: Default::default(),
             bench_report: None,
             dialogs: DialogState {
                 bench_open: false,
@@ -4934,6 +4942,14 @@ impl FractadyneApp {
                 s.push_str("\n\n");
             }
         }
+        // Before the log, so a reader meets the machine-validated verdict before the raw tail.
+        if self.report.include_test {
+            if let Some(block) = self.test_result_block() {
+                s.push_str("== Diagnostics test result ==\n");
+                s.push_str(block.trim_end());
+                s.push_str("\n\n");
+            }
+        }
         if self.report.include_log {
             if let Some(log) = crate::diag::recent_log(48 * 1024) {
                 s.push_str("== Recent log (tail) ==\n");
@@ -6011,6 +6027,10 @@ impl eframe::App for FractadyneApp {
         self.draw_update_dialog(ctx);
         self.draw_goto_dialog(ctx);
         self.draw_share_dialog(ctx);
+        // Polled unconditionally (like the tour render): a test keeps running and stays reapable
+        // even if the user closes the dialog while it works.
+        self.poll_diagnostics(ctx);
+        self.draw_diagnostics_dialog(ctx);
         self.draw_report_dialog(ctx);
         self.draw_reset_dialog(ctx);
         self.draw_script_export_dialog(ctx);

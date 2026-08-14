@@ -361,6 +361,24 @@ impl FractadyneApp {
                         if has_crash { "Latest crash report" } else { "Latest crash report (none found)" },
                     );
                 });
+                // Only offered once a test has actually been run — an issue that claims a test
+                // result it does not have is worse than one that claims nothing. Help →
+                // Diagnostics… produces it, and its "Attach to an issue report…" ticks this.
+                let has_test = self.diagnostics.last.is_some();
+                ui.add_enabled_ui(has_test, |ui| {
+                    ui.checkbox(
+                        &mut self.report.include_test,
+                        if has_test {
+                            "Diagnostics test result"
+                        } else {
+                            "Diagnostics test result (run one from Help → Diagnostics…)"
+                        },
+                    )
+                    .on_hover_text(
+                        "A machine-validated pass/fail from your own hardware — far more useful \
+                         to a maintainer than a description alone",
+                    );
+                });
 
                 let report = self.build_report();
                 ui.add_space(4.0);

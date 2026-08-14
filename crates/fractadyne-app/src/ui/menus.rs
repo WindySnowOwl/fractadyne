@@ -544,6 +544,17 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui
+                            .button("Diagnostics…")
+                            .on_hover_text(
+                                "Check that Fractadyne works correctly on your hardware, and \
+                                 attach the result to an issue report",
+                            )
+                            .clicked()
+                        {
+                            self.diagnostics.open = true;
+                            ui.close_menu();
+                        }
+                        if ui
                             .button("Report an issue…")
                             .on_hover_text(
                                 "File a GitHub issue (or email) with a crash report, log, and \
