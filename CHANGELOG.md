@@ -24,6 +24,16 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **A deep hold no longer burns ~70 seconds rebuilding a table that cannot change** (beta.97). At a
+  deep view whose reference came back *partial*, the renderer would notice its bilinear-approximation
+  table had drifted out of range, rebuild it — and rebuild the identical table, because the fix it
+  actually needs is a longer reference orbit, which is capped while the view is treated as moving.
+  The trigger then fired again on the next frame. Measured at 2.6e72×: **91 rebuild cycles in one
+  run, each spending ~800 ms on a four-million-node table**, with the orbit extension itself taking
+  1 ms and changing nothing. That burn was self-defeating — it delayed the view settling, and
+  settling is what lifts the cap that blocks the growth. The futile case is now skipped, and only
+  that case: a reference that has fully escaped is long enough already, so its rebuild genuinely can
+  help and still runs, which preserves the zoom-out tiling fix that trigger was added for.
 - **Log-scaled palette mapping** (beta.96) — *Color → Log color scale*, or `--log-palette`.
   Escape values crowd towards the high end at depth: most of a deep frame's pixels sit in the last
   few percent of the range, so mapping the palette linearly spends nearly all of it on a thin

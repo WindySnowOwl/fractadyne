@@ -3763,7 +3763,34 @@ impl FractadyneApp {
             //     above the measured 0.69 tiling onset so it rebuilds before artifacts show. Zoom-IN
             //     never drops below 1.0, so this leaves the dive path untouched.)
             let bla_out_of_range = bla_active && !(0.85..=1.1).contains(&depth_lag);
-            let recompute = out_of_view || needs_quality || bla_out_of_range;
+            // ⭐A `bla_out_of_range` rebuild that cannot LENGTHEN the orbit is a no-op that
+            // re-fires forever. The BLA is built from the orbit, so a PARTIAL reference whose
+            // orbit is already at its cap rebuilds the same table, leaves `depth_lag` where it
+            // was, and trips this trigger again on the next frame. Measured at the 2.6e72× hold
+            // (`validation/e72-handoff.toml`, `FRACTADYNE_TRACE=ref`): 91 cycles in one run, each
+            // `orbit_ms=1 sa_ms=0 bla_ms=801` — ~70 s of CPU spent rebuilding a 4-million-node
+            // table that cannot come out different. That burn is self-defeating: it delays the
+            // view settling, and settling is what lifts the cap that blocks the growth.
+            //
+            // Suppress only that provably-futile case. A COMPLETE (escaped) orbit is long enough
+            // already, so its BLA rebuild genuinely can fix `depth_lag` and must still fire —
+            // that is the e260 zoom-out tiling this trigger was added for.
+            let can_grow = ref_build_iter.min(cap_now).min(orbit_len_cap())
+                > self.ref_cache[vi].orbit_len;
+            let bla_rebuild_futile =
+                bla_out_of_range && self.ref_cache[vi].partial && !can_grow;
+            if bla_rebuild_futile && crate::diag::trace_on("ref") {
+                crate::diag::trace(
+                    "ref",
+                    format!(
+                        "bla out of range (depth_lag {depth_lag:.2}) but orbit cannot grow \
+                         (len {} vs cap {}) — skipping a rebuild that would be identical",
+                        self.ref_cache[vi].orbit_len,
+                        ref_build_iter.min(cap_now).min(orbit_len_cap())
+                    ),
+                );
+            }
+            let recompute = out_of_view || needs_quality || (bla_out_of_range && !bla_rebuild_futile);
             // Whether the series approximation applies to this view (bundled into the recompute).
             // BLA subsumes SA (see `export_reference_inputs`): when this view builds a BLA tree,
             // skip the SA coefficient pass — it's the dominant deep build cost (~9.4 s at 1e1105×)
