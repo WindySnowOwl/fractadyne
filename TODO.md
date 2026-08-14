@@ -319,6 +319,40 @@ Mockups: [design/mockups/](design/mockups/).
   both are described in full in the commit message trail and in the `⚠DO NOT extract` note left at
   the AIMD call site, so they can be re-applied unchanged once the cliff is gone.
 
+  ### Attempt 1 (2026-08-14) — two hypotheses tested, BOTH REFUTED. Read before trying a third.
+
+  The `ref` trace is the instrument for this; run
+  `FRACTADYNE_TRACE=ref --livetest tours/grand-tour.toml --size 480x270` and read the
+  `hold-prefetch spawn/install` pairs in `config/logs/fractadyne.log`.
+
+  ⛔**Hypothesis A — "only one build in flight serialises the pipeline". WRONG.** `slot.rx` clears
+  when a build FINISHES, not when it installs, so the concurrency rule is almost never the binding
+  constraint; a branch added under it never executed across a whole tour. ⚠A livetest run passed
+  while that branch was dead code, which would have read as a successful fix — **a green
+  `hold-e72` proves nothing on its own, because slice-1 state passes routinely.** Always confirm
+  the mechanism fired (trace) before believing a pass.
+
+  ⛔**Hypothesis B — "the build starts too late; give it more lead". WRONG, and it REGRESSES e94.**
+  Measured: spawns pair with installs 3 ms apart (`install 258193 @249.000 → spawn 1200000
+  @249.003`), so the real gate is the **window cap** (`hold_prefetch.len() >= 3`) — a new window
+  opens only when an old one is consumed, which gave e72 ~52 tour-seconds of lead for a ~52-second
+  build. Raising the cap to 4 (memory-gated) did exactly what it promised: e72 spawned at tour
+  **147.1 instead of 215.3**, and `len=1208193` **installed for the correct window 267.0..273.0s**.
+  **`hold-e72` still reported `orbit_len 508193` anyway**, and `hold-e94` began failing too (its
+  build landing as a 3,631,055 partial against a 4,008,192 ask, the extra concurrency starving it).
+
+  ⭐**What that leaves — and it is a much sharper question than the one we started with.** The
+  right reference was built, finished, and installed for the right window, and the checkpoint still
+  read the previous hold's 508,193. So this is **not** a build-duration or scheduling problem at
+  all: it is an **install→render handoff** problem at the window boundary. Look there next — does
+  the render path pick up `ref_cache` before or after the prefetch slot installs; does the
+  checkpoint sample the frame that precedes the install; is the installed slot reaching the view
+  the checkpoint reads? ⚠Also note the installed precisions differ run to run for the same holds
+  (375 vs 402/432), which suggests the seed/reuse chain (`seed_ready`) picks different sources
+  depending on ordering — worth confirming that is benign.
+  ⚠And do not re-attempt by raising concurrency or lead: both are now measured dead ends, and the
+  second actively breaks a deeper checkpoint.
+
 - [ ] ⭐**The F3 corpus gate is RED — but it is a COLOUR-MAPPING change, not a maths regression**
   (found + characterized 2026-08-14). `generate_corpus.py --check --only 01,02,03` gives **0/3
   MATCH**, maxΔ 169, meanΔ 26.9 / 46.9 / 23.6, including `01-home` (1.3×, 512 iters, direct
