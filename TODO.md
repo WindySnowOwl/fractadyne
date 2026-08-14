@@ -3187,6 +3187,33 @@ descent and the Tan Lei self-checking test).
   coloring itself ships. Verification: histogram/banding metric on a shallow gradient render.
 - [ ] **Interior distance-estimation coloring** (P0, §2.2 gap) — exterior DE ships and is stable
   past e300; interior is a flat color today.
+  ⭐**ATTEMPTED 2026-08-14 and REVERTED — the maths works, the integration is the real job. Start
+  from here, don't re-derive it.** A working direct-mode implementation renders correctly: the
+  cardioid and the period-2 bulb shade smoothly, brightening toward the nucleus.
+  - **Formula** (accumulate around one period of `z ← z² + c`, from the settled cycle point):
+    `dz' = 2z·dz` (dz₀=1, this is the multiplier λ) · `dc' = 2z·dc + 1` (dc₀=0) ·
+    `dzdz' = 2(dz² + z·dzdz)` (0) · `dcdz' = 2(dz·dc + z·dcdz)` (0), then
+    **`d = (1 − |λ|²) / |dcdz + dzdz·dc/(1 − λ)|`**. Advance `dz` LAST — every other update reads
+    the previous one. Reject `|λ| ≥ 1` as "not an attracting cycle" rather than shading it.
+  - ⭐**Period detection must use a TOLERANCE, not the closest return.** Taking the globally
+    nearest return looks equivalent and is not: near a component's edge the orbit is still
+    creeping toward the cycle, every k is about as close as every other, the winner is noise, and
+    neighbouring pixels pick different periods — a visibly MOTTLED interior. Accept the first k
+    with `|f^k(z) − z| < 1e-4·(1+|z|)`; pixels that never qualify report "no estimate" and stay
+    flat. That single change turned mottle into a clean gradient.
+  - **Anchor for the next attempt**: at `c = 0` the cycle is the fixed point with p=1, giving
+    d = 0.5, against a true distance of 0.25 — a DE is expected within a factor of ~2, so 0.5 is
+    correct, not a bug.
+  - ⛔**Why it was reverted: `chunked direct render is bit-identical` FAILS.** The single-pass
+    `fs_iterate` gained an estimate while the chunked path (`fs_iterate_chunk` → `fs_resolve`)
+    still writes 1.0e30, so the two disagree by 1e30 on every interior texel and a load-bearing
+    invariant goes red. `fs_resolve` has the settled z but not `c`; `fs_iterate_chunk` does derive
+    `c`, so the fix is to compute it there and carry it through the chunk→resolve handoff —
+    whose channel meanings differ per mode, which is the part that needs care rather than haste.
+    **Do that first, then re-apply.** Carrying the estimate in the DE (`a`) channel with `r < 0`
+    still the interior marker worked well and is the right shape.
+  - Also worth keeping: gate the per-pixel cycle walk on the feature flag (the reverted version
+    computed it for every interior pixel regardless of the toggle — correct output, wasted work).
 - [ ] **Log-scaled + histogram/percentile palette mapping** (P0, §2.4 partial) — `--normalize` and
   the live "Normalize deep colors" toggle do *linear* min/max range mapping from GPU escape
   min/max. Log and histogram mapping are what keep color perceptually stable across a zoom video.
