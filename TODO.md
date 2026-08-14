@@ -256,18 +256,28 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] ⭐**The F3 corpus regression gate is RED on the dev machine, and nobody noticed** (found
-  2026-08-14 while preparing an AMD comparison). `python validation/corpus/generate_corpus.py
-  --check --only 01,02,03` reports **0/3 MATCH** with maxΔ 169 and meanΔ 26.9 / 46.9 / 23.6 —
-  including `01-home`, the shallowest, simplest location in the set (1.3×, 512 iterations,
-  direct mode). That is far too large to be boundary-pixel noise; it is systematic. The gate is
-  manual ("run after a major change") and clearly has not been run in a long while, so the
-  renderer's output drifted from the committed F3-confirmed baselines at some unknown point.
-  Until it is explained, **the committed corpus renders cannot be trusted as a reference**.
-  First step is a bisect on `01-home` alone (it renders in ~0.1 s, so this is cheap): find the
-  commit that moved it, then decide whether the new output is better or worse against the F3
-  reference before re-blessing. ⚠Do NOT re-bless to make it green — that is how the baselines
-  stopped meaning anything.
+- [ ] ⭐**The F3 corpus gate is RED — but it is a COLOUR-MAPPING change, not a maths regression**
+  (found + characterized 2026-08-14). `generate_corpus.py --check --only 01,02,03` gives **0/3
+  MATCH**, maxΔ 169, meanΔ 26.9 / 46.9 / 23.6, including `01-home` (1.3×, 512 iters, direct
+  mode). ⭐**Decisive characterization — do this before panicking about any future corpus red:**
+  bucket every pixel by its OLD colour and measure how tightly the NEW colours cluster. Result:
+  within-colour spread **0.21** (essentially zero) and an identical interior fraction (9.3% vs
+  9.3%). A one-to-one old→new colour map with an unchanged interior means **the escape field is
+  bit-unchanged and only the iteration→colour mapping moved.** So this is not precision, not
+  perturbation, not the GPU.
+  Ruled out so far: palette definitions (no commits to `fractadyne-color` since the baseline;
+  Ember is still index 0); `cycle`/`offset` (session holds 0.27/0.10, which ARE the defaults);
+  and `normalize_live` (setting it false changes nothing — the CLI render path never applies it,
+  as designed). A palette-phase scan shows the baseline is best approximated by today's render
+  at offset ≈0.20 rather than 0.10 (meanΔ 31.5 → 11.6), i.e. roughly a constant phase shift plus
+  a residual, which smells like a changed smooth-iteration → palette-position mapping (suspect
+  the G-buffer packing from the beta.65/68 iteration-range tiling work, where `iter`/`smit` were
+  re-packed).
+  ⚠**Context that reframes the severity: the baseline PNGs are dated 2026-07-12**, predating
+  everything from v0.2.36 through beta.92 — so this is a month-stale reference, not a fresh
+  regression, and the gate simply has not been run in that window. Next step is a bisect on
+  `01-home` alone (0.1 s per render; the cost is the rebuild per step). ⚠Do NOT re-bless to make
+  it green — decide first whether the new mapping is intended, then re-bless deliberately.
   ⛔**Related retraction: "score our render against F3 pixel-for-pixel" does NOT work**, and I
   recommended it twice before checking. The F3 references carry Fraktaler-3's OWN colouring, so
   a diff is dominated by palette, not precision — measured meanΔ **189** on `01-home`, where
