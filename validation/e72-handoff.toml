@@ -6,18 +6,15 @@
 # the structure that matters — a hold whose reference is built for a 500,000 ask, immediately
 # followed by a deeper hold asking 1,200,000 — and drops the eleven shallow keyframes ahead of it.
 #
-# ⛔STATUS: THIS DOES NOT YET REPRODUCE THE FAILURE. Kept because ruling things out is the point.
-# Two shapes were measured (2026-08-14), both PASSING with e72 getting its full 1,208,193:
-#   * three holds (e55, e63, e72) — passes, and the reason is structural: the prefetch keeps at
-#     most three windows, so with three holds every build spawns at once and e72 has a huge lead.
-#   * four holds (e55, e61, e63, e72) — e72 is now the first hold that must wait for a window to
-#     free, which is the grand tour's condition. It STILL passes, in 2.0 minutes.
-# So "e72 is the fourth hold and must wait for a window" is NOT sufficient. The failure needs
-# something the full tour accumulates by t≈267 that four consecutive deep holds do not — the
-# remaining suspects being memory pressure from the longer reference chain, the seed/reuse chain
-# (`seed_ready`) picking a different source, or the deeper e82/e94 builds. Extending this file
-# toward the tour one element at a time is the cheapest way to find which, at 2 minutes a step
-# instead of 13.
+# ✅STATUS: REPRODUCES, in ~6 minutes rather than 13 —
+#     hold-e72  FAIL  orbit_len 508193  eff_iter 1200000  black 0.276
+# the grand tour's signature exactly. Three shapes were needed to get here, and each failure to
+# reproduce eliminated a hypothesis, so keep all four elements:
+#   * three holds (e55, e63, e72) — PASSES. The prefetch keeps three windows, so all three spawn
+#     at once and e72 gets an enormous lead.
+#   * four holds (+ e61) — PASSES. So "e72 must wait for a window" is NOT the cause.
+#   * plus the continuous dive in — PASSES. So arriving with reference history is not it either.
+#   * plus a DEEPER hold AFTER e72 (e82) — FAILS. That is the missing ingredient.
 #
 # WHAT TO LOOK FOR. On the grand tour the failure reads as `hold-e72` reporting
 # `orbit_len 508193` against `eff_iter 1200000`: the previous hold's reference is still installed,
@@ -55,16 +52,39 @@ id = "three-spar"
 re = "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1"
 im = "9.5628651080914147131604703998237075557983304380930462483482733212267499793490593467836270525491219946548323699651521e-1"
 
-# Enter deep enough that the shallow dive costs nothing, but far enough above e63 that the
-# reference machinery is in its normal deep regime rather than starting cold at the hold.
+# The CONTINUOUS DIVE in. Added after the two static-entry shapes above both passed: the grand
+# tour reaches e55 through ~72 tour-seconds of descent, rebuilding references the whole way, and
+# arriving with that history is the largest remaining difference from a cold entry. Gaps between
+# the holds mirror the tour exactly (18 / 12 / 22 s) so the window contention matches.
 [[keyframe]]
-id = "enter-e55"
+id = "dive-start"
 t = 0
 location = "three-spar"
+zoom = 8
+max_iter = 3000
+hold = 2
+
+[[keyframe]]
+id = "dive-e10"
+t = 10
+zoom = "1e10"
+max_iter = 20000
+ease = "in"
+
+[[keyframe]]
+id = "dive-e30"
+t = 38
+zoom = "1e30"
+max_iter = 60000
+ease = "linear"
+
+[[keyframe]]
+id = "hold-e55"
+t = 72
 zoom = "1e55"
 max_iter = 250000
 ease = "linear"
-hold = 3
+hold = 6
 
 # ⚠hold-e61 is REQUIRED, not scenery. The prefetch holds at most three windows, so with only
 # three holds every build spawns immediately, e72 gets an enormous lead and the repro PASSES —
@@ -72,7 +92,7 @@ hold = 3
 # wait for a window to free before it can even start.
 [[keyframe]]
 id = "hold-e61"
-t = 12
+t = 90
 zoom = "1e61"
 max_iter = 400000
 ease = "linear"
@@ -81,7 +101,7 @@ hold = 6
 # The 500,000 ask whose reference is the one that wrongly serves e72.
 [[keyframe]]
 id = "hold-e63"
-t = 24
+t = 102
 zoom = "1e63"
 max_iter = 500000
 ease = "linear"
@@ -90,8 +110,21 @@ hold = 6
 # The 1,200,000 ask. This view genuinely needs ~1M; served by e63's 508,193 it renders ~27% black.
 [[keyframe]]
 id = "hold-e72"
-t = 36
+t = 124
 zoom = "1e72"
 max_iter = 1200000
+ease = "linear"
+hold = 6
+
+# ⚠hold-e82 is REQUIRED for the same reason hold-e61 is, and it is the element the first three
+# shapes were missing. On the grand tour the deeper spawns fire WHILE e72 is still building —
+# `spawn 1200000 @249.0`, then `spawn 2000000 @280.1` and `spawn 4000000 @306.9`, with e72's
+# reference only landing at 367.4 — so e72's build is competing with them for CPU, not running
+# alone. Without a competitor after it, e72 always wins and the repro passes.
+[[keyframe]]
+id = "hold-e82"
+t = 148
+zoom = "1e82"
+max_iter = 2000000
 ease = "linear"
 hold = 6

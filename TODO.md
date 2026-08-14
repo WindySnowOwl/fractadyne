@@ -353,6 +353,39 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠And do not re-attempt by raising concurrency or lead: both are now measured dead ends, and the
   second actively breaks a deeper checkpoint.
 
+  ### ⭐ROOT CAUSE FOUND (2026-08-14, attempt 2) — the reactive extension cannot grow
+
+  A repro now exists: **`validation/e72-handoff.toml`, ~6 minutes**, reproducing the exact
+  signature (`orbit_len 508193`, `eff_iter 1200000`, 27.6% black). It took four elements, and the
+  fourth is the one nobody would have guessed: a **deeper hold AFTER e72**. Three holds pass; four
+  holds pass; adding the whole dive passes; adding `hold-e82` *after* e72 fails.
+
+  **What the `ref` trace shows during the e72 hold** — the reactive rebuild running over and over:
+
+  ```
+  len=508193  iter=1130776   ← asked 1.13M, produced 508,193
+  len=508193  iter=1167945   ← ask climbs (the boost), produced 508,193
+  len=508193  iter=1165180   ← again, forever, ~1.2 s apart
+  ```
+
+  The ask grows every cycle while the build returns **exactly the length already installed**, and
+  each result is re-installed over itself (`long-partial install: len=508193 (clamp was 508193)`).
+  So the reactive extension is in a **deadlock**: it decides to rebuild on appetite
+  (`needs_quality` correctly uses `ref_build_iter`), then produces a reference that is no longer
+  than the one it is replacing. The hold's own prefetch build — an entirely separate 1.2M job — is
+  the ONLY thing that ever breaks it, which is why the checkpoint's verdict is just a race between
+  that install and the sample, and why any recompile flips it.
+  ⚠**Not the caps.** `live_orbit_cap` resolves to 1,208,192 at a settled hold, and neither of its
+  branches can yield 508,193; the device `orbit_len_cap()` is ≥4M (2,008,193 and 4,008,193 install
+  fine later in the same run). The ask reaching the worker is 1,130,776, not a clamped value.
+  **So the limiter is inside the extension itself — start at `try_reuse_reference`** and find why
+  extending a 508,193 orbit toward a 1.13M ask returns 508,193. That is the whole bug.
+  ⭐**Why it matters beyond the tour:** this is a live-view deadlock, not a test artefact. Any
+  user sitting at a deep view whose reference came back partial gets a reference that can never
+  grow, no matter how long they wait — the appetite climbs, the rebuild fires every ~1.2 s, and
+  the orbit stays the same length. The tour only makes it visible because a prefetch happens to
+  rescue it.
+
 - [ ] ⭐**The F3 corpus gate is RED — but it is a COLOUR-MAPPING change, not a maths regression**
   (found + characterized 2026-08-14). `generate_corpus.py --check --only 01,02,03` gives **0/3
   MATCH**, maxΔ 169, meanΔ 26.9 / 46.9 / 23.6, including `01-home` (1.3×, 512 iters, direct
