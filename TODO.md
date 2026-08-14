@@ -386,6 +386,33 @@ Mockups: [design/mockups/](design/mockups/).
   the orbit stays the same length. The tour only makes it visible because a prefetch happens to
   rescue it.
 
+  #### The exact cap, and what the loop actually costs (the `reuse-extend` trace, now committed)
+
+  ```
+  reuse-extend: prefix=1208193 → len=1208193
+    (target 256000 = min(gpu_iter 1840970, orbit_len_cap 256000, device 7452444))  ⚠DID NOT GROW
+  ```
+
+  `orbit_len_cap` is **256,000 = `LIVE_REF_CAP`**, i.e. `live_orbit_cap(interacting = true)`. The
+  target is therefore *below the orbit that already exists*, `extend_reference_orbit` correctly
+  returns the prefix untouched, and nothing can grow. **A settled hold is running the MOTION cap.**
+  ⚠**And the loop is not free.** Each no-op cycle logs `orbit_ms=1 sa_ms=0 **bla_ms=801**`: the
+  extension does nothing in 1 ms, then a 4-million-node BLA table is rebuilt for ~800 ms. **91
+  cycles in one run ≈ 70 s of CPU burned per hold** — which is itself what delays the view
+  settling, and settling is the thing that would lift the cap. The bug feeds itself.
+  ⭐**What triggers the loop is the next question, and it is narrow.**
+  `recompute = out_of_view || needs_quality || bla_out_of_range`. `needs_quality` already mins with
+  `cap_now`, so with cap 256,000 against a 1,208,193 orbit it is FALSE and cannot be the trigger.
+  That leaves **`bla_out_of_range`** (`depth_lag` outside 0.85..=1.1) — a condition the rebuild
+  **cannot satisfy** while the cap blocks growth, so it re-fires indefinitely. Confirm that, then
+  the fix is one of: (a) don't spawn a recompute whose extension provably cannot exceed the
+  existing orbit — cheapest, kills the 70 s burn, but leaves the reference short; (b) fix why a
+  settled hold reports `interacting` — the real fix, since `LIVE_REF_CAP` exists for freeze-safety
+  DURING MOTION and has no business bounding a view the camera is parked at.
+  ⚠Whichever is chosen, verify with `validation/e72-handoff.toml` AND the grand tour: this
+  subsystem has produced a device loss and a permanent wedge from exactly these decisions, and
+  three hypotheses were wrong here before instrumentation settled it.
+
 - [ ] ⭐**The F3 corpus gate is RED — but it is a COLOUR-MAPPING change, not a maths regression**
   (found + characterized 2026-08-14). `generate_corpus.py --check --only 01,02,03` gives **0/3
   MATCH**, maxΔ 169, meanΔ 26.9 / 46.9 / 23.6, including `01-home` (1.3×, 512 iters, direct
