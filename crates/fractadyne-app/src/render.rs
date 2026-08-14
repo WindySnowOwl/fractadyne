@@ -776,15 +776,35 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
     // Same caps as the fresh build (see `orbit_len_cap`): don't extend a reused orbit past this
     // build's length cap (LIVE freeze safety) or the GPU buffer. `inp.gpu_iter` (the render
     // budget) still flows to `finish_reference` below unchanged — only the stored length is bounded.
+    let target = inp.gpu_iter.min(inp.orbit_len_cap).min(orbit_len_cap());
     let (o, len, tail) = fc::extend_reference_orbit(
         &reuse.prefix,
         &reuse.tail,
         &cx0,
         &cy0,
         inp.formula,
-        inp.gpu_iter.min(inp.orbit_len_cap).min(orbit_len_cap()),
+        target,
         reuse.prec,
     );
+    // ⭐Which of the three caps actually bound this extension, and whether it moved at all. Added
+    // chasing the e72 deadlock (TODO.md), where the reactive rebuild returns EXACTLY the length it
+    // already has while the ask climbs — the trace above reports the ask and the result but not
+    // the target between them, which is the number that identifies the culprit.
+    if crate::diag::trace_on("ref") {
+        crate::diag::trace(
+            "ref",
+            format!(
+                "reuse-extend: prefix={} → len={} (target {target} = min(gpu_iter {}, \
+                 orbit_len_cap {}, device {})){}",
+                reuse.prefix.len(),
+                len,
+                inp.gpu_iter,
+                inp.orbit_len_cap,
+                orbit_len_cap(),
+                if len <= reuse.prefix.len() as u32 { "  ⚠DID NOT GROW" } else { "" }
+            ),
+        );
+    }
     let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
     Some(finish_reference(
         reuse.point.clone(),
