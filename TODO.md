@@ -283,8 +283,23 @@ Mockups: [design/mockups/](design/mockups/).
   render live frames, so `norm_range` stays `None` and CLI/corpus keep `--normalize`-only
   semantics). ⚠Also note the best-fit phase match is only meanΔ 11.6, not ~0, so it is NOT a
   pure phase shift — there is a scale/shape component too, and any single-constant explanation
-  should be treated with suspicion. Bisect `01-home` between `a781f6e` and HEAD (0.1 s per
-  render; the rebuild dominates each step).
+  should be treated with suspicion.
+  ✅**RESOLVED-ENOUGH 2026-08-14: it is NOT a code regression, so there is nothing to bisect.**
+  Two independent proofs. (1) **The selftest goldens were blessed 2026-07-04 — EARLIER than the
+  corpus baseline (07-12) — and they still pass 17/17 today.** A renderer change that moved the
+  colour mapping would have broken them first; it did not. (2) **Checked out the baseline-era
+  commit `b050ee9` (v0.2.20), built it, and rendered `01-home`: meanΔ 27.98 against its OWN
+  baseline** — i.e. the July binary cannot reproduce the July render either. The variable is
+  therefore the ENVIRONMENT, not the code. Also excluded by direct test: `aa` (0/1/2/3 all give
+  byte-identical CLI output — it does not reach `--render`), plus the earlier exclusions
+  (palette defs, cycle/offset, normalize_live).
+  ⭐**Reframed as a TOOLING bug, which is what it always was: corpus renders are NOT HERMETIC.**
+  `stage_session` pins ~17 keys and inherits every other one from the developer's live session,
+  so the output depends on whatever the app last wrote — exactly the flaw its own docstring warns
+  about for coloring, only half-fixed. `--selftest` is hermetic and is the gate that actually
+  matters; it is green. Fix the corpus the same way (render from a known session, not the live
+  one), then re-bless deliberately. ⚠**No announce risk**: the shipped release gate (goldens
+  17/17, suite 113/113) is unaffected.
   ⚠**Context that reframes the severity: the baseline PNGs are dated 2026-07-12**, predating
   everything from v0.2.36 through beta.92 — so this is a month-stale reference, not a fresh
   regression, and the gate simply has not been run in that window. Next step is a bisect on
