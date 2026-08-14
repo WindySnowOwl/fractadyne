@@ -400,6 +400,21 @@ impl FractadyneApp {
             let due = pending.last().map(|(ct, _)| e >= *ct).unwrap_or(false);
             if due && (real || last_real.is_some()) {
                 let (t_cp, id) = pending.pop().unwrap();
+                // ⭐e72 (TODO.md): the reference cap a hold builds under is chosen by `interacting`,
+                // so record what the checkpoint's own frame reported — a hold sampled while still
+                // "interacting" is building references under the MOTION cap.
+                if crate::diag::trace_on("ref") {
+                    crate::diag::trace(
+                        "ref",
+                        format!(
+                            "checkpoint {id} @{t_cp:.1}: interacting={interacting} \
+                             since_settle={:.2}s orbit_len={} partial={}",
+                            now - self.pointer.settle_t[0],
+                            self.ref_cache[0].orbit_len,
+                            self.ref_cache[0].partial,
+                        ),
+                    );
+                }
                 let Some((live_px, live_res, real_at)) = last_real.clone() else { continue };
                 let stale_ms = (t_base.elapsed().as_secs_f64() - real_at) * 1000.0;
                 let live_black = interior_frac(&live_px);

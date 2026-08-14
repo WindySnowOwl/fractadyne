@@ -325,6 +325,8 @@ pub(crate) struct RecomputeResult {
     /// extend it (see [`RefCache::orbit_tail`]). `None` when the orbit escaped (complete) or is empty.
     /// (The precision it was built at — depth precision + reuse HEADROOM — travels in `prec`.)
     orbit_tail: Option<fractadyne_core::OrbitTail>,
+    /// The view's `orbit_id` when this build was spawned (see `RecomputeInputs::spawn_orbit_id`).
+    spawn_orbit_id: u64,
 }
 
 /// A cached reference the worker may EXTEND instead of rebuilding from scratch: the prior orbit's
@@ -407,6 +409,13 @@ struct RecomputeInputs {
     /// A prior reference the worker may extend instead of rebuilding (deeper zoom, same in-view
     /// point). `None` forces a fresh best-reference pick + full orbit build.
     reuse: Option<ReuseRef>,
+    /// The view's `orbit_id` when this build was SPAWNED — its staleness stamp. A deep build runs
+    /// for seconds while other builders (lookahead, hold prefetch) finish and install, so a result
+    /// can land against a reference that is already BETTER than the one it started from. Measured
+    /// at the 6.5e94× hold: the hold's 4,008,193-sample reference installed, and **97 ms later** an
+    /// in-flight reactive build landed 2,008,236 samples on top of it and threw it away. See
+    /// `install_recompute`, which drops exactly that: older stamp AND shorter orbit.
+    spawn_orbit_id: u64,
 }
 
 /// Aux coloring aggregates for the BLA tree, derived from a reference orbit. Triangle-inequality
@@ -473,9 +482,36 @@ pub(crate) fn orbit_len_cap() -> u32 {
 /// reference value at sample precision — only escaped-end rebases are sound), so the reference
 /// itself must reach the budget. The device binding cap still bounds the build downstream
 /// (`orbit_len_cap()`, orbit + BLA sized together), so GPU memory is safe at any value here.
-pub(crate) fn live_orbit_cap(interacting: bool, ref_build_iter: u32) -> u32 {
+/// `FRACTADYNE_NO_PREFETCH=1`: disable script-playback reference prefetching (both the dive
+/// lookahead and the hold prefetch), so a tour exercises the REACTIVE rebuild path alone — the
+/// path a GUI user at a deep view has. Diagnostic only; read once.
+pub(crate) fn no_prefetch() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("FRACTADYNE_NO_PREFETCH").is_ok_and(|v| v != "0"))
+}
+
+/// ⭐`have_len` — the orbit ALREADY INSTALLED for this view — is a FLOOR on the motion cap, and it
+/// is what stops a motion-time rebuild from TRUNCATING a deep reference. Measured at the 2e82×
+/// hold (`validation/e72-handoff.toml` with `FRACTADYNE_NO_PREFETCH=1`): a rebuild during the glide
+/// whose reuse was refused (the cached orbit's precision band ran out) fell back to a FRESH pick,
+/// built it to `LIVE_REF_CAP`, and installed **256,001 samples over the installed 1,208,193** — the
+/// view then arrived at the hold clamped to a quarter of the orbit it had a moment earlier and
+/// rendered **100% black**. The cap exists so a dive's REFRESH builds stay cheap, not so a dive can
+/// destroy the reference it is already rendering with; keeping the length we have costs nothing on
+/// the reuse path (`extend_reference_orbit` returns the prefix) and costs a re-anchor exactly what
+/// the reference on screen already cost.
+///
+/// It deliberately does NOT let the orbit GROW during motion: `needs_quality` mins the ask with
+/// this cap, and at a deep view `min(ask, have_len) == have_len`, so the gate stays quiet and
+/// growth still waits for the view to settle (the freeze-safety contract below is untouched).
+pub(crate) fn live_orbit_cap(interacting: bool, ref_build_iter: u32, have_len: u32) -> u32 {
     if interacting {
-        crate::LIVE_REF_CAP
+        // ⚠The floor is `have_len` capped by THIS view's ask, not `have_len` outright. Zooming OUT
+        // lowers the ask, and a bare floor would make every re-anchor on the way out rebuild the
+        // deepest orbit the session ever held (up to the ~7.4M device cap ≈ 10 s of bignum) to
+        // serve a view that needs a fraction of it. The truncation this guards against is always
+        // `ask > have_len` (the view wants MORE than it has), so the min leaves it untouched.
+        crate::LIVE_REF_CAP.max(have_len.min(ref_build_iter))
     } else {
         crate::LIVE_REF_CAP.max(ref_build_iter)
     }
@@ -712,9 +748,10 @@ fn finish_reference(
         crate::diag::trace(
             "ref",
             format!(
-                "len={len} iter={orbit_iter} prec={orbit_prec} partial={partial} \
+                "[{}] len={len} iter={orbit_iter} prec={orbit_prec} partial={partial} \
                  escaped={} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={} \
                  | orbit_ms={ref_ms:.0} sa_ms={series_ms:.0} bla_ms={bla_ms:.0}",
+                inp.origin,
                 tail_escaped,
                 sa.skip,
                 bla.len(),
@@ -737,6 +774,7 @@ fn finish_reference(
         bla_ms,
         partial,
         orbit_tail,
+        spawn_orbit_id: inp.spawn_orbit_id,
     }
 }
 
@@ -794,8 +832,9 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
         crate::diag::trace(
             "ref",
             format!(
-                "reuse-extend: prefix={} → len={} (target {target} = min(gpu_iter {}, \
+                "reuse-extend [{}]: prefix={} → len={} (target {target} = min(gpu_iter {}, \
                  orbit_len_cap {}, device {})){}",
+                inp.origin,
                 reuse.prefix.len(),
                 len,
                 inp.gpu_iter,
@@ -987,6 +1026,35 @@ impl FractadyneApp {
         // ESCAPED (precision-cliff) orbit laundering itself past this guard — see
         // `escape_length_of_rounded_centre`. A correct camera (exact pinned-centre glides) makes
         // truthful long partials the NORM at deep holds, so they must be installable.
+        // ⭐STALE-CLOBBER GUARD. A deep build runs for seconds, and four builders (reactive,
+        // lookahead, hold prefetch, cold start) feed this one cache — so a result can land against
+        // a reference INSTALLED AFTER IT WAS SPAWNED and strictly better than the one it started
+        // from. Measured on the grand tour at the 6.5e94× hold: `hold-prefetch install: len=4008193`
+        // at +448.012 s, then at +448.109 s — 97 MILLISECONDS later — an in-flight reactive build
+        // landed `len=2008236` on top of it, and the hold lost the reference it had been building
+        // for 190 seconds. Drop a result that is BOTH older than the current reference (its
+        // `spawn_orbit_id` predates the installed `orbit_id`) AND shorter than it: older-but-longer
+        // still installs (a deep extension that overtakes a small refresh is exactly what we want),
+        // and every zoom-out re-anchor is younger than what it replaces, so shrinking on the way
+        // out is untouched.
+        if res.spawn_orbit_id < self.ref_cache[vi].orbit_id
+            && res.orbit_len < self.ref_cache[vi].orbit_len
+        {
+            if crate::diag::trace_on("ref") {
+                crate::diag::trace(
+                    "ref",
+                    format!(
+                        "stale install DROPPED v{vi}: len={} (spawned at orbit_id {}) vs installed \
+                         len={} (orbit_id {})",
+                        res.orbit_len,
+                        res.spawn_orbit_id,
+                        self.ref_cache[vi].orbit_len,
+                        self.ref_cache[vi].orbit_id,
+                    ),
+                );
+            }
+            return;
+        }
         let long_partial = res.partial && res.orbit_len > crate::LIVE_REF_CAP.saturating_add(1);
         if long_partial && crate::diag::trace_on("ref") {
             crate::diag::trace(
@@ -1133,6 +1201,15 @@ impl FractadyneApp {
     /// pans/changes fractal) is simply dropped and the reactive path covers it as before. Cleared on
     /// tour start/end and `invalidate_refs` so a stale prefetch can never install.
     pub(crate) fn playback_ref_prefetch(&mut self, pb: &crate::scripting::Playback, e: f64) {
+        // ⭐DIAGNOSTIC: `FRACTADYNE_NO_PREFETCH=1` turns both tour prefetchers off, leaving the
+        // REACTIVE rebuild path alone to serve every frame — which is exactly the situation of a
+        // user parked at a deep view in the GUI, where no script says where the camera is going.
+        // The e72 defect (TODO.md) hides behind the prefetch: a hold whose reference lands short
+        // is rescued by the prefetch install, so the livetest verdict is a race and flips on any
+        // recompile. With this set, the tour measures the reactive path and nothing else.
+        if no_prefetch() {
+            return;
+        }
         /// Slot spacing (octaves). Sets the ACTIVE reference's peak lag between installs: an
         /// install restores lag ≈ 1.0, and the next slot becomes installable when the view reaches
         /// its window ⇒ peak active lag = 1.0 + spacing − 0.14. That peak MUST stay below
@@ -1335,8 +1412,10 @@ impl FractadyneApp {
                 gpu_iter: ref_build_iter,
                 // Playback prefetch is by definition mid-motion: keep the short cap so lookahead
                 // builds stay cheap and the queue keeps pace with the dive (`live_orbit_cap`'s
-                // settled extension happens on the main build once the dive pauses).
-                orbit_len_cap: live_orbit_cap(true, ref_build_iter),
+                // settled extension happens on the main build once the dive pauses) — but never
+                // BELOW the orbit this build would replace on install, or a lookahead whose reuse
+                // is refused truncates the live reference (see `live_orbit_cap`).
+                orbit_len_cap: live_orbit_cap(true, ref_build_iter, self.ref_cache[0].orbit_len),
                 precision,
                 julia: false,
                 formula: self.fractal.formula_id(),
@@ -1347,6 +1426,7 @@ impl FractadyneApp {
                 stripe_freq: self.coloring.stripe_freq as f64,
                 trap_type: self.coloring.trap_type as u32,
                 reuse,
+                spawn_orbit_id: self.ref_cache[0].orbit_id,
             };
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
@@ -1527,7 +1607,7 @@ impl FractadyneApp {
             delta_exp,
             gpu_iter: ref_build_iter,
             // SETTLED semantics — the whole point: the hold's ask, not the motion cap.
-            orbit_len_cap: live_orbit_cap(false, ref_build_iter),
+            orbit_len_cap: live_orbit_cap(false, ref_build_iter, self.ref_cache[0].orbit_len),
             precision,
             julia: false,
             formula: self.fractal.formula_id(),
@@ -1538,6 +1618,7 @@ impl FractadyneApp {
             stripe_freq: self.coloring.stripe_freq as f64,
             trap_type: self.coloring.trap_type as u32,
             reuse,
+            spawn_orbit_id: self.ref_cache[0].orbit_id,
         };
         if crate::diag::trace_on("ref") {
             crate::diag::trace(
@@ -1728,6 +1809,7 @@ impl FractadyneApp {
             stripe_freq: self.coloring.stripe_freq as f64,
             trap_type: self.coloring.trap_type as u32,
             reuse: None, // one-shot export: always a fresh build
+            spawn_orbit_id: 0, // export never installs into a live cache
         }
     }
 
@@ -3733,7 +3815,8 @@ impl FractadyneApp {
             // forever. Bounding by the CURRENT cap keeps it loop-free: while interacting at such a
             // view, `min(gpu_iter, cap) == orbit_len` and the gate stays quiet; on settle the cap
             // lifts, the gate fires once, and the extended build re-quiets it.
-            let cap_now = live_orbit_cap(interacting, ref_build_iter);
+            let cap_now =
+                live_orbit_cap(interacting, ref_build_iter, self.ref_cache[vi].orbit_len);
             // The device cap bounds what any build can store: without it in the comparison, a
             // budget above the hardware limit (e.g. 2M at extreme depth vs the ~928k binding cap)
             // re-fires forever against an orbit that can never get longer. The extension ask uses
@@ -3763,34 +3846,22 @@ impl FractadyneApp {
             //     above the measured 0.69 tiling onset so it rebuilds before artifacts show. Zoom-IN
             //     never drops below 1.0, so this leaves the dive path untouched.)
             let bla_out_of_range = bla_active && !(0.85..=1.1).contains(&depth_lag);
-            // ⭐A `bla_out_of_range` rebuild that cannot LENGTHEN the orbit is a no-op that
-            // re-fires forever. The BLA is built from the orbit, so a PARTIAL reference whose
-            // orbit is already at its cap rebuilds the same table, leaves `depth_lag` where it
-            // was, and trips this trigger again on the next frame. Measured at the 2.6e72× hold
-            // (`validation/e72-handoff.toml`, `FRACTADYNE_TRACE=ref`): 91 cycles in one run, each
-            // `orbit_ms=1 sa_ms=0 bla_ms=801` — ~70 s of CPU spent rebuilding a 4-million-node
-            // table that cannot come out different. That burn is self-defeating: it delays the
-            // view settling, and settling is what lifts the cap that blocks the growth.
-            //
-            // Suppress only that provably-futile case. A COMPLETE (escaped) orbit is long enough
-            // already, so its BLA rebuild genuinely can fix `depth_lag` and must still fire —
-            // that is the e260 zoom-out tiling this trigger was added for.
-            let can_grow = ref_build_iter.min(cap_now).min(orbit_len_cap())
-                > self.ref_cache[vi].orbit_len;
-            let bla_rebuild_futile =
-                bla_out_of_range && self.ref_cache[vi].partial && !can_grow;
-            if bla_rebuild_futile && crate::diag::trace_on("ref") {
-                crate::diag::trace(
-                    "ref",
-                    format!(
-                        "bla out of range (depth_lag {depth_lag:.2}) but orbit cannot grow \
-                         (len {} vs cap {}) — skipping a rebuild that would be identical",
-                        self.ref_cache[vi].orbit_len,
-                        ref_build_iter.min(cap_now).min(orbit_len_cap())
-                    ),
-                );
-            }
-            let recompute = out_of_view || needs_quality || (bla_out_of_range && !bla_rebuild_futile);
+            // ⚠beta.97 SUPPRESSED this trigger whenever the orbit "could not grow" (partial +
+            // ask ≤ cap), calling the rebuild futile. REVERTED here, measured: a rebuild that
+            // cannot lengthen the orbit is NOT a no-op — it rebuilds the BLA at the CURRENT span,
+            // which is the only thing that resets `depth_lag`, and (when the reuse is refused on
+            // precision) it re-anchors the orbit at the depth's precision, renewing the
+            // `REF_PREC_HEADROOM` band mid-glide. Suppressing it left the whole deep glide running
+            // on a 30+-octave-stale BLA (`depth_lag 34`, every frame frozen and reprojected), and
+            // pushed the expensive precision re-anchor into the HOLD, where it does not fit.
+            // A/B on `validation/e72-handoff.toml` with `FRACTADYNE_NO_PREFETCH=1` (2026-08-14),
+            // everything else equal — suppression ON: hold-e82 warn, orbit 1,208,193 against a
+            // 2,000,000 ask, 42.7 s stale, 247 s of wall clock. Suppression OFF: hold-e82 ok,
+            // orbit 2,008,193, 0 ms stale, 197 s — 50 SECONDS FASTER, because the ~900 ms BLA
+            // rebuilds it "saves" are cheaper than the from-scratch build they defer.
+            // The 91-cycle burn that motivated the suppression was the TRUNCATION loop above
+            // (a motion rebuild capped below the installed orbit), fixed in `live_orbit_cap`.
+            let recompute = out_of_view || needs_quality || bla_out_of_range;
             // Whether the series approximation applies to this view (bundled into the recompute).
             // BLA subsumes SA (see `export_reference_inputs`): when this view builds a BLA tree,
             // skip the SA coefficient pass — it's the dominant deep build cost (~9.4 s at 1e1105×)
@@ -3848,6 +3919,7 @@ impl FractadyneApp {
                     stripe_freq: self.coloring.stripe_freq as f64,
                     trap_type: self.coloring.trap_type as u32,
                     reuse,
+                    spawn_orbit_id: self.ref_cache[vi].orbit_id,
                 };
                 // Anti-churn backstop: never respawn more than ~60×/s (spaced ≥ 16 ms). The wider
                 // `out_of_view` above already keeps refreshes infrequent; this just guards against a
@@ -3884,6 +3956,24 @@ impl FractadyneApp {
                     let progressive = cold
                         && !(self.dual && vi == 1 && self.julia_pin.is_none())
                         && !self.tour_playing();
+                    // ⭐WHY this reactive build was spawned, and under which cap. The e72 deadlock
+                    // (TODO.md) turns on one bit: a settled deep hold that still reports
+                    // `interacting` runs the MOTION cap, so the extension targets BELOW the orbit
+                    // it already has. The result lines downstream show the cap but not the state
+                    // that chose it, nor which of the three triggers fired.
+                    if crate::diag::trace_on("ref") {
+                        crate::diag::trace(
+                            "ref",
+                            format!(
+                                "spawn [live] v{vi}: interacting={interacting} cap_now={cap_now} \
+                                 ref_build_iter={ref_build_iter} orbit_len={} partial={} \
+                                 | out_of_view={out_of_view} needs_quality={needs_quality} \
+                                 bla_out_of_range={bla_out_of_range} (depth_lag {depth_lag:.2})",
+                                self.ref_cache[vi].orbit_len,
+                                self.ref_cache[vi].partial,
+                            ),
+                        );
+                    }
                     std::thread::spawn(move || {
                         recompute_worker_staged(inputs, tx, progressive);
                     });
@@ -4663,6 +4753,7 @@ mod reuse_tests {
             stripe_freq: 1.0,
             trap_type: 0,
             reuse,
+            spawn_orbit_id: 0,
         }
     }
 
@@ -4746,11 +4837,32 @@ mod reuse_tests {
     fn live_orbit_cap_follows_settled_budget() {
         // The reported failure: settled budget 351,606 + headroom > 256k must lift the cap.
         let boosted = 351_606u32 + 32 * 256;
-        assert_eq!(live_orbit_cap(false, boosted), boosted);
+        assert_eq!(live_orbit_cap(false, boosted, 0), boosted);
         // Below the cap, the cap still floors (escaped-short truncation guard, v0.2.26).
-        assert_eq!(live_orbit_cap(false, 100_000), crate::LIVE_REF_CAP);
-        // Interacting: always the short cap, regardless of budget (dive builds stay cheap).
-        assert_eq!(live_orbit_cap(true, boosted), crate::LIVE_REF_CAP);
-        assert_eq!(live_orbit_cap(true, 100_000), crate::LIVE_REF_CAP);
+        assert_eq!(live_orbit_cap(false, 100_000, 0), crate::LIVE_REF_CAP);
+        // Interacting with NOTHING installed: the short cap, so dive builds stay cheap.
+        assert_eq!(live_orbit_cap(true, boosted, 0), crate::LIVE_REF_CAP);
+        assert_eq!(live_orbit_cap(true, 100_000, 0), crate::LIVE_REF_CAP);
+    }
+
+    /// The 2e82× truncation (measured 2026-08-14, `FRACTADYNE_NO_PREFETCH=1`): a motion-time
+    /// rebuild whose reuse was refused built a FRESH 256,001-sample orbit and installed it over the
+    /// live 1,208,193 one, and the hold that followed rendered 100% black. A motion build may
+    /// decline to GROW the reference; it may never come back SHORTER than the one on screen.
+    #[test]
+    fn live_orbit_cap_never_truncates_the_installed_orbit() {
+        let installed = 1_208_193u32;
+        let ask = 2_008_192u32;
+        // Motion at a deep view: the cap is the installed length, not `LIVE_REF_CAP`.
+        assert_eq!(live_orbit_cap(true, ask, installed), installed);
+        // …and it still does not let motion GROW it: `needs_quality` mins the ask with this cap.
+        assert_eq!(ask.min(live_orbit_cap(true, ask, installed)), installed);
+        // Settled is unchanged — growth is the settled path's job.
+        assert_eq!(live_orbit_cap(false, ask, installed), ask);
+        // A short installed orbit (the e21000 tip's refused extension) keeps the plain cap.
+        assert_eq!(live_orbit_cap(true, ask, 100_000), crate::LIVE_REF_CAP);
+        // Zooming OUT: the ask drops below what is installed, and the floor drops with it — a
+        // re-anchor on the way out must not rebuild the deepest orbit the session ever held.
+        assert_eq!(live_orbit_cap(true, 400_000, 4_000_000), 400_000);
     }
 }

@@ -3489,8 +3489,30 @@ impl FractadyneApp {
         // but wrong for a HOLD: the adaptive iteration budget only measures and adapts on SETTLED
         // frames, so a tour could never raise its budget and starved deep views stayed black for
         // the whole hold — while the same view resolves the moment a human stops touching it.
-        if !pb.holding_at(e).0 {
+        let (holding_now, hold_kf) = pb.holding_at(e);
+        if !holding_now {
             self.pointer.settle_t = [now; 2];
+        }
+        // ⭐e72 (TODO.md): a settled deep hold runs the MOTION reference cap, which means the view
+        // still reports `interacting` — i.e. `settle_t` is being stamped when this says it should
+        // not be, or `holding_at` disagrees with the hold the checkpoint is sampling. Trace the
+        // TRANSITIONS (not every tick) so the hold's own boundary is visible against the caps.
+        if crate::diag::trace_on("ref") {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static LAST_HOLDING: AtomicBool = AtomicBool::new(false);
+            if LAST_HOLDING.swap(holding_now, Ordering::Relaxed) != holding_now {
+                crate::diag::trace(
+                    "ref",
+                    format!(
+                        "playback holding={holding_now} kf={} (\"{}\") e={e:.2} paced_hold={:.2} \
+                         since_settle={:.2}s",
+                        hold_kf,
+                        pb.kfs.get(hold_kf).map(|k| k.id.as_str()).unwrap_or("?"),
+                        pb.paced_hold,
+                        now - self.pointer.settle_t[0],
+                    ),
+                );
+            }
         }
         // Reference LOOKAHEAD: the script knows where the camera is going — build the reference the
         // dive is about to need on idle cores, and install it as the dive arrives (render.rs).

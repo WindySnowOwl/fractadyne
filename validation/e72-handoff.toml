@@ -45,7 +45,12 @@ normalize = true
 [playback]
 # Hold the clock at each hold until the view resolves, exactly as the grand tour does — without
 # this the camera walks past a black frame instead of waiting, and the failure changes shape.
-settled = true
+# ⚠This said `settled = true` from the day the file was written (2026-08-14) — NOT a key this
+# schema has, so the loader ignored it and every measurement taken on this repro until it was
+# corrected ran at the DEFAULT `adaptive` pace, i.e. without the very clock-hold the comment
+# claims. `pace` + `settle_timeout` are the real keys; the grand tour sets exactly these.
+pace = "settled"
+settle_timeout = 15
 
 [[location]]
 id = "three-spar"

@@ -279,8 +279,15 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] ⭐⭐**BLOCKER FOR THE `render.rs` REFACTOR — the e72 reference build sits on a knife edge, and
+- [x] ⭐⭐**BLOCKER FOR THE `render.rs` REFACTOR — the e72 reference build sits on a knife edge, and
   the livetest gate cannot tell a recompile from a regression** (measured 2026-08-14).
+  ✅**ROOT-CAUSED AND FIXED 2026-08-14 (attempt 3) — see "the motion cap was TRUNCATING the live
+  reference" at the end of this entry.** The hold no longer depends on the prefetch winning a race
+  (the reactive path alone now serves every hold in the repro), so the checkpoint should stop
+  flipping on recompiles — ⚠confirm with two consecutive grand-tour runs before re-applying
+  refactor slices 2 and 3. The history below is kept because three hypotheses were wrong here, and
+  one of them (attempt 2's "a settled hold runs the motion cap") was wrong in a way that reads
+  convincingly — read the correction before trusting any of it.
   **What happens.** At the grand tour's `hold-e72`, the hold has a few seconds to build a
   1,208,193-sample reference. It either makes it, or it lands on a **508,193-sample partial** — and
   then the live view renders **27% black** where the offline truth is 0%. `eff_iter` is
@@ -412,6 +419,93 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠Whichever is chosen, verify with `validation/e72-handoff.toml` AND the grand tour: this
   subsystem has produced a device loss and a permanent wedge from exactly these decisions, and
   three hypotheses were wrong here before instrumentation settled it.
+
+  ### ✅FIXED (2026-08-14, attempt 3) — the motion cap was TRUNCATING the live reference
+
+  ⛔**First, a correction that matters more than the fix: "a settled hold is running the MOTION
+  cap" (attempt 2, above) is WRONG.** Instrumented directly — the checkpoint now records the
+  `interacting` its own frame reported — every hold in the repro samples at
+  `interacting=false since_settle≈5.5s`. The 256,000-cap traces attributed to the hold were
+  GLIDE frames; the hold's cap lifts 0.18 s after the camera stops, exactly as designed. Two
+  attempts were spent on that misreading, and it came from reading `orbit_len_cap 256000` out of
+  a log whose lines did not say WHICH build they belonged to. The `ref` trace now tags every
+  build with its origin (`[live]`/`[lookahead]`/`[hold]`/`[export]`), traces each reactive spawn
+  with `interacting`/`cap_now`/the three triggers, and traces `holding` transitions.
+
+  ⭐**The instrument that cracked it: `FRACTADYNE_NO_PREFETCH=1`** — disables both tour
+  prefetchers, so a tour exercises the REACTIVE path alone. That is the path a GUI user parked at
+  a deep view has (no script tells the app where the camera is going), and it turns the flaky
+  checkpoint race into a deterministic measurement. **Any future work on this family should start
+  by running the repro this way.**
+
+  **The actual root cause.** `live_orbit_cap(interacting=true, ..)` returned a flat
+  `LIVE_REF_CAP` = 256,000 as an ABSOLUTE cap on the orbit a motion-time build may store. Once
+  the view is deep enough that the installed orbit is LONGER than that (508k, 1.2M, 2M — every
+  deep view), the cap stops meaning "keep dive builds cheap" and starts meaning **"any rebuild
+  that cannot reuse must come back SHORTER than what is on screen"**. Measured at the 2e82× hold:
+  a glide rebuild whose reuse was refused (the cached orbit's `REF_PREC_HEADROOM` band ran out by
+  ONE bit — 335 available, 336 required) fell back to a fresh pick, built 256,001 samples, and
+  installed them over the live 1,208,193. The pixel clamp dropped with it and the hold rendered
+  **100% black** (`hold-e82 FAIL, orbit_len 256001`).
+
+  **Fix (`live_orbit_cap` takes `have_len`)**: the motion cap is now
+  `LIVE_REF_CAP.max(installed orbit_len)` — a motion build may decline to GROW the reference, but
+  can never come back shorter than the one being rendered. It costs nothing on the reuse path
+  (`extend_reference_orbit` returns the prefix) and costs a re-anchor exactly what the reference
+  already on screen cost. Growth still waits for settle: `needs_quality` mins the ask with this
+  cap, and `min(ask, have_len) == have_len` at a deep view, so the gate stays quiet during motion.
+
+  **And beta.97's futility gate is REVERTED as part of this.** With the truncation gone, a
+  rebuild that "cannot grow the orbit" is not futile at all: it rebuilds the BLA at the CURRENT
+  span (the only thing that resets `depth_lag`) and, when the reuse is refused on precision,
+  re-anchors the orbit at full precision — renewing the 128-bit headroom band DURING the glide,
+  where there is time, instead of at the hold, where there is not. A/B on the repro with
+  `FRACTADYNE_NO_PREFETCH=1`, everything else equal:
+
+  | beta.97 suppression | hold-e82 | orbit at checkpoint | stale | wall clock |
+  |---|---|---|---|---|
+  | ON | warn | 1,208,193 vs a 2,000,000 ask | 42.7 s | 247 s |
+  | OFF | **ok** | 2,008,193 | 0 ms | **197 s** |
+
+  Suppressing the rebuilds was 50 SECONDS SLOWER end to end — the ~900 ms BLA rebuilds it "saved"
+  are cheaper than the from-scratch build they defer. It also left the whole deep glide on a
+  30+-octave-stale BLA (`depth_lag 34`, every frame frozen and reprojected). The 91-cycle burn
+  that motivated it was the truncation loop, not the trigger.
+
+  **Result** (`--livetest validation/e72-handoff.toml --size 480x270`, `FRACTADYNE_NO_PREFETCH=1`,
+  i.e. reactive path only): **6/6 ok**, every hold serving its own ask — e55 258,193 · e61 408,193
+  · e63 508,193 · e72 1,208,193 · e82 2,008,193, all 0–1 ms stale. Before: e82 FAIL at 100% black
+  (gate off) / warn at 42.7 s stale (gate on). Gates: selftest 113/113 + 17/17 goldens,
+  `--bench-matrix` 0 algorithmic drift.
+
+  #### A second defect the fix exposed: a stale build CLOBBERING a better reference
+
+  With the glide rebuilds restored, the grand tour drifted at `hold-e94` (orbit 4,008,193 →
+  3,631,055) — and the trace shows why, in two lines 97 ms apart:
+
+  ```
+  +448.012s  hold-prefetch install: len=4008193 prec=507 (window 321.0..331.0s)
+  +448.109s  install v0: len=2008236 partial=true prec=504 (was len=4008193 partial=true)
+  ```
+
+  The hold's own reference — spawned at tour 245 s, 190 seconds of bignum — installed, and an
+  in-flight REACTIVE build that had been spawned back when the cache held 2,008,235 samples landed
+  a tenth of a second later and threw it away. Four builders (reactive, lookahead, hold prefetch,
+  cold start) write one cache with no ordering rule at all, so this was always possible; the
+  beta.97 suppression had merely made the reactive builder silent during glides, hiding it.
+  **Fixed with a staleness stamp**: every build carries the view's `orbit_id` as of its SPAWN, and
+  `install_recompute` drops a result that is both older than the installed reference and shorter
+  than it. Older-but-longer still installs (a deep extension overtaking a small refresh is the
+  point of the pipeline), and a zoom-out re-anchor is always younger than what it replaces, so
+  legitimate shrinking is untouched.
+
+  ⚠**The repro was not testing what it said it was.** `validation/e72-handoff.toml` set
+  `[playback] settled = true` — not a key this schema has (`pace = "settled"` is), so the loader
+  ignored it and every measurement taken on that file ran at the DEFAULT `adaptive` pace, without
+  the clock-hold its own comment claims parity with. Corrected to `pace`/`settle_timeout`. The
+  script loader ignores unknown keys by design (forward compat); a silently-ignored misspelling in
+  a VALIDATION script is a different matter — a warning line on unknown `[playback]` keys is worth
+  considering.
 
 - [ ] ⭐**The F3 corpus gate is RED — but it is a COLOUR-MAPPING change, not a maths regression**
   (found + characterized 2026-08-14). `generate_corpus.py --check --only 01,02,03` gives **0/3

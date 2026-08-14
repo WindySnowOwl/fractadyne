@@ -24,6 +24,31 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **A deep view no longer throws away the reference it is rendering with** (beta.98). Zooming or
+  panning at extreme depth could leave the picture blank: a reference rebuild that happened while
+  the view was moving was capped to a short "keep motion cheap" length, and once that cap sat below
+  the reference already on screen, any rebuild that could not simply extend the cached orbit came
+  back **shorter** — measured at 2e82×, a 1,208,193-sample reference replaced by a 256,001-sample
+  one, and the view that arrived a moment later rendered **100% black**. A moving view may now
+  decline to lengthen its reference, but never shortens it; growth still waits for the view to
+  settle, so a dive costs no more than before. This also lets the expensive precision re-anchor
+  (every ~128 octaves of zoom, the cached orbit's accuracy margin runs out and the reference must be
+  rebuilt from scratch) happen during the descent, where there is time for it, instead of at the
+  moment the camera stops. Same 6-minute deep-zoom validation script, reference pipeline only: five
+  deep stops that previously landed on a stale or truncated reference now each render their own,
+  and the run finishes 50 seconds sooner.
+  - Supersedes beta.97's fix below, which is reverted with it: skipping those "futile" rebuilds was
+    treating a symptom of the truncation, and it cost the descent its up-to-date approximation
+    tables (frozen, reprojected frames all the way down).
+  - **A finished reference no longer overwrites a better one that landed while it was building.**
+    Four separate builders feed one cache, and a deep build runs for minutes: measured at 6.5e94×,
+    a reference that took 190 seconds installed and was thrown away 97 milliseconds later by an
+    older, half-as-long build that had been in flight the whole time. Results now carry the
+    reference generation they were spawned against, and a result that is both older and shorter
+    than what is already installed is dropped.
+  - New `FRACTADYNE_NO_PREFETCH=1` diagnostic: play a tour with its reference lookahead disabled, so
+    the live path is exercised the way an interactive viewer exercises it. The failure above was
+    invisible for three attempts because the lookahead kept papering over it.
 - **A deep hold no longer burns ~70 seconds rebuilding a table that cannot change** (beta.97). At a
   deep view whose reference came back *partial*, the renderer would notice its bilinear-approximation
   table had drifted out of range, rebuild it — and rebuild the identical table, because the fix it
