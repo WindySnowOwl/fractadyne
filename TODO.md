@@ -301,10 +301,32 @@ Mockups: [design/mockups/](design/mockups/).
   device/pipeline creation + 46 s render) vs 2.1 s on Vulkan, reproducible across five runs and
   both build profiles, with identical escape counters (so it is cost, not correctness). Almost
   certainly naga→HLSL + FXC/DXC compiling a large multi-entry-point module per pipeline.**
-  Remaining follow-ups: (b) a NON-NVIDIA data point is THE decisive experiment and is now the
-  only one left (AMD RX 6800 XT planned for the Linux box; Mesa/RADV compiles SPIR-V through ACO,
-  an independent stack expected to honour IEEE semantics) — `--gputest` runs headless over SSH,
-  so it is one command;
+  ⭐⭐**2026-08-14, ANSWERED — AMD RX 6800 XT (Windows) PRESERVES the error-free transforms.
+  Our arithmetic is correct; NVIDIA's graphics compiler is the outlier.** On AMD's Vulkan
+  (proprietary driver 26.7.1) and OpenGL paths, `two_sum`, `two_prod` AND the bitcast-armored
+  `two_sum` all come back **exact**, and `df_add` lands at **2.64e-15** with `fe_add` at 8.01e-15
+  — i.e. ~2⁻⁴⁸, genuine double-float precision, against ~9.4e-8 (pure f32) on every NVIDIA
+  backend. That is the proof the whole investigation needed: the WGSL is right, and df32 is real
+  on hardware whose compiler honours IEEE semantics.
+  ⚠**AMD's DX12 path is broken too, but DIFFERENTLY: `two_prod` fails 256/256** (residual exactly
+  0 ⇒ `fma(a,b,-p)` is NOT being fused, so the product's error term vanishes), plus the same
+  reassociation as NVIDIA. So DX12 is unusable on both vendors, for two distinct reasons — more
+  support for the beta.89 backend pin.
+  ⚠**OPEN, and do not report as settled: on AMD Vulkan/GL six families still fail** — `df_mul`
+  5.45e-8, `df_div` 9.30e-8, `c_sqr` 5.74e-8, `fe_mul` 4.42e-8, and both accumulations — all at
+  f32 magnitude, on the same stack where the EFTs are exact. **My first explanation was wrong and
+  is retracted**: I suspected the harness feeds unnormalized df32 pairs (`gt_df` builds `lo` with
+  a random exponent, measured up to **52.8×** larger than `ulp(hi)/2`, which df_mul's error
+  analysis forbids). A CPU mirror with exact f32 semantics says that flaw is real but far too
+  small to matter — it takes a correct implementation to 8.64e-13, over the 2.3e-13 tolerance but
+  **63,000× short of AMD's 5.45e-8**. So two separate things to do: (i) fix the harness anyway —
+  normalize `gt_df` output (or widen the multiplicative tolerances), since a test that fails a
+  correct implementation is a bad test; (ii) then find what actually costs df_mul its low limb on
+  AMD while `two_prod` is exact. Prime suspect: **`quick_two_sum` is never tested in isolation**
+  and has exactly the foldable shape (`e = b - ((a+b) - a)`); df_mul depends on it. (Though note
+  `df_add` uses it twice and PASSES, which argues against a simple fold — resolve before
+  concluding.)
+  Remaining follow-ups: (b) ✅DONE (above);
   (c) upstream: ask whether naga can emit SPIR-V `NoContraction` / HLSL `precise` (check the
   wgpu tracker first, file if absent) — note NoContraction alone bars fma contraction, not
   reassociation, so this may need a spec-level answer; (d) if any stack preserves EFTs, weigh

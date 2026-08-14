@@ -24,6 +24,19 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **`--gputest` gains a `quick_two_sum` probe, and stops feeding itself invalid inputs**
+  (beta.91). The AMD RX 6800 XT result (Vulkan/OpenGL preserve the error-free transforms exactly,
+  proving the shader arithmetic is correct and NVIDIA's compiler is the outlier) left one thing
+  unexplained: on that same stack `df_mul`, `df_div`, `c_sqr` and `fe_mul` were still only
+  f32-accurate. `quick_two_sum` — the *other* error-free transform, which all of those end in —
+  was never tested in isolation, and its shape `e = b - ((a+b) - a)` is even easier to fold than
+  `two_sum`'s. It now has its own row, with inputs ordered by magnitude since the algorithm
+  requires `|a| >= |b|`. Separately, the harness built its double-float inputs with a
+  fixed-band low limb, producing pairs up to **52.8× outside** the `|lo| <= ulp(hi)/2` invariant
+  that `df_mul`'s error analysis assumes — enough to fail a *correct* implementation (measured on
+  a CPU mirror: 8.64e-13 against a 2.3e-13 tolerance). Inputs are now normalized by construction,
+  using integer/bit math rather than an error-free transform, so a machine that folds EFTs can't
+  end up measured on different inputs than the CPU oracle uses.
 - **The "hardware-dependent deep view" was largely the test harness racing itself** (beta.90).
   `--uitest` screenshots a live band once the reference-orbit length holds steady for 700 ms. But
   the reference build is progressive: it installs an iteration-capped coarse preview first and

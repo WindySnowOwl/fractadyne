@@ -1764,9 +1764,18 @@ fn gt_f32(seed: u32, emin: i32, espan: u32) -> f32 {
     let sign = (gt_hash(seed ^ 0x85EBCA6Bu) & 1u) << 31u;
     return bitcast<f32>(sign | (eb << 23u) | mant);
 }
-// A df32 pair: lo sits ~2^-26 under hi's band, mirroring a normalized double-f32.
+// A NORMALIZED df32 pair. `lo`'s exponent is derived from `hi`'s ACTUAL exponent so that
+// |lo| <= ulp(hi)/2 — the invariant every df32 value in the renderer satisfies, and which
+// df_mul/df_div's error analysis assumes. The first version of this drew lo from a fixed band
+// and produced pairs with |lo| up to 52.8x over the limit, which makes a CORRECT df_mul look
+// wrong (measured: 8.64e-13 against a 2.3e-13 tolerance) — a test that fails good code.
+// Built from integer/bit manipulation only, never an error-free transform: normalizing via
+// quick_two_sum would make the INPUTS depend on the very property under test, so a machine that
+// folds EFTs would silently be measured on different inputs than the CPU oracle uses.
 fn gt_df(seed: u32, emin: i32, espan: u32) -> vec2<f32> {
-    return vec2<f32>(gt_f32(seed, emin, espan), gt_f32(seed ^ 0xDEADBEEFu, emin - 26, espan));
+    let hi = gt_f32(seed, emin, espan);
+    let he = i32((bitcast<u32>(hi) >> 23u) & 0xFFu) - 127;
+    return vec2<f32>(hi, gt_f32(seed ^ 0xDEADBEEFu, he - 25, 1u));
 }
 
 // Identity that survives algebraic optimizers: a round-trip through the integer domain.
@@ -1846,6 +1855,19 @@ fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         case 10u: {
             // two_sum with bitcast armor — the reassociation discriminator (see gt_opaque).
             let r = gt_two_sum_armored(a, b);
+            return vec4<f32>(r.x, r.y, 0.0, 0.0);
+        }
+        case 11u: {
+            // quick_two_sum ISOLATED. It is the other error-free transform the renderer leans on
+            // — df_mul, df_div and df_add all end in it — and it was untested here while two_sum
+            // was covered, which left a gap exactly where the 2026-08-14 AMD result is
+            // unexplained (EFTs exact, yet df_mul only f32-accurate). Its shape
+            // `e = b - ((a+b) - a)` is even easier to fold than two_sum's. Inputs are ORDERED by
+            // magnitude because the algorithm requires |a| >= |b| — feeding it unordered pairs
+            // would make a correct implementation look broken.
+            let hi = select(b, a, abs(a) >= abs(b));
+            let lo = select(a, b, abs(a) >= abs(b));
+            let r = quick_two_sum(hi, lo);
             return vec4<f32>(r.x, r.y, 0.0, 0.0);
         }
         default: { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }

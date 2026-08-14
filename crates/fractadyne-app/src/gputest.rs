@@ -27,8 +27,12 @@ fn gt_f32(seed: u32, emin: i32, espan: u32) -> f32 {
     let sign = (gt_hash(seed ^ 0x85EB_CA6B) & 1) << 31;
     f32::from_bits(sign | (eb << 23) | mant)
 }
+/// Mirrors WGSL `gt_df`: a NORMALIZED pair, `lo`'s exponent derived from `hi`'s actual exponent
+/// so `|lo| <= ulp(hi)/2` (integer/bit math only — see the WGSL for why no EFT is used here).
 fn gt_df(seed: u32, emin: i32, espan: u32) -> (f32, f32) {
-    (gt_f32(seed, emin, espan), gt_f32(seed ^ 0xDEAD_BEEF, emin - 26, espan))
+    let hi = gt_f32(seed, emin, espan);
+    let he = ((hi.to_bits() >> 23) & 0xFF) as i32 - 127;
+    (hi, gt_f32(seed ^ 0xDEAD_BEEF, he - 25, 1))
 }
 fn df64(d: (f32, f32)) -> f64 {
     d.0 as f64 + d.1 as f64
@@ -61,13 +65,16 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
         (0u32, "two_sum (exact EFT)"),
         (1u32, "two_prod (exact EFT — fma canary)"),
         (10u32, "two_sum, bitcast-armored (reassociation discriminator)"),
+        (11u32, "quick_two_sum (exact EFT — df_mul/df_div depend on it)"),
     ] {
         let mut fails = 0u32;
         let mut detail = String::new();
         for ix in 0..w {
             let s = ix + 100003 * op;
-            let a = gt_f32(s * 2 + 1, -8, 16);
-            let b = gt_f32(s * 2 + 2, -8, 16);
+            let (mut a, mut b) = (gt_f32(s * 2 + 1, -8, 16), gt_f32(s * 2 + 2, -8, 16));
+            if op == 11 && a.abs() < b.abs() {
+                std::mem::swap(&mut a, &mut b); // quick_two_sum requires |a| >= |b|
+            }
             let got = texel(ix, op);
             let (es, ee) = if op == 1 {
                 let fp = a * b;
