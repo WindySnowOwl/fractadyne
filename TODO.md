@@ -397,6 +397,34 @@ Mockups: [design/mockups/](design/mockups/).
   would pass 12/17 and correctly flag the deep multibrots as genuinely different. ⭐**Best way to
   learn which output is RIGHT: run the F3 corpus check on AMD** — it is a cross-implementation
   oracle, so it can say whether AMD matches Fraktaler-3 better than NVIDIA does.
+  ⭐⭐**MEASURED 2026-08-14 — what the precision difference is actually WORTH, in pixels.** Same
+  binary (beta.92), same pinned settings, one variable (GPU), all 20 corpus locations rendered on
+  both the 3080 and the 6800 XT via the corpus kit. **Overall meanΔ 2.8/255 (~1%); no location
+  byte-identical; largest is `06-seahorse-1e24` at meanΔ 12.9 with 43% of pixels differing** — a
+  df32-perturbation location, exactly where working EFTs should matter most. By band: direct
+  (`01-home`) 0.07 = effectively identical (at 1.3× plain f32 has precision to spare, so there is
+  nothing for extra bits to fix); perturbation df32 (1e4–1e24) 1.4–12.9; perturbation floatexp
+  (1e30–1e1105) 0.04–7.4, with the DEEPEST location differing *less* (1.1) than mid-range ones,
+  which fits floatexp carrying its own exponent and leaning less on the low limb.
+  ⚠**This measures DIVERGENCE, not correctness** — it cannot say which GPU is right. The belief
+  that AMD is the more accurate one rests on the gputest evidence (exact EFTs, df_add 3.35e-15),
+  not on these images. ⚠The "structural vs recolour" spread statistic is unreliable below
+  meanΔ ~0.1 (a few outlier pixels dominate it); treat `01-home` and `13-deep-3.7e141` as "a few
+  pixels moved", not as signal.
+  ⭐**Design consequence: this argues for RESTRAINT.** ~1% mean, concentrated in one band, one
+  location at 13 — enough to justify DETECTING the capability and using it where it is free;
+  not enough to justify vendor tuning tables or per-vendor golden sets.
+  ⛔**The beta.92 dissection REFUTED the folding hypothesis for AMD, and exposed a limit in my
+  own probe.** Results: NVIDIA/Vulkan zeroes the final `quick_two_sum` residual 256/256 with p.y
+  and e intact (a complete account of its df_mul loss); AMD **DX12** zeroes BOTH p.y and the
+  quick_two_sum residual 256/256 (consistent with its two_prod failing 256/256); AMD
+  **Vulkan/GL zero NOTHING — the row PASSES — yet df_mul still fails at 5.45e-8.** Verified the
+  probe tests the right code: the row reimplements `df_mul` character-for-character. ⚠**But the
+  row only checks whether each intermediate is ZERO, not whether it is CORRECT**, so an
+  intermediate that survives but is computed imprecisely passes silently — which is exactly the
+  remaining case. **NEXT: make row 12 report each intermediate's relative error vs the CPU
+  oracle instead of a zero count**; that names the inaccurate step the way the zero count named
+  the folded one.
   Remaining follow-ups: (b) ✅DONE (above);
   (c) upstream: ask whether naga can emit SPIR-V `NoContraction` / HLSL `precise` (check the
   wgpu tracker first, file if absent) — note NoContraction alone bars fma contraction, not
