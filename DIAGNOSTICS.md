@@ -101,6 +101,46 @@ exercise means dead code (exactly how the v0.2.6 NaN-marker regression would hav
 | `--benchmark-std` | Standardized dive benchmark with report |
 | `--render --out X …` | One-shot render; prints manifest + progress; non-zero exit on failure |
 
+## Validating a new machine / GPU (the B6 battery)
+
+Run **one** command on the machine under test; it produces a single bundle to send back.
+
+```powershell
+# Windows                                    # Linux (works over bare SSH)
+.\scripts\gpu-validate.ps1 -Label rx6800xt-windows    ./scripts/gpu-validate.sh --label rx6800xt-linux
+.\scripts\gpu-validate.ps1 -Label foo -Quick          ./scripts/gpu-validate.sh --label foo --quick
+.\scripts\gpu-validate.ps1 -Label foo -Backend dx12   ./scripts/gpu-validate.sh --label foo --backend gl
+```
+
+Both scripts run the same six steps in the same order and write the same file names, so two
+machines' bundles diff directly: `--gputest` (arithmetic per backend), `--selftest` (suite +
+goldens), `--selftest-filter live-res` (the settled-resolution invariant), `--bench-matrix`
+(determinism), `--livetest` (live vs offline truth) and `--uitest` (screenshots). `-Quick` drops
+the last two, taking the run from ~15 minutes to ~3. They find the binary beside themselves
+(extracted release zip) or in `target/release`, so testers need no repo and no toolchain.
+
+Three properties worth preserving if you edit them:
+
+- **Hermetic.** Everything runs against a private config dir inside the bundle
+  (`FRACTADYNE_CONFIG_DIR`), so the tester's own session is untouched *and* every machine renders
+  with identical settings. Without this, results are not comparable — the F3 corpus check inherits
+  the developer's live session and its baselines drifted into meaninglessness as a result.
+- **A failing step never aborts the battery.** A card can fail the goldens and still pass the
+  live-resolution check; you want both. Hence `set -uo pipefail` (not `-e`) and
+  `$ErrorActionPreference = "Continue"` — with `Stop`, the app's stderr banner alone kills the run.
+- **ASCII-only in the `.ps1`.** Windows PowerShell 5.1 reads scripts as ANSI unless they carry a
+  UTF-8 BOM, so an em-dash becomes a parse error on a stranger's machine.
+
+**Reading the results** — `summary.txt` leads with the step/exit/duration table and then explains
+which failures are expected off the reference card. The essentials: `live-res` must pass
+everywhere; the 113 non-golden checks should pass everywhere; the 17 goldens are compared
+*exactly* and were blessed on an RTX 3080, so cross-vendor deltas there are expected rather than
+bugs (judge by count and magnitude); `bench-matrix` timings are meaningless across machines but
+exit 2 means algorithmic drift; `livetest` compares live against offline *on that machine*, so its
+FAILs are meaningful even on unfamiliar hardware while its "drift" lines are not.
+`adapter.txt` records what the app itself resolved — adapter, backend, `TIMESTAMP_QUERY` — which
+is the "record adapter and resolved tunables per card" half of B6.
+
 ## Canonical extreme-zoom diagnostic location
 
 The Mandelbrot **real-axis tip** (`c = -2` exactly) at **~1e21000×** (`units_per_pixel_e = -69770`,
