@@ -24,6 +24,22 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **Tours can script the dual-view split, and the orbit overlay stops following your mouse**
+  (beta.100, both user-reported).
+  - **`dual_split` keyframe field**: the fraction of the width the Mandelbrot panel takes — the same
+    thing dragging the divider sets — interpolated between keyframes, so a tour can hand the Julia
+    panel more room as it moves into it. The offline tour renderer honours it too; it previously
+    hardcoded a 50/50 split, which meant a rendered tour could not match the playback it was
+    rendering. Your own divider position is restored when the tour ends.
+  - **The script now outranks the cursor during playback.** The orbit overlay picked the point under
+    the mouse and fell back to the scripted point only when the pointer was off the canvas — so
+    through any tour watched with the mouse resting over the fractal, the overlay followed the
+    mouse instead of the presentation.
+  - **The grand tour demonstrates both.** Its dual chapter opens even and slides to a two-thirds
+    Julia panel as c travels along the boundary; its orbit chapter is now a three-stop story —
+    inside the set the orbit closes into a 3-cycle, on the boundary it never cycles and never
+    escapes, outside it spirals out and leaves the frame — with the point gliding between them so
+    the path visibly reorganises as c crosses the boundary.
 - **The Fraktaler-3 comparison corpus is reproducible again** (beta.99). Its regression check had
   been red since July on every location including the simplest one, and the reason was the harness,
   not the renderer: corpus renders patched a handful of settings into the developer's *live*

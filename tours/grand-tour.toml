@@ -278,28 +278,67 @@ location = "home"
 minimap = false
 max_iter = 2000
 dual = true
+# Open with the panels even, then hand the Julia side more room below — `dual_split` is the
+# fraction of the width the LEFT (Mandelbrot) panel takes, the same number the divider drag sets,
+# and it INTERPOLATES, so the divider slides with the glide instead of jumping at the keyframe.
+dual_split = 0.5
 julia_re = -0.122561
 julia_im = 0.744862
 hold = 5
 
-# Slide c along the boundary — the Julia set morphs continuously with it.
+# Slide c along the boundary — the Julia set morphs continuously with it — and widen the Julia
+# panel to two thirds as we move into it, which is what a viewer would drag the divider to do.
 [[keyframe]]
 id = "dual-slide"
 t = 111
+dual_split = 0.34
 julia_re = -0.743643
 julia_im = 0.131825
 ease = "linear"
 hold = 4
 
-# Orbit overlay: the actual path of z under iteration, drawn over the set.
+# Orbit overlay: the actual path of z under iteration, drawn over the set. The point MOVES from
+# here to the Burning Ship keyframe, and the three stops are the whole of what the set means:
+# inside -> on the boundary -> outside. The orbit point interpolates between keyframes, so the
+# path visibly reorganises itself as c crosses the boundary rather than cutting between stills.
+# (The intermediate keyframes deliberately carry hold = 0: a hold is what the livetest samples as
+# a checkpoint, and these exist to be travelled through, not stopped at.)
+#
+# Stop 1 — INSIDE the period-3 bulb: the orbit falls onto a 3-cycle and stays there forever.
+# That closed loop is what "c is in the set" looks like.
 [[keyframe]]
 id = "orbit-overlay"
 t = 119
 dual = false
 orbits = true
+orbit_re = -0.12
+orbit_im = 0.75
+hold = 2
+
+# Stop 2 — ON the boundary (the seahorse-valley point this tour pins its Julia set to): the orbit
+# never settles into a cycle and never escapes, so it fills a dense tangle. Every deep-zoom
+# location in the last chapter lives on this knife edge.
+# ⚠Each stop HOLDS. A waypoint with hold = 0 is travelled through, not seen — the first cut put
+# the escape stop 1.4 s before the Burning Ship keyframe with no hold, and the camera was already
+# flying to the next location by the time it rendered.
+[[keyframe]]
+id = "orbit-boundary"
+t = 122
 orbit_re = -0.743643
 orbit_im = 0.131825
-hold = 5
+ease = "linear"
+hold = 1.5
+
+# Stop 3 — OUTSIDE: the orbit spirals out and escapes in a handful of steps. How FAST it escapes
+# is the escape count, which is the number every colour in every other frame of this tour is
+# drawn from.
+[[keyframe]]
+id = "orbit-escape"
+t = 124.5
+orbit_re = 0.35
+orbit_im = 0.42
+ease = "linear"
+hold = 1.5
 
 # A different family entirely — the escape-time engine is not Mandelbrot-only.
 [[keyframe]]
@@ -475,9 +514,24 @@ t = 105.5
 secs = 5.0
 [[annotation]]
 kind = "caption"
-text = "Orbit overlay — the path of z under iteration"
-t = 119.5
-secs = 4.5
+text = "Scripts set the split too — the Julia panel takes the room it needs"
+t = 112.0
+secs = 4.0
+[[annotation]]
+kind = "caption"
+text = "Orbit overlay: inside, z settles into a 3-cycle and never leaves"
+t = 119.3
+secs = 2.2
+[[annotation]]
+kind = "caption"
+text = "On the boundary: never a cycle, never an escape"
+t = 122.2
+secs = 1.8
+[[annotation]]
+kind = "caption"
+text = "Outside: it escapes — and how fast is the colour"
+t = 124.7
+secs = 1.8
 [[annotation]]
 kind = "caption"
 text = "Ten fractal families share the same deep-zoom engine"

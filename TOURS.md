@@ -110,6 +110,7 @@ A camera waypoint. The view eases from the previous keyframe to this one, ARRIVI
 | `fractal` | string | (inherit) | Fractal family name (e.g. "Mandelbrot", "Burning Ship"). |
 | `julia` | bool | (inherit) | Julia mode for the family. |
 | `dual` | bool | (inherit) | Show the linked dual view (Mandelbrot + its Julia set side by side). |
+| `dual_split` | float | (inherit) | Fraction of the width given to the LEFT (Mandelbrot) panel of the dual view, 0.15..0.85 — what dragging the divider sets. Interpolated between keyframes; the viewer's own split is restored when the tour ends. |
 | `julia_re` | float | (inherit) | Pin the Julia parameter c (real part). Both julia_re and julia_im are required; interpolated between keyframes. |
 | `julia_im` | float | (inherit) | Julia parameter c (imaginary part). |
 | `orbits` | bool | (inherit) | Overlay the escape-time orbit (the path of z under iteration). |

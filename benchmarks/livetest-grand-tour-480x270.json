@@ -1,8 +1,8 @@
 {
-  "version": "0.2.40-beta.80 (build 1468)",
+  "version": "0.2.40-beta.100 (build 1577)",
   "gpu": "NVIDIA GeForce RTX 3080",
-  "utc": "2026-08-13 12:17:09 UTC",
-  "tour": "tours\\grand-tour.toml",
+  "utc": "2026-08-14 23:29:48 UTC",
+  "tour": "tours/grand-tour.toml",
   "size": [
     480,
     270
@@ -38,8 +38,8 @@
     },
     "back-out-1": {
       "verdict": "ok",
-      "gpu_iter": 2001,
-      "eff_iter": 2001,
+      "gpu_iter": 2000,
+      "eff_iter": 2000,
       "boost": 1.0,
       "orbit_len": 3090,
       "partial": false,
@@ -47,8 +47,8 @@
         480,
         270
       ],
-      "live_black": 0.09450617283950617,
-      "truth_black": 0.09450617283950617
+      "live_black": 0.09416666666666666,
+      "truth_black": 0.09416666666666666
     },
     "back-out-2": {
       "verdict": "ok",
@@ -198,11 +198,11 @@
       "orbit_len": 508193,
       "partial": true,
       "res": [
-        395,
-        222
+        461,
+        259
       ],
-      "live_black": 0.0149161820047896,
-      "truth_black": 0.0149161820047896
+      "live_black": 0.014849370597743699,
+      "truth_black": 0.014849370597743699
     },
     "hold-e72": {
       "verdict": "ok",
@@ -212,8 +212,8 @@
       "orbit_len": 1208193,
       "partial": true,
       "res": [
-        295,
-        166
+        298,
+        167
       ],
       "live_black": 0.0,
       "truth_black": 0.0
@@ -226,8 +226,8 @@
       "orbit_len": 2008193,
       "partial": true,
       "res": [
-        24,
-        16
+        230,
+        129
       ],
       "live_black": 0.0,
       "truth_black": 0.0
@@ -240,18 +240,46 @@
       "orbit_len": 4008193,
       "partial": true,
       "res": [
-        16,
-        16
+        163,
+        91
       ],
-      "live_black": 0.00390625,
-      "truth_black": 0.00390625
+      "live_black": 0.002831524303916942,
+      "truth_black": 0.002831524303916942
     },
     "open": {
       "verdict": "ok",
       "gpu_iter": 2000,
       "eff_iter": 2000,
       "boost": 1.0,
-      "orbit_len": 0,
+      "orbit_len": 3318566,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.09416666666666666,
+      "truth_black": 0.09416666666666666
+    },
+    "orbit-boundary": {
+      "verdict": "ok",
+      "gpu_iter": 2000,
+      "eff_iter": 2000,
+      "boost": 1.0,
+      "orbit_len": 3090,
+      "partial": false,
+      "res": [
+        480,
+        270
+      ],
+      "live_black": 0.09416666666666666,
+      "truth_black": 0.09416666666666666
+    },
+    "orbit-escape": {
+      "verdict": "ok",
+      "gpu_iter": 2000,
+      "eff_iter": 2000,
+      "boost": 1.0,
+      "orbit_len": 3090,
       "partial": false,
       "res": [
         480,
@@ -279,7 +307,7 @@
       "gpu_iter": 4000,
       "eff_iter": 4000,
       "boost": 1.0,
-      "orbit_len": 0,
+      "orbit_len": 3318566,
       "partial": false,
       "res": [
         480,

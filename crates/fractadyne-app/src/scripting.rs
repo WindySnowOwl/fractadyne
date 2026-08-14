@@ -522,6 +522,12 @@ struct KeyframeFile {
     /// Show the linked dual view (Mandelbrot + its Julia set side by side).
     #[serde(default)]
     dual: Option<bool>,
+    /// Fraction of the width given to the LEFT (Mandelbrot) panel of the dual view, 0.15..0.85 —
+    /// the same quantity the viewer drags the divider to set. INTERPOLATED along a glide, so a
+    /// tour can widen the Julia panel while it explores it. Restored to the viewer's own divider
+    /// position when the tour ends.
+    #[serde(default)]
+    dual_split: Option<f32>,
     /// Pin the Julia set's parameter `c` (the Mandelbrot point whose Julia set to show). Both
     /// components must be given to take effect.
     #[serde(default)]
@@ -663,6 +669,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "fractal", ty: "string", default: "(inherit)", doc: "Fractal family name (e.g. \"Mandelbrot\", \"Burning Ship\")." },
             SchemaField { name: "julia", ty: "bool", default: "(inherit)", doc: "Julia mode for the family." },
             SchemaField { name: "dual", ty: "bool", default: "(inherit)", doc: "Show the linked dual view (Mandelbrot + its Julia set side by side)." },
+            SchemaField { name: "dual_split", ty: "float", default: "(inherit)", doc: "Fraction of the width given to the LEFT (Mandelbrot) panel of the dual view, 0.15..0.85 — what dragging the divider sets. Interpolated between keyframes; the viewer's own split is restored when the tour ends." },
             SchemaField { name: "julia_re", ty: "float", default: "(inherit)", doc: "Pin the Julia parameter c (real part). Both julia_re and julia_im are required; interpolated between keyframes." },
             SchemaField { name: "julia_im", ty: "float", default: "(inherit)", doc: "Julia parameter c (imaginary part)." },
             SchemaField { name: "orbits", ty: "bool", default: "(inherit)", doc: "Overlay the escape-time orbit (the path of z under iteration)." },
@@ -1191,6 +1198,9 @@ pub(crate) struct PlaybackRestore {
     /// own settings, handed back when the tour ends like the budget and palette above.
     pub(crate) minimap: bool,
     pub(crate) show_orbits: bool,
+    /// The viewer's own dual-view divider position, handed back when the tour ends — a script that
+    /// widens the Julia panel is doing it for the presentation, not editing the session.
+    pub(crate) dual_split: f32,
 }
 
 /// A resolved chapter: `[start, end)` in tour seconds.
@@ -1216,6 +1226,9 @@ struct Kf {
     julia: bool,
     // Discrete (non-interpolated) state, inherited forward.
     dual: bool,
+    /// Dual-view split fraction (left panel), inherited forward and INTERPOLATED along a glide —
+    /// `None` until a keyframe states one, which leaves the viewer's own divider alone.
+    dual_split: Option<f32>,
     julia_c: Option<(f64, f64)>,
     orbits: bool,
     minimap: bool,
@@ -1387,6 +1400,9 @@ pub(crate) struct Sampled {
     pub(crate) fractal: FractalKind,
     pub(crate) julia: bool,
     pub(crate) dual: bool,
+    /// Dual-view split (left-panel fraction) when the script states one; `None` = leave the
+    /// viewer's divider where it is.
+    pub(crate) dual_split: Option<f32>,
     pub(crate) julia_c: Option<(f64, f64)>,
     pub(crate) orbits: bool,
     pub(crate) minimap: bool,
@@ -1518,13 +1534,14 @@ impl Playback {
             }
         }
         let a = &self.kfs[i];
-        let mk = |cx, cy, lm, julia_c, orbit, max_iter, palette| Sampled {
+        let mk = |cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split| Sampled {
             cx,
             cy,
             logmag: lm,
             fractal: a.fractal,
             julia: a.julia,
             dual: a.dual,
+            dual_split,
             julia_c,
             orbits: a.orbits,
             minimap: a.minimap,
@@ -1538,7 +1555,8 @@ impl Playback {
                 TourPalette::Preset(i) => PaletteApply::Preset(*i),
                 TourPalette::Stops(s) => PaletteApply::Stops(s.clone()),
             });
-            return mk(a.cx.clone(), a.cy.clone(), a.logmag, a.julia_c, a.orbit, a.max_iter, pal);
+            return mk(a.cx.clone(), a.cy.clone(), a.logmag, a.julia_c, a.orbit, a.max_iter, pal,
+                      a.dual_split);
         }
         // Gliding a → b over its move window, with b's easing.
         let b = &self.kfs[i + 1];
@@ -1558,6 +1576,12 @@ impl Playback {
         };
         let orbit = match (a.orbit, b.orbit) {
             (Some(oa), Some(ob)) => Some(lerp2(oa, ob)),
+            (x, _) => x,
+        };
+        // The dual split slides with the glide, so a tour can hand the Julia panel more room as it
+        // moves into it rather than snapping at the keyframe.
+        let dual_split = match (a.dual_split, b.dual_split) {
+            (Some(sa), Some(sb)) => Some(sa + (sb - sa) * ease as f32),
             (x, _) => x,
         };
         // Iteration budget: interpolate GEOMETRICALLY (in log space) — iteration cost grows with
@@ -1609,7 +1633,7 @@ impl Playback {
                 fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
             )
         };
-        mk(cx, cy, lm, julia_c, orbit, max_iter, palette)
+        mk(cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split)
     }
 
     /// Is the camera stationary at time `e` — inside a keyframe's hold, or past the final one?
@@ -2208,6 +2232,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
     // State inherited forward until a keyframe changes it.
     let mut fractal = FractalKind::Mandelbrot;
     let (mut julia, mut dual, mut julia_c, mut orbits, mut orbit) = (false, false, None, false, None);
+    let mut dual_split: Option<f32> = None;
     let mut minimap = false;
     let (mut max_iter, mut palette): (Option<u32>, Option<usize>) = (None, None);
     for (i, k) in sf.keyframe.iter().enumerate() {
@@ -2283,6 +2308,10 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         if let Some(d) = k.dual {
             dual = d;
         }
+        if let Some(s) = k.dual_split {
+            // Same bounds the divider drag enforces (`ui/central.rs`): neither panel may collapse.
+            dual_split = Some(s.clamp(crate::DUAL_SPLIT_MIN, crate::DUAL_SPLIT_MAX));
+        }
         if let (Some(r), Some(i)) = (k.julia_re, k.julia_im) {
             julia_c = Some((r, i));
         }
@@ -2323,6 +2352,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             fractal,
             julia,
             dual,
+            dual_split,
             julia_c,
             orbits,
             minimap,
@@ -2583,6 +2613,7 @@ impl FractadyneApp {
             self.coloring.use_duotone = r.use_duotone;
             self.dialogs.minimap = r.minimap;
             self.anim.show_orbits = r.show_orbits;
+            self.dual_split = r.dual_split;
         }
     }
 
@@ -2648,6 +2679,7 @@ impl FractadyneApp {
                     use_duotone: self.coloring.use_duotone,
                     minimap: self.dialogs.minimap,
                     show_orbits: self.anim.show_orbits,
+                    dual_split: self.dual_split,
                 });
                 self.playback = Some(pb);
             }
@@ -3111,17 +3143,25 @@ impl FractadyneApp {
                     .map_err(|e| format!("frame {fi}: {e}"))
             };
             let (mut px, rw, rh) = if s.dual {
-                // Side-by-side: Mandelbrot (left) | its Julia set (right), each a half-width panel.
-                let half = (width / 2).max(1);
-                self.viewport = fractadyne_core::Viewport::new(half as f64, height as f64);
+                // Side-by-side: Mandelbrot (left) | its Julia set (right). The split follows the
+                // script's `dual_split` (what the divider sets live), defaulting to half — before
+                // this the offline renderer hardcoded `width / 2`, so a rendered tour could not
+                // match the playback it was rendering. The two panel widths must SUM to `width`
+                // (derive the right from the left, never round both) or an odd width silently
+                // loses or gains a column against the requested frame size.
+                let split = s.dual_split.unwrap_or(0.5)
+                    .clamp(crate::DUAL_SPLIT_MIN, crate::DUAL_SPLIT_MAX);
+                let lw = ((width as f32 * split).round() as u32).clamp(1, width.saturating_sub(1));
+                let rw_panel = width - lw;
+                self.viewport = fractadyne_core::Viewport::new(lw as f64, height as f64);
                 self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
-                let mut jvp = fractadyne_core::Viewport::new(half as f64, height as f64);
+                let mut jvp = fractadyne_core::Viewport::new(rw_panel as f64, height as f64);
                 jvp.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
                 jvp.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
                 jvp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.2 / height as f64);
                 jvp.precision = 64;
-                let mr = render(self, &self.viewport, false, half, fractadyne_gpu::Vignette::default())?;
-                let jr = render(self, &jvp, true, half, fractadyne_gpu::Vignette::default())?;
+                let mr = render(self, &self.viewport, false, lw, fractadyne_gpu::Vignette::default())?;
+                let jr = render(self, &jvp, true, rw_panel, fractadyne_gpu::Vignette::default())?;
                 let (w, h, p) = crate::stitch_side_by_side(&mr, &jr);
                 (p, w, h)
             } else {
@@ -3466,6 +3506,13 @@ impl FractadyneApp {
         if self.dual != s.dual {
             self.dual = s.dual;
             self.invalidate_refs();
+        }
+        // The panel split is presentation, not geometry: each panel re-lays-out at its new width
+        // and re-renders, but neither viewport's centre or zoom changes, so this must NOT
+        // invalidate references (that would rebuild a deep Mandelbrot orbit every frame of a
+        // sliding divider). The resize path already re-sizes the panels' textures.
+        if let Some(sp) = s.dual_split {
+            self.dual_split = sp;
         }
         if let Some(c) = s.julia_c {
             if self.julia_c != c {

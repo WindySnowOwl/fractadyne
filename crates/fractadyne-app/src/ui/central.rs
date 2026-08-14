@@ -28,7 +28,8 @@ impl FractadyneApp {
         // Split position from the persisted fraction; a small gap between the panels holds the
         // draggable separator (handled at the end of this fn, so it draws on top).
         const HANDLE_W: f32 = 6.0;
-        let mid = full.min.x + full.width() * self.dual_split.clamp(0.15, 0.85);
+        let mid = full.min.x
+            + full.width() * self.dual_split.clamp(crate::DUAL_SPLIT_MIN, crate::DUAL_SPLIT_MAX);
         let left = egui::Rect::from_min_max(full.min, egui::pos2(mid - HANDLE_W * 0.5, full.max.y));
         let right = egui::Rect::from_min_max(egui::pos2(mid + HANDLE_W * 0.5, full.min.y), full.max);
         let scroll = ctx.input(|i| i.smooth_scroll_delta.y) as f64;
@@ -144,9 +145,15 @@ impl FractadyneApp {
             }
         }
 
-        // Orbit overlay on the hovered panel — or, during a tour, a scripted point on the Mandelbrot.
+        // Orbit overlay on the hovered panel — or, during a tour, the SCRIPTED point.
+        // ⭐The script outranks the cursor while a tour plays. It used to be the other way round
+        // (hover wins, scripted point only as a fallback), which meant the scripted orbit was
+        // invisible whenever the viewer's mouse happened to rest over the fractal — i.e. where a
+        // mouse normally is — and the overlay followed the pointer through a presentation that had
+        // authored a specific point to look at. A tour is a presentation, not an interaction.
         if self.anim.show_orbits {
-            if let Some((p, r, is_julia)) = panel {
+            let hover_wins = !self.tour_playing();
+            if let (Some((p, r, is_julia)), true) = (panel, hover_wins) {
                 let l = p - r.min;
                 let vp = if is_julia {
                     &self.julia_viewport
@@ -183,7 +190,8 @@ impl FractadyneApp {
         let sep = ui.interact(handle, ui.id().with("dual_split"), egui::Sense::drag());
         if sep.dragged() {
             if let Some(p) = sep.interact_pointer_pos() {
-                self.dual_split = ((p.x - full.min.x) / full.width().max(1.0)).clamp(0.15, 0.85);
+                self.dual_split = ((p.x - full.min.x) / full.width().max(1.0))
+                    .clamp(crate::DUAL_SPLIT_MIN, crate::DUAL_SPLIT_MAX);
             }
         }
         if sep.hovered() || sep.dragged() {
@@ -891,8 +899,10 @@ impl FractadyneApp {
 
                 // Orbit overlay for the point under the cursor — or, during a tour, a scripted point.
                 if self.anim.show_orbits {
-                    let cpx = response
-                        .hover_pos()
+                    // ⭐Scripted point first while a tour plays — see the dual-view note above:
+                    // a resting mouse used to hijack the overlay for the whole presentation.
+                    let hover = if self.tour_playing() { None } else { response.hover_pos() };
+                    let cpx = hover
                         .map(|hp| {
                             let l = hp - rect.min;
                             (l.x as f64 * ppp, l.y as f64 * ppp)

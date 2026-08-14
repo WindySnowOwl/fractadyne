@@ -96,8 +96,17 @@ Ordered by how fast a stranger hits them.
 
 ### D — STRONGLY RECOMMENDED, not blocking
 
-- [ ] ⭐**The scripted orbit overlay is hijacked by the viewer's mouse, and no tour ever moves it**
-  (user, 2026-08-14). Two halves, both small:
+- [x] ✅**The scripted orbit overlay is hijacked by the viewer's mouse, and no tour ever moves it**
+  (user, 2026-08-14) — **FIXED beta.100**. The cursor branch in both `ui/central.rs` sites is now
+  gated on `!self.tour_playing()`, so a script's point wins for the length of a tour and a resting
+  mouse can no longer take over the presentation. The grand tour's orbit chapter was rewritten as
+  a three-stop narrative — INSIDE the period-3 bulb (the orbit closes into a clean 3-cycle), ON the
+  boundary (a dense tangle that neither cycles nor escapes), OUTSIDE (it spirals out and leaves the
+  frame) — with the point INTERPOLATED between them, so the path visibly reorganises as c crosses
+  the boundary. Verified in the OFFLINE twin (`stamp_orbit`) by rendering the chapter: all three
+  read exactly as intended. ⚠Each stop needed a `hold`: the first cut used `hold = 0` waypoints and
+  the camera was already flying to the next location by the time the escape stop rendered.
+  Original report:
   - **The cursor outranks the script.** `ui/central.rs` picks the orbit point as
     `response.hover_pos().or_else(|| self.anim.tour_orbit)` (single view; the dual path at the top
     of the same file is the same shape with the branches swapped) — so the scripted point is only
@@ -115,8 +124,18 @@ Ordered by how fast a stranger hits them.
     point that crawls, then an escaping point), which is the one overlay that explains what the
     picture MEANS. ⚠The offline twin (`stamp_orbit`) must show the same thing — the tour renders
     to video as well as playing live, and the two paths draw the orbit separately.
-- [ ] ⭐**Scripts cannot set the dual-view split; the offline renderer hardcodes 50/50** (user,
-  2026-08-14). `dual_split` exists as a live, drag-resizable session value (`main.rs`, clamped
+- [x] ✅**Scripts cannot set the dual-view split; the offline renderer hardcodes 50/50** (user,
+  2026-08-14) — **FIXED beta.100**. New interpolated `dual_split` keyframe field (left-panel
+  fraction, clamped to the same `DUAL_SPLIT_MIN..MAX` the divider drag uses — now one pair of
+  constants shared by the drag, the session restore and the script, so a script cannot reach a
+  state the viewer cannot drag back out of). Honoured in BOTH paths: live playback sets it per
+  frame (deliberately without invalidating references — the split is presentation, not geometry,
+  and rebuilding a deep orbit on every frame of a sliding divider would be a stall), and the
+  offline renderer derives the right panel from the left so the two widths always sum to the
+  requested frame width. Restored to the viewer's own divider on tour end via `PlaybackRestore`.
+  The grand tour's dual chapter opens even and slides to 0.34 as c moves, which is also the
+  regression test: rendering it offline shows the seam at 0.5 then two-thirds. `TOURS.md`
+  regenerated. Original report: `dual_split` exists as a live, drag-resizable session value (`main.rs`, clamped
   0.15..0.85 — the divider in `ui/central.rs`), but it is NOT in the keyframe schema, so a tour
   cannot say "give the Julia panel two thirds while we explore it". Worse, the offline tour
   renderer ignores the live value entirely: `scripting.rs` splits the frame at

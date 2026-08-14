@@ -693,6 +693,13 @@ const EASE_TAU: f64 = 0.15; // ease-in/out time constant (seconds)
 /// steps don't each trigger a full-AA render (which felt laggy).
 pub(crate) const SETTLE_DELAY: f64 = 0.18;
 
+/// Dual-view divider bounds: the fraction of the width the LEFT (Mandelbrot) panel may take.
+/// Neither panel may collapse — a zero-width panel still costs a render and shows nothing. The
+/// drag handle, the session restore, and the scripted `dual_split` keyframe field all clamp here,
+/// so a script cannot reach a state the viewer cannot drag back out of.
+pub(crate) const DUAL_SPLIT_MIN: f32 = 0.15;
+pub(crate) const DUAL_SPLIT_MAX: f32 = 0.85;
+
 /// Anti-alias supersampling for progressive-settle stage `frame`, ramping 1→2→4→… up to `target`.
 /// A settled view refines from an instant coarse frame to full AA over a few frames, rather than
 /// blocking on one expensive full-AA frame. `frame` is capped so the shift can't overflow.
@@ -2789,7 +2796,7 @@ impl FractadyneApp {
             click_zoom: s.click_zoom,
             julia_pin: None,
             dual: s.dual && fractal.supports_julia(),
-            dual_split: s.dual_split.clamp(0.15, 0.85),
+            dual_split: s.dual_split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX),
             fullscreen: false,
             menu_bar_id: None,
             julia_viewport: {
@@ -5938,6 +5945,7 @@ impl eframe::App for FractadyneApp {
                             use_duotone: self.coloring.use_duotone,
                             minimap: self.dialogs.minimap,
                             show_orbits: self.anim.show_orbits,
+                            dual_split: self.dual_split,
                         });
                         self.playback = Some(pb);
                     }
