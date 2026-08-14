@@ -24,6 +24,16 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **The "hardware-dependent deep view" was largely the test harness racing itself** (beta.90).
+  `--uitest` screenshots a live band once the reference-orbit length holds steady for 700 ms. But
+  the reference build is progressive: it installs an iteration-capped coarse preview first and
+  then computes the full orbit in a worker, and at 1e30× that full build runs for many seconds
+  while the length sits at exactly 16,385. The gate fired on the preview, and an
+  iteration-capped preview of a deep interior field is solid black — so whether a machine
+  captured detail or blackness came down to a race against a fixed timer, which is exactly what
+  "same view, different result on different GPUs" looked like. The gate now also requires that no
+  reference build is in flight, the same lesson as beta.88's pacer fix: an in-flight worker is
+  progress that a quiet-period timer cannot see.
 - **A shared tour script could kill the app before it drew a frame — fixed** (beta.89). Tour
   `zoom` is a string so a tour can go deeper than `f64`, but that value sizes the bignum
   precision every centre in the script is parsed at, and is re-derived per frame while playing.

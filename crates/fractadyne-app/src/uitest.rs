@@ -150,10 +150,10 @@ pub(crate) struct UiTest {
     sb_min: f32,
     sb_max: f32,
     // Reference-orbit length last seen, and when it last changed — a live view screenshots only
-    // once this stops growing (the progressive reference build has finished), so a deep band lands
-    // on the SAME resolved frame regardless of how fast the machine builds it. (On a 3070 the ref
-    // reached 2.0M and showed structure; on a 3080 a capped-fraction gate fired the hard cap at a
-    // partial 30k ref and captured black — this makes it machine-independent.)
+    // once this stops growing AND no build is in flight (see the gate below; the length alone is
+    // not enough, because the progressive build parks at the coarse cap while the full orbit is
+    // still being computed). This is what makes a deep band land on the same resolved frame
+    // regardless of how fast the machine builds it.
     ref_len_seen: u32,
     ref_changed_at: Instant,
 }
@@ -459,7 +459,23 @@ impl FractadyneApp {
                 // to reach the same resolved frame instead of screenshotting a half-built black one.
                 // Direct mode has no reference and escapes immediately; screens/windows just wait
                 // out the settle. The hard cap forces progress so a wedge can never hang the harness.
+                // "Length stopped changing" is NOT sufficient on its own, and believing it was
+                // produced the long-running "the deep view is hardware-dependent" mystery. The
+                // reference build is PROGRESSIVE: it installs a coarse preview capped at
+                // `COARSE_ITER` (16,384) and then keeps building the full orbit in the worker. At
+                // 1e30x the full build takes many seconds, so the length sits at exactly 16,385
+                // for far longer than this quiet period — the gate fires, and the harness
+                // screenshots the ITERATION-CAPPED PREVIEW, which at a deep interior field is
+                // solid black. Which stage you capture is then a race between one machine's build
+                // speed and a fixed 700 ms window, which is exactly what "same view, different
+                // result per machine" looked like. (Measured: 3070/Linux captured len 16,385 and
+                // scored the band black; the 3080 captured 32,117 and scored it rich.)
+                // So also require that NO reference build is in flight for this view — the worker
+                // channel is the authoritative "still working" signal, the same lesson as the
+                // beta.88 pacer fix (an in-flight build is progress the quiet-period can't see).
+                let ref_building = self.recompute_rx[0].is_some();
                 let ref_settled = ol > 0
+                    && !ref_building
                     && now.duration_since(ut.ref_changed_at) >= std::time::Duration::from_millis(700);
                 let ready = now >= ut.settle_until
                     && match &ut.steps[ut.idx].kind {

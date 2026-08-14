@@ -466,6 +466,24 @@ Mockups: [design/mockups/](design/mockups/).
   the machines consistent; they are not, and the harness verdicts (PASS here, WARN there) now
   point the opposite way they did in August.
 
+  ⭐**ROOT CAUSE OF THE 16,385 CASE FOUND — it was the HARNESS, not the hardware (fixed
+  beta.90).** `COARSE_ITER = 16384`: the reference build is PROGRESSIVE, installing an
+  iteration-capped coarse preview first and then computing the full orbit in the worker. The
+  `--uitest` capture gate waited only for `last_orbit_len` to hold steady for 700 ms — but at
+  1e30× the full build runs for many SECONDS while the length sits at exactly 16,385, so the gate
+  fired and screenshotted the preview, which at a deep interior field is solid black. Which stage
+  a machine captures was therefore a race against a fixed 700 ms window — precisely the shape of
+  "same view, different result per machine". Fixed by also requiring that no build is in flight
+  (`recompute_rx[0].is_none()`), the same lesson as the beta.88 pacer fix: an in-flight worker is
+  progress that a quiet-period timer cannot see. Local re-run is unchanged (25/25, len 32,117 —
+  this box already won the race), so **the fix must be validated on the 3070/Linux box**: expect
+  its deep band to move off 16,385 to a full-length reference and its WARN to become PASS.
+  ⚠**This does NOT explain the whole entry.** The beta.62 3080 case was `len 30,379` and black —
+  past the coarse cap, so a different failure. Treat the remaining question as narrower and
+  better posed: with the capture race removed, does a deep near-interior field still black out
+  because the iteration-boost plateau gives up too early? That is now testable without the
+  confound.
+
 
 
 - [x] ⭐⭐⭐**RESOLVED v0.2.40-beta.49 (2026-08-09): the 2:58 device loss AND the black deep holds
