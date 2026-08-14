@@ -114,16 +114,32 @@ function Invoke-Step {
     Write-Host ("-> {0}" -f $Name) -ForegroundColor Yellow
     if ($Why) { Write-Host ("   {0}" -f $Why) -ForegroundColor DarkGray }
     $path = Join-Path $dir $File
+    $errPath = "$path.err"
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $code = 0
+    # Start-Process with file redirection, NOT `& $exe ... 2>&1 | Out-File`. Piping a native
+    # command's stderr through PowerShell wraps every line in an ErrorRecord, so the captured log
+    # ends up interleaved with "NativeCommandError" blocks and script line numbers - noise in the
+    # one artifact a tester is asked to read. Redirecting at the process level keeps the app's own
+    # output verbatim. (stdout and stderr cannot share one file here, so they are merged after.)
     try {
-        & $exe @Arguments 2>&1 | Out-File $path -Encoding utf8
-        $code = $LASTEXITCODE
+        $p = Start-Process -FilePath $exe -ArgumentList $Arguments -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $path -RedirectStandardError $errPath
+        $code = $p.ExitCode
     }
     catch {
         "$_" | Out-File $path -Encoding utf8 -Append
         $code = 1
     }
+    # Fold stderr in after stdout so the diagnostics/banner lines are present but not interleaved.
+    if ((Test-Path $errPath) -and (Get-Item $errPath).Length -gt 0) {
+        # -Encoding utf8 on the READ too: the app emits UTF-8, and re-reading it as ANSI before
+        # writing it back out double-encodes every non-ASCII character (the selftest's em-dashes
+        # came through as mojibake before this).
+        "", "--- stderr ---" | Out-File $path -Encoding utf8 -Append
+        Get-Content $errPath -Encoding utf8 | Out-File $path -Encoding utf8 -Append
+    }
+    Remove-Item $errPath -ErrorAction SilentlyContinue
     $sw.Stop()
     $secs = [math]::Round($sw.Elapsed.TotalSeconds, 1)
     $script:results += [pscustomobject]@{ Step = $Name; Exit = $code; Seconds = $secs; File = $File }
