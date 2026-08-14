@@ -25,9 +25,21 @@ individually-regression-checked segment.
 | `ref` / `series` / `bla` ms | `ProfSetup` (CPU bignum setup) | hardware-dependent |
 | `gpu` ms (+ pass split via `TIMESTAMP_QUERY`) | wall-clock + GPU timestamps | hardware-dependent |
 
-The **deterministic** fields are the machine-independent signal: they encode exactly which path ran
-and how hard, and are reproducible regardless of GPU speed. The **timings** are only comparable on
-the same hardware.
+The **deterministic** fields encode exactly which path ran and how hard, and are reproducible
+regardless of GPU *speed*. The **timings** are only comparable on the same hardware.
+
+> ⚠ **"Deterministic" is not the same as "machine-independent", which this document originally
+> conflated.** These fields are reproducible for a given build *on a given GPU*. They are not
+> identical across vendors: on hardware whose shader compiler preserves the df32 error-free
+> transforms (AMD's Vulkan/GL do; NVIDIA's fold them — see `--gputest`) the arithmetic genuinely
+> differs, so escape decisions shift by a pixel here and there and the rebase/skip counts follow.
+> Measured on an RX 6800 XT against an RTX 3080 baseline: **7 of 22 segments** reported
+> "ALGORITHMIC DRIFT" on an entirely healthy card.
+>
+> So since v0.2.40-beta.94 a signature difference is **drift only when the baseline was recorded
+> on the same GPU**; on any other card it is reported as an expected cross-GPU difference and does
+> not fail the run. The tripwire is unchanged on the baseline's own hardware, which is where it
+> does its work.
 
 ## The matrix
 
@@ -50,15 +62,18 @@ the two heavy deep bands (`1e148`, `1e300`) are `--bench-matrix`-only.
 
 ## Regression model — two tiers
 
-1. **Algorithmic (machine-independent) — hard fail.** Any change to a segment's deterministic
-   signature (mode / skip / orbit-len / eff-iter / counters) means a rendering path changed its
-   executed work. `--bench-matrix` exits **2**; the selftest check FAILS. If intended, re-bless.
+1. **Algorithmic (same-GPU) — hard fail.** Any change to a segment's deterministic signature
+   (mode / skip / orbit-len / eff-iter / counters) means a rendering path changed its executed
+   work. `--bench-matrix` exits **2**; the selftest check FAILS. If intended, re-bless.
 2. **Performance (same-GPU) — soft warn.** A timing above `baseline × 1.35` (and ≥ 1 ms) warns but
    does not fail. Generous, because run-to-run variance on the small CPU bignum builds is real.
+3. **Cross-GPU — reported, never failed.** On a card other than the baseline's, signature
+   differences are listed as expected (see the note above) and the run still exits 0.
 
-Baseline: `benchmarks/bench-matrix-baseline.json` (committed). `--bench-matrix --bless` records it;
-a plain `--bench-matrix` compares against it. A different GPU skips the timing comparison (noted in
-the output) but still checks the deterministic signatures.
+Baseline: `benchmarks/bench-matrix-baseline.json` (committed, and it records which GPU produced
+it). `--bench-matrix --bless` records it; a plain `--bench-matrix` compares against it. A different
+GPU skips the timing comparison *and* softens the signature comparison — both noted in the output,
+so a reader always knows which mode produced the verdict.
 
 ## Usage
 

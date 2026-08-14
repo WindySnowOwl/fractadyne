@@ -63,6 +63,40 @@ re-committed. The check exits non-zero on any change and never modifies the comm
 catalog. It is intentionally **not** part of the fast `--selftest` — a full 20-location re-render takes
 minutes (the deep locations dominate), so it is an on-demand gate.
 
+> ### ⚠ Known problem: this gate is currently RED, and the cause is the tooling, not the renderer
+>
+> As of 2026-08-14 `--check` reports `0/3 MATCH` on the first three locations (maxΔ 169, meanΔ 27–47),
+> **including `01-home`** — the shallowest, simplest view in the set. Before treating that as a
+> rendering regression, know what was already established:
+>
+> - **The escape field is unchanged.** Bucketing every pixel by its old colour shows the new colours
+>   cluster to a spread of 0.21 with an identical interior fraction — a one-to-one recolour, not
+>   different mathematics.
+> - **It is not a code change.** The `--selftest` goldens were blessed *earlier* (2026-07-04) than
+>   these renders (07-12) and still pass; and checking out the baseline-era commit and rendering
+>   `01-home` with it reproduces the same ~28 mean delta against its own baseline. The July binary
+>   cannot reproduce the July render, so the variable is the environment.
+> - **The cause is that corpus renders are not hermetic.** `stage_session` pins ~17 keys and inherits
+>   every other one from the developer's live session, so output depends on whatever the app last
+>   wrote. This is the very trap the generator's own docstring warns about for colouring — only
+>   half-fixed. (`--selftest` *is* hermetic, which is why it stayed green throughout.)
+>
+> **Fix the hermeticity first, then re-bless deliberately.** Do not re-bless to make it green: that
+> is how these baselines stopped meaning anything in the first place.
+
+## The F3 references are for *visual* comparison, not pixel scoring
+
+Worth stating because it is an easy and expensive mistake: `renders/<slug>-fraktaler.png` carries
+**Fraktaler-3's own colouring**, so diffing it against ours measures palette, not precision. Measured
+mean delta is **189/255 on `01-home`**, where precision cannot matter at all, and 125 averaged over
+all twenty. The pairs are for structural, side-by-side inspection in `catalog.html` — which is what
+the corpus was built for and what "matches F3" refers to throughout the docs.
+
+A genuinely numeric F3 comparison needs raw escape data rather than images. Only three locations have
+a non-empty F3 `.exr` (`diag/fraktaler/locations/`: `me30`, `me141`, `me1007`); the other eight of
+locations 11–20 are header-only, which is how their parameters were imported. Re-colouring those
+three through our palette would give a real numeric cross-check at three depths.
+
 Renders go through `--render` with a fully staged session per location — exact center strings +
 magnification, the location's verbatim iteration count (auto-scale off; `--render` honors an
 explicit count, unlike the tour renderer, which forces auto-iteration and silently re-caps it),

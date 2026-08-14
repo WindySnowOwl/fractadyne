@@ -40,6 +40,12 @@ Two cross-cutting lessons:
 
 ## What exists today
 
+> **Snapshot as of when this plan was written (v0.2.2–0.2.9).** Deliberately left as-is — the
+> point of the list is what was available when the plan was made, and rewriting it would erase
+> the reasoning. For the *current* tooling see [DIAGNOSTICS.md](../DIAGNOSTICS.md); the counts
+> below have since grown (the self-test is 113 checks + 17 goldens), and see "After this plan"
+> at the end for the tooling added later.
+
 - `FRACTADYNE_TRACE=1` — ad-hoc but proven stderr tracing: `[fd-trace]` per-frame GPU sizing,
   `[fd-req]` export request manifest, `[fd-ref]` reference-build stats, `[fd-gpu]` budget
   controller. Added during the v0.2.2–0.2.6 investigations; solved in one run what constant-
@@ -163,3 +169,26 @@ passed the full suite while failing filtered — state leakage (F13) observed li
 by pinning reference length per check. Open: D1.6 minidumps (no hard fault yet observed),
 live-path counter readback (needs the non-blocking pump), F13's full fix (per-block config
 ownership), F17 per-tile attribution.
+
+## After this plan (2026-08)
+
+The plan's own failure catalog was written from incidents on one machine. The next class of cost
+came from the opposite direction — behaviour that differs *between* machines — and the tooling
+added since is aimed there. Recorded here because it is the same idea (build the instrument the
+failure demanded), not a new plan:
+
+- **`--gputest`** — the WGSL df32/floatexp primitives against CPU oracles, swept over every
+  backend. Built because "df32" was silently degrading to plain `f32`: NVIDIA's shader compiler
+  folds the error-free transforms that make double-float more than float, on all three backends,
+  and no image-level test could have localized that. AMD's Vulkan/GL preserve them, which is how
+  we know the shader source was right all along.
+- **`--uitest`** — scripted UI + live-render walk with screenshots; the harness that caught the
+  deep-band capture racing a progressive reference build.
+- **Help → Diagnostics…** (`ui/diagnostics.rs`) — the self-test and UI test run from the
+  interface as child processes, with the result attachable to an issue report. The audience is
+  people testing on hardware we do not own, who will never pass a CLI flag.
+- **`scripts/gpu-validate.ps1` / `.sh`** — the whole battery in one command, same steps and file
+  names on both OSes, hermetic so two machines' bundles are comparable.
+- **Cross-GPU tolerance** on the goldens and the path-signature baseline (see ARCHITECTURE.md
+  §12). The lesson worth carrying: a gate that reddens on every non-reference GPU trains testers
+  to ignore it, so it stops reporting anything at all.

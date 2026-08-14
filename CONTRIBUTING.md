@@ -52,6 +52,15 @@ cargo run -p fractadyne-app -- --selftest   # GPU vs CPU/bignum oracle + goldens
   the whole workspace on Windows; see `.github/workflows/ci.yml`).
 - For anything touching the numerics or render pipeline, run `--selftest` locally
   (CI can't — the runners have no GPU) and mention the result in the PR.
+- **If you are not on the reference GPU, expect some differences and don't chase
+  them.** The golden images and the path-signature baseline were recorded on one
+  card; cross-vendor floating point legitimately differs, so both are compared
+  with a wider tolerance elsewhere and the run says which mode it used. The other
+  checks should pass everywhere — those failing is a real signal. `--gputest` is
+  worth a run too: it reports whether your stack's shader compiler preserves the
+  extended-precision arithmetic deep zoom depends on (NVIDIA's does not), and a
+  result from hardware we don't own is genuinely valuable. `scripts/gpu-validate.ps1`
+  / `.sh` runs the whole battery and leaves one bundle you can attach.
 - Keep changes focused; match the surrounding code's style, naming, and comment
   density. Update `CHANGELOG.md` and, for a functional change, bump the workspace
   version in `Cargo.toml`.

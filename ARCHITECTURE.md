@@ -52,10 +52,14 @@ select + reference recompute / reuse / freeze-reproject + export requests), `aut
 window), `cli.rs` (headless modes), `export.rs` (view-metadata / `.fdn`), `fractal.rs`
 (`FractalKind`), `refcache_persist.rs` (persist/restore the deep-zoom reference), `error.rs`
 (`AppError`), `selftest.rs` (GPU validation), `theme.rs`, `profile.rs` (profiling + the
-`--frametest`/`--divetest`/`--livetest` harnesses), `sysinfo.rs`, `diag.rs` (log/crash/watchdog/trace),
+`--frametest`/`--divetest` harnesses), `livetest.rs` (the live-vs-offline output harness),
+`sysinfo.rs`, `diag.rs` (log/crash/watchdog/trace), `alloc.rs` (allocation-failure hook),
 `update.rs` (GitHub-Releases update check, Stable/Beta tracks), `bench_matrix.rs` (the
-`--bench-matrix` path-coverage perf/regression suite), `reusetest.rs`, and a `ui/` submodule tree
-(`central.rs`, `menus.rs`, `panels.rs`, `dialogs.rs`) from the intra-crate UI split.
+`--bench-matrix` path-coverage perf/regression suite), `gputest.rs` (`--gputest`: the WGSL
+df32/floatexp primitives against CPU oracles, swept over every backend — the harness that found
+NVIDIA's shader compiler folding the error-free transforms), `uitest.rs` (`--uitest`: the scripted
+UI + live-render walk), `reusetest.rs`, and a `ui/` submodule tree (`central.rs`, `menus.rs`,
+`panels.rs`, `dialogs.rs`, `tour_render.rs`, `diagnostics.rs`) from the intra-crate UI split.
 
 ---
 
@@ -247,10 +251,17 @@ confirm) removes the whole config dir.
 `help.rs`). Headless modes include: `--render` (one image), `--render-tour` (movie frames),
 `--benchmark` / `--benchmark-std`, `--selftest`, `--validate-deep`, `--crosscheck-f3`, `--compare`,
 `--render-iter`, `--find-minibrot`, `--import-kfr`, `--check-updates`, `--reset-state`,
+`--gputest` (WGSL primitives vs CPU oracles, every backend — headless, no display needed),
 `@args-file`; dev harnesses: `--profile`, `--bench-matrix` (path-coverage perf/regression suite vs
 a blessed baseline), `--frametest`, `--divetest` (headless live-dive windows per depth band),
-`--livetest` (live-output validation against offline renders of the same views),
-`--reusetest`, `--refdiag`.
+`--livetest` (live-output validation against offline renders of the same views), `--uitest`
+(scripted UI + live-render walk with screenshots), `--juliadive`, `--reusetest`, `--refdiag`.
+
+`--selftest`, `--uitest` and `--gputest` are also reachable without a command line: **Help →
+Diagnostics…** (`ui/diagnostics.rs`) runs the first two as child processes — so a lost device kills
+the test rather than the session — and can attach the verdict to an issue report. The developer
+harnesses stay CLI-only on purpose. `scripts/gpu-validate.ps1` / `.sh` run the whole battery on a
+machine and leave one comparable bundle.
 
 ---
 
@@ -260,21 +271,30 @@ Layered, mostly external-data-free:
 
 - **Core exact-math tests** (`cargo test -p fractadyne-core`) — perturbation/SA/BLA reproduce the
   exact bignum recurrence; nuclei Newton-solve to known constants; coordinate round-trips.
-- **`--selftest`** (**83 checks + 17 goldens**) — GPU pipeline compared pixel-for-pixel against an
+- **`--selftest`** (**113 checks + 17 goldens**) — GPU pipeline compared pixel-for-pixel against an
   independent arbitrary-precision **CPU dwell oracle** (shares nothing with the GPU path), plus
   **golden images** (17: a direct-mode overview per family + a deep df32-perturbation, 1e6×, golden
   per polynomial family — so per-formula dispatch and the deep reference-orbit path are both
-  guarded; bit-identical, read from the canonical `validation/golden/`; all render-affecting state
-  pinned so they're deterministic; `--bless` records), plus the **bench-matrix** group: 20
-  deterministic rendering-path signatures (mode / SA-skip / orbit length / GPU event counters)
-  asserted exactly against `benchmarks/bench-matrix-baseline.json` — an algorithmic-regression
-  tripwire for any change touching the rendering pipeline (see
+  guarded; read from the canonical `validation/golden/`; all render-affecting state pinned so
+  they're deterministic; `--bless` records, and also stamps `BLESSED-GPU.txt` with the card that
+  produced them), plus the **bench-matrix** group: 20 deterministic rendering-path signatures
+  (mode / SA-skip / orbit length / GPU event counters) checked against
+  `benchmarks/bench-matrix-baseline.json` — an algorithmic-regression tripwire for any change
+  touching the rendering pipeline (see
   [design/bench-matrix.md](design/bench-matrix.md)).
 - **`--validate-deep`** — precision self-consistency of the bignum core from 1e1000× to 1e1000000×.
 - **`--crosscheck-f3`** — F3's exact integer escape counts vs. the same oracle (transitively:
   GPU≈oracle and F3≈oracle ⇒ GPU≈F3).
 - **`validation/catalog.toml`** — externally-verifiable challenge coordinates (period/nucleus,
   membership).
+- **Cross-GPU tolerance.** Both image and signature comparisons are strict on the card that
+  blessed them and deliberately looser on any other, because neither is machine-independent:
+  cross-vendor floating point differs, and on hardware whose shader compiler preserves the df32
+  error-free transforms (AMD's Vulkan/GL do; NVIDIA's fold them — see `--gputest`) escape
+  decisions move by a pixel here and there, taking the rebase/skip counts with them. A gate that
+  reddens on every non-reference GPU teaches testers to ignore it, which costs more than it
+  catches. An **absent** `BLESSED-GPU.txt` means strict: the gate only ever loosens when the
+  hardware is positively known to differ.
 
 CI (`.github/workflows/ci.yml`) runs the core tests on Linux + a workspace build on Windows; the GPU
 `--selftest` is a local/manual gate (runners have no GPU).
