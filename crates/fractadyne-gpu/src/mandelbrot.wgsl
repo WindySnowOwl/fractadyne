@@ -1740,3 +1740,114 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(col, 1.0);
 }
+
+// ---------------- GPU primitive self-test (`--gputest`) ----------------
+// Verifies the df32/floatexp building blocks THIS shader renders with, against CPU oracles —
+// per machine. The error-free transforms above assume round-to-nearest with a FUSED fma; a
+// driver or GPU where that assumption fails breaks every deep render silently, and until now
+// it was verified only end-to-end by goldens on one GPU. Inputs derive from the pixel index by
+// integer hashing + BITCAST (no floating arithmetic in construction, so the CPU reproduces
+// them bit-exactly); one op family per ROW, one input set per COLUMN; each RGBA32F texel
+// carries up to four f32 results. The CPU side (fractadyne-app `gputest`) regenerates the
+// inputs and checks each op against an f64 / exact-EFT oracle.
+
+fn gt_hash(x0: u32) -> u32 {
+    var x = x0 * 747796405u + 2891336453u;
+    x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
+    return (x >> 22u) ^ x;
+}
+// An f32 assembled from hash bits: sign|exponent|mantissa, exponent confined to
+// [emin, emin+espan) so each op sees a chosen magnitude band (never inf/NaN/denormal).
+fn gt_f32(seed: u32, emin: i32, espan: u32) -> f32 {
+    let mant = gt_hash(seed) & 0x007FFFFFu;
+    let eb = u32(127 + emin + i32(gt_hash(seed ^ 0x9E3779B9u) % espan));
+    let sign = (gt_hash(seed ^ 0x85EBCA6Bu) & 1u) << 31u;
+    return bitcast<f32>(sign | (eb << 23u) | mant);
+}
+// A df32 pair: lo sits ~2^-26 under hi's band, mirroring a normalized double-f32.
+fn gt_df(seed: u32, emin: i32, espan: u32) -> vec2<f32> {
+    return vec2<f32>(gt_f32(seed, emin, espan), gt_f32(seed ^ 0xDEADBEEFu, emin - 26, espan));
+}
+
+// Identity that survives algebraic optimizers: a round-trip through the integer domain.
+// Reassociation licenses (`(a+b)-a → b`) operate on float expressions; no mainstream
+// compiler rewrites across a bitcast. Used by the armored EFT rows below to DIAGNOSE
+// whether a wrong two_sum on this machine is compiler reassociation (armored row passes)
+// or genuinely broken rounding (armored row fails too).
+fn gt_opaque(x: f32) -> f32 {
+    return bitcast<f32>(bitcast<u32>(x));
+}
+fn gt_two_sum_armored(a: f32, b: f32) -> vec2<f32> {
+    let s = gt_opaque(a + b);
+    let v = gt_opaque(s - a);
+    let e = gt_opaque(a - gt_opaque(s - v)) + gt_opaque(b - v);
+    return vec2<f32>(s, e);
+}
+
+@fragment
+fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let ix = u32(pos.x);
+    let op = u32(pos.y);
+    let s = ix + 100003u * op; // decorrelate rows
+    let a = gt_f32(s * 2u + 1u, -8, 16u);
+    let b = gt_f32(s * 2u + 2u, -8, 16u);
+    let ar = gt_df(s * 8u + 3u, -4, 8u);
+    let ai = gt_df(s * 8u + 4u, -4, 8u);
+    let br = gt_df(s * 8u + 5u, -4, 8u);
+    let bi = gt_df(s * 8u + 6u, -4, 8u);
+    switch op {
+        case 0u: { let r = two_sum(a, b); return vec4<f32>(r.x, r.y, 0.0, 0.0); }
+        case 1u: { let r = two_prod(a, b); return vec4<f32>(r.x, r.y, 0.0, 0.0); }
+        case 2u: { let r = df_add(ar, br); return vec4<f32>(r.x, r.y, 0.0, 0.0); }
+        case 3u: { let r = df_mul(ar, br); return vec4<f32>(r.x, r.y, 0.0, 0.0); }
+        case 4u: { let r = df_div(ar, br); return vec4<f32>(r.x, r.y, 0.0, 0.0); }
+        case 5u: {
+            let z = c_sqr(cset(ar, ai));
+            return vec4<f32>(z.re.x, z.re.y, z.im.x, z.im.y);
+        }
+        case 6u: {
+            // fe_mul across a wide exponent spread; im.lo is dropped (4 output slots).
+            let ea = i32(gt_hash(s ^ 17u) % 200u) - 100;
+            let eb2 = i32(gt_hash(s ^ 23u) % 200u) - 100;
+            let r = fe_mul(fe_norm(cset(ar, ai), ea), fe_norm(cset(br, bi), eb2));
+            return vec4<f32>(r.m.re.x, r.m.re.y, f32(r.e), r.m.im.x);
+        }
+        case 7u: {
+            // fe_add with exponent gaps up to ±40 (exercises the align/renorm path).
+            let ea = i32(gt_hash(s ^ 31u) % 80u) - 40;
+            let r = fe_add(fe_norm(cset(ar, ai), ea), fe_norm(cset(br, bi), 0));
+            return vec4<f32>(r.m.re.x, r.m.re.y, f32(r.e), r.m.im.x);
+        }
+        case 8u: {
+            // 64-step CONTRACTED Mandelbrot-form accumulation: z ← (z²)·2⁻¹ + c. The halving
+            // (exact) keeps it bounded without branches, so the test measures pure df32
+            // accumulation over a long dependent chain — the regime the goldens can't isolate.
+            let cr = gt_df(s * 8u + 3u, -3, 3u);
+            let ci = gt_df(s * 8u + 4u, -3, 3u);
+            var z = cset(vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 0.0));
+            for (var i = 0; i < 64; i++) {
+                let q = c_sqr(z);
+                z = c_add(cset(df_mul_f32(q.re, 0.5), df_mul_f32(q.im, 0.5)), cset(cr, ci));
+            }
+            return vec4<f32>(z.re.x, z.re.y, z.im.x, z.im.y);
+        }
+        case 9u: {
+            // Julia-form accumulation: the per-pixel identity enters ONLY through z₀ (the
+            // 2026-08-13 Julia direct-mode failure class); fixed c from exact literals.
+            let cfix = cset(
+                vec2<f32>(-0.7436, 0.0), vec2<f32>(0.1318, 0.0));
+            var z = cset(gt_df(s * 8u + 3u, -3, 3u), gt_df(s * 8u + 4u, -3, 3u));
+            for (var i = 0; i < 64; i++) {
+                let q = c_sqr(z);
+                z = c_add(cset(df_mul_f32(q.re, 0.5), df_mul_f32(q.im, 0.5)), cfix);
+            }
+            return vec4<f32>(z.re.x, z.re.y, z.im.x, z.im.y);
+        }
+        case 10u: {
+            // two_sum with bitcast armor — the reassociation discriminator (see gt_opaque).
+            let r = gt_two_sum_armored(a, b);
+            return vec4<f32>(r.x, r.y, 0.0, 0.0);
+        }
+        default: { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+    }
+}

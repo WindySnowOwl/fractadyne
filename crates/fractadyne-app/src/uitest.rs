@@ -240,7 +240,7 @@ impl JuliaDive {
 
 impl FractadyneApp {
     pub(crate) fn juliadive_frame(&mut self, ctx: &egui::Context) {
-        const TARGET_L2: f64 = 11.0; // ≈ 2000×, past the reported 1041×
+        const TARGET_L2: f64 = 15.0; // ≈ 32,000× — crosses PERT_JULIA_THRESHOLD (1e2) and 1e4
         const OCTAVES_PER_S: f64 = 2.0;
         let Some(jd) = self.juliadive.as_mut() else { return };
         jd.frame += 1;
@@ -347,7 +347,7 @@ fn build_steps() -> Vec<Step> {
     let live = |name: &str, decades: f64| Step {
         name: name.to_string(),
         // Mode is whatever the app itself would pick at this depth — asserted, not forced.
-        kind: StepKind::Live(LiveView { decades, expect: RenderMode::select(true, 10f64.powf(decades)) }),
+        kind: StepKind::Live(LiveView { decades, expect: RenderMode::select(true, false, 10f64.powf(decades)) }),
     };
     vec![
         // --- UI screens ---

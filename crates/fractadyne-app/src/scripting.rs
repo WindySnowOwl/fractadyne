@@ -1354,6 +1354,10 @@ pub(crate) struct Playback {
     /// Latched once `pace_waited` exceeds the timeout: the pacer has given up waiting and lets the
     /// clock run until the pipeline actually catches up (`hold` falls on its own).
     pace_released: bool,
+    /// Wall-clock seconds the clock has been held at the CURRENT hold waiting on that hold's own
+    /// in-flight prefetched reference (see the pacing block) — its independent bound, so a wedged
+    /// build can't hold a tour hostage past 6× `settle_timeout`.
+    hold_ref_waited: f64,
     /// Current tour time (seconds) — the authoritative clock, advanced by `advance_playback_core`.
     pub(crate) cur_t: f64,
     /// Transport: playback rate multiplier, and whether the clock is user-paused. Distinct from
@@ -2345,6 +2349,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         settle_kf: usize::MAX,
         pace_waited: 0.0,
         pace_released: false,
+        hold_ref_waited: 0.0,
         cur_t: 0.0,
         last_now: None,
         wall_t: 0.0,
@@ -3259,6 +3264,34 @@ impl FractadyneApp {
                     pb.settle_waited += dt;
                     hold = 1.0;
                 }
+            }
+            // A hold whose OWN prefetched reference is still in flight is about to sharpen —
+            // hold the clock for it (any pace but Realtime). The lag dilation above cannot see
+            // this case: `last_depth_lag` tracks BLA validity, not "the reference is still an
+            // ask short of this hold's budget". Without it the clock walks through the hold,
+            // the entry expires with its window mid-build, the finished orbit is discarded, and
+            // the viewer (and the livetest checkpoint) gets the PREVIOUS ask's clamped render —
+            // the intermittent hold-e72 failure. Crucially this also RESETS the give-up latch
+            // below: a deep glide legitimately accumulates more than `settle_timeout` of
+            // lag-dilated clock-hold, so `pace_released` is often already latched by the time
+            // the clock reaches the hold — and a latched release would force `hold` back to 0
+            // and override this wait (measured: exactly the e72 failure mode). An in-flight
+            // build for THIS hold is the progress evidence the beta.42 give-up lacked, so the
+            // stall clock restarts. Bounded on its own terms: a dead worker culls the entry on
+            // the next poll, and `hold_ref_waited` caps the wait at 6× `settle_timeout` (a deep
+            // extension legitimately needs tens of seconds) — past that, the normal give-up
+            // machinery resumes from zero.
+            let hold_ref_inflight = pb.pace != Pace::Realtime
+                && dt > 0.0
+                && pb.holding_at(pb.cur_t).0
+                && self.hold_prefetch_pending_for(pb.cur_t);
+            if hold_ref_inflight && pb.hold_ref_waited <= pb.settle_timeout * 6.0 {
+                pb.hold_ref_waited += dt;
+                hold = 1.0;
+                pb.pace_waited = 0.0;
+                pb.pace_released = false;
+            } else if !hold_ref_inflight {
+                pb.hold_ref_waited = 0.0;
             }
             // FINAL BACKSTOP, over every reason the clock can be held. `settle_timeout` bounds the
             // settled-hold branch above, but the lag dilation had no bound at all: at a view whose

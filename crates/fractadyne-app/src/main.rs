@@ -54,6 +54,7 @@ mod error;
 mod export;
 mod bench_matrix;
 mod fractal;
+mod gputest;
 mod help;
 mod livetest;
 mod profile;
@@ -867,11 +868,24 @@ pub(crate) enum RenderMode {
     /// Extended-range floatexp perturbation (`≥ PERT_FE_THRESHOLD`).
     Floatexp = 2,
 }
+/// Magnification at/above which a JULIA view leaves direct mode for perturbation. Far below the
+/// Mandelbrot threshold (1e4) because their direct-mode precision differs structurally: a
+/// Mandelbrot pixel re-injects its df32 `c` EVERY iteration, so the per-pixel identity survives
+/// f32 rounding noise; a Julia pixel's identity lives only in `z0`, entered once — measured
+/// (2026-08-13, `--juliadive` + user report at J 4,362×): speckle from ~530×, hard
+/// iteration-plateau "tessellation" patches by ~1000–4000×, healthy again at ≥1e4 where
+/// perturbation takes over. 1e2 keeps a wide margin below the first measurable degradation;
+/// perturbation is exact at any depth and the Julia reference machinery is the same one deep
+/// dual views already use.
+pub(crate) const PERT_JULIA_THRESHOLD: f64 = 1.0e2;
+
 impl RenderMode {
     /// Pick the representation for a view: direct when shallow or the formula has no perturbation,
     /// then df32, switching to floatexp past `PERT_FE_THRESHOLD`. The one place this is decided.
-    pub(crate) fn select(supports_perturbation: bool, mag: f64) -> RenderMode {
-        if !supports_perturbation || mag < 1.0e4 {
+    /// `julia` selects the much lower direct→perturbation crossover (see `PERT_JULIA_THRESHOLD`).
+    pub(crate) fn select(supports_perturbation: bool, julia: bool, mag: f64) -> RenderMode {
+        let direct_below = if julia { PERT_JULIA_THRESHOLD } else { 1.0e4 };
+        if !supports_perturbation || mag < direct_below {
             RenderMode::Direct
         } else if mag < PERT_FE_THRESHOLD {
             RenderMode::Df32Pert
@@ -2282,6 +2296,8 @@ struct FractadyneApp {
     std_res: BenchRes,
     std_passes: u32,
     std_depth: BenchDepth,
+    /// GPU backend ("Dx12"/"Vulkan"/"Gl") — names the shader-compiler stack for `--gputest`.
+    gpu_backend: String,
     /// GPU adapter name (for benchmark reports).
     gpu_name: String,
     /// Host system facts (CPU / cores / cache / VRAM) for benchmark reports.
@@ -2333,6 +2349,9 @@ struct FractadyneApp {
     /// CLI `--livetest FILE`: headless live-OUTPUT harness — plays a tour through the live
     /// pipeline and validates the frames it shows against offline renders of the same views.
     livetest: Option<std::path::PathBuf>,
+    /// CLI `--gputest`: verify the shader's df32/floatexp primitives against CPU oracles on
+    /// THIS machine's GPU/driver (see `mod gputest`), print the verdict table, exit.
+    gputest: bool,
     /// CLI `--uitest [DIR]`: scripted walk through every UI screen + the live-render bands,
     /// screenshotting each and writing a review bundle (see `mod uitest`), then exit.
     uitest: Option<uitest::UiTest>,
@@ -2551,6 +2570,11 @@ impl FractadyneApp {
         diag::start_watchdog();
         install_fonts(&cc.egui_ctx); // brand typefaces (theme-independent); visuals applied below
         let gpu_name = render_state.adapter.get_info().name;
+        // Which BACKEND (and so which shader-compiler stack: DX12 = FXC/DXC-compiled HLSL,
+        // Vulkan = SPIR-V) built the running pipelines — a `--gputest` verdict or wrong-render
+        // report is uninterpretable without it. Kept separate from `gpu_name`, which baseline
+        // `same_gpu` comparisons match on verbatim.
+        let gpu_backend = format!("{:?}", render_state.adapter.get_info().backend);
 
         // CLI modes (headless, for automation / debugging):
         //   --benchmark [--out PATH]                    run the built-in benchmark, save, quit
@@ -2646,6 +2670,7 @@ impl FractadyneApp {
         let profile_regions = val("--regions").cloned();
         let divetest = val("--divetest").map(std::path::PathBuf::from);
         let livetest = val("--livetest").map(std::path::PathBuf::from);
+        let gputest = args.iter().any(|a| a == "--gputest");
         // --uitest [DIR]: presence enables the UI walk; a following non-flag token is the output
         // base directory (else the share/logs default). Built lazily so a normal launch pays nothing.
         let uitest = if args.iter().any(|a| a == "--uitest") {
@@ -2778,6 +2803,7 @@ impl FractadyneApp {
             std_passes,
             std_depth,
             gpu_name,
+            gpu_backend,
             sysinfo: gather_system_info(),
             report: ReportState::default(),
             auto_benchmark,
@@ -2807,6 +2833,7 @@ impl FractadyneApp {
             resizetest,
             divetest,
             livetest,
+            gputest,
             uitest,
             juliadive,
             livetest_quick,
@@ -5597,6 +5624,18 @@ impl eframe::App for FractadyneApp {
                 });
                 self.run_divetest(dev, q, &tour, &out);
                 crate::exit(0);
+            }
+        }
+
+        // CLI GPU primitive self-test: run `fs_gputest` (the renderer's own df32/floatexp helper
+        // functions on hash-derived inputs) and grade every op family against CPU oracles — the
+        // per-machine answer to "is deep rendering trustworthy on THIS GPU/driver". Exit 1 if any
+        // family fails, so a user can paste the table into a bug report.
+        if self.gputest {
+            if let Some((dev, q)) = &gpu {
+                let name = format!("{} · {}", self.gpu_name, self.gpu_backend);
+                let fails = self.run_gputest(dev, q, Some(name.as_str()));
+                crate::exit(if fails > 0 { 1 } else { 0 });
             }
         }
 

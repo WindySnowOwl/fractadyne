@@ -1130,7 +1130,7 @@ impl FractadyneApp {
                 fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
             vp.set_center_log2mag(s.cx, s.cy, target_l2);
             let mag = vp.magnification();
-            let mode = RenderMode::select(self.fractal.supports_perturbation(), mag);
+            let mode = RenderMode::select(self.fractal.supports_perturbation(), false, mag);
             if mode.is_direct() {
                 break; // shallow frames rebuild in microseconds — nothing to prefetch
             }
@@ -1315,7 +1315,7 @@ impl FractadyneApp {
         let mut vp = fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
         vp.set_center_log2mag(s.cx, s.cy, target_l2);
         let mag = vp.magnification();
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), mag);
+        let mode = RenderMode::select(self.fractal.supports_perturbation(), false, mag);
         if mode.is_direct() {
             return;
         }
@@ -1395,6 +1395,16 @@ impl FractadyneApp {
             until,
             slot: RefPrefetchSlot { rx: Some(rx), ready: None, target_l2 },
         });
+    }
+
+    /// Is a hold-prefetch reference still IN FLIGHT for the hold containing tour-time `t`? The
+    /// pacer holds the clock at such a hold: an in-flight entry is a live progress signal (its
+    /// worker dying culls it on the next poll), so waiting is bounded and the alternative —
+    /// walking through the hold and capturing/showing the PREVIOUS ask's clamped render — is the
+    /// intermittent hold-e72 livetest failure (27.6% black whenever the ~52 s extension lost its
+    /// race against the oracle renders' CPU).
+    pub(crate) fn hold_prefetch_pending_for(&self, t: f64) -> bool {
+        self.hold_prefetch.iter().any(|h| t >= h.at && t <= h.until)
     }
 
     /// Snapshot view 0's FULL reference for on-disk persistence (see `refcache_persist`), or `None`
@@ -1641,7 +1651,7 @@ impl FractadyneApp {
     fn export_reference_inputs_for(&self, vp: &Viewport, julia: bool) -> Option<RecomputeInputs> {
         let log2mag = vp.log2_magnification();
         let mag = vp.magnification();
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), mag);
+        let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, mag);
         if mode.is_direct() {
             return None;
         }
@@ -1758,7 +1768,7 @@ impl FractadyneApp {
             // iterations, both apps".
             self.render_cfg.max_iter
         };
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), mag);
+        let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, mag);
         let precision = vp.precision; // maintained by the viewport; valid at any depth
         let (cx, cy) = vp.center_f64();
         let scale = vp.gpu_scale();
@@ -2357,7 +2367,11 @@ impl FractadyneApp {
         // pile into the vsync swapchain faster than the GPU drains — the event loop blocks on
         // present and the app hangs ("Not Responding"). Shrink the *moving* budget so resolution
         // absorbs the cost; settle frames keep the full `wb*6`, so the final image is unchanged.
-        let is_pert = fractal.supports_perturbation() && magnification >= 1.0e4;
+        // Julia views cross into perturbation far earlier (see PERT_JULIA_THRESHOLD) — this
+        // classification must agree with RenderMode::select or the motion/hold machinery
+        // (reuse-hold, will_reproject, prefer-detail) misclassifies the view's regime.
+        let pert_below = if julia { crate::PERT_JULIA_THRESHOLD } else { 1.0e4 };
+        let is_pert = fractal.supports_perturbation() && magnification >= pert_below;
         let wb = self.effective_work_budget();
         let (budget, iter_cap): (u64, u32) = if interacting {
             let moving = if is_fe {
@@ -2830,7 +2844,7 @@ impl FractadyneApp {
         // overshoot-safe by design, so the cost is one or two coarser frames after the crossover.
         if !offscreen {
             // `mode` itself is selected further down; it is a pure function of these two.
-            let m = RenderMode::select(fractal.supports_perturbation(), magnification).to_u32();
+            let m = RenderMode::select(fractal.supports_perturbation(), julia, magnification).to_u32();
             if self.perf.budget_mode[vidx] != m {
                 let prev = self.perf.budget_mode[vidx];
                 self.perf.budget_mode[vidx] = m;
@@ -3087,7 +3101,7 @@ impl FractadyneApp {
         // the full-res payoff) and the settle tiling (wrong axis). Gated to the chunk shader's
         // scope: holomorphic formulas 0..3, aux coloring off (the chunk pass carries no orbit
         // statistics), and mode 0 additionally glitch-free (live never runs glitch detection).
-        let chunk_mode = RenderMode::select(fractal.supports_perturbation(), magnification);
+        let chunk_mode = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
         let chunk_over = (chunk_mode.is_direct() || chunk_mode == RenderMode::Df32Pert)
             && fractal.formula_id() <= 3
             && !self.coloring.color_method.needs_aux()
@@ -3438,7 +3452,7 @@ impl FractadyneApp {
         // Render path: 1 = direct df32 (shallow / unsupported formulas), 0 = df32
         // perturbation (fast, common deep range), 2 = floatexp perturbation (past df32's
         // ~1e30× exponent limit → extreme depth, ~1.7× costlier so only when needed).
-        let mode = RenderMode::select(fractal.supports_perturbation(), magnification);
+        let mode = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
         let precision = fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64);
         let vi = view_id as usize;
 

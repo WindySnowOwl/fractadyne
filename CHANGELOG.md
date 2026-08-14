@@ -16,6 +16,38 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The tour clock now waits for a hold's own reference** (beta.88). The intermittent
+  hold-e72 livetest failure (27.6% black whenever the ~52 s deep extension lost its race
+  against the tour clock): Adaptive pacing's lag dilation tracks BLA validity but not "the
+  reference is still an ask short of this hold's budget", so the clock could walk through a
+  hold showing the previous ask's clamped render. The pacer now holds the clock inside a hold
+  window while that hold's prefetched reference is in flight — the in-flight build is a live
+  progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
+  a 6× allowance for this demonstrably-progressing case.
+- **`--gputest`: per-machine verification of the shader's arithmetic primitives** (beta.88).
+  Runs the renderer's own df32/floatexp helpers (error-free transforms, df add/mul/div, complex
+  square, floatexp mul/add, 64-step Mandelbrot- and Julia-form accumulation) on hash-derived
+  bit-exact inputs and grades every op family against CPU oracles — exact-EFT checks are the
+  fused-fma canary. Deep rendering was verified only by goldens blessed on one RTX 3080; on a
+  GPU/driver with fast-math contraction or flushed denormals this prints *which primitive* is
+  wrong instead of leaving an unexplained black frame. Exit 1 on any failing family; the table
+  is designed to be pasted into bug reports. Its very first run found something real: on the
+  reference machine itself (NVIDIA, Vulkan backend) the compiler folds the error-free
+  transforms — `two_sum`'s residual comes back exactly 0, even bitcast-armored — so df32 has
+  effectively been running at f32 precision all along, which retroactively explains the Julia
+  tessellation depth and the direct-mode switch point sitting at the f32 cliff. Not a
+  regression (status quo of every build shipped); the full account and follow-ups are in
+  TODO.md "Open bugs". The report header now names the backend (`… · Vulkan`) since the
+  shader-compiler stack is what makes a verdict interpretable.
+- **The Julia "tessellation" is fixed: Julia views cross into perturbation at 100× instead of
+  10,000×** (beta.88, user-confirmed at J 4,362×). A Julia pixel's identity lives only in its
+  starting point z₀ — unlike Mandelbrot, which re-injects its per-pixel df32 c every iteration —
+  so direct-mode f32 rounding noise swamps the per-pixel difference from a few hundred × on:
+  speckle by ~530×, pretty-but-wrong iteration-plateau tessellation patches by ~1000–4000×,
+  healthy again at 10,000× where perturbation used to take over. Perturbation is exact at any
+  depth and the Julia reference machinery is the same one deep views already use, so the
+  crossover simply moves to 100× for Julia views (`PERT_JULIA_THRESHOLD`). Verified with
+  `--juliadive` from 8× to 32,818×: crisp in motion and settled, no seam at either threshold.
 - **The dual-view Julia no longer freezes onto a stale texture** (beta.87). Reported as
   "blockiness and an odd artifact at the center while zooming the Julia": the missing-reference
   test in the live path forced reprojection unconditionally — but a Direct-mode view never

@@ -247,37 +247,57 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] ⭐**Deep-hold reference install races (or stalls behind) the hold — livetest e82/e94 drift
-  vs the beta.50 baseline, found 2026-08-13 while fixing the beta.79 budget regression.** Both
-  remaining drifted checkpoints captured with the PREVIOUS hold's reference still installed:
-  hold-e82 showed a 20.6 s-stale reprojection (its 2M ref still building), and hold-e94 captured
-  a real frame with every pixel clamped at the stale 2M orbit (→ 100% interior-colored = FAIL)
-  **even though its 3.63M reference had finished building ~100 s earlier** — built but never
-  installed (watch lines: "reference built [live]: len=3631055" at wall 573 s, capture ~690 s,
-  orbit at capture 2008193). At the beta.50 baseline the right refs were in place at the same
-  checkpoints. Suspects: the install path needs a frame that never comes at an idle hold, the
-  pacer/sticky-give-up (beta.42) moving the clock on before the install, or the freeze-guard
-  path for a COMPLETE 3.63M ref (escaped < the 4M ask). Baseline deliberately NOT re-blessed
-  over this. Repro: `--livetest tours\grand-tour.toml --size 480x270 --segment gauntlet` with
-  `FRACTADYNE_TRACE=gpu` (harness budget-walk "lt" lines now exist, beta.80).
+- [ ] ⭐⭐**The shader compiler FOLDS the df32 error-free transforms — "df32" has been ~f32 on
+  the shipping configuration all along (found 2026-08-13 by the new `--gputest` harness, first
+  run).** Evidence chain: `two_sum`'s residual comes back EXACTLY 0 on 216/256 hash-derived
+  inputs (`two_prod`'s fma-based residual survives — fma is opaque to reassociation); every
+  df/fe op family shows ~2⁻²⁴ relative error (= hi-limb-only); a bitcast-armored `two_sum`
+  (f32→u32→f32 round-trips between every step) STILL returns 0 — the compiler folds through
+  the integer domain; naga 24 is EXONERATED (its translated HLSL preserves the arithmetic
+  verbatim, inspected); and the shipping backend is **Vulkan** (confirmed via the new backend
+  print — WGPU_BACKEND env selection: `dx12` alone fails surface creation, `dx12,vulkan` still
+  picks Vulkan, `gl` panics on downlevel limits), so the folder is NVIDIA's SPIR-V compiler
+  reassociating undecorated float math. Corroboration that this affects the REAL iterate shader
+  (not just the test entry point): the Julia direct-mode tessellation appeared exactly where
+  PLAIN f32 predicts (~2^10×·2^11 px) though mode 1 is nominally 48-bit df32; and the
+  direct→perturbation switch lives at 2^13.7 — the f32 cliff — though the code comments claim
+  "df32's reach ~1e6×". Why nothing else ever looked wrong: perturbation δ needs only RELATIVE
+  precision (f32 mantissa suffices between rebases), floatexp matches F3 because F3 itself uses
+  f32-mantissa floatexp by design, and the direct band was (evidently empirically) capped right
+  at the f32 cliff. NOT an announce blocker — this is the status quo of every build ever
+  shipped. Follow-ups, in order: (a) get a DX12/FXC + DXC data point (needs code-level backend
+  forcing; env selection can't reach it) and a non-NVIDIA one (3070 is also NVIDIA; try the
+  Linux box's Mesa/radv if available — Mesa is expected to be strict, which would confirm
+  driver-specific); (b) if some stack preserves EFTs, weigh switching/offering that backend —
+  re-tune everything TDR-related first (all budget history was measured on this stack); (c)
+  upstream: naga could emit SPIR-V `NoContraction`/HLSL `precise` (check wgpu tracker, file if
+  absent); (d) if a strict stack materializes, re-derive `--gputest` oracle tolerances there,
+  re-widen the direct-mode switch + `PERT_JULIA_THRESHOLD`, and expect visible quality gains in
+  the 1e4–1e6 direct band. Meanwhile `--gputest` (exit 1 on this machine, by honest design)
+  documents the real arithmetic contract per machine — exactly its job.
 
-- [ ] ⭐**Julia direct-mode precision collapses from ~300× — speckle, then iteration-plateau
-  patches (found 2026-08-13 while fixing the dual-Julia freeze; the freeze had been MASKING it
-  by showing a stale-but-clean frozen texture instead).** Deterministic repro: `--juliadive`
-  (dev harness, boots dual + zooms the Julia in-app with per-octave screenshots). Evidence: at
-  J 134× the Julia renders crisp; at ~530× it decorrelates into salt-and-pepper speckle; by
-  ~1000–2000× it congeals into hard-edged patches (pixels sharing one quantized orbit) with a
-  bilinear bullseye at the anchor. The main view is immune at the same magnifications.
-  Suspected mechanism: a JULIA carries its per-pixel identity only in `z0` (c is constant),
-  while Mandelbrot re-injects the df32 per-pixel `c` EVERY iteration — so any f32 truncation in
-  the direct shader's iteration arithmetic swamps the Julia's per-pixel δ (pixel step ~6e-9 at
-  500× vs ~2e-7 f32 rounding noise at |z|≈2) but leaves Mandelbrot's intact. Fix directions,
-  in preference order: (a) verify/repair the direct shader's df32 iteration path for the
-  z0-varying case; (b) lower the Julia view's perturbation threshold (Julia references — the
-  z0 orbit under fixed c — already exist; mode select's 1e4 assumes direct-df32 exactness that
-  only holds for the Mandelbrot form); (c) at minimum warn. Also verify against an OFFLINE
-  render of the same Julia view (the export path renders dual/julia) to pin exactly where live
-  and truth diverge.
+- [x] ⭐**Deep-hold reference install races (or stalls behind) the hold — RESOLVED beta.81 +
+  beta.88 (2026-08-13).** Two coupled fixes: (1) beta.81's hold-prefetch pipeline builds each
+  hold keyframe's reference at destination ask/precision during the glide (Vec pipeline, ≤3
+  entries, installs inside the hold window); (2) beta.88's pacer holds the tour clock inside a
+  hold while that hold's prefetched reference is in flight — AND resets the beta.42 sticky
+  give-up latch, which a deep glide legitimately trips (>20 s of lag-dilated hold) and which
+  otherwise forces the clock straight through the hold, expiring the entry mid-build and
+  discarding the finished orbit (the intermittent hold-e72 27.6%-black failure; the fix's first
+  attempt missed this and failed identically). Wait bounded by `hold_ref_waited` ≤ 6×
+  `settle_timeout`. Livetest grand tour 22/22, 0 drift vs the beta.80 baseline — passing even
+  under deliberate CPU contention, which used to be the flake trigger.
+
+- [~] ⭐**Julia direct-mode precision collapses from ~300× — MITIGATED beta.88
+  (`PERT_JULIA_THRESHOLD = 1e2`: Julia views cross into perturbation at 100×, where the
+  reference machinery is exact at any depth; verified crisp 8×→32,818× with `--juliadive`).**
+  Root cause now KNOWN and is not Julia-specific: the direct path's df32 is genuinely running
+  at ~f32 precision because the compiler folds the error-free transforms — see the
+  ⭐compiler-folds-EFT entry below. A Julia carries its per-pixel identity only in `z0` (c is
+  constant), so it hits the f32 cliff ~2^11 pixels past 1× (~300–500×), while Mandelbrot's
+  re-injected per-pixel `c` keeps it healthy to the mode switch. If the EFT folding is ever
+  fixed, direct-df32 Julia becomes exact to ~1e6× and this threshold can be re-widened (a
+  perturbation Julia view costs a reference build the direct one didn't).
 
 - [~] **Speckle at deep, high-detail views — DIAGNOSED, it is ANTI-ALIASING, not a bug (user
   report 2026-08-10).** At the three-spar ~1e103× the live view (ss2, ~1236 px wide) shows uniform

@@ -1480,3 +1480,100 @@ pub fn color_iter_buffer(
         counters: [0u64; crate::COUNTER_SLOTS],
     })
 }
+
+/// Run the shader's primitive self-test (`fs_gputest`, see the WGSL) and return the raw
+/// `(width, height, rgba_f32)` result grid: one op family per row, one hashed input set per
+/// column, up to four f32 results per texel. The CPU comparison lives in the app (it needs the
+/// f64 / exact-EFT oracles); this just executes the very shader code the renderer uses on THIS
+/// device and reads it back.
+pub fn gputest(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(u32, u32, Vec<f32>), GpuError> {
+    const W: u32 = 256;
+    const H: u32 = 11;
+    let shader = shader_module(device);
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("gputest.layout"),
+        bind_group_layouts: &[],
+        push_constant_ranges: &[],
+    });
+    let pipeline =
+        fullscreen_pipeline(device, &shader, &layout, "fs_gputest", &[ITER_FORMAT], "gputest.pipeline");
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("gputest.out"),
+        size: wgpu::Extent3d { width: W, height: H, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: ITER_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let bpp = 16u32;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let unpadded_bpr = W * bpp;
+    let padded_bpr = unpadded_bpr.div_ceil(align) * align;
+    let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("gputest.readback"),
+        size: (padded_bpr * H) as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("gputest.enc"),
+    });
+    {
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("gputest.pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.draw(0..3, 0..1);
+    }
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &tex,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &out_buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bpr),
+                rows_per_image: Some(H),
+            },
+        },
+        wgpu::Extent3d { width: W, height: H, depth_or_array_layers: 1 },
+    );
+    queue.submit(std::iter::once(enc.finish()));
+    let slice = out_buf.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    let _ = device.poll(wgpu::Maintain::Wait);
+    rx.recv()
+        .map_err(|e| GpuError::Readback(e.to_string()))?
+        .map_err(|e| GpuError::Readback(e.to_string()))?;
+    let data = slice.get_mapped_range();
+    let mut pixels = vec![0.0_f32; (W * H * 4) as usize];
+    for r in 0..H {
+        let src = (r * padded_bpr) as usize;
+        let row: &[f32] = bytemuck::cast_slice(&data[src..src + unpadded_bpr as usize]);
+        pixels[(r * W * 4) as usize..((r + 1) * W * 4) as usize].copy_from_slice(row);
+    }
+    drop(data);
+    out_buf.unmap();
+    Ok((W, H, pixels))
+}
