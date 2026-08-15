@@ -175,8 +175,11 @@ Ok "At $commit - version $version"
 $setup = Join-Path $Dir 'scripts\setup.ps1'
 if (Test-Path $setup) {
     Say "Checking the Rust/MSVC toolchain (scripts\setup.ps1)"
-    $setupArgs = @('-SkipBuild')
-    if ($Yes -or $Deps) { $setupArgs += '-Yes' }
+    # A HASHTABLE splat, not an array: array splatting passes its elements POSITIONALLY, so
+    # `@('-SkipBuild')` reaches a [CmdletBinding()] script as a positional argument and it errors
+    # with "A positional parameter cannot be found that accepts argument '-SkipBuild'".
+    $setupArgs = @{ SkipBuild = $true }
+    if ($Yes -or $Deps) { $setupArgs['Yes'] = $true }
     # A PowerShell script only sets $LASTEXITCODE when it calls `exit`, so clear it first -
     # otherwise a success here would be judged by the previous native command's code.
     $global:LASTEXITCODE = 0
