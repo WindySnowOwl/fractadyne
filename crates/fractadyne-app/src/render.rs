@@ -2236,14 +2236,47 @@ impl FractadyneApp {
                 self.compute_reference(&center_bf, span, eff_iter, precision, julia, Some([rx, ry]));
             let dx = fractadyne_core::ref_offset_mantissa(&center_bf[0], &rp[0], delta_exp, precision);
             let dy = fractadyne_core::ref_offset_mantissa(&center_bf[1], &rp[1], delta_exp, precision);
-            // Re-reference pass: fresh orbit, no SA/BLA (they were built for the base reference).
+            // Re-reference pass: fresh orbit, and — ⭐since the e100 device loss — a FRESH BLA
+            // TREE to go with it. The base reference's tree cannot be reused (it approximates
+            // THAT orbit), which is why this used to run with `bla_on = 0`; but "cannot reuse"
+            // was silently taken to mean "cannot have one", and a correction pass with no
+            // iteration skip at all is a different renderer from the one that produced the base
+            // image. Measured at 7.885e100× with 4M iterations: a correction tile ran at
+            // **0.04 Gsteps/s against the base pass's 174** — 4000× slower, in the same frame —
+            // which is what put a "bounded" 7×7 tile (49 px!) past the OS watchdog and lost the
+            // device, deterministically. The tree costs one build per pass and buys back that
+            // factor, so the pass is bounded by the same arithmetic that bounds every other
+            // render instead of by hope. SA stays off (it seeds from the base reference's point).
+            let bla_dc_max = self
+                .bla_eligible(RenderMode::from_u32(req.mode), julia)
+                .then(|| Self::bla_dc_max(req.span_mantissa, delta_exp));
+            let (bla, bla_on) = match bla_dc_max {
+                Some(dc_max) => {
+                    let levels = fractadyne_core::build_bla_mandel(
+                        &orbit,
+                        dc_max,
+                        BLA_EPS,
+                        aux_agg_from_orbit(
+                            &orbit,
+                            self.coloring.stripe_freq as f64,
+                            self.coloring.trap_type as u32,
+                        ),
+                    );
+                    if levels.is_empty() {
+                        (std::sync::Arc::new(Vec::new()), 0)
+                    } else {
+                        (std::sync::Arc::new(fractadyne_core::bla_to_gpu(&levels)), 1)
+                    }
+                }
+                None => (std::sync::Arc::new(Vec::new()), 0),
+            };
             let mut r = req.clone();
             r.orbit = orbit;
             r.orbit_len = len;
             r.ref_offset = RefOffset::from_df32(dx, dy);
             r.sa_skip = 0;
-            r.bla_on = 0;
-            r.bla = std::sync::Arc::new(Vec::new());
+            r.bla_on = bla_on;
+            r.bla = bla;
             // Tiled + deadline-aware: a pass over the dark cores (BLA off) is split into short
             // dispatches; if the deadline lands mid-pass the tiled render returns Canceled and we
             // keep the merge accumulated by earlier passes rather than blocking on one huge dispatch.

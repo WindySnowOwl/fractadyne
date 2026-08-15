@@ -331,8 +331,22 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] 🔴⭐⭐**DEVICE LOSS rendering a deep view whose EXPLICIT iteration count exceeds the
-  reference's escape length — deterministic, 2/2** (found 2026-08-14 while investigating the
+- [x] ✅🔴**DEVICE LOSS rendering a deep view whose EXPLICIT iteration count exceeds the
+  reference's escape length — FIXED beta.101.** The correction passes were running with `bla_on = 0`
+  and an empty tree ("no SA/BLA — they were built for the base reference"), so each pass was a
+  renderer with NO iteration skip at all: 0.04 Gsteps/s against the base pass's 174 in the same
+  frame. Every attempt to bound those dispatches by SIZE failed (see attempt 1) because the cost
+  model, not the size, was wrong. Each pass now builds its own BLA tree from its own orbit — the
+  base reference's tree cannot be REUSED, which is not the same as a correction pass not being
+  allowed to HAVE one. Verified: the crashing render completes (166 s, exit 0, `bla_skip` 1.56e9),
+  selftest's correction check still reports 7 references / **0 residual glitches**, and the
+  corrected image differs from the uncorrected one at 131 of 129,600 pixels (0.1%) with the rest
+  byte-identical — exactly the signature of correction doing its job and nothing else.
+  ⚠The `--iter`-above-escape-length regime is still the expensive one (166 s vs 473 ms with
+  correction off); this makes it SAFE and correct, not fast. The pixellation entry below shares its
+  root and is still open. Original report:
+  ~~DEVICE LOSS rendering a deep view whose EXPLICIT iteration count exceeds the
+  reference's escape length — deterministic, 2/2~~ (found 2026-08-14 while investigating the
   pixellation report below; announce-blocking, it is a hard crash on a plain `--render`).
 
   ```

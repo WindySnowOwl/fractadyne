@@ -24,6 +24,18 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **Fixed: rendering a deep view with a high iteration count could crash the graphics device**
+  (beta.101). Exporting at 7.9e100× with an explicit 4,000,000 iterations lost the device every
+  time — a hard crash on default settings, since glitch correction is on by default for exports.
+  The multi-reference correction passes ran with the iteration-skipping tree switched OFF: the base
+  reference's tree cannot be reused for a different reference, and "cannot reuse" had been taken to
+  mean "cannot have one". A correction pass was therefore a completely different renderer from the
+  one that drew the picture — measured at **0.04 billion steps/second against the base pass's 174,
+  a 4000× gap inside the same frame** — so the work-bounding arithmetic that keeps every dispatch
+  inside the OS watchdog was pricing those passes with the wrong cost model, and a "bounded" tile of
+  49 pixels ran for four and a half seconds. Each correction pass now builds its own tree. The
+  render completes, and correction still resolves every glitch it finds (the previously-crashing
+  render now changes 131 pixels out of 129,600 and leaves the rest identical).
 - **Tours can script the dual-view split, and the orbit overlay stops following your mouse**
   (beta.100, both user-reported).
   - **`dual_split` keyframe field**: the fraction of the width the Mandelbrot panel takes — the same
