@@ -10,12 +10,12 @@
 
   Options:
     -Deps           install the prerequisites: git, the Rust toolchain, and the MSVC C++ build
-                    tools the Rust `msvc` toolchain links against. Uses winget where available,
-                    falling back to the vendors' own installers.
-                    !!RUN THIS ONE FROM AN ELEVATED POWERSHELL. These install machine-wide, and
-                    without elevation winget stalls at "0%" waiting on a UAC prompt that may never
-                    surface. The script checks and tells you rather than hanging. Every other
-                    switch works fine unelevated.
+                    tools the Rust `msvc` toolchain links against. Git and Rust are installed with
+                    the vendors' OWN unattended installers, not winget - see the note in the code
+                    for why (winget stalled at "0%" twice, including from an elevated shell).
+                    !!RUN THIS ONE FROM AN ELEVATED POWERSHELL: Git and the build tools install
+                    machine-wide. The script checks first and tells you, rather than starting work
+                    it cannot finish. Every other switch works fine unelevated.
     -SelfTest       after building, run --selftest (needs a real GPU; see the note below).
     -Run            after building, launch the app.
     -Branch NAME    build a branch or tag other than main.
@@ -85,7 +85,7 @@ function Test-Admin {
 # The timeout is the backstop for anything not covered above: a bootstrap script that hangs
 # forever is worse than one that fails, because a failure tells you what to do next.
 function Invoke-Winget {
-    param([Parameter(Mandatory)][string]$Id, [int]$TimeoutSec = 900)
+    param([Parameter(Mandatory)][string]$Id, [int]$TimeoutSec = 300)
     $a = @('install', '--id', $Id, '-e', '--source', 'winget', '--silent',
            '--disable-interactivity', '--accept-source-agreements', '--accept-package-agreements')
     $p = Start-Process -FilePath 'winget' -ArgumentList $a -NoNewWindow -PassThru
@@ -102,17 +102,34 @@ function Invoke-Winget {
 # Git for Windows embeds its version in the asset name, so the download URL comes from the API
 # rather than being hardcoded to a version that will age out.
 function Install-GitDirect {
-    Say "Installing Git from git-scm.com directly"
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Say "Fetching the current Git for Windows release"
     $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/git-for-windows/git/releases/latest' `
                              -Headers @{ 'User-Agent' = 'fractadyne-setup' } -TimeoutSec 90
     $asset = $rel.assets | Where-Object { $_.name -match '^Git-.*-64-bit\.exe$' } | Select-Object -First 1
     if (-not $asset) { Die "could not find a 64-bit Git installer in the latest release" }
+    $mb = [math]::Round($asset.size / 1MB, 1)
     $exe = Join-Path $env:TEMP $asset.name
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $exe -TimeoutSec 900
+    Say "Downloading $($asset.name) ($mb MB) - this takes a minute and shows no progress"
+
+    # PowerShell 5.1's Invoke-WebRequest renders a progress bar that costs FAR more than the
+    # download itself (a documented ~10x slowdown on large files), which on a 62 MB installer looks
+    # exactly like the stall we are here to eliminate. Silencing it is a speed fix, not cosmetic.
+    $prev = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try { Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $exe -TimeoutSec 1800 }
+    finally { $ProgressPreference = $prev }
+    if (-not (Test-Path $exe)) { Die "the Git installer did not download" }
+    Ok "downloaded $([math]::Round((Get-Item $exe).Length / 1MB, 1)) MB"
+
+    Say "Running the installer silently (no dialogs; it does not report progress either)"
     $p = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-',
                                                     '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS' -PassThru
-    if (-not $p.WaitForExit(900 * 1000)) { Die "the Git installer did not finish in 15 minutes" }
+    if (-not $p.WaitForExit(900 * 1000)) {
+        try { $p.Kill() } catch { }
+        Die "the Git installer did not finish in 15 minutes - install it by hand from https://git-scm.com/download/win"
+    }
+    if ($p.ExitCode -ne 0) { Die "the Git installer exited $($p.ExitCode)" }
     Remove-Item $exe -ErrorAction SilentlyContinue
 }
 
@@ -156,8 +173,9 @@ if ($Deps) {
     # window, and the install sits at "0%" indefinitely with no error - so refuse up front and say
     # what to do, rather than letting the script appear to work and then stop forever.
     if (-not (Test-Admin)) {
-        Warn2 "-Deps installs machine-wide software and this window is NOT elevated."
-        Warn2 "Without elevation winget stalls at 0% waiting for a UAC prompt you may never see."
+        Warn2 "-Deps installs machine-wide software (Git, the MSVC build tools) and this window"
+        Warn2 "is NOT elevated. Unelevated, those installers wait on a UAC prompt that may never"
+        Warn2 "surface here, which looks exactly like a hang."
         Write-Host ""
         Write-Host "  Start an elevated PowerShell and run:" -ForegroundColor White
         Write-Host "    cd $PSScriptRoot" -ForegroundColor White
@@ -169,30 +187,30 @@ if ($Deps) {
         exit 1
     }
 
+    # !!WINGET IS NOT USED FOR THE TWO TOOLS THAT MATTER, and that is the fix rather than an
+    # omission. It stalled at "0%" installing Git twice - once unelevated (a UAC prompt that never
+    # surfaced) and again from an ELEVATED shell even with --source winget --silent
+    # --disable-interactivity, which should have made waiting impossible. Whatever it is waiting on
+    # is not something this script can see or control, and the vendors both ship unattended
+    # installers that need no package manager at all. Fewer moving parts, and each one observable.
     if (Have 'git') { Ok "git present" }
-    elseif (Have 'winget') {
-        Say "Installing Git"
-        if (-not (Invoke-Winget 'Git.Git')) { Install-GitDirect }
+    else {
+        Install-GitDirect
         Add-ToolPaths
-        if (-not (Have 'git')) { Die "Git still is not on PATH - open a new terminal and re-run." }
+        if (-not (Have 'git')) { Die "Git installed but is not on PATH - open a new terminal and re-run." }
         Ok "git installed"
     }
-    else { Install-GitDirect; Add-ToolPaths }
 
     if (Have 'rustup') { Ok "rustup present" }
     else {
-        Say "Installing the Rust toolchain"
-        # rustup-init is the vendor's own unattended installer, so it is the fallback AND the
-        # better path: no elevation needed, no package-manager indirection.
-        if (-not ((Have 'winget') -and (Invoke-Winget 'Rustlang.Rustup'))) {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            $init = Join-Path $env:TEMP 'rustup-init.exe'
-            Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $init -TimeoutSec 600
-            & $init -y --default-toolchain stable --profile default
-            Remove-Item $init -ErrorAction SilentlyContinue
-        }
+        Say "Installing the Rust toolchain (rustup-init, the vendor's own unattended installer)"
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $init = Join-Path $env:TEMP 'rustup-init.exe'
+        Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $init -TimeoutSec 600
+        & $init -y --default-toolchain stable --profile default
+        Remove-Item $init -ErrorAction SilentlyContinue
         Add-ToolPaths
-        if (-not (Have 'rustup')) { Die "rustup still is not on PATH - open a new terminal and re-run." }
+        if (-not (Have 'rustup')) { Die "rustup installed but is not on PATH - open a new terminal and re-run." }
         Ok "rustup installed"
     }
 
