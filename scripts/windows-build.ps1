@@ -76,29 +76,14 @@ function Test-Admin {
         [Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-# winget, made incapable of hanging. Three things stall it at "0%", and all three are silent:
-#   * it needs to ELEVATE for a machine-wide install and waits on a UAC prompt that may never
-#     surface in this window (the reported symptom, 2026-08-15),
-#   * the `msstore` source wants an agreement or an account, so `--source winget` avoids it,
-#   * the package's own installer opens a dialog, which `--silent` and `--disable-interactivity`
-#     prevent (the latter makes winget FAIL rather than wait - which is the entire point).
-# The timeout is the backstop for anything not covered above: a bootstrap script that hangs
-# forever is worse than one that fails, because a failure tells you what to do next.
-function Invoke-Winget {
-    param([Parameter(Mandatory)][string]$Id, [int]$TimeoutSec = 300)
-    $a = @('install', '--id', $Id, '-e', '--source', 'winget', '--silent',
-           '--disable-interactivity', '--accept-source-agreements', '--accept-package-agreements')
-    $p = Start-Process -FilePath 'winget' -ArgumentList $a -NoNewWindow -PassThru
-    if (-not $p.WaitForExit($TimeoutSec * 1000)) {
-        Warn2 "winget made no progress in $TimeoutSec s - stopping it and falling back."
-        try { $p.Kill($true) } catch { try { $p.Kill() } catch { } }
-        return $false
-    }
-    if ($p.ExitCode -ne 0) { Warn2 "winget exited $($p.ExitCode) for $Id." }
-    return ($p.ExitCode -eq 0)
-}
+# !!NO WINGET ANYWHERE IN THIS SCRIPT, deliberately. Every install attempted through it stalled at
+# "0%" on the machine this was written for: Git unelevated (a UAC prompt that never surfaced), Git
+# again from an ELEVATED shell with --source winget --silent --disable-interactivity - flags that
+# should make waiting impossible - and finally ffmpeg. Three stalls, three different packages, two
+# elevation states. Whatever it waits on is invisible from here, and a bootstrap script that hangs
+# with no output is worse than one that fails, because a failure tells you what to do next.
+# The vendors' own unattended installers have never done this, so they are the only path used.
 
-# Fallback when winget is absent or unhelpful: fetch the official installer and run it silently.
 # Git for Windows embeds its version in the asset name, so the download URL comes from the API
 # rather than being hardcoded to a version that will age out.
 function Install-GitDirect {
@@ -141,11 +126,11 @@ function Invoke-Native {
     if ($LASTEXITCODE -ne 0) { Die "$What failed (exit $LASTEXITCODE)" }
 }
 
-# rustup and winget-installed tools land in places that are not on PATH in an already-open
-# session. Add them for THIS process so a first run can continue straight into the build instead
+# rustup and the Git installer put their binaries in places that are not on PATH in an
+# already-open session. Add them for THIS process so a first run continues into the build instead
 # of telling you to open a new terminal.
 function Add-ToolPaths {
-    # winget writes PATH to the registry; this process still holds the value it started with.
+    # Installers write PATH to the registry; this process still holds the value it started with.
     # Re-read both scopes wholesale rather than diffing entry by entry (a path containing `[`
     # breaks a `-like` comparison, and duplicates in a process-local PATH are harmless).
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
@@ -169,7 +154,7 @@ if ($Deps) {
     Say "Installing prerequisites"
 
     # Git, Rust and the MSVC build tools all install MACHINE-WIDE, which needs administrator
-    # rights. Without them winget waits on an elevation prompt that may never appear in this
+    # rights. Without them the installers wait on an elevation prompt that may never appear in this
     # window, and the install sits at "0%" indefinitely with no error - so refuse up front and say
     # what to do, rather than letting the script appear to work and then stop forever.
     if (-not (Test-Admin)) {
@@ -214,12 +199,15 @@ if ($Deps) {
         Ok "rustup installed"
     }
 
-    # ffmpeg is OPTIONAL and only matters for `--render-tour --mp4`, which shells out to it
-    # after every frame is rendered. Missing it fails at the END of a long render, which is
-    # the worst moment to find out - so offer it here, where it costs seconds.
+    # ffmpeg is OPTIONAL - it is used only by `--render-tour --mp4`, which shells out to it after
+    # all the frames exist. This script does NOT install it: every winget install attempted here
+    # stalled at "0%", elevated or not, and ffmpeg ships as a zip rather than an installer, so
+    # fetching it would mean unpacking it somewhere and editing PATH - too invasive for a
+    # convenience nobody has asked for yet. A one-line pointer costs nothing and cannot hang.
     if (Have 'ffmpeg') { Ok "ffmpeg present (tour --mp4 assembly)" }
-    elseif ((Have 'winget') -and (Confirm2 "Install ffmpeg too? (only needed for tour MP4 assembly)")) {
-        if (Invoke-Winget 'Gyan.FFmpeg') { Add-ToolPaths } else { Warn2 "ffmpeg install skipped." }
+    else {
+        Warn2 "ffmpeg not found - only needed for `--render-tour --mp4`; frames render without it."
+        Warn2 "  Get it from https://www.gyan.dev/ffmpeg/builds/ and put ffmpeg.exe on PATH."
     }
 }
 
