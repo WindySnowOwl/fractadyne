@@ -65,17 +65,16 @@ else {
         Write-Host "Aborting. Install Rust from https://rustup.rs and re-run this script." -ForegroundColor Red
         exit 1
     }
-    if (Have 'winget') {
-        Write-Host "  Installing via winget (Rustlang.Rustup)..."
-        winget install --id Rustlang.Rustup -e --accept-source-agreements --accept-package-agreements
-    }
-    else {
-        Write-Host "  Downloading rustup-init.exe..."
-        $init = Join-Path $env:TEMP 'rustup-init.exe'
-        Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $init
-        & $init -y --default-toolchain stable --profile default
-        Remove-Item $init -ErrorAction SilentlyContinue
-    }
+    # rustup-init IS the vendor's unattended installer and needs no administrator rights, so it is
+    # preferred over winget rather than used as its fallback. winget would install the same thing
+    # while adding two ways to stall at "0%": a UAC prompt that may never surface in this window,
+    # and the `msstore` source waiting on an agreement. Neither can happen here.
+    Write-Host "  Downloading rustup-init.exe..."
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $init = Join-Path $env:TEMP 'rustup-init.exe'
+    Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $init -TimeoutSec 600
+    & $init -y --default-toolchain stable --profile default
+    Remove-Item $init -ErrorAction SilentlyContinue
     if ((Test-Path $cargoBin) -and ($env:Path -notlike "*$cargoBin*")) {
         $env:Path = "$cargoBin;$env:Path"
     }
@@ -116,9 +115,23 @@ else {
     Write-Warn2 "The MSVC C++ build tools (with the Windows SDK) were not detected."
     Write-Warn2 "The Rust msvc toolchain needs them to link. Install the 'Desktop development with C++' workload."
     if (Have 'winget') {
-        if (Confirm-Action "Install Visual Studio 2022 Build Tools (C++ workload) via winget now? (large download)") {
-            winget install --id Microsoft.VisualStudio.2022.BuildTools -e `
-                --accept-source-agreements --accept-package-agreements `
+        # This one genuinely installs machine-wide, so it needs administrator rights. Unelevated,
+        # winget waits on a UAC prompt that may never appear in this window and simply sits at
+        # "0%" - so say that BEFORE starting a multi-gigabyte download, not after.
+        $elevated = (New-Object Security.Principal.WindowsPrincipal(
+            [Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator)
+        if (-not $elevated) {
+            Write-Warn2 "This window is NOT elevated. Installing the build tools needs administrator"
+            Write-Warn2 "rights; without them winget stalls at 0% on a UAC prompt you may never see."
+            Write-Warn2 "Re-run this script from an elevated PowerShell, or install the workload by hand:"
+            Write-Warn2 "  https://visualstudio.microsoft.com/downloads/ -> Build Tools -> Desktop development with C++"
+        }
+        elseif (Confirm-Action "Install Visual Studio 2022 Build Tools (C++ workload) via winget now? (large download)") {
+            # --source winget skips msstore (another silent stall); --disable-interactivity makes
+            # winget FAIL instead of waiting, which is what turns a hang into a message.
+            winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget `
+                --disable-interactivity --accept-source-agreements --accept-package-agreements `
                 --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
             Write-Warn2 "After it finishes, open a NEW terminal so the tools are on PATH, then re-run this script."
         }
