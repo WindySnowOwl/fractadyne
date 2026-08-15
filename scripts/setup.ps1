@@ -114,33 +114,50 @@ if ($haveMsvc) {
 else {
     Write-Warn2 "The MSVC C++ build tools (with the Windows SDK) were not detected."
     Write-Warn2 "The Rust msvc toolchain needs them to link. Install the 'Desktop development with C++' workload."
-    if (Have 'winget') {
-        # This one genuinely installs machine-wide, so it needs administrator rights. Unelevated,
-        # winget waits on a UAC prompt that may never appear in this window and simply sits at
-        # "0%" - so say that BEFORE starting a multi-gigabyte download, not after.
-        $elevated = (New-Object Security.Principal.WindowsPrincipal(
-            [Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole(
-            [Security.Principal.WindowsBuiltInRole]::Administrator)
-        if (-not $elevated) {
-            Write-Warn2 "This window is NOT elevated. Installing the build tools needs administrator"
-            Write-Warn2 "rights; without them winget stalls at 0% on a UAC prompt you may never see."
-            Write-Warn2 "Re-run this script from an elevated PowerShell, or install the workload by hand:"
-            Write-Warn2 "  https://visualstudio.microsoft.com/downloads/ -> Build Tools -> Desktop development with C++"
+    # !!NOT VIA WINGET. It stalled at "0%" here (2026-08-15, elevated), as it did for Git and for
+    # ffmpeg in windows-build.ps1 - and while stalled it also scrambled this script's output, because
+    # its progress display repositions the cursor and every later line then starts at an arbitrary
+    # column. Microsoft's own bootstrapper installs the same workload unattended, with no package
+    # manager in between.
+    $elevated = (New-Object Security.Principal.WindowsPrincipal(
+        [Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $elevated) {
+        Write-Warn2 "This window is NOT elevated, and these install machine-wide."
+        Write-Warn2 "Re-run from an elevated PowerShell, or install the workload by hand:"
+        Write-Warn2 "  https://visualstudio.microsoft.com/downloads/ -> Build Tools -> Desktop development with C++"
+    }
+    elseif (Confirm-Action "Install Visual Studio 2022 Build Tools (C++ workload) now? (multi-GB download)") {
+        Write-Host "  This is the long one: several GB, typically 10-30 minutes, and it prints"
+        Write-Host "  NOTHING while it works. That is the installer being silent, not a hang."
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $boot = Join-Path $env:TEMP 'vs_BuildTools.exe'
+        $prev = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'   # the 5.1 progress bar dominates the transfer
+        try {
+            Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vs_BuildTools.exe' -OutFile $boot -TimeoutSec 900
         }
-        elseif (Confirm-Action "Install Visual Studio 2022 Build Tools (C++ workload) via winget now? (large download)") {
-            # --source winget skips msstore (another silent stall); --disable-interactivity makes
-            # winget FAIL instead of waiting, which is what turns a hang into a message.
-            winget install --id Microsoft.VisualStudio.2022.BuildTools -e --source winget `
-                --disable-interactivity --accept-source-agreements --accept-package-agreements `
-                --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-            Write-Warn2 "After it finishes, open a NEW terminal so the tools are on PATH, then re-run this script."
+        finally { $ProgressPreference = $prev }
+        # --wait makes the bootstrapper block until the real installer finishes, so the exit code
+        # below describes the INSTALL rather than the download. 3010 = success, reboot required.
+        $p = Start-Process -FilePath $boot -PassThru -ArgumentList `
+            '--quiet', '--wait', '--norestart', '--nocache', `
+            '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended'
+        if (-not $p.WaitForExit(90 * 60 * 1000)) {
+            try { $p.Kill() } catch { }
+            Write-Warn2 "The build tools installer did not finish in 90 minutes; install it by hand."
+        }
+        elseif ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) {
+            Write-Ok "Build tools installed$(if ($p.ExitCode -eq 3010) { ' (a reboot is pending)' })."
+            Write-Warn2 "Open a NEW terminal so the tools are on PATH, then re-run this script."
         }
         else {
-            Write-Warn2 "Skipping. The verification build will likely fail to link until these are installed."
+            Write-Warn2 "The build tools installer exited $($p.ExitCode). See %TEMP%\dd_setup_*.log."
         }
+        Remove-Item $boot -ErrorAction SilentlyContinue
     }
     else {
-        Write-Warn2 "Install from https://visualstudio.microsoft.com/downloads/ (Build Tools for Visual Studio -> 'Desktop development with C++')."
+        Write-Warn2 "Skipping. The verification build will likely fail to link until these are installed."
     }
 }
 
