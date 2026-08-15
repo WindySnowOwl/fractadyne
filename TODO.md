@@ -428,7 +428,13 @@ Mockups: [design/mockups/](design/mockups/).
   refuse correction when the base pass's own worst tile rate says a correction pass cannot be
   bounded.
 
-- [ ] ⭐**A settled deep view renders PIXELLATED until the window is nudged** (user report,
+- [x] ✅⭐⭐**A settled deep view rendered PIXELLATED until the window was nudged — FIXED
+  beta.102.** The tile ALLOWANCE was the settled resolution ceiling and was switched on the
+  BUDGET'S MAGNITUDE, which for a converged budget is a per-step RATE test in disguise; a view
+  slower than ~50 Gsteps/s got sixteen dispatches and stayed a mosaic while a view one percent
+  faster got 512 and went native in the same frame. See "the fix" at the end of this entry.
+  Original report:
+  ~~A settled deep view renders PIXELLATED until the window is nudged~~ (user report,
   2026-08-14, v0.2.40-beta.100 build 1577, RTX 3080, ~1000×700 window). Parked at 7.885e100× on
   the three-spar centre with an explicit 4,000,000 iterations, the settled frame is a grid of
   ~30-pixel blocks; resizing the window slightly re-renders the SAME view in full detail. The two
@@ -476,31 +482,73 @@ Mockups: [design/mockups/](design/mockups/).
   can_tile=true  tiling=false  fresh=85x49  geo=Some(([1920,1102], 1, 110))  max_tiles=16
   ```
 
-  The settle grid for native resolution is **110 tiles; the allowance is 16**, so the tiled settle
-  REFUSES TO START and the frame falls back to the budget-derived 85×49 — which upscaled to the
-  panel is exactly the reported mosaic. On the runs that recover, the same view reports
-  `max_tiles=512` and tiles to full 1920×1102 within a second.
-  **`settle_max_tiles` grants the 512 allowance only once `budget_base(fe_budget) >=
-  EXPLICIT_DISPATCH_CAP`**; below that it returns `TDR_MAX_TILES` = 16 on the reasoning that "a
-  short grid completes quickly, and completing is what lets the geometry pin step aside and re-form
-  sharper at the larger budget". ⭐**That reasoning has a hole: at 4M iterations sixteen tiles
-  cannot cover the frame at ANY resolution the budget affords, so the grid never runs, the budget
-  never gets the completion it is waiting for, and the view is pinned coarse indefinitely.** It is
-  a deadlock between the allowance and the thing the allowance is waiting for.
-  **Why a resize cures it**: it re-forms the geometry (`state.geo` is keyed on resolution+ss), and
-  a different panel size needs a different tile count — a SMALLER window needs fewer, so it fits
-  the allowance and the grid runs. Nothing about the reference changes.
-  ⚠**Predictions worth confirming before fixing** (both follow from the above and are cheap):
-  resizing SMALLER should cure it more reliably than larger, and lowering the iteration count
-  should cure it too (fewer iterations per pixel ⇒ bigger tiles ⇒ fewer of them).
-  **Fix candidates**: (a) grant the full allowance when the grid at native resolution cannot fit
-  the small one AND the view is settled — the premise of the 16-tile allowance is that a short grid
-  is achievable, so where it is not, it should not apply; (b) let the allowance be a function of
-  the tiles the frame actually needs (capped by `TDR_TILES_CEIL`) rather than a two-valued switch;
-  (c) allow a PARTIAL grid to run and refine progressively instead of refusing all-or-nothing.
-  ⚠Verify any of them against the reason the 16 exists — three device losses at ~900 ms dispatches
-  (`EXPLICIT_DISPATCH_CAP` / `TDR_EXPLICIT_BUDGET_MS`) — and note each tile is budget-sized either
-  way, so the allowance governs FRAMES SPENT, not dispatch size.
+  ⛔**Two things in that reading were WRONG, and correcting them is what produced the fix
+  (2026-08-15).** ①`geo`'s third element is the tile SIDE in pixels, not the tile count
+  (`state.geo = Some((resolution, ss, side))`) — that grid is 18×11 = 198 tiles, not 110.
+  ②Nothing in the code compares a tile COUNT against `max_tiles`, so "the grid refuses to start" is
+  not something the code can do. `max_tiles` has exactly one effect: it multiplies `tdr_steps` into
+  `tdr_allowed`, which the resolution shrink then fits the frame under.
+  ⭐**So the allowance IS the settled resolution ceiling — `max_tiles × budget ÷ iterations` pixels
+  and no more, however long the view sits there.** 16 × 1.666e10 ÷ 4e6 = 66,640 px = the reported
+  85×49. There was never a deadlock; there is a ceiling, correctly applied.
+  ⭐⭐**And the switch that sets it is a per-step RATE test in disguise.** `settle_max_tiles` granted
+  512 only above `budget_base(fe_budget) >= EXPLICIT_DISPATCH_CAP` (2e10) — but a CONVERGED budget
+  is by construction "whatever nominal count measured `TDR_EXPLICIT_BUDGET_MS`", so that threshold
+  asks *does this view run faster than 2e10 nominal steps per 400 ms (≈50 Gsteps/s)?* A view just
+  under earns sixteen dispatches forever; a view one percent over earns 512 and goes native in the
+  same frame. Measured three times over on the reporter's own coordinates and gesture:
+
+  ```
+  14.869s  bud=1.538e10  maxt=16   res=81x46      ← 4% of a 1920x1102 panel
+  14.923s  bud=2.307e10  maxt=512  res=100x57     ← the budget crossed 2e10
+  14.942s  bud=2.307e10  maxt=512  res=1920x1102  ← native, one frame later
+  22.163s  install v0: len=256001 partial → 3554457 complete   (clamp lifted ⇒ budget ÷8)
+  22.316s  bud=6.487e9   maxt=16   res=53x30      ← native back to 3% linear, for 2.2 s
+  ```
+
+  **Why a resize cures it**: it moves the view a fraction of a percent (the reporter's own status
+  bars: 7.88506e100 → 7.90270e100) onto a reference on the other side of that rate threshold.
+  Nothing about the picture or the hardware changes — the 33.75 ms at 34× the pixels is the same
+  frame priced in the fast regime.
+  ⚠**The committed `validation/pixellation-repro.ps1` did NOT reproduce the stuck state**: 3/3 runs
+  recovered, because the window lands at a different position on each launch and the injected click
+  therefore zooms to a different destination — the script is a regime LOTTERY, not a repro. What it
+  does reproduce deterministically is the 2.2-second collapse above, which is the same defect on a
+  timer. (`-Trace`, `-MaxIter` and `-Tag` parameters added while investigating; a future attempt
+  should pin the window rect before clicking.)
+
+  #### ✅The fix (beta.102) — two parts, both small
+
+  1. **`settle_max_tiles` grants what the FRAME needs** — `ceil(frame_px · iter ÷ tdr_steps)`
+     clamped to `[TDR_MAX_TILES, TDR_TILES_CEIL]` — instead of switching on the budget's size. A
+     still-CLIMBING budget (`!fe_budget_ok`) keeps the old 16, and that floor is load-bearing: at
+     the 4e8 bootstrap with 4M iterations the "need" is ~21,000 tiles, which would clamp to 512
+     tiles of TEN pixels a side, each latency-bound at a few hundred ms regardless of how few pixels
+     it covers, with the geometry pinned for all 512 frames. Sixteen gets the same information in
+     sixteen frames and re-forms sharper.
+  2. **An explicit count re-arms the grid whenever the view is settled** (the
+     `>= EXPLICIT_DISPATCH_CAP` clause dropped from the arm predicate — restoring what the comment
+     above it already claimed: "only a never-measurable budget and a user-typed iteration count take
+     the new path"). Without it the 22.3 s collapse above is *displayed*: no grid armed ⇒ nothing
+     composing ⇒ the "prefer detail" present gate drops ⇒ the 53×30 frame is what the user sees.
+     Arming costs the same coarse frame (it is the ARM frame either way) and keeps the last complete
+     image on screen while the grid re-forms underneath it.
+
+  ⭐**Regression check: `--selftest live-res` → "tile allowance does NOT bind settled resolution"** —
+  a 1920×1102 panel at an explicit 4,000,000 and 1.3e30× (floatexp, where no iteration chunking
+  exists), with a converged budget of 1.666e10 INJECTED and re-injected every frame. The property is
+  "a converged budget of this size must not bind resolution"; measuring the budget instead would
+  make the test depend on the day's GPU rate, which is the very thing that must not decide whether a
+  view is sharp. Shown to catch it: **340/1920 = 18% before the fix, 1920/1920 = 100% after** (18% =
+  16 × 1.666e10 ÷ 4e6, the arithmetic above). It sits beside the beta.40/41/47 invariant it extends;
+  that one uses 2000 iterations, where sixteen tiles cover the panel with room to spare, which is
+  why it never saw this.
+  ⚠**Not fixed, and not the same thing**: at a genuinely slow reference, native resolution costs
+  what it costs — ~500 budget-sized dispatches ≈ 3 minutes of background sharpening at the 400 ms
+  target, one per frame, abandoned on any input. The allowance no longer *prevents* it and
+  `TDR_TILES_CEIL` bounds it. The 380× per-step swing between two references a fraction of a percent
+  apart is the real prize, and it is the same "nominal steps stop being a cost model" item as the
+  e100 crash above.
 
 - [x] ⭐⭐**BLOCKER FOR THE `render.rs` REFACTOR — the e72 reference build sits on a knife edge, and
   the livetest gate cannot tell a recompile from a regression** (measured 2026-08-14).

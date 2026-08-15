@@ -235,20 +235,18 @@ pub(crate) const EXPLICIT_STEPS_CEIL: u64 = 60_000_000_000;
 /// multi-second dispatch).
 pub(crate) const TDR_STEPS_CEIL: u64 = 300_000_000_000;
 /// FLOOR on the budget-sized dispatches a tiled settle may spend sharpening one frame — the count
-/// this was a fixed constant at, kept so nothing regresses below the behaviour it produced.
-/// `settle_max_tiles` scales above it from MEASURED tile cost.
+/// this was a fixed constant at, kept so nothing regresses below the behaviour it produced. It is
+/// also what a view with a still-CLIMBING budget gets, so its grid completes quickly and can
+/// re-form sharper; `settle_max_tiles` grants a converged view what its frame actually needs.
 pub(crate) const TDR_MAX_TILES: u64 = 16;
-/// Wall clock a settled view may spend reaching native resolution, one tile per frame. Matches the
-/// envelope the fixed 16-tile count implied at the ~900 ms target, so the worst case is unchanged;
-/// what changes is that CHEAP tiles now buy more of them instead of leaving the count at 16.
-pub(crate) const TDR_SETTLE_BUDGET_MS: f64 = 12_000.0;
-/// Absolute cap on tiles per grid, whatever the measurement says — a backstop on grid bookkeeping,
-/// not a cost bound (each tile is independently budget-sized, so the count cannot trip the watchdog).
+/// Absolute cap on tiles per grid, whatever the frame asks for — a backstop on grid bookkeeping,
+/// not a cost bound (each tile is independently budget-sized, so the count cannot trip the
+/// watchdog). It IS the wall-clock envelope of a settle, though: 512 dispatches at the explicit
+/// regime's `TDR_EXPLICIT_BUDGET_MS` target is ~3.5 minutes of background sharpening on a view the
+/// user is parked at, one dispatch per frame, abandoned the moment they touch anything. Views whose
+/// tiles measure far under the target (the common case — a budget pinned at `EXPLICIT_STEPS_CEIL`
+/// measures 12–57 ms per tile here) spend seconds, not minutes.
 pub(crate) const TDR_TILES_CEIL: u64 = 512;
-/// A tile costs at least one frame to draw, so its wall-clock price never falls below a vsync
-/// however cheap the GPU pass measures. Sizing the tile allowance without this floor would promise
-/// thousands of "free" tiles and spend minutes delivering them.
-pub(crate) const TDR_TILE_VSYNC_MS: f64 = 16.7;
 
 /// One view's tiled-settle progress. `None` geometry = ARMED: the view has rendered its coarse
 /// single-dispatch frame under this key and the next settled frame may start the grid. Tiles then
@@ -2473,8 +2471,8 @@ impl FractadyneApp {
     /// spent this frame's tile (two budget-sized dispatches in one submission could pair up past the
     /// watchdog), and repeats the final rect once the grid is complete (the GPU dedupes it, so a
     /// finished view costs nothing per frame).
-    /// How many budget-sized dispatches this view's settle may spend, priced from MEASURED tile
-    /// cost rather than assumed.
+    /// How many budget-sized dispatches this view's settle may spend, taken from what the FRAME
+    /// needs rather than from how large its budget happens to be.
     ///
     /// The fixed 16 was the binder on settled resolution, and it is why an explicit iteration count
     /// could not be honoured. At the 8.8e94× three-spar the field HUD reads `iterate 1.3 ms (GPU)`
@@ -2484,9 +2482,28 @@ impl FractadyneApp {
     /// cover it. None of that is a cost the hardware refused to pay; it is an allowance nobody
     /// measured.
     ///
-    /// So price it the way everything else here is priced — by observation. A tile costs what the
-    /// last one measured (never below a vsync: tiles go one per frame), and a settling view may
-    /// spend `TDR_SETTLE_BUDGET_MS` of them.
+    /// ⚠**The allowance IS the settled resolution ceiling**: the shrink below fits
+    /// `frame_px · iter ≤ tdr_steps × max_tiles`, so a view can never render more than
+    /// `max_tiles × budget` pixels' worth however long it sits there. That is why the replaced
+    /// form — `TDR_TILES_CEIL` once `budget_base(fe_budget) >= EXPLICIT_DISPATCH_CAP`, else
+    /// `TDR_MAX_TILES` — was wrong in a way no amount of waiting could recover from. A CONVERGED
+    /// budget is by construction "whatever measured `TDR_EXPLICIT_BUDGET_MS`", so thresholding on
+    /// its magnitude is a per-step RATE test in disguise: a view slower than ~2e10 nominal steps
+    /// per 400 ms (≈50 Gsteps/s) earned sixteen dispatches and stayed a mosaic, while a view one
+    /// percent faster got 512 and went native in the same frame. Measured 2026-08-15 on the
+    /// reporter's own view and gesture (`validation/pixellation-repro.ps1`, 3 runs):
+    ///
+    /// ```text
+    /// 14.869s  bud=1.538e10  maxt=16   res=81x46      ← 4% of a 1920x1102 panel
+    /// 14.923s  bud=2.307e10  maxt=512  res=100x57     ← the budget crossed 2e10
+    /// 14.942s  bud=2.307e10  maxt=512  res=1920x1102  ← native, one frame later
+    /// 22.163s  install v0: len=256001 partial → 3554457 complete   (clamp lifted ⇒ budget ÷8)
+    /// 22.316s  bud=6.487e9   maxt=16   res=53x30      ← native to 3% linear, for 2.2 s
+    /// ```
+    ///
+    /// The reported "pixellated until I nudge the window" is that same step function seen from the
+    /// losing side: a nudge moves the view a fraction of a percent onto a reference on the other
+    /// side of the threshold. Nothing about the picture, the reference, or the hardware changes.
     ///
     /// ⚠**This raises the NUMBER of safe dispatches, never the size of one** — the tiles are still
     /// individually sized by `tdr_steps`, so per-dispatch watchdog exposure is unchanged. That
@@ -2496,28 +2513,27 @@ impl FractadyneApp {
     /// on a BLA-effective view would submit a multi-second dispatch the instant the view panned
     /// into an interior where BLA cannot skip. A tile COUNT carries no such hazard: a costly tile
     /// measures slow, and the next grid is smaller.
-    fn settle_max_tiles(&self, vidx: usize) -> u64 {
+    fn settle_max_tiles(&self, vidx: usize, frame_px: u64, gpu_iter: u32, tdr_steps: u64) -> u64 {
         // While the budget is still CLIMBING, keep the allowance at the old fixed count. Not for
         // safety — each tile is budget-sized either way — but for feedback: a short grid completes
         // quickly, and completing is what lets the geometry pin step aside and re-form sharper at
-        // the larger budget. Handing a still-climbing budget the full allowance would spend
-        // hundreds of frames perfecting a resolution that is already known to be too low.
-        //
-        // EXPLICIT budgets in the cap region get the full allowance: the explicit regime's 200 ms
-        // real target deliberately forbids the ~900 ms dispatches that used to make 16 tiles
-        // enough (three device losses — see EXPLICIT_DISPATCH_CAP / TDR_EXPLICIT_BUDGET_MS), so
-        // native resolution is reachable only as MORE modestly-sized tiles (native at 4M ≈ 80–240
-        // of them, one per frame, each bounded ≤ ~600 ms real worst-case and far less when BLA
-        // skips). The budget converges within a few tiles of arriving here, so the "climbing
-        // budget wastes frames on known-low resolution" concern is bounded to those few.
-        let _ = (TDR_SETTLE_BUDGET_MS, TDR_TILE_VSYNC_MS);
-        let _ = self.perf.last_iterate_ms[vidx];
-        if !self.render_cfg.auto_iter
-            && budget_base(self.perf.fe_budget[vidx]) >= EXPLICIT_DISPATCH_CAP
-        {
-            return TDR_TILES_CEIL;
+        // the larger budget. Handing a still-climbing budget what the frame needs would be far
+        // worse than merely wasteful at a high explicit count: at the 4.0e8 bootstrap and 4,000,000
+        // iterations the need is ~21,000 tiles, so it would clamp to 512 tiles of TEN pixels a
+        // side — each one latency-bound at a few hundred ms regardless of how few pixels it
+        // covers — and the geometry pin would hold that 296×170 grid for every one of those frames
+        // before it could re-form. Sixteen tiles gets the same information in sixteen frames.
+        // (`fe_budget == 0` — never measured — is the same case: the first reading moves it off
+        // zero, and the wall-clock fallback guarantees readings even without TIMESTAMP_QUERY.)
+        if !self.perf.fe_budget_ok[vidx] {
+            return TDR_MAX_TILES;
         }
-        TDR_MAX_TILES
+        // CONVERGED: grant exactly what native resolution costs, and nothing beyond it. `ss` is not
+        // in this estimate — it is capped later against the same budget and the AA ramp only runs
+        // after the grid completes, so counting it here would shrink the resolution to buy
+        // supersampling, which is the wrong trade for a view that is currently a mosaic.
+        let need = frame_px.saturating_mul(gpu_iter.max(1) as u64).div_ceil(tdr_steps.max(1));
+        need.clamp(TDR_MAX_TILES, TDR_TILES_CEIL)
     }
 
     fn next_settle_tile(
@@ -3337,18 +3353,27 @@ impl FractadyneApp {
                 // to 100%. So an auto-budgeted view keeps waiting for convergence exactly as it
                 // shipped; only a never-measurable budget and a user-typed iteration count take
                 // the new path.
-                // An EXPLICIT budget in the cap region arms early. The explicit regime now
-                // CONVERGES (`budget_step` targets 200 ms real, and a ceiling-pinned budget reads
-                // as `ok`), so the plain `fe_budget_ok` arm above eventually fires on its own —
-                // but the climb-probe stops growing an unmeasured budget at the cap, so a STATIC
-                // view can reach 2e10 with `ok` still false and no dispatches left to measure.
-                // Arming here bridges that: the settle's tiles are real measured dispatches, and
-                // they carry the budget the rest of the way to its converged size (the grid
-                // re-forms sharper as it grows — the 9/8 ratchet bounds the restarts).
+                // An EXPLICIT count arms whenever the view is settled, converged or not. The
+                // explicit regime now CONVERGES (`budget_step` targets 400 ms real, and a
+                // ceiling-pinned budget reads as `ok`), so the plain `fe_budget_ok` arm above
+                // fires on its own once the climb finishes — but the gap before it does is not
+                // free, because a frame with NO grid armed also has nothing composing, so the
+                // present gate drops and the budget-shrunk frame is what the user SEES. Measured
+                // on the field repro: a reference install derates the budget ÷8, the grid's key
+                // goes stale, the re-arm was refused, and a native 1920×1102 view displayed a
+                // 53×30 frame upscaled for 2.2 seconds until the budget re-climbed. Arming instead
+                // costs the same coarse frame — it is the ARM frame either way — but keeps the
+                // last complete image on screen while the grid re-forms underneath it. The
+                // allowance stays at `TDR_MAX_TILES` throughout the climb, so a still-cheap budget
+                // buys a short grid, not hundreds of frames. (Auto-iter views keep waiting for
+                // convergence: there the settle competes with the adaptive iteration boost, which
+                // reads a capped-pixel fraction the GPU reports only for a FULL-FRAME iterate —
+                // arming unconditionally dropped the boost to ×1.60 and took the 1e61 hold from
+                // 42.1% black to 100%. An explicit count runs no probe, so there is nothing to
+                // starve.)
                 _ if self.perf.fe_budget_ok[vidx]
                     || self.perf.fe_budget[vidx] == 0
-                    || (!self.render_cfg.auto_iter
-                        && budget_base(self.perf.fe_budget[vidx]) >= EXPLICIT_DISPATCH_CAP) =>
+                    || !self.render_cfg.auto_iter =>
                 {
                     // ARM: this frame renders the coarse single-dispatch full frame; the grid may
                     // start next frame, seeded from it. Once armed/running, an `ok` flap must NOT
@@ -3367,7 +3392,15 @@ impl FractadyneApp {
             self.perf.tile_pending[vidx] = false;
         }
         // A tiled frame may spend several dispatch budgets in total; everything else gets one.
-        let max_tiles = self.settle_max_tiles(vidx);
+        // `resolution` here is the frame the settle has to cover: the raw panel for a settled GUI
+        // view (`res_scale` is 1.0 there), the motion-scaled size during a tour. Either way it is
+        // what the shrink below is about to be measured against, and NOT yet shrunk itself.
+        let max_tiles = self.settle_max_tiles(
+            vidx,
+            (resolution[0] as u64) * (resolution[1] as u64),
+            gpu_iter,
+            tdr_steps,
+        );
         let tdr_allowed = if tiling {
             tdr_steps.saturating_mul(max_tiles)
         } else {

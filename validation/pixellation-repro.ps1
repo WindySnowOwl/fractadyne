@@ -29,11 +29,17 @@
 param(
     [string]$Exe = "$PSScriptRoot\..\target\release\fractadyne.exe",
     [int]$SettleSec = 55,      # time for the cold reference build before the click
-    [int]$WatchSec = 100       # time to watch after the click
+    [int]$WatchSec = 100,      # time to watch after the click
+    # `gpu` adds the BUDGET controller's own readings (`view=0 iterate=NNNms cur=… -> next=… ok=…`),
+    # which is what says whether the frame is coarse because the allowance binds it or because the
+    # view genuinely measures that expensive. Off by default: it is one line per dispatch.
+    [string]$Trace = "tile,ref",
+    [int]$MaxIter = 4000000,   # the reporter's explicit count; lower it to test the cost prediction
+    [string]$Tag = ""          # suffix for the throwaway config dir, so runs keep their own logs
 )
 
 $ErrorActionPreference = "Stop"
-$cfg = Join-Path $env:TEMP "fdcfg_pixrepro"
+$cfg = Join-Path $env:TEMP "fdcfg_pixrepro$Tag"
 Remove-Item -LiteralPath $cfg -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $cfg | Out-Null
 
@@ -51,7 +57,7 @@ $pins = @{
     center_x_str = '"' + $re + '"'; center_y_str = '"' + $im + '"'
     center_x = "-0.10109636384562213"; center_y = "0.9562865108091415"
     units_per_pixel = $m.ToString("R"); units_per_pixel_e = "$e2"
-    max_iter = "4000000"; auto_iter = "false"; aa = "2"
+    max_iter = "$MaxIter"; auto_iter = "false"; aa = "2"
     click_zoom = "true"; click_zoom_factor = "100.0"
     min_motion_res = "0.75"; prefer_detail = "true"; work_budget_scale = "8.0"
 }
@@ -72,8 +78,8 @@ public class FdClick {
 '@
 
 $env:FRACTADYNE_CONFIG_DIR = $cfg
-$env:FRACTADYNE_TRACE = 'tile,ref'
-Write-Host "booting at 9.612e104x (config $cfg)"
+$env:FRACTADYNE_TRACE = $Trace
+Write-Host "booting at 9.612e104x, iter $MaxIter, trace '$Trace' (config $cfg)"
 $p = Start-Process -FilePath $Exe -PassThru
 Start-Sleep -Seconds $SettleSec
 

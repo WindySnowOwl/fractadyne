@@ -24,6 +24,21 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **Fixed: a deep view could stay pixellated until you nudged the window** (beta.102,
+  user-reported). Parked at 7.9e100× with an explicit 4,000,000 iterations, the settled picture was
+  a grid of coarse blocks; resizing the window slightly re-rendered the same view in full detail,
+  eleven times faster per frame. A settled view too costly to draw in one pass is drawn as a grid of
+  small tiles instead, one per frame, and the number of tiles it was allowed to spend was switched
+  on how large its measured frame budget happened to be. Because that budget converges to "whatever
+  fits the safe time slice", the switch was really asking how FAST the view runs — and a view a
+  few percent below the line was allowed sixteen tiles, which at four million iterations is 4% of
+  the window, forever, while a view a few percent above got 512 and reached full resolution in a
+  single frame. Nudging the window moved the view a fraction of a percent onto the fast side of that
+  line. The allowance is now simply how many tiles the picture needs, so what a view looks like no
+  longer depends on which side of an invisible threshold it lands on. Two related improvements come
+  with it: a view still measuring itself keeps the small allowance (so it settles progressively
+  rather than grinding through hundreds of tiny tiles), and finishing a better reference orbit no
+  longer flashes a coarse frame over an already-sharp one.
 - **Fixed: rendering a deep view with a high iteration count could crash the graphics device**
   (beta.101). Exporting at 7.9e100× with an explicit 4,000,000 iterations lost the device every
   time — a hard crash on default settings, since glitch correction is on by default for exports.

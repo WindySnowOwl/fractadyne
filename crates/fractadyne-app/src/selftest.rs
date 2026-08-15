@@ -2077,6 +2077,98 @@ impl FractadyneApp {
                 );
             }
 
+            // ---- the tile ALLOWANCE must not bind the settled resolution either ----
+            // ⭐The same invariant as above, at the count where it actually broke. The settled
+            // resolution is `tdr_steps × settle_max_tiles ÷ iterations`, so the ALLOWANCE is a
+            // resolution ceiling; while it was a two-valued switch on `budget >=
+            // EXPLICIT_DISPATCH_CAP` it was also a per-step RATE test, and a deep view whose
+            // converged budget landed just under 2e10 got sixteen dispatches forever — 85×49 out
+            // of a 1920×1102 panel, the 2026-08-14 field report. The count above (2000) cannot see
+            // it: sixteen tiles cover that panel at 2000 iterations with room to spare.
+            //
+            // The budget here is INJECTED rather than measured, and re-injected every frame,
+            // because the property under test is exactly "a converged budget of this size must not
+            // bind resolution" — a real measurement would make the test depend on the day's GPU
+            // rate, which is the very thing that must not decide whether the view is sharp. 1.666e10
+            // is the value the field frame reported (85×49 × 4,000,000 = one dispatch's worth).
+            {
+                const DEEP: [u32; 2] = [1920, 1102];
+                const DEEP_ITER: u32 = 4_000_000;
+                const FIELD_BUDGET: u64 = 16_660_000_000;
+                self.render_cfg.max_iter = 2000; // cheap warm-up reference; raised below
+                self.render_cfg.auto_iter = false;
+                self.viewport.set_size(DEEP[0] as f64, DEEP[1] as f64);
+                self.viewport.set_center_log2mag(
+                    fractadyne_core::parse_bf(SX).unwrap(),
+                    fractadyne_core::parse_bf(SY).unwrap(),
+                    100.0, // 1.3e30× — floatexp (mode 2), where no iteration chunking exists
+                );
+                self.ref_cache[0].ref_pt = None;
+                self.perf.tile_state = [None, None];
+                self.perf.fe_budget = [0, 0];
+                self.perf.fe_budget_ok = [false, false];
+                let deep_build = |app: &mut Self, iter: u32| -> [u32; 2] {
+                    app.perf.frame_idx += 1;
+                    let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
+                    let center = app.viewport.center_f64();
+                    let span = app.viewport.complex_span_fe();
+                    let mag = app.viewport.magnification();
+                    let l2 = app.viewport.log2_magnification();
+                    app.build_params(
+                        center_bf, center, span, mag, l2, app.fractal, false, iter, false, 1, DEEP,
+                        0, None,
+                    )
+                    .resolution
+                };
+                // Warm up until the orbit exists — `will_reproject` forces `can_tile` off without
+                // one, and a harness that skipped this would measure the reproject path.
+                let mut warm = 0;
+                while self.ref_cache[0].ref_pt.is_none() && warm < 400 {
+                    let _ = deep_build(self, 2000);
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    warm += 1;
+                }
+                let deep_ref = self.ref_cache[0].ref_pt.is_some();
+                self.render_cfg.max_iter = DEEP_ITER;
+                self.perf.tile_state = [None, None];
+                self.perf.tile_pending = [false, false];
+                let mut deep_best = 0u32;
+                for _ in 0..60 {
+                    // Re-injected per frame: a reference install landing mid-loop derates the
+                    // budget and clears `ok`, which is a different (real) behaviour and not what
+                    // this check is about.
+                    self.perf.fe_budget = [FIELD_BUDGET, FIELD_BUDGET];
+                    self.perf.fe_budget_ok = [true, true];
+                    deep_best = deep_best.max(deep_build(self, DEEP_ITER)[0]);
+                }
+                let deep_frac = deep_best as f64 / DEEP[0] as f64;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Live budget",
+                    name: "tile allowance does NOT bind settled resolution".into(),
+                    params: format!(
+                        "{}×{} panel, {DEEP_ITER} iter @1.3e30×, converged budget {:.3e}",
+                        DEEP[0], DEEP[1], FIELD_BUDGET as f64
+                    ),
+                    result: format!(
+                        "settled width {deep_best}/{} ({:.0}% of panel)",
+                        DEEP[0],
+                        deep_frac * 100.0
+                    ),
+                    threshold: "≥90% of panel width",
+                    pass: deep_ref && deep_frac >= 0.90,
+                });
+                if !deep_ref {
+                    eprintln!(
+                        "[selftest] live-res deep: reference orbit never installed — the check \
+                         above is reporting the reproject path, not the tiled settle."
+                    );
+                }
+                self.viewport.set_size(PANEL[0] as f64, PANEL[1] as f64);
+                self.perf.fe_budget = [0, 0];
+                self.perf.fe_budget_ok = [false, false];
+                self.perf.tile_state = [None, None];
+            }
+
             // ✅A1's user-visible half, end to end: an EXPLICIT count must reach the shader
             // params verbatim. Direct mode at a shallow view so no reference/pixel-clamp can
             // confound the reading — the only thing between the Iterations box and the GPU here
