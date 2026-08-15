@@ -66,8 +66,16 @@ mod scripting;
 mod selftest;
 mod sysinfo;
 mod theme;
+mod tunables;
 mod ui;
 mod uitest;
+
+// ⭐The tunables live in ONE module now (a user requirement — see `tunables.rs`), and are
+// re-exported from here and from `render` so that every existing `crate::NAME` /
+// `crate::render::NAME` call site is unchanged. The move is therefore provably behaviour-neutral:
+// the compiler resolves the same names to the same values, and nothing outside `tunables.rs` had
+// to be edited to make it so.
+pub(crate) use tunables::*;
 pub(crate) use fractal::FractalKind;
 pub(crate) use scripting::{BenchDepth, BenchRes, Playback, StdBench};
 pub(crate) use sysinfo::*;
@@ -686,12 +694,7 @@ impl RandomPalette {
 
 // `lerp_color` / `dual_toggle_button` moved to `theme.rs` (re-exported below).
 
-/// Continuous-zoom tuning.
-pub(crate) const ZOOM_RATE: f64 = 0.462; // ln(2)/1.5 ≈ ~2× magnification per 1.5 s at full speed
 const EASE_TAU: f64 = 0.15; // ease-in/out time constant (seconds)
-/// Keep anti-aliasing off for this long after the last interaction, so rapid zoom
-/// steps don't each trigger a full-AA render (which felt laggy).
-pub(crate) const SETTLE_DELAY: f64 = 0.18;
 
 /// Dual-view divider bounds: the fraction of the width the LEFT (Mandelbrot) panel may take.
 /// Neither panel may collapse — a zero-width panel still costs a render and shows nothing. The
@@ -706,21 +709,9 @@ pub(crate) const DUAL_SPLIT_MAX: f32 = 0.85;
 fn aa_ramp(frame: u32, target: u32) -> u32 {
     (1u32 << frame.min(5)).min(target.max(1))
 }
-/// Max GPU work per render (texels × iterations) before the OS GPU watchdog (TDR)
-/// risks a device-lost crash. Supersampling auto-reduces to stay under this.
-pub(crate) const WORK_BUDGET: u64 = 60_000_000_000;
 
 
-/// Upper bound on a loaded/pasted `.fdn` location blob (untrusted input). A real one is
-/// well under 1 KB; this caps parse work without rejecting anything legitimate.
-const SHARE_MAX: usize = 256 * 1024;
 
-/// Max iterates drawn by the interactive orbit overlay (shallow f64 path).
-const ORBIT_MAX: usize = 512;
-/// Deep (bignum) orbit cap — large enough to run past where nearby points' orbits
-/// diverge (≈ the reference orbit's escape length) so the overlay responds to the
-/// cursor; bounded for cost. Cached so it only recomputes when the cursor/view moves.
-const ORBIT_MAX_DEEP: u32 = 8192;
 
 /// Cache key for the interactive orbit (recompute only when these change).
 #[derive(Clone, PartialEq)]
@@ -740,9 +731,6 @@ struct OrbitCacheEntry {
     pts: Vec<(f64, f64)>,
 }
 
-/// Magnification at/above which perturbation switches from the fast df32 δ to the
-/// floatexp δ. df32 stays clean to ~1e30×; cross over before then with margin.
-pub(crate) const PERT_FE_THRESHOLD: f64 = 1.0e28;
 
 // Version / system-info / time helpers moved to `sysinfo.rs` (re-exported below).
 
@@ -875,16 +863,6 @@ pub(crate) enum RenderMode {
     /// Extended-range floatexp perturbation (`≥ PERT_FE_THRESHOLD`).
     Floatexp = 2,
 }
-/// Magnification at/above which a JULIA view leaves direct mode for perturbation. Far below the
-/// Mandelbrot threshold (1e4) because their direct-mode precision differs structurally: a
-/// Mandelbrot pixel re-injects its df32 `c` EVERY iteration, so the per-pixel identity survives
-/// f32 rounding noise; a Julia pixel's identity lives only in `z0`, entered once — measured
-/// (2026-08-13, `--juliadive` + user report at J 4,362×): speckle from ~530×, hard
-/// iteration-plateau "tessellation" patches by ~1000–4000×, healthy again at ≥1e4 where
-/// perturbation takes over. 1e2 keeps a wide margin below the first measurable degradation;
-/// perturbation is exact at any depth and the Julia reference machinery is the same one deep
-/// dual views already use.
-pub(crate) const PERT_JULIA_THRESHOLD: f64 = 1.0e2;
 
 impl RenderMode {
     /// Pick the representation for a view: direct when shallow or the formula has no perturbation,
@@ -1031,75 +1009,15 @@ const MISIUREWICZ_POI: &[(&str, &str, &str, f64)] = &[
 /// directly so it stays finite past 1e308× where `magnification()` saturates to `∞`.
 pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
     let o = octaves.max(0.0);
-    (2000.0 + o * 256.0).min(u32::MAX as f64) as u32
+    (ZOOM_ITER_BASE + o * ZOOM_ITER_PER_OCTAVE).min(u32::MAX as f64) as u32
 }
 
-/// Ceiling on the LIVE preview's reference-orbit LENGTH (samples) **while interacting**. At
-/// extreme depth a non-escaping tip yields a full ~500k-iter reference — a ~4M-node BLA whose
-/// build/upload per dive-refresh is what froze the window on boot/settle historically. Capping the
-/// REFERENCE (not the pixel iteration) keeps every motion-path build cheap.
-///
-/// CRUCIAL: it must sit ABOVE the moderate-depth reference build (`ref_build_iter` ≈ `gpu_iter` +
-/// headroom, ≈184k at ~1e205×). A reference that ESCAPES below the cap builds complete
-/// (`partial=false`), so pixels iterate to the full `gpu_iter` by REBASING past it and the border
-/// resolves. But truncating a reference that would have escaped just above the cap flips it to
-/// `partial=true`, and the render then clamps `max_iter` to the (short) orbit length — leaving a
-/// smooth, unresolved border (the ~1e205× session point escaped at 100002 and a 100k cap truncated
-/// it 2 iterations early).
-///
-/// **SETTLED views are no longer bound by this** (`live_orbit_cap`, since the 6.3e63× spar blobs):
-/// the adaptive iteration boost raises settled budgets past 256k at Misiurewicz spar fields, whose
-/// near-neutral references are long-lived at ANY depth — the old "only bites past ~1e290×"
-/// assumption was wrong there — and a partial reference shorter than the budget clamps pixels
-/// into blobs. A settled build follows its budget instead; the device storage-binding cap
-/// (`init_orbit_len_cap`, orbit + BLA sized together) is the remaining bound, so GPU memory stays
-/// safe. Export keeps the full appetite (`orbit_len_cap = u32::MAX`).
-pub(crate) const LIVE_REF_CAP: u32 = 256_000;
 
-/// Reference builds per second that mean a spin rather than a workload. Healthy playback spawns
-/// one reactive build plus at most `PREFETCH_SLOTS` lookahead builds per INSTALL, and installs run
-/// ~2/octave — single digits per second even on the fastest dive. Set an order of magnitude above
-/// that so it can only fire on a genuine runaway.
-pub(crate) const BUILD_STORM_PER_S: u32 = 60;
 
-/// Hard ceiling on lookahead reference builds per second (`playback_ref_prefetch`). A backstop, not
-/// a policy: the queue's own bookkeeping should keep it near one build per install, and three
-/// separate defects have each turned it into a spin. Well above any legitimate rate.
-pub(crate) const PREFETCH_BUILDS_PER_S: u32 = 30;
 
-/// Deep-dive pipeline pacing window (octaves of `last_depth_lag`): below `LO` the dive runs at
-/// full speed; above `HI` it's fully held (just under the mode-2 stale-reference spin/freeze
-/// threshold ≈ 3 octaves); in between it proportionally slows. Shared by the script-playback
-/// clock dilation (`advance_playback`) and the interactive zoom-velocity damping
-/// (`paced_zoom_vel`) so both degrade the same way: the image stays sharp, the dive slows.
-pub(crate) const PACE_LAG_LO: f64 = 1.5;
-pub(crate) const PACE_LAG_HI: f64 = 2.8;
 
-/// Consecutive fruitless raises the adaptive iteration probe must see before it concludes the
-/// view is genuinely interior and stops (see `build_params`). Three, because the measured worst
-/// case — the 3.3e61× three-spar — stays at 100% capped through two raises before resolving on
-/// the third. Too low and a starved view latches to a black screen; too high and a true interior
-/// pays a few extra settle frames before reverting.
-pub(crate) const ITER_STALL_LIMIT: u8 = 3;
 
-/// Ceiling on the adaptive iteration boost multiplier. The old ×16 was a wall the Misiurewicz
-/// spar family outgrew by ~1e82×: `zoom_iter_cap` there is ~72k, so even a maxed boost stopped at
-/// ~1.15M while the field genuinely needs several million — the probe was still measuring "capped,
-/// and raising helps" when the ceiling cut it off. 256× lets `zoom_iter_cap × boost` reach
-/// `MAX_ITER_LIMIT` at any depth where that appetite is real; runaway protection is the job of the
-/// stall/plateau evidence logic and the frame-budget machinery (cost-based), not this number.
-pub(crate) const ITER_BOOST_MAX: f64 = 256.0;
 
-/// Hard ceiling on the user-settable iteration count (the Iterations slider max and the live
-/// budget clamps). Was 500,000 — which the 2.6e72× Misiurewicz spar outgrew (measured: 33% of
-/// samples still capped at 500k, ZERO at 1M — the view was fully resolvable, the app just refused
-/// to try). Peer deep-zoomers (KF / Fraktaler-3 / Imagina) treat iterations as effectively
-/// unbounded and users routinely run millions; 10M covers the depths our reference/precision
-/// stack actually reaches. Live-path safety does NOT come from this number: per-frame cost is
-/// bounded by the work budget / tiled settle / motion-res machinery, and non-escaping references
-/// keep the `LIVE_REF_CAP` clamp (freeze guard). The AUTO appetite has its own tighter ceiling in
-/// `recommended_max_iter`.
-pub(crate) const MAX_ITER_LIMIT: u32 = 10_000_000;
 
 // Self-test helpers + run_selftest moved to selftest.rs.
 
@@ -1187,6 +1105,45 @@ fn main() -> eframe::Result<()> {
     // Crash/hang visibility (design/diagnostics.md D1): log file, panic hook, watchdog.
     // Before run_headless so even the pre-GUI CLI modes get crash reports.
     diag::init(&args);
+    // ⭐DEBUG TUNABLE OVERRIDES (`--set NAME=VALUE`, repeatable). Applied here — after logging
+    // exists, before ANY mode runs — so a headless `--render`, a self-test and the GUI all get the
+    // same values, and so the startup line lands in the log file that a bug report will carry.
+    // A bad name or value is FATAL: a typo'd knob that silently did nothing would send a field
+    // diagnosis chasing a change that never happened.
+    {
+        let mut pairs = Vec::new();
+        let mut it = args.iter().skip(1);
+        while let Some(a) = it.next() {
+            let kv = if a == "--set" {
+                it.next().map(String::as_str)
+            } else {
+                a.strip_prefix("--set=")
+            };
+            if let Some(kv) = kv {
+                match kv.split_once('=') {
+                    Some((k, v)) => pairs.push((k.to_string(), v.to_string())),
+                    None => {
+                        eprintln!("fractadyne: --set expects NAME=VALUE (got '{kv}')");
+                        crate::exit(2);
+                    }
+                }
+            }
+        }
+        if !pairs.is_empty() {
+            if let Err(e) = tunables::apply_overrides(&pairs) {
+                eprintln!("fractadyne: {e}");
+                crate::exit(2);
+            }
+            // Loud, and in the log: every later reading in this process is off-stock.
+            diag::log_line("start", &format!("⚠TUNABLES {}", tunables::status_line()));
+            eprintln!(
+                "fractadyne: ⚠tunable override(s) in effect — {}\n\
+                 fractadyne: ⚠this is a DEBUGGING build state; the shipped defaults are the only \
+                 tested path, and this run's results describe no released configuration.",
+                tunables::status_line()
+            );
+        }
+    }
     // `--oomtest`: force a real allocation failure, to prove the OOM path actually writes a crash
     // report. It cannot be verified any other way — an out-of-memory abort skips the panic hook,
     // which is the whole reason this machinery exists, and waiting for a genuine OOM means waiting

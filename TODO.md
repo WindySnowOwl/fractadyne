@@ -164,7 +164,14 @@ Ordered by how fast a stranger hits them.
       shown while a tour plays, sharing `pb.speed` with the transport's cycle button.
     ⚠A missing or moved file must fall back to the picker rather than erroring, and the stored
     path should not be treated as trusted input (same handling as any loaded `.toml`).
-    - **A progress bar in the Render Script dialog** (user, 2026-08-09). The 🎬 dialog launches
+    - [x] ✅**A progress bar in the Render Script dialog — SHIPPED** (`ui/tour_render.rs`:
+      `parse_frame_progress` + an `egui::ProgressBar` fed by the child's `frame K/N` lines, 3 parser
+      unit tests; a non-progress line leaves the bar at its last value rather than blanking a
+      70-minute render's only visual anchor). The pipe-robustness half it was paired with shipped
+      with it — the render path prints through pipe-safe `say()` and the output directory carries
+      its own `render-status.txt` marker (see the resolved 4K-render-death entry under Open bugs).
+      Original request:
+      **A progress bar in the Render Script dialog** (user, 2026-08-09). The 🎬 dialog launches
       the render as a child process (`--render-tour`) and today shows only text; the child already
       emits per-frame progress lines on stdout, so the dialog should parse them into a bar with
       frames-done / total, elapsed, and an ETA. ⚠The same stdout pipe is implicated in the silent
@@ -1742,8 +1749,50 @@ Mockups: [design/mockups/](design/mockups/).
   depth-specific (e142, e148, e163) and a golden at e40 would guard a band nothing has broken in.
 
 
-- [ ] ⭐**PRIORITY: tunables + hardware-dependent factors are individually well-reasoned and
-  collectively fragile.** ⭐**USER REQUIREMENT (2026-08-09): centralize the constants — "I don't
+- [x] ✅⭐**PRIORITY: tunables + hardware-dependent factors are individually well-reasoned and
+  collectively fragile — CENTRALIZED beta.104.** The user requirement below is delivered in two
+  halves, each provable on its own:
+
+  **(a) One place, zero behaviour change.** All 42 fixed constants moved into
+  `crates/fractadyne-app/src/tunables.rs`, **verbatim, with the doc comment that records the
+  incident that set each value** — the reasoning is the point, not the digits. `render.rs` and
+  `main.rs` re-export the module, so **not one call site changed**: the diff is 263 deletions
+  against 19 insertions, and the insertions are the two `use` blocks. The move was done by script
+  rather than by hand, and checked two ways: every value string compared equal to `HEAD`'s, and the
+  build resolved every name unchanged. Also folded in: `zoom_iter_cap`'s inline `2000 + 256/octave`,
+  now `ZOOM_ITER_BASE` / `ZOOM_ITER_PER_OCTAVE` — the number this ledger quotes constantly and the
+  only one that was literally a magic number in an expression. ⚠One scripted-extraction trap worth
+  keeping: the declaration walker must ignore a trailing `// …` comment when looking for the `;`, or
+  a constant with one (`ZOOM_RATE`) swallows the next two declarations whole. Caught by the
+  compiler (duplicate definition), but it would have been a silent value swap in a less lucky shape.
+
+  **(b) Debug overrides: `--set NAME=VALUE`, repeatable.** Scoped to the twelve frame-cost
+  constants — the family every device loss in this ledger involved, and the ones a field diagnosis
+  actually needs to move ("does this reproduce at a 400 ms target?"). Those read through
+  `tunables::cost()`; the rest stay plain constants, because a constant is compile-time proof of its
+  own value and widening the overridable set trades that away. Properties, each tested:
+  - **Never a silent no-op** — an unknown name, a non-positive/non-finite value, or a pair that
+    would invert a floor and its ceiling (`TDR_MIN_STEPS` above `TDR_STEPS_CEIL`, which would panic
+    the clamp in `budget_step`) is a fatal startup error. A typo'd knob that quietly did nothing
+    would send a diagnosis chasing a change that never happened.
+  - **Loud and traceable** — logged at startup (`⚠TUNABLES 2 OVERRIDE(S) — TDR_BUDGET_MS 900 → 500,
+    …`) and stamped into every crash report on a `tunables:` line that reads `stock` otherwise, so a
+    report from an overridden run can never masquerade as stock behaviour — and a report that says
+    nothing about tunables can be told apart from one written before the mechanism existed.
+  - **The gates refuse to be quoted off-stock** — `--selftest` carries a check that FAILS under any
+    override (verified: `5/6` under `--set TDR_MAX_TILES=64`, `6/6` stock). Every threshold, golden
+    and blessed baseline in the suite assumes the defaults; a run that moved one has measured a
+    build nobody ships.
+  - **Dangerous values are permitted on purpose**: raising a budget until the device is lost is a
+    legitimate experiment, and the ~0.9 s lethal band is reachable from here. Nothing clamps you.
+
+  Verified: `cargo test --bins` 47 passed, `--selftest` 116/116 + 17/17 goldens, grand-tour livetest
+  0-drift. Documented in DIAGNOSTICS.md ("Moving a tunable for one run") and `--help`.
+  ⚠**Still open from this entry**: an advanced settings FILE and a diagnostics UI panel for the same
+  knobs (the CLI was the half that matters for field diagnosis), and `--bench-matrix` still does not
+  record the capability probe. Original requirement:
+  ~~PRIORITY: tunables + hardware-dependent factors are individually well-reasoned and
+  collectively fragile.~~ ⭐**USER REQUIREMENT (2026-08-09): centralize the constants — "I don't
   like having critical numbers buried in random blocks of code."** Concretely: gather the fixed
   constants below into one `tunables` module (each with its doc comment, unit, and the incident
   that set it — the per-site comments move with the values), and allow OVERRIDING them for

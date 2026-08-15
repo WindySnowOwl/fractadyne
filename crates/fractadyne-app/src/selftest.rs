@@ -2050,8 +2050,8 @@ impl FractadyneApp {
                 name: "unmeasured budget bounds the FIRST dispatch".into(),
                 params: format!("{}×{} panel, {ITER} iter, fe_budget=0", PANEL[0], PANEL[1]),
                 result: format!("arm frame {arm_w}×{arm_h} ss{arm_ss} = {:.3e} steps", arm_steps as f64),
-                threshold: "≤ TDR_BOOTSTRAP_STEPS",
-                pass: arm_steps <= crate::render::TDR_BOOTSTRAP_STEPS,
+                threshold: "≤ crate::tunables::cost().tdr_bootstrap_steps",
+                pass: arm_steps <= crate::tunables::cost().tdr_bootstrap_steps,
             });
 
             // Subsequent settled frames run the grid and must reach (near-)native resolution.
@@ -2076,6 +2076,22 @@ impl FractadyneApp {
                     "[selftest] live-res: reference orbit never installed — the check above is                      reporting the reproject path, not the tiled settle."
                 );
             }
+
+            // ---- the suite must be measuring the SHIPPED numbers ----
+            // `--set` can move any of the frame-cost tunables for a run, which is exactly what a
+            // field diagnosis wants and exactly what a verdict must not be quoted from: every
+            // threshold in this suite, every golden and every blessed baseline assumes the
+            // defaults. A run with an override is measuring a build nobody ships, so say so here
+            // rather than letting the summary read as a clean bill of health.
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Live budget",
+                name: "tunables are stock (no --set overrides)".into(),
+                params: "the suite's thresholds, goldens and baselines all assume the defaults"
+                    .into(),
+                result: crate::tunables::status_line(),
+                threshold: "stock",
+                pass: crate::tunables::is_stock(),
+            });
 
             // ---- the tile ALLOWANCE must not bind the settled resolution either ----
             // ⭐The same invariant as above, at the count where it actually broke. The settled

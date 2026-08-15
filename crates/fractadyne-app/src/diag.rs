@@ -351,6 +351,7 @@ fn write_crash_report_at(msg: &str, loc: &str) {
          memory  : {}\n\
          activity: {}\n\
          manifest: {}\n\
+         tunables: {}\n\
          thread  : {}\n\n\
          backtrace (debug symbols are disabled in this build; addresses only):\n{}\n",
         crate::sysinfo::version_string(),
@@ -359,6 +360,10 @@ fn write_crash_report_at(msg: &str, loc: &str) {
         memory_line(),
         current_breadcrumb(),
         MANIFEST.lock().map(|m| m.clone()).unwrap_or_default(),
+        // Always printed, `stock` included: a report that says nothing about tunables cannot be
+        // told apart from one written by a build that predates the override mechanism — and a
+        // report from an overridden run must never be read as stock behaviour.
+        crate::tunables::status_line(),
         std::thread::current().name().unwrap_or("<unnamed>"),
         std::backtrace::Backtrace::force_capture(),
     );

@@ -8,9 +8,11 @@ use fractadyne_core::Viewport;
 use fractadyne_gpu::{MandelbrotParams, RefOffset};
 use std::time::Instant;
 
-/// BLA per-step linear tolerance (drops δz² with relative error ≤ this). Smaller ⇒ more
-/// accurate but fewer/smaller skips; 1e-6 keeps pixel error negligible while still merging.
-const BLA_EPS: f64 = 1.0e-6;
+// The cost/watchdog constants this file is built around now live in `crate::tunables` (one place,
+// each with the incident that set it). Re-exported so `crate::render::TDR_*` keeps resolving for
+// the self-test and the harnesses that read them.
+pub(crate) use crate::tunables::*;
+
 
 /// How a view is classified for cost purposes, and the per-frame GPU work budget that follows.
 ///
@@ -136,117 +138,7 @@ mod frame_cost_tests {
     }
 }
 
-/// GPU time a settled floatexp frame is aimed at. Comfortably under the ~2 s GPU watchdog AND short
-/// enough that the UI thread keeps pumping messages between frames (Windows paints a window "Not
-/// Responding" after ~5 s), so an unaffordable view degrades in resolution instead of hanging.
-pub(crate) const TDR_BUDGET_MS: f64 = 900.0;
-/// Per-measurement budget change limits. Growth is capped well under 2× so the next frame cannot leap
-/// from the target into the watchdog; shrink is allowed to halve at once.
-///
-/// The budget is retargeted by the measured-time RATIO, deliberately without modelling cost as
-/// `steps ∝ time`. That model is false at deep interior views: every pixel runs the full iteration
-/// count on a dependent chain, so a small frame is LATENCY-bound (~89.9k iterations ≈ 415 ms here no
-/// matter how few pixels) and only becomes throughput-bound once it saturates GPU occupancy. Assuming
-/// proportionality made the loop conclude a shrunk frame should be fast, and it drove the view to a
-/// postage stamp trying to reach a target that no resolution could reach. A ratio search needs no such
-/// assumption — it just walks toward whatever size actually measures near the target.
-pub(crate) const TDR_GROW_MAX: f64 = 1.5;
-pub(crate) const TDR_SHRINK_MAX: f64 = 0.5;
-/// Cost of the very first frame in a mode, before any measurement exists — the OPENING GUESS, not a
-/// floor. Everything above it is measured, not assumed.
-///
-/// ⚠**Its old claim, "a few ms even on a GPU orders of magnitude slower", is FALSE in the
-/// floatexp / no-BLA regime, and believing it cost six device losses.** Measured 2026-08-09 on an
-/// RTX 3080 at the three-spar dive, `mode=2` with `orbit_len=626` (an escaped reference so short
-/// that BLA skips nothing and real cost tracks the nominal count instead of being a small fraction
-/// of it): the old 4e8 value measured **~1070 ms**, over half the ~2 s driver watchdog on a
-/// current discrete part and therefore NEGATIVE margin on anything slower. A nominal step is not a
-/// fixed amount of work — that is the standing lesson of this file — so no constant expressed in
-/// steps can be "a few ms" everywhere.
-///
-/// ⚠**Lowering it does not help and is not free — TRIED 4e8 → 1e8, REVERTED.** It did not prevent
-/// the device loss (the run died anyway, at 69×54 and 9.86e7 steps), because the cost that kills is
-/// not reachable by this constant — see the mode-2 throughput collapse in TODO.md. And it cost real
-/// resolution: `--livetest` caught the `seahorse-2` checkpoint dropping **480×270 → 100×56**. The
-/// guess is a starting point the controller climbs from at ×1.5 per reading, so starting 4× lower
-/// costs ~4 frames of coarseness at every checkpoint that has not converged yet. See
-/// `TDR_MIN_STEPS` for the change that does matter.
-pub(crate) const TDR_BOOTSTRAP_STEPS: u64 = 400_000_000;
-/// ⭐Absolute floor the measured budget may fall to. The clamp's lower bound used to be
-/// `TDR_BOOTSTRAP_STEPS`, which meant **the controller could not shrink below the opening guess no
-/// matter what it measured** — and where that guess is worth 780 ms rather than a few ms, the app
-/// sat submitting ~0.8 s dispatches back to back during a fast dive, roughly 2× from the ~2 s
-/// driver watchdog, in the one regime where cost is least predictable. Six device losses, each
-/// matched 1:1 by an `nvlddmkm` Event 153, all within seconds of entering that regime; the last
-/// one at `146x115  steps=4.598e8  budget=4.625e8` — the controller had grown the budget from the
-/// bootstrap because a frame measured 780 ms against a 900 ms target, i.e. it was working exactly
-/// as designed and the design had no way down.
-///
-/// A safety valve must be able to move in the direction of safety. 100× below the opening guess is
-/// far enough to reach single-digit milliseconds in the worst regime measured, and the resolution
-/// shrink's own 16×16 floor still bounds how small a frame can get.
-pub(crate) const TDR_MIN_STEPS: u64 = 4_000_000;
 
-/// Nominal-step bound for EXPLICIT-count dispatches (auto-iter off) while the cost model is still
-/// UNMEASURED. Three device losses in one release cycle shared the shape "controller converges
-/// explicit-count dispatches toward the 900 ms target; ~0.9–1.3 s of unpreemptible fragment work
-/// intermittently loses the device" (crash-1786499093 Direct, crash-1786506241 mode-0
-/// rebase-grind, crash-1786538140 mode-2 settle tiles) — the `nvlddmkm` Event-153 marginality of
-/// the beta.48 saga, reproduced at will. 2e10 nominal is ~60–200 ms real even with ZERO skip —
-/// safely under any watchdog — which is exactly the guarantee an unmeasured dispatch needs.
-/// Applied to the budget-climb probe's stop and to the tiling gate's "arm once the cap region is
-/// reached" predicate. Auto-iter views are untouched.
-///
-/// ⚠It is NOT the bound on a MEASURED explicit budget. Shipped as a flat cap on `tdr_steps`, it
-/// silently priced every skip-heavy dispatch at its zero-skip worst case: a scripted dive at a
-/// 5111×2158 window (2026-08-12 field report) ran cap-sized dispatches that measured **54.3 ms**
-/// against the ~900 ms target — 4× of safe headroom spent rendering 26-pixel blocks — while the
-/// frame budget sat frozen above the cap discarding every reading as undersized (`(settling)`
-/// forever). Measured cost is the real currency: `budget_step` in the explicit regime converges
-/// on `TDR_EXPLICIT_BUDGET_MS` real and is ceilinged by `EXPLICIT_STEPS_CEIL`.
-pub(crate) const EXPLICIT_DISPATCH_CAP: u64 = 20_000_000_000;
-/// Real-milliseconds target for MEASURED explicit-count dispatches. The lethal band starts around
-/// ~0.9 s (three reproduced Event-153 losses); 400 ms keeps a >2× margin while roughly tripling
-/// the per-dispatch work the old flat nominal cap allowed in skip-heavy regimes. Deliberately
-/// below the auto-iter `TDR_BUDGET_MS`: explicit counts are the regime where skip effectiveness
-/// is least predictable (that unpredictability is what the three crashes were).
-///
-/// ⚠It MUST sit above the deep view's per-dispatch LATENCY FLOOR. Shipped first at 200 ms and
-/// caught by `--livetest` (the grand tour's six deep holds collapsed 480×270 → 16×16): a 16×16
-/// mode-2 dispatch at a 250k pixel ask measures ~250–330 ms *no matter how few pixels* — 256
-/// threads on 250k-step dependent chains is latency-bound, the codebase's oldest banked lesson —
-/// so every reading at the floor read "slow", the controller shrank to `TDR_MIN_STEPS`, and the
-/// pinned budget read back as converged (`next == cur ⇒ ok`). 400 ms clears the floor measured
-/// here; the floor GUARD in `budget_step` is what keeps a deeper/slower view from cornering
-/// itself when even 400 ms is below its floor.
-pub(crate) const TDR_EXPLICIT_BUDGET_MS: f64 = 400.0;
-/// Ceiling on a latency floor the guard in `budget_step` may HOLD at (rather than shrink away
-/// from). Between the explicit target (400 ms) and here, a small slow dispatch is treated as an
-/// accepted latency floor; past here it is watchdog-relevant and the shrink proceeds. Sits well
-/// under the ~0.9 s lethal band and above every floor measured so far (250–330 ms at the grand
-/// tour's 250k–1.2M holds).
-pub(crate) const TDR_LATENCY_ACCEPT_MS: f64 = 600.0;
-/// Nominal ceiling for a MEASURED explicit budget: 3× `EXPLICIT_DISPATCH_CAP`, so even a total
-/// skip collapse between one measurement and the next (nominal = real, the worst case nominal
-/// denomination guarantees) prices at ~180–600 ms — under the lethal band with margin. Growth
-/// from the cap to here takes ~3 measured readings at ×1.5, each a real timing.
-pub(crate) const EXPLICIT_STEPS_CEIL: u64 = 60_000_000_000;
-/// Never exceed this even if a view measures absurdly cheap (a lone quick interval shouldn't uncork a
-/// multi-second dispatch).
-pub(crate) const TDR_STEPS_CEIL: u64 = 300_000_000_000;
-/// FLOOR on the budget-sized dispatches a tiled settle may spend sharpening one frame — the count
-/// this was a fixed constant at, kept so nothing regresses below the behaviour it produced. It is
-/// also what a view with a still-CLIMBING budget gets, so its grid completes quickly and can
-/// re-form sharper; `settle_max_tiles` grants a converged view what its frame actually needs.
-pub(crate) const TDR_MAX_TILES: u64 = 16;
-/// Absolute cap on tiles per grid, whatever the frame asks for — a backstop on grid bookkeeping,
-/// not a cost bound (each tile is independently budget-sized, so the count cannot trip the
-/// watchdog). It IS the wall-clock envelope of a settle, though: 512 dispatches at the explicit
-/// regime's `TDR_EXPLICIT_BUDGET_MS` target is ~3.5 minutes of background sharpening on a view the
-/// user is parked at, one dispatch per frame, abandoned the moment they touch anything. Views whose
-/// tiles measure far under the target (the common case — a budget pinned at `EXPLICIT_STEPS_CEIL`
-/// measures 12–57 ms per tile here) spend seconds, not minutes.
-pub(crate) const TDR_TILES_CEIL: u64 = 512;
 
 /// One view's tiled-settle progress. `None` geometry = ARMED: the view has rendered its coarse
 /// single-dispatch frame under this key and the next settled frame may start the grid. Tiles then
@@ -337,9 +229,6 @@ struct ReuseRef {
     prec: usize,
 }
 
-/// Slack (octaves) on "the dive has arrived at this slot's target" — the width of the old install
-/// window, kept so a pump landing just short of a target still installs instead of waiting a frame.
-pub(crate) const PREFETCH_REACH_SLACK: f64 = 0.14;
 
 /// Which queued lookahead slot the dive has ARRIVED at: the DEEPEST ready target at or below the
 /// current depth `cur_l2`, or `None` if every ready slot is still ahead of the view. Slots ahead of
@@ -596,16 +485,7 @@ fn pick_reference(inp: &RecomputeInputs) -> [fractadyne_core::BigFloat; 2] {
     point
 }
 
-/// Extra orbit precision above the depth's exact requirement, so successive DEEPER rebuilds within
-/// this band can extend the cached orbit (see [`try_reuse_reference`]) instead of recomputing it.
-/// The orbit is stored as df32 with ample accuracy headroom, so building at a higher precision
-/// leaves the df32 samples byte-identical — this only grows the accumulation margin, not the render.
-const REF_PREC_HEADROOM: usize = 128;
 
-/// Hard drift ceiling for reusing a cached reference: a point beyond this fraction of a span
-/// off-centre is re-anchored (fresh pick) instead. Held at the `out_of_view` gate that already
-/// filters the caller, so a reused reference is never worse than one the live path already trusts.
-const REUSE_MAX_DRIFT: f64 = 0.7;
 
 /// Build the orbit (to `orbit_iter`, at reuse-headroom precision) + series-approximation skip + BLA
 /// tree for a PRE-CHOSEN reference point `rp`. Split out of `recompute_worker` so a progressive cold
@@ -1137,9 +1017,9 @@ impl FractadyneApp {
                 // not merely ÷8 — the mispricing scales with the collapse ratio (3,333× here),
                 // and the budget re-climbs within a few measured frames if the frame is cheap.
                 let derated = if big_collapse {
-                    (cur / 8).min(TDR_BOOTSTRAP_STEPS).max(TDR_MIN_STEPS)
+                    (cur / 8).min(crate::tunables::cost().tdr_bootstrap_steps).max(crate::tunables::cost().tdr_min_steps)
                 } else {
-                    (cur / 8).max(TDR_MIN_STEPS)
+                    (cur / 8).max(crate::tunables::cost().tdr_min_steps)
                 };
                 if cur == 0 || derated < cur {
                     self.perf.fe_budget[vb] = derated;
@@ -1208,39 +1088,6 @@ impl FractadyneApp {
         if no_prefetch() {
             return;
         }
-        /// Slot spacing (octaves). Sets the ACTIVE reference's peak lag between installs: an
-        /// install restores lag ≈ 1.0, and the next slot becomes installable when the view reaches
-        /// its window ⇒ peak active lag = 1.0 + spacing − 0.14. That peak MUST stay below
-        /// `PACE_LAG_LO` (1.5) and `DEEP_LAG_HOLD` (1.8), or the tail of every inter-install
-        /// interval rhythmically clips the pacer / freeze-reproject zones — the residual "visible
-        /// jerkiness from ~e400" with 1.0 spacing (peak 1.86: below ~e400 the reactive path patched
-        /// the tail in ~10–30 ms, past it builds cost 70–130 ms and lose the race at the fast dive
-        /// phase). 0.5 ⇒ peak lag ≈ 1.36 — clear of both thresholds.
-        const PREFETCH_OCT: f64 = 0.5;
-        /// Lookahead depth (slots × PREFETCH_OCT octaves = ~3 octaves, ~0.3 s of runway at the
-        /// fastest ~10 oct/s phase vs 0.1–0.6 s per build; consumption 2 installs/octave). Each
-        /// build's candidate scoring already fans out across all cores, so concurrent slots briefly
-        /// oversubscribe threads — harmless for compute-bound bursts.
-        const PREFETCH_SLOTS: usize = 6;
-        /// ⭐How many lookahead builds may be IN FLIGHT at once, as opposed to how many slots the
-        /// queue holds. Previously unbounded: the refill loop below spawns until the queue is
-        /// full, so whenever the queue drained it started six builds in the same millisecond —
-        /// visible in every crash log as five `building reference [lookahead]` lines sharing a
-        /// timestamp.
-        ///
-        /// That is not the cheap burst the old comment assumed. `best_reference`'s candidate
-        /// scoring uses `std::thread::scope` with `available_parallelism()` threads PER CALL — a
-        /// fresh set each time, not a shared pool — so six concurrent builds put six times the
-        /// core count of bignum work up against the render thread. Measured on the 2026-08-09
-        /// 08:33 device loss, with the frame budget already pinned to the bootstrap so the GPU had
-        /// almost nothing to do: **8 frames in 3.8 s — ~475 ms per frame — for a 135×106 frame
-        /// doing 4e8 steps**, which is ~10 ms of GPU work on the dev 3080. The frames were not
-        /// GPU-bound; the main thread was starved.
-        ///
-        /// Two is enough to keep a build overlapping the one being consumed while leaving the
-        /// machine to the renderer. The queue still covers its full depth — slots simply fill in
-        /// sequence instead of all at once.
-        const PREFETCH_MAX_INFLIGHT: usize = 2;
         const LN_2: f64 = std::f64::consts::LN_2;
         let cur_l2 = pb.sample(e).logmag / LN_2;
         // 1) Collect finished builds into their slots.
@@ -1304,7 +1151,6 @@ impl FractadyneApp {
         // the grand tour's back-out chapters: **214 lookahead builds in one second, none installed.**
         // The tour still reaches those depths later; the lookahead re-queues them when it resumes
         // descending, and the reactive path covers everything in between as it always has.
-        const DIVE_PROBE_S: f64 = 0.25;
         if pb.sample((e + DIVE_PROBE_S).min(pb.total)).logmag / LN_2 <= cur_l2 {
             return;
         }
@@ -1461,9 +1307,6 @@ impl FractadyneApp {
     /// is orphaned exactly like a missed queue slot.
     fn playback_hold_prefetch(&mut self, pb: &crate::scripting::Playback, e: f64) {
         const LN_2: f64 = std::f64::consts::LN_2;
-        /// How far ahead (tour seconds) a hold build may start. Deep extensions cost 25–90 s of
-        /// wall clock; the pacer only ever DILATES tour time, so the real lead is at least this.
-        const HOLD_PREFETCH_LEAD_S: f64 = 120.0;
         // Poll every entry, install the one whose window the clock is inside, drop expired ones.
         let mut entries = std::mem::take(&mut self.hold_prefetch);
         let mut install: Option<RecomputeResult> = None;
@@ -2152,7 +1995,6 @@ impl FractadyneApp {
         // nominal per-pixel work; small tiles keep each GPU dispatch well inside the TDR window and
         // leave the loop interruptible (between tiles) by `deadline`. This is the fix for the
         // >1h uninterruptible-dispatch pathology (TODO.md Open bugs).
-        const CORRECT_WORK_BUDGET: u64 = 2_000_000_000;
         let mut req = self.current_export_request_for(vp, julia);
         req.width = width;
         req.height = height;
@@ -2526,14 +2368,14 @@ impl FractadyneApp {
         // (`fe_budget == 0` — never measured — is the same case: the first reading moves it off
         // zero, and the wall-clock fallback guarantees readings even without TIMESTAMP_QUERY.)
         if !self.perf.fe_budget_ok[vidx] {
-            return TDR_MAX_TILES;
+            return crate::tunables::cost().tdr_max_tiles;
         }
         // CONVERGED: grant exactly what native resolution costs, and nothing beyond it. `ss` is not
         // in this estimate — it is capped later against the same budget and the AA ramp only runs
         // after the grid completes, so counting it here would shrink the resolution to buy
         // supersampling, which is the wrong trade for a view that is currently a mosaic.
         let need = frame_px.saturating_mul(gpu_iter.max(1) as u64).div_ceil(tdr_steps.max(1));
-        need.clamp(TDR_MAX_TILES, TDR_TILES_CEIL)
+        need.clamp(crate::tunables::cost().tdr_max_tiles, crate::tunables::cost().tdr_tiles_ceil)
     }
 
     fn next_settle_tile(
@@ -3036,7 +2878,6 @@ impl FractadyneApp {
         // the reference is still too short for the new depth, the `depth_lag` gate below holds/
         // reprojects instead — so a refresh never renders on a too-short reference (the old ~5 s-spin
         // hazard). Net: floatexp streams real detail every REFRESH_OCTAVES of a continuous dive.
-        const REFRESH_OCTAVES: f64 = 0.5;
         // Time floor on the hold: the octave gate alone starves a SLOW deep dive of real frames —
         // an ease-out tour decelerating through ~2 oct/s drops below ~4 real updates/s (0.5 oct
         // apart in ZOOM is seconds apart in TIME), which reads as visible stepping ("jerkiness
@@ -3044,7 +2885,6 @@ impl FractadyneApp {
         // older than this, even if it hasn't drifted an octave yet; a fast dive still refreshes on
         // the octave gate first. Real refresh frames are res-scaled + TDR-bounded, so ~7/s is
         // affordable at any depth the live view reaches.
-        const REFRESH_MAX_SECS: f64 = 0.15;
         // …but the time floor only applies once the view has actually ZOOMED since the held frame.
         // Zoom is measured on units-per-pixel (`zoom_drift`), NOT on `log2mag` — magnification
         // follows the window height, so a WINDOW RESIZE drifts `frozen_drift` without any zoom.
@@ -3053,7 +2893,6 @@ impl FractadyneApp {
         // compositor stretch the stale frame — the "briefly squashed" resize. With zero zoom the
         // hold's reproject path serves the frame aspect-fit and cheap (the pre-floor behaviour);
         // the `frozen_drift < REFRESH_OCTAVES` gate still forces a real frame on a BIG resize.
-        const REFRESH_MIN_DRIFT: f64 = 0.02;
         let upp_l2 = span.0.log2() - (resolution[0].max(1) as f64).log2();
         let vc = &self.ref_cache[view_id as usize];
         let frozen_drift = (vc.frozen_l2 - log2mag).abs();
@@ -3193,7 +3032,7 @@ impl FractadyneApp {
                             "mode switch to {m}: budget {:.2e} → unmeasured (bootstrap {:.2e}), \
                              re-converging",
                             cur as f64,
-                            TDR_BOOTSTRAP_STEPS as f64
+                            crate::tunables::cost().tdr_bootstrap_steps as f64
                         ),
                     );
                 }
@@ -3202,7 +3041,7 @@ impl FractadyneApp {
         // A reproject frame re-samples the frozen texture, so it must land on the SAME resolution as
         // the frame that produced it; recomputing from a moving budget would drift `fit` off 1.
         let tdr_steps = if offscreen {
-            TDR_STEPS_CEIL
+            crate::tunables::cost().tdr_steps_ceil
         } else if will_reproject && self.perf.frozen_budget[vidx] != 0 {
             self.perf.frozen_budget[vidx]
         } else {
@@ -3231,7 +3070,7 @@ impl FractadyneApp {
         // the budget froze above the cap discarding every undersized reading ("(settling)"
         // forever). Measured real cost is the currency; nominal is only the worst-case backstop.
         let tdr_steps = if !offscreen && !self.render_cfg.auto_iter {
-            tdr_steps.min(EXPLICIT_STEPS_CEIL)
+            tdr_steps.min(crate::tunables::cost().explicit_steps_ceil)
         } else {
             tdr_steps
         };
@@ -3700,7 +3539,7 @@ impl FractadyneApp {
             // reproducible. Below the ceiling the deadlock is still broken (16×16 → ~84×66 at a
             // 4M explicit ask, stable and alive); a native-res render of such an ask needs the
             // chunked path extended to perturbation modes (TODO), not bigger single dispatches.
-            && budget_base(self.perf.fe_budget[vidx]) < EXPLICIT_DISPATCH_CAP
+            && budget_base(self.perf.fe_budget[vidx]) < crate::tunables::cost().explicit_dispatch_cap
         {
             self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
             probe_fired = true;
@@ -4082,7 +3921,6 @@ impl FractadyneApp {
             //    catches up, so a continuous dive stays sharp far deeper; beyond it, a depth-matched
             //    reference lands and the view snaps to full sharpness. (`is_direct`, mode 1 <1e4×,
             //    re-renders every frame — cheap, sharp, no frozen texture to reproject.)
-            const DEEP_LAG_HOLD: f64 = 1.8;
             too_stale = too_stale || reuse_hold || depth_lag > DEEP_LAG_HOLD;
             // ⚠"Prefer detail" does NOT add a freeze here. Its first cut did — every interacting
             // frame froze — which disabled the reuse-hold's REFRESH_OCTAVES cadence entirely, so a
@@ -4528,8 +4366,8 @@ pub(crate) fn live_iter_budget(eff_iter: u32, log2mag: f64, boost: f64, explicit
 
 pub(crate) fn budget_base(fe_budget: u64) -> u64 {
     match fe_budget {
-        0 => TDR_BOOTSTRAP_STEPS,
-        b => b.clamp(TDR_MIN_STEPS, TDR_STEPS_CEIL),
+        0 => crate::tunables::cost().tdr_bootstrap_steps,
+        b => b.clamp(crate::tunables::cost().tdr_min_steps, crate::tunables::cost().tdr_steps_ceil),
     }
 }
 
@@ -4553,9 +4391,9 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     // livetest harness, and the tests cannot select it differently (the beta.40 lesson: a harness
     // whose controller differs from the app's measures a view the app never renders).
     let (target_ms, ceil) = if explicit {
-        (TDR_EXPLICIT_BUDGET_MS, EXPLICIT_STEPS_CEIL)
+        (crate::tunables::cost().tdr_explicit_budget_ms, crate::tunables::cost().explicit_steps_ceil)
     } else {
-        (TDR_BUDGET_MS, TDR_STEPS_CEIL)
+        (crate::tunables::cost().tdr_budget_ms, crate::tunables::cost().tdr_steps_ceil)
     };
     let slow = ms > target_ms;
     // A fast dispatch far under budget size finished quickly because it is SMALL. One-sided: a
@@ -4579,12 +4417,12 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     // resident warps is the only safe direction, and the honest fix for that regime is iteration
     // CHUNKING (mode-2 extension, TODO), not bigger holds. The accept bound also keeps this
     // guard out of the AUTO regime entirely: auto's `slow` starts at 900 ms, already past it.
-    if slow && steps <= TDR_BOOTSTRAP_STEPS && ms <= TDR_LATENCY_ACCEPT_MS {
+    if slow && steps <= crate::tunables::cost().tdr_bootstrap_steps && ms <= crate::tunables::cost().tdr_latency_accept_ms {
         return Some((cur, true));
     }
-    let factor = (target_ms / ms).clamp(TDR_SHRINK_MAX, TDR_GROW_MAX);
+    let factor = (target_ms / ms).clamp(crate::tunables::cost().tdr_shrink_max, crate::tunables::cost().tdr_grow_max);
     let base = if slow { cur.min(steps.max(1)) } else { cur };
-    let next = ((base as f64 * factor) as u64).clamp(TDR_MIN_STEPS, ceil);
+    let next = ((base as f64 * factor) as u64).clamp(crate::tunables::cost().tdr_min_steps, ceil);
     // Converged when the factor sits in the dead band — or when the clamp pinned `next` at `cur`
     // (a ceiling-pinned explicit budget is as converged as it is allowed to get; this is what
     // lets `fe_budget_ok` arm the tiled settle without a special case).
@@ -4614,10 +4452,10 @@ mod controller_props {
     #[test]
     fn slow_reading_always_lowers_the_budget() {
         // Whatever the dispatch's nominal size, taking longer than the target must shrink.
-        for &cur in &[TDR_BOOTSTRAP_STEPS * 4, 1_000_000_000, 50_000_000_000, TDR_STEPS_CEIL] {
+        for &cur in &[crate::tunables::cost().tdr_bootstrap_steps * 4, 1_000_000_000, 50_000_000_000, crate::tunables::cost().tdr_steps_ceil] {
             for &steps in &[1u64, cur / 3, cur, cur * 4] {
                 for explicit in [false, true] {
-                    let (next, _) = budget_step(cur, steps, TDR_BUDGET_MS * 2.0, explicit)
+                    let (next, _) = budget_step(cur, steps, crate::tunables::cost().tdr_budget_ms * 2.0, explicit)
                         .expect("a slow reading is never discarded");
                     assert!(
                         next < cur,
@@ -4680,11 +4518,11 @@ mod controller_props {
 
     #[test]
     fn a_converged_low_budget_is_never_hoisted_back_to_the_guess() {
-        let low = TDR_MIN_STEPS * 2;
-        assert!(low < TDR_BOOTSTRAP_STEPS);
+        let low = crate::tunables::cost().tdr_min_steps * 2;
+        assert!(low < crate::tunables::cost().tdr_bootstrap_steps);
         assert_eq!(budget_base(low), low, "a real measurement is used as is");
-        assert_eq!(budget_base(0), TDR_BOOTSTRAP_STEPS, "only 'unmeasured' gets the guess");
-        assert_eq!(budget_base(1), TDR_MIN_STEPS, "but never below the absolute floor");
+        assert_eq!(budget_base(0), crate::tunables::cost().tdr_bootstrap_steps, "only 'unmeasured' gets the guess");
+        assert_eq!(budget_base(1), crate::tunables::cost().tdr_min_steps, "but never below the absolute floor");
     }
 
     #[test]
@@ -4692,30 +4530,30 @@ mod controller_props {
         // The floor used to be TDR_BOOTSTRAP_STEPS, so a regime where the opening guess is itself
         // too expensive (measured: 4e8 steps = 780 ms at mode 2 with orbit_len=626) left the
         // controller with nowhere to go. A safety valve has to move toward safety.
-        let (next, _) = budget_step(TDR_BOOTSTRAP_STEPS, TDR_BOOTSTRAP_STEPS, 780.0, false)
+        let (next, _) = budget_step(crate::tunables::cost().tdr_bootstrap_steps, crate::tunables::cost().tdr_bootstrap_steps, 780.0, false)
             .expect("a reading at the opening guess is usable");
         // 780 ms is under the 900 ms target, so this one still grows — the point is the next ones.
-        let mut b = TDR_BOOTSTRAP_STEPS;
+        let mut b = crate::tunables::cost().tdr_bootstrap_steps;
         for _ in 0..8 {
             b = budget_step(b, b, 2_000.0, false).expect("a slow reading is never discarded").0;
         }
         assert!(
-            b < TDR_BOOTSTRAP_STEPS,
+            b < crate::tunables::cost().tdr_bootstrap_steps,
             "sustained 2 s frames must drive the budget below the opening guess, got {b}"
         );
-        assert!(b >= TDR_MIN_STEPS);
+        assert!(b >= crate::tunables::cost().tdr_min_steps);
         let _ = next;
     }
 
     #[test]
     fn budget_never_leaves_its_clamps() {
-        for &ms in &[0.05, 1.0, TDR_BUDGET_MS, 5_000.0] {
-            for &cur in &[TDR_MIN_STEPS, TDR_BOOTSTRAP_STEPS, TDR_STEPS_CEIL] {
+        for &ms in &[0.05, 1.0, crate::tunables::cost().tdr_budget_ms, 5_000.0] {
+            for &cur in &[crate::tunables::cost().tdr_min_steps, crate::tunables::cost().tdr_bootstrap_steps, crate::tunables::cost().tdr_steps_ceil] {
                 if let Some((next, _)) = budget_step(cur, cur, ms, false) {
-                    assert!((TDR_MIN_STEPS..=TDR_STEPS_CEIL).contains(&next));
+                    assert!((crate::tunables::cost().tdr_min_steps..=crate::tunables::cost().tdr_steps_ceil).contains(&next));
                 }
                 if let Some((next, _)) = budget_step(cur, cur, ms, true) {
-                    assert!((TDR_MIN_STEPS..=EXPLICIT_STEPS_CEIL).contains(&next));
+                    assert!((crate::tunables::cost().tdr_min_steps..=crate::tunables::cost().explicit_steps_ceil).contains(&next));
                 }
             }
         }
@@ -4725,7 +4563,7 @@ mod controller_props {
     fn growth_is_bounded_so_one_reading_cannot_reach_the_watchdog() {
         let cur = 1_000_000_000;
         let (next, _) = budget_step(cur, cur, 0.01, false).unwrap();
-        assert!(next as f64 <= cur as f64 * TDR_GROW_MAX + 1.0);
+        assert!(next as f64 <= cur as f64 * crate::tunables::cost().tdr_grow_max + 1.0);
     }
 
     #[test]
@@ -4754,8 +4592,8 @@ mod controller_props {
         // the flat cap wasted on 26-pixel blocks — while the frozen budget above the cap ignored
         // every reading. Measured growth must walk past the old cap and pin at the explicit
         // ceiling, converged (`ok`), with the real cost still far under the ~0.9 s lethal band.
-        let skip_rate = EXPLICIT_DISPATCH_CAP as f64 / 54.3; // nominal steps per real ms, measured
-        let mut b = EXPLICIT_DISPATCH_CAP;
+        let skip_rate = crate::tunables::cost().explicit_dispatch_cap as f64 / 54.3; // nominal steps per real ms, measured
+        let mut b = crate::tunables::cost().explicit_dispatch_cap;
         for _ in 0..16 {
             let ms = b as f64 / skip_rate; // cost tracks nominal size at a fixed skip rate
             assert!(ms < 300.0, "explicit dispatches must stay far under the lethal band: {ms}");
@@ -4767,10 +4605,10 @@ mod controller_props {
             }
             b = next;
         }
-        assert_eq!(b, EXPLICIT_STEPS_CEIL, "growth stops exactly at the explicit ceiling");
+        assert_eq!(b, crate::tunables::cost().explicit_steps_ceil, "growth stops exactly at the explicit ceiling");
         // And the regime still shrinks on a genuinely slow reading (skip collapse).
-        let (next, _) = budget_step(EXPLICIT_STEPS_CEIL, EXPLICIT_STEPS_CEIL, 700.0, true).unwrap();
-        assert!(next < EXPLICIT_STEPS_CEIL);
+        let (next, _) = budget_step(crate::tunables::cost().explicit_steps_ceil, crate::tunables::cost().explicit_steps_ceil, 700.0, true).unwrap();
+        assert!(next < crate::tunables::cost().explicit_steps_ceil);
     }
 
     #[test]
@@ -4795,10 +4633,10 @@ mod controller_props {
     fn an_unmeasured_budget_never_binds_resolution_below_a_measured_one() {
         // The invariant. `settle_max_tiles` is the allowance the resolution shrink is sized
         // against; a view that has measured nothing must not be given LESS room than one that has.
-        assert!(TDR_MAX_TILES >= 1);
-        let unmeasured_allowance = TDR_BOOTSTRAP_STEPS.saturating_mul(TDR_MAX_TILES);
+        assert!(crate::tunables::cost().tdr_max_tiles >= 1);
+        let unmeasured_allowance = crate::tunables::cost().tdr_bootstrap_steps.saturating_mul(crate::tunables::cost().tdr_max_tiles);
         assert!(
-            unmeasured_allowance > TDR_BOOTSTRAP_STEPS,
+            unmeasured_allowance > crate::tunables::cost().tdr_bootstrap_steps,
             "tiling must be able to exceed a single bootstrap dispatch, or the bootstrap              constant becomes a permanent resolution cap"
         );
     }

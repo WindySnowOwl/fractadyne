@@ -101,6 +101,33 @@ exercise means dead code (exactly how the v0.2.6 NaN-marker regression would hav
 | `--frametest [--center X Y]` | Stepped-dive stutter harness (build_ms stalls; its "gpu" column is CPU wall-clock — trust `--profile`/`--divetest` for GPU numbers). `--center` dives a real deep line instead of the 34-digit seahorse (precision-noise past ~1e34×) |
 | `--benchmark-std` | Standardized dive benchmark with report |
 | `--render --out X …` | One-shot render; prints manifest + progress; non-zero exit on failure |
+| `--set NAME=VALUE` | Override one frame-cost tunable **for this run** (repeatable). See below |
+
+## Moving a tunable for one run (`--set`)
+
+Every critical number lives in [`crates/fractadyne-app/src/tunables.rs`](crates/fractadyne-app/src/tunables.rs),
+each with its unit and the incident that set it. Twelve of them — the frame-cost controller family
+that every device loss in this project involved — can be overridden from the command line, so a
+field diagnosis can answer *"does this still reproduce at a 400 ms target?"* without a rebuild:
+
+```
+fractadyne --set TDR_EXPLICIT_BUDGET_MS=200 --set TDR_MAX_TILES=64 --play tours/grand-tour.toml
+```
+
+`TDR_BUDGET_MS`, `TDR_EXPLICIT_BUDGET_MS`, `TDR_LATENCY_ACCEPT_MS`, `TDR_GROW_MAX`,
+`TDR_SHRINK_MAX`, `TDR_BOOTSTRAP_STEPS`, `TDR_MIN_STEPS`, `TDR_STEPS_CEIL`, `EXPLICIT_STEPS_CEIL`,
+`EXPLICIT_DISPATCH_CAP`, `TDR_MAX_TILES`, `TDR_TILES_CEIL`.
+
+- **Not a configuration surface.** The defaults are the only tested path: the self-test, the
+  goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that
+  FAILS when any override is in effect, so an overridden run can never be quoted as a clean verdict.
+- **Loud and traceable.** Overrides are logged at startup (`⚠TUNABLES 2 OVERRIDE(S) — …`) and
+  stamped into every crash report (`tunables:` line, which reads `stock` otherwise) — a report from
+  an overridden run cannot masquerade as stock behaviour.
+- **Never a silent no-op.** An unknown name, a non-numeric or non-positive value, or a pair that
+  would invert a floor and its ceiling is a fatal startup error.
+- ⚠**Dangerous values are permitted on purpose** — raising a budget until the device is lost is a
+  legitimate experiment, and the ~0.9 s lethal band is reachable from here. Nothing clamps you.
 
 ## Validating a new machine / GPU (the B6 battery)
 

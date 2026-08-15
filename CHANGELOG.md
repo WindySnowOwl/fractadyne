@@ -24,6 +24,17 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **Every critical number now lives in one file, and twelve of them can be moved for a single run**
+  (beta.104, user-requested: *"I don't like having critical numbers buried in random blocks of
+  code."*). The values that govern how much work one frame may ask of the graphics card — the ones
+  behind most of this release's rendering incidents — were scattered through two large source files,
+  each with a long comment explaining the incident that set it. They are now collected in
+  `tunables.rs`, moved verbatim with those comments, with no change to behaviour whatsoever. For
+  diagnosis there is also a new developer flag, `--set NAME=VALUE`, that moves one of the twelve
+  frame-cost numbers for that run only: it is announced at startup, recorded in any crash report,
+  and deliberately made impossible to mistake for a supported setting — the self-test fails outright
+  if a run uses one, because the shipped defaults are the only tested configuration. See
+  DIAGNOSTICS.md, "Moving a tunable for one run".
 - **Fixed: a sharpened deep view was finished but never shown** (beta.103, user-reported —
   *"it does the computation but doesn't update the image, because it shows up almost immediately
   when you resize slightly smaller"*). With "prefer detail" on, a settled view too costly to draw in
