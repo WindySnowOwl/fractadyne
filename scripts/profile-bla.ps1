@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Measure the BLA (bilinear approximation) cost/benefit: profile with BLA off vs on, then
   analyze the tradeoff per region.

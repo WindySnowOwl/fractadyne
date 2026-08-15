@@ -93,6 +93,18 @@ Requires the Rust toolchain (rustup). **Windows quick start:** from the repo roo
 [`./scripts/setup.ps1`](scripts/setup.ps1) — it checks for (and can install) the Rust toolchain +
 the MSVC C++ build tools, then does a verification build.
 
+**From nothing at all**, on a machine with no toolchain and no checkout, one command does the whole
+job — install the prerequisites, clone, and build:
+
+```powershell
+iwr https://raw.githubusercontent.com/WindySnowOwl/fractadyne/main/scripts/windows-build.ps1 -OutFile windows-build.ps1
+./windows-build.ps1 -Deps
+```
+
+Re-run [`./scripts/windows-build.ps1`](scripts/windows-build.ps1) any time to fetch the latest
+`main` and rebuild; `-SelfTest` runs the GPU validation suite afterwards, `-Run` launches the app.
+[`./scripts/linux-build.sh`](scripts/linux-build.sh) is the same thing for Debian/Ubuntu.
+
 ```sh
 cargo run -p fractadyne-app                 # debug
 cargo run --release -p fractadyne-app       # release — much faster bignum (recommended for deep zoom)

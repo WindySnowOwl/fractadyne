@@ -24,6 +24,19 @@ It checks for (and can install) the Rust toolchain and the MSVC C++ build tools,
 then does a verification build. Safe to re-run. Pass `-Yes` for unattended setup
 or `-SkipBuild` to only set up the toolchain.
 
+Starting from nothing — no toolchain, no checkout — `./scripts/windows-build.ps1
+-Deps` installs the prerequisites, clones the repo, and builds it; re-run it
+without `-Deps` to fetch the latest `main` and rebuild. `./scripts/linux-build.sh`
+is the Debian/Ubuntu equivalent.
+
+⚠**Keep `.ps1` files either pure ASCII or UTF-8 with a BOM.** Windows PowerShell
+5.1 — what a fresh Windows install runs — decodes a BOM-less file as CP1252, so a
+UTF-8 em-dash becomes a stray `"` that swallows the rest of the script. Five
+scripts in this repo, `setup.ps1` among them, failed to *parse* on 5.1 for that
+reason until 2026-08-15. The scripts a stranger runs (`setup.ps1`,
+`windows-build.ps1`, `gpu-validate.ps1`) are kept ASCII-only, since a BOM may not
+survive being copied or downloaded raw.
+
 Otherwise (or on Linux/macOS), all you need is the Rust toolchain (stable, via
 [rustup](https://rustup.rs)); on Linux also install the GTK/X11/Wayland dev
 packages that eframe/`rfd` link against. The first build fetches wgpu/egui and

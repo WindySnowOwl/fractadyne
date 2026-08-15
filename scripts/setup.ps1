@@ -49,7 +49,7 @@ if ((Test-Path $cargoBin) -and ($env:Path -notlike "*$cargoBin*")) {
 
 function Have($name) { return [bool](Get-Command $name -ErrorAction SilentlyContinue) }
 
-Write-Host "Fractadyne — Windows build environment setup" -ForegroundColor White
+Write-Host "Fractadyne - Windows build environment setup" -ForegroundColor White
 Write-Host "(this only installs a Rust toolchain and, if needed, the MSVC C++ build tools)"
 
 # ---------------------------------------------------------------------------
@@ -66,11 +66,11 @@ else {
         exit 1
     }
     if (Have 'winget') {
-        Write-Host "  Installing via winget (Rustlang.Rustup)…"
+        Write-Host "  Installing via winget (Rustlang.Rustup)..."
         winget install --id Rustlang.Rustup -e --accept-source-agreements --accept-package-agreements
     }
     else {
-        Write-Host "  Downloading rustup-init.exe…"
+        Write-Host "  Downloading rustup-init.exe..."
         $init = Join-Path $env:TEMP 'rustup-init.exe'
         Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile $init
         & $init -y --default-toolchain stable --profile default
@@ -127,7 +127,7 @@ else {
         }
     }
     else {
-        Write-Warn2 "Install from https://visualstudio.microsoft.com/downloads/ (Build Tools for Visual Studio → 'Desktop development with C++')."
+        Write-Warn2 "Install from https://visualstudio.microsoft.com/downloads/ (Build Tools for Visual Studio -> 'Desktop development with C++')."
     }
 }
 
@@ -139,8 +139,8 @@ if ($SkipBuild) {
 }
 else {
     Write-Step "Verification build (cargo build --bin fractadyne)"
-    Write-Host "  The first build fetches wgpu/egui and may take several minutes…"
-    # Deliberately NOT using -j1 / no-debuginfo — those are the author machine's page-file
+    Write-Host "  The first build fetches wgpu/egui and may take several minutes..."
+    # Deliberately NOT using -j1 / no-debuginfo - those are the author machine's page-file
     # workaround (see Cargo.toml), not something a normal build environment needs.
     Push-Location (Join-Path $PSScriptRoot '..')
     try {

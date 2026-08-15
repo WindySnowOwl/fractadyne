@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Pull Fractadyne diagnostics bundles from the Linux test rig to this Windows dev box via scp.
 

@@ -1,4 +1,4 @@
-# Real-window resize smoke test (LOCAL ONLY — moves the mouse for ~2 s).
+﻿# Real-window resize smoke test (LOCAL ONLY — moves the mouse for ~2 s).
 #
 # Launches the app in a sandboxed config dir (FRACTADYNE_CONFIG_DIR) with FRACTADYNE_PERF=1,
 # grabs the window's bottom-right corner with synthetic OS input (SendInput-level, the same

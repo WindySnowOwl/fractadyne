@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Compare two Fractadyne profile JSON logs (before/after an optimization).
 

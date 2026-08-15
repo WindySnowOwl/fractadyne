@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
     Render the "deep spiral dive" guided tour (tours/deep-spiral-dive.toml) to a movie.
