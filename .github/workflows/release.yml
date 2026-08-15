@@ -1,8 +1,13 @@
 name: Release
 
 # Build and publish the Windows + Linux binaries. Tag a release (e.g. `git tag v0.1.0 && git
-# push --tags`) to build + attach the zip to a GitHub Release; or run manually
-# (workflow_dispatch) to produce a downloadable test artifact without publishing.
+# push --tags`) to build + attach both archives to a GitHub Release; or run manually
+# (workflow_dispatch) to produce downloadable test artifacts without publishing.
+#
+# Tag runs are a four-job fan-out/fan-in: create-release makes a DRAFT, windows and linux build
+# and upload into it in parallel, publish undrafts it once both have succeeded. Manual runs skip
+# create-release and publish (both are tag-gated) and the two build jobs upload workflow
+# artifacts instead.
 on:
   push:
     tags: ["v*"]
@@ -17,8 +22,49 @@ permissions:
   contents: write # needed to create the release + upload assets
 
 jobs:
+  # Create the release FIRST, as a draft, so neither build job races the other to call
+  # `gh release create`. Previously only the windows job created it and linux retried the upload
+  # for three minutes waiting for it to appear — linux builds faster, so a slow windows build
+  # would silently drop the Linux asset from the release. Now both jobs upload into a release
+  # that already exists, and `publish` undrafts it only after BOTH succeed: a failed build leaves
+  # an unpublished draft (invisible to the update checker) rather than a release missing a
+  # platform.
+  create-release:
+    name: Create draft release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      # No checkout: notes are generated server-side and nothing here reads the tree. `gh` would
+      # normally infer the repo from the git remote, so GH_REPO supplies it instead.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="${{ github.ref_name }}"
+          # Idempotent: a re-run of a partially-failed workflow must not fail here, and must not
+          # regenerate notes over a release that may already have been edited by hand.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag already exists — leaving it as-is"
+            exit 0
+          fi
+          # Track selection by tag shape: a pre-release suffix (v0.3.0-beta.1 / -rc.1 / -alpha.1)
+          # publishes as a GitHub *pre-release* (the "beta" track); a plain vX.Y.Z tag publishes as
+          # a stable release and is marked "latest" (the "release" track) when it is undrafted. An
+          # update checker can then query /releases/latest for stable, or the newest of /releases
+          # (incl. pre-releases) for beta.
+          set -- "$tag" --draft --title "Fractadyne $tag" --generate-notes
+          case "$tag" in
+            *-*) set -- "$@" --prerelease ;;
+          esac
+          gh release create "$@"
+
   windows:
     name: Windows x64 binary
+    needs: create-release
+    # Tag runs wait for the draft; manual (workflow_dispatch) runs skip create-release entirely
+    # and still build an artifact, so a *skipped* dependency must not skip this job.
+    if: ${{ !cancelled() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -73,21 +119,16 @@ jobs:
           "$hash  $dir.zip" | Out-File -FilePath "$dir.zip.sha256" -Encoding ascii
           "ASSET=$dir.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
 
-      - name: Publish GitHub Release
+      # Uploads into the draft `create-release` already made. No retry loop: the release is
+      # guaranteed to exist, so a failure here is a real failure and should fail the job.
+      - name: Upload to draft release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          # Track selection by tag shape: a pre-release suffix (v0.3.0-beta.1 / -rc.1 / -alpha.1)
-          # publishes as a GitHub *pre-release* (the "beta" track); a plain vX.Y.Z tag publishes as
-          # a stable release and is marked "latest" (the "release" track). An update checker can then
-          # query /releases/latest for stable, or the newest of /releases (incl. pre-releases) for beta.
-          $args = @("$tag", "$env:ASSET", "$env:ASSET.sha256",
-                    "--title", "Fractadyne $tag", "--generate-notes")
-          if ($tag -match '-') { $args += "--prerelease" } else { $args += "--latest" }
-          gh release create @args
+          gh release upload $tag $env:ASSET "$env:ASSET.sha256" --clobber
 
       - name: Upload artifact (manual/test runs)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -104,6 +145,8 @@ jobs:
   # mirror ci.yml's build-linux job (winit/eframe need X11+Wayland+xkbcommon; rfd needs GTK3).
   linux:
     name: Linux x64 binary
+    needs: create-release
+    if: ${{ !cancelled() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -140,30 +183,30 @@ jobs:
           # (Goldens are blessed on the dev RTX 3080 — an exact match confirms identical GPU
           # output; small deltas on other hardware are expected FP32 variance.)
           cp validation/golden/*.png "$dir/validation/golden/"
+          # BLESSED-GPU.txt records which card produced these images. Without it a tester's
+          # self-test falls back to the STRICT tolerance and reports expected cross-vendor
+          # differences as failures — precisely the confusion the tolerance exists to prevent.
+          # (The windows job has always shipped this; the linux job did not, so every Linux
+          # tester on a non-3080 card saw false failures. Falling back to strict is the SAFE
+          # direction, so its absence degraded gracefully — it just wasted the feature.)
+          cp validation/golden/BLESSED-GPU.txt "$dir/validation/golden/" 2>/dev/null || true
           cp validation/catalog.toml "$dir/validation/"
           cp benchmarks/bench-matrix-baseline.json "$dir/benchmarks/"
           tar czf "$dir.tar.gz" "$dir"
           sha256sum "$dir.tar.gz" > "$dir.tar.gz.sha256"
           echo "ASSET=$dir.tar.gz" >> "$GITHUB_ENV"
 
-      # Uploads to the SAME release the windows job creates (or created). `gh release upload`
-      # with --clobber is idempotent; if this job wins the race before the release exists, retry
-      # briefly rather than failing the whole build.
-      - name: Publish to GitHub Release
+      # Uploads into the draft `create-release` already made. The old version of this step raced
+      # the windows job for the release's existence and retried 6×30s; that window happened to be
+      # enough on v0.2.40-beta.104, but linux builds faster than windows, so a slow windows build
+      # would have exhausted it and dropped this asset.
+      - name: Upload to draft release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ github.ref_name }}"
-          for i in 1 2 3 4 5 6; do
-            if gh release upload "$tag" "$ASSET" "$ASSET.sha256" --clobber; then
-              exit 0
-            fi
-            echo "release not ready yet (attempt $i), retrying in 30s…"
-            sleep 30
-          done
-          echo "could not upload to release $tag" >&2
-          exit 1
+          gh release upload "$tag" "$ASSET" "$ASSET.sha256" --clobber
 
       - name: Upload artifact (manual/test runs)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -173,3 +216,27 @@ jobs:
           path: |
             *.tar.gz
             *.tar.gz.sha256
+
+  # Undraft only after BOTH platforms have uploaded. Default `needs` semantics skip this job if
+  # either build failed, which leaves the draft in place with whatever assets made it — inspectable
+  # and deletable, and never visible to `--check-updates` as a release missing a platform.
+  publish:
+    name: Publish release
+    needs: [create-release, windows, linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Undraft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="${{ github.ref_name }}"
+          # --latest only for a stable tag; a pre-release must not become /releases/latest, which
+          # is what the update checker's Stable track queries.
+          case "$tag" in
+            *-*) gh release edit "$tag" --draft=false ;;
+            *)   gh release edit "$tag" --draft=false --latest ;;
+          esac
+          echo "published $tag with assets:"
+          gh release view "$tag" --json assets --jq '.assets[].name'
