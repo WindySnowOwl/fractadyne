@@ -375,6 +375,45 @@ Mockups: [design/mockups/](design/mockups/).
   under 1M and never trips it, which is why the corpus and every tour miss it. `glitch_correct` is
   ON by default for exports, so a user rendering a deep view with an explicit count hits this.
 
+  #### Attempt 1 (2026-08-14) — NOT FIXED, code reverted. Read this before attempting a second.
+
+  Tried: size the tiles from MEASURED time instead of nominal steps (the fix direction stated
+  above), starting conservatively and adapting. **It does not work, and the per-tile trace says
+  why in one line.** Instrumenting every tile with its size, ms and achieved rate:
+
+  ```
+  base pass:        tile 22x22 at (374,205) -> 35.7ms  (54.25 Gsteps/s)
+  base pass:        tile 22x21 at (462,249) -> 10.6ms  (173.76 Gsteps/s)
+  correction pass:  tile  7x7  at (7,0)     -> 4600.7ms (0.04 Gsteps/s)   ⚠4000x slower
+  ```
+
+  * **Even a 7×7 tile is fatal.** 49 pixels × 4M iterations took 3.5–4.6 s (two runs) — past the
+    watchdog on its own. So no *pixel-count* budget can be both safe and useful here: the safe
+    tile at that rate is ~2×2, i.e. 32,400 dispatches for one 480×270 pass.
+  * **Cost is CLUSTERED, so a controller calibrated on cheap tiles walks into the expensive corner
+    at a fatal size.** Forcing a 1×1 first tile did not help: the loop climbed through the cheap
+    region and died anyway. The expensive pixels here are the top-left corner (the base pass sees
+    them too — its (7,0) tile is 281 ms against 11 ms for its neighbours, a 25× spread *within the
+    healthy pass*).
+  * **Governing the tile by the WORST rate seen anywhere is a catastrophic pessimisation.** Tried;
+    it turned a plain deep export that finishes in 473 ms into one still running after 10 minutes,
+    because one 4000×-slow tile pins the size for the whole frame. That trade is worse than the
+    bug for every view that does not crash.
+  * ⚠**A clue the next attempt should start from**: with tiles small enough not to die immediately,
+    the device is eventually lost *while the CPU is building the next correction reference*
+    (`last activity: building reference [export]: iter=4000000 prec=400`). `render_iter_tiled`
+    blocks on `poll(Wait)` per tile, so nothing it submits should still be running then — find out
+    what IS in flight at that moment before sizing anything.
+
+  ⛔**Therefore the tile-size lever is the wrong one, and the real fix is the one already on the
+  books: bound a dispatch by ITERATIONS, not by pixels** — mode-2 (floatexp) iteration chunking,
+  the open `[~]` item below (mode 0 shipped in beta.68). With per-dispatch iteration bounds the
+  cost of a dispatch stops depending on what the pixels contain, which is the property every
+  attempt above was trying to fake. Until then the honest mitigations are: keep `glitch_correct`
+  off for deep explicit-count renders (measured: 4M with correction OFF renders in 473 ms), or
+  refuse correction when the base pass's own worst tile rate says a correction pass cannot be
+  bounded.
+
 - [ ] ⭐**A settled deep view renders PIXELLATED until the window is nudged** (user report,
   2026-08-14, v0.2.40-beta.100 build 1577, RTX 3080, ~1000×700 window). Parked at 7.885e100× on
   the three-spar centre with an explicit 4,000,000 iterations, the settled frame is a grid of
