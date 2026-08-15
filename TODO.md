@@ -461,6 +461,13 @@ Mockups: [design/mockups/](design/mockups/).
   faithful render at 17% resolution.
   ### ⭐ROOT CAUSE (2026-08-15) — the settle grid needs more tiles than it is ALLOWED
 
+  ⭐**Repro: `validation/pixellation-repro.ps1`** (~4 min, unattended). No existing harness reaches
+  this: `--livetest` plays a TOUR, and the settled full-resolution branch (`res_scale = 1.0`) is
+  gated on `!tour_playing()`, so the bug lives in a path only the real window exercises. The script
+  writes the reporter's exact coordinates into a THROWAWAY `FRACTADYNE_CONFIG_DIR`, boots, waits
+  out the cold reference build, injects a real click through `user32` (click-to-zoom 100×), then
+  prints the resolution timeline and the tiling verdict.
+
   Reproduced from the reporter's exact `.fdn` coordinates and gesture (park at 9.612e104×, click
   to zoom 100× → 9.612e106×, explicit 4,000,000 iterations), driven headlessly by synthesising the
   session and injecting a real click through `user32`. The stuck frame says it outright:
