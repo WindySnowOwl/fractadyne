@@ -2052,8 +2052,10 @@ struct AnimationState {
 
 /// Scattered window/panel open-flags plus two small chrome selections — pure UI-visibility state the
 /// egui layer reads. Only `right_panel_open` & `minimap` persist; the rest are transient. (Phase 2a.)
-/// Where the issue reporter sends to (Help → Report an issue…).
-pub(crate) const REPORT_EMAIL: &str = "fractadyne@rithea.com";
+/// Where the issue reporter sends to (Help → Report an issue…). The project's own support mailbox
+/// as of 2026-08-15, confirmed live before this was changed — a dead support address is worse than
+/// none, which is why the TODO entry for it waited on the mailbox actually existing.
+pub(crate) const REPORT_EMAIL: &str = "feedback@fractadyne.org";
 
 /// GitHub issue tracker — the PRIMARY reporting channel (public, searchable, and other users can
 /// confirm/subscribe); email stays as the private fallback.

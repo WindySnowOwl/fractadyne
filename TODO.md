@@ -77,7 +77,16 @@ Ordered by how fast a stranger hits them.
     responsive, clean exit writes a valid session. ⚠A PrintWindow capture of the wgpu surface can
     show the view composited off-centre — capture artefact (endemic DWM), the session/viewport is
     correct; don't chase it from screenshots alone.
-12. **Support website + email (user, 2026-08-09): `fractadyne.org` / `feedback@fractadyne.org`.**
+12. ✅**DONE 2026-08-15 — support mailbox live, confirmed by the user before switching.**
+    `REPORT_EMAIL` is now `feedback@fractadyne.org` (was `fractadyne@rithea.com`), which is the
+    only place the address appears in the app — the Help -> Report an issue flow keeps GitHub
+    Issues primary and uses it for the mailto / "Compose in Gmail" fallback. ⚠The *website* half is
+    deliberately NOT in this repo (user's instruction): `fractadyne.org` is hosted separately on
+    Plesk/IIS, and its source lives in its own repository. Add a link to it from Help/About and the
+    README once it is actually serving the site rather than the Plesk default page — a link to a
+    parking page is the same mistake as a dead support address. SECURITY.md still routes security
+    reports to `pub@rithea.com` on purpose (a private channel, not the public feedback mailbox).
+    Original: **Support website + email (user, 2026-08-09): `fractadyne.org` / `feedback@fractadyne.org`.**
     Update the in-app issue reporting (`ISSUES_URL` flow keeps GitHub Issues primary; the mailto /
     "Compose in Gmail" fallback currently points at `fractadyne@rithea.com` → change to
     `feedback@fractadyne.org`), the Help/About text, README, and the release-notes footer. Do this
