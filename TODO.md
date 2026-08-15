@@ -296,10 +296,28 @@ to HARDWARE VARIANCE (everything blessed on one RTX 3080). Sequenced by announce
    `MAX_LOAD_OCTAVES` clamping with a "memory DoS" comment — the guard existed, the newer format
    just never got it. **Worth auditing the remaining untrusted entry points for the same
    asymmetry** rather than assuming the pattern was applied uniformly.
-3. [ ] **Export writer unit tests** — the byte-level writers have zero direct coverage (the
-   goldens exercise the pipeline incidentally, end-to-end): PNG encode + metadata embed →
-   read-back roundtrip (pixels AND metadata), EXR write/read, the resume-vetting reader.
-   Pure functions, no GPU, half a day; corruption there eats user work silently.
+3. [x] ✅**Export writer unit tests — DONE 2026-08-15 (beta.104).** 16 tests, no GPU, ~0.1 s:
+   10 in `fractadyne-export` (`writer_roundtrip_tests`) and 6 in `scripting.rs`
+   (`resume_vetting_tests`). What they pin, chosen as properties the app depends on rather than
+   "it runs": the PNG bytes are EXACTLY `to_srgb8_dithered` of the buffer (the identity every
+   golden comparison rests on — if it drifts, every golden fails for a reason unrelated to
+   rendering); `write_png_rgba8` does not re-encode already-display-space pixels (the double-encode
+   it exists to prevent); metadata round-trips verbatim through both PNG `tEXt` and the EXR
+   attribute, with absence reading as `None` rather than `""`; EXR is linear RGB with alpha passed
+   through untransformed; a short buffer is refused AND leaves no file behind for `--resume` to
+   mistake for a finished frame; corrupt input is a typed error, never a panic.
+   ⭐**A real finding, and the tests now pin it in BOTH crates**: the PNG decoder accepts a file
+   truncated by ONE byte — IEND's final CRC, which it never verifies — while rejecting the loss of
+   the whole IEND chunk. That is exactly the shape an interrupted write leaves, and it is precisely
+   why `png_frame_size` tests for the 12-byte terminator ITSELF instead of trusting a successful
+   decode. The vetter's test writes that one-byte-short frame and asserts it is discarded; the
+   export test asserts the decoder accepts it, with each pointing at the other. Two of my
+   assumptions about which truncations decode were wrong before measuring — the tests record what
+   the decoder DOES.
+   Original: the byte-level writers have zero direct coverage (the goldens exercise the pipeline
+   incidentally, end-to-end): PNG encode + metadata embed → read-back roundtrip (pixels AND
+   metadata), EXR write/read, the resume-vetting reader. Pure functions, no GPU, half a day;
+   corruption there eats user work silently.
 4. [ ] **proptest adoption** on the pure functions whose properties are already stated in
    prose: `progressive_frame_order` (any range + seeds ⇒ exact permutation),
    `segment_range` (shards tile [0,F) exactly), `budget_step` (slow always shrinks; clamps
