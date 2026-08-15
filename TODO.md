@@ -331,6 +331,90 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] 🔴⭐⭐**DEVICE LOSS rendering a deep view whose EXPLICIT iteration count exceeds the
+  reference's escape length — deterministic, 2/2** (found 2026-08-14 while investigating the
+  pixellation report below; announce-blocking, it is a hard crash on a plain `--render`).
+
+  ```
+  fractadyne --render --out x.png --size 480x270 --iter 4000000 --ss 1       --center <three-spar re> <three-spar im> --zoom-log2 335.15   # 7.885e100x
+  ⇒ [fd-panic] wgpu device lost (Unknown): Device is lost
+     activity: glitch correction: pass 1/64, 28 px glitched
+     manifest: mode=2 iter=4000000 orbit_len=3631099 sa_skip=0 bla_on=1 prec=400 size=480x270 ss=1
+  ```
+
+  **Bisected by iteration count, and the boundary is the reference's own escape length (3,631,055):**
+
+  | `--iter` | result | counters |
+  |---|---|---|
+  | 3,000,000 | ok | `rebase=0 bla_skip=1.46e7 maxiter=129600` (every pixel exhausts the budget) |
+  | 3,500,000 | ok | `rebase=0 bla_skip=1.70e7 maxiter=129600` |
+  | 4,000,000 | **DEVICE LOST** | — |
+  | 4,000,000, glitch correction OFF | ok, 473 ms | `rebase=674947 bla_skip=1.70e8 maxiter=0` (every pixel ESCAPES) |
+
+  Crossing the escape length flips the whole frame between two regimes — from "nothing escapes,
+  no rebases" to "everything escapes, 5.2 rebases per pixel and 10× the BLA skips" — and only the
+  **glitch-correction pass** cannot survive the second one. The base iterate at 4M is fine (473 ms).
+  ⭐**Mechanism: the correction pass sizes its tiles in NOMINAL steps and inherits the base pass's
+  cost model.** `CORRECT_WORK_BUDGET = 2e9` with `max_iter = 4e6` gives
+  `by_work = sqrt(2e9/4e6) ≈ 22` ⇒ a 22×22 tile ≈ 1.94e9 nominal steps, which at the BASE pass's
+  measured 1094 Gsteps/s would take **1.8 ms**. But a correction pass renders against a
+  reference re-picked at a glitched pixel, which can have no useful BLA coverage at all — and
+  per-nominal-step cost across that difference swings by ~3 orders of magnitude, so the same
+  "bounded" tile runs past the ~2 s watchdog. The loop's `deadline` cannot help: it is checked
+  BETWEEN tiles, and the device is gone during one.
+  ⚠**This is the same fundamental weakness as the live path below, in a different costume: nominal
+  steps stop being a cost model once BLA skip effectiveness varies by 1000×.** Fix candidates, none
+  free: (a) MEASURE the first correction tile (timestamp query) and re-size the rest from real ms
+  rather than nominal steps — the live path already does exactly this for its own budget;
+  (b) cap `max_iter` for correction passes at the base reference's escape length (past it the base
+  pass has already resolved every pixel, so the correction pass is refining pixels that escaped);
+  (c) shrink `CORRECT_WORK_BUDGET` by the ratio of BLA coverage between base and correction
+  references. ⚠(c) alone is a guess at a number that already failed once at another depth — prefer
+  (a), which needs no constant.
+  ⚠**Reproduce with `--iter` ABOVE the escape length**: auto-iteration at this depth asks well
+  under 1M and never trips it, which is why the corpus and every tour miss it. `glitch_correct` is
+  ON by default for exports, so a user rendering a deep view with an explicit count hits this.
+
+- [ ] ⭐**A settled deep view renders PIXELLATED until the window is nudged** (user report,
+  2026-08-14, v0.2.40-beta.100 build 1577, RTX 3080, ~1000×700 window). Parked at 7.885e100× on
+  the three-spar centre with an explicit 4,000,000 iterations, the settled frame is a grid of
+  ~30-pixel blocks; resizing the window slightly re-renders the SAME view in full detail. The two
+  status bars are the whole clue, and they say the opposite of "this view is expensive":
+
+  ```
+  pixellated  : frame 366.19 ms  gpu 365.81 ms  zoom 7.88506 62667 4e100x  iter 4,000,000
+  after resize: frame  33.75 ms  gpu  33.40 ms  zoom 7.90270 62360 2e100x  iter 4,000,000
+  ```
+
+  **Eleven times cheaper per frame at ~34× the pixels.** Repro committed:
+  `validation/deep-settle-pixellation.toml` (~2 min) — the settled hold records **163×91 out of a
+  960×540 panel** (17% linear), with `FRACTADYNE_TRACE=gpu` showing the sizing arithmetic outright:
+
+  ```
+  res=163x91 iter=4000000 steps=5.93e10 ms=180.3 cur=6.00e10 -> "6.00e10 ok=true"
+  ```
+
+  i.e. the resolution is simply the largest that fits `pixels × iterations ≤ budget`, and the
+  controller reports itself CONVERGED there. At native 960×540 the same view is 2.07e12 nominal
+  steps — 34× the budget — so it renders 163×91 and stops. ⭐**The budget is in NOMINAL steps, but
+  the real cost of a nominal step at a deep view swings by ~200× depending on whether the pixel
+  budget exceeds the reference's escape length** (see the crash above for the same swing measured
+  from the other side: 473 ms for 5.18e11 nominal steps = 1094 Gsteps/s, against ~330 Gsteps/s in
+  the slow state). A resize changes the window height, which changes units-per-pixel, which moves
+  the view a fraction of a percent (7.88506e100 → 7.90270e100 in the report) — enough to land on a
+  reference in the cheap regime, after which the budget affords full resolution.
+  ⚠**Not the same defect as the beta.98 truncation family** — the reference here is COMPLETE
+  (escaped, 3,631,055 samples) and correct. Nothing is broken about the picture; the frame is a
+  faithful render at 17% resolution.
+  **Fix direction**: the same as the crash's (a) — the live budget already measures GPU ms and
+  adapts, so the question is why it converges at a resolution whose measured cost (180 ms) is far
+  ABOVE the ~16 ms a settled frame should target while reporting `ok=true`. Read
+  `budget_res_scale`/the AIMD controller with that trace before touching anything; and note the
+  settled GUI path (`res_scale = 1.0` when `!interacting && !tour_playing`) plus the TILED SETTLE
+  are what SHOULD give a settled view full resolution in bounded tiles — the harness cannot see
+  either (a tour is playing, and `allow_tiled_settle` is GUI-only), so the next step is a GUI-side
+  measurement (`--uitest`) of whether the tiled settle starts at this view at all.
+
 - [x] ⭐⭐**BLOCKER FOR THE `render.rs` REFACTOR — the e72 reference build sits on a knife edge, and
   the livetest gate cannot tell a recompile from a regression** (measured 2026-08-14).
   ✅**ROOT-CAUSED AND FIXED 2026-08-14 (attempt 3) — see "the motion cap was TRUNCATING the live

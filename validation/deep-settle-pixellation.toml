@@ -1,0 +1,69 @@
+# Deep settled view renders PIXELLATED until the window is resized — field report 2026-08-14.
+#
+# REPORTED (v0.2.40-beta.100, build 1577, RTX 3080, ~1000x700 window): parked at 7.885e100x on the
+# three-spar centre with an EXPLICIT 4,000,000 iterations, the settled frame is a grid of ~30-pixel
+# blocks. Nudging the window size re-renders the SAME view in full detail. The status bar is the
+# tell — it is not that the detailed frame is expensive and the blocky one cheap, it is the exact
+# opposite:
+#
+#   pixellated : frame 366.19 ms  gpu/idle 365.81 ms   zoom 7.88506 62667 4e100x  iter 4,000,000
+#   after resize: frame  33.75 ms  gpu/idle  33.40 ms  zoom 7.90270 62360 2e100x  iter 4,000,000
+#
+# ELEVEN TIMES cheaper per frame at FULL resolution. So the blocky state is not the renderer
+# running out of budget for an intrinsically costly view — it is a view whose per-pixel cost is
+# ~1000x too high (a reference/BLA state that skips nothing), with the live cost-bound responding
+# the only way it can: shrinking resolution, which floors at 16x16. The resize forces a rebuild,
+# the rebuild lands a reference that skips properly, and the frame becomes cheap.
+#
+# This harness parks at the reported depth and holds long enough for the settle path to finish, so
+# `--livetest` records the resolution the frame actually reached:
+#
+#     FRACTADYNE_TRACE=ref,tile fractadyne --livetest validation/deep-settle-pixellation.toml \
+#         --size 960x540
+#
+# WHAT TO READ. `tile` reports the per-frame resolution/ss/steps vs budget decisions; `ref` reports
+# what the reference did (`bla_nodes`, `depth_lag`, whether it grew). A run that reproduces shows a
+# settled hold whose resolution stays a fraction of the panel while `bla_skip` sits at/near zero.
+# ⚠The livetest's checkpoint records `res`, but resolution ATTRIBUTES and does not GATE (demoted
+# 2026-08-09 after it flapped four times in a day), so a pixellated hold can still print `ok` —
+# read the number, not the verdict.
+
+format_version = 2
+name = "deep settle pixellation"
+
+[render]
+size = "960x540"
+fps = 30
+ss = 1
+normalize = true
+
+[playback]
+# Stop the clock at the hold until the view resolves — the same pacing the grand tour uses, so a
+# slow settle shows up as a pixellated frame rather than the camera walking past it.
+pace = "settled"
+settle_timeout = 30
+
+[[location]]
+id = "three-spar"
+re = "-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125546238220995191834757e-1"
+im = "9.5628651080914147131604703998237075557983304380930462483482733212267499793490593467836270525491219946548323699651521e-1"
+
+# Arrive the way a user does — a continuous descent, not a cold jump — so the reference reaching
+# the hold is one the dive built, which is the state the report describes.
+[[keyframe]]
+id = "approach"
+t = 0
+location = "three-spar"
+zoom = "1e94"
+max_iter = 4000000
+hold = 2
+
+# The reported view. The explicit 4M count is the reported one and matters: `auto_iter` off is what
+# lets the pixel budget stay at millions while the cost-bound shrinks resolution instead.
+[[keyframe]]
+id = "hold-e100"
+t = 20
+zoom = "7.885e100"
+max_iter = 4000000
+ease = "linear"
+hold = 12
