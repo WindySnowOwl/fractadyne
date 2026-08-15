@@ -459,14 +459,41 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**Not the same defect as the beta.98 truncation family** — the reference here is COMPLETE
   (escaped, 3,631,055 samples) and correct. Nothing is broken about the picture; the frame is a
   faithful render at 17% resolution.
-  **Fix direction**: the same as the crash's (a) — the live budget already measures GPU ms and
-  adapts, so the question is why it converges at a resolution whose measured cost (180 ms) is far
-  ABOVE the ~16 ms a settled frame should target while reporting `ok=true`. Read
-  `budget_res_scale`/the AIMD controller with that trace before touching anything; and note the
-  settled GUI path (`res_scale = 1.0` when `!interacting && !tour_playing`) plus the TILED SETTLE
-  are what SHOULD give a settled view full resolution in bounded tiles — the harness cannot see
-  either (a tour is playing, and `allow_tiled_settle` is GUI-only), so the next step is a GUI-side
-  measurement (`--uitest`) of whether the tiled settle starts at this view at all.
+  ### ⭐ROOT CAUSE (2026-08-15) — the settle grid needs more tiles than it is ALLOWED
+
+  Reproduced from the reporter's exact `.fdn` coordinates and gesture (park at 9.612e104×, click
+  to zoom 100× → 9.612e106×, explicit 4,000,000 iterations), driven headlessly by synthesising the
+  session and injecting a real click through `user32`. The stuck frame says it outright:
+
+  ```
+  can_tile=true  tiling=false  fresh=85x49  geo=Some(([1920,1102], 1, 110))  max_tiles=16
+  ```
+
+  The settle grid for native resolution is **110 tiles; the allowance is 16**, so the tiled settle
+  REFUSES TO START and the frame falls back to the budget-derived 85×49 — which upscaled to the
+  panel is exactly the reported mosaic. On the runs that recover, the same view reports
+  `max_tiles=512` and tiles to full 1920×1102 within a second.
+  **`settle_max_tiles` grants the 512 allowance only once `budget_base(fe_budget) >=
+  EXPLICIT_DISPATCH_CAP`**; below that it returns `TDR_MAX_TILES` = 16 on the reasoning that "a
+  short grid completes quickly, and completing is what lets the geometry pin step aside and re-form
+  sharper at the larger budget". ⭐**That reasoning has a hole: at 4M iterations sixteen tiles
+  cannot cover the frame at ANY resolution the budget affords, so the grid never runs, the budget
+  never gets the completion it is waiting for, and the view is pinned coarse indefinitely.** It is
+  a deadlock between the allowance and the thing the allowance is waiting for.
+  **Why a resize cures it**: it re-forms the geometry (`state.geo` is keyed on resolution+ss), and
+  a different panel size needs a different tile count — a SMALLER window needs fewer, so it fits
+  the allowance and the grid runs. Nothing about the reference changes.
+  ⚠**Predictions worth confirming before fixing** (both follow from the above and are cheap):
+  resizing SMALLER should cure it more reliably than larger, and lowering the iteration count
+  should cure it too (fewer iterations per pixel ⇒ bigger tiles ⇒ fewer of them).
+  **Fix candidates**: (a) grant the full allowance when the grid at native resolution cannot fit
+  the small one AND the view is settled — the premise of the 16-tile allowance is that a short grid
+  is achievable, so where it is not, it should not apply; (b) let the allowance be a function of
+  the tiles the frame actually needs (capped by `TDR_TILES_CEIL`) rather than a two-valued switch;
+  (c) allow a PARTIAL grid to run and refine progressively instead of refusing all-or-nothing.
+  ⚠Verify any of them against the reason the 16 exists — three device losses at ~900 ms dispatches
+  (`EXPLICIT_DISPATCH_CAP` / `TDR_EXPLICIT_BUDGET_MS`) — and note each tile is budget-sized either
+  way, so the allowance governs FRAMES SPENT, not dispatch size.
 
 - [x] ⭐⭐**BLOCKER FOR THE `render.rs` REFACTOR — the e72 reference build sits on a knife edge, and
   the livetest gate cannot tell a recompile from a regression** (measured 2026-08-14).
