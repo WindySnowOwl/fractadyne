@@ -24,6 +24,16 @@ in the git history.
   window while that hold's prefetched reference is in flight — the in-flight build is a live
   progress signal (a dead worker culls it), and the sticky give-up backstop still applies with
   a 6× allowance for this demonstrably-progressing case.
+- **Fixed: a sharpened deep view was finished but never shown** (beta.103, user-reported —
+  *"it does the computation but doesn't update the image, because it shows up almost immediately
+  when you resize slightly smaller"*). With "prefer detail" on, a settled view too costly to draw in
+  one pass keeps the last complete picture on screen while the sharper one is assembled underneath,
+  and swaps to it when the assembly finishes. The test for "still assembling" was never satisfied
+  the other way: a finished assembly goes on nominating its last piece every frame (harmless and
+  deliberate — the graphics card skips repeated work), and that was being read as "still busy". So
+  from the first assembly onward the view kept displaying the coarse placeholder it had started
+  from, while the finished, sharp image sat unseen. Nudging the window revealed it instantly because
+  interacting suspends the hold — the picture had been ready all along.
 - **Fixed: a deep view could stay pixellated until you nudged the window** (beta.102,
   user-reported). Parked at 7.9e100× with an explicit 4,000,000 iterations, the settled picture was
   a grid of coarse blocks; resizing the window slightly re-rendered the same view in full detail,

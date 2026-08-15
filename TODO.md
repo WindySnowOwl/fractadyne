@@ -543,6 +543,35 @@ Mockups: [design/mockups/](design/mockups/).
   16 × 1.666e10 ÷ 4e6, the arithmetic above). It sits beside the beta.40/41/47 invariant it extends;
   that one uses 2000 iterations, where sixteen tiles cover the panel with room to spare, which is
   why it never saw this.
+  #### ✅⭐⭐The SECOND defect, and the one the reporter actually saw (beta.103)
+
+  User follow-up on the beta.102 build: *"It seems it does the computation but doesn't update the
+  image, because it shows up almost immediately when you resize slightly smaller."* That is a
+  different bug, and the phrasing is the whole diagnosis — the picture was finished and unseen.
+  **Present-gating ("prefer detail") never released.** A settled view that needs tiling displays a
+  SNAPSHOT of the last complete frame while the grid composes underneath, and drops it when nothing
+  is composing — but `composing` counted `tile.is_some()`, and `next_settle_tile` REPEATS its final
+  rect every frame once the grid is done (deliberately: the GPU dedupes it, so a finished view costs
+  nothing). So from the first completed grid onward the gate was stuck true **permanently**: the
+  display kept serving the snapshot taken when the grid ARMED — a coarse, budget-shrunk frame —
+  while the sharp composite sat in the texture, invisible. A resize "fixes" it because interaction
+  breaks the gate and shows the texture directly, which is why the detail appears INSTANTLY instead
+  of being recomputed.
+  ⭐The chunked path's own term was written with exactly this care (`e > s`, and its completed tail
+  emits `[iter, iter]`); the tile path was missing it. Fix: `composing` now tests whether THIS FRAME
+  dispatched a real tile (`tile_work`), so a completed grid's repeated rect and a zero-area
+  "waiting for the other panel's turn" hold stop counting as work, while a grid with tiles left
+  keeps the gate up through the existing "grid incomplete" term.
+  ⭐**Regression check `--selftest live-res` → "a completed tiled settle REVEALS (present gate
+  drops)"**: drives the 540-tile grid to completion and asserts the gate engaged and then dropped.
+  **`still holding after 900 frames=true` before, `after 542 frames=false` after** (540 tiles + the
+  arm + one reveal frame). It asserts the gate ENGAGED first, so a gate that never works cannot pass
+  it vacuously.
+  ⚠**LESSON: the resolution trace measures what is RENDERED, not what is DISPLAYED.** Every
+  `res=1920x1102` line in the timelines above was true and the user was still looking at a mosaic.
+  Nothing in `FRACTADYNE_TRACE=tile` can see the present gate; the first fix was verified entirely
+  against the render path and would have shipped this untouched.
+
   ⚠**Not fixed, and not the same thing**: at a genuinely slow reference, native resolution costs
   what it costs — ~500 budget-sized dispatches ≈ 3 minutes of background sharpening at the 400 ms
   target, one per frame, abandoned on any input. The allowance no longer *prevents* it and

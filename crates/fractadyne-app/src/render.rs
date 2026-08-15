@@ -3537,6 +3537,11 @@ impl FractadyneApp {
         // dispatch. `tile` travels into `MandelbrotParams` below; a real (non-hold) rect also
         // reprices the timing sink, since the timestamped dispatch is the tile, not a full frame.
         let mut tile: Option<[u32; 4]> = None;
+        // Did THIS frame dispatch a real tile? Not the same as `tile.is_some()`: a completed grid
+        // keeps emitting its final rect (the GPU dedupes it, so a finished view costs nothing), and
+        // a view waiting for the other panel's turn emits a zero-area hold. Present-gating needs
+        // the distinction — see the `composing` block below.
+        let mut tile_work = false;
         if tiling && !chunk_over {
             let total = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
@@ -3550,6 +3555,7 @@ impl FractadyneApp {
                         .saturating_mul(gpu_iter.max(1) as u64);
                     // This frame runs a real pass, even though the iterate KEY is unchanged.
                     self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
+                    tile_work = true;
                 }
                 tile = Some(rect);
                 // The texture a later reproject frame re-samples is (near-)native here, NOT shrunk
@@ -3719,7 +3725,17 @@ impl FractadyneApp {
             && !offscreen
             && !interacting
             && !chunk_mode.is_direct();
-        let composing = tile.is_some()
+        // ⚠`tile_work`, NOT `tile.is_some()`. A COMPLETED grid goes on emitting its final rect
+        // every frame by design, so `tile.is_some()` is true forever after the first grid finishes
+        // — the gate never dropped, the display kept serving the snapshot it took when the grid
+        // ARMED (a coarse, budget-shrunk frame), and the sharp composite sat in the texture unseen.
+        // That is the 2026-08-15 field report in full: "it does the computation but doesn't update
+        // the image; it shows up as soon as I resize slightly smaller" — a resize interacts, and
+        // interaction breaks the gate, revealing the texture that was finished all along. The
+        // chunked path's own term already excludes its completed tail (`e > s`, and the tail emits
+        // `[iter, iter]`); this is the same care, which the tile path was missing.
+        // Pinned by `--selftest live-res` → "a completed tiled settle REVEALS".
+        let composing = tile_work
             || chunk_range.is_some_and(|[s, e]| e > s)
             || probe_fired
             || self.perf.tile_state[vidx].as_ref().is_some_and(|g| match g.geo {

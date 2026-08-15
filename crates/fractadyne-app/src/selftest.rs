@@ -2107,18 +2107,18 @@ impl FractadyneApp {
                 self.perf.tile_state = [None, None];
                 self.perf.fe_budget = [0, 0];
                 self.perf.fe_budget_ok = [false, false];
-                let deep_build = |app: &mut Self, iter: u32| -> [u32; 2] {
+                let deep_build = |app: &mut Self, iter: u32| -> ([u32; 2], bool) {
                     app.perf.frame_idx += 1;
                     let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
                     let center = app.viewport.center_f64();
                     let span = app.viewport.complex_span_fe();
                     let mag = app.viewport.magnification();
                     let l2 = app.viewport.log2_magnification();
-                    app.build_params(
+                    let pr = app.build_params(
                         center_bf, center, span, mag, l2, app.fractal, false, iter, false, 1, DEEP,
                         0, None,
-                    )
-                    .resolution
+                    );
+                    (pr.resolution, pr.display_hold)
                 };
                 // Warm up until the orbit exists — `will_reproject` forces `can_tile` off without
                 // one, and a harness that skipped this would measure the reproject path.
@@ -2139,7 +2139,7 @@ impl FractadyneApp {
                     // this check is about.
                     self.perf.fe_budget = [FIELD_BUDGET, FIELD_BUDGET];
                     self.perf.fe_budget_ok = [true, true];
-                    deep_best = deep_best.max(deep_build(self, DEEP_ITER)[0]);
+                    deep_best = deep_best.max(deep_build(self, DEEP_ITER).0[0]);
                 }
                 let deep_frac = deep_best as f64 / DEEP[0] as f64;
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
@@ -2163,6 +2163,58 @@ impl FractadyneApp {
                          above is reporting the reproject path, not the tiled settle."
                     );
                 }
+
+                // ---- …and the finished composite must REVEAL ----
+                // ⭐"It does the computation but doesn't update the image; it shows up as soon as I
+                // resize slightly" (field report, 2026-08-15). Present-gating ("prefer detail")
+                // serves a SNAPSHOT of the last complete frame while a grid composes underneath,
+                // and drops the gate when nothing is composing — but `composing` counted
+                // `tile.is_some()`, and `next_settle_tile` REPEATS the final rect forever once the
+                // grid is done (deliberately: the GPU dedupes it, so a finished view costs
+                // nothing). So the gate never dropped, the display kept serving the coarse ARM
+                // frame, and the sharp composite sat in the texture unseen. A window nudge
+                // "fixed" it because interaction breaks the gate and shows the texture directly.
+                // The chunked path's own term (`e > s`) already excludes its completed tail; this
+                // is the same care, missing on the tile path.
+                //
+                // The grid here is 540 tiles at one per frame, so give it room and then assert the
+                // gate is DOWN — and that it was UP first, or a gate that never engages at all
+                // would pass this vacuously.
+                let saved_detail = self.render_cfg.prefer_detail;
+                self.render_cfg.prefer_detail = true;
+                self.perf.tile_state = [None, None];
+                self.perf.tile_pending = [false, false];
+                self.perf.hold_active = [false, false];
+                let mut held_any = false;
+                let mut held_last = true;
+                let mut frames = 0;
+                for i in 0..900 {
+                    self.perf.fe_budget = [FIELD_BUDGET, FIELD_BUDGET];
+                    self.perf.fe_budget_ok = [true, true];
+                    let (_, hold) = deep_build(self, DEEP_ITER);
+                    held_any |= hold;
+                    held_last = hold;
+                    frames = i + 1;
+                    // Stop as soon as the grid has completed AND the gate has dropped; if it never
+                    // drops, the loop runs out and the check fails with `held_last` still true.
+                    if held_any && !hold && !self.perf.tile_pending[0] {
+                        break;
+                    }
+                }
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Live budget",
+                    name: "a completed tiled settle REVEALS (present gate drops)".into(),
+                    params: format!(
+                        "{}×{} panel, {DEEP_ITER} iter @1.3e30×, prefer detail on",
+                        DEEP[0], DEEP[1]
+                    ),
+                    result: format!(
+                        "gate engaged={held_any}, still holding after {frames} frames={held_last}"
+                    ),
+                    threshold: "engages, then drops once the grid completes",
+                    pass: deep_ref && held_any && !held_last,
+                });
+                self.render_cfg.prefer_detail = saved_detail;
                 self.viewport.set_size(PANEL[0] as f64, PANEL[1] as f64);
                 self.perf.fe_budget = [0, 0];
                 self.perf.fe_budget_ok = [false, false];
