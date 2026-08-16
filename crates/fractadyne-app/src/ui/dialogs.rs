@@ -11,6 +11,71 @@ fn default_dive_secs(log10mag: f64) -> f64 {
     (8.0 + 1.5 * log10mag.max(0.0)).round().clamp(8.0, 3600.0)
 }
 
+/// Middle-elide a path so BOTH ends survive. Left-truncation hides the drive, right-truncation
+/// hides the leaf, and it is the two ends together that let someone recognise where a file went.
+/// Operates on chars, not bytes, so a non-ASCII user directory cannot split a codepoint.
+fn elide_middle(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max || max < 5 {
+        return s.to_string();
+    }
+    let keep = max - 1; // room for the ellipsis
+    let head = keep.div_ceil(2);
+    let tail = keep - head;
+    let h: String = s.chars().take(head).collect();
+    let t: String = s.chars().skip(n - tail).collect();
+    format!("{h}…{t}")
+}
+
+/// Reveal a directory in the platform file manager. Best-effort and deliberately silent on
+/// failure: this is a convenience next to a path that is already displayed in full, so the user
+/// can always copy it by hand if the launch does not work.
+fn open_in_file_manager(dir: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = std::process::Command::new("explorer");
+        c.arg(dir);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg(dir);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(dir);
+        c
+    };
+    cmd.spawn().map(|_| ())
+}
+
+#[cfg(test)]
+mod welcome_tests {
+    use super::elide_middle;
+
+    #[test]
+    fn elide_keeps_both_ends_and_respects_the_budget() {
+        assert_eq!(elide_middle("short", 46), "short", "under budget is untouched");
+        let p = r"C:\Users\someone\AppData\Roaming\Fractadyne\Fractadyne\config";
+        let e = elide_middle(p, 46);
+        assert_eq!(e.chars().count(), 46, "must land exactly on the budget");
+        assert!(e.starts_with(r"C:\Users"), "the drive must survive: {e}");
+        assert!(e.ends_with("config"), "the leaf must survive: {e}");
+    }
+
+    #[test]
+    fn elide_is_char_safe_on_non_ascii_paths() {
+        // A non-ASCII user directory is ordinary, and slicing by byte would panic on it.
+        let p = "/home/josé-münchen/Ω-fractadyne/config/that/goes/on/and/on/for/a/while";
+        let e = elide_middle(p, 30);
+        assert_eq!(e.chars().count(), 30);
+        assert!(e.contains('…'));
+    }
+}
+
 impl FractadyneApp {
     /// First-run welcome overlay: a short quick-start shown once on a fresh install (and
     /// re-openable from Help). Deep-zoom explorers are opaque to newcomers — this covers the
@@ -63,10 +128,78 @@ impl FractadyneApp {
                 });
                 ui.add_space(8.0);
                 ui.separator();
+                // ── Setup strip ─────────────────────────────────────────────────────────────
+                // Deliberately SHORT, and the rule that keeps it short: a first-run screen carries
+                // only what is consequential, awkward to discover later, or a matter of consent.
+                // Everything else belongs in File → Settings, which is one click away below — a
+                // welcome screen that grows into a settings panel is a wall between the user and
+                // the fractal, and the landmark buttons above are what actually get them moving.
+                //
+                // Theme and update track are NOT new here; they already live in File → Settings.
+                // They are surfaced because first run is when people want them and least know
+                // where to look. The other two rows are orientation, not settings.
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Theme").weak().small());
+                    for m in [crate::theme::ThemeMode::Dark, crate::theme::ThemeMode::Light] {
+                        if ui.selectable_label(self.theme == m, m.label()).clicked() {
+                            self.theme = m;
+                            crate::theme::apply_theme(ui.ctx(), m);
+                        }
+                    }
+                    ui.add_space(12.0);
+                    // ⚠The one CONSENT item on this screen: a network request the app makes on the
+                    // user's behalf. That belongs at first run rather than buried in a menu.
+                    ui.checkbox(&mut self.update_check_on_launch, "Check for updates")
+                        .on_hover_text(
+                            "Asks GitHub for the latest release when the app starts. \
+                             Nothing is uploaded.",
+                        );
+                    if self.update_check_on_launch {
+                        for t in crate::update::UpdateTrack::ALL {
+                            ui.selectable_value(&mut self.update_track, t, t.label());
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+                // Where things go — answers "where did my screenshot end up?" before it is asked.
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Files").weak().small());
+                    let dir = fractadyne_state::config_dir();
+                    let shown = dir
+                        .as_ref()
+                        .map(|d| d.display().to_string())
+                        .unwrap_or_else(|| "(no config directory)".to_string());
+                    ui.label(
+                        egui::RichText::new(elide_middle(&shown, 46)).monospace().small(),
+                    )
+                    .on_hover_text(&shown);
+                    if let Some(d) = dir {
+                        if ui.small_button("Open").clicked() {
+                            let _ = open_in_file_manager(&d);
+                        }
+                    }
+                });
+                // The adapter, as text. Not a setting — but nearly every hard problem this project
+                // has hit is hardware-specific, and a user who can read their GPU straight off this
+                // screen writes a far better bug report. It also confirms which card was picked,
+                // which is not obvious on a dual-GPU laptop.
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Rendering on").weak().small());
+                    ui.label(egui::RichText::new(&self.gpu_name).small());
+                });
+                ui.add_space(8.0);
+                ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Open full help  (F1)").clicked() {
                         open_help = true;
                     }
+                    // A pointer, not a button: Settings is a submenu, so a button here could not
+                    // actually open it, and a control that cannot deliver is worse than none.
+                    ui.label(
+                        egui::RichText::new("More in File → ⚙ Settings")
+                            .weak()
+                            .small(),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(egui::Button::new(

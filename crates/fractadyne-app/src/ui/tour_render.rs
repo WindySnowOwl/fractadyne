@@ -464,6 +464,19 @@ impl FractadyneApp {
                         );
                     });
                 }
+                // Say that the held view is deliberate. Without this the live panel stops updating
+                // the moment a render starts and reads as the app having frozen — the same
+                // ambiguity that makes an unexplained black screen a support ticket.
+                if running {
+                    ui.label(
+                        egui::RichText::new(
+                            "Live view paused — the render has the GPU to itself, so it \
+                             finishes sooner and measures its own frame costs accurately.",
+                        )
+                        .small()
+                        .weak(),
+                    );
+                }
                 if let Some(st) = &self.tour_render.status {
                     ui.colored_label(crate::theme::BRAND_ACCENT, egui::RichText::new(st).small());
                 }

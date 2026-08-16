@@ -3991,7 +3991,28 @@ impl FractadyneApp {
             let d = resp.drag_delta();
             self.pointer.pan_px += egui::vec2(d.x * ppp as f32, d.y * ppp as f32);
         }
-        let reproject = if self.pointer.pan_view == Some(view_id) && interacting {
+        // ⭐YIELD THE GPU WHILE A TOUR RENDER OWNS IT (user-reported, 2026-08-16).
+        //
+        // The "Render tour…" dialog runs the render as a CHILD PROCESS, and nothing used to stop
+        // the live view re-iterating behind it — in fact the dialog calls `request_repaint()` every
+        // frame to animate its progress readout, so the parent was being woken deliberately to
+        // compete with the single heaviest GPU work this app does. Two costs, and the second is the
+        // one that matters:
+        //
+        //  - the render is simply slower, sharing the device with a full-quality live frame;
+        //  - the CHILD'S COST MEASUREMENTS ARE POLLUTED. Its frame-cost controller sizes dispatches
+        //    from measured GPU time while an uncontrolled second consumer is on the same card, so
+        //    it prices frames it never rendered alone. That is the same error as running a gate
+        //    beside a compile (design/torture-suite.md §P8), and here it feeds a controller whose
+        //    mispricing has already cost two devices.
+        //
+        // Reuses the existing reproject path rather than inventing a suspend: `Some([0.0, 0.0])`
+        // is exactly what a resize does — hold the last completed frame and re-sample it, no
+        // iterate dispatch. Checked FIRST so it also wins over pan/zoom interaction.
+        let render_child_busy = self.tour_render.child.is_some();
+        let reproject = if render_child_busy {
+            Some([0.0, 0.0])
+        } else if self.pointer.pan_view == Some(view_id) && interacting {
             self.schedule_repaint(ctx); // keep rendering until the view settles
             Some([
                 self.pointer.pan_px.x / res[0].max(1) as f32,
