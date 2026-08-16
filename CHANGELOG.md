@@ -16,6 +16,24 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: two crashes where the app pushed the graphics card too hard and lost it** (beta.105).
+  Both were reported from the same machine and both ended the same way — the window vanishing and
+  reappearing with your view restored. The app decides how much work one frame may ask of the card
+  by measuring how long recent frames took and steering toward a target. That target was set close
+  to the point where the driver gives up on a frame, so a steady state that *aimed* at roughly nine
+  tenths of a second was working as designed while leaving almost no margin. It now aims at less
+  than half that. Three related changes: the app also backs off in a single step rather than
+  gradually once a frame does run long, and it no longer raises its estimate of what the card can
+  afford using frames measured while it is rebuilding the deep-zoom reference — those frames are
+  unusually cheap, and treating them as typical is what inflated the estimate just before the work
+  became expensive. Expect slightly lower resolution on very deep views that were previously being
+  drawn at the edge of what the card could manage.
+- **New: a diagnostics tool for testing the renderer's limits** (beta.105). `--torture` runs an
+  escalating ladder of scenarios — increasingly deep zooms, resolutions and rendering regimes —
+  with each one launched as a separate process under a time limit, so a scenario that hangs or
+  loses the graphics device is recorded rather than taking the whole run down. Failures do not stop
+  the run, so a single pass can surface several unrelated problems. Aimed at contributors and at
+  anyone reporting a hardware-specific issue; see `design/torture-suite.md`.
 - **Fixed: the Linux download's self-test reported normal graphics-card differences as failures.**
   The Linux archive was missing the small file that records which card the reference images were
   made on. Without it the self-test has no way to know it is running somewhere else, so it applies
