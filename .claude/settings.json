@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git grep *)",
+      "Bash(git rev-list *)",
+      "Bash(git check-ignore *)",
+      "Bash(gh run watch *)",
+      "Bash(cargo metadata *)",
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo test *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Select-String *)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Start-Sleep *)",
+      "PowerShell(Get-Process *)"
+    ]
+  }
+}

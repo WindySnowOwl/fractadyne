@@ -374,6 +374,36 @@ to HARDWARE VARIANCE (everything blessed on one RTX 3080). Sequenced by announce
    local report is the honest version; today's gaps are inferred from structure, not measured.
    Deprioritized: egui_kittest widget tests (highest cost; the scenario harnesses have caught
    the recent UI bugs faster than widget-level tests would have).
+6. [ ] ⭐**Automate test runs on the remote GPU machines (user, 2026-08-16).** Today every
+   cross-machine run is hand-driven: pull, rebuild, run the script, copy results to the share, ask
+   for them to be read. That loop cost real time on 2026-08-16 — one six-phase run was started **53
+   seconds** after the fix it was meant to exercise was pushed, so it measured the previous binary
+   and nobody could tell until the logs were read against the commit timestamp.
+   **Topology already in place**: `D:\share` is a local directory on the dev box published as SMB
+   share `share`; the Radeon box mounts it and writes reports in. So a bidirectional channel exists
+   with no new credentials.
+   ⚠**Remoting alone does NOT solve this, and the reason is the whole design constraint.** WinRM and
+   SSH sessions on Windows are non-interactive: an eframe/wgpu app there usually cannot create a
+   swapchain, and where it can it may land on a software adapter — GPU timings that look plausible
+   and describe nothing. Fine for the headless phases (`--selftest`, `--gputest`, the offline
+   torture lane), useless for `--play`/`--livetest`, which are exactly the ones that matter for the
+   device-loss class.
+   **Proposed shape**: a watcher running in the LOGGED-ON desktop session on each test box, polling
+   `<share>/Fractadyne/jobs/`. The dev side drops a job file; the watcher pulls, rebuilds, runs, and
+   writes results back. Because it lives in the user's session it has the real desktop and the real
+   GPU, and being a separate process it survives the device losses under investigation.
+   - ⚠**Job files must carry PARAMETERS, not commands** — a phase list, `--set` overrides, env flags
+     — with the watcher only ever invoking a whitelisted script. A watcher that executes arbitrary
+     strings off a network share is a remote-execution backdoor on the test box.
+   - Must record the **commit SHA actually built** in the results, so "did this binary contain the
+     fix?" stops being inferred from log timestamps. That single field would have saved the wasted
+     run above.
+   - Alternative if remoting is preferred: `schtasks /run /s <host> /tn <task>` against a task set
+     to *"run only when user is logged on"* launches into the interactive session and keeps GPU
+     access — but needs the task defined up front plus credentials/domain trust, and gives less
+     control over parameters.
+   Applies to the Linux rig too; `scripts/pull-linux-reports.ps1` already establishes the scp/ssh
+   half of the same idea.
 
 ### E — (b) fundamentally missing features: assessed, nothing blocking
 
