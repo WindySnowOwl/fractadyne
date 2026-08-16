@@ -45,3 +45,6 @@ Desktop.ini
 # Archived docs (completed/abandoned plans + stale snapshots) — kept locally, out of the tracked repo
 /archive/
 __pycache__/
+
+# Torture-suite output: per-rung logs, failure artifacts, throwaway config dirs.
+validation/torture/

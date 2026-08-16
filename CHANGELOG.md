@@ -16,6 +16,15 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: the Linux download's self-test reported normal graphics-card differences as failures.**
+  The Linux archive was missing the small file that records which card the reference images were
+  made on. Without it the self-test has no way to know it is running somewhere else, so it applies
+  the strict same-card comparison and flags the ordinary differences between one vendor's
+  arithmetic and another's — which is precisely what that file exists to prevent. The Windows
+  archive has always included it. Also, release publishing was reorganised so the Windows and
+  Linux builds can no longer race each other: previously the Linux archive was attached to a
+  release the Windows build had to create first, and a slow Windows build could have caused a
+  release to be published without the Linux download at all.
 - **The tour clock now waits for a hold's own reference** (beta.88). The intermittent
   hold-e72 livetest failure (27.6% black whenever the ~52 s deep extension lost its race
   against the tour clock): Adaptive pacing's lag dilation tracks BLA validity but not "the

@@ -46,7 +46,26 @@ Ordered by how fast a stranger hits them.
 
 5. **Release artifacts — ✅DONE 2026-08-10**: `release.yml` gained a `linux` job (ubuntu-22.04,
    tar.gz + sha256, uploads to the same release with retry-for-race; manual runs upload an
-   artifact). ⚠Untested until the next dispatch/tag — workflows only fire at the user's request.
+   artifact). ✅**Proven 2026-08-15** on `v0.2.40-beta.104`: the never-run `linux` job worked
+   first try (13.7 MB tar.gz + sha256).
+   ⭐**The retry-for-race was a real defect, fixed 2026-08-15.** Only the `windows` job called
+   `gh release create`; `linux` uploaded into whatever that job had made, retrying 6×30 s if it
+   was not there yet. Linux builds FASTER, so it always spent part of that budget waiting on
+   Windows — it fit on beta.104, but a slow Windows build would have exhausted the retries and
+   published a release **silently missing the Linux asset**. Restructured into a fan-out/fan-in:
+   a `create-release` job makes a **draft** first, `windows` and `linux` upload into it in
+   parallel with no retry loop, and a `publish` job undrafts it only after BOTH succeed. A failed
+   build now leaves an unpublished draft (invisible to `--check-updates`) instead of a
+   half-populated release. Manual runs skip both new jobs, so the build jobs must treat a
+   *skipped* `create-release` as a go — hence the `!cancelled() && (success || skipped)` guard.
+   ⭐**Second defect found while reading it**: the `linux` Package step never copied
+   `validation/golden/BLESSED-GPU.txt`, which `windows` has always shipped. An absent marker means
+   STRICT golden comparison (beta.93), so **every Linux tester on a non-3080 card would have seen
+   expected cross-vendor variance reported as self-test failures** — exactly the confusion the
+   tolerance was built to prevent. The beta.104 Linux tarball on the shelf has this flaw; it is
+   cosmetic (strict is the safe direction — it over-reports, never under-reports) but it wastes
+   the feature for precisely the audience it was written for. ⚠Both fixes are **untested until
+   the next tag** — workflows fire only at the user's request.
 6. **Real-hardware validation** on the new rig, across the swappable GPUs — this is where (2) and
    the orbit-cap differences surface. ✅**The Linux machine is AVAILABLE as of 2026-08-09**, so this
    is unblocked and waiting on the Windows build stabilising first (the user's sequencing). Highest
@@ -102,6 +121,25 @@ Ordered by how fast a stranger hits them.
     applied (`map_or(true, …)` → `is_none_or`); the 2 negated-float-comparison warnings are
     intentional NaN-rejecting guards (`!(x > t)`) left as-is; the rest are rustdoc-markdown
     cosmetics that don't affect code readability. Zero compiler warnings workspace-wide.
+    ⭐**Zero restored 2026-08-15 after a toolchain bump.** Testing `scripts/setup.ps1` ran
+    `rustup toolchain install stable`, moving the compiler to **rustc 1.97.1**, which lit 31
+    instances of a new future-hard-error lint: *"falling back to `f32` as the trait bound
+    `f32: From<f64>` is not satisfied"* (rust#154024). All 31 were the same shape — an unsuffixed
+    float literal as the generic `Into<f32>` width argument of `egui::Stroke::new` — across
+    `theme.rs` (12), `ui/central.rs` (10), `main.rs` (3), `ui/menus.rs` (3), `scripting.rs` (2),
+    `ui/dialogs.rs` (1). Fixed by applying rustc's own machine-applicable suggestion via
+    `cargo fix`: 31 insertions, 31 deletions, every one just the literal plus `_f32`. **Provably
+    semantics-free** — the literals were already inferring to `f32`; the lint objects to the
+    inference *path*, not the result. Four further warnings, visible only under `--all-targets`
+    and predating the bump, were cleared at the same time so the baseline holds under both
+    invocations: an unused row index in a deliberately row-invariant dither-test ramp, and the
+    `Ftz`/`Nf` CPU arithmetic models in `tests/probe_fe.rs`, which are `#[allow(dead_code)]` with
+    a stated reason rather than deleted — `Nf` models non-fused FMA, i.e. exactly the still-open
+    AMD DX12 `two_prod` 256/256 finding. ⚠**Clippy is a separate baseline and is NOT zero** (15
+    warnings): the bump also added `manual_is_multiple_of`, `items after a test module`, and
+    `unnecessary_unwrap` to the set surveyed here. The `unnecessary_unwrap` was checked and is not
+    a bug — the `unwrap()` is in the `else` of its own `is_none()` guard. Left as-is, consistent
+    with this item's original finding that the residue is intentional or cosmetic.
 
 ### D — STRONGLY RECOMMENDED, not blocking
 
@@ -364,6 +402,76 @@ Living backlog. Specs: [DESIGN.md](DESIGN.md), [UI-DESIGN.md](UI-DESIGN.md).
 Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
+
+- [ ] 🔴⭐⭐**DEVICE LOSS on the RX 6800 XT two frames after a mode 0→2 switch — the AUTO budget
+  target (900 ms) is inside the band this codebase documents as lethal.** Field report
+  `reports/fractadyne-report-2026-08-15.txt` (beta.104, Windows, RX 6800 XT / **Vulkan**,
+  TIMESTAMP_QUERY=true, i7-9700K), crash `crash-1786831982-0.txt`, uptime 122.7 s. User was
+  hand-zooming; `auto_iter=1`, zoom 1.35e28, max_iter 10,000,000.
+  **The log is unusually clean — the whole event is five lines:**
+  - `+120.086s` `arithmetic mode 0 → 2 at frame 4298 (mag 2^93.0)`
+  - `+120.086s` `mode switch to 2: budget 7.78e10 → unmeasured (bootstrap 4.00e8), re-converging`
+    ← the beta-era reset working exactly as designed
+  - `+120.319s` frame 4300: `mode=2 steps=3.922e8 budget=0.000e0 … bla_skip=0`
+  - `+121.393s` frame 4303: `dt=1038ms … mode=2 steps=5.909e8 budget=6.000e8 … bla_skip=0`
+  - `+122.687s` `DEVICE LOST (Unknown)` inside `Queue::submit` → auto-restart fired correctly.
+  ⭐**ROOT CAUSE, and the arithmetic closes exactly.** `budget_step`'s AUTO regime converges on
+  `TDR_BUDGET_MS = 900.0`; growth is `(target/ms).clamp(_, TDR_GROW_MAX=1.5)`. Frame 4300 measured
+  fast, so the factor pinned at ×1.5: `3.922e8 × 1.5 = 5.88e8` — the observed `6.000e8`. That
+  budget then bought a **1038 ms** dispatch and the device died on the next submit.
+  The controller was doing precisely what it is told to do: **walk the frame cost up to 900 ms.**
+  `TDR_EXPLICIT_BUDGET_MS` was cut to 400 ms after three Event-153 losses, and its own doc comment
+  says *"the lethal band starts around ~0.9 s"* and *"deliberately below the auto-iter
+  `TDR_BUDGET_MS`"* — the rationale being that auto-iter is the PREDICTABLE regime. **This report
+  refutes that for the mode-switch window.**
+  ⭐**Why here and not on the 3080**: `bla_skip=0` on both post-switch frames. Immediately after
+  0→2 there is no valid BLA tree yet, so nominal steps ARE real cost — the same "skip effectiveness
+  is unpredictable" condition that justified the explicit regime's 400 ms. Proof it is the BLA and
+  not the location: after the auto-restart the app reloaded **the same view** in mode 2 with
+  `bla_skip=3,764,865`, converged to a budget of **2.025e9** — 3.4× larger — and ran 235 ms frames.
+  Same view, ~20× cheaper per nominal step once BLA is live.
+  ⛔**This is NOT primarily a vendor difference — my first reading of it was wrong.**
+  `TDR_BOOTSTRAP_STEPS`' own doc comment already records the measurement that settles it: on the
+  **dev RTX 3080**, `mode=2` with `orbit_len=626` (an escaped reference so short that BLA skips
+  nothing), 4e8 steps measured **~1070 ms** — the same ~1 s the RX 6800 XT hit. The cause is the
+  REGIME (mode 2 with no BLA), which this file already knew was worth ~1 s at the opening guess;
+  the field report is that regime reached through a live mode 0→2 crossover on a second vendor.
+  Frame 4300 dispatching 3.922e8 — essentially the 4e8 guess — is the confirmation.
+  ⭐The same comment states the conclusion the fix follows from: *"A nominal step is not a fixed
+  amount of work — that is the standing lesson of this file — so no constant expressed in steps can
+  be 'a few ms' everywhere."*
+  ✅**FIX IMPLEMENTED 2026-08-15 (user chose the rate-derived bootstrap).** `TDR_BOOTSTRAP_STEPS`
+  becomes a CEILING; the opening guess is now derived in `render::bootstrap_steps` from a measured
+  per-step rate and a new time-denominated `TDR_BOOTSTRAP_MS = 40.0`:
+  ① this mode measured on this device ⇒ `rate × TDR_BOOTSTRAP_MS`; ② only another mode measured ⇒
+  that rate ÷ `MODE_RATE_UNKNOWN_MARGIN = 256` (the observed mode0:mode2 ratio was ~152×, so the
+  margin is one binary step past the single measurement, asymmetric on purpose); ③ nothing measured
+  ⇒ the historical constant, unchanged. Always clamped to `[TDR_MIN_STEPS, TDR_BOOTSTRAP_STEPS]`,
+  so the derived guess can only ever LOWER the opening dispatch — which is what keeps the 4e8→1e8
+  regression (`--livetest` seahorse-2, 480×270 → 100×56) from recurring by construction on any card
+  whose measured rate reaches the ceiling.
+  `Perf::mode_rate[view][mode]` feeds it and **latches the MINIMUM, never an average**: within mode
+  2 the per-step rate swings ~100× on whether BLA is live (same view: 5.7e5 steps/ms at
+  `bla_skip=0` vs a 3.4× larger budget once skipping), so a BLA-live reading must never size the
+  opening dispatch of a no-BLA re-entry. Recorded in `apply_iterate_measurement` — the one funnel
+  both measurement sources share — and deliberately BEFORE `budget_step`'s early return, since a
+  reading with no budget signal is still a true measurement of per-step cost.
+  Both new constants are `--set`-overridable (`TDR_BOOTSTRAP_MS`, `MODE_RATE_UNKNOWN_MARGIN`), so
+  **the Radeon machine can bisect this without a rebuild.**
+  ⚠**Verified on the dev 3080 only** — zero warnings, 54/54 app unit tests, and a new
+  `the_opening_guess_is_derived_from_a_measured_rate` that pins all three cases plus the field
+  numbers. The 3080 cannot reproduce the crash through a live crossover, so **the fix is unproven on
+  the hardware that showed the bug**; it needs a re-run of the reported zoom on the RX 6800 XT.
+  **Still open even after this:** the deeper issue is that `TDR_BUDGET_MS = 900` remains the auto
+  target, i.e. the controller is still *aiming* at the documented lethal band — the rate-derived
+  guess makes the approach to it survivable, not the destination safe. Remaining candidates:
+  (a) lower `TDR_BUDGET_MS` toward the explicit 400 ms; (b) treat the post-switch window as
+  explicit-like until `bla_skip > 0`; (d) mode-2 iteration CHUNKING, which `budget_step`'s own
+  latency-floor comment already names as "the honest fix for that regime".
+  **Two smaller findings in the same report:** ①`VRAM: 8192 MB` for a card that has **16 GB** —
+  Windows VRAM detection is wrong or silently falling back. ②`render.rs` ~L3058 says
+  `TDR_EXPLICIT_BUDGET_MS` is "200 ms real, 4.5× under the lethal band"; the constant is **400.0**
+  and its own doc explains why 200 was abandoned. Stale comment, fix when next in there.
 
 - [x] ✅🔴**DEVICE LOSS rendering a deep view whose EXPLICIT iteration count exceeds the
   reference's escape length — FIXED beta.101.** The correction passes were running with `bla_on = 0`
