@@ -37,9 +37,29 @@ device loss has landed in the no-BLA regime (`bla_skip=0`, short escaped referen
 **Neither harness can produce the regime that kills.** A suite that sweeps depth, resolution and
 fractals but not this would have missed the 2026-08-15 crash entirely.
 
-**G3 — `--livetest` runs at exactly one resolution, 480×270.** The no-`TIMESTAMP_QUERY` bug was at
-1445×1134; the two beta.102/103 pixellation defects were at 1920×1102. A 480×270 harness is
-structurally blind to the settled-resolution ceiling, the tile allowance, and the present gate.
+**G3 — `--livetest` ran at exactly one resolution, 480×270. ✅PARTLY CLOSED 2026-08-16.**
+
+⚠**The original wording here was imprecise and the imprecision mattered.** It implied the small
+window left the frame-cost controller untested. Measured, it does not: at 480×270 the deep holds
+e63/e72/e82/e94 already settle at 461×259 / 298×167 / 230×129 / 163×91 — budget-bound — and at
+1920×1080 they settle at *exactly the same sizes*, because the budget is denominated in steps and
+the resolution that fits it is window-independent.
+
+What the large window genuinely adds, and why it was still worth blessing:
+
+- **e55 and e61 become budget-bound** (653×367, 516×290) where the small window capped them first,
+  so two further holds exercise the controller rather than the window.
+- **The shallow checkpoints render at true full resolution**, which is the only route to the
+  **tiled settle at full size** — and both 2026 field device losses were on that path (the 08-16
+  one explicitly `settled=true`, `tile=true`, 2247×1485). A 480×270 window never needs tiling, so
+  no gate had ever run it.
+
+`benchmarks/livetest-grand-tour-1920x1080.json` is blessed (24/24) and verified reproducible
+(0 drifted on a re-run), wired in as `tour/grand/gauntlet-1080p` and `tour/grand/full-1080p`.
+
+Still open: the no-`TIMESTAMP_QUERY` path (1445×1134 + `FRACTADYNE_NO_TIMESTAMPS=1`), the
+beta.102/103 pixellation size (1920×1102), and a window at the 2247×1485 class the 08-16 loss
+actually used.
 
 **G4 — Goldens stop at 1e6.** There is no exact-image check anywhere in e6–e1008. Deep correctness
 rests entirely on the F3 corpus (a different oracle, offline only) and on livetest black-fraction

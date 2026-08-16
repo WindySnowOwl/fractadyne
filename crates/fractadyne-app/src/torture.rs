@@ -488,6 +488,43 @@ pub(crate) const LADDER: &[Rung] = &[
         requires: &["tour/grand/features"],
         needs_disk: 128 * MB,
     },
+    // ---- FULL-RESOLUTION live coverage (design G3). Blessed 2026-08-16 at
+    // benchmarks/livetest-grand-tour-1920x1080.json, verified reproducible (0 drifted on a re-run).
+    //
+    // ⭐Why a second resolution earns its keep, stated precisely because the obvious reason is
+    // WRONG. It is not that "the budget never binds at 480×270" — it does: e63/e72/e82/e94 settle
+    // at 461×259 / 298×167 / 230×129 / 163×91 there, and at 1920×1080 they settle at exactly the
+    // same sizes, because the budget is denominated in steps and the resolution that fits it does
+    // not care about the window. What the large window actually adds is:
+    //   - e55 and e61 become budget-bound too (653×367, 516×290) where the small window capped
+    //     them first, so two more holds exercise the controller instead of the window;
+    //   - the shallow checkpoints render at TRUE full resolution, which is the only way to reach
+    //     the TILED SETTLE at full size — and both 2026 field device losses were on that path
+    //     (the 08-16 one at 2247×1485, settled=true, tile=true).
+    // A 480×270 window is simply too small to need tiling, so no gate had ever run it.
+    Rung {
+        id: "tour/grand/gauntlet-1080p",
+        lane: Lane::Tour,
+        motivation: "The deep gauntlet at 1920x1080: e55/e61 become budget-bound here, and the \
+                     full-resolution tiled settle runs for the first time in any gate.",
+        cmd: Cmd::SelfExe(&[
+            "--livetest", "tours/grand-tour.toml", "--segment", "gauntlet", "--size", "1920x1080",
+        ]),
+        deadline: Duration::from_secs(30 * MIN),
+        requires: &["tour/grand/gauntlet"],
+        needs_disk: 256 * MB,
+    },
+    Rung {
+        id: "tour/grand/full-1080p",
+        lane: Lane::Tour,
+        motivation: "The whole grand tour at 1920x1080 - the widest live coverage there is, and \
+                     the only gate that exercises the frame-cost controller at a window size a \
+                     person would actually use.",
+        cmd: Cmd::SelfExe(&["--livetest", "tours/grand-tour.toml", "--size", "1920x1080"]),
+        deadline: Duration::from_secs(45 * MIN),
+        requires: &["tour/grand/gauntlet-1080p"],
+        needs_disk: 512 * MB,
+    },
     Rung {
         id: "tour/bench/matrix",
         lane: Lane::Tour,
