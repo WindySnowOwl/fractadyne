@@ -6357,7 +6357,15 @@ impl eframe::App for FractadyneApp {
         // frame cadence after the df32→floatexp switch reads equally well as "1 Hz idle timer" and
         // as "1 s GPU dispatches", and the two call for opposite fixes. `outside` is measured
         // against the PREVIOUS frame's body, since dt spans `frame_start(N-1) → frame_start(N)`.
-        if body_ms > 200.0 || self.perf.last_dt_ms > 200.0 {
+        // ⚠While the BLA-suppression instrument is armed, log EVERY frame regardless of the 200 ms
+        // threshold. Without this the window is unobservable and the instrument cannot be checked:
+        // on 2026-08-16 the RX 6800 XT armed it correctly at frame 1861 for frames 1861–2061, and
+        // the first frame that happened to exceed the slow threshold was frame 3229 — 1368 frames
+        // PAST the window. Both the "it works" reading on the dev 3080 and the "it did nothing"
+        // reading on the Radeon were taken from frames outside the window and meant nothing.
+        // Bounded by N frames by construction, so this cannot flood a normal run.
+        let instrumented = self.perf.frame_idx < self.perf.bla_suppress_until[0].max(self.perf.bla_suppress_until[1]);
+        if body_ms > 200.0 || self.perf.last_dt_ms > 200.0 || instrumented {
             let outside = self.perf.last_dt_ms - self.perf.prev_body_ms;
             let rebase_bla = self.live_work_counters(0);
             diag::log_line(
