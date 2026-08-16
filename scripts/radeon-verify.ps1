@@ -103,7 +103,10 @@ function New-Cfg([string]$tag) {
 }
 
 function Run-Phase {
-    param([string]$Tag, [string[]]$FdArgs, [int]$TimeoutSec = 3600)
+    # -ExpectNoExit: this mode keeps its window open after the work is done (--play does), so
+    # reaching the timeout is the NORMAL ending, not a failure. The 2026-08-15 run reported both
+    # repro phases as TIMEOUT for exactly this reason and buried the real result.
+    param([string]$Tag, [string[]]$FdArgs, [int]$TimeoutSec = 3600, [switch]$ExpectNoExit)
 
     Kill-Stragglers
     $cfg = New-Cfg $Tag
@@ -115,15 +118,22 @@ function Run-Phase {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $p = Start-Process -FilePath $Exe -ArgumentList $FdArgs -NoNewWindow -PassThru `
         -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+    $timedOut = $false
     if (-not $p.WaitForExit($TimeoutSec * 1000)) {
-        Say "  TIMEOUT after ${TimeoutSec}s - killing"
+        $timedOut = $true
+        if ($ExpectNoExit) { Say "  reached ${TimeoutSec}s - closing (expected for this mode)" }
+        else { Say "  TIMEOUT after ${TimeoutSec}s - killing" }
         try { $p.Kill() } catch { }
-        $sw.Stop()
-        return [pscustomobject]@{ Tag = $Tag; Exit = $null; Seconds = $sw.Elapsed.TotalSeconds; TimedOut = $true; Cfg = $cfg }
+        Start-Sleep -Milliseconds 500
     }
     $sw.Stop()
+
+    # WARNING:Merge stderr BEFORE any early return. The first version returned straight out of the timeout
+    # branch, so the device-loss check below read a near-empty .log while all 122 KB of diagnostics
+    # sat in the .err file - and both A/B repro phases were scored "no device loss" without ever
+    # looking at the evidence. The whole point of the run was that one boolean.
     if (Test-Path "$log.err") { Get-Content "$log.err" | Add-Content $log; Remove-Item "$log.err" -Force }
-    $code = $p.ExitCode
+    $code = if ($timedOut) { $null } else { $p.ExitCode }
     Say ("  exit {0} in {1:N1}s" -f $code, $sw.Elapsed.TotalSeconds)
 
     # Harvest any crash reports this phase produced.
@@ -147,7 +157,8 @@ function Run-Phase {
     }
     if ($lost) { Say "  >>> DEVICE LOST detected" }
 
-    return [pscustomobject]@{ Tag = $Tag; Exit = $code; Seconds = $sw.Elapsed.TotalSeconds; TimedOut = $false; DeviceLost = $lost; Cfg = $cfg }
+    $reportTimeout = $timedOut -and (-not $ExpectNoExit)
+    return [pscustomobject]@{ Tag = $Tag; Exit = $code; Seconds = $sw.Elapsed.TotalSeconds; TimedOut = $reportTimeout; DeviceLost = $lost; Cfg = $cfg }
 }
 
 $results = @()
@@ -191,15 +202,41 @@ if (& $want 5) {
     $tour = Join-Path $repo 'tours\repro-e28-crossover.toml'
     if (-not (Test-Path $tour)) { $tour = 'tours\repro-e28-crossover.toml' }
 
+    # The tour is ~72s of content and --play keeps the window open afterwards, so 150s covers it
+    # with margin. -ExpectNoExit stops that normal ending being scored as a TIMEOUT.
     Say "A) pre-fix behaviour (MODE_RATE_UNKNOWN_MARGIN=1) - a device loss here is EXPECTED"
-    $results += Run-Phase -Tag '05a-repro-OLD' -FdArgs @('--set', 'MODE_RATE_UNKNOWN_MARGIN=1', '--play', $tour) -TimeoutSec 600
+    $results += Run-Phase -Tag '05a-repro-OLD' -FdArgs @('--set', 'MODE_RATE_UNKNOWN_MARGIN=1', '--play', $tour) -TimeoutSec 150 -ExpectNoExit
 
     Kill-Stragglers
     Start-Sleep -Seconds 5
 
     Say ""
     Say "B) stock (the fix) - survival here is the result we are after"
-    $results += Run-Phase -Tag '05b-repro-NEW' -FdArgs @('--play', $tour) -TimeoutSec 600
+    $results += Run-Phase -Tag '05b-repro-NEW' -FdArgs @('--play', $tour) -TimeoutSec 150 -ExpectNoExit
+
+    # ------------------------------------------------------------------ 5c/5d
+    # The 2026-08-15 attempt crossed cleanly with bla_skip=5,590,609 -- BLA was LIVE, so nominal
+    # steps were a small fraction of real cost and the frame was never expensive enough to be
+    # dangerous. The field crash had bla_skip=0 at the fatal frames: no valid BLA tree yet, so
+    # nominal steps WERE real cost.
+    #
+    # FRACTADYNE_NO_PREFETCH=1 is the instrument for this. It disables reference prefetching and
+    # leaves the reactive path alone -- which is what a person hand-zooming at depth actually gets,
+    # and is how the original crash was produced. Without it the tour arrives at the crossover with
+    # a prefetched reference and a ready BLA tree, i.e. the safe version of the same journey.
+    Kill-Stragglers
+    Start-Sleep -Seconds 5
+    Say ""
+    Say "C) pre-fix + NO PREFETCH - the reactive path a hand-zoom actually takes"
+    $env:FRACTADYNE_NO_PREFETCH = '1'
+    $results += Run-Phase -Tag '05c-repro-OLD-noprefetch' -FdArgs @('--set', 'MODE_RATE_UNKNOWN_MARGIN=1', '--play', $tour) -TimeoutSec 150 -ExpectNoExit
+
+    Kill-Stragglers
+    Start-Sleep -Seconds 5
+    Say ""
+    Say "D) stock + NO PREFETCH - the pair that matters if C loses the device"
+    $results += Run-Phase -Tag '05d-repro-NEW-noprefetch' -FdArgs @('--play', $tour) -TimeoutSec 150 -ExpectNoExit
+    Remove-Item Env:\FRACTADYNE_NO_PREFETCH -ErrorAction SilentlyContinue
 }
 
 # ---------------------------------------------------------------- verdict
@@ -210,24 +247,40 @@ $results | ForEach-Object {
 }
 $results | Format-Table -AutoSize | Out-File (Join-Path $Out 'summary.txt') -Encoding ascii
 
-$a = $results | Where-Object { $_.Tag -eq '05a-repro-OLD' }
-$b = $results | Where-Object { $_.Tag -eq '05b-repro-NEW' }
-if ($a -and $b) {
+function Verdict([string]$label, $old, $new) {
+    if (-not $old -or -not $new) { return }
     Say ""
-    if ($a.DeviceLost -and -not $b.DeviceLost) {
-        Say "RESULT: reproduced on the pre-fix setting and SURVIVED on stock. That is the proof."
-    } elseif (-not $a.DeviceLost -and -not $b.DeviceLost) {
-        Say "RESULT: INCONCLUSIVE. Neither run lost the device, so the tour did not re-enter the"
-        Say "        killing regime. This does NOT show the fix works. Check the app log for"
-        Say "        'arithmetic mode 0 -> 2' and whether bla_skip was 0 just after it; if BLA was"
-        Say "        live through the crossover, the tour needs a centre with a short escaped"
-        Say "        reference. Send the logs rather than calling this a pass."
-    } elseif ($a.DeviceLost -and $b.DeviceLost) {
-        Say "RESULT: BOTH lost the device. The fix is INSUFFICIENT for this regime. This is the"
-        Say "        most valuable outcome to report - send the whole output directory."
+    if ($old.DeviceLost -and -not $new.DeviceLost) {
+        Say "$label : reproduced pre-fix and SURVIVED on stock. That is the proof."
+    } elseif (-not $old.DeviceLost -and -not $new.DeviceLost) {
+        Say "$label : INCONCLUSIVE - neither run lost the device, so the tour did not re-enter"
+        Say "  the killing regime. This does NOT show the fix works."
+    } elseif ($old.DeviceLost -and $new.DeviceLost) {
+        Say "$label : BOTH lost the device - the fix is INSUFFICIENT here. Most valuable outcome"
+        Say "  to report; send the whole directory."
     } else {
-        Say "RESULT: stock lost the device but the pre-fix setting did not. Unexpected ordering;"
-        Say "        treat as a real finding and send the logs."
+        Say "$label : stock lost it but pre-fix did not. Unexpected; treat as a real finding."
+    }
+}
+
+Verdict 'RESULT (prefetch on) ' ($results | Where-Object { $_.Tag -eq '05a-repro-OLD' }) ($results | Where-Object { $_.Tag -eq '05b-repro-NEW' })
+Verdict 'RESULT (no prefetch) ' ($results | Where-Object { $_.Tag -eq '05c-repro-OLD-noprefetch' }) ($results | Where-Object { $_.Tag -eq '05d-repro-NEW-noprefetch' })
+
+# Whatever the verdict, report the ONE number that says whether the regime was even entered.
+Say ""
+Say "Did the run reach the killing regime? Check bla_skip just after the crossover:"
+foreach ($t in @('05a-repro-OLD', '05b-repro-NEW', '05c-repro-OLD-noprefetch', '05d-repro-NEW-noprefetch')) {
+    $lg = Join-Path $Out "$t.log"
+    if (-not (Test-Path $lg)) { continue }
+    $sw = Select-String -Path $lg -Pattern 'arithmetic mode 0 . 2' | Select-Object -First 1
+    if (-not $sw) { Say ("  {0,-26} no 0->2 crossover found - the tour never crossed" -f $t); continue }
+    $after = Get-Content $lg | Select-Object -Skip $sw.LineNumber | Where-Object { $_ -match 'bla_skip=(\d+)' } | Select-Object -First 1
+    if ($after -match 'bla_skip=(\d+)') {
+        $v = [int64]$Matches[1]
+        $note = if ($v -eq 0) { 'BLA NOT live - this IS the killing regime' } else { 'BLA live - safe variant, not the crash regime' }
+        Say ("  {0,-26} bla_skip={1,-12} {2}" -f $t, $v, $note)
+    } else {
+        Say ("  {0,-26} crossed, but no frame diagnostics after it" -f $t)
     }
 }
 

@@ -294,7 +294,7 @@ pub(crate) const LADDER: &[Rung] = &[
         motivation: "Framing/palette anchor at magnification 1.",
         cmd: Cmd::SelfExe(&[
             "--render", "--center", "-0.75", "0", "--zoom", "1", "--size", "640x400",
-            "--iter", "512", "-o", "validation/torture/render-e00.png",
+            "--iter", "512", "-o", "{OUT}/render-e00.png",
         ]),
         deadline: Duration::from_secs(2 * MIN),
         requires: &["offline/math/numeric"],
@@ -307,7 +307,7 @@ pub(crate) const LADDER: &[Rung] = &[
         cmd: Cmd::SelfExe(&[
             "--render", "--center", "-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139",
             "--zoom", "1e6", "--size", "640x400", "--iter", "3000",
-            "-o", "validation/torture/render-e06.png",
+            "-o", "{OUT}/render-e06.png",
         ]),
         deadline: Duration::from_secs(3 * MIN),
         requires: &["offline/depth/e00-home"],
@@ -321,7 +321,7 @@ pub(crate) const LADDER: &[Rung] = &[
         cmd: Cmd::SelfExe(&[
             "--render", "--center", "-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139",
             "--zoom", "5e13", "--size", "640x400", "--iter", "20000",
-            "-o", "validation/torture/render-e13.png",
+            "-o", "{OUT}/render-e13.png",
         ]),
         deadline: Duration::from_secs(5 * MIN),
         requires: &["offline/depth/e06-double-exhausted"],
@@ -334,7 +334,7 @@ pub(crate) const LADDER: &[Rung] = &[
         cmd: Cmd::SelfExe(&[
             "--render", "--center", "-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139",
             "--zoom", "1e24", "--size", "640x400", "--iter", "20000",
-            "-o", "validation/torture/render-e24.png",
+            "-o", "{OUT}/render-e24.png",
         ]),
         deadline: Duration::from_secs(6 * MIN),
         requires: &["offline/depth/e13-f32-cliff"],
@@ -350,7 +350,7 @@ pub(crate) const LADDER: &[Rung] = &[
         cmd: Cmd::SelfExe(&[
             "--render", "--center", "-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139",
             "--zoom", "1e28", "--size", "640x400", "--iter", "20000",
-            "-o", "validation/torture/render-e28.png",
+            "-o", "{OUT}/render-e28.png",
         ]),
         deadline: Duration::from_secs(8 * MIN),
         requires: &["offline/depth/e24-deep-df32"],
@@ -365,7 +365,7 @@ pub(crate) const LADDER: &[Rung] = &[
         cmd: Cmd::SelfExe(&[
             "--render", "--center", "-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139",
             "--zoom", "1e28", "--size", "640x400", "--iter", "10000000",
-            "-o", "validation/torture/render-e28x.png",
+            "-o", "{OUT}/render-e28x.png",
         ]),
         deadline: Duration::from_secs(15 * MIN),
         requires: &["offline/depth/e28-crossover"],
@@ -379,7 +379,7 @@ pub(crate) const LADDER: &[Rung] = &[
         cmd: Cmd::SelfExe(&[
             "--render", "--center", "-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139",
             "--zoom", "1e28", "--size", "1920x1080", "--iter", "20000",
-            "-o", "validation/torture/render-1080p.png",
+            "-o", "{OUT}/render-1080p.png",
         ]),
         deadline: Duration::from_secs(10 * MIN),
         requires: &["offline/depth/e28-crossover"],
@@ -393,7 +393,7 @@ pub(crate) const LADDER: &[Rung] = &[
         cmd: Cmd::SelfExe(&[
             "--render", "--center", "-0.7436438870371587047521915061147707", "0.131825904205311970493132056385139",
             "--zoom", "1e28", "--size", "3840x2160", "--iter", "20000",
-            "-o", "validation/torture/render-4k.png",
+            "-o", "{OUT}/render-4k.png",
         ]),
         deadline: Duration::from_secs(20 * MIN),
         requires: &["offline/res/1080p"],
@@ -768,16 +768,23 @@ fn run_rung(exe: &Path, rung: &Rung, out_dir: &Path) -> RunRecord {
     let _ = std::fs::create_dir_all(&cfg);
     let log = out_dir.join(format!("{}.log", rung.id.replace('/', "_")));
 
+    // ⚠`{OUT}` is substituted with the run's output directory, which the supervisor has created.
+    // The first version of the render rungs hard-coded `validation/torture/render-*.png`, a
+    // relative path into a GITIGNORED directory: it worked on the dev box only because that
+    // directory happened to exist there by hand, and on the RX 6800 XT's fresh clone every render
+    // rung died instantly with "The system cannot find the path specified. (os error 3)". A rung
+    // must not depend on the working directory it is launched from, nor on untracked state.
+    let subst = |a: &&'static str| -> String { a.replace("{OUT}", &out_dir.to_string_lossy()) };
     let started = Instant::now();
     let mut builder = match &rung.cmd {
         Cmd::SelfExe(a) => {
             let mut c = Command::new(exe);
-            c.args(*a);
+            c.args(a.iter().map(subst));
             c
         }
         Cmd::External(prog, a) => {
             let mut c = Command::new(prog);
-            c.args(*a);
+            c.args(a.iter().map(subst));
             c
         }
     };
@@ -923,7 +930,14 @@ fn run_rung(exe: &Path, rung: &Rung, out_dir: &Path) -> RunRecord {
 /// Repaint the in-place status line. Carriage return, no newline: the line is overwritten in place
 /// so a 40-minute rung produces one live line rather than a thousand scrolled ones.
 fn paint_progress(rung: &Rung, elapsed: Duration, res: &ResourceStats) {
-    use std::io::Write;
+    use std::io::{IsTerminal, Write};
+    // ⚠Only to a terminal. Carriage-return repainting into a REDIRECTED stream writes every frame
+    // of the animation into the file, which is what turned the RX 6800 XT's captured torture log
+    // into an unreadable smear of half-overwritten status lines. A progress display exists for a
+    // human watching; a log exists for whoever reads it afterwards, and they want different bytes.
+    if !std::io::stdout().is_terminal() {
+        return;
+    }
     let gb = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
     let pct = (elapsed.as_secs_f64() / rung.deadline.as_secs_f64() * 100.0).min(999.0);
     let gpu = if res.gpu_known {
@@ -946,7 +960,10 @@ fn paint_progress(rung: &Rung, elapsed: Duration, res: &ResourceStats) {
 }
 
 fn clear_progress() {
-    use std::io::Write;
+    use std::io::{IsTerminal, Write};
+    if !std::io::stdout().is_terminal() {
+        return;
+    }
     print!("\r{:100}\r", " ");
     let _ = std::io::stdout().flush();
 }

@@ -3026,12 +3026,21 @@ impl FractadyneApp {
                 if cur != 0 {
                     self.perf.fe_budget[vidx] = 0;
                     self.perf.fe_budget_ok[vidx] = false; // tiling re-arms once re-converged
+                    // ⚠Log the guess ACTUALLY DERIVED for the mode being entered, not the ceiling
+                    // constant. This line used to print `tdr_bootstrap_steps` unconditionally,
+                    // which was merely redundant when the guess WAS that constant and became a
+                    // falsehood the moment it started coming from a measured rate: the RX 6800 XT
+                    // run reported "bootstrap 4.00e8" on both arms of an A/B whose whole point was
+                    // that the two arms compute different guesses. A diagnostic that cannot
+                    // distinguish the thing under test is worse than no diagnostic.
+                    let boot = self.perf.bootstrap_steps(vidx);
                     crate::diag::log_line(
                         "render",
                         &format!(
-                            "mode switch to {m}: budget {:.2e} → unmeasured (bootstrap {:.2e}), \
-                             re-converging",
+                            "mode switch to {m}: budget {:.2e} → unmeasured (bootstrap {:.2e}, \
+                             ceiling {:.2e}), re-converging",
                             cur as f64,
+                            boot as f64,
                             crate::tunables::cost().tdr_bootstrap_steps as f64
                         ),
                     );
