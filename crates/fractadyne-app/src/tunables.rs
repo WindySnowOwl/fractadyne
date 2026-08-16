@@ -57,6 +57,7 @@ pub(crate) struct Cost {
     pub tdr_latency_accept_ms: f64,
     pub tdr_grow_max: f64,
     pub tdr_shrink_max: f64,
+    pub tdr_lethal_ms: f64,
     pub tdr_bootstrap_steps: u64,
     pub tdr_bootstrap_ms: f64,
     pub mode_rate_unknown_margin: f64,
@@ -76,6 +77,7 @@ impl Default for Cost {
             tdr_latency_accept_ms: TDR_LATENCY_ACCEPT_MS_DEFAULT,
             tdr_grow_max: TDR_GROW_MAX_DEFAULT,
             tdr_shrink_max: TDR_SHRINK_MAX_DEFAULT,
+            tdr_lethal_ms: TDR_LETHAL_MS_DEFAULT,
             tdr_bootstrap_steps: TDR_BOOTSTRAP_STEPS_DEFAULT,
             tdr_bootstrap_ms: TDR_BOOTSTRAP_MS_DEFAULT,
             mode_rate_unknown_margin: MODE_RATE_UNKNOWN_MARGIN_DEFAULT,
@@ -148,6 +150,7 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
             }
             "TDR_GROW_MAX" => { let p = c.tdr_grow_max; c.tdr_grow_max = f()?; p.to_string() }
             "TDR_SHRINK_MAX" => { let p = c.tdr_shrink_max; c.tdr_shrink_max = f()?; p.to_string() }
+            "TDR_LETHAL_MS" => { let p = c.tdr_lethal_ms; c.tdr_lethal_ms = f()?; p.to_string() }
             "TDR_BOOTSTRAP_STEPS" => {
                 let p = c.tdr_bootstrap_steps; c.tdr_bootstrap_steps = u()?; p.to_string()
             }
@@ -187,7 +190,8 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
 
 /// The names `--set` accepts, for the error message and `--help`.
 pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
-    TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_BOOTSTRAP_STEPS, TDR_BOOTSTRAP_MS, \
+    TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_LETHAL_MS, TDR_BOOTSTRAP_STEPS, \r
+    TDR_BOOTSTRAP_MS, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL";
 
@@ -202,6 +206,7 @@ mod override_tests {
         assert_eq!(d.tdr_budget_ms, TDR_BUDGET_MS_DEFAULT);
         assert_eq!(d.tdr_bootstrap_steps, TDR_BOOTSTRAP_STEPS_DEFAULT);
         assert_eq!(d.tdr_bootstrap_ms, TDR_BOOTSTRAP_MS_DEFAULT);
+        assert_eq!(d.tdr_lethal_ms, TDR_LETHAL_MS_DEFAULT);
         assert_eq!(d.mode_rate_unknown_margin, MODE_RATE_UNKNOWN_MARGIN_DEFAULT);
         assert_eq!(d.tdr_min_steps, TDR_MIN_STEPS_DEFAULT);
         assert_eq!(d.tdr_steps_ceil, TDR_STEPS_CEIL_DEFAULT);
@@ -296,7 +301,29 @@ pub(crate) const TDR_BUDGET_MS_DEFAULT: f64 = 400.0;
 /// assumption — it just walks toward whatever size actually measures near the target.
 pub(crate) const TDR_GROW_MAX_DEFAULT: f64 = 1.5;
 
+/// Most the budget may shrink on ONE reading. Bounded for the same reason growth is: the ratio
+/// search should walk, not lurch, or it oscillates between a postage stamp and an unaffordable
+/// frame. ⚠**Bypassed above `TDR_LETHAL_MS`** — see there; a cap on how fast you can retreat is a
+/// liability once you are already standing in the fire.
 pub(crate) const TDR_SHRINK_MAX_DEFAULT: f64 = 0.5;
+
+/// ⭐The measured frame time at which the budget controller stops easing and retreats in ONE step.
+///
+/// This band has been prose in half a dozen comments in this file ("~0.9 s", "the lethal band")
+/// since the first Event-153 losses; naming it makes it testable and overridable.
+///
+/// **Why a single-step retreat.** `TDR_SHRINK_MAX` caps a reading at ×0.5, which is right while
+/// walking toward a target and actively harmful past this point. The 2026-08-16 device loss
+/// (`reports/fractadyne-report.-2026-08-16a.txt`) measured **1033 ms** against a target that wanted
+/// ×0.39; clamped to ×0.5 that needs two or more readings, readings are deferred ~2 frames, and
+/// every frame in between is another ~1 s dispatch. **The device died after three.** The controller
+/// was not mispricing after the first reading — it had already seen the danger and was retreating
+/// too slowly to survive its own recovery.
+///
+/// Above this threshold the shrink uses the raw `target/ms` ratio, still floored by
+/// `TDR_MIN_STEPS`. Overshooting into a frame that is too small is cheap and self-correcting
+/// (the next reading grows it back at ×1.5); overshooting into the watchdog is not.
+pub(crate) const TDR_LETHAL_MS_DEFAULT: f64 = 900.0;
 
 /// Cost of the very first frame in a mode, before any measurement exists — the OPENING GUESS, not a
 /// floor. Everything above it is measured, not assumed.

@@ -5508,6 +5508,23 @@ impl FractadyneApp {
             }
             return false;
         };
+        // ⚠ALWAYS logged, not trace-gated: a reading in the watchdog band means this frame came
+        // within roughly 2× of losing the device, and both 2026 field losses show only three or
+        // four such frames between the first one and the end. If it happens in the field the log
+        // must already say so — by the time anyone thinks to enable a trace, the run is over.
+        if ms >= crate::tunables::cost().tdr_lethal_ms {
+            diag::log_line(
+                "render",
+                &format!(
+                    "⚠LETHAL-BAND FRAME: view={v} {src}={ms:.0}ms (band ≥{:.0}ms) steps={:.3e} \
+                     budget={:.3e} — emergency retreat to {:.3e}",
+                    crate::tunables::cost().tdr_lethal_ms,
+                    steps as f64,
+                    cur as f64,
+                    next as f64
+                ),
+            );
+        }
         self.perf.last_iterate_ms[v] = ms;
         self.perf.fe_budget_ok[v] = ok;
         if diag::trace_on("gpu") {

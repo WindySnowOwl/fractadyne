@@ -4485,7 +4485,21 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     if slow && steps <= crate::tunables::cost().tdr_bootstrap_steps && ms <= crate::tunables::cost().tdr_latency_accept_ms {
         return Some((cur, true));
     }
-    let factor = (target_ms / ms).clamp(crate::tunables::cost().tdr_shrink_max, crate::tunables::cost().tdr_grow_max);
+    // ⭐EMERGENCY RETREAT. Past `TDR_LETHAL_MS` the shrink cap is removed and the raw ratio applies.
+    //
+    // The cap is right while walking toward a target and actively harmful once a reading lands in
+    // the watchdog band: the 2026-08-16 device loss measured 1033 ms wanting ×0.39, got clamped to
+    // ×0.5, and needed two-plus readings to recover — with readings deferred ~2 frames and every
+    // frame between them another ~1 s dispatch. It died after three. The controller had already
+    // SEEN the danger on the first reading; what killed it was how slowly it was allowed to back
+    // away. Overshooting into too small a frame is cheap and self-correcting (the next reading
+    // grows it at ×1.5); overshooting into the watchdog is not.
+    let lethal = ms >= crate::tunables::cost().tdr_lethal_ms;
+    let factor = if lethal {
+        (target_ms / ms).min(crate::tunables::cost().tdr_grow_max)
+    } else {
+        (target_ms / ms).clamp(crate::tunables::cost().tdr_shrink_max, crate::tunables::cost().tdr_grow_max)
+    };
     let base = if slow { cur.min(steps.max(1)) } else { cur };
     let next = ((base as f64 * factor) as u64).clamp(crate::tunables::cost().tdr_min_steps, ceil);
     // Converged when the factor sits in the dead band — or when the clamp pinned `next` at `cur`
@@ -4629,6 +4643,60 @@ mod controller_props {
 
         // The floor still holds: an absurdly slow rate cannot drive the guess under TDR_MIN_STEPS.
         assert_eq!(bootstrap_steps(1e-9, 0.0), c.tdr_min_steps);
+    }
+
+    #[test]
+    fn a_reading_in_the_lethal_band_retreats_in_one_step() {
+        // The 2026-08-16 device loss, as numbers: budget pinned at the 3e11 ceiling, a tile
+        // measured 1033 ms. Clamped at TDR_SHRINK_MAX the controller could only reach 1.5e11 and
+        // would spend another ~1 s frame per reading getting the rest of the way. It died after
+        // three. Past the band the raw ratio must apply.
+        let c = crate::tunables::cost();
+        let cur = c.tdr_steps_ceil;
+        let (next, _) = budget_step(cur, cur, 1033.0, false).expect("a slow reading carries signal");
+        let capped = (cur as f64 * c.tdr_shrink_max) as u64;
+        assert!(
+            next < capped,
+            "must retreat further than the ×{} cap allows: got {next:.3e}, cap floor {capped:.3e}",
+            c.tdr_shrink_max
+        );
+        // And it should land near the target in ONE move, not merely somewhat lower.
+        let implied_ms = 1033.0 * (next as f64 / cur as f64);
+        assert!(
+            implied_ms <= c.tdr_budget_ms * 1.05,
+            "one retreat should reach the target: implied {implied_ms:.0}ms vs target {:.0}ms",
+            c.tdr_budget_ms
+        );
+    }
+
+    #[test]
+    fn the_shrink_cap_still_applies_below_the_lethal_band() {
+        // The cap exists so the ratio search walks instead of lurching; only the emergency case
+        // bypasses it. Pick a reading where the cap actually BINDS but the band does not: the
+        // clamp only engages once target/ms < shrink_max, i.e. past 800 ms at a 400 ms target, so
+        // the window where it governs is 800–900 ms. (My first version of this test used 600 ms,
+        // where the ratio is 0.667 and the clamp is not reached at all — it asserted the cap was
+        // in force somewhere it never applies, and failed for the right reason.)
+        let c = crate::tunables::cost();
+        let ms = (c.tdr_budget_ms / c.tdr_shrink_max) + 10.0; // just past where the clamp engages
+        assert!(ms < c.tdr_lethal_ms, "no window between the clamp and the band: {ms}ms");
+        let cur = c.tdr_steps_ceil;
+        let (next, _) = budget_step(cur, cur, ms, false).expect("slow reading");
+        let capped = (cur as f64 * c.tdr_shrink_max) as u64;
+        assert_eq!(next, capped, "below the band the ×{} cap governs", c.tdr_shrink_max);
+    }
+
+    #[test]
+    fn both_regimes_now_aim_outside_the_lethal_band() {
+        // The invariant the 900→400 change exists to establish: a CONVERGED controller must not be
+        // parked inside the band, in either regime. Two field losses happened because auto was.
+        let c = crate::tunables::cost();
+        assert!(c.tdr_budget_ms < c.tdr_lethal_ms, "auto target is inside the lethal band");
+        assert!(c.tdr_explicit_budget_ms < c.tdr_lethal_ms, "explicit target is inside the band");
+        assert!(
+            c.tdr_budget_ms * 2.0 <= c.tdr_lethal_ms,
+            "auto target should keep the >=2x margin the explicit one is documented to have"
+        );
     }
 
     #[test]
