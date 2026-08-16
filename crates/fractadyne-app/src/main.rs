@@ -2745,13 +2745,23 @@ impl FractadyneApp {
         } else {
             None
         };
-        // Is this an automated harness run rather than a person at a keyboard? Used to suppress
-        // first-run UI that would otherwise wait forever for a click. Kept as one predicate so a
-        // new harness cannot be added without deciding this question.
-        let headless_harness = livetest.is_some()
+        let play_tour = val("--play").map(std::path::PathBuf::from);
+        // Was the app launched to DO something specific, rather than to be explored? If so, no
+        // first-run onboarding: a modal is either something nobody will ever click (a headless
+        // harness) or something standing in front of the very thing the launch asked for.
+        //
+        // ⚠`--play` belongs here even though it is a perfectly ordinary windowed run, and leaving
+        // it out was a real bug: the 2026-08-15 Radeon repro played its tour with the welcome
+        // dialog sitting on top of it. That one did not block the tour — `--play` drives the live
+        // view, so the dispatches underneath carried on and the measurement survived — but it
+        // obscured the view being investigated, and the same omission against a harness that DOES
+        // wait for a clean state is the hang this predicate exists to prevent. The question to ask
+        // of a new flag is "did the user ask for a specific outcome?", not "is it headless?".
+        let launched_for_a_task = livetest.is_some()
             || divetest.is_some()
             || uitest.is_some()
             || juliadive.is_some()
+            || play_tour.is_some()
             || selftest
             || bench_matrix
             || profile
@@ -2760,7 +2770,6 @@ impl FractadyneApp {
             || frametest
             || auto_render
             || auto_benchmark;
-        let play_tour = val("--play").map(std::path::PathBuf::from);
         let livetest_quick = args.iter().any(|a| a == "--quick");
         let frametest_steps = val("--steps").and_then(|s| s.parse().ok()).unwrap_or(40u32);
         let frametest_hold = val("--hold").and_then(|s| s.parse().ok()).unwrap_or(4u32);
@@ -2893,7 +2902,7 @@ impl FractadyneApp {
                 // automation mutually exclusive, so a torture rung with its own config dir would
                 // block on EVERY live rung. Suppressing it for harness modes is what lets the
                 // gates be reproducible.
-                welcome_open: !s.welcome_seen && !headless_harness,
+                welcome_open: !s.welcome_seen && !launched_for_a_task,
                 help_open: false,
                 help_section: 0,
                 right_panel_open: s.right_panel_open,
