@@ -373,6 +373,16 @@ impl FractadyneApp {
                         !self.render_cfg.auto_iter,
                     );
                     if let Some((next, ok)) = stepped {
+                        // ⚠MUST mirror `apply_iterate_measurement` exactly. This harness keeps its
+                        // own copy of the controller loop, and the banked beta.40 lesson is that a
+                        // harness whose controller differs from the app's measures a view the app
+                        // never renders. The build gate was added to the app first and this line
+                        // was missed for one commit; the livetest then reported 0 drift on a path
+                        // that did not contain the change at all — a green gate for a code path it
+                        // was not exercising, which is worse than a red one.
+                        let building = self.recompute_rx[0].is_some();
+                        let (next, ok) =
+                            crate::render::budget_after_build_gate(cur, next, ok, building);
                         self.perf.fe_budget_ok[0] = ok;
                         self.perf.fe_budget[0] = next;
                     }

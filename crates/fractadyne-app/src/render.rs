@@ -4508,6 +4508,38 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     Some((next, next == cur || (0.8..=1.25).contains(&factor)))
 }
 
+/// Gate a budget step on whether a REPLACEMENT REFERENCE is currently being built for this view.
+///
+/// Returns the budget to install and whether it may be treated as converged.
+///
+/// ⭐**Growth is refused; shrink is not.** A frame rendered while a rebuild is in flight is priced
+/// against a reference that is about to be thrown away — usually a cheap frame, because the pixels
+/// are still clamped to the old (shorter) orbit — so growth measured there is unearned. Shrink is
+/// always honoured: a slow frame is bad news regardless of what happens next.
+///
+/// **The incident.** 2026-08-16 (`reports/fractadyne-report.-2026-08-16a.txt`), a settled tiled view
+/// at zoom 3.4e38. Inside the ~2 s window containing one reference build, `fe_budget` went
+/// 4.520e10 → 3.000e11 — the `TDR_STEPS_CEIL` — which is ×1.5 growth across roughly five readings
+/// on frames cheap enough that none crossed the slow-frame log threshold. The new reference then
+/// landed, per-frame nominal cost jumped 27× to 7.546e11, and the tiled grid dispatched tiles sized
+/// against that inflated budget: 1033 ms and 1026 ms, then the device was gone.
+///
+/// The budget was earned under one cost regime and spent under another. Nominal steps are supposed
+/// to be regime-independent currency, and they are not — per-step real cost moves with skip
+/// effectiveness, and a pending rebuild is a loud advance warning that skip effectiveness is about
+/// to change. This declines to bank a windfall measured in the last moments before that.
+///
+/// ⚠Also withholds CONVERGENCE while a build is in flight, which keeps the tiled settle disarmed:
+/// arming a full-resolution tiled grid on a budget that is about to be invalidated is the specific
+/// mistake that made the above fatal rather than merely slow.
+pub(crate) fn budget_after_build_gate(cur: u64, next: u64, ok: bool, building: bool) -> (u64, bool) {
+    if building && next > cur {
+        (cur, false)
+    } else {
+        (next, ok && !building)
+    }
+}
+
 /// Has measurement STARVED for this view? True when a real dispatch has gone out since the last
 /// timing came back and nothing has arrived for `limit` frames. An idle view (no dispatch since
 /// the last reading) is never starved — there is nothing outstanding to price.
@@ -4697,6 +4729,42 @@ mod controller_props {
             c.tdr_budget_ms * 2.0 <= c.tdr_lethal_ms,
             "auto target should keep the >=2x margin the explicit one is documented to have"
         );
+    }
+
+    #[test]
+    fn a_pending_rebuild_refuses_growth_but_never_blocks_a_shrink() {
+        let cur = 4_520_000_000u64;
+        let up = cur * 3 / 2; // a ×1.5 growth step
+        let down = cur / 2;
+
+        // Idle: both directions honoured, convergence passes through.
+        assert_eq!(budget_after_build_gate(cur, up, true, false), (up, true));
+        assert_eq!(budget_after_build_gate(cur, down, true, false), (down, true));
+
+        // Rebuild in flight: growth refused, shrink honoured. The asymmetry IS the safety property
+        // — a frame priced against an orbit about to be replaced can warn us, but cannot reward us.
+        assert_eq!(budget_after_build_gate(cur, up, true, true), (cur, false));
+        assert_eq!(budget_after_build_gate(cur, down, true, true), (down, false));
+
+        // Convergence is withheld while building, which keeps the tiled settle disarmed. Arming a
+        // full-resolution grid on a budget about to be invalidated is what made 2026-08-16 fatal.
+        assert!(!budget_after_build_gate(cur, cur, true, true).1);
+    }
+
+    #[test]
+    fn the_2026_08_16_budget_inflation_cannot_recur_while_building() {
+        // The measured path: 4.520e10 climbing at ×1.5 per reading to the 3e11 ceiling across ~five
+        // cheap readings taken around one reference build. With the gate, none of those readings
+        // banks anything, so the tiled grid is never sized against the inflated figure.
+        let c = crate::tunables::cost();
+        let mut b = 45_200_000_000u64;
+        for _ in 0..5 {
+            let (next, _) = budget_step(b, b, 50.0, false).unwrap_or((b, true));
+            let (gated, _) = budget_after_build_gate(b, next, true, true);
+            b = gated;
+        }
+        assert_eq!(b, 45_200_000_000, "no growth may be banked during a rebuild");
+        assert!(b < c.tdr_steps_ceil, "and it must not have reached the ceiling");
     }
 
     #[test]

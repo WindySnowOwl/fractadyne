@@ -5508,6 +5508,16 @@ impl FractadyneApp {
             }
             return false;
         };
+        // Refuse to bank growth measured while this view's reference is being REBUILT — the frame
+        // was priced against an orbit that is about to be replaced. See `budget_after_build_gate`.
+        let building = self.recompute_rx[v].is_some();
+        let (next, ok) = render::budget_after_build_gate(cur, next, ok, building);
+        if building && next == cur {
+            diag::trace(
+                "gpu",
+                format!("view={v} {src}={ms:.1}ms growth REFUSED — reference rebuild in flight"),
+            );
+        }
         // ⚠ALWAYS logged, not trace-gated: a reading in the watchdog band means this frame came
         // within roughly 2× of losing the device, and both 2026 field losses show only three or
         // four such frames between the first one and the end. If it happens in the field the log
