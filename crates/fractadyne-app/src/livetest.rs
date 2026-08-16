@@ -357,7 +357,15 @@ impl FractadyneApp {
                 let ms = if ts.captured { ts.iterate_ms } else { gpu_ms };
                 let steps = self.perf.fe_steps_last[0];
                 if ms > 0.01 && steps > 0 {
-                    let cur = crate::render::budget_base(self.perf.fe_budget[0]);
+                    // Same rule as the app's: only a real timestamp reading may set a per-step
+                    // rate. `gpu_ms` is the wall-clock proxy and would latch a pessimistic rate.
+                    if ts.captured {
+                        self.perf.record_mode_rate(0, ms, steps);
+                    }
+                    let cur = crate::render::budget_base(
+                        self.perf.fe_budget[0],
+                        self.perf.bootstrap_steps(0),
+                    );
                     let stepped = crate::render::budget_step(
                         cur,
                         steps,

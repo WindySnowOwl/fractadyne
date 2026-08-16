@@ -52,6 +52,13 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         println!("fractadyne {}", version_string());
         return true;
     }
+    // `--torture`: the escalating failure-hunting suite (design/torture-suite.md). Handled here,
+    // headless and before any GPU work, because the SUPERVISOR needs no device of its own — it
+    // launches each rung as a child process precisely so that a rung which loses the device or
+    // wedges cannot take the runner down with it.
+    if args.iter().any(|a| a == "--torture") {
+        std::process::exit(crate::torture::run(args));
+    }
     // Print the tour-script schema reference (Markdown) and exit — used to (re)generate TOURS.md.
     if args.iter().any(|a| a == "--dump-tour-schema") {
         print!("{}", crate::scripting::tour_schema_markdown());

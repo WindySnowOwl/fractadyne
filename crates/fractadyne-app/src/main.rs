@@ -66,6 +66,7 @@ mod scripting;
 mod selftest;
 mod sysinfo;
 mod theme;
+mod torture;
 mod tunables;
 mod ui;
 mod uitest;
@@ -225,6 +226,18 @@ struct Perf {
     /// crossover from the death is the difference between a coincidence and a cause, and it
     /// costs one `u64` to answer.
     mode_switch_frame: [u64; 2],
+    /// ⭐Measured nominal steps per millisecond, per view and per arithmetic mode (0.0 = never
+    /// measured). This is what makes the opening guess hardware-derived instead of assumed; see
+    /// `render::bootstrap_steps` and `tunables::TDR_BOOTSTRAP_MS`.
+    ///
+    /// ⚠**Latches the MINIMUM, never an average.** Within one mode the per-step rate swings by two
+    /// orders of magnitude depending on whether a BLA tree is live — the same mode-2 view measured
+    /// ~5.7e5 steps/ms with `bla_skip=0` right after a crossover and is worth a budget 3.4× larger
+    /// once BLA is skipping (2026-08-15 field report). An average, or a last-value, would let a
+    /// BLA-live reading size the opening dispatch of a no-BLA re-entry, which is exactly the frame
+    /// that lost the device. The pessimistic latch costs at most a few ×1.5 climb frames; the
+    /// optimistic one costs the device, and the asymmetry is the whole design.
+    mode_rate: [[f64; Self::MODE_RATE_SLOTS]; 2],
     /// Tiled-settle progress per view (see `render::TileGrid`); `None` = no grid armed or running.
     tile_state: [Option<render::TileGrid>; 2],
     /// Iteration-range tiling (direct mode). `chunk_ok`: the device granted the 48-byte
@@ -331,6 +344,58 @@ struct Perf {
     motion_res: f64,
 }
 
+impl Perf {
+    /// Arithmetic modes are `RenderMode::to_u32()` ∈ {0, 1, 2}; `u32::MAX` means "none yet" and is
+    /// simply out of range, so `slot()` rejects it along with anything a future mode adds.
+    const MODE_RATE_SLOTS: usize = 3;
+
+    fn slot(mode: u32) -> Option<usize> {
+        ((mode as usize) < Self::MODE_RATE_SLOTS).then_some(mode as usize)
+    }
+
+    /// Fold one priced dispatch into this view's per-mode rate, keeping the PESSIMISTIC extreme.
+    /// See the `mode_rate` field comment for why this is a min and not an average.
+    fn record_mode_rate(&mut self, v: usize, ms: f64, steps: u64) {
+        let (Some(s), true) = (Self::slot(self.budget_mode[v]), ms > 0.0 && steps > 0) else {
+            return;
+        };
+        // ⚠A measurement is DEFERRED — `wall_probe_step` holds a reading for two frames, and the
+        // timestamp readback lags similarly — so `budget_mode` at record time is not necessarily
+        // the mode the priced dispatch ran in. Straight after a crossover that misattributes the
+        // OLD mode's rate to the new one, and the old mode is the fast one (~152× at 0→2 in the
+        // field report), which is precisely the optimistic direction this whole mechanism exists to
+        // avoid. The ceiling clamp in `bootstrap_steps` means such a poisoned rate can never be
+        // worse than the historical constant, but it would silently defeat the fix in the one
+        // window that motivated it. Skipping the frames that straddle the switch is enough: the
+        // dispatch behind a reading taken 3+ frames later is unambiguously in the current mode.
+        let since = self.frame_idx.saturating_sub(self.mode_switch_frame[v]);
+        if self.mode_switch_frame[v] != u64::MAX && since < 3 {
+            return;
+        }
+        let rate = steps as f64 / ms;
+        if !rate.is_finite() || rate <= 0.0 {
+            return;
+        }
+        let cur = self.mode_rate[v][s];
+        self.mode_rate[v][s] = if cur > 0.0 { cur.min(rate) } else { rate };
+    }
+
+    /// The opening guess for this view's CURRENT mode, derived from what has actually been measured
+    /// on this device. `rate_other` is the most pessimistic rate seen in any other mode, which is
+    /// all we have to go on the first time a dive crosses into a mode.
+    fn bootstrap_steps(&self, v: usize) -> u64 {
+        let this = Self::slot(self.budget_mode[v]).map_or(0.0, |s| self.mode_rate[v][s]);
+        let other = self.mode_rate[v]
+            .iter()
+            .enumerate()
+            .filter(|(s, _)| Self::slot(self.budget_mode[v]) != Some(*s))
+            .map(|(_, r)| *r)
+            .filter(|r| *r > 0.0)
+            .fold(0.0_f64, |acc, r| if acc == 0.0 { r } else { acc.min(r) });
+        render::bootstrap_steps(this, other)
+    }
+}
+
 impl Default for Perf {
     fn default() -> Self {
         Self {
@@ -372,6 +437,7 @@ impl Default for Perf {
             ts_supported: false,
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
+            mode_rate: [[0.0; Self::MODE_RATE_SLOTS]; 2],
             tile_state: [None, None],
             tile_pending: [false, false],
             chunk_ok: false,
@@ -2679,6 +2745,21 @@ impl FractadyneApp {
         } else {
             None
         };
+        // Is this an automated harness run rather than a person at a keyboard? Used to suppress
+        // first-run UI that would otherwise wait forever for a click. Kept as one predicate so a
+        // new harness cannot be added without deciding this question.
+        let headless_harness = livetest.is_some()
+            || divetest.is_some()
+            || uitest.is_some()
+            || juliadive.is_some()
+            || selftest
+            || bench_matrix
+            || profile
+            || reusetest
+            || resizetest
+            || frametest
+            || auto_render
+            || auto_benchmark;
         let play_tour = val("--play").map(std::path::PathBuf::from);
         let livetest_quick = args.iter().any(|a| a == "--quick");
         let frametest_steps = val("--steps").and_then(|s| s.parse().ok()).unwrap_or(40u32);
@@ -2800,7 +2881,19 @@ impl FractadyneApp {
                 bench_dialog_open: false,
                 bookmarks_open: false,
                 reset_confirm_open: false,
-                welcome_open: !s.welcome_seen,
+                // ⚠NEVER in a headless harness. The welcome modal is gated on a SESSION field, so
+                // any harness given a fresh `FRACTADYNE_CONFIG_DIR` — which is exactly what a
+                // hermetic run is — boots on "first run" and puts up a dialog nobody will ever
+                // click. Measured 2026-08-15: `--livetest` under a wiped config reached the home
+                // view in 0.85 s and then sat behind this modal, rendering frames but never
+                // starting the tour. `--uitest` had already worked around it locally (it drives the
+                // dialog on purpose); every other harness silently hung instead.
+                //
+                // The consequence was worse than one stuck run: it makes hermeticity and
+                // automation mutually exclusive, so a torture rung with its own config dir would
+                // block on EVERY live rung. Suppressing it for harness modes is what lets the
+                // gates be reproducible.
+                welcome_open: !s.welcome_seen && !headless_harness,
                 help_open: false,
                 help_section: 0,
                 right_panel_open: s.right_panel_open,
@@ -3723,7 +3816,7 @@ impl FractadyneApp {
             painter.rect_stroke(
                 boxr,
                 egui::CornerRadius::ZERO,
-                egui::Stroke::new(1.5, BRAND_ACCENT),
+                egui::Stroke::new(1.5_f32, BRAND_ACCENT),
                 egui::StrokeKind::Inside,
             );
             if resp.drag_stopped() {
@@ -4582,13 +4675,13 @@ impl FractadyneApp {
                     let col = sample_stops(&packed, n, t);
                     pr.line_segment(
                         [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
-                        egui::Stroke::new(1.5, col),
+                        egui::Stroke::new(1.5_f32, col),
                     );
                 }
                 pr.rect_stroke(
                     rect,
                     2.0,
-                    egui::Stroke::new(1.0, BRAND_ACCENT),
+                    egui::Stroke::new(1.0_f32, BRAND_ACCENT),
                     egui::StrokeKind::Inside,
                 );
                 ui.add_space(6.0);
@@ -5322,6 +5415,10 @@ impl FractadyneApp {
         self.invalidate_refs();
     }
 
+    /// `src` tag for a reading that came from a real GPU timestamp query. The wall-clock fallback
+    /// uses a different tag, and the difference is load-bearing for `record_mode_rate` — see there.
+    const SRC_GPU_ITERATE: &'static str = "gpu_iterate";
+
     /// Fold one measured iterate cost into a view's frame budget. Shared by BOTH measurement
     /// sources — the GPU timestamp readback and the wall-clock fallback — because the arithmetic
     /// must not differ between them: a fallback that walks the budget by different rules is a
@@ -5336,7 +5433,24 @@ impl FractadyneApp {
         // guess before EVERY step, so a converged-low budget was hoisted back up on each reading
         // and could never settle below `bootstrap × TDR_SHRINK_MAX`. That is the same
         // guess-as-a-floor bug as the clamp in `budget_step`, in a second place; see TDR_MIN_STEPS.
-        let cur = render::budget_base(self.perf.fe_budget[v]);
+        // Record the rate BEFORE pricing: this reading describes the mode we are in now, and the
+        // opening guess for the NEXT crossover is only as good as the worst rate we have kept.
+        // Deliberately outside the `budget_step` early-return below — a reading that carries no
+        // signal for the budget (an undersized dispatch) is still a true measurement of per-step
+        // cost, and the pessimistic ones are exactly the ones worth keeping.
+        //
+        // ⚠GPU TIMESTAMPS ONLY. The wall-clock fallback prices a dispatch by `max_dt` — the frame
+        // interval at which the queue finally stalls — which deliberately includes present/vsync
+        // wait so the BUDGET errs toward shrinking. That conservatism is wrong for a RATE: it
+        // understates steps-per-ms, and because `record_mode_rate` latches the minimum, one
+        // wall-clock reading would cap this view's opening guess low for the rest of the session.
+        // A device with no timestamps at all therefore records no rate and falls back to the
+        // historical constant — the honest degradation, since we genuinely cannot measure per-step
+        // cost there.
+        if src == Self::SRC_GPU_ITERATE {
+            self.perf.record_mode_rate(v, ms, steps);
+        }
+        let cur = render::budget_base(self.perf.fe_budget[v], self.perf.bootstrap_steps(v));
         // The arithmetic lives in `render::budget_step` as a pure function so the properties that
         // matter — a slow reading always shrinks, growth is bounded, the clamps hold — are pinned
         // by tests rather than by re-reading this block.
@@ -5575,7 +5689,7 @@ impl eframe::App for FractadyneApp {
                 0 => self.perf.fe_steps_last[v],
                 n => n,
             };
-            if self.apply_iterate_measurement(v, ms, steps, "gpu_iterate") {
+            if self.apply_iterate_measurement(v, ms, steps, Self::SRC_GPU_ITERATE) {
                 ctx.request_repaint();
             }
         }

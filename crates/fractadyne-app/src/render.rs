@@ -3046,7 +3046,7 @@ impl FractadyneApp {
             self.perf.frozen_budget[vidx]
         } else {
             // Zero until the first probe resolves; the loop in `update` maintains it thereafter.
-            budget_base(self.perf.fe_budget[vidx])
+            budget_base(self.perf.fe_budget[vidx], self.perf.bootstrap_steps(vidx))
         };
         // EXPLICIT-count dispatch bound. Three device losses this release cycle share one shape:
         // with auto-iter OFF and a huge explicit count, the ratio controller converges dispatches
@@ -3539,7 +3539,8 @@ impl FractadyneApp {
             // reproducible. Below the ceiling the deadlock is still broken (16×16 → ~84×66 at a
             // 4M explicit ask, stable and alive); a native-res render of such an ask needs the
             // chunked path extended to perturbation modes (TODO), not bigger single dispatches.
-            && budget_base(self.perf.fe_budget[vidx]) < crate::tunables::cost().explicit_dispatch_cap
+            && budget_base(self.perf.fe_budget[vidx], self.perf.bootstrap_steps(vidx))
+                < crate::tunables::cost().explicit_dispatch_cap
         {
             self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
             probe_fired = true;
@@ -4364,9 +4365,42 @@ pub(crate) fn live_iter_budget(eff_iter: u32, log2mag: f64, boost: f64, explicit
     capped.min(((zoom_iter_cap(log2mag).max(256) as f64) * boost) as u32)
 }
 
-pub(crate) fn budget_base(fe_budget: u64) -> u64 {
+/// ⭐The OPENING GUESS, derived from a measured per-step rate rather than assumed.
+///
+/// `rate_this_mode` is steps-per-ms measured in the mode we are about to dispatch in;
+/// `rate_other_mode` is the most pessimistic rate measured in any OTHER mode. Both are 0.0 when
+/// unknown. The result is always clamped into `[TDR_MIN_STEPS, TDR_BOOTSTRAP_STEPS]`, so this can
+/// only ever lower the guess — a device that has measured nothing gets exactly the historical
+/// constant, and no rate, however optimistic, can raise the opening dispatch above it.
+///
+/// The three cases, in order of how much we actually know:
+///  1. **This mode measured here** — the honest answer: `rate × TDR_BOOTSTRAP_MS`.
+///  2. **Only another mode measured** — that rate bounds the device's speed but says nothing about
+///     this mode's per-step cost, which the field report has at ~152× worse across 0→2. Divide by
+///     `MODE_RATE_UNKNOWN_MARGIN` before believing it. This is the case the 2026-08-15 RX 6800 XT
+///     device loss lands in.
+///  3. **Nothing measured at all** — the first frame of the session; keep the historical constant,
+///     because there is no information to do better with and lowering it blindly was tried,
+///     measured, and reverted (see `TDR_BOOTSTRAP_STEPS`).
+pub(crate) fn bootstrap_steps(rate_this_mode: f64, rate_other_mode: f64) -> u64 {
+    let c = crate::tunables::cost();
+    let rate = if rate_this_mode > 0.0 {
+        rate_this_mode
+    } else if rate_other_mode > 0.0 {
+        rate_other_mode / c.mode_rate_unknown_margin
+    } else {
+        return c.tdr_bootstrap_steps;
+    };
+    // NaN/inf cannot reach here (both inputs are finite and positive), but the cast still has to be
+    // saturating: a very fast rate overflows u64 before the clamp would catch it.
+    let steps = (rate * c.tdr_bootstrap_ms).max(0.0);
+    (steps as u64).clamp(c.tdr_min_steps, c.tdr_bootstrap_steps)
+}
+
+/// `bootstrap` is what `bootstrap_steps` derived for this view and mode.
+pub(crate) fn budget_base(fe_budget: u64, bootstrap: u64) -> u64 {
     match fe_budget {
-        0 => crate::tunables::cost().tdr_bootstrap_steps,
+        0 => bootstrap,
         b => b.clamp(crate::tunables::cost().tdr_min_steps, crate::tunables::cost().tdr_steps_ceil),
     }
 }
@@ -4518,11 +4552,52 @@ mod controller_props {
 
     #[test]
     fn a_converged_low_budget_is_never_hoisted_back_to_the_guess() {
+        let boot = crate::tunables::cost().tdr_bootstrap_steps;
         let low = crate::tunables::cost().tdr_min_steps * 2;
-        assert!(low < crate::tunables::cost().tdr_bootstrap_steps);
-        assert_eq!(budget_base(low), low, "a real measurement is used as is");
-        assert_eq!(budget_base(0), crate::tunables::cost().tdr_bootstrap_steps, "only 'unmeasured' gets the guess");
-        assert_eq!(budget_base(1), crate::tunables::cost().tdr_min_steps, "but never below the absolute floor");
+        assert!(low < boot);
+        assert_eq!(budget_base(low, boot), low, "a real measurement is used as is");
+        assert_eq!(budget_base(0, boot), boot, "only 'unmeasured' gets the guess");
+        assert_eq!(budget_base(1, boot), crate::tunables::cost().tdr_min_steps, "but never below the absolute floor");
+    }
+
+    #[test]
+    fn the_opening_guess_is_derived_from_a_measured_rate() {
+        let c = crate::tunables::cost();
+        // Nothing measured anywhere: unchanged from before this existed. This is the case the
+        // 4e8 → 1e8 experiment regressed (`--livetest` seahorse-2, 480×270 → 100×56), so it is
+        // pinned rather than left to inference.
+        assert_eq!(bootstrap_steps(0.0, 0.0), c.tdr_bootstrap_steps);
+
+        // A rate fast enough to ask for more than the constant is CAPPED by it: the derived guess
+        // may only ever lower the opening dispatch.
+        let fast = (c.tdr_bootstrap_steps as f64 / c.tdr_bootstrap_ms) * 10.0;
+        assert_eq!(bootstrap_steps(fast, 0.0), c.tdr_bootstrap_steps);
+
+        // The field case (2026-08-15, RX 6800 XT): mode 2 with no BLA measured 5.909e8 steps in
+        // 1038 ms. The guess derived from that rate must be worth about TDR_BOOTSTRAP_MS, i.e.
+        // ~25× smaller than the constant that lost the device.
+        let amd_mode2 = 5.909e8 / 1038.0;
+        let got = bootstrap_steps(amd_mode2, 0.0);
+        assert!(got < c.tdr_bootstrap_steps / 10, "got {got}");
+        let implied_ms = got as f64 / amd_mode2;
+        assert!(
+            (implied_ms - c.tdr_bootstrap_ms).abs() < 1.0,
+            "the derived guess should be worth ~{} ms, got {implied_ms:.1}",
+            c.tdr_bootstrap_ms
+        );
+
+        // Only ANOTHER mode measured — mode 0 on that same card, ~8.65e7 steps/ms. Believing it
+        // directly would size a lethal opening dispatch in mode 2, so the margin divides it down.
+        let amd_mode0 = 7.785e10 / 900.0;
+        let cross = bootstrap_steps(0.0, amd_mode0);
+        assert!(cross < bootstrap_steps(amd_mode0, 0.0), "the margin must bite");
+        assert!(
+            (cross as f64) / amd_mode2 < c.tdr_latency_accept_ms,
+            "the first frame in an unmeasured mode must not be watchdog-relevant"
+        );
+
+        // The floor still holds: an absurdly slow rate cannot drive the guess under TDR_MIN_STEPS.
+        assert_eq!(bootstrap_steps(1e-9, 0.0), c.tdr_min_steps);
     }
 
     #[test]

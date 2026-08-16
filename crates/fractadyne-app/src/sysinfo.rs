@@ -204,6 +204,153 @@ pub(crate) fn available_memory() -> Option<u64> {
     None
 }
 
+/// Total physical memory, so a "used" figure can be reported as a fraction rather than a bare
+/// number that means nothing without the denominator.
+#[cfg(windows)]
+pub(crate) fn total_memory() -> Option<u64> {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        length: u32,
+        memory_load: u32,
+        total_phys: u64,
+        avail_phys: u64,
+        total_page_file: u64,
+        avail_page_file: u64,
+        total_virtual: u64,
+        avail_virtual: u64,
+        avail_extended_virtual: u64,
+    }
+    extern "system" {
+        fn GlobalMemoryStatusEx(buffer: *mut MemoryStatusEx) -> i32;
+    }
+    // SAFETY: identical contract to `available_memory` above — zeroed storage, `length` set to its
+    // own size, non-zero return means the fields are valid.
+    unsafe {
+        let mut status: MemoryStatusEx = std::mem::zeroed();
+        status.length = std::mem::size_of::<MemoryStatusEx>() as u32;
+        (GlobalMemoryStatusEx(&mut status) != 0).then_some(status.total_phys)
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn total_memory() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb * 1024);
+        }
+    }
+    None
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub(crate) fn total_memory() -> Option<u64> {
+    None
+}
+
+/// System-wide CPU busy percentage, measured as a DELTA between successive calls.
+///
+/// ⚠Stateful by necessity: CPU time is a monotonic counter, so a single reading is meaningless —
+/// the percentage only exists relative to a previous sample. The first call therefore returns
+/// `None` (it establishes the baseline) rather than a fabricated 0%, which would read as "idle" at
+/// exactly the moment a caller most wants the truth.
+#[derive(Default)]
+pub(crate) struct CpuSampler {
+    prev: Option<(u64, u64)>, // (idle, total)
+}
+
+impl CpuSampler {
+    /// Busy percent since the previous call, or `None` for the first call / on error.
+    pub(crate) fn sample(&mut self) -> Option<f64> {
+        let (idle, total) = read_cpu_times()?;
+        let out = match self.prev {
+            Some((pi, pt)) if total > pt => {
+                let d_total = (total - pt) as f64;
+                let d_idle = (idle.saturating_sub(pi)) as f64;
+                Some(((d_total - d_idle) / d_total * 100.0).clamp(0.0, 100.0))
+            }
+            _ => None,
+        };
+        self.prev = Some((idle, total));
+        out
+    }
+}
+
+#[cfg(windows)]
+fn read_cpu_times() -> Option<(u64, u64)> {
+    #[repr(C)]
+    #[derive(Default, Clone, Copy)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    extern "system" {
+        fn GetSystemTimes(idle: *mut FileTime, kernel: *mut FileTime, user: *mut FileTime) -> i32;
+    }
+    fn v(f: FileTime) -> u64 {
+        ((f.high as u64) << 32) | f.low as u64
+    }
+    // SAFETY: three out-params of the exact FILETIME layout the API writes; non-zero return means
+    // all three were filled. Note Windows counts idle time INSIDE kernel time, so total is
+    // kernel+user and idle is a subset of it — not an additional term.
+    unsafe {
+        let (mut i, mut k, mut u) = (FileTime::default(), FileTime::default(), FileTime::default());
+        if GetSystemTimes(&mut i, &mut k, &mut u) == 0 {
+            return None;
+        }
+        Some((v(i), v(k) + v(u)))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn read_cpu_times() -> Option<(u64, u64)> {
+    // /proc/stat's first line: cpu user nice system idle iowait irq softirq steal ...
+    let text = std::fs::read_to_string("/proc/stat").ok()?;
+    let line = text.lines().next()?.strip_prefix("cpu ")?;
+    let f: Vec<u64> = line
+        .split_whitespace()
+        .filter_map(|t| t.parse().ok())
+        .collect();
+    if f.len() < 5 {
+        return None;
+    }
+    // idle + iowait are both "not doing work".
+    let idle = f[3] + f.get(4).copied().unwrap_or(0);
+    Some((idle, f.iter().sum()))
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn read_cpu_times() -> Option<(u64, u64)> {
+    None
+}
+
+/// GPU utilisation percent and VRAM used/total bytes, via `nvidia-smi`.
+///
+/// ⚠Deliberately best-effort and vendor-limited: there is no portable GPU counter, and shelling out
+/// is too slow to do at a high rate. Callers must sample this rarely and treat `None` as "unknown",
+/// never as zero — an AMD box reporting 0% GPU would be a lie, and the RX 6800 XT is exactly the
+/// machine whose numbers matter most right now.
+pub(crate) fn gpu_usage() -> Option<(f64, u64, u64)> {
+    let out = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=utilization.gpu,memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let row = text.lines().next()?;
+    let mut f = row.split(',').map(|s| s.trim());
+    let util: f64 = f.next()?.parse().ok()?;
+    let used: u64 = f.next()?.parse().ok()?;
+    let total: u64 = f.next()?.parse().ok()?;
+    Some((util, used * 1024 * 1024, total * 1024 * 1024))
+}
+
 /// Host system facts shown in benchmark reports (gathered once at startup).
 pub(crate) struct SysInfo {
     pub(crate) cpu: String,

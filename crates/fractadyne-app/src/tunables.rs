@@ -58,6 +58,8 @@ pub(crate) struct Cost {
     pub tdr_grow_max: f64,
     pub tdr_shrink_max: f64,
     pub tdr_bootstrap_steps: u64,
+    pub tdr_bootstrap_ms: f64,
+    pub mode_rate_unknown_margin: f64,
     pub tdr_min_steps: u64,
     pub tdr_steps_ceil: u64,
     pub explicit_steps_ceil: u64,
@@ -75,6 +77,8 @@ impl Default for Cost {
             tdr_grow_max: TDR_GROW_MAX_DEFAULT,
             tdr_shrink_max: TDR_SHRINK_MAX_DEFAULT,
             tdr_bootstrap_steps: TDR_BOOTSTRAP_STEPS_DEFAULT,
+            tdr_bootstrap_ms: TDR_BOOTSTRAP_MS_DEFAULT,
+            mode_rate_unknown_margin: MODE_RATE_UNKNOWN_MARGIN_DEFAULT,
             tdr_min_steps: TDR_MIN_STEPS_DEFAULT,
             tdr_steps_ceil: TDR_STEPS_CEIL_DEFAULT,
             explicit_steps_ceil: EXPLICIT_STEPS_CEIL_DEFAULT,
@@ -147,6 +151,12 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
             "TDR_BOOTSTRAP_STEPS" => {
                 let p = c.tdr_bootstrap_steps; c.tdr_bootstrap_steps = u()?; p.to_string()
             }
+            "TDR_BOOTSTRAP_MS" => {
+                let p = c.tdr_bootstrap_ms; c.tdr_bootstrap_ms = f()?; p.to_string()
+            }
+            "MODE_RATE_UNKNOWN_MARGIN" => {
+                let p = c.mode_rate_unknown_margin; c.mode_rate_unknown_margin = f()?; p.to_string()
+            }
             "TDR_MIN_STEPS" => { let p = c.tdr_min_steps; c.tdr_min_steps = u()?; p.to_string() }
             "TDR_STEPS_CEIL" => { let p = c.tdr_steps_ceil; c.tdr_steps_ceil = u()?; p.to_string() }
             "EXPLICIT_STEPS_CEIL" => {
@@ -177,8 +187,9 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
 
 /// The names `--set` accepts, for the error message and `--help`.
 pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
-    TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_BOOTSTRAP_STEPS, TDR_MIN_STEPS, \
-    TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL";
+    TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_BOOTSTRAP_STEPS, TDR_BOOTSTRAP_MS, \
+    MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
+    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL";
 
 #[cfg(test)]
 mod override_tests {
@@ -190,6 +201,8 @@ mod override_tests {
         let d = Cost::default();
         assert_eq!(d.tdr_budget_ms, TDR_BUDGET_MS_DEFAULT);
         assert_eq!(d.tdr_bootstrap_steps, TDR_BOOTSTRAP_STEPS_DEFAULT);
+        assert_eq!(d.tdr_bootstrap_ms, TDR_BOOTSTRAP_MS_DEFAULT);
+        assert_eq!(d.mode_rate_unknown_margin, MODE_RATE_UNKNOWN_MARGIN_DEFAULT);
         assert_eq!(d.tdr_min_steps, TDR_MIN_STEPS_DEFAULT);
         assert_eq!(d.tdr_steps_ceil, TDR_STEPS_CEIL_DEFAULT);
         assert_eq!(d.explicit_dispatch_cap, EXPLICIT_DISPATCH_CAP_DEFAULT);
@@ -266,7 +279,45 @@ pub(crate) const TDR_SHRINK_MAX_DEFAULT: f64 = 0.5;
 /// guess is a starting point the controller climbs from at ×1.5 per reading, so starting 4× lower
 /// costs ~4 frames of coarseness at every checkpoint that has not converged yet. See
 /// `TDR_MIN_STEPS` for the change that does matter.
+/// ⭐As of 2026-08-15 this is a CEILING on the opening guess, not the guess itself: `bootstrap_steps`
+/// derives the guess from a measured per-step RATE and clamps it here. A card that has never been
+/// measured still starts exactly where it always did; a card (or regime) measured to be slower
+/// starts lower. See `TDR_BOOTSTRAP_MS` for why, and note that this is the fix the paragraph above
+/// asks for by name — "no constant expressed in steps can be 'a few ms' everywhere" is a statement
+/// that the guess must be denominated in TIME and converted with a rate.
 pub(crate) const TDR_BOOTSTRAP_STEPS_DEFAULT: u64 = 400_000_000;
+
+/// ⭐Wall-clock the OPENING GUESS aims at, in ms. `bootstrap_steps` converts it to a nominal step
+/// count with a measured per-step rate, which is the only way the guess can mean the same thing on
+/// hardware and in regimes it was not calibrated on — the standing lesson recorded under
+/// `TDR_BOOTSTRAP_STEPS`.
+///
+/// **The field report this comes from** (2026-08-15, RX 6800 XT / Vulkan, beta.104,
+/// `reports/fractadyne-report-2026-08-15.txt`): a mode 0→2 switch at frame 4298 correctly reset the
+/// budget to unmeasured; frame 4300 then dispatched **3.922e8** steps — the 4e8 guess — and two
+/// frames later a ×1.5 growth to 6.000e8 measured **1038 ms** and lost the device. That is the same
+/// ~1070 ms this file already records for 4e8 in `mode=2` with no BLA, reproduced on a second
+/// vendor. `bla_skip=0` on both post-switch frames: immediately after the crossover there is no
+/// valid BLA tree, so nominal steps ARE real cost.
+///
+/// 40 ms is deliberately the value that reproduces `TDR_BOOTSTRAP_STEPS` on the dev card in the
+/// BLA-live regime, so the common path is unchanged: the derived guess only bites where the
+/// measured rate is genuinely worse. ⚠It must stay far under `TDR_LATENCY_ACCEPT_MS` — an opening
+/// dispatch is the one nobody has priced yet, and the whole point is that it cannot be the frame
+/// that kills the device.
+pub(crate) const TDR_BOOTSTRAP_MS_DEFAULT: f64 = 40.0;
+
+/// ⭐Safety divisor for the FIRST entry into an arithmetic mode this device has never measured, when
+/// the only rate available was earned in a different mode. Per-step cost is not comparable across
+/// modes — the field report above measured mode 0 at ~8.6e7 steps/ms and mode 2 (no BLA) at
+/// ~5.7e5, a ratio of about **152×** — so another mode's rate is an upper bound on speed, never an
+/// estimate, and must be divided down before it sizes a dispatch.
+///
+/// 256 is one binary step past the single ratio ever measured, chosen asymmetrically on purpose:
+/// being too conservative costs a few coarse frames while the controller re-climbs at ×1.5 (the
+/// cost `TDR_BOOTSTRAP_STEPS` already documents for a low guess), while being too optimistic once
+/// costs the device. The very first reading in the new mode replaces this estimate with a real one.
+pub(crate) const MODE_RATE_UNKNOWN_MARGIN_DEFAULT: f64 = 256.0;
 
 /// ⭐Absolute floor the measured budget may fall to. The clamp's lower bound used to be
 /// `TDR_BOOTSTRAP_STEPS`, which meant **the controller could not shrink below the opening guess no
