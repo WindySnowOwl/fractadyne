@@ -238,6 +238,23 @@ struct Perf {
     /// that lost the device. The pessimistic latch costs at most a few ×1.5 climb frames; the
     /// optimistic one costs the device, and the asymmetry is the whole design.
     mode_rate: [[f64; Self::MODE_RATE_SLOTS]; 2],
+    /// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_BLA_DROP_FRAMES=N`, default off). Frames of BLA
+    /// suppression remaining for this view after an arithmetic-mode switch.
+    ///
+    /// Exists because the device-loss regime could not be reached on purpose. Every recorded loss
+    /// has `bla_skip=0` in the frames right after a mode 0→2 crossover: the reference was replaced
+    /// across the switch (a hand-zoom rebuilds it every ~1.5–2 s as auto-iter raises the ask), so
+    /// no BLA tree existed for it yet and nominal steps WERE real cost. A scripted tour holds one
+    /// reference through the crossover and its tree is ready, so it lands in the safe variant of
+    /// the same journey — measured on the RX 6800 XT, `bla_skip=5,590,609` on all four arms of the
+    /// A/B, identical to the digit, with and without prefetch.
+    ///
+    /// Reproducing that by tuning tour geometry is a timing lottery. This makes it a switch.
+    ///
+    /// Stored as the frame index to suppress UNTIL, not a countdown: `build_params` can run more
+    /// than once per frame (tiled settles do), and a decrement there would burn the window early
+    /// and silently shorten the very thing being measured.
+    bla_suppress_until: [u64; 2],
     /// Tiled-settle progress per view (see `render::TileGrid`); `None` = no grid armed or running.
     tile_state: [Option<render::TileGrid>; 2],
     /// Iteration-range tiling (direct mode). `chunk_ok`: the device granted the 48-byte
@@ -383,6 +400,20 @@ impl Perf {
     /// The opening guess for this view's CURRENT mode, derived from what has actually been measured
     /// on this device. `rate_other` is the most pessimistic rate seen in any other mode, which is
     /// all we have to go on the first time a dive crosses into a mode.
+    /// How many frames of BLA suppression `FRACTADYNE_BLA_DROP_FRAMES` asks for after a mode
+    /// switch. Zero (the default, and any unparseable value) disables the instrument entirely.
+    /// Read once: this is consulted per frame and an env lookup per frame is a silly cost.
+    pub(crate) fn bla_drop_frames() -> u32 {
+        use std::sync::OnceLock;
+        static N: OnceLock<u32> = OnceLock::new();
+        *N.get_or_init(|| {
+            std::env::var("FRACTADYNE_BLA_DROP_FRAMES")
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0)
+        })
+    }
+
     fn bootstrap_steps(&self, v: usize) -> u64 {
         let this = Self::slot(self.budget_mode[v]).map_or(0.0, |s| self.mode_rate[v][s]);
         let other = self.mode_rate[v]
@@ -438,6 +469,7 @@ impl Default for Perf {
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
             mode_rate: [[0.0; Self::MODE_RATE_SLOTS]; 2],
+            bla_suppress_until: [0, 0],
             tile_state: [None, None],
             tile_pending: [false, false],
             chunk_ok: false,

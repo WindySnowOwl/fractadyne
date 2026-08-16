@@ -7,13 +7,23 @@
   guess derive from a measured per-step rate instead of a fixed step count. The dev RTX 3080
   CANNOT reproduce the crash - BLA hides the regime - so the fix is unproven until this runs.
 
-  THE EXPERIMENT. Phase 5 runs the SAME binary twice over the same tour:
-      A) --set MODE_RATE_UNKNOWN_MARGIN=1   restores the pre-fix behaviour exactly. With the
-         margin at 1 the undivided mode-0 rate (~8.6e7 steps/ms x 40 ms = 3.46e9) clamps straight
-         back to TDR_BOOTSTRAP_STEPS = 4e8, which is bit-for-bit the guess that lost the device.
-      B) stock                              the fix.
-  A device loss in A and survival in B is the proof. Survival in BOTH means the tour did not
-  re-enter the regime, NOT that the fix works - say so rather than claiming success.
+  THE EXPERIMENT. Phase 5 runs the SAME binary over the same tour in three A/B pairs. In each
+  pair, OLD is --set MODE_RATE_UNKNOWN_MARGIN=1, which restores the pre-fix guess exactly (the
+  undivided mode-0 rate clamps back to TDR_BOOTSTRAP_STEPS = 4e8), and NEW is stock.
+      A/B  plain
+      C/D  + FRACTADYNE_NO_PREFETCH=1   the reactive reference path
+      E/F  + FRACTADYNE_BLA_DROP_FRAMES=200   BLA withheld after the switch  <-- THE ONE THAT MATTERS
+
+  Why E/F. The 2026-08-15 run of A-D all crossed with bla_skip=5,590,609 - BLA LIVE, the SAFE
+  variant - so no budget could have killed anything, and NO_PREFETCH did not change that by a
+  digit. Every recorded device loss has bla_skip=0 just after the crossover, because a hand-zoom
+  replaces the reference across the switch and no tree exists for it yet. DROP_FRAMES withholds
+  the tree deliberately; verified on the dev 3080 to give bla_skip=0 where the same tour otherwise
+  reports 5.59e6.
+
+  Loss on OLD and survival on NEW is the proof. Survival in BOTH means that pair did not reach the
+  regime, NOT that the fix works - the summary says so rather than claiming success, and prints
+  the bla_skip and the derived bootstrap for every phase so you can see which happened.
 
   USAGE
     .\scripts\radeon-verify.ps1                 # all phases
@@ -128,7 +138,7 @@ function Run-Phase {
     }
     $sw.Stop()
 
-    # WARNING:Merge stderr BEFORE any early return. The first version returned straight out of the timeout
+    # WARNING: merge stderr BEFORE any early return. The first version returned straight out of the timeout
     # branch, so the device-loss check below read a near-empty .log while all 122 KB of diagnostics
     # sat in the .err file - and both A/B repro phases were scored "no device loss" without ever
     # looking at the evidence. The whole point of the run was that one boolean.
@@ -237,6 +247,34 @@ if (& $want 5) {
     Say "D) stock + NO PREFETCH - the pair that matters if C loses the device"
     $results += Run-Phase -Tag '05d-repro-NEW-noprefetch' -FdArgs @('--play', $tour) -TimeoutSec 150 -ExpectNoExit
     Remove-Item Env:\FRACTADYNE_NO_PREFETCH -ErrorAction SilentlyContinue
+
+    # ------------------------------------------------------------------ 5e/5f
+    # THE PAIR THAT MATTERS. Phases A-D all crossed with bla_skip=5,590,609 - BLA live, the SAFE
+    # variant - so none of them could have lost the device whatever the budget did. NO_PREFETCH did
+    # not change that by a single digit.
+    #
+    # FRACTADYNE_BLA_DROP_FRAMES=200 withholds the BLA tree for 200 frames after a mode switch,
+    # which is what a hand-zoom gets for free when auto-iter keeps raising the ask and the
+    # reference is replaced across the crossover. Verified on the dev 3080 to produce bla_skip=0
+    # where the same tour otherwise reports 5.59e6.
+    #
+    # With the tree withheld, the opening guess is the whole story:
+    #   E) margin=1 -> bootstrap 4.00e8 (the pre-fix guess, measured)
+    #   F) stock    -> bootstrap 4.00e6 (100x smaller, measured)
+    # The 3080 survives both, which is exactly why this has to run here.
+    Kill-Stragglers
+    Start-Sleep -Seconds 5
+    Say ""
+    Say "E) pre-fix + BLA WITHHELD - the closest reconstruction of the crash conditions"
+    $env:FRACTADYNE_BLA_DROP_FRAMES = '200'
+    $results += Run-Phase -Tag '05e-repro-OLD-noBLA' -FdArgs @('--set', 'MODE_RATE_UNKNOWN_MARGIN=1', '--play', $tour) -TimeoutSec 150 -ExpectNoExit
+
+    Kill-Stragglers
+    Start-Sleep -Seconds 5
+    Say ""
+    Say "F) stock + BLA WITHHELD - if E loses the device and F does not, the fix is proven"
+    $results += Run-Phase -Tag '05f-repro-NEW-noBLA' -FdArgs @('--play', $tour) -TimeoutSec 150 -ExpectNoExit
+    Remove-Item Env:\FRACTADYNE_BLA_DROP_FRAMES -ErrorAction SilentlyContinue
 }
 
 # ---------------------------------------------------------------- verdict
@@ -265,11 +303,12 @@ function Verdict([string]$label, $old, $new) {
 
 Verdict 'RESULT (prefetch on) ' ($results | Where-Object { $_.Tag -eq '05a-repro-OLD' }) ($results | Where-Object { $_.Tag -eq '05b-repro-NEW' })
 Verdict 'RESULT (no prefetch) ' ($results | Where-Object { $_.Tag -eq '05c-repro-OLD-noprefetch' }) ($results | Where-Object { $_.Tag -eq '05d-repro-NEW-noprefetch' })
+Verdict 'RESULT (BLA withheld) ' ($results | Where-Object { $_.Tag -eq '05e-repro-OLD-noBLA' }) ($results | Where-Object { $_.Tag -eq '05f-repro-NEW-noBLA' })
 
 # Whatever the verdict, report the ONE number that says whether the regime was even entered.
 Say ""
 Say "Did the run reach the killing regime? Check bla_skip just after the crossover:"
-foreach ($t in @('05a-repro-OLD', '05b-repro-NEW', '05c-repro-OLD-noprefetch', '05d-repro-NEW-noprefetch')) {
+foreach ($t in @('05a-repro-OLD', '05b-repro-NEW', '05c-repro-OLD-noprefetch', '05d-repro-NEW-noprefetch', '05e-repro-OLD-noBLA', '05f-repro-NEW-noBLA')) {
     $lg = Join-Path $Out "$t.log"
     if (-not (Test-Path $lg)) { continue }
     $sw = Select-String -Path $lg -Pattern 'arithmetic mode 0 . 2' | Select-Object -First 1
@@ -282,6 +321,16 @@ foreach ($t in @('05a-repro-OLD', '05b-repro-NEW', '05c-repro-OLD-noprefetch', '
     } else {
         Say ("  {0,-26} crossed, but no frame diagnostics after it" -f $t)
     }
+}
+
+Say ""
+Say "Opening guess actually used at the crossover (the value under test):"
+foreach ($t in @('05a-repro-OLD', '05b-repro-NEW', '05c-repro-OLD-noprefetch', '05d-repro-NEW-noprefetch', '05e-repro-OLD-noBLA', '05f-repro-NEW-noBLA')) {
+    $lg = Join-Path $Out "$t.log"
+    if (-not (Test-Path $lg)) { continue }
+    $m = Select-String -Path $lg -Pattern 'mode switch to 2: .*bootstrap ([0-9.e+]+), ceiling ([0-9.e+]+)' | Select-Object -First 1
+    if ($m) { Say ("  {0,-26} bootstrap={1,-10} ceiling={2}" -f $t, $m.Matches[0].Groups[1].Value, $m.Matches[0].Groups[2].Value) }
+    else { Say ("  {0,-26} no mode-2 switch recorded" -f $t) }
 }
 
 Say ""

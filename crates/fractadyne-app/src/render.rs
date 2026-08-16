@@ -2989,6 +2989,20 @@ impl FractadyneApp {
                 let prev = self.perf.budget_mode[vidx];
                 self.perf.budget_mode[vidx] = m;
                 self.perf.mode_switch_frame[vidx] = self.perf.frame_idx;
+                // Arm the BLA-suppression instrument (off unless FRACTADYNE_BLA_DROP_FRAMES is
+                // set). See `Perf::bla_suppress`: this is the only way found to reach the
+                // `bla_skip=0` post-crossover regime on demand.
+                let drop_n = crate::Perf::bla_drop_frames();
+                if drop_n > 0 {
+                    self.perf.bla_suppress_until[vidx] = self.perf.frame_idx + drop_n as u64;
+                    crate::diag::log_line(
+                        "render",
+                        &format!(
+                            "INSTRUMENT: suppressing BLA for {drop_n} frame(s) after the \
+                             {prev} → {m} switch (FRACTADYNE_BLA_DROP_FRAMES)"
+                        ),
+                    );
+                }
                 // Always logged, not trace-gated: this crossover is the suspect in the
                 // `orbit_len=626` device-loss class, the class is intermittent, and a trace run
                 // has already been observed to suppress it. A one-line breadcrumb per switch
@@ -4077,7 +4091,13 @@ impl FractadyneApp {
                     vc.bla_trap_type = self.coloring.trap_type as u32;
                 }
                 let vc = &self.ref_cache[vi];
-                if !vc.bla.is_empty() {
+                // INSTRUMENT: withhold the tree for the armed number of frames after a mode
+                // switch, so the dispatch runs at full nominal cost exactly as it does when a
+                // reference is replaced across the crossover. The tree itself is left intact and
+                // cached — this suppresses its USE, so nothing has to be rebuilt afterwards and the
+                // frames either side are otherwise unchanged.
+                let suppressed = self.perf.frame_idx < self.perf.bla_suppress_until[vidx];
+                if !vc.bla.is_empty() && !suppressed {
                     bla = vc.bla.clone();
                     bla_on = 1;
                 }
