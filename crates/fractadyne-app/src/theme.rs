@@ -39,7 +39,7 @@ pub(crate) fn dual_toggle_button(ui: &mut egui::Ui, selected: bool) -> egui::Res
         egui::pos2(inner.min.x + half_w + gap, inner.min.y),
         egui::vec2(half_w, inner.height()),
     );
-    let stroke = egui::Stroke::new(1.4, v.fg_stroke.color);
+    let stroke = egui::Stroke::new(1.4_f32, v.fg_stroke.color);
     p.rect_stroke(left, egui::CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
     p.rect_stroke(right, egui::CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
     resp
@@ -194,31 +194,31 @@ pub(crate) fn apply_theme(ctx: &egui::Context, mode: ThemeMode) {
     };
     v.panel_fill = p.panel;
     v.window_fill = p.panel;
-    v.window_stroke = egui::Stroke::new(1.0, p.border);
+    v.window_stroke = egui::Stroke::new(1.0_f32, p.border);
     v.extreme_bg_color = p.window; // text-edit / slider-trough backing
     v.faint_bg_color = p.surface; // striped/group backgrounds
     v.hyperlink_color = p.accent; // doubles as the theme accent (see `ui_accent`)
     v.selection.bg_fill = p.selection;
-    v.selection.stroke = egui::Stroke::new(1.0, p.accent);
+    v.selection.stroke = egui::Stroke::new(1.0_f32, p.accent);
 
     // Primary text + separators.
-    v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, p.text);
-    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, p.border);
+    v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, p.text);
+    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, p.border);
 
     // Interactive widgets: neutral fills, amber outline/text on hover & press.
     v.widgets.inactive.weak_bg_fill = p.surface;
     v.widgets.inactive.bg_fill = p.elevated;
-    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, p.border);
-    v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, p.text);
+    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, p.border);
+    v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, p.text);
     v.widgets.hovered.bg_fill = p.hover;
     v.widgets.hovered.weak_bg_fill = p.hover;
-    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, p.accent);
-    v.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, p.accent);
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, p.accent);
+    v.widgets.hovered.fg_stroke = egui::Stroke::new(1.5_f32, p.accent);
     v.widgets.active.bg_fill = p.active;
-    v.widgets.active.bg_stroke = egui::Stroke::new(1.0, p.accent);
-    v.widgets.active.fg_stroke = egui::Stroke::new(1.5, p.accent);
+    v.widgets.active.bg_stroke = egui::Stroke::new(1.0_f32, p.accent);
+    v.widgets.active.fg_stroke = egui::Stroke::new(1.5_f32, p.accent);
     v.widgets.open.bg_fill = p.elevated;
-    v.widgets.open.bg_stroke = egui::Stroke::new(1.0, p.border);
+    v.widgets.open.bg_stroke = egui::Stroke::new(1.0_f32, p.border);
 
     ctx.set_visuals(v);
 }

@@ -2903,14 +2903,14 @@ impl FractadyneApp {
                 continue;
             }
             let accent = with_a(crate::theme::BRAND_ACCENT, a);
-            painter.circle_stroke(sp, 7.0, egui::Stroke::new(2.0, accent));
+            painter.circle_stroke(sp, 7.0, egui::Stroke::new(2.0_f32, accent));
             painter.circle_filled(sp, 1.8, accent);
             let galley = ctx.fonts(|f| {
                 f.layout_no_wrap(co.text.clone(), egui::FontId::proportional(co.size), with_a(egui::Color32::WHITE, a))
             });
             let gs = galley.size();
             let lp = place_callout_label(sp, gs, rect, 16.0, pad, &mut placed);
-            painter.line_segment([sp, lp + gs * 0.5], egui::Stroke::new(1.5, accent));
+            painter.line_segment([sp, lp + gs * 0.5], egui::Stroke::new(1.5_f32, accent));
             let bg = egui::Rect::from_min_size(lp - pad, gs + pad * 2.0);
             painter.rect_filled(bg, 4.0, egui::Color32::from_black_alpha((a * 150.0) as u8));
             painter.galley(lp, galley, with_a(egui::Color32::WHITE, a));

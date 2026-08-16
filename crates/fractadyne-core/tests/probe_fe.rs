@@ -59,7 +59,16 @@ impl Flt for f64 {
 
 // GPU f32 with SUBNORMAL FLUSH (FTZ): most GPUs flush |x| < 2^-126 to zero on every op. IEEE
 // Rust f32 does not, so this isolates whether FTZ degrades the df32 error-free transforms.
+//
+// Ftz and Nf below are CPU models of two hypotheses about how a GPU's arithmetic can differ from
+// ours. Neither is currently instantiated -- `--gputest` now measures the real hardware directly,
+// which is strictly better evidence -- but they are kept, not deleted, because the question they
+// model is still open: the RX 6800 XT's DX12 backend fails two_prod 256/256, i.e. exactly the
+// non-fused-FMA behaviour `Nf` simulates. Re-point a probe test at them to reproduce a suspected
+// backend on the CPU. See TODO.md, "The shader compiler FOLDS the df32 error-free transforms".
+#[allow(dead_code)]
 fn ftz(x: f32) -> f32 { if x != 0.0 && x.abs() < f32::MIN_POSITIVE { 0.0 } else { x } }
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 struct Ftz(f32);
 impl std::ops::Add for Ftz { type Output = Ftz; fn add(self, o: Ftz) -> Ftz { Ftz(ftz(self.0 + o.0)) } }
@@ -79,6 +88,7 @@ impl Flt for Ftz {
 // GPU f32 with a NON-FUSED FMA: if the driver/compiler does not fuse `a*b+c` (or contracts it
 // wrong), two_prod's error term collapses to 0 and the df32 mul loses ~24 bits. Everything else
 // is exact IEEE f32.
+#[allow(dead_code)] // see the note on Ftz above
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 struct Nf(f32);
 impl std::ops::Add for Nf { type Output = Nf; fn add(self, o: Nf) -> Nf { Nf(self.0 + o.0) } }

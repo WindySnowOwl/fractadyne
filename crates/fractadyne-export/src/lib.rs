@@ -160,14 +160,15 @@ mod dither_tests {
     /// fractal-exterior case. Dithering must break those bands up while preserving the mean.
     fn shallow_ramp(w: usize, h: usize) -> Vec<f32> {
         let mut v = Vec::with_capacity(w * h * 4);
-        for y in 0..h {
+        // Row-invariant by construction: the ramp runs across x only, so every row is identical
+        // and the row index is deliberately unused.
+        for _y in 0..h {
             for x in 0..w {
                 // Span ~4 eight-bit levels across the whole width: ~64 px per band undithered.
                 let c = 0.25 + (x as f32 / w as f32) * (4.0 / 255.0);
                 v.extend_from_slice(&[c, c, c, 1.0]);
             }
         }
-        let _ = h;
         v
     }
 

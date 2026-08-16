@@ -140,7 +140,7 @@ impl FractadyneApp {
             let sp = self.complex_screen_pos(pin, left, ppp);
             if left.contains(sp) {
                 let painter = ui.painter_at(left);
-                painter.circle_stroke(sp, 6.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
+                painter.circle_stroke(sp, 6.0, egui::Stroke::new(1.5_f32, egui::Color32::WHITE));
                 painter.circle_filled(sp, 1.5, egui::Color32::WHITE);
             }
         }
@@ -382,7 +382,7 @@ impl FractadyneApp {
             let [r, g, b, _] = col.to_array();
             painter.circle_filled(pos, 8.0, egui::Color32::from_rgba_unmultiplied(r, g, b, 70));
             painter.circle_filled(pos, 4.0, col);
-            painter.circle_stroke(pos, 4.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+            painter.circle_stroke(pos, 4.0, egui::Stroke::new(1.0_f32, egui::Color32::WHITE));
         }
     }
 
@@ -479,7 +479,7 @@ impl FractadyneApp {
             painter.line_segment(
                 [at(head + span * t), at(head + span * (i + 1) as f32 / n as f32)],
                 egui::Stroke::new(
-                    2.4,
+                    2.4_f32,
                     egui::Color32::from_rgba_unmultiplied(0xE0, 0xA0, 0x30, alpha),
                 ),
             );
@@ -498,7 +498,7 @@ impl FractadyneApp {
             .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(10.0, -34.0))
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
-                    .stroke(egui::Stroke::new(1.0, BRAND_ACCENT))
+                    .stroke(egui::Stroke::new(1.0_f32, BRAND_ACCENT))
                     .show(ui, |ui| {
                         let (rect, resp) = ui.allocate_exact_size(
                             egui::vec2(disp_w, disp_h),
@@ -527,8 +527,8 @@ impl FractadyneApp {
                             // Shallow: draw the actual view rectangle (auto-clipped to the map).
                             let rh = rw * rect.height() / rect.width();
                             let vr = egui::Rect::from_center_size(mk, egui::vec2(rw, rh));
-                            p.rect_stroke(vr, 0.0, egui::Stroke::new(3.0, halo), egui::StrokeKind::Middle);
-                            p.rect_stroke(vr, 0.0, egui::Stroke::new(1.5, amber), egui::StrokeKind::Middle);
+                            p.rect_stroke(vr, 0.0, egui::Stroke::new(3.0_f32, halo), egui::StrokeKind::Middle);
+                            p.rect_stroke(vr, 0.0, egui::Stroke::new(1.5_f32, amber), egui::StrokeKind::Middle);
                         } else {
                             // Deep: a bright crosshair + centre dot (the view is sub-pixel here).
                             let c = 8.0;
@@ -537,9 +537,9 @@ impl FractadyneApp {
                                 p.line_segment([mk - egui::vec2(0.0, c), mk + egui::vec2(0.0, c)], egui::Stroke::new(w, col));
                             };
                             cross(3.5, halo, &p);
-                            p.circle_stroke(mk, 5.0, egui::Stroke::new(3.5, halo));
+                            p.circle_stroke(mk, 5.0, egui::Stroke::new(3.5_f32, halo));
                             cross(1.5, amber, &p);
-                            p.circle_stroke(mk, 5.0, egui::Stroke::new(1.5, amber));
+                            p.circle_stroke(mk, 5.0, egui::Stroke::new(1.5_f32, amber));
                             p.circle_filled(mk, 2.0, amber);
                         }
                         // Zoom-depth label.
@@ -652,7 +652,7 @@ impl FractadyneApp {
                     painter.rect_stroke(
                         boxr,
                         egui::CornerRadius::ZERO,
-                        egui::Stroke::new(1.5, BRAND_ACCENT),
+                        egui::Stroke::new(1.5_f32, BRAND_ACCENT),
                         egui::StrokeKind::Inside,
                     );
                     if response.drag_stopped() {
@@ -936,7 +936,7 @@ impl FractadyneApp {
                             painter.rect_stroke(
                                 sel,
                                 egui::CornerRadius::ZERO,
-                                egui::Stroke::new(1.5, egui::Color32::from_rgb(0xE0, 0xA0, 0x30)),
+                                egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(0xE0, 0xA0, 0x30)),
                                 egui::StrokeKind::Inside,
                             );
                         }

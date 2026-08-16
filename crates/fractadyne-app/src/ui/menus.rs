@@ -1054,7 +1054,7 @@ impl FractadyneApp {
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .fill(egui::Color32::from_black_alpha(190))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(40)))
+                    .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(40)))
                     .corner_radius(6)
                     .show(ui, |ui| {
                         // NOTHING IN HERE MAY BE SIZED FROM THE AVAILABLE WIDTH. Inside an `Area`
@@ -1291,12 +1291,12 @@ impl FractadyneApp {
                                 // Upper tick at the wall-clock ghost.
                                 p.line_segment(
                                     [egui::pos2(gx, top), egui::pos2(gx, mid)],
-                                    egui::Stroke::new(2.0, amber),
+                                    egui::Stroke::new(2.0_f32, amber),
                                 );
                                 // Bracket from the playhead across to the ghost.
                                 p.line_segment(
                                     [egui::pos2(cx, top), egui::pos2(gx, top)],
-                                    egui::Stroke::new(1.0, faint),
+                                    egui::Stroke::new(1.0_f32, faint),
                                 );
                             }
                         });

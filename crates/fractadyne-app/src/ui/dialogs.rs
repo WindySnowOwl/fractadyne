@@ -833,7 +833,7 @@ impl FractadyneApp {
                     let ink = ui.visuals().strong_text_color().gamma_multiply(fade);
                     egui::Frame::popup(ui.style())
                         .fill(fill)
-                        .stroke(egui::Stroke::new(1.0, accent))
+                        .stroke(egui::Stroke::new(1.0_f32, accent))
                         .show(ui, |ui| {
                             ui.label(egui::RichText::new(msg).color(ink));
                         });
