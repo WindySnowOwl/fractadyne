@@ -1,0 +1,76 @@
+# Fractadyne tour — REPRODUCTION of the 2026-08-15 RX 6800 XT device loss.
+#
+# Field report: reports/fractadyne-report-2026-08-15.txt (beta.104, Windows, RX 6800 XT / Vulkan).
+# A hand-zoom crossed PERT_FE_THRESHOLD and lost the device two frames later:
+#
+#   +120.086s  arithmetic mode 0 → 2 at frame 4298 (mag 2^93.0)
+#   +120.086s  mode switch to 2: budget 7.78e10 → unmeasured (bootstrap 4.00e8), re-converging
+#   +120.319s  frame 4300: mode=2 steps=3.922e8 budget=0.000e0 … bla_skip=0
+#   +121.393s  frame 4303: dt=1038ms  mode=2 steps=5.909e8 budget=6.000e8 … bla_skip=0
+#   +122.687s  DEVICE LOST (Unknown)
+#
+# The centre below is verbatim from that report's .fdn block, so this crosses at the same place.
+#
+# ⚠THE SHALLOW HOLD IS LOAD-BEARING, not padding. The kill needs a CONVERGED mode-0 budget
+# (7.785e10) to exist at the moment of the switch — that is what the ×1.5 growth then walks up from
+# in the new mode. Cut the first hold short and the tour crosses with an unconverged budget and
+# proves nothing.
+#
+# Play LIVE (the only path that reproduces it — an offline --render never crosses live):
+#   fractadyne --play tours/repro-e28-crossover.toml
+#
+# A/B the fix on ONE binary, since `--set` restores the pre-fix behaviour exactly:
+#   fractadyne --set MODE_RATE_UNKNOWN_MARGIN=1 --play tours/repro-e28-crossover.toml   # OLD → expect loss
+#   fractadyne --play tours/repro-e28-crossover.toml                                    # NEW → expect survival
+# With the margin at 1 the undivided mode-0 rate (~8.6e7 steps/ms × 40 ms = 3.46e9) clamps straight
+# back to TDR_BOOTSTRAP_STEPS = 4e8 — bit-for-bit the guess that lost the device.
+format_version = 2
+name = "Repro: e28 crossover device loss (RX 6800 XT, 2026-08-15)"
+
+[render]
+size = "1920x1080"
+fps = 30
+
+[[location]]
+id = "report"
+re = "3.56347746013043822145931349632498083368187522594299004088899999999999999999999e-1"
+im = "6.551721978595704786747352603319278832581733349789635038606000000000000000000030000000000000000001e-1"
+
+[[keyframe]]            # already on the target centre, well inside mode 0 (df32)
+id = "approach"
+t = 0.0
+fractal = "Mandelbrot"
+location = "report"
+zoom = "1.0e20"
+max_iter = 200000
+hold = 10.0             # ⚠converge the mode-0 budget here — see the note above
+
+[[keyframe]]            # still mode 0, deeper, budget now measured and large
+id = "pre-crossover"
+t = 22.0
+zoom = "1.0e26"
+max_iter = 400000
+ease = "smooth"
+hold = 8.0
+
+[[keyframe]]            # ⭐THE CROSSING. mode 0 → 2 happens in this glide, at ~1e28 / mag 2^93
+id = "crossover"
+t = 40.0
+zoom = "1.3500618616115263e28"
+max_iter = 2000000
+ease = "out"
+hold = 15.0             # the death window was ~2.6 s after the switch; sit here well past it
+
+[[keyframe]]            # settled floatexp, past the danger band
+id = "settled"
+t = 62.0
+zoom = "5.0e29"
+max_iter = 2000000
+ease = "smooth"
+hold = 10.0
+
+[[annotation]]
+kind = "caption"
+text = "e28 crossover repro — mode 0 to 2 at ~1e28"
+t = 0.0
+secs = 72.0
