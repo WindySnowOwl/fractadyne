@@ -3078,7 +3078,7 @@ impl FractadyneApp {
         // shrunk single frame (crash-1786499093, Direct), as a rebase-grind frame
         // (crash-1786506241, mode 0), and as budget-sized settle TILES at a deep floatexp view
         // (crash-1786538140, mode 2, ~1.5e11-nominal ≈ 900 ms per tile, one per frame). The
-        // explicit regime therefore converges on TDR_EXPLICIT_BUDGET_MS (200 ms real, 4.5× under
+        // explicit regime therefore converges on TDR_EXPLICIT_BUDGET_MS (400 ms real, >2× under
         // the lethal band) inside `budget_step` — every step of growth above the bootstrap is
         // paced by a real measurement at ×1.5 — and this bound is only its worst-case backstop:
         // EXPLICIT_STEPS_CEIL nominal is ~180–600 ms real even with ZERO skip, so a stale budget
@@ -3548,13 +3548,14 @@ impl FractadyneApp {
             && chunk_range.is_none()
             && !self.perf.fe_budget_ok[vidx]
             // PACED: at least 3 frames since the last real dispatch. An unpaced probe re-created
-            // the beta.48 death — near convergence each dispatch is ~TDR_BUDGET_MS (900 ms), and
+            // the beta.48 death — near convergence each dispatch is ~TDR_BUDGET_MS (400 ms since
+            // 2026-08-16; it was 900 ms when this was written, which is what made it lethal), and
             // firing one EVERY frame ran ~1 s dispatches back-to-back with zero idle → device lost
             // at f=68 of the first climb soak. The gap leaves present-able frames between
             // dispatches (~⅓ duty), which is the profile the converged controller already runs.
             && self.perf.frame_idx.saturating_sub(self.perf.fe_dispatch_frame[vs]) >= 3
             // CEILINGED: the probe stops growing the budget at ~2e10 nominal (~60–90 ms real in
-            // the no-skip regime) instead of riding the controller to its 900 ms target. The
+            // the no-skip regime) instead of riding the controller to its target. The
             // second climb soak PROVED the target is lethal in this regime even paced: at a
             // 99-sample escaped reference with bla_skip=0 (nominal = real, zero preemption inside
             // the fullscreen draw), the ×1.5 growth step from ~600 ms landed a ~1.3 s dispatch and
@@ -4447,10 +4448,11 @@ pub(crate) fn install_collapse(old_len: u32, new_len: u32, new_partial: bool) ->
 }
 
 pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Option<(u64, bool)> {
-    // Two regimes, one arithmetic. `explicit` (auto-iter off, incl. script playback) converges on
-    // a much shorter real target with a hard nominal ceiling — skip effectiveness is least
-    // predictable there and ~900 ms real is the reproduced lethal band (see
-    // TDR_EXPLICIT_BUDGET_MS). The regime lives INSIDE this function so the app controller, the
+    // Two regimes, one arithmetic. Since 2026-08-16 both converge on the SAME real target (400 ms);
+    // `explicit` still differs in carrying a hard nominal ceiling, because skip effectiveness is
+    // least predictable there. ~900 ms real is the reproduced lethal band, and two field losses
+    // arrived through the AUTO regime at ~1030 ms — which is why the auto target no longer sits
+    // inside it (see TDR_BUDGET_MS). The regime lives INSIDE this function so the app controller, the
     // livetest harness, and the tests cannot select it differently (the beta.40 lesson: a harness
     // whose controller differs from the app's measures a view the app never renders).
     let (target_ms, ceil) = if explicit {

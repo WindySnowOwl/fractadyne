@@ -241,10 +241,48 @@ mod override_tests {
 // GPU watchdog: the frame-cost budget controller
 // ----------------------------------------------------------------------------
 
-/// GPU time a settled floatexp frame is aimed at. Comfortably under the ~2 s GPU watchdog AND short
-/// enough that the UI thread keeps pumping messages between frames (Windows paints a window "Not
-/// Responding" after ~5 s), so an unaffordable view degrades in resolution instead of hanging.
-pub(crate) const TDR_BUDGET_MS_DEFAULT: f64 = 900.0;
+/// GPU time a settled floatexp frame is aimed at. Short enough that the UI thread keeps pumping
+/// messages between frames (Windows paints a window "Not Responding" after ~5 s), so an
+/// unaffordable view degrades in resolution instead of hanging.
+///
+/// ⭐**900 → 400 on 2026-08-16, after the SECOND field device loss converged on the same band.**
+/// The old value's claim to be "comfortably under the ~2 s GPU watchdog" was the whole problem: the
+/// controller does not approach a target from below and stop, it CONVERGES on it, so a 900 ms
+/// target means steady-state dispatches of ~900 ms — and this file already documents ~0.9 s as the
+/// start of the lethal band (see `TDR_EXPLICIT_BUDGET_MS`, cut to 400 ms for exactly that reason
+/// after three Event-153 losses). The auto regime was left at 900 on the reasoning that auto-iter
+/// counts are the PREDICTABLE case. Two field reports on an RX 6800 XT refute that, by two
+/// unrelated routes:
+///
+///  1. **2026-08-15, at a mode 0→2 crossover.** Growth ×1.5 off the opening guess produced a
+///     1038 ms dispatch two frames after the switch; device lost on the next submit.
+///  2. **2026-08-16, at a SETTLED tiled view 1770 frames from any switch** (zoom 3.4e38,
+///     `settled=true`, `tile=true`). A reference install moved `ref_len` 181,313 → 195,520 — 8%
+///     longer — and per-frame nominal cost jumped 27× to 7.546e11 against a converged
+///     `budget=3.000e11`. With tiling that is ~2.5e11 per tile, which measured **1033 ms and
+///     1026 ms** on that card. Two frames later the device was gone.
+///
+/// The routes differ; the destination does not. Both died at ~1030 ms, both were the controller
+/// working as specified. A target is a promise about steady state, so the target itself has to sit
+/// outside the lethal band — no amount of care on the approach fixes aiming at it.
+///
+/// 400 ms matches the explicit regime and keeps the >2× margin its comment argues for. ⚠It is now
+/// EQUAL to `TDR_EXPLICIT_BUDGET_MS` rather than above it; the two regimes differ in how
+/// predictable their cost is, but the hardware's lethal band does not care which regime asked, so
+/// one common target is the honest expression of it. ⚠It also sits BELOW
+/// `TDR_LATENCY_ACCEPT_MS` (600 ms), which brings the latency-floor guard in `budget_step` into the
+/// auto regime for the first time — see that constant.
+///
+/// ⚠**Where the budget binds, this costs settled resolution**, and that is the point: a view that
+/// cannot be drawn in 400 ms is drawn smaller instead of risking the device.
+///
+/// Measured, not assumed: `--livetest` came back **24/24, 0 drifted** — no re-blessing needed. At
+/// its 480×270 the deep holds never approach the ceiling, so the target never binds there. ⚠Read
+/// that as "the gate does not exercise this", NOT as "the change is free": the 2026-08-16 loss was
+/// a **2247×1485** settled tiled frame, and no gate renders live at that size (design/torture-suite
+/// G3). The resolution cost lands at full-window deep views, which is exactly where no automated
+/// coverage currently exists.
+pub(crate) const TDR_BUDGET_MS_DEFAULT: f64 = 400.0;
 
 /// Per-measurement budget change limits. Growth is capped well under 2× so the next frame cannot leap
 /// from the target into the watchdog; shrink is allowed to halve at once.
@@ -355,9 +393,13 @@ pub(crate) const EXPLICIT_DISPATCH_CAP_DEFAULT: u64 = 20_000_000_000;
 
 /// Real-milliseconds target for MEASURED explicit-count dispatches. The lethal band starts around
 /// ~0.9 s (three reproduced Event-153 losses); 400 ms keeps a >2× margin while roughly tripling
-/// the per-dispatch work the old flat nominal cap allowed in skip-heavy regimes. Deliberately
-/// below the auto-iter `TDR_BUDGET_MS`: explicit counts are the regime where skip effectiveness
-/// is least predictable (that unpredictability is what the three crashes were).
+/// the per-dispatch work the old flat nominal cap allowed in skip-heavy regimes.
+///
+/// ⚠It used to be "deliberately below the auto-iter `TDR_BUDGET_MS`", on the reasoning that
+/// explicit counts are where skip effectiveness is least predictable. As of 2026-08-16 the two are
+/// EQUAL: two field device losses arrived through the auto regime at ~1030 ms, so the premise that
+/// auto is the safe one did not survive contact. Unpredictability decides how much MARGIN you need;
+/// the lethal band decides where the ceiling is, and it is the same band for both regimes.
 ///
 /// ⚠It MUST sit above the deep view's per-dispatch LATENCY FLOOR. Shipped first at 200 ms and
 /// caught by `--livetest` (the grand tour's six deep holds collapsed 480×270 → 16×16): a 16×16
@@ -370,10 +412,18 @@ pub(crate) const EXPLICIT_DISPATCH_CAP_DEFAULT: u64 = 20_000_000_000;
 pub(crate) const TDR_EXPLICIT_BUDGET_MS_DEFAULT: f64 = 400.0;
 
 /// Ceiling on a latency floor the guard in `budget_step` may HOLD at (rather than shrink away
-/// from). Between the explicit target (400 ms) and here, a small slow dispatch is treated as an
-/// accepted latency floor; past here it is watchdog-relevant and the shrink proceeds. Sits well
-/// under the ~0.9 s lethal band and above every floor measured so far (250–330 ms at the grand
-/// tour's 250k–1.2M holds).
+/// from). Between the 400 ms target and here, a small slow dispatch is treated as an accepted
+/// latency floor; past here it is watchdog-relevant and the shrink proceeds. Sits well under the
+/// ~0.9 s lethal band and above every floor measured so far (250–330 ms at the grand tour's
+/// 250k–1.2M holds).
+///
+/// ⚠**This now applies to the AUTO regime as well, which it did not before 2026-08-16.** The old
+/// note here said the accept bound "keeps this guard out of the AUTO regime entirely: auto's `slow`
+/// starts at 900 ms, already past it". Lowering `TDR_BUDGET_MS` to 400 makes auto's `slow` start at
+/// 400 ms, so a small auto dispatch measuring 400–600 ms is now HELD rather than shrunk. That is
+/// the intended behaviour in both regimes — a latency-bound frame cannot be made faster by making
+/// it smaller — but it is a real change to auto, and it is recorded here because the previous
+/// sentence would otherwise read as still true.
 pub(crate) const TDR_LATENCY_ACCEPT_MS_DEFAULT: f64 = 600.0;
 
 /// Nominal ceiling for a MEASURED explicit budget: 3× `EXPLICIT_DISPATCH_CAP`, so even a total
