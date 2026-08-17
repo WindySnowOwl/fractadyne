@@ -101,6 +101,9 @@ A camera waypoint. The view eases from the previous keyframe to this one, ARRIVI
 | `t` | float | 0 (first) / (required) | ABSOLUTE second the camera arrives here. Must be >= the previous keyframe's t + hold. Absolute times mean inserting a keyframe can't desync downstream narration. |
 | `hold` | float | 0 | Seconds to pause here before the next glide begins. |
 | `ease` | string | smooth | Easing for the glide arriving here: smooth, linear, smoother, in (accelerate), or out (decelerate). |
+| `transition` | string | cut | How the picture ARRIVES here: cut (the camera simply jumps or glides), fade (rise from black), or dissolve (the previous picture stays frozen while this one rises through it — a crossfade at a cut). Occupies the first transition_secs after t, so upstream and downstream absolute times are untouched. dissolve needs SEQUENTIAL render order (it mixes with the preceding frame); under --order progressive it warns once and behaves as a cut. |
+| `transition_secs` | float | 0.6 | How long the arrival transition takes. Clamped to this keyframe's hold — a transition still ramping when the next keyframe arrives would never complete. Ignored for cut. |
+| `fade_out_secs` | float | 0 | Fade to black over the LAST this-many seconds of this keyframe's hold. Independent of transition, so one keyframe can rise from black and a later one sink back into it. When a short hold makes the two windows overlap, sinking wins. |
 | `location` | string | (inherit) | Named coordinate to sit on (see [[location]]), instead of inline re/im. |
 | `re` | string | (inherit) | Center, real part: full-precision decimal or an exact rational. Omit to inherit (pure zoom). |
 | `im` | string | (inherit) | Center, imaginary part. |

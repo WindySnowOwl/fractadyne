@@ -96,6 +96,8 @@ t = 79
 # ══ 1. THE SET ═══════════════════════════════════════════════════════════════════════════════
 [[keyframe]]
 id = "open"
+transition = "fade"
+transition_secs = 1.5
 t = 0.0
 fractal = "Mandelbrot"
 re = "-0.6"
@@ -114,6 +116,8 @@ ease = "smooth"
 # ══ 2. SEAHORSE VALLEY ═══════════════════════════════════════════════════════════════════════
 [[keyframe]]              # CUT (t == previous t + hold): no glide, no frames spent travelling
 id = "seahorse-enter"
+transition = "dissolve"
+transition_secs = 0.8
 t = 11.0
 location = "seahorse"
 zoom = 40.0
@@ -132,6 +136,8 @@ hold = 3.0
 # ══ 3. JULIA DUALITY ═════════════════════════════════════════════════════════════════════════
 [[keyframe]]              # CUT back out, into the side-by-side view
 id = "julia-open"
+transition = "dissolve"
+transition_secs = 0.8
 t = 31.0
 re = "-0.6"
 im = "0.0"
@@ -155,6 +161,8 @@ hold = 3.0
 # ══ 4. THE DIVE ══════════════════════════════════════════════════════════════════════════════
 [[keyframe]]              # CUT to a single view and fall
 id = "dive-start"
+transition = "dissolve"
+transition_secs = 0.8
 t = 49.0
 dual = false
 location = "dendrite"
@@ -176,6 +184,8 @@ hold = 3.0
 # only frames in the tour that cost real time.
 [[keyframe]]
 id = "cut-e44"
+transition = "dissolve"
+transition_secs = 0.8
 t = 79.0
 location = "e44"
 zoom = "8.87e43"
@@ -185,6 +195,8 @@ hold = 4.0
 
 [[keyframe]]
 id = "cut-e500"
+transition = "dissolve"
+transition_secs = 0.8
 t = 83.0
 location = "e500"
 zoom = "8.12e500"
@@ -194,6 +206,9 @@ hold = 4.0
 
 [[keyframe]]              # the finale
 id = "cut-e1105"
+transition = "dissolve"
+transition_secs = 1.0
+fade_out_secs = 1.5
 t = 87.0
 location = "e1105"
 zoom = "6.13e1105"

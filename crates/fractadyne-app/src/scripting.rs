@@ -518,6 +518,24 @@ struct KeyframeFile {
     /// Seconds to hold (pause) at this keyframe before gliding to the next.
     #[serde(default)]
     hold: f64,
+    /// How the picture ARRIVES here: `cut` (default — the camera simply jumps or glides),
+    /// `fade` (rise from black), or `dissolve` (the previous picture stays put while this one
+    /// rises through it). Occupies the first `transition_secs` after `t`, so absolute times
+    /// upstream and downstream are untouched — inserting a transition can never desync narration.
+    ///
+    /// `dissolve` is meaningful at a CUT, where the outgoing picture is frozen and the incoming one
+    /// rises through it. That is also why it is cheap: the outgoing side is a buffer we already
+    /// have, not a second render.
+    #[serde(default)]
+    transition: Option<String>,
+    /// How long the arrival transition takes (seconds). Default 0.6. Ignored for `cut`.
+    #[serde(default)]
+    transition_secs: Option<f64>,
+    /// Fade to black over the LAST this-many seconds of this keyframe's hold. Independent of
+    /// `transition`, so one keyframe can rise from black and a later one sink back into it — which
+    /// is all "fade in and out" needs.
+    #[serde(default)]
+    fade_out_secs: Option<f64>,
     // --- discrete state (inherited forward until changed, like the center) ---
     /// Show the linked dual view (Mandelbrot + its Julia set side by side).
     #[serde(default)]
@@ -660,6 +678,9 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "t", ty: "float", default: "0 (first) / (required)", doc: "ABSOLUTE second the camera arrives here. Must be >= the previous keyframe's t + hold. Absolute times mean inserting a keyframe can't desync downstream narration." },
             SchemaField { name: "hold", ty: "float", default: "0", doc: "Seconds to pause here before the next glide begins." },
             SchemaField { name: "ease", ty: "string", default: "smooth", doc: "Easing for the glide arriving here: smooth, linear, smoother, in (accelerate), or out (decelerate)." },
+            SchemaField { name: "transition", ty: "string", default: "cut", doc: "How the picture ARRIVES here: cut (the camera simply jumps or glides), fade (rise from black), or dissolve (the previous picture stays frozen while this one rises through it — a crossfade at a cut). Occupies the first transition_secs after t, so upstream and downstream absolute times are untouched. dissolve needs SEQUENTIAL render order (it mixes with the preceding frame); under --order progressive it warns once and behaves as a cut." },
+            SchemaField { name: "transition_secs", ty: "float", default: "0.6", doc: "How long the arrival transition takes. Clamped to this keyframe's hold — a transition still ramping when the next keyframe arrives would never complete. Ignored for cut." },
+            SchemaField { name: "fade_out_secs", ty: "float", default: "0", doc: "Fade to black over the LAST this-many seconds of this keyframe's hold. Independent of transition, so one keyframe can rise from black and a later one sink back into it. When a short hold makes the two windows overlap, sinking wins." },
             SchemaField { name: "location", ty: "string", default: "(inherit)", doc: "Named coordinate to sit on (see [[location]]), instead of inline re/im." },
             SchemaField { name: "re", ty: "string", default: "(inherit)", doc: "Center, real part: full-precision decimal or an exact rational. Omit to inherit (pure zoom)." },
             SchemaField { name: "im", ty: "string", default: "(inherit)", doc: "Center, imaginary part." },
@@ -1354,11 +1375,48 @@ pub(crate) struct Segment {
 
 /// A resolved keyframe: parsed center, the time the glide *reaches* it, how long it holds there,
 /// and the easing of the glide arriving at it.
+/// How a keyframe's picture arrives. See `KeyframeFile::transition`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum TransitionKind {
+    #[default]
+    Cut,
+    /// Rise from black.
+    Fade,
+    /// The previous picture stays frozen while this one rises through it.
+    Dissolve,
+}
+
+impl TransitionKind {
+    fn parse(s: Option<&str>) -> TransitionKind {
+        match s.map(|x| x.trim().to_ascii_lowercase()).as_deref() {
+            Some("fade") => TransitionKind::Fade,
+            Some("dissolve") | Some("crossfade") => TransitionKind::Dissolve,
+            _ => TransitionKind::Cut,
+        }
+    }
+}
+
+/// What the renderer must do to a finished frame to realise a transition.
+///
+/// Deliberately a description of a PIXEL operation rather than of camera state: transitions are
+/// composited after the frame exists, so they cost nothing in the renderer and cannot perturb the
+/// iteration budget, the reference, or anything else the frame-cost controller measures.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Composite {
+    /// Multiply the frame toward black (0 = black, 1 = untouched).
+    Scale(f32),
+    /// Mix the frozen pre-transition frame with this one: `frozen*(1-a) + this*a`.
+    Blend(f32),
+}
+
 struct Kf {
     /// The script's `id` (or `#index`) — what harnesses and error messages call this keyframe.
     id: String,
     at: f64,
     hold: f64,
+    transition: TransitionKind,
+    transition_secs: f64,
+    fade_out_secs: f64,
     ease: EaseKind,
     cx: fractadyne_core::BigFloat,
     cy: fractadyne_core::BigFloat,
@@ -1663,6 +1721,43 @@ impl Playback {
     /// Sample the eased camera state at time `e` (seconds, expected in `[0, total]`):
     /// the segment-interpolated center, `ln(magnification)`, fractal, and Julia flag.
     /// Shared by live playback and the headless tour renderer.
+    /// What compositing (if any) a frame at time `e` needs. `None` means "leave the frame alone",
+    /// which is the answer for the overwhelming majority of frames in any tour.
+    ///
+    /// Fade-out is checked BEFORE fade-in: when a keyframe both rises from black and sinks back into
+    /// it, and its hold is short enough that the two windows overlap, sinking must win — otherwise
+    /// the tour's final frame brightens instead of going dark, which is the one moment a viewer is
+    /// guaranteed to be looking at.
+    pub(crate) fn transition_at(&self, e: f64) -> Option<Composite> {
+        let k = self.kfs.iter().rev().find(|k| k.at <= e + 1e-9)?;
+        let since = e - k.at;
+        // Sink to black over the last `fade_out_secs` of this keyframe's hold.
+        if k.fade_out_secs > 0.0 {
+            let start = k.hold - k.fade_out_secs;
+            if since >= start - 1e-9 && since <= k.hold + 1e-9 {
+                let a = ((k.hold - since) / k.fade_out_secs).clamp(0.0, 1.0);
+                return Some(Composite::Scale(a as f32));
+            }
+        }
+        if k.transition_secs <= 0.0 || since > k.transition_secs {
+            return None;
+        }
+        let a = (since / k.transition_secs).clamp(0.0, 1.0) as f32;
+        match k.transition {
+            TransitionKind::Cut => None,
+            TransitionKind::Fade => Some(Composite::Scale(a)),
+            TransitionKind::Dissolve => Some(Composite::Blend(a)),
+        }
+    }
+
+    /// Does any keyframe ask for a dissolve? The renderer needs to know up front, because a
+    /// dissolve blends against the frame that preceded it and so requires SEQUENTIAL render order.
+    pub(crate) fn has_dissolve(&self) -> bool {
+        self.kfs
+            .iter()
+            .any(|k| k.transition == TransitionKind::Dissolve && k.transition_secs > 0.0)
+    }
+
     pub(crate) fn sample(&self, e: f64) -> Sampled {
         let n = self.kfs.len();
         // Current segment start = last keyframe whose reach-time is ≤ e.
@@ -2486,6 +2581,16 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             id: id.clone(),
             at,
             hold,
+            transition: TransitionKind::parse(k.transition.as_deref()),
+            // Clamped to the hold it lives inside: a transition still ramping when the next
+            // keyframe arrives would hand over at partial brightness, which reads as a glitch.
+            // ⚠Clamped to EXACTLY `hold`, with no epsilon — an earlier version added 0.0001 "for
+            // safety" and the ramp then peaked at 0.9998 instead of 1.0, i.e. the picture jumped
+            // the last 0.02% at the handover. A transition therefore needs a hold to live in; on a
+            // keyframe with `hold = 0` there is no room and it does nothing. 0.6 s is a
+            // conventional dissolve length.
+            transition_secs: k.transition_secs.unwrap_or(0.6).clamp(0.0, hold.max(0.0)),
+            fade_out_secs: k.fade_out_secs.unwrap_or(0.0).clamp(0.0, hold.max(0.0)),
             ease: EaseKind::parse(k.ease.as_deref()),
             cx,
             cy,
@@ -3191,6 +3296,23 @@ impl FractadyneApp {
         } else {
             (first_frame..=last_frame).collect()
         };
+        // ── Dissolve support ───────────────────────────────────────────────────────────────────
+        // A dissolve blends against the frame that PRECEDED it, so it needs the frames to arrive in
+        // temporal order. Under `progressive` (bisecting order) or a `--segment`/shard whose first
+        // frame is already mid-dissolve, that predecessor has not been rendered in this run, so the
+        // dissolve degrades to a cut. Say so ONCE, up front: a dissolve that silently became a cut
+        // is a wrong deliverable, and the failure is invisible in any individual frame.
+        let sequential = !cli.progressive;
+        let dissolve_used = pb.has_dissolve() && sequential;
+        if pb.has_dissolve() && !sequential {
+            say(
+                "⚠ dissolve + progressive: a dissolve mixes each frame with the one before it, \
+                 which bisecting order does not render first — dissolves will appear as hard cuts. \
+                 Use the default sequential order for delivery.",
+            );
+        }
+        // The last frame that is not itself mid-dissolve: what a dissolve rises through.
+        let mut frozen_frame: Option<(u32, u32, Vec<f32>)> = None;
         let started = std::time::Instant::now();
         for (pos, &fi) in order.iter().enumerate() {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
@@ -3383,6 +3505,52 @@ impl FractadyneApp {
             // Location HUD (single view only — meaningless on the split dual frame).
             if show_location && !s.dual {
                 stamp_location(ctx, &mut px, rw, rh, &self.viewport);
+            }
+            // ── TRANSITIONS ────────────────────────────────────────────────────────────────────
+            // Applied LAST, after the watermark, captions, callouts and orbit overlay, so the whole
+            // composed picture fades together. A caption that stayed at full brightness while the
+            // fractal behind it sank to black would look like a bug, not a transition.
+            //
+            // Deliberately a pixel operation on the finished frame: it costs one pass over the
+            // buffer, never a second render, and it cannot perturb the iteration budget or the
+            // reference — so nothing the frame-cost controller measures changes because a tour
+            // happens to be dissolving.
+            match pb.transition_at(t) {
+                None => {}
+                Some(crate::scripting::Composite::Scale(a)) => {
+                    // Toward black. Alpha is left untouched: these frames are opaque, and scaling
+                    // it would produce a transparent PNG rather than a dark one.
+                    for p in px.chunks_exact_mut(4) {
+                        p[0] *= a;
+                        p[1] *= a;
+                        p[2] *= a;
+                    }
+                }
+                Some(crate::scripting::Composite::Blend(a)) => {
+                    // Mix the frozen pre-transition frame under this one. `frozen` is only ever
+                    // Some when the render is SEQUENTIAL and the same size — see where it is set.
+                    match &frozen_frame {
+                        Some((fw, fh, fpx)) if *fw == rw && *fh == rh && fpx.len() == px.len() => {
+                            for (p, f) in px.chunks_exact_mut(4).zip(fpx.chunks_exact(4)) {
+                                p[0] = f[0] * (1.0 - a) + p[0] * a;
+                                p[1] = f[1] * (1.0 - a) + p[1] * a;
+                                p[2] = f[2] * (1.0 - a) + p[2] * a;
+                            }
+                        }
+                        // No usable frozen frame: fall through as a hard cut. Warned once at the
+                        // top of the render rather than per frame, because a dissolve that silently
+                        // became a cut is a wrong deliverable, not a wrong pixel.
+                        _ => {}
+                    }
+                }
+            }
+            // Freeze the last frame that is NOT itself mid-dissolve; that is the picture a
+            // subsequent dissolve rises through. Skipping mid-dissolve frames matters: blending
+            // against an already-blended frame compounds the mix and the fade never reaches 100%.
+            if dissolve_used
+                && !matches!(pb.transition_at(t), Some(crate::scripting::Composite::Blend(_)))
+            {
+                frozen_frame = Some((rw, rh, px.clone()));
             }
             // Surface any earlier encode failure before enqueuing more work.
             if let Some(e) = enc_err.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
@@ -4252,6 +4420,78 @@ impl FractadyneApp {
         s.push_str("----------------------------------------\n");
         s.push_str(&format!("score      {:8.0}   (avg FPS × 100)", mean * 100.0));
         s
+    }
+}
+
+#[cfg(test)]
+mod transition_tests {
+    use super::{parse_tour_text, Composite};
+
+    fn pb(body: &str) -> super::Playback {
+        let text = format!("format_version = 2\nname = \"t\"\n{body}");
+        parse_tour_text(&text).expect("script should parse")
+    }
+
+    #[test]
+    fn fade_in_rises_from_black_and_then_stops_compositing() {
+        let p = pb("[[keyframe]]\nt = 0.0\nzoom = 1.0\nhold = 4.0\ntransition = \"fade\"\n\
+                    transition_secs = 1.0\n");
+        assert_eq!(p.transition_at(0.0), Some(Composite::Scale(0.0)), "starts black");
+        assert_eq!(p.transition_at(0.5), Some(Composite::Scale(0.5)), "half way");
+        // Past the window there is nothing to do — every later frame must be untouched, not
+        // multiplied by 1.0, so the common case costs no pass over the buffer at all.
+        assert_eq!(p.transition_at(1.5), None);
+    }
+
+    #[test]
+    fn fade_out_sinks_over_the_end_of_its_hold() {
+        let p = pb("[[keyframe]]\nt = 0.0\nzoom = 1.0\nhold = 5.0\nfade_out_secs = 2.0\n");
+        assert_eq!(p.transition_at(1.0), None, "before the window: untouched");
+        assert_eq!(p.transition_at(3.0), Some(Composite::Scale(1.0)), "window opens at full");
+        assert_eq!(p.transition_at(4.0), Some(Composite::Scale(0.5)));
+        assert_eq!(p.transition_at(5.0), Some(Composite::Scale(0.0)), "ends black");
+    }
+
+    #[test]
+    fn sinking_beats_rising_when_the_windows_overlap() {
+        // A short hold with both a fade-in and a fade-out: the last frame of the tour is the one
+        // moment a viewer is guaranteed to be watching, and it must go DARK. If rising won here the
+        // tour would brighten as it ended.
+        let p = pb("[[keyframe]]\nt = 0.0\nzoom = 1.0\nhold = 1.0\ntransition = \"fade\"\n\
+                    transition_secs = 1.0\nfade_out_secs = 1.0\n");
+        assert_eq!(p.transition_at(1.0), Some(Composite::Scale(0.0)), "ends black, not bright");
+    }
+
+    #[test]
+    fn dissolve_reports_blend_and_is_detected_for_the_order_guard() {
+        let p = pb("[[keyframe]]\nt = 0.0\nzoom = 1.0\nhold = 2.0\n\
+                    [[keyframe]]\nt = 2.0\nzoom = 100.0\nhold = 2.0\n\
+                    transition = \"dissolve\"\ntransition_secs = 1.0\n");
+        assert!(p.has_dissolve(), "the renderer must know to demand sequential order");
+        assert_eq!(p.transition_at(2.0), Some(Composite::Blend(0.0)), "starts on the old picture");
+        assert_eq!(p.transition_at(2.5), Some(Composite::Blend(0.5)));
+        assert_eq!(p.transition_at(3.5), None, "and is over");
+        // The first keyframe asked for nothing, so nothing happens there.
+        assert_eq!(p.transition_at(1.0), None);
+    }
+
+    #[test]
+    fn a_cut_and_an_absent_transition_are_both_free() {
+        let p = pb("[[keyframe]]\nt = 0.0\nzoom = 1.0\nhold = 2.0\ntransition = \"cut\"\n\
+                    transition_secs = 1.0\n");
+        assert_eq!(p.transition_at(0.0), None);
+        assert_eq!(p.transition_at(0.5), None);
+        assert!(!p.has_dissolve());
+    }
+
+    #[test]
+    fn a_transition_longer_than_its_hold_is_clamped_to_it() {
+        // Otherwise the ramp is still climbing when the next keyframe arrives and the picture
+        // jumps at partial brightness.
+        let p = pb("[[keyframe]]\nt = 0.0\nzoom = 1.0\nhold = 0.5\ntransition = \"fade\"\n\
+                    transition_secs = 10.0\n");
+        assert_eq!(p.transition_at(0.5), Some(Composite::Scale(1.0)), "reaches full within the hold");
+        assert_eq!(p.transition_at(0.6), None);
     }
 }
 

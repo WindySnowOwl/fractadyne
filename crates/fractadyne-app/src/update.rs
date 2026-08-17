@@ -178,9 +178,50 @@ fn parse_ver(s: &str) -> ((u32, u32, u32), Option<String>) {
     )
 }
 
+/// Compare two prerelease strings by semver §11: dot-separated identifiers, left to right.
+/// NUMERIC identifiers compare numerically; alphanumeric ones compare lexically; numeric sorts
+/// below alphanumeric; and a shorter run of identifiers sorts below a longer one that matches so
+/// far (`beta` < `beta.1`).
+///
+/// ⚠**The bug this replaces was a plain `String` comparison, and it inverted the update check.**
+/// Reported from the field 2026-08-16: a build running **0.2.40-beta.105** offered
+/// **0.2.40-beta.78** as an upgrade. Lexically `"beta.78" > "beta.105"` — at the first differing
+/// character `'7' > '1'` — so an older release looked newer. The comment here used to claim
+/// "lexical is adequate for our `beta.N`/`rc.N` scheme", which was true only while N was a single
+/// digit: it has been wrong since beta.10 and silently mis-ranked every release for ninety-five
+/// betas. A version comparator is exactly the kind of code where "adequate for now" ages into a
+/// falsehood without anything failing loudly.
+fn cmp_prerelease(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering::*;
+    let mut ai = a.split('.');
+    let mut bi = b.split('.');
+    loop {
+        match (ai.next(), bi.next()) {
+            (None, None) => return Equal,
+            // Fewer identifiers sorts lower when everything so far is equal (semver §11).
+            (None, Some(_)) => return Less,
+            (Some(_), None) => return Greater,
+            (Some(x), Some(y)) => {
+                if x == y {
+                    continue;
+                }
+                let ord = match (x.parse::<u64>(), y.parse::<u64>()) {
+                    (Ok(nx), Ok(ny)) => nx.cmp(&ny), // the case that was broken
+                    (Ok(_), Err(_)) => Less,         // numeric < alphanumeric
+                    (Err(_), Ok(_)) => Greater,
+                    (Err(_), Err(_)) => x.cmp(y),
+                };
+                if ord != Equal {
+                    return ord;
+                }
+            }
+        }
+    }
+}
+
 /// True if `cand` is a strictly newer semver than `cur`. Prerelease ordering (semver §11): a
-/// release outranks its own pre-releases; two pre-releases of the same core compare by identifier
-/// (`beta.2 > beta.1`, `rc.1 > beta.9` — lexical is adequate for our `beta.N`/`rc.N` scheme).
+/// release outranks its own pre-releases, and two pre-releases of the same core compare via
+/// `cmp_prerelease` (so `beta.105 > beta.78`, and `rc.1 > beta.9`).
 fn version_gt(cand: &str, cur: &str) -> bool {
     let (cc, cp) = parse_ver(cand);
     let (uc, up) = parse_ver(cur);
@@ -191,7 +232,7 @@ fn version_gt(cand: &str, cur: &str) -> bool {
         (None, None) => false,
         (None, Some(_)) => true,
         (Some(_), None) => false,
-        (Some(a), Some(b)) => a > b,
+        (Some(a), Some(b)) => cmp_prerelease(&a, &b) == std::cmp::Ordering::Greater,
     }
 }
 
@@ -234,5 +275,37 @@ mod tests {
         assert!(!version_gt("0.3.0-beta.1", "0.3.0")); // prerelease < release
         assert!(version_gt("0.3.0-beta.2", "0.3.0-beta.1"));
         assert!(version_gt("0.3.0-beta.1", "0.2.38")); // newer core, even as a prerelease
+    }
+
+    #[test]
+    fn multi_digit_prereleases_compare_numerically() {
+        // ⭐THE FIELD BUG, verbatim: 0.2.40-beta.105 was offered 0.2.40-beta.78 as an "update",
+        // because a String comparison puts "beta.78" above "beta.105" ('7' > '1'). Every test above
+        // uses single-digit betas, which is precisely why this survived to beta.105.
+        assert!(version_gt("0.2.40-beta.105", "0.2.40-beta.78"));
+        assert!(!version_gt("0.2.40-beta.78", "0.2.40-beta.105"));
+        assert_eq!(cmp_ver("0.2.40-beta.78", "0.2.40-beta.105"), Ordering::Less);
+
+        // The boundary where lexical ordering first breaks: 9 vs 10.
+        assert!(version_gt("0.2.40-beta.10", "0.2.40-beta.9"));
+        assert!(!version_gt("0.2.40-beta.9", "0.2.40-beta.10"));
+
+        // And the case that actually matters for the shelf: the newest beta must win the Beta
+        // track, whatever else is published alongside it.
+        let published = ["0.2.36", "0.2.40-beta.78", "0.2.40-beta.104", "0.2.40-beta.105"];
+        let newest = published.iter().copied().max_by(|a, b| cmp_ver(a, b)).unwrap();
+        assert_eq!(newest, "0.2.40-beta.105");
+        // A build ON that newest release must be told there is nothing to get.
+        assert!(!version_gt(newest, "0.2.40-beta.105"));
+    }
+
+    #[test]
+    fn prerelease_identifier_kinds_order_per_semver() {
+        // rc outranks beta (alphanumeric, lexical), and numeric sorts below alphanumeric.
+        assert!(version_gt("0.3.0-rc.1", "0.3.0-beta.9"));
+        assert!(version_gt("0.3.0-rc.1", "0.3.0-beta.105"));
+        // Fewer identifiers sorts lower when the common prefix matches (semver §11).
+        assert!(version_gt("0.3.0-beta.1", "0.3.0-beta"));
+        assert!(!version_gt("0.3.0-beta", "0.3.0-beta.1"));
     }
 }
