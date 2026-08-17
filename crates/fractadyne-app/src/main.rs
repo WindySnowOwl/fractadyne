@@ -238,6 +238,17 @@ struct Perf {
     /// that lost the device. The pessimistic latch costs at most a few ×1.5 climb frames; the
     /// optimistic one costs the device, and the asymmetry is the whole design.
     mode_rate: [[f64; Self::MODE_RATE_SLOTS]; 2],
+    /// Milliseconds of DELIBERATE `fps_cap` sleep at the end of the previous frame.
+    ///
+    /// ⚠Subtracted from the next frame interval before anything prices cost off it. The interval is
+    /// frame-start to frame-start and the cap sleep sits inside it by construction, so with a 30 fps
+    /// cap every frame read ~33 ms no matter how cheap it actually was. Both consumers treat that
+    /// number as a cost signal: the AIMD motion-resolution controller shrinks above 24 ms, so it
+    /// ratcheted to the 0.30 floor within about five real frames and stayed there for the whole
+    /// session — deep motion permanently at 30% linear resolution on hardware with headroom to
+    /// spare — and the no-timestamp wall-clock budget fallback under-grew for the same reason.
+    /// Sleeping is not work.
+    cap_sleep_ms: f64,
     /// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_BLA_DROP_FRAMES=N`, default off). Frames of BLA
     /// suppression remaining for this view after an arithmetic-mode switch.
     ///
@@ -469,6 +480,7 @@ impl Default for Perf {
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
             mode_rate: [[0.0; Self::MODE_RATE_SLOTS]; 2],
+            cap_sleep_ms: 0.0,
             bla_suppress_until: [0, 0],
             tile_state: [None, None],
             tile_pending: [false, false],
@@ -6222,8 +6234,12 @@ impl eframe::App for FractadyneApp {
             }
         }
         if let Some(prev) = self.perf.last_frame {
-            let dt = frame_start.duration_since(prev).as_secs_f64() * 1000.0;
-            self.perf.last_dt_ms = dt; // raw — the motion-res controller reads the actual spike
+            // Discount the previous frame's deliberate cap sleep — it lies inside this interval and
+            // is not work. See `Perf::cap_sleep_ms` for the mispricing that cost.
+            let dt = (frame_start.duration_since(prev).as_secs_f64() * 1000.0
+                - std::mem::take(&mut self.perf.cap_sleep_ms))
+                .max(0.0);
+            self.perf.last_dt_ms = dt; // the actual spike, with cap sleep removed
             self.perf.frame_ms = ema(self.perf.frame_ms, dt);
             // Same interval, second consumer: with no GPU timestamps this is the ONLY cost signal
             // the frame budget can have. Here `dt`, `fe_iter_frame`, and `fe_steps_last` all still
@@ -6464,7 +6480,10 @@ impl eframe::App for FractadyneApp {
                 let target = 1.0 / cap;
                 let spent = frame_start.elapsed().as_secs_f64();
                 if spent < target {
-                    std::thread::sleep(std::time::Duration::from_secs_f64(target - spent));
+                    let nap = target - spent;
+                    // Remembered so the next frame's interval can subtract it — see cap_sleep_ms.
+                    self.perf.cap_sleep_ms = nap * 1000.0;
+                    std::thread::sleep(std::time::Duration::from_secs_f64(nap));
                 }
             }
         }

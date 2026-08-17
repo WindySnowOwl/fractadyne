@@ -2849,13 +2849,13 @@ impl FractadyneApp {
                             format!("aimd: real-frame dt={dt:.1}ms res={:.2}", self.perf.motion_res),
                         );
                     }
-                    if dt > 24.0 {
-                        self.perf.motion_res = (self.perf.motion_res * (20.0 / dt).sqrt())
-                            .max(self.render_cfg.min_motion_res as f64);
-                    } else if dt < 17.0 {
-                        self.perf.motion_res = (self.perf.motion_res + 0.02).min(1.0);
-                    }
-                    // 17..=24 ms: deadband — hold, so it settles instead of hunting.
+                    // Pure, so the thresholds are pinned by test rather than by reading — see
+                    // `motion_res_step`. `dt` already has the fps_cap sleep discounted.
+                    self.perf.motion_res = motion_res_step(
+                        self.perf.motion_res,
+                        dt,
+                        self.render_cfg.min_motion_res as f64,
+                    );
                 }
             }
             self.perf.motion_res
@@ -4528,6 +4528,27 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     Some((next, next == cur || (0.8..=1.25).contains(&factor)))
 }
 
+/// One AIMD step of the deep-motion resolution scale, from a REAL re-iterate frame's interval.
+///
+/// Pure so the thresholds can be pinned by test — extracted from `build_params` after an external
+/// review pointed out there was no coverage of it at all, and that its two hard-coded bounds encode
+/// a 60 Hz assumption. `dt_ms` must already have the deliberate `fps_cap` sleep discounted (see
+/// `Perf::cap_sleep_ms`); passing the raw interval is what made a 30 fps cap ratchet this to the
+/// floor every session.
+///
+/// Above 24 ms: cut proportionally toward a ~20 ms interval. Cost goes as res², so scale by
+/// `sqrt(target/dt)` — one step, not a hunt. Below 17 ms the frame fit a vsync, so grow gently.
+/// Between them, hold: a deadband is what lets it settle instead of oscillating.
+pub(crate) fn motion_res_step(cur: f64, dt_ms: f64, floor: f64) -> f64 {
+    if dt_ms > 24.0 {
+        (cur * (20.0 / dt_ms).sqrt()).max(floor)
+    } else if dt_ms < 17.0 {
+        (cur + 0.02).min(1.0)
+    } else {
+        cur
+    }
+}
+
 /// Gate a budget step on whether a REPLACEMENT REFERENCE is currently being built for this view.
 ///
 /// Returns the budget to install and whether it may be treated as converged.
@@ -4788,6 +4809,38 @@ mod controller_props {
             c.tdr_budget_ms * 2.0 <= c.tdr_lethal_ms,
             "auto target should keep the >=2x margin the explicit one is documented to have"
         );
+    }
+
+    #[test]
+    fn a_capped_frame_rate_must_not_ratchet_motion_resolution_to_the_floor() {
+        // ⭐The bug: the frame interval is frame-start to frame-start and the deliberate fps_cap
+        // sleep sits INSIDE it, so with a 30 fps cap every frame read ~33 ms however cheap it was.
+        // 33 > 24, so this shrank on EVERY real frame and reached the 0.30 floor in about five of
+        // them — deep motion pinned at 30% linear resolution for the session, on hardware with
+        // headroom to spare. The fix discounts the sleep before pricing (Perf::cap_sleep_ms); this
+        // pins both halves of the consequence.
+        let floor = 0.30;
+
+        // A genuinely cheap frame under a 30 fps cap: 33.3 ms raw, ~4 ms of real work.
+        // Priced RAW (the bug) it collapses; priced DISCOUNTED it grows toward native.
+        let mut raw = 1.0;
+        for _ in 0..6 {
+            raw = motion_res_step(raw, 33.3, floor);
+        }
+        assert!(raw <= floor + 1e-9, "raw pricing reaches the floor — this is the bug: {raw:.3}");
+
+        let mut fixed = 1.0;
+        for _ in 0..6 {
+            fixed = motion_res_step(fixed, 4.0, floor);
+        }
+        assert_eq!(fixed, 1.0, "a 4 ms frame must stay at native, not shrink");
+
+        // The controller still does its job on frames that are genuinely expensive.
+        assert!(motion_res_step(1.0, 40.0, floor) < 1.0, "a real 40 ms frame must shrink");
+        // And the deadband holds, so it settles instead of hunting.
+        assert_eq!(motion_res_step(0.8, 20.0, floor), 0.8, "17..=24 ms holds");
+        // The floor is respected however slow the frame is.
+        assert!(motion_res_step(0.31, 5000.0, floor) >= floor);
     }
 
     #[test]
