@@ -801,6 +801,15 @@ fn fs_iterate(in: VsOut) -> FragOut {
                     let node = iu.orbit_len + (bla_off[l] + j) * 4u;
                     let v2 = reference[node + 2u];
                     let span = u32(reference[node + 3u].x);
+                    // ⚠A ZERO span must never be applied. `iter += span` / `ref_n += span` is the
+                    // only forward progress in this loop, so span == 0 makes the fragment spin
+                    // until the driver's watchdog fires — a device loss with nothing in any log,
+                    // which is the worst failure this codebase has. The bounds check below does NOT
+                    // catch it (ref_n + 0 is still < orbit_len), and the CPU packer should never
+                    // emit it — but a partially uploaded tree racing an orbit swap, or plain buffer
+                    // corruption, would. One comparison converts "device lost" into "skip this
+                    // node and iterate normally", i.e. at worst slightly slower pixels.
+                    if (span == 0u) { continue; }
                     if (ref_n + span >= iu.orbit_len) { continue; } // keep reference[nref] valid
                     if (!sf_lt(dzmag, sf_norm(vec2<f32>(v2.w, 0.0), i32(v2.z)))) { continue; }
                     let v0 = reference[node];
