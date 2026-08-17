@@ -1,0 +1,294 @@
+# Fractadyne — the announcement tour.
+#
+# Built for a 4K YouTube render accompanying the public announcement. Seven sections joined by hard
+# CUTS rather than one continuous dive, ending at 4.6e1105x.
+#
+# ⚠WHY CUTS, AND WHY THESE COORDINATES — this is a RENDER-COST design, not just an editorial one.
+# Measured 2026-08-16 at 3840x2160: a frame's cost is driven by the ITERATION ASK, not by depth.
+# The grand tour's deep holds ask 1.2M-4M iterations and cost MINUTES per frame at 4K; a single
+# 993-frame shard of its e72-e82 band was still on its second frame after 11 minutes. The corpus
+# locations used below reach far deeper on 50k-250k iterations and are correspondingly cheaper.
+#
+# Two consequences shape every keyframe here:
+#   1. A cut costs only its HOLD frames. A glide through deep territory costs every frame in
+#      between, and those are the expensive ones — so the camera never travels while deep.
+#   2. Depth is free; iterations are not. Ending at e1105 (250k iters) is cheaper than sitting at
+#      e94 with the grand tour's 4M.
+#
+# Coordinates for the deep sections are the VERIFIED Fraktaler-3 corpus points
+# (validation/corpus/locations.toml), so every frame past e18 is a location this build has already
+# been cross-checked against an independent implementation at.
+#
+# MEASURED COST at 3840x2160 on an RTX 3080 (2026-08-16), by iteration ask:
+#     60k iters (e44)   ->  0.64 s/frame
+#    150k iters (e500)  ->  9.23 s/frame
+#    250k iters (e1105) -> 23.60 s/frame
+# Depth barely enters into it: e1105 is twenty-five decades deeper than e500 for 2.5x the cost,
+# because it asks 1.7x the iterations. Whole tour ~2 h; the 7 s e1105 finale is 83 min of that,
+# i.e. ~70% of the render for 7 s of screen time. Shorten that hold first if time is tight.
+#
+# For contrast, the reason this tour exists rather than reusing the grand tour: grand-tour.toml's
+# deep holds ask 1.2M-4M iterations and cost MINUTES per frame at 4K, putting a full 4K render of
+# it at roughly EIGHT DAYS — and it stops at e94.
+#
+# Render:  fractadyne --render-tour tours/announce-4k.toml --size 3840x2160 --out frames
+# Preview: fractadyne --render-tour tours/announce-4k.toml --size 1280x720 --out preview
+#          (add --order progressive to see the whole shape in minutes before committing hours)
+format_version = 2
+name = "Fractadyne — Announcement Tour"
+
+[render]
+size = "3840x2160"
+fps = 30
+
+# ── Verified corpus coordinates (validation/corpus/locations.toml) ────────────────────────────
+[[location]]
+id = "seahorse"
+re = "-0.7436438870371587047521915061147707"
+im = "0.131825904205311970493132056385139"
+
+[[location]]
+id = "dendrite"
+re = "-0.71455191519512020059044918385"
+im = "0.35402073332318232065549730365"
+
+[[location]]
+id = "e44"
+re = "-6.70209187903253724099340233845986400901890228472988919658169553187602139279518e-1"
+im = "4.58060975296945872909213676106313996238241655922637652387687460587764642477807e-1"
+
+[[location]]
+id = "e500"
+re = "-8.3519660785486091757042830837282018099564215399840079290994370086858323332666026012321442424716476137516010235155803265588739473477613596416091464645795520269598424012720833764116138244965076206850492967287719772239086564999667057721590369251891928492280730134092302594674598125642798639910091442187057955792057421550794342345174060002465254997472987432984231120486618202330117277556383076138282583978997392314887381834712013461059227773552093199422831818832614215489147840039739096870634260502312035491160466210910542672e-2"
+im = "6.5633926651421357642435445624794287179732375780414070512804948680532038749594379415920265613034895936155571162042591359618401572538324489365585021937324229690811051813054355303297146505784380472686805411007343337407036576849918099996178564489137074763749678134908890169192653702269459070993654823276465265186119424696953082232235864113135941331483344740170011427854073921885047231710113229147644154379696549177162208675566004999502643881966677072076493891512329846424644392411879461499442500274655605273427804756526273386e-1"
+
+[[location]]
+id = "e1105"
+re = "2.88551201093059871274071303800151400053376951368725797081040550949502145160849912266356224118501966464135846631379795058388609385964706486647996582643879478925575952218990751370176258484608485083133367487097906821440830511869909287086597785789826928561826274850445330000681644035759856900986476475356340868534799132831546215764056013357233227447467653379961482697042858229104376560594733683330116841762126291149816626308012303061322151055718776975477001606946693760651780628655609819106485874251187866964764616038084199216787523541106958789789778684139260242292353663372539803694268099057799954487430842363686430930152025258483158501945904136023561632175130396533078460888424445029573162350889097583181352611946864579590776490531359750407648947220112191756348913404966610352672800669965940059429323243984891398477690051433173236645354747635334075445218450766702300989851412169406814176762255852305038946978145919956030591296721320395854117784060672083316748778700788521899422382707620664136521027163977579950831583843911751282971487548367000941118309453976509667412199803621909583556040093508673809100966968254713802886502450262538843122e-1"
+im = "1.22837636274455449095906129335365068997904564092657092682711609329657475248504117230298594194722893314450582686087175509222694652475593007643450421256169190800610076957439693583571672717854028516924894608054626517771395424214000184977238550994874071548877895866493498484394960925405692074041707187503454315817871339862328188800787008820556680366789006084410733162530706740241276272226746077107376726954027943679186089294724856485367627745940403901785071720399946998747637456940456364561604904824103220284211276485879969539226863099565997769862081352549027498183743229145980993325227542917205312788342014852932791437571527323480742719984655330259153974377870900671860511486568863697185201118310254336995727240122142964919084343712047436064010498241817670904966247730713854167626448917359003570878253357397029983065354473376428170667926009275287396642227784529183790066283190895591560322819425655006015634989296704784329133923932968155785152237168947325332485204646508045257927702536291589877518328412842143905369515797279684857778054057793621817152244795211173327630404929420802627390890880044196672287580528733070422302382619507072155441e-2"
+
+# ── Chapters, for --segment ─────────────────────────────────────────────────────────────────
+[[segment]]
+id = "opening"
+title = "1. The set"
+t = 0
+
+[[segment]]
+id = "seahorse"
+title = "2. Seahorse Valley"
+t = 11
+
+[[segment]]
+id = "julia"
+title = "3. Julia duality"
+t = 31
+
+[[segment]]
+id = "dive"
+title = "4. The dive"
+t = 49
+
+[[segment]]
+id = "extreme"
+title = "5. Extreme depth"
+t = 79
+
+# ══ 1. THE SET ═══════════════════════════════════════════════════════════════════════════════
+[[keyframe]]
+id = "open"
+t = 0.0
+fractal = "Mandelbrot"
+re = "-0.6"
+im = "0.0"
+zoom = 0.85
+max_iter = 2000
+hold = 4.0
+
+[[keyframe]]              # a slow breath inward — establishes that the boundary never smooths out
+id = "open-in"
+t = 11.0
+zoom = 6.0
+max_iter = 3000
+ease = "smooth"
+
+# ══ 2. SEAHORSE VALLEY ═══════════════════════════════════════════════════════════════════════
+[[keyframe]]              # CUT (t == previous t + hold): no glide, no frames spent travelling
+id = "seahorse-enter"
+t = 11.0
+location = "seahorse"
+zoom = 40.0
+max_iter = 4000
+ease = "linear"
+hold = 2.0
+
+[[keyframe]]
+id = "seahorse-deep"
+t = 26.0
+zoom = "1.0e6"
+max_iter = 12000
+ease = "smooth"
+hold = 3.0
+
+# ══ 3. JULIA DUALITY ═════════════════════════════════════════════════════════════════════════
+[[keyframe]]              # CUT back out, into the side-by-side view
+id = "julia-open"
+t = 31.0
+re = "-0.6"
+im = "0.0"
+zoom = 0.85
+max_iter = 2000
+dual = true
+dual_split = 0.5
+julia_re = -0.512
+julia_im = 0.521
+ease = "linear"
+hold = 3.0
+
+[[keyframe]]              # slide c along the boundary; the Julia set reorganises continuously
+id = "julia-slide"
+t = 46.0
+julia_re = -0.743
+julia_im = 0.1315
+ease = "smooth"
+hold = 3.0
+
+# ══ 4. THE DIVE ══════════════════════════════════════════════════════════════════════════════
+[[keyframe]]              # CUT to a single view and fall
+id = "dive-start"
+t = 49.0
+dual = false
+location = "dendrite"
+zoom = 4.0
+max_iter = 3000
+ease = "linear"
+hold = 1.5
+
+[[keyframe]]              # 1e18 on 50k iterations - past double precision, still inexpensive
+id = "dive-e18"
+t = 76.0
+zoom = "1.09e18"
+max_iter = 50000
+ease = "in"
+hold = 3.0
+
+# ══ 5. EXTREME DEPTH ═════════════════════════════════════════════════════════════════════════
+# Cuts from here on. Each is a verified corpus location; each hold is short because these are the
+# only frames in the tour that cost real time.
+[[keyframe]]
+id = "cut-e44"
+t = 79.0
+location = "e44"
+zoom = "8.87e43"
+max_iter = 60000
+ease = "linear"
+hold = 4.0
+
+[[keyframe]]
+id = "cut-e500"
+t = 83.0
+location = "e500"
+zoom = "8.12e500"
+max_iter = 150000
+ease = "linear"
+hold = 4.0
+
+[[keyframe]]              # the finale
+id = "cut-e1105"
+t = 87.0
+location = "e1105"
+zoom = "6.13e1105"
+max_iter = 250000
+ease = "linear"
+hold = 7.0
+
+# ══ CAPTIONS ═════════════════════════════════════════════════════════════════════════════════
+# Informative rather than decorative: each says what the renderer is doing, not just where we are.
+[[annotation]]
+kind = "caption"
+t = 0.4
+secs = 5.0
+text = "The Mandelbrot set: the points c where z → z² + c never escapes to infinity."
+
+[[annotation]]
+kind = "caption"
+t = 6.0
+secs = 4.6
+text = "Colour shows how quickly a point escapes. The black interior never does."
+
+[[annotation]]
+kind = "caption"
+t = 11.4
+secs = 5.0
+text = "Seahorse Valley, on the boundary between the main body and the period-2 bulb."
+
+[[annotation]]
+kind = "caption"
+t = 17.0
+secs = 5.0
+text = "The spirals are not repetitions — every one differs in detail from the last."
+
+[[annotation]]
+kind = "caption"
+t = 24.0
+secs = 4.8
+text = "1,000,000×. Beyond about 1e15, ordinary double precision runs out of digits."
+
+[[annotation]]
+kind = "caption"
+t = 31.4
+secs = 5.4
+text = "Every point of the plane indexes its own Julia set — shown here on the right."
+
+[[annotation]]
+kind = "caption"
+t = 37.5
+secs = 5.5
+text = "Inside the set, the Julia set is connected. Outside, it shatters into dust."
+
+[[annotation]]
+kind = "caption"
+t = 43.5
+secs = 4.5
+text = "Sliding c along the boundary reorganises the Julia set continuously."
+
+[[annotation]]
+kind = "caption"
+t = 49.4
+secs = 5.0
+text = "A dendrite: filaments of points that escape only after very many iterations."
+
+[[annotation]]
+kind = "caption"
+t = 56.0
+secs = 6.0
+text = "To go deeper, the renderer follows one high-precision reference orbit and\ncomputes every pixel as a small deviation from it — perturbation theory."
+
+[[annotation]]
+kind = "caption"
+t = 63.0
+secs = 6.0
+text = "Bilinear approximation then skips thousands of iterations at once, wherever\nthe deviation stays provably small."
+
+[[annotation]]
+kind = "caption"
+t = 70.0
+secs = 5.5
+text = "1.09e18× — roughly the width of the solar system scaled to a proton."
+
+[[annotation]]
+kind = "caption"
+t = 79.4
+secs = 3.4
+text = "8.87e43×. From here the coordinates are arbitrary-precision decimals."
+
+[[annotation]]
+kind = "caption"
+t = 83.4
+secs = 3.4
+text = "8.12e500×. Verified frame-for-frame against Fraktaler-3, an independent renderer."
+
+[[annotation]]
+kind = "caption"
+t = 87.4
+secs = 6.4
+text = "6.13e1105×. A magnification with 1,106 digits — and the boundary is still\nas intricate here as it was at the very first frame."
