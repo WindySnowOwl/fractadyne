@@ -4480,9 +4480,29 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     // is the beta.48 death loop (sub-bootstrap dispatches at ~1 s, back to back, until Event
     // 153). Past the accept bound the shrink proceeds: it may not beat chain latency, but fewer
     // resident warps is the only safe direction, and the honest fix for that regime is iteration
-    // CHUNKING (mode-2 extension, TODO), not bigger holds. The accept bound also keeps this
-    // guard out of the AUTO regime entirely: auto's `slow` starts at 900 ms, already past it.
-    if slow && steps <= crate::tunables::cost().tdr_bootstrap_steps && ms <= crate::tunables::cost().tdr_latency_accept_ms {
+    // CHUNKING (mode-2 extension, TODO), not bigger holds.
+    //
+    // ⚠**THE DISPATCH MUST BE REPRESENTATIVE OF THE BUDGET** (`steps >= cur * 0.7`), and leaving that
+    // out was a real exposure. The other two conditions test the dispatch's ABSOLUTE size and its
+    // time; neither notices whether `cur` is small. So a clamped edge tile, a chunk step, or a
+    // motion-shrunk frame measuring inside the accept window while `cur` sat at a converged 3e11 was
+    // read as "this is the latency floor, hold position" AND returned converged — which arms the
+    // tiled settle on a budget calibrated for a per-step rate that no longer exists. But an
+    // UNDERSIZED dispatch taking 500 ms is the strongest available evidence that per-step cost has
+    // COLLAPSED (~2e5 steps/ms here); the next full-size tile at `cur` then prices in tens of
+    // seconds, and the emergency retreat cannot save it because its first reading lands two frames
+    // late, behind two more budget-sized dispatches. That is the shape of both 2026 field losses.
+    //
+    // ⚠It was UNREACHABLE in the auto regime until 2026-08-16 — the comment here used to say so,
+    // resting on auto's `slow` starting at 900 ms, past the 600 ms accept bound. Lowering the auto
+    // target to 400 ms opened a live 400–600 ms window, and the auto ceiling is 3e11 against
+    // explicit's 6e10, so it opened it where the blast radius is largest. 0.7 is deliberately the
+    // same "this dispatch reflects the budget" threshold the discard test above uses.
+    if slow
+        && steps <= crate::tunables::cost().tdr_bootstrap_steps
+        && ms <= crate::tunables::cost().tdr_latency_accept_ms
+        && (steps as f64) >= cur as f64 * 0.7
+    {
         return Some((cur, true));
     }
     // ⭐EMERGENCY RETREAT. Past `TDR_LETHAL_MS` the shrink cap is removed and the raw ratio applies.
@@ -4678,6 +4698,45 @@ mod controller_props {
     }
 
     #[test]
+    fn an_undersized_slow_reading_never_holds_a_large_budget_as_converged() {
+        // ⭐The exposure the 900→400 target change opened, and the reason the latency-floor guard
+        // needs a SECOND condition. The guard tests the dispatch's ABSOLUTE size (steps <=
+        // TDR_BOOTSTRAP_STEPS) but never whether the BUDGET is small. So a clamped edge tile, a
+        // chunk step, or a motion-shrunk frame that measures inside the 400–600 ms window while
+        // `cur` sits at a converged 3e11 was read as "this is the latency floor, hold position" —
+        // and returned ok = true, which arms the tiled settle on a budget calibrated for a per-step
+        // rate that no longer exists. An undersized dispatch taking 450 ms is the strongest
+        // available evidence that per-step cost has COLLAPSED; the next full-size tile at `cur`
+        // then prices in tens of seconds, and the emergency retreat cannot help because its first
+        // reading arrives two frames late, behind two more budget-sized dispatches.
+        let c = crate::tunables::cost();
+        let cur = c.tdr_steps_ceil; // 3e11, a converged deep budget
+        let steps = c.tdr_bootstrap_steps / 4; // 1e8, plainly undersized against cur
+        let ms = (c.tdr_budget_ms + c.tdr_latency_accept_ms) / 2.0; // 500 ms: slow, under the accept bound
+        assert!(ms > c.tdr_budget_ms && ms <= c.tdr_latency_accept_ms, "test sits in the window");
+
+        let (next, _ok) = budget_step(cur, steps, ms, false).expect("a slow reading carries signal");
+        assert!(next < cur, "an undersized slow reading must LOWER a large budget, not hold it");
+        // The budget must land near the DISPATCH's own size, not merely somewhere below `cur`:
+        // `base = min(cur, steps)` is what makes the collapse proportionate to the evidence.
+        assert!(
+            next <= steps,
+            "must re-price to the measured dispatch, got {next:.3e} against steps {steps:.3e}"
+        );
+        // And the result must be honest about time: at `next`, this per-step rate implies ~target.
+        let implied_ms = ms * (next as f64 / steps as f64);
+        assert!(
+            implied_ms <= c.tdr_budget_ms * 1.05,
+            "the re-priced budget should imply ~{:.0}ms, got {implied_ms:.0}ms",
+            c.tdr_budget_ms
+        );
+        // NOTE: `ok` is deliberately not asserted false. Once the hold is gated on the dispatch
+        // being representative, this path SHRINKS rather than holds, so a converged flag here sits
+        // on a corrected budget (8e7 implying 400 ms) and arming the settle on it is safe. The
+        // danger was never the flag; it was the flag on a budget that had not been re-priced.
+    }
+
+    #[test]
     fn a_reading_in_the_lethal_band_retreats_in_one_step() {
         // The 2026-08-16 device loss, as numbers: budget pinned at the 3e11 ceiling, a tile
         // measured 1033 ms. Clamped at TDR_SHRINK_MAX the controller could only reach 1.5e11 and
@@ -4821,8 +4880,10 @@ mod controller_props {
         // But a floor NEAR the watchdog band is the beta.48 death loop — shrink proceeds.
         let (next, _) = budget_step(400_000_000, 400_000_000, 1500.0, true).unwrap();
         assert!(next < 400_000_000, "a watchdog-relevant floor must still shrink");
-        // And the AUTO regime is untouched: its slow threshold (900 ms) is already past the
-        // accept bound, so the exact beta.48 shape keeps shrinking as beta.48 fixed it to.
+        // The same shape in AUTO also shrinks. ⚠This used to hold because auto's slow threshold
+        // (900 ms) sat past the accept bound so the guard could not fire at all; since 2026-08-16
+        // auto's target is 400 ms, so it now passes for the ORIGINAL reason instead — 1070 ms is
+        // past the 600 ms accept bound, which is the beta.48 death-loop case.
         let (next, _) = budget_step(400_000_000, 400_000_000, 1070.0, false).unwrap();
         assert!(next < 400_000_000);
     }
