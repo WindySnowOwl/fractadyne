@@ -920,7 +920,19 @@ impl ViewResources {
         samples: u32,
     ) {
         if samples > self.orbit_cap {
-            self.orbit_cap = samples.next_power_of_two();
+            // ⚠CLAMP THE ROUNDING TO THE GRANT. `next_power_of_two` can overshoot the device's
+            // `max_storage_buffer_binding_size`, and the entire-buffer bind then fails validation →
+            // uncaptured error → panic. It happens to be safe on POWER-OF-TWO grants only, where the
+            // app-side orbit-length cap (limit/16/9 − 4096) leaves the rounded size landing exactly
+            // on the limit. Measured: at 128 MiB and 1 GiB the buffer is exactly the limit; at
+            // 768 MiB it rounds to 1 GiB (33% over) and at 640 MiB likewise (60% over). Some
+            // Intel/Mesa stacks do report non-power-of-two limits, so the coincidence is not a
+            // guarantee. A clamp costs nothing and turns a hard crash into a bounded buffer — and
+            // WGSL storage reads are bounds-checked, so the worst case downstream is wrong pixels
+            // rather than undefined behaviour (and the app-side cap should keep us short of it).
+            let limit_slots =
+                (device.limits().max_storage_buffer_binding_size as u64 / 16).max(1) as u32;
+            self.orbit_cap = samples.next_power_of_two().min(limit_slots);
             self.orbit_buf = make_orbit_buffer(device, self.orbit_cap);
             self.iter_bg =
                 make_iter_bg(device, iter_bgl, &self.iter_uniform, &self.orbit_buf, &self.counters_buf);
