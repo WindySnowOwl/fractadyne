@@ -3526,6 +3526,38 @@ perturbation + series approximation + glitch correction. The headline feature.
 
 ## Branding & UI (M7)
 
+- [ ] ⭐**"Render finished" sound, off-switchable (user, 2026-08-16).** FRACTINT played a distinct
+  tone through the PC speaker when an image completed, and it was genuinely useful: deep renders were
+  slow enough that you left the room, and the beep is what told you to come back. Fractadyne has
+  exactly the same shape of problem — the announce tour's e1105 finale is ~24 s/frame, and a 4K grand
+  tour is measured in days.
+  ⚠**The exact tone still needs sourcing, not guessing.** FRACTINT had a `sound=` parameter
+  (off / beep / x / y / z — the x/y/z modes sonified orbit values, which is a different feature) and
+  drove the PC speaker directly. The completion tone's frequency and duration should be read out of
+  FRACTINT's own source or documentation before anything is implemented; do NOT approximate from
+  memory. Reimplement it independently rather than lifting code — a short functional tone is not the
+  licensing question, but FRACTINT's source is licensed and copying it would be.
+  **Where it earns its place** (ranked; the value is entirely "you walked away and came back"):
+  1. **Offline render completion** — `--render`, `--render-tour`, and the "Render tour…" dialog. The
+     direct analogue of FRACTINT's case and the strongest candidate.
+  2. **Tour playback reaching the end** — cheap to wire, obvious meaning.
+  3. **A deep view finishing its settle** — arguably the closest match to what FRACTINT's beep
+     actually signalled ("the image is done"). ⚠Must be gated on the settle having taken long enough
+     to be worth announcing (order of 10 s), or it fires on every navigation keystroke and becomes
+     unbearable within a minute. This gate is the whole design, not a detail.
+  4. Export/screenshot written.
+  A DIFFERENT sound for failure is worth considering — a device-loss auto-restart is exactly the
+  event you want to know about from another room, and it should not share the success tone.
+  **Implementation choice to make first**, because it decides the dependency:
+  - OS notification sound (Windows `MessageBeep`, and a Linux/macOS equivalent) — no new crates, but
+    inconsistent across platforms and not the FRACTINT tone.
+  - A generated square-wave tone through an audio crate (`rodio`/`cpal`) — faithful and identical
+    everywhere, at the cost of the app's first audio dependency and an output device it currently
+    never touches. ⚠Also needs a graceful no-audio-device path; a headless render box has none, and
+    `--render-tour` must not fail because it could not beep.
+  **Off switch**: File → ⚙ Settings, alongside theme and updates, persisted in the session like
+  they are. Default OFF is the polite modern choice; the argument for default ON is that nobody
+  discovers a feature they never hear. Lean off, and mention it in the release notes.
 - [x] **Fractadyne theme + branding** — dark deep-space theme with cyan/magenta accents
       (`apply_brand_theme`), painted brand mark + wordmark in the top bar
       (`brand_wordmark`), and a procedural window icon (`brand_icon`).
