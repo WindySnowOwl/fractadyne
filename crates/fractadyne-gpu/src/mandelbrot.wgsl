@@ -1183,8 +1183,40 @@ fn fs_iterate(in: VsOut) -> FragOut {
                 }
             }
             if (z2 > bail2) { escaped = true; break; }
+            // This is the SAME underflow that disabled Zhuoran rebasing in mode 2 (see the long
+            // note at the mode-2 trigger above), and it was still live on this path: the test
+            // squares plain f32, so once |δz| drops below ~1.1e-19 the square falls under f32's
+            // 1.18e-38 normal floor and flushes to zero. With |z| near zero the other side flushes
+            // too, the test reads `0 < 0`, and rebasing is silently off at exactly the near-zero
+            // orbit passes it exists for. Mode 0 reaches 1e28×, where pixel δ is ~1e-31 — squared,
+            // thirty decades under the floor — so the upper part of this mode's range ran with the
+            // trigger dead, and the live path has no Pauldelbrot detection to catch the resulting
+            // glitch (single reference + rebasing, by design).
+            //
+            // The repair is deliberately scoped to the degenerate case ONLY. Both squares reading
+            // exactly zero is the one situation the original form cannot answer; every other
+            // combination it already gets right (one side flushed while the other did not still
+            // orders correctly, because the flushed side is genuinely the smaller magnitude). So
+            // the original comparison is kept verbatim and consulted first, and the fallback runs
+            // just for `0 < 0`. Rewriting the test unconditionally is what NOT to do here: an
+            // earlier attempt normalised by max-component, which is algebraically identical but
+            // multiplies by an inexact 1/s, and it drifted three determinism checks by ~99
+            // iterations in 1.2M as near-ties rounded the other way.
+            //
+            // In the fallback both magnitudes are known to be under ~1.1e-19, so scaling by 2^64
+            // cannot overflow, and being a power of two the scaling is EXACT — this stays a true
+            // 2-norm comparison rather than switching to an ∞-norm, which would shift the trigger
+            // by up to sqrt(2). Post-scale the floor sits near 1e-38 * 2^64, leaving about seven
+            // decades of headroom below mode 0's deepest δ.
             let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
-            if (z2 < dzmag2 || ref_n + 1u >= iu.orbit_len) {
+            var rebase_now = z2 < dzmag2;
+            if (z2 == 0.0 && dzmag2 == 0.0) {
+                const LIFT: f32 = 18446744073709551616.0; // 2^64, exact
+                let zl = zf * LIFT;
+                let dl = vec2<f32>(dz.re.x * LIFT, dz.im.x * LIFT);
+                rebase_now = dot(zl, zl) < dot(dl, dl);
+            }
+            if (rebase_now || ref_n + 1u >= iu.orbit_len) {
                 n_rebase = n_rebase + 1u;
                 let r0 = orbit_cdf(reference[0]);
                 // Phoenix (two-term): rebase δz_{n-1} to Z_{-1}=0 → the full previous value
@@ -1485,8 +1517,20 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             if (z2m > bail2) { escaped = true; break; }
             // Zhuoran rebase: the δ overtook the reference (or the orbit ran out) — fold the
             // full value back onto the orbit start. Identical to the single-pass branch.
+            // Degenerate-case fallback, identical to the single-pass branch above — see the full
+            // note there. These two must stay in lockstep: a rebase criterion that differed
+            // between the chunked and unchunked paths would make a view's pixels depend on whether
+            // the frame happened to be split, which is precisely what the chunk selftests exist to
+            // rule out (they assert bit-identical output across a chunk boundary).
             let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
-            if (z2m < dzmag2 || ref_n + 1u >= iu.orbit_len) {
+            var rebase_now = z2m < dzmag2;
+            if (z2m == 0.0 && dzmag2 == 0.0) {
+                const LIFT: f32 = 18446744073709551616.0; // 2^64, exact
+                let zl = zf * LIFT;
+                let dl = vec2<f32>(dz.re.x * LIFT, dz.im.x * LIFT);
+                rebase_now = dot(zl, zl) < dot(dl, dl);
+            }
+            if (rebase_now || ref_n + 1u >= iu.orbit_len) {
                 n_rebase = n_rebase + 1u;
                 let r0 = orbit_cdf(reference[0]);
                 dz = cset(
