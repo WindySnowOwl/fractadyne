@@ -3352,6 +3352,36 @@ perturbation + series approximation + glitch correction. The headline feature.
 
 ## Milestone M5 — High-res export (in progress)
 
+- [ ] ⭐**Survive a lost output directory: retry with escalating backoff (user, 2026-08-17).** A write
+  failure to the destination currently sets `enc_err` and aborts the whole render. That is right for a
+  permanent failure and wrong for a temporary one, and the difference cost real work: the dev box
+  (which hosts the `share` SMB export the Radeon was writing to) was restarted, the destination
+  vanished for a couple of minutes, and an **eight-hour 4K soak at frame 6721 died** because of it.
+  The share came back on its own minutes later; nothing needed to be lost.
+  **Shape**: on a write failure, hold the frame's pixel buffer, retry, and back off — fast at first
+  (a second or two, for a blip) escalating to 5–10 minutes or more, since a rebooting host or a
+  reconnecting network takes that long. Log every retry loudly and count them in the summary.
+  ⚠**Classify the error before retrying — this is the whole design, not a detail.** A vanished network
+  path will very likely come back and should be waited on; a **full disk** will not come back on its
+  own and retrying forever just hangs quietly; **permission denied** is a configuration error to
+  report immediately. Map `io::ErrorKind` (`NotFound`/`HostUnreachable`/`NetworkDown` vs
+  `StorageFull`/`PermissionDenied`) to different policies rather than retrying everything.
+  ⚠**Never leave a partial file behind.** If a write fails midway, DELETE the stub before retrying.
+  The resume vetter's own tests record that the PNG decoder accepts a file truncated by exactly one
+  byte (IEND's final CRC is never verified), so a half-written frame can later read as a finished one
+  and `--resume` would skip it. That is a silently corrupt deliverable — the single worst outcome here.
+  ⚠**Interacts with the encode backpressure.** The encode queue is a bounded `sync_channel`, so while
+  writes are stalled it fills and the render loop blocks on `send`. That is the CORRECT behaviour (it
+  stops burning GPU on frames it cannot store) but it must be distinguishable from a hang: the hang
+  watchdog and any external monitor will otherwise see a frozen render with no explanation. Log the
+  state clearly enough that a human reading only the log can tell "waiting for the destination" from
+  "wedged".
+  **Give up cleanly, not silently**: after a capped total wait, print what happened and exit non-zero
+  so the operator knows, leaving the completed frames intact — `--resume` then continues from the
+  gap. (Verified 2026-08-17 that the frames written before this failure were contiguous with complete
+  IEND terminators, so resume-after-give-up is already sound.)
+  **Applies beyond tour renders**: `--render`, image/screenshot export, `--torture` artifacts, and the
+  diagnostic log writer all write to paths a user can point at a network share.
 - [x] **PNG / OpenEXR export** — `File → Export image…`: pick width (1280–7680),
       supersampling (1–4×), and format. Renders the current view offscreen at the
       chosen resolution (`fractadyne_gpu::render_export`: iterate → color → readback),
