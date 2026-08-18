@@ -454,6 +454,32 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] 🟠**MISSING TOOL: there is no unpaced harness that drives the frame-cost controller, so the
+  device-loss class cannot be reproduced automatically.** Established 2026-08-17 after twelve scripted
+  `radeon-verify` phase-5 arms across two nights produced ZERO lethal readings while a human diving by
+  hand produced 21 in one evening.
+  ⭐**MEASURED, so nobody re-treads this:**
+  - `--play tours/repro-e28-crossover.toml` (the phase-5 vehicle) peaks at **~195 ms** of measured
+    iterate over 156 controller readings on an RTX 3080, with **88 discarded** as unrepresentative
+    (`steps < 0.7x budget`). The lethal band starts at 900 ms — the tour is ~4.6x too gentle, on any
+    machine. A tour clock also DILATES on a slow frame, so pressure can never accumulate.
+  - `--frametest --dive` looked like the answer and is NOT: a whole run emits ONE `fd-gpu` line
+    (`no reading (bits=false, ms=0.00, steps=0)`) and never prices a frame. It drives `build_params`
+    and reference recompute — what it was built for — not the controller.
+  - `--livetest` carries its OWN copy of the controller and its own trace format, so it cannot stand in
+    for the app's (the beta.40 lesson, still true).
+  ⭐**What the tool must do:** drive the REAL update loop with NO tour clock — a continuous zoom that
+  submits frames as fast as they complete, full screen, auto-iter on, crossing mode 0→2 and continuing
+  deep. That is what a hand-driven dive is, and it is the only thing observed to reach the regime.
+  ⚠Until it exists, `radeon-verify -Phase 5` prints an INCONCLUSIVE verdict rather than a false pass,
+  and the documented repro is manual.
+  ⭐**Instrumentation that now exists** (use it for any future attempt): `FRACTADYNE_TRACE=gpu` emits a
+  per-frame `view=N gpu_iterate=X.Xms cur=... -> next=... ok=...` line plus `IGNORED (steps=...)` for
+  discarded readings. ⚠Do NOT measure with `gpu_iterate=`/`wall_iterate=` scraped from the log at
+  large: those substrings occur ONLY inside the LETHAL-BAND message, so keying off them is circular
+  (verified: 21 occurrences, all 21 inside lethal lines). And `dt=` is frame interval including
+  present/idle waits — a paced tour shows ~976 ms dt against a ~0 ms body with no real work.
+
 - [ ] 🟡**"Normalize deep colors" renders a FLAT GRAY exterior at shallow zoom with a high manual
   iteration count.** Field report 2026-08-18 (build 1678, screenshot): after returning Home from a deep
   view, zoom 1.06× with `iter = 250,000` and auto-scale OFF drew the set correctly in black on a

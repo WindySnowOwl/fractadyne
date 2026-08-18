@@ -175,25 +175,39 @@ function Run-Phase {
     # not reproduce says so out loud.
     $lethal = 0
     $peakMs = 0
+    $ignored = 0
     $al = Join-Path $Out "$Tag-app.log"
     if (Test-Path $al) {
         $lethal = @(Select-String -Path $al -Pattern 'LETHAL-BAND' -SimpleMatch).Count
-        # Peak MEASURED iterate, not frame interval: `dt` includes present/idle waits, so a paced
-        # tour shows ~1000 ms dt with a ~0 ms body and no real work at all. Only gpu_iterate /
-        # wall_iterate reflect what the controller actually prices.
-        $m = Select-String -Path $al -Pattern '(?:gpu|wall)_iterate=(\d+)ms' -AllMatches
+        # Peak MEASURED iterate, from the FRACTADYNE_TRACE=gpu per-frame controller lines
+        # (`view=0 gpu-iterate=123.4ms cur=... -> next=... ok=...`).
+        #
+        # NOT from `gpu_iterate=`/`wall_iterate=`: those substrings occur ONLY inside the LETHAL-BAND
+        # message itself, so keying off them made this circular - it could only be non-zero when a
+        # lethal reading already existed, which is exactly the thing we are trying to detect the
+        # absence of. Verified on a real log: 21 occurrences, all 21 inside lethal lines.
+        #
+        # NOT from `dt=` either: frame interval includes present/idle waits, so a paced tour shows
+        # ~976 ms dt against a ~0 ms body with no real work at all. That number is what made two
+        # nights of runs look like they had reached the danger zone when they had not.
+        $m = Select-String -Path $al -Pattern '=(\d+(?:\.\d+)?)ms cur=' -AllMatches
         foreach ($hit in $m) {
             foreach ($g in $hit.Matches) {
-                $v = [int]$g.Groups[1].Value
+                $v = [double]$g.Groups[1].Value
                 if ($v -gt $peakMs) { $peakMs = $v }
             }
         }
+        # Readings the controller THREW AWAY as unrepresentative (steps < 0.7x budget). A high count
+        # here means the arm produced work but the controller declined to price it, which is its own
+        # finding and not the same as "the arm was idle".
+        $ignored = @(Select-String -Path $al -Pattern 'IGNORED (steps=' -SimpleMatch).Count
         if ($lethal -gt 0) { Say "  >>> $lethal LETHAL-BAND reading(s), peak measured iterate ${peakMs}ms" }
-        else { Say "  (no lethal reading; peak measured iterate ${peakMs}ms - this arm did NOT reach the dangerous regime)" }
+        elseif ($peakMs -eq 0) { Say "  (NO measured iterate at all - the controller never priced a frame. Set FRACTADYNE_TRACE=gpu; if it is already set, this arm did no real GPU work.)" }
+        else { Say "  (no lethal reading; peak measured iterate ${peakMs}ms, $ignored reading(s) discarded as unrepresentative)" }
     }
 
     $reportTimeout = $timedOut -and (-not $ExpectNoExit)
-    return [pscustomobject]@{ Tag = $Tag; Exit = $code; Seconds = $sw.Elapsed.TotalSeconds; TimedOut = $reportTimeout; DeviceLost = $lost; Lethal = $lethal; PeakIterMs = $peakMs; Cfg = $cfg }
+    return [pscustomobject]@{ Tag = $Tag; Exit = $code; Seconds = $sw.Elapsed.TotalSeconds; TimedOut = $reportTimeout; DeviceLost = $lost; Lethal = $lethal; PeakIterMs = $peakMs; Discarded = $ignored; Cfg = $cfg }
 }
 
 $results = @()
@@ -239,6 +253,11 @@ if (& $want 5) {
 
     # The tour is ~72s of content and --play keeps the window open afterwards, so 150s covers it
     # with margin. -ExpectNoExit stops that normal ending being scored as a TIMEOUT.
+    # Without this the per-frame controller timings are never written, and the run cannot tell you
+    # whether it reached the dangerous regime - only whether it happened to die.
+    $env:FRACTADYNE_TRACE = 'gpu'
+    Say "trace: FRACTADYNE_TRACE=gpu (per-frame measured iterate, so a no-repro run says so)"
+    Say ""
     Say "A) pre-fix behaviour (MODE_RATE_UNKNOWN_MARGIN=1) - a device loss here is EXPECTED"
     $results += Run-Phase -Tag '05a-repro-OLD' -FdArgs @('--set', 'MODE_RATE_UNKNOWN_MARGIN=1', '--play', $tour) -TimeoutSec 150 -ExpectNoExit
 
@@ -301,26 +320,20 @@ if (& $want 5) {
     $results += Run-Phase -Tag '05f-repro-NEW-noBLA' -FdArgs @('--play', $tour) -TimeoutSec 150 -ExpectNoExit
     Remove-Item Env:\FRACTADYNE_BLA_DROP_FRAMES -ErrorAction SilentlyContinue
 
-    # ------------------------------------------------------------------ 5g/5h: UNPACED
-    # Why these exist: every `--play` arm above is PACED. A tour advances a clock and dilates it when
-    # a frame runs long, so pressure never accumulates -- measured on 2026-08-16 and again on
-    # 2026-08-17, where all six arms reported an identical 976 ms slowest frame interval with ZERO
-    # lethal readings. An identical number across six different configurations is a WAIT, not work.
+    # ------------------------------------------------------------------ why there is no 5g/5h
+    # An UNPACED automated arm was attempted here and REMOVED, because no such harness exists yet.
+    # MEASURED 2026-08-17: `--frametest --dive` looked ideal (it steps a dive on the live path with
+    # auto-iter on and no tour clock) but it does NOT drive the frame-cost controller - a whole run
+    # emits ONE `fd-gpu` line, "no reading (bits=false, ms=0.00, steps=0)", and never prices a frame.
+    # It exercises build_params and reference recompute, which is what it was built for. `--livetest`
+    # is no good either: it carries its OWN copy of the controller and its own trace format.
     #
-    # `--frametest` steps a dive on the live path (build_params, reference cache, recompute) with
-    # auto-iter ON and no pacer, which is much closer to what the field losses actually were: a
-    # hand-driven continuous dive. `--dive 350` goes deep enough for auto-iter to ask for the large
-    # counts that make a frame expensive, and crosses mode 0 -> 2 on the way.
-    Say ""
-    Say "G) UNPACED dive, pre-fix behaviour - no tour clock to hide behind"
-    $results += Run-Phase -Tag '05g-dive-OLD' -FdArgs @('--set', 'MODE_RATE_UNKNOWN_MARGIN=1', '--frametest', '--dive', '350', '--steps', '60', '--hold', '4') -TimeoutSec 900
+    # The controller only ever runs in the real update loop, and every automated driver of that loop
+    # (`--play`, `--livetest`) is tour-PACED, which is the very thing that stops pressure building. So
+    # an unpaced live-dive harness is a MISSING TOOL, not a script tweak - see TODO.md. Until it
+    # exists, the only known-working repro is a human at the keyboard.
 
-    Kill-Stragglers
-    Start-Sleep -Seconds 5
-
-    Say ""
-    Say "H) UNPACED dive, stock"
-    $results += Run-Phase -Tag '05h-dive-NEW' -FdArgs @('--frametest', '--dive', '350', '--steps', '60', '--hold', '4') -TimeoutSec 900
+    Remove-Item Env:\FRACTADYNE_TRACE -ErrorAction SilentlyContinue
 }
 
 # ---------------------------------------------------------------- verdict
@@ -328,7 +341,7 @@ Head "Summary"
 $results | ForEach-Object {
     $d = if ($_.DeviceLost) { 'DEVICE-LOST' } elseif ($_.TimedOut) { 'TIMEOUT' } else { 'ok' }
     $trig = if ($_.Lethal -gt 0) { "lethal x$($_.Lethal)" } else { 'NO TRIGGER' }
-    Say ("  {0,-24} {1,8:N1}s  {2,-12} {3,-12} peak={4}ms" -f $_.Tag, $_.Seconds, $d, $trig, $_.PeakIterMs)
+    Say ("  {0,-24} {1,8:N1}s  {2,-12} {3,-12} peak={4}ms discarded={5}" -f $_.Tag, $_.Seconds, $d, $trig, $_.PeakIterMs, $_.Discarded)
 }
 $results | Format-Table -AutoSize | Out-File (Join-Path $Out 'summary.txt') -Encoding ascii
 
@@ -338,10 +351,16 @@ $repro = $results | Where-Object { $_.Tag -like '05*' }
 if ($repro -and (($repro | Measure-Object -Property Lethal -Sum).Sum -eq 0)) {
     Say ""
     Say "!! INCONCLUSIVE: not one arm produced a LETHAL-BAND reading, so the pre-fix control never"
-    Say "!! failed and the fix was never exercised. Do NOT record this as a pass. Peak measured"
-    Say "!! iterate per arm is printed above; if those are all well under 900 ms the repro is too"
-    Say "!! gentle for this machine. The reliable fallback is a MANUAL dive: full screen, auto-iter"
-    Say "!! on, dive past e28 and keep going, then send the session log."
+    Say "!! failed and the fix was never exercised. Do NOT record this as a pass."
+    Say "!!"
+    Say "!! This is the EXPECTED result for this tour, not a surprise. Measured on an RTX 3080:"
+    Say "!! repro-e28-crossover peaks at ~195 ms of measured iterate over 156 controller readings,"
+    Say "!! with 88 of them discarded as unrepresentative. The lethal band starts at 900 ms, so the"
+    Say "!! tour is roughly 4.6x too gentle to trigger anything, on any machine."
+    Say "!!"
+    Say "!! The only known-working repro is MANUAL: full screen, auto-iter on, dive past e28 and keep"
+    Say "!! going. That produced 21 lethal readings across three runs in one evening where twelve"
+    Say "!! scripted arms over two nights produced none. Send the session log afterwards."
 }
 
 function Verdict([string]$label, $old, $new) {
