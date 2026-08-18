@@ -1187,6 +1187,107 @@ mod order_tests {
         assert_eq!(&order[..4], &[0, 30, 60, 100]);
     }
 
+    /// Deterministic xorshift64*. A fixed seed keeps any failure reproducible, and rolling it
+    /// by hand keeps the workspace free of dev-dependencies (it has none, on purpose).
+    pub(super) struct Rng(pub u64);
+    impl Rng {
+        pub(super) fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.0 = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        /// Uniform-enough in `0..n` for a property sweep; `n == 0` yields 0.
+        pub(super) fn below(&mut self, n: u64) -> u64 {
+            if n == 0 {
+                0
+            } else {
+                self.next() % n
+            }
+        }
+    }
+
+    #[test]
+    fn progressive_order_is_a_permutation_for_any_input() {
+        // The test above pins four shapes; this quantifies over the input space, which is where
+        // `--resume` and mp4 assembly actually live. A duplicated frame silently re-renders (at
+        // 4K that is hours), and a missing one leaves a hole `--resume` cannot know about and the
+        // encoder turns into a visible jump.
+        let mut r = Rng(0x9E37_79B9_7F4A_7C15);
+        for case in 0..4000u32 {
+            let lo = r.below(500);
+            let span = r.below(400);
+            // Every 7th case passes the endpoints BACKWARDS: the function swaps them and callers
+            // rely on that, so the property has to hold for reversed input too.
+            let (a, b) = if case % 7 == 0 { (lo + span, lo) } else { (lo, lo + span) };
+            let n_kf = r.below(9);
+            // Drawn from a wider span than the range, so most cases carry out-of-range seeds.
+            let kfs: Vec<u64> = (0..n_kf).map(|_| r.below(1000)).collect();
+            let order = progressive_frame_order(a, b, &kfs);
+            let (first, last) = (a.min(b), a.max(b));
+            assert_eq!(order.len() as u64, last - first + 1, "count: [{a},{b}] kfs={kfs:?}");
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            assert_eq!(
+                sorted,
+                (first..=last).collect::<Vec<_>>(),
+                "not a permutation: [{a},{b}] kfs={kfs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn progressive_order_depends_only_on_the_seed_set() {
+        // Scripts list keyframes in authoring order, with repeats, and `--segment` hands over
+        // slices whose keyframes fall outside the range. Order must depend only on the SET of
+        // in-range seeds (it is collected through a BTreeSet). If it depended on spelling, two
+        // runs of the same tour could disagree on frame order and `--resume` would "fill" frames
+        // that were never missing while leaving the real gaps.
+        let mut r = Rng(0xDEAD_BEEF_CAFE_1234);
+        for _ in 0..1500 {
+            let first = r.below(50);
+            let last = first + r.below(200);
+            let n = r.below(7);
+            let base: Vec<u64> = (0..n).map(|_| first + r.below(220)).collect();
+            let canonical = progressive_frame_order(first, last, &base);
+            let mut noisy: Vec<u64> = base.iter().rev().copied().collect();
+            noisy.extend(base.iter().copied()); // reversed AND duplicated — same set
+            assert_eq!(
+                progressive_frame_order(first, last, &noisy),
+                canonical,
+                "order changed with keyframe spelling: [{first},{last}] {base:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn progressive_order_leads_with_every_in_range_seed() {
+        // The early-look contract, and the whole reason the mode exists: keyframes plus the two
+        // endpoints render BEFORE any bisection, in time order, so a deep frame can be inspected
+        // minutes into a render instead of at the end.
+        let mut r = Rng(0x0123_4567_89AB_CDEF);
+        for _ in 0..1500 {
+            let first = r.below(40);
+            let last = first + 1 + r.below(200);
+            let n = r.below(6);
+            let kfs: Vec<u64> = (0..n).map(|_| first + r.below(260)).collect();
+            let mut seeds: Vec<u64> =
+                kfs.iter().copied().filter(|f| (first..=last).contains(f)).collect();
+            seeds.push(first);
+            seeds.push(last);
+            seeds.sort_unstable();
+            seeds.dedup();
+            let order = progressive_frame_order(first, last, &kfs);
+            assert_eq!(
+                &order[..seeds.len()],
+                &seeds[..],
+                "seeds did not lead: [{first},{last}] kfs={kfs:?}"
+            );
+        }
+    }
+
     // ---- Tour scripts are UNTRUSTED input: they are the artifact people share on a forum ----
 
     /// A hostile `zoom` must be REFUSED, not turned into an allocation. Every one of these
@@ -1292,6 +1393,105 @@ pub(crate) fn segment_range(frames: u64, n: u64, k: u64) -> (u64, u64) {
     let n = n.max(1);
     let k = k.min(n - 1);
     (k * frames / n, (k + 1) * frames / n)
+}
+
+#[cfg(test)]
+mod segment_props {
+    use super::order_tests::Rng;
+    use super::segment_range;
+
+    #[test]
+    fn segments_tile_the_frame_range_exactly() {
+        // `--segments N --segment-index K` shards one offline render across machines, so this is
+        // the property the whole feature rests on: half-open `[start, end)` ranges that abut with
+        // no overlap and no gap. Overlap means two boxes burn hours on the same frames; a gap
+        // means the assembled mp4 is missing frames, and nothing reports it — the omission only
+        // shows up as a jump on playback, long after the machines are released.
+        //
+        // This function had NO tests before this. It is four lines, which is exactly why.
+        let mut r = Rng(0xA5A5_5A5A_1234_9876);
+        for _ in 0..4000 {
+            let frames = r.below(20_000);
+            let n = 1 + r.below(64);
+            let mut prev_end = 0u64;
+            for k in 0..n {
+                let (s, e) = segment_range(frames, n, k);
+                assert!(s <= e, "inverted shard k={k} n={n} frames={frames}: [{s},{e})");
+                assert_eq!(s, prev_end, "gap or overlap at k={k} n={n} frames={frames}");
+                prev_end = e;
+            }
+            assert_eq!(prev_end, frames, "shards miss frames: n={n} frames={frames}");
+        }
+    }
+
+    #[test]
+    fn an_out_of_range_index_clamps_to_the_last_shard() {
+        // `--segment-index` is user input. Clamping (rather than panicking or returning an empty
+        // range) means a typo re-renders the tail instead of silently producing nothing.
+        let mut r = Rng(0x1357_9BDF_0246_8ACE);
+        for _ in 0..1000 {
+            let frames = r.below(5000);
+            let n = 1 + r.below(32);
+            let last = segment_range(frames, n, n - 1);
+            for over in [n, n + 1, n + 997, u64::MAX] {
+                assert_eq!(
+                    segment_range(frames, n, over),
+                    last,
+                    "index {over} past n={n} did not clamp to the last shard"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zero_segments_behaves_as_one_whole_render() {
+        // `n.max(1)` — a zero segment count must mean "render everything", not divide by zero.
+        for frames in [0u64, 1, 7, 1000, 20_000] {
+            assert_eq!(segment_range(frames, 0, 0), (0, frames));
+            assert_eq!(segment_range(frames, 1, 0), (0, frames));
+        }
+    }
+
+    #[test]
+    fn more_shards_than_frames_still_tiles_without_panicking() {
+        // The degenerate shape a distributed run hits at the end of a short tour: some shards are
+        // necessarily EMPTY (start == end). That is fine and must stay fine — the renderer skips
+        // them — but they must not overlap their neighbours or drop a frame.
+        for frames in 0..40u64 {
+            for n in 1..64u64 {
+                let mut prev_end = 0u64;
+                for k in 0..n {
+                    let (s, e) = segment_range(frames, n, k);
+                    assert_eq!(s, prev_end, "gap at k={k} n={n} frames={frames}");
+                    assert!(e >= s);
+                    prev_end = e;
+                }
+                assert_eq!(prev_end, frames, "n={n} frames={frames}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_tiling_formula_is_safe_for_any_reachable_frame_count() {
+        // ⚠`k * frames` is a u64 multiply with no checked arithmetic, so it overflows once
+        // `frames > u64::MAX / (n - 1)`. Tours are UNTRUSTED input (the artifact people share on
+        // a forum), so this is worth stating rather than assuming: with the 64-shard maximum used
+        // above, the bound is ~2.9e17 frames — about 1.5e11 years of 60 fps video, and far beyond
+        // what a frame count parsed from fps x duration can reach. Pinned at a generous ceiling so
+        // that if a future caller ever does compute frame counts near that bound, this fails here
+        // rather than wrapping into a silently mistiled render.
+        let huge = 1_000_000_000_000u64; // 1e12 frames, ~528 years at 60 fps
+        for n in [1u64, 2, 7, 64] {
+            let mut prev_end = 0u64;
+            for k in 0..n {
+                let (s, e) = segment_range(huge, n, k);
+                assert_eq!(s, prev_end);
+                prev_end = e;
+            }
+            assert_eq!(prev_end, huge, "mistiled at n={n}");
+        }
+        assert!(huge < u64::MAX / 64, "the tiling multiply would overflow at this frame count");
+    }
 }
 
 /// Everything the tour renderer needs, after merging the CLI over the script's `[render]` block.

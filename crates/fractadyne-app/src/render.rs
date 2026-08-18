@@ -4601,6 +4601,130 @@ mod controller_props {
     //! incident at a time.
     use super::*;
 
+    /// Deterministic xorshift64* — fixed seed, reproducible failures, no dev-dependency.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.0 = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            if n == 0 {
+                0
+            } else {
+                self.next() % n
+            }
+        }
+    }
+
+    /// A spread of readings covering every regime this controller has ever misjudged: instant,
+    /// vsync-shaped, the 400–600 ms latency-floor window, the ~900 ms reproduced lethal band, and
+    /// values no healthy GPU produces.
+    fn a_reading(r: &mut Rng) -> f64 {
+        match r.below(7) {
+            0 => 0.0,
+            1 => r.below(20) as f64,
+            2 => 380.0 + r.below(60) as f64,
+            3 => 400.0 + r.below(200) as f64,
+            4 => 850.0 + r.below(400) as f64,
+            5 => 1.0e6,
+            _ => r.below(3000) as f64,
+        }
+    }
+
+    #[test]
+    fn the_next_budget_is_always_a_legal_dispatch_size() {
+        // Quantified counterpart to the pinned cases below. Whatever a dispatch reports, the
+        // budget it produces must remain dispatchable: never 0 (which would stall the render
+        // forever, making no progress and never timing out) and never above the regime's ceiling.
+        let c = crate::tunables::cost();
+        let mut r = Rng(0x5EED_1234_ABCD_0001);
+        let mut decided = 0u32;
+        for _ in 0..8000 {
+            let cur = 1 + r.below(c.tdr_steps_ceil);
+            let steps = r.below(c.tdr_steps_ceil.saturating_mul(2));
+            let ms = a_reading(&mut r);
+            let explicit = r.below(2) == 1;
+            if let Some((next, _ok)) = budget_step(cur, steps, ms, explicit) {
+                decided += 1;
+                let ceil =
+                    if explicit { c.explicit_steps_ceil } else { c.tdr_steps_ceil };
+                assert!(
+                    next >= c.tdr_min_steps,
+                    "budget fell under the floor: cur={cur} steps={steps} ms={ms} \
+                     explicit={explicit} -> {next} < {}",
+                    c.tdr_min_steps
+                );
+                assert!(
+                    next <= ceil,
+                    "budget exceeded its ceiling: cur={cur} steps={steps} ms={ms} \
+                     explicit={explicit} -> {next} > {ceil}"
+                );
+            }
+        }
+        // Anti-vacuity guard. `budget_step` returns an Option, so a change that made it decline
+        // most readings would leave every assertion above unexecuted and this test still green —
+        // the same way an interior-filled view let the bignum oracle pass without ever comparing
+        // an escape count (see the G1 note in selftest.rs).
+        assert!(decided > 4000, "only {decided}/8000 readings produced a budget — sweep went vacuous");
+    }
+
+    #[test]
+    fn a_lethal_reading_never_asks_for_more_work() {
+        // The emergency retreat is allowed to shrink FURTHER than TDR_SHRINK_MAX — that is its
+        // whole purpose, getting out of the lethal band in one step instead of three. What it must
+        // never do is come back asking for more: a dispatch that already measured near the TDR
+        // deadline is the strongest evidence available that per-step cost has collapsed.
+        //
+        // The `max(cur, floor)` is not slack: when `cur` sits below TDR_MIN_STEPS the clamp raises
+        // the result, and the floor legitimately wins over the retreat.
+        let c = crate::tunables::cost();
+        let mut r = Rng(0xFEED_FACE_0000_0007);
+        let mut decided = 0u32;
+        for _ in 0..4000 {
+            let cur = 1 + r.below(c.tdr_steps_ceil);
+            let steps = r.below(c.tdr_steps_ceil.saturating_mul(2));
+            let ms = c.tdr_lethal_ms + r.below(5000) as f64;
+            let explicit = r.below(2) == 1;
+            if let Some((next, _ok)) = budget_step(cur, steps, ms, explicit) {
+                decided += 1;
+                assert!(
+                    next <= cur.max(c.tdr_min_steps),
+                    "a {ms} ms reading RAISED the budget: cur={cur} steps={steps} \
+                     explicit={explicit} -> {next}"
+                );
+            }
+        }
+        assert!(decided > 2000, "only {decided}/4000 lethal readings decided — sweep went vacuous");
+    }
+
+    #[test]
+    fn a_nonsense_frame_time_cannot_wedge_the_controller() {
+        // Frame times come from a clock, and clocks lie: a zero, a negative interval across a
+        // clock adjustment, or a NaN from a division by an elapsed time of zero. None of those
+        // may panic, and none may produce an illegal budget. This is a robustness floor, not a
+        // claim about which direction the controller should move.
+        let c = crate::tunables::cost();
+        for &ms in &[0.0, -0.0, -1.0, -1.0e9, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::MIN_POSITIVE] {
+            for &cur in &[c.tdr_min_steps, 1_000_000_000, c.tdr_steps_ceil] {
+                for &explicit in &[false, true] {
+                    if let Some((next, _ok)) = budget_step(cur, cur, ms, explicit) {
+                        let ceil =
+                            if explicit { c.explicit_steps_ceil } else { c.tdr_steps_ceil };
+                        assert!(
+                            next >= c.tdr_min_steps && next <= ceil,
+                            "ms={ms} cur={cur} explicit={explicit} -> illegal budget {next}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn slow_reading_always_lowers_the_budget() {
         // Whatever the dispatch's nominal size, taking longer than the target must shrink.
