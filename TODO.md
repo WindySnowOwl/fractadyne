@@ -454,79 +454,144 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] 🟢**FractalShark comparison — items worth taking (2026-08-18).** Source:
-  `mattsaccount364/FractalShark` (CUDA/NVIDIA/Mandelbrot-only research vehicle) vs ours (wgpu, 10
-  formulas, portable). ⭐**Independent convergence worth recording:** their `HDRFloat<CudaDblflt>` /
-  `HDRFloatComplex` is a 2×32 mantissa pair with ONE shared `i32` exponent — structurally identical
-  to our `Fe { m: Cdf, e: i32 }`. Two projects arriving there separately is mutual validation of the
-  representation choice.
-  ⭐**Every claim below was VERIFIED against our code before ranking** — the ×9 factor, the level-0
-  layout and the uncompressed cache all confirmed; two claims were mis-scoped, noted inline.
+- [ ] 🟢**Peer-renderer adoption list — reconciled (2026-08-18).** Sources: `5E-324/Imagina` (+ Imagina 2),
+  `mattsaccount364/FractalShark`. Consolidates three review rounds into ONE tiered list; supersedes the
+  separate FractalShark and Imagina entries so there is no third overlapping copy.
+  ⭐**Independent convergence worth recording:** FractalShark's `HDRFloat<CudaDblflt>` /
+  `HDRFloatComplex` — a 2×32 mantissa pair with ONE shared exponent — is structurally our
+  `Fe { m: Cdf, e: i32 }`. Imagina's `FExpDouble` is the f64-mantissa sibling. Three projects arriving
+  there separately is mutual validation of the representation.
+  ⭐**Every claim here was verified against our code before ranking.** Confirmed: the ×9 factor
+  (`render.rs:369` = 16 B orbit + 128 B tree), level-0's derivability, `BLA_EPS = 1.0e-6`
+  (`tunables.rs:568`), `delta_exp: i32`, exponents on every BLA node at every level, `refcache_persist`
+  uncompressed, and the per-pixel floatexp `D` the Julia-mipmap LOD test would need. Four claims were
+  mis-scoped or already closed — marked ⛔ below.
 
-  - [ ] ⭐**1. Derive BLA level-0 in-shader — the orbit-cap win.** CONFIRMED: `render.rs:369` is
-    literally `(limit / 16 / 9)` = 16 B orbit sample + 128 B tree (~2×orbit_len nodes × 64 B), so the
-    tree IS the orbit-length wall. And level 0 is fully derivable from the orbit sample
-    (`reference.rs:600-620`: `a = 2Z_n`, `b = one`, `r = |2Z_n|·eps`, `span = 1`). Dropping level 0
-    from the UPLOAD (keep it CPU-side for the merge) takes the factor 9 → ~5, i.e. cap ~928k → ~1.6M
-    at the same binding grant — direct relief for the e2100 wall.
-    ⚠**The analysis called this "immediate, small". It is not, and the reason generalises.** (a) It
-    omits that level-0 nodes ALSO carry `agg_trap`/`agg_tia`/`agg_stripe`, which need `Z_{n+1}` plus
-    `atan2`/`sin` (stripe) and `pow` (TIA) in-shader. (b) The CPU builds `r` in **f64** via
-    `sample_xy`; deriving it in df32/floatexp will NOT match those bits, so skip decisions change ⇒
-    pixels change ⇒ 17 goldens + the 20-point F3 corpus + the 24-checkpoint livetest are all in play.
-    The code is small; the identity argument is the work. Gate it as "prove identical, or re-bless
-    with evidence" — not as a patch.
-  - [ ] **2. Period-aware LA (LAv2-style) as a second acceleration structure.** Where they are
-    genuinely better: one LA node per detected period per stage instead of our per-step tree, so a
-    periodic location needs hundreds of nodes where ours needs millions. We already have
-    `detect_period`/`find_nucleus`, and our extended-range dip markers ARE the MinMag period signal
-    their detection uses, so detection is nearly free; `bla_merge` is already the right composition
-    algebra. Their `AT` (attractor transformation — skips whole periods for pixels within
-    `ThresholdC`) is the highest-value second step and lands exactly on our Misiurewicz-spar pain
-    case. Also: they test a per-pixel δc threshold at stage entry, where our `bla_merge` bakes the
-    worst-case corner `dc_max` into the merged radius, so pixels near the reference are denied skips
-    they could legitimately take. Large port; the memory win concentrates exactly where our tree is
-    both largest and least effective per byte.
-  - [ ] **3. Waypoint compression for the reference cache (Zhuoran's scheme).** Store a new waypoint
-    only when `|ẑ − Z_n|²·10^errExp ≥ |Z_n|²`, re-iterating in the low-precision type between them.
-    CONFIRMED our `refcache_persist` is uncompressed. ⚠The analysis calls the disk variant
-    "unambiguous" — it is not: compression carries a controlled ERROR, so a loaded cache would no
-    longer match a freshly built reference, needing the same identity argument as item 1. The GPU
-    variant is worse for us than for them (no f64 in WGSL ⇒ df32 reconstruction ⇒ tighter error
-    threshold, denser waypoints).
-  - [ ] **4. Possibly retire the extended-range dip marker for per-sample exponents.** They store an
-    exponent per sample, so near-zero dips need no special encoding and keep full mantissa precision.
-    Ours trades a ~24-bit dip cliff for 16 B/sample. Uniform `(re_hi, re_lo, im_hi, im_lo)` + a packed
-    exponent buffer costs +25% memory and deletes the special case from `pack_sample` / `orbit_fe` /
-    `orbit_cdf` / `sample_xy` / the BLA builder. Interacts with item 1 — decide after it, since 1 is
-    what relieves the memory pressure.
-  - [ ] **5. Chebyshev norms in the hot radius tests** — `max(|re|,|im|)` instead of a `sqrt` via
-    `fe_abs_sf`. ⚠Also NOT "free": it explicitly needs ε rescaled by √2 at build time, which changes
-    the radii, which changes skip decisions — the same gate cost as item 1 for a much smaller payoff.
-    Do it WITH item 1 if at all, so one re-bless covers both.
-  - [x] **6. Imagina location import — DONE 2026-08-18.** `--import-imagina` + `parse_imagina_text`.
-    ⚠The premise was partly wrong: we do NOT validate against Fraktaler-3 only — the `Bignum oracle`
-    group is an independent arbitrary-precision CPU arbiter, and it is what settled the AMD
-    df32-vs-floatexp question. Imagina is a third opinion, not a second.
-    ⚠Text format only. The binary `.im` needs `HRReal`'s layout + GMP `mpf` raw streams, neither
-    documented in the readable source, so it is refused by its magic (`FF 49 4D 50 56 0D 0A 00`) with
-    a re-save hint rather than guessed at — a guessed binary parser imports a plausible WRONG location
-    silently. **Imagina's `Size` is a HALF-HEIGHT ⇒ magnification = 2/Size**: the one inferred
-    quantity, pinned by a unit test so a correction is one constant rather than archaeology.
-  - [ ] **Their acknowledged BLA bug is independent evidence for our hazard class.**
-    `BLAKernels.cuh` ships annotated known bugs including "the rebase guard runs too late ... add a
-    rebase check between BLA loop exit and the single-step perturbation". Our situation is BETTER than
-    the analysis states: `mandelbrot.wgsl:844-857` already carries a LOCAL rebase at the BLA landing
-    (documented against corpus-15's dendrites), and `ref_n + span >= orbit_len` at :813 keeps the
-    landing index valid. The orbit-end sub-case still leans on the full-step trigger's
-    `|| ref_n + 1u >= iu.orbit_len`, which does run before anything reads `reference[ref_n+1]`.
-    Making it fully local would rebase a step EARLIER than today ⇒ behaviour change ⇒ same gate cost.
-  - [ ] **Not porting:** their NTT GPU high-precision reference (CUDA-specific, needs u64 and warp
-    primitives WGSL lacks, only pays past ~10k digits) and templated `IterType` u32/u64 (our 10M cap
-    is a deliberate live-path safety policy — and it is compression+LA that makes the extreme-period
-    regime affordable, not integer width). Their cheap CPU trick — two dedicated threads squaring x²
-    and y² concurrently plus a coordinator — may be worth MEASURING for astro-float at the deepest
-    holds only, where per-step thread overhead is amortised.
+  ### Already done — do not re-open
+
+  - [x] ⛔**Mode-0 rebase underflow — FIXED `ccf5505`, and the impact claim was REFUTED.** Every review
+    round lists this as outstanding Tier-1 work; it landed 2026-08-17. ⚠And it fixed no pixels anyone
+    has seen: rebase counts are **bit-identical** before and after at 1e24, 1e26, 1e27 and 1e27.9 —
+    across the whole top of mode 0's range. Mode 2's version was severe for a different reason (it
+    flushed on *converting* a floatexp δ to f32, every iteration); mode 0's δ limbs are already f32, so
+    |δz| ≥ ~1e-38 by construction and the trigger fires after δz has grown past 1e-19.
+    ⚠**Do NOT apply the recommended form** ("compare unsquared, or use the mode-2 compare"): rewriting
+    the test unconditionally drifted **three determinism checks by ~99 iterations in 1.2M**. The shipped
+    fix is scoped to the degenerate `0 < 0` case only, with an exact 2^64 lift.
+  - [x] ⛔**Imagina location import — DONE `ce08da9`.** `--import-imagina` + `parse_imagina_text`, text
+    variant. Binary `.im` refused by magic (`FF 49 4D 50 56 0D 0A 00`) with a re-save hint, because its
+    payload needs `HRReal`'s layout + GMP `mpf` raw streams and a guessed binary parser imports a
+    plausible WRONG location silently. **Imagina's `Size` is a HALF-HEIGHT ⇒ magnification = 2/Size** —
+    the one inferred quantity, pinned by a test. ⚠The premise was partly wrong: we do NOT validate
+    against Fraktaler-3 only. The `Bignum oracle` group is an independent arbitrary-precision CPU
+    arbiter and is what settled the AMD df32-vs-floatexp question. Imagina is a *third* opinion.
+  - [x] ⛔**"Make the BLA orbit-end guard local" — the premise is wrong; we are already guarded.**
+    Claimed as Tier-1 one-liner on the grounds that our safety "rests on three non-local invariants".
+    Verified otherwise: `mandelbrot.wgsl:844-857` already carries a **local** rebase at the BLA landing
+    (deliberately, documented against corpus-15's dendrites), and `ref_n + span >= orbit_len` at :813
+    keeps the landing index valid. The orbit-end sub-case leans on the full-step trigger's
+    `|| ref_n + 1u >= iu.orbit_len`, which *does* run before anything reads `reference[ref_n+1]`.
+    Adding the recommended condition would rebase a step EARLIER than today ⇒ behaviour change ⇒ full
+    gate cost for no known defect. ✅Their `BLAKernels.cuh` shipping this as acknowledged UB is still
+    useful: independent evidence the hazard class is real, which is why the local guard stays.
+
+  ### Tier 1 — corrections and cheap wins
+
+  - [ ] ⭐**T1a. Make `BLA_EPS` `--set`-overridable, THEN run the ε A/B.** Reviews recommend tightening
+    ~2⁻²⁰ → 2⁻²⁴ (Imagina's `LAThresholdScale`, from the author who is simultaneously the speed and
+    accuracy reference). ⭐**Blocker they could not know: `BLA_EPS` is a plain `const`, not in the
+    `--set` set** (only the 12 frame-cost constants route through `tunables::cost()`), so the "cheap
+    A/B" is a rebuild per value today. Making it overridable is ~5 lines, changes nothing at stock
+    settings, and `--selftest` already fails under any override so no gate can be quoted off-stock.
+    **This is the best first move on the whole list**: highest information per unit risk.
+  - [ ] **T1b. Chebyshev norms in the hot radius tests** (`max(|re|,|im|)` for `fe_abs_sf`). ⚠Reviews
+    call this "zero accuracy cost" and hours of work. Accuracy, yes; **pixels, no** — it needs ε
+    rescaled by √2 at build time, which changes the radii, which changes skip decisions, which puts 17
+    goldens + the 20-point F3 corpus + the 24-checkpoint livetest in play. Do it WITH T2a so one
+    re-bless covers both.
+
+  ### Tier 2 — the substantive adoptions (quarter-scale, sequence matters)
+
+  - [ ] ⭐**T2a. Derive BLA level-0 in-shader.** `a = 2Z_n`, `b = one`, `r = |2Z_n|·eps`, `span = 1`, all
+    from the orbit sample (`reference.rs:600-620`). Dropping level 0 from the UPLOAD (keep it CPU-side
+    for the merge) takes the memory factor 9 → ~5, i.e. cap ~928k → ~1.6M at the same binding grant —
+    direct relief for the e2100 wall. ⚠Two things the early reviews missed (the latest one now says
+    "days", which is right): level-0 nodes ALSO carry `agg_trap`/`agg_tia`/`agg_stripe`, needing
+    `Z_{n+1}` plus `atan2`/`sin` and `pow` in-shader; and the CPU builds `r` in **f64** via `sample_xy`,
+    so deriving it in df32 will not match those bits ⇒ skip decisions change ⇒ pixels change. Gate it as
+    "prove identical, or re-bless with evidence".
+  - [ ] **T2b. Per-level precision demotion** (Imagina's `ConvertStageToDouble` transposed): levels whose
+    merged radius fits f32 range store exponent-free nodes and skip `fe_norm` traffic in the hot path.
+    CONFIRMED we have no analog — every node carries exponents at every level. Folds naturally into T2a;
+    together they take the tree toward ~3–4× orbit memory with faster traversal.
+  - [ ] ⭐⭐**T2c. Restructure the acceleration table along MipLA lines** — the converged recommendation of
+    all three review rounds, and the item that *dissolves* the orbit-length wall instead of negotiating
+    with it. One node per detected period per stage instead of our exhaustive per-step tree: hundreds of
+    nodes where ours needs millions, at exactly the deep settled views where our tree is both largest
+    and least effective per byte. ⭐**Imagina 2's `MipLA` module is nearly a specification** for
+    upgrading `bla_merge` in place — our tree's shape, LA's node contents, with `ValidRadiusC` carried
+    separately for **per-pixel δc validity** instead of our worst-case-corner `dc_max` (pixels near the
+    reference are currently denied skips they could legitimately take). Sequence: dual thresholds first;
+    dip-driven stage construction second (our extended-range dip markers already ARE the MinMag signal
+    `PERIOD_DETECTION_METHOD2` keys on, so detection is nearly free, and we already have
+    `detect_period`/`find_nucleus`); the **AT** (attractor transformation — whole-period skips for
+    pixels within `ThresholdC`) third, which lands exactly on our Misiurewicz-spar pain case.
+    ⚠Read `HarmonicLLA`/`HarmonicMLA` before committing the stage design — possibly the successor
+    construction, but the reviewer's own read is low-confidence and the theory is undocumented.
+  - [ ] **T2d. Self-referential orbit compression for `refcache_persist`.** Imagina's scheme (perturb the
+    orbit against its own PREFIX, waypoint + rebase-bit + rebase-index list, emit only where the
+    self-perturbation drifts past a relative-error bound) is materially better than FractalShark's
+    re-iterate-from-waypoints version, because a deep near-periodic orbit is nearly self-similar.
+    ⭐**Imagina 2's `PTWithCompression` is a clean ~100-line reference** — use it rather than the
+    uncommented old evaluator. The rebase bit is load-bearing; carry it. ⚠**NOT the "low-risk item to
+    take first"**, contrary to two review rounds: compression carries a controlled *error*, so a loaded
+    cache stops matching a freshly built reference — the same identity argument as T2a. Defer the GPU
+    runtime-decompression variant (no f64 in WGSL ⇒ df32 reconstruction ⇒ tighter threshold, denser
+    waypoints, uncertain net).
+
+  ### Tier 3 — moonshot, spike before committing
+
+  - [ ] ⭐⭐**T3. Julia-mipmap early termination** (Imagina's renormalization trick): once a pixel's tail
+    dynamics reduce to sampling a precomputed, |z|-mipmapped Julia structure, stop iterating and take a
+    texture fetch, LOD-selected by |dzdc|·PixelScale. Near a minibrot every pixel's tail is the same
+    quasi-conformal pattern — compute once, finish millions of pixels. Largest potential constant-factor
+    win at deep minibrot holds and **unusually GPU-friendly for us**: the mipmap is literally a texture,
+    sampling belongs in a fragment shader, and we already carry the floatexp `D` per pixel for DE
+    lighting, which is exactly the LOD input. ⭐**Extra argument for it: those are the same frames the
+    budget controller currently spends seconds tiling — the regime that produced BOTH device losses. So
+    the payoff is safety, not only speed.** ⚠Least documented item on the list (the code is the only
+    spec) and the reviewer read validity predicates rather than deriving correctness; the blend band is
+    where that bites. Time-box a feasibility spike on settled mode-2 Mandelbrot holds.
+
+  ### Extracted from the "declined" list — actually worth doing
+
+  - [ ] ⭐**Runtime EFT / fused-fma capability probe that derates mode thresholds.** Buried in a
+    CUDA-migration rebuttal but it is a real item, and it is OURS already in spirit: we have measured
+    that all three NVIDIA Windows backends fold the error-free transforms while AMD Vulkan/GL preserve
+    them, and the standing conclusion was **detect the capability, do not build vendor tuning tables**.
+    `--gputest` already computes exactly this verdict headlessly — promote it to a startup probe that
+    adjusts `PERT_FE_THRESHOLD` (and would gate a future Metal/iOS path). Ties directly to the AMD
+    finding that df32-vs-floatexp diverges at mode 0's ceiling only where the EFTs survive.
+  - [ ] **Exponential-map EXR export for the zoomasm pipeline** — low effort, and it plugs into the
+    zoom-video community that overlaps our announce audience. Not previously tracked.
+  - [ ] Informational: watch `ImaginaFractal`'s module ABI. If Imagina 2 lands as a platform, interop
+    shifts from file formats to component interfaces.
+
+  ### Declined, for the record
+
+  - CUDA migration (the wins above are API-agnostic; CUDA buys guaranteed FMA and big buffers at the
+    cost of portability — the capability probe above is the cheap half of that benefit).
+  - NTT GPU high-precision reference (CUDA-specific, needs u64/warp primitives WGSL lacks, pays only
+    past ~e10000).
+  - Per-sample glitch flags (our rebasing-live / multi-ref-export split is cleaner).
+  - The x86 JIT and Imagina's SIMD lane machinery (`VecGather*`/`VecResetIf` — not expressible in WGSL;
+    worth knowing the divergence phenomenon has a name when profiling boundary-heavy views), and
+    `ReservedMemoryArray` (`Vec::reserve` + OS overcommit approximates it).
+  - Templated `IterType` u32/u64: our 10M cap is a deliberate live-path safety policy, and it is
+    compression + LA that makes the extreme-period regime affordable, not integer width.
+  ⚠**Two recommendations reference context not in this repo** — a "Tier-1 formula DSL we discussed" and
+  an "iOS question"/"iOS memory enabler". Neither is recorded anywhere here; if they are real
+  commitments they need writing down before they can be sequenced against the above.
 
 - [ ] 🟠**MISSING TOOL: there is no unpaced harness that drives the frame-cost controller, so the
   device-loss class cannot be reproduced automatically.** Established 2026-08-17 after twelve scripted
