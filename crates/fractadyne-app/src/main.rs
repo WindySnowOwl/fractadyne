@@ -3544,8 +3544,38 @@ impl FractadyneApp {
             center_y: fractadyne_core::to_f64(&self.viewport.center_y),
             center_x_str: fractadyne_core::to_decimal_string(&self.viewport.center_x),
             center_y_str: fractadyne_core::to_decimal_string(&self.viewport.center_y),
-            units_per_pixel: self.viewport.units_per_pixel.m,
-            units_per_pixel_e: self.viewport.units_per_pixel.e,
+            // ⚠NEVER PERSIST A NON-FINITE ZOOM, and shout when we nearly did. This is the other half
+            // of `restored_units_per_pixel`: that guard stops a poisoned session from being LOADED,
+            // this one stops it being WRITTEN, so a single bad frame cannot outlive the process.
+            //
+            // It is also the diagnostic. The 2026-08-18 field case (a NaN zoom that opened to a
+            // black screen and selected the most expensive arithmetic mode) is unreproduced, and its
+            // poisoned session was overwritten before it could be read — so the origin is still
+            // unknown. `FloatExp::norm` passes a non-finite mantissa straight through, so once a NaN
+            // exists anywhere it flows silently through every FloatExp operation and the first place
+            // anyone notices is a black screen next launch. This logs at the moment of creation
+            // instead, which is what will actually identify the source.
+            units_per_pixel: if self.viewport.units_per_pixel.m.is_finite()
+                && self.viewport.units_per_pixel.m != 0.0
+            {
+                self.viewport.units_per_pixel.m
+            } else {
+                diag::log_line(
+                    "start",
+                    &format!(
+                        "REFUSING to persist a non-finite zoom (mantissa={}, exp={}) — saving the default view instead. This is a live bug: the viewport held an unusable magnification.",
+                        self.viewport.units_per_pixel.m, self.viewport.units_per_pixel.e
+                    ),
+                );
+                Viewport::new(1280.0, 720.0).units_per_pixel.m
+            },
+            units_per_pixel_e: if self.viewport.units_per_pixel.m.is_finite()
+                && self.viewport.units_per_pixel.m != 0.0
+            {
+                self.viewport.units_per_pixel.e
+            } else {
+                Viewport::new(1280.0, 720.0).units_per_pixel.e
+            },
             max_iter: self.render_cfg.max_iter,
             auto_iter: self.render_cfg.auto_iter,
             palette_idx: self.coloring.palette_idx,
