@@ -21,19 +21,40 @@ impl FractadyneApp {
                 ui.separator();
                 // Scroll the sections when they don't fit the window height (header stays pinned).
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                // Per-fractal info: formula, background, reference link.
-                let info = self.fractal.info();
-                egui::CollapsingHeader::new(self.fractal.name())
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        ui.monospace(info.formula);
-                        ui.add_space(4.0);
-                        ui.label(info.about);
-                        ui.add_space(4.0);
-                        ui.hyperlink_to("Reference \u{2197}", info.reference);
-                    });
-                ui.separator();
 
+                egui::CollapsingHeader::new("Navigate").default_open(true).show(ui, |ui| {
+                ui.add(
+                    egui::Slider::new(&mut self.render_cfg.zoom_rate, 0.25..=4.0)
+                        .text("Zoom speed")
+                        .suffix("×")
+                        .logarithmic(true),
+                )
+                .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
+
+                // Click-to-zoom tool: arm a click to dive into the point by a fixed factor. Off by
+                // default; drag still pans and Shift/right-drag still box-zoom. Single view only.
+                ui.checkbox(&mut self.click_zoom, "Click to zoom")
+                    .on_hover_text(
+                        "When on, a left-click in the view dives in by the factor below \
+                         (right-click backs out), recentered on the clicked point. Drag still pans; \
+                         Shift+drag / right-drag still box-zoom. Backspace undoes a click. \
+                         Single view only.",
+                    );
+                ui.add_enabled_ui(self.click_zoom, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("    Factor");
+                        for f in [2.0_f32, 4.0, 10.0, 50.0, 100.0] {
+                            ui.selectable_value(
+                                &mut self.render_cfg.click_zoom_factor,
+                                f,
+                                format!("{f:.0}×"),
+                            );
+                        }
+                    });
+                });
+
+
+                });
                 egui::CollapsingHeader::new("Coloring").default_open(true).show(ui, |ui| {
                 egui::ComboBox::from_label("Method")
                     .selected_text(self.coloring.color_method.label())
@@ -169,6 +190,73 @@ impl FractadyneApp {
                     self.anim.random_palette.reshuffle();
                 }
                 });
+                egui::CollapsingHeader::new("Quality").default_open(true).show(ui, |ui| {
+                ui.checkbox(&mut self.render_cfg.auto_iter, "Auto-scale iterations with zoom");
+                let label = if self.render_cfg.auto_iter { "Iterations (base)" } else { "Iterations" };
+                ui.add(
+                    egui::Slider::new(&mut self.render_cfg.max_iter, 64..=crate::MAX_ITER_LIMIT)
+                        .logarithmic(true)
+                        .text(label),
+                )
+                .on_hover_text(
+                    "Base iteration count. With Auto-scale on, the effective count climbs \
+                     with zoom depth. While you're moving, the preview caps iterations low \
+                     (50,000) for responsiveness, then sharpens to the full count when the \
+                     view settles — so deep edges look smooth during motion and resolve when \
+                     you stop.",
+                );
+                // Detail note: the coarse count only applies while moving. If the view is
+                // settled and still resolution-limited (huge window at extreme depth), an
+                // export renders at full resolution — otherwise the settled preview already
+                // matches it. Show the current effective (settled) count so the user knows
+                // the true detail level once motion stops.
+                let log2mag = self.viewport.log2_magnification();
+                let want_iter = if self.render_cfg.auto_iter {
+                    self.viewport.recommended_max_iter(self.render_cfg.max_iter)
+                } else {
+                    self.render_cfg.max_iter
+                };
+                let settled_iter =
+                    want_iter.min(crate::MAX_ITER_LIMIT).min(zoom_iter_cap(log2mag).max(256));
+                let px = (self.viewport.width_px * self.viewport.height_px).max(1.0) as u64;
+                let res_limited = px.saturating_mul(settled_iter.max(1) as u64)
+                    > self.effective_work_budget().saturating_mul(6);
+                if res_limited {
+                    let accent = theme::ui_accent(ui.ctx());
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "⚠ At this depth the settled preview renders {} iterations at \
+                             reduced resolution to stay responsive. Export for full-resolution \
+                             detail.",
+                            commas(&settled_iter.to_string()),
+                        ))
+                        .small()
+                        .color(accent),
+                    );
+                }
+                ui.separator();
+                egui::ComboBox::from_label("Anti-alias")
+                    .selected_text(match self.render_cfg.aa {
+                        1 => "Off",
+                        2 => "2×",
+                        3 => "3×",
+                        4 => "4×",
+                        _ => "8×",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.render_cfg.aa, 1, "Off");
+                        ui.selectable_value(&mut self.render_cfg.aa, 2, "2×");
+                        ui.selectable_value(&mut self.render_cfg.aa, 3, "3×");
+                        ui.selectable_value(&mut self.render_cfg.aa, 4, "4×");
+                        ui.selectable_value(&mut self.render_cfg.aa, 8, "8×");
+                    })
+                    .response
+                    .on_hover_text(
+                        "Supersampling for still images (applied when the view settles). \
+                         Higher tames the fine exterior 'dust' at the cost of render time.",
+                    );
+
+                });
                 egui::CollapsingHeader::new("Effects").default_open(false).show(ui, |ui| {
                 ui.checkbox(&mut self.effects.light, "3D relief lighting")
                     .on_hover_text(
@@ -235,73 +323,14 @@ impl FractadyneApp {
                      depth. Click it to jump to a region.",
                 );
                 });
-                egui::CollapsingHeader::new("Rendering").default_open(true).show(ui, |ui| {
-                ui.checkbox(&mut self.render_cfg.auto_iter, "Auto-scale iterations with zoom");
-                let label = if self.render_cfg.auto_iter { "Iterations (base)" } else { "Iterations" };
-                ui.add(
-                    egui::Slider::new(&mut self.render_cfg.max_iter, 64..=crate::MAX_ITER_LIMIT)
-                        .logarithmic(true)
-                        .text(label),
-                )
-                .on_hover_text(
-                    "Base iteration count. With Auto-scale on, the effective count climbs \
-                     with zoom depth. While you're moving, the preview caps iterations low \
-                     (50,000) for responsiveness, then sharpens to the full count when the \
-                     view settles — so deep edges look smooth during motion and resolve when \
-                     you stop.",
-                );
-                // Detail note: the coarse count only applies while moving. If the view is
-                // settled and still resolution-limited (huge window at extreme depth), an
-                // export renders at full resolution — otherwise the settled preview already
-                // matches it. Show the current effective (settled) count so the user knows
-                // the true detail level once motion stops.
-                let log2mag = self.viewport.log2_magnification();
-                let want_iter = if self.render_cfg.auto_iter {
-                    self.viewport.recommended_max_iter(self.render_cfg.max_iter)
-                } else {
-                    self.render_cfg.max_iter
-                };
-                let settled_iter =
-                    want_iter.min(crate::MAX_ITER_LIMIT).min(zoom_iter_cap(log2mag).max(256));
-                let px = (self.viewport.width_px * self.viewport.height_px).max(1.0) as u64;
-                let res_limited = px.saturating_mul(settled_iter.max(1) as u64)
-                    > self.effective_work_budget().saturating_mul(6);
-                if res_limited {
-                    let accent = theme::ui_accent(ui.ctx());
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "⚠ At this depth the settled preview renders {} iterations at \
-                             reduced resolution to stay responsive. Export for full-resolution \
-                             detail.",
-                            commas(&settled_iter.to_string()),
-                        ))
-                        .small()
-                        .color(accent),
-                    );
-                }
-                ui.separator();
-                egui::ComboBox::from_label("Anti-alias")
-                    .selected_text(match self.render_cfg.aa {
-                        1 => "Off",
-                        2 => "2×",
-                        3 => "3×",
-                        4 => "4×",
-                        _ => "8×",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.render_cfg.aa, 1, "Off");
-                        ui.selectable_value(&mut self.render_cfg.aa, 2, "2×");
-                        ui.selectable_value(&mut self.render_cfg.aa, 3, "3×");
-                        ui.selectable_value(&mut self.render_cfg.aa, 4, "4×");
-                        ui.selectable_value(&mut self.render_cfg.aa, 8, "8×");
-                    })
-                    .response
-                    .on_hover_text(
-                        "Supersampling for still images (applied when the view settles). \
-                         Higher tames the fine exterior 'dust' at the cost of render time.",
-                    );
-                ui.separator();
-                ui.label(egui::RichText::new("Accelerators (advanced)").weak().small());
+                // ADVANCED, closed by default. Everything a first-time user should not meet
+                // while looking for how to zoom: the accelerators (whose names - BLA, series
+                // approximation, glitch correction - mean nothing without the theory) and the
+                // performance-tuning sliders that used to sit inside Navigation. "Live render
+                // budget" and "Min motion resolution" are arguably MORE obscure than BLA: BLA can
+                // be ignored safely, whereas a mis-set budget changes behaviour with no clue why.
+                egui::CollapsingHeader::new("Advanced").default_open(false).show(ui, |ui| {
+                ui.label(egui::RichText::new("Accelerators").weak().small());
                 ui.checkbox(&mut self.render_cfg.use_bla, "BLA acceleration (deep zoom)")
                     .on_hover_text(
                         "Bilinear approximation: skip iterations throughout the orbit at extreme \
@@ -322,39 +351,8 @@ impl FractadyneApp {
                          references until clean. On by default. Exports up to ~32 MP (non-aux \
                          coloring); larger images and the live view use the plain path.",
                     );
-
-                });
-                egui::CollapsingHeader::new("Navigation").default_open(true).show(ui, |ui| {
-                ui.add(
-                    egui::Slider::new(&mut self.render_cfg.zoom_rate, 0.25..=4.0)
-                        .text("Zoom speed")
-                        .suffix("×")
-                        .logarithmic(true),
-                )
-                .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
-
-                // Click-to-zoom tool: arm a click to dive into the point by a fixed factor. Off by
-                // default; drag still pans and Shift/right-drag still box-zoom. Single view only.
-                ui.checkbox(&mut self.click_zoom, "Click to zoom")
-                    .on_hover_text(
-                        "When on, a left-click in the view dives in by the factor below \
-                         (right-click backs out), recentered on the clicked point. Drag still pans; \
-                         Shift+drag / right-drag still box-zoom. Backspace undoes a click. \
-                         Single view only.",
-                    );
-                ui.add_enabled_ui(self.click_zoom, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("    Factor");
-                        for f in [2.0_f32, 4.0, 10.0, 50.0, 100.0] {
-                            ui.selectable_value(
-                                &mut self.render_cfg.click_zoom_factor,
-                                f,
-                                format!("{f:.0}×"),
-                            );
-                        }
-                    });
-                });
-
+                ui.separator();
+                ui.label(egui::RichText::new("Performance tuning").weak().small());
                 // Auto-zoom (autopilot) dive limit, edited in decimal orders (1eN×) but stored as log2.
                 let mut dive_log10 = self.autopilot.dive_log2 / std::f64::consts::LOG2_10;
                 if ui
@@ -418,8 +416,22 @@ impl FractadyneApp {
                          coarser). Shallow views (direct mode) always render live — they are \
                          cheap and sharp every frame either way.",
                     );
-
                 });
+                // Per-fractal info, LAST and closed by default: it is reference material, not a
+                // control, and it was previously the panel's top section - the most valuable space in
+                // the panel spent on something read once. Its header was also `self.fractal.name()`,
+                // i.e. literally "Mandelbrot", which reads as a formula SELECTOR next to the toolbar
+                // dropdown that actually is one.
+                let info = self.fractal.info();
+                egui::CollapsingHeader::new(format!("About {}", self.fractal.name()))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.monospace(info.formula);
+                        ui.add_space(4.0);
+                        ui.label(info.about);
+                        ui.add_space(4.0);
+                        ui.hyperlink_to("Reference \u{2197}", info.reference);
+                    });
                 // Performance section, docked at the bottom of this same panel
                 // (toggle via the Perf button or the View menu).
                 if self.perf.enabled {
