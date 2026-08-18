@@ -3411,6 +3411,19 @@ impl FractadyneApp {
                 Err(e) => eprintln!("--import-kfr: {e}"),
             }
         }
+        // `--import-imagina FILE`: same, for an Imagina TEXT location. A second independent
+        // implementation to cross-check the validation corpus against — we otherwise compare only
+        // to Fraktaler-3 (and to our own arbitrary-precision CPU oracle).
+        if let Some(p) = args
+            .iter()
+            .position(|a| a == "--import-imagina")
+            .and_then(|i| args.get(i + 1))
+        {
+            match app.load_imagina_file(std::path::Path::new(p)) {
+                Ok(m) => println!("{m}"),
+                Err(e) => eprintln!("--import-imagina: {e}"),
+            }
+        }
         // Resume the deep-zoom reference saved from last session so the restored view renders
         // immediately instead of rebuilding the (up to ~10 s) bignum orbit+SA+BLA. Best-effort: only
         // when the snapshot's view-key exactly matches the view we just restored (centre + zoom
@@ -5352,6 +5365,44 @@ impl FractadyneApp {
         self.invalidate_refs();
         self.record_nav();
         Ok(format!("Imported .kfr location @ {}×", fmt_zoom(zoom)))
+    }
+
+    /// Load an **Imagina TEXT location** (`--import-imagina`). Mirrors `load_kfr_file`.
+    ///
+    /// The BINARY `.im` form is refused by its magic rather than parsed: its payload needs `HRReal`'s
+    /// layout and GMP `mpf` raw streams, which are not documented in the source available to read, and
+    /// a guessed binary parser is worse than none — it imports a plausible wrong location silently.
+    /// Telling the user to re-save as text is the honest outcome.
+    fn load_imagina_file(&mut self, path: &std::path::Path) -> Result<String, crate::error::AppError> {
+        use crate::error::AppError;
+        let meta = std::fs::metadata(path)?;
+        if meta.len() > 4_000_000 {
+            return Err(AppError::Message("file too large (not an Imagina location?)".into()));
+        }
+        let bytes = std::fs::read(path)?;
+        if bytes.starts_with(&fractadyne_core::IMAGINA_BINARY_MAGIC) {
+            return Err(AppError::Message(
+                "this is a BINARY Imagina .im file, which is not supported — re-save it from Imagina as a text location (File type: Imagina text) and import that"
+                    .into(),
+            ));
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        let v = fractadyne_core::parse_imagina_text(&text).ok_or_else(|| {
+            AppError::Parse("not a valid Imagina text location (need Location Size / Re / Im)".into())
+        })?;
+        let zoom = v.zoom;
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        if let Some(it) = v.iterations {
+            self.render_cfg.max_iter = it.clamp(64, MAX_ITER_LIMIT);
+            self.render_cfg.auto_iter = false;
+        }
+        self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
+        self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+        Ok(format!("Imported Imagina location @ {}×", fmt_zoom(zoom)))
     }
 
     /// Open the Share-location dialog, pre-filled with the current view as `.fdn` text.

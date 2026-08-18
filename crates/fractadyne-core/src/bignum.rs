@@ -461,6 +461,163 @@ pub fn parse_kfr(text: &str) -> Option<KfrView> {
     })
 }
 
+/// Parse an **Imagina TEXT location** (`FileType::ImaginaText` in Imagina's `File.cpp`) into a
+/// [`KfrView`], so Imagina locations can be imported the same way `.kfr` ones are.
+///
+/// Format, from Imagina's own writer: an indented hierarchy of `Key: value`, with a `Location`
+/// block carrying `Size`, `Re`, `Im` and `Iterations`, plus a top-level `Formula`. Keys are matched
+/// on their LAST path component so both the flat (`Location.Re:`) and indented (`Location:` then
+/// `Re:`) spellings work — the writer emits the nested form, but hand-edited and tool-generated
+/// files in the wild use the dotted one.
+///
+/// ⚠**`Size` is a HALF-HEIGHT, so magnification = 2/Size.** Imagina's binary header calls the same
+/// quantity `HalfH`, and our magnification is `REFERENCE_HEIGHT (4) / view_height`, so
+/// `4 / (2·Size)`. That is the one inferred quantity here — the field's semantics are not stated in
+/// the text format itself — and it is pinned by a test below precisely so a correction is a
+/// one-constant change rather than an archaeology exercise.
+///
+/// The **binary** `.im` format is deliberately NOT handled: its payload needs `HRReal`'s layout and
+/// GMP `mpf` raw streams, neither of which is documented in the source we can read, and guessing at
+/// a binary layout produces an importer that looks like it works. Callers should refuse it by its
+/// magic (`0x000A0D56504D49FF`, i.e. the bytes `FF 49 4D 50 56 0D 0A 00`) with a clear message.
+///
+/// Hardened exactly as [`parse_kfr`] is: bounded size and value lengths, an allow-list of keys
+/// (no formulas-as-code, no paths), the centre validated through [`parse_bf`], and clamped
+/// zoom/iterations. Returns `None` unless a valid `Re`, `Im` and `Size` are present.
+pub fn parse_imagina_text(text: &str) -> Option<KfrView> {
+    if text.len() > 4_000_000 {
+        return None;
+    }
+    let (mut re, mut im, mut size, mut iters) = (None, None, None, None);
+    for line in text.lines().take(20_000) {
+        let Some((key, val)) = line.split_once(':') else {
+            continue;
+        };
+        let (key, val) = (key.trim(), val.trim());
+        if val.len() > 100_000 || val.is_empty() {
+            continue;
+        }
+        // Match the last dotted component so `Location.Re` and a nested `Re` both land.
+        let leaf = key.rsplit('.').next().unwrap_or(key).trim();
+        if leaf.eq_ignore_ascii_case("Re") {
+            re = Some(val);
+        } else if leaf.eq_ignore_ascii_case("Im") {
+            im = Some(val);
+        } else if leaf.eq_ignore_ascii_case("Size") {
+            // HRReal prints as a plain decimal or with an exponent; both parse as f64 here, and a
+            // value past f64 range is out of our viewport's reach anyway.
+            size = val.parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0);
+        } else if leaf.eq_ignore_ascii_case("Iterations") {
+            iters = val.parse::<u64>().ok().map(|v| v.min(1_000_000) as u32);
+        }
+        // every other key, `Formula` included, is ignored by design
+    }
+    let size = size?;
+    let zoom = (2.0 / size).clamp(1.0, 1.0e300);
+    Some(KfrView { cx: parse_bf(re?)?, cy: parse_bf(im?)?, zoom, iterations: iters })
+}
+
+/// The Imagina BINARY signature, so callers can refuse a `.im` file with a useful message instead
+/// of parsing its bytes as text and silently importing nothing.
+pub const IMAGINA_BINARY_MAGIC: [u8; 8] = [0xFF, 0x49, 0x4D, 0x50, 0x56, 0x0D, 0x0A, 0x00];
+
+#[cfg(test)]
+mod imagina_tests {
+    use super::{parse_imagina_text, to_f64, IMAGINA_BINARY_MAGIC};
+
+    #[test]
+    fn the_nested_form_imagina_writes_is_parsed() {
+        let t = "Formula: Mandelbrot
+Location:
+	Size: 2e-30
+	Re: -0.75
+	Im: 0.1
+	Iterations: 25000
+";
+        let v = parse_imagina_text(t).expect("nested form must parse");
+        assert!((to_f64(&v.cx) + 0.75).abs() < 1e-12);
+        assert!((to_f64(&v.cy) - 0.1).abs() < 1e-12);
+        assert_eq!(v.iterations, Some(25_000));
+        // Size is a half-height: mag = 2/Size = 1e30.
+        assert!((v.zoom / 1.0e30 - 1.0).abs() < 1e-9, "zoom was {}", v.zoom);
+    }
+
+    #[test]
+    fn the_dotted_form_is_parsed_identically() {
+        let nested = "Location:
+  Size: 4
+  Re: -0.5
+  Im: 0
+";
+        let dotted = "Location.Size: 4
+Location.Re: -0.5
+Location.Im: 0
+";
+        let a = parse_imagina_text(nested).expect("nested");
+        let b = parse_imagina_text(dotted).expect("dotted");
+        assert_eq!(a.zoom, b.zoom);
+        assert_eq!(to_f64(&a.cx), to_f64(&b.cx));
+    }
+
+    #[test]
+    fn a_full_precision_centre_survives_verbatim() {
+        // The whole point of importing: deep centres are long, and truncating one silently moves
+        // the view. 139 digits, the length our own session files already carry.
+        let re = "-0.101096363845622131810062384757351929938361014185318540959576769264716835033666295089126713641250096615102645646890476648163450651052568";
+        let t = format!("Location:
+ Size: 1e-100
+ Re: {re}
+ Im: 0.5
+");
+        let v = parse_imagina_text(&t).expect("deep centre must parse");
+        let round = crate::to_decimal_string(&v.cx);
+        assert!(round.starts_with("-1.0109636384562213181006238475735192993836101418531854095957676926471683503366629508912671364125"),
+            "precision lost on import: {round}");
+    }
+
+    #[test]
+    fn junk_and_hostile_input_is_refused_not_guessed() {
+        assert!(parse_imagina_text("").is_none());
+        assert!(parse_imagina_text("Formula: Mandelbrot
+").is_none()); // no location
+        assert!(parse_imagina_text("Location:
+ Size: 0
+ Re: 0
+ Im: 0
+").is_none()); // zero size
+        assert!(parse_imagina_text("Location:
+ Size: -1
+ Re: 0
+ Im: 0
+").is_none());
+        assert!(parse_imagina_text("Location:
+ Size: nan
+ Re: 0
+ Im: 0
+").is_none());
+        assert!(parse_imagina_text("Location:
+ Size: 1
+ Re: not-a-number
+ Im: 0
+").is_none());
+        // A binary .im must not be coaxed into a text parse.
+        assert_eq!(IMAGINA_BINARY_MAGIC[0], 0xFF);
+        assert_eq!(&IMAGINA_BINARY_MAGIC[1..5], b"IMPV");
+    }
+
+    #[test]
+    fn a_shallow_location_clamps_rather_than_inverting() {
+        // Size larger than the whole set: mag would fall below 1, which our viewport treats as the
+        // home view. Clamp, never produce a sub-1 or negative magnification.
+        let v = parse_imagina_text("Location:
+ Size: 1e6
+ Re: 0
+ Im: 0
+").expect("parses");
+        assert_eq!(v.zoom, 1.0);
+    }
+}
+
 /// Mantissa bits needed to position sub-pixel at the given magnification (+ guard).
 ///
 /// Note: `mag` is `f64`, so this saturates near `1e308×` (and the viewport's `f64`

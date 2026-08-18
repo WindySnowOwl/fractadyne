@@ -454,6 +454,80 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] 🟢**FractalShark comparison — items worth taking (2026-08-18).** Source:
+  `mattsaccount364/FractalShark` (CUDA/NVIDIA/Mandelbrot-only research vehicle) vs ours (wgpu, 10
+  formulas, portable). ⭐**Independent convergence worth recording:** their `HDRFloat<CudaDblflt>` /
+  `HDRFloatComplex` is a 2×32 mantissa pair with ONE shared `i32` exponent — structurally identical
+  to our `Fe { m: Cdf, e: i32 }`. Two projects arriving there separately is mutual validation of the
+  representation choice.
+  ⭐**Every claim below was VERIFIED against our code before ranking** — the ×9 factor, the level-0
+  layout and the uncompressed cache all confirmed; two claims were mis-scoped, noted inline.
+
+  - [ ] ⭐**1. Derive BLA level-0 in-shader — the orbit-cap win.** CONFIRMED: `render.rs:369` is
+    literally `(limit / 16 / 9)` = 16 B orbit sample + 128 B tree (~2×orbit_len nodes × 64 B), so the
+    tree IS the orbit-length wall. And level 0 is fully derivable from the orbit sample
+    (`reference.rs:600-620`: `a = 2Z_n`, `b = one`, `r = |2Z_n|·eps`, `span = 1`). Dropping level 0
+    from the UPLOAD (keep it CPU-side for the merge) takes the factor 9 → ~5, i.e. cap ~928k → ~1.6M
+    at the same binding grant — direct relief for the e2100 wall.
+    ⚠**The analysis called this "immediate, small". It is not, and the reason generalises.** (a) It
+    omits that level-0 nodes ALSO carry `agg_trap`/`agg_tia`/`agg_stripe`, which need `Z_{n+1}` plus
+    `atan2`/`sin` (stripe) and `pow` (TIA) in-shader. (b) The CPU builds `r` in **f64** via
+    `sample_xy`; deriving it in df32/floatexp will NOT match those bits, so skip decisions change ⇒
+    pixels change ⇒ 17 goldens + the 20-point F3 corpus + the 24-checkpoint livetest are all in play.
+    The code is small; the identity argument is the work. Gate it as "prove identical, or re-bless
+    with evidence" — not as a patch.
+  - [ ] **2. Period-aware LA (LAv2-style) as a second acceleration structure.** Where they are
+    genuinely better: one LA node per detected period per stage instead of our per-step tree, so a
+    periodic location needs hundreds of nodes where ours needs millions. We already have
+    `detect_period`/`find_nucleus`, and our extended-range dip markers ARE the MinMag period signal
+    their detection uses, so detection is nearly free; `bla_merge` is already the right composition
+    algebra. Their `AT` (attractor transformation — skips whole periods for pixels within
+    `ThresholdC`) is the highest-value second step and lands exactly on our Misiurewicz-spar pain
+    case. Also: they test a per-pixel δc threshold at stage entry, where our `bla_merge` bakes the
+    worst-case corner `dc_max` into the merged radius, so pixels near the reference are denied skips
+    they could legitimately take. Large port; the memory win concentrates exactly where our tree is
+    both largest and least effective per byte.
+  - [ ] **3. Waypoint compression for the reference cache (Zhuoran's scheme).** Store a new waypoint
+    only when `|ẑ − Z_n|²·10^errExp ≥ |Z_n|²`, re-iterating in the low-precision type between them.
+    CONFIRMED our `refcache_persist` is uncompressed. ⚠The analysis calls the disk variant
+    "unambiguous" — it is not: compression carries a controlled ERROR, so a loaded cache would no
+    longer match a freshly built reference, needing the same identity argument as item 1. The GPU
+    variant is worse for us than for them (no f64 in WGSL ⇒ df32 reconstruction ⇒ tighter error
+    threshold, denser waypoints).
+  - [ ] **4. Possibly retire the extended-range dip marker for per-sample exponents.** They store an
+    exponent per sample, so near-zero dips need no special encoding and keep full mantissa precision.
+    Ours trades a ~24-bit dip cliff for 16 B/sample. Uniform `(re_hi, re_lo, im_hi, im_lo)` + a packed
+    exponent buffer costs +25% memory and deletes the special case from `pack_sample` / `orbit_fe` /
+    `orbit_cdf` / `sample_xy` / the BLA builder. Interacts with item 1 — decide after it, since 1 is
+    what relieves the memory pressure.
+  - [ ] **5. Chebyshev norms in the hot radius tests** — `max(|re|,|im|)` instead of a `sqrt` via
+    `fe_abs_sf`. ⚠Also NOT "free": it explicitly needs ε rescaled by √2 at build time, which changes
+    the radii, which changes skip decisions — the same gate cost as item 1 for a much smaller payoff.
+    Do it WITH item 1 if at all, so one re-bless covers both.
+  - [x] **6. Imagina location import — DONE 2026-08-18.** `--import-imagina` + `parse_imagina_text`.
+    ⚠The premise was partly wrong: we do NOT validate against Fraktaler-3 only — the `Bignum oracle`
+    group is an independent arbitrary-precision CPU arbiter, and it is what settled the AMD
+    df32-vs-floatexp question. Imagina is a third opinion, not a second.
+    ⚠Text format only. The binary `.im` needs `HRReal`'s layout + GMP `mpf` raw streams, neither
+    documented in the readable source, so it is refused by its magic (`FF 49 4D 50 56 0D 0A 00`) with
+    a re-save hint rather than guessed at — a guessed binary parser imports a plausible WRONG location
+    silently. **Imagina's `Size` is a HALF-HEIGHT ⇒ magnification = 2/Size**: the one inferred
+    quantity, pinned by a unit test so a correction is one constant rather than archaeology.
+  - [ ] **Their acknowledged BLA bug is independent evidence for our hazard class.**
+    `BLAKernels.cuh` ships annotated known bugs including "the rebase guard runs too late ... add a
+    rebase check between BLA loop exit and the single-step perturbation". Our situation is BETTER than
+    the analysis states: `mandelbrot.wgsl:844-857` already carries a LOCAL rebase at the BLA landing
+    (documented against corpus-15's dendrites), and `ref_n + span >= orbit_len` at :813 keeps the
+    landing index valid. The orbit-end sub-case still leans on the full-step trigger's
+    `|| ref_n + 1u >= iu.orbit_len`, which does run before anything reads `reference[ref_n+1]`.
+    Making it fully local would rebase a step EARLIER than today ⇒ behaviour change ⇒ same gate cost.
+  - [ ] **Not porting:** their NTT GPU high-precision reference (CUDA-specific, needs u64 and warp
+    primitives WGSL lacks, only pays past ~10k digits) and templated `IterType` u32/u64 (our 10M cap
+    is a deliberate live-path safety policy — and it is compression+LA that makes the extreme-period
+    regime affordable, not integer width). Their cheap CPU trick — two dedicated threads squaring x²
+    and y² concurrently plus a coordinator — may be worth MEASURING for astro-float at the deepest
+    holds only, where per-step thread overhead is amortised.
+
 - [ ] 🟠**MISSING TOOL: there is no unpaced harness that drives the frame-cost controller, so the
   device-loss class cannot be reproduced automatically.** Established 2026-08-17 after twelve scripted
   `radeon-verify` phase-5 arms across two nights produced ZERO lethal readings while a human diving by
