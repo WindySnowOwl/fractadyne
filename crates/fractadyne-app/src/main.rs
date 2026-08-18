@@ -3015,7 +3015,13 @@ impl FractadyneApp {
                 Some(n) => Some(n),
                 None => Some(250_000),
             };
-            Some(autopilot::AutoDive::new(target, secs, iter))
+            // Default 1 Home cycle: the zoom-home glide is the part that stresses the controller
+            // (and the button that lost the device on 2026-08-18). `--autodive-home 0` dives only.
+            let homes = val("--autodive-home")
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(1)
+                .min(20);
+            Some(autopilot::AutoDive::new(target, secs, iter, homes))
         } else {
             None
         };

@@ -235,6 +235,36 @@ pub(crate) struct AutoDive {
     deepest_log10: f64,
     /// Has the explicit iteration count been applied yet? See `EXPLICIT_FROM_LOG10`.
     iter_applied: bool,
+    /// Remaining dive→Home cycles. **THE ZOOM-HOME GLIDE IS THE STRESS TEST**, and it took three
+    /// failed harness designs to see it.
+    ///
+    /// A monotonic dive cannot stress the frame-cost controller: measured on the RX 6800 XT, diving
+    /// to 1e150x produced a peak measured iterate of 36 ms against a 400 ms target, with frames
+    /// CPU-bound (body 200-639 ms against 1-2 ms of wait). The controller was STARVED, not stressed —
+    /// and a controller that only ever sees 36 ms frames never grows into danger. Smooth progressions
+    /// let it adapt continuously, which is it working correctly.
+    ///
+    /// Home is the opposite: one continuous sweep from extreme depth to 1x, crossing every mode
+    /// boundary while the budget is still calibrated for the deep regime. That is exactly the shape of
+    /// both field losses — `mode switch to 2: budget 8.31e10 -> bootstrap 2.45e8` followed by a frame
+    /// ALREADY SIZED by the old regime going out at 1.146e11 steps (405x over budget, 3040 ms), and
+    /// `bla_skip` collapsing 4,457,481 -> 9,343 so per-step cost jumped ~100x under a stale budget.
+    /// It is also literally the button that killed the device on 2026-08-18.
+    home_left: u32,
+    /// A Home glide is in flight (peaks during it are tracked separately — see `peak_home_ms`).
+    homing: bool,
+    homes_done: u32,
+    /// Peak measured iterate observed DURING a Home glide, so the report can say whether Home is
+    /// harder than the dive rather than leaving it to inference.
+    peak_home_ms: f64,
+    /// CURRENT depth, distinct from `deepest_log10`, which is a high-water mark.
+    ///
+    /// ⚠Using the high-water mark for the explicit-count switch broke multi-cycle runs: after a Home
+    /// glide the view is back at 1x but `deepest_log10` still reads 30, so the switch fired instantly
+    /// and the re-dive started at 1x with an explicit 250k — the all-interior case where the
+    /// autopilot's target search returns None and the dive dies on the spot. Measured: 2 cycles
+    /// requested, 1 completed, then a timeout doing nothing.
+    current_log10: f64,
 }
 
 /// Depth at which `--autodive` switches from auto-iter to its explicit iteration count.
@@ -249,7 +279,7 @@ pub(crate) struct AutoDive {
 const EXPLICIT_FROM_LOG10: f64 = 6.0;
 
 impl AutoDive {
-    pub(crate) fn new(target_log10: f64, timeout_s: f64, iter: Option<u32>) -> Self {
+    pub(crate) fn new(target_log10: f64, timeout_s: f64, iter: Option<u32>, home_cycles: u32) -> Self {
         Self {
             target_log10,
             timeout_s,
@@ -263,6 +293,11 @@ impl AutoDive {
             peak_ms: 0.0,
             deepest_log10: 0.0,
             iter_applied: false,
+            home_left: home_cycles,
+            homing: false,
+            homes_done: 0,
+            peak_home_ms: 0.0,
+            current_log10: 0.0,
         }
     }
 }
@@ -285,11 +320,17 @@ impl crate::FractadyneApp {
             if ms >= crate::tunables::cost().tdr_lethal_ms {
                 d.lethal += 1;
             }
+            if d.homing && ms > d.peak_home_ms {
+                d.peak_home_ms = ms;
+            }
             d.last_ms = ms;
         }
         let depth = self.viewport.log2_magnification() / LOG2_10;
-        if depth.is_finite() && depth > d.deepest_log10 {
-            d.deepest_log10 = depth;
+        if depth.is_finite() {
+            d.current_log10 = depth;
+            if depth > d.deepest_log10 {
+                d.deepest_log10 = depth;
+            }
         }
 
         if !d.armed {
@@ -321,26 +362,68 @@ impl crate::FractadyneApp {
         }
 
         // Switch to the explicit count once the dive has structure to aim at.
-        if d.armed && !d.iter_applied && d.deepest_log10 >= EXPLICIT_FROM_LOG10 {
+        if d.armed && !d.iter_applied && d.current_log10 >= EXPLICIT_FROM_LOG10 {
             if let Some(n) = d.iter {
                 self.render_cfg.max_iter = n.clamp(64, crate::MAX_ITER_LIMIT);
                 self.render_cfg.auto_iter = false;
                 crate::diag::log_line(
                     "autodive",
-                    &format!("1e{:.1}x reached — switching to explicit iter={n}", d.deepest_log10),
+                    &format!("1e{:.1}x reached — switching to explicit iter={n}", d.current_log10),
                 );
             }
             d.iter_applied = true;
         }
 
         let elapsed = d.t0.elapsed().as_secs_f64();
-        let finished = d.armed && !self.autopilot.active;
+        let dive_done = d.armed && !self.autopilot.active;
         let timed_out = elapsed >= d.timeout_s;
-        if finished || timed_out {
+
+        // ---- dive → Home cycling: the Home glide is the part that actually stresses the controller.
+        if !timed_out && d.homing {
+            if self.home_anim.is_none() {
+                d.homes_done += 1;
+                d.homing = false;
+                crate::diag::log_line(
+                    "autodive",
+                    &format!(
+                        "home glide {} complete (peak during home {:.1}ms)",
+                        d.homes_done, d.peak_home_ms
+                    ),
+                );
+                if d.home_left > 0 {
+                    // Re-dive. Back to auto-iter first: at 1x an explicit 250k makes the view
+                    // all-interior and the autopilot's target search returns None immediately (the
+                    // 1e0.8x non-dive). The explicit count re-lands at EXPLICIT_FROM_LOG10.
+                    self.render_cfg.auto_iter = true;
+                    d.iter_applied = false;
+                    self.autopilot.dive_log2 = d.target_log10 * LOG2_10;
+                    self.toggle_autopilot(ctx);
+                }
+            }
+            self.autodive = Some(d);
+            ctx.request_repaint();
+            return;
+        }
+        if !timed_out && dive_done && d.home_left > 0 {
+            d.home_left -= 1;
+            d.homing = true;
+            let now = ctx.input(|i| i.time);
+            crate::diag::log_line(
+                "autodive",
+                &format!("1e{:.1}x reached — ZOOM HOME (the stress test)", d.current_log10),
+            );
+            self.zoom_home(now);
+            self.autodive = Some(d);
+            ctx.request_repaint();
+            return;
+        }
+
+        if dive_done || timed_out {
             // ⚠Distinguish "reached the target" from "the autopilot quit on us". The first version
             // called any inactive autopilot a "dive limit reached", which reported success at 1e0.8x
             // against a 1e45 target — a verdict that lied in the direction of looking fine.
             let reached = d.deepest_log10 >= d.target_log10 - 0.5;
+            let _ = dive_done;
             let why = if timed_out {
                 "timeout"
             } else if reached {
@@ -372,9 +455,16 @@ impl crate::FractadyneApp {
             println!("  controller readings {}", d.readings);
             println!("  peak measured iterate {:.1}ms (lethal band >= {:.0}ms)",
                 d.peak_ms, crate::tunables::cost().tdr_lethal_ms);
+            println!("  home glides         {} (peak during home {:.1}ms)",
+                d.homes_done, d.peak_home_ms);
             println!("  lethal readings     {}", d.lethal);
             println!("  {verdict}");
-            crate::exit(if d.lethal > 0 { 0 } else { 3 });
+            // Exit 2, not 3: this codebase reserves 2 for "ran fine, the RESULT is wrong"
+            // (`--bench-matrix` uses it for algorithmic drift) and `torture::classify` maps it to
+            // FailAssert, where any other non-zero code becomes FailCrash. A clean run that simply
+            // did not reach the regime is an assertion failure, not a crash, and mislabelling it
+            // would send whoever reads the ladder report hunting a crash that never happened.
+            crate::exit(if d.lethal > 0 { 0 } else { 2 });
         }
 
         self.autodive = Some(d);
