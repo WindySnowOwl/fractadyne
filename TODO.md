@@ -365,11 +365,20 @@ to HARDWARE VARIANCE (everything blessed on one RTX 3080). Sequenced by announce
    incidentally, end-to-end): PNG encode + metadata embed → read-back roundtrip (pixels AND
    metadata), EXR write/read, the resume-vetting reader. Pure functions, no GPU, half a day;
    corruption there eats user work silently.
-4. [ ] **proptest adoption** on the pure functions whose properties are already stated in
-   prose: `progressive_frame_order` (any range + seeds ⇒ exact permutation),
-   `segment_range` (shards tile [0,F) exactly), `budget_step` (slow always shrinks; clamps
-   hold; convergence reachable). One dev-dependency; the `controller_props` are currently
-   example-based despite the name.
+4. [x] **Property tests on the pure functions** — DONE beta.105 `bd34ece`. 11 tests, ~24k
+   generated cases: `progressive_frame_order` (exact permutation over random ranges incl.
+   reversed endpoints and out-of-range seeds; order depends only on the in-range seed SET;
+   every seed leads in time order), `segment_range` (tiles [0,F) with no gap/overlap; index
+   clamps; 0 segments = 1; more shards than frames still tiles; multiply safe below ~2.9e17
+   frames), `budget_step` (never 0 and never above ceiling; a lethal reading never asks for
+   more work; NaN/inf/negative frame times cannot wedge it).
+   NO dev-dependency was added — a hand-rolled deterministic xorshift64* gives reproducible
+   failures and keeps the workspace's zero-dev-dependency property. Two habits worth copying:
+   the randomized sweeps carry **anti-vacuity counters** (`budget_step` returns an Option, so a
+   change that made it decline most readings would leave every assertion unexecuted and the test
+   green), and both suites were **mutation-checked** — `end += 1` in `segment_range` fails 4 of 5
+   tests naming the case, dropping the `TDR_MIN_STEPS` floor fails 4 controller tests.
+   ⚠`segment_range` had NO tests before this, despite being what shards a render across machines.
 5. [ ] **Coverage measurement** as a local script (`cargo llvm-cov`) — CI is manual-only, so a
    local report is the honest version; today's gaps are inferred from structure, not measured.
    Deprioritized: egui_kittest widget tests (highest cost; the scenario harnesses have caught
