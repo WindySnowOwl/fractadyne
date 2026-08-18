@@ -208,6 +208,21 @@ impl FractadyneApp {
 pub(crate) struct AutoDive {
     target_log10: f64,
     timeout_s: f64,
+    /// Explicit iteration count, or `None` for auto-iter.
+    ///
+    /// ⚠**Defaults to EXPLICIT, and that is the whole difference between a harness that reproduces
+    /// and one that cannot.** The first version forced `auto_iter = true`, reasoning that both field
+    /// losses ran with auto-iter on. That was wrong in a way that made the harness useless: the LIVE
+    /// path deliberately caps auto-iter lower than the export appetite for responsiveness, so every
+    /// frame was cheap by construction. Measured on the RX 6800 XT: 900 s of diving reached 1e112x
+    /// with a peak measured iterate of **19.5 ms** against a 900 ms lethal band — lower even than the
+    /// paced tour it was built to replace.
+    ///
+    /// The crash manifest says what the regime actually needs:
+    /// `iter=250000 (gpu_iter=250000, eff=250000, boost=1.00)` with the budget ceiling at `6.000e10`
+    /// — the EXPLICIT ceiling. An explicit high count with auto-iter off is what makes a deep frame
+    /// expensive enough to reach the band, so that is the default here.
+    iter: Option<u32>,
     t0: std::time::Instant,
     /// Frames to let the GPU and first reference come up before diving.
     warmup: u32,
@@ -218,13 +233,27 @@ pub(crate) struct AutoDive {
     lethal: u32,
     peak_ms: f64,
     deepest_log10: f64,
+    /// Has the explicit iteration count been applied yet? See `EXPLICIT_FROM_LOG10`.
+    iter_applied: bool,
 }
 
+/// Depth at which `--autodive` switches from auto-iter to its explicit iteration count.
+///
+/// ⚠It CANNOT be applied from frame one, and finding that out cost a run. The autopilot picks its
+/// next target by looking for detail variance; with an explicit 250,000 at shallow depth the view is
+/// essentially all-interior, the evaluator returns `None`, and the autopilot deactivates on the spot
+/// (`autopilot.rs`, the `None =>` arm). Measured: the dive "finished" in 13.9 s at 1e0.8x having gone
+/// nowhere. So dive shallow on auto-iter, where targeting works, and switch to the expensive explicit
+/// count once there is real structure to aim at — which is also the honest reproduction of the field
+/// case, where the user zoomed deep first and the big count was set at depth.
+const EXPLICIT_FROM_LOG10: f64 = 6.0;
+
 impl AutoDive {
-    pub(crate) fn new(target_log10: f64, timeout_s: f64) -> Self {
+    pub(crate) fn new(target_log10: f64, timeout_s: f64, iter: Option<u32>) -> Self {
         Self {
             target_log10,
             timeout_s,
+            iter,
             t0: std::time::Instant::now(),
             warmup: 45,
             armed: false,
@@ -233,6 +262,7 @@ impl AutoDive {
             lethal: 0,
             peak_ms: 0.0,
             deepest_log10: 0.0,
+            iter_applied: false,
         }
     }
 }
@@ -266,8 +296,11 @@ impl crate::FractadyneApp {
             if d.warmup > 0 {
                 d.warmup -= 1;
             } else {
-                // Field conditions: auto-iter ON is what both device losses ran, and it is what makes
-                // a deep frame expensive enough to matter.
+                // Field conditions, from the crash manifest: an EXPLICIT iteration count with
+                // auto-iter OFF. See the note on `AutoDive::iter` for why auto-iter is the wrong
+                // choice here despite the losses having run with it.
+                // Always start on auto-iter so the autopilot's target evaluation has detail to
+                // find; the explicit count lands at EXPLICIT_FROM_LOG10 (see that note).
                 self.render_cfg.auto_iter = true;
                 self.autopilot.dive_log2 = d.target_log10 * LOG2_10;
                 self.toggle_autopilot(ctx);
@@ -275,19 +308,46 @@ impl crate::FractadyneApp {
                 crate::diag::log_line(
                     "autodive",
                     &format!(
-                        "diving to 1e{:.0}x (auto-iter on, lethal band >= {:.0}ms)",
+                        "diving to 1e{:.0}x ({}, lethal band >= {:.0}ms)",
                         d.target_log10,
+                        match d.iter {
+                            Some(n) => format!("explicit iter={n}"),
+                            None => "auto-iter".to_string(),
+                        },
                         crate::tunables::cost().tdr_lethal_ms
                     ),
                 );
             }
         }
 
+        // Switch to the explicit count once the dive has structure to aim at.
+        if d.armed && !d.iter_applied && d.deepest_log10 >= EXPLICIT_FROM_LOG10 {
+            if let Some(n) = d.iter {
+                self.render_cfg.max_iter = n.clamp(64, crate::MAX_ITER_LIMIT);
+                self.render_cfg.auto_iter = false;
+                crate::diag::log_line(
+                    "autodive",
+                    &format!("1e{:.1}x reached — switching to explicit iter={n}", d.deepest_log10),
+                );
+            }
+            d.iter_applied = true;
+        }
+
         let elapsed = d.t0.elapsed().as_secs_f64();
         let finished = d.armed && !self.autopilot.active;
         let timed_out = elapsed >= d.timeout_s;
         if finished || timed_out {
-            let why = if finished { "dive limit reached" } else { "timeout" };
+            // ⚠Distinguish "reached the target" from "the autopilot quit on us". The first version
+            // called any inactive autopilot a "dive limit reached", which reported success at 1e0.8x
+            // against a 1e45 target — a verdict that lied in the direction of looking fine.
+            let reached = d.deepest_log10 >= d.target_log10 - 0.5;
+            let why = if timed_out {
+                "timeout"
+            } else if reached {
+                "dive limit reached"
+            } else {
+                "AUTOPILOT STOPPED EARLY (no detail target, or interrupted) — dive did not finish"
+            };
             // The verdict, stated so a run that never reached the regime cannot be read as a pass.
             // This is the whole point of the harness: a green exit with zero lethal readings means
             // the experiment did not run, not that the code is safe.
@@ -307,6 +367,8 @@ impl crate::FractadyneApp {
             println!();
             println!("--autodive: {why} after {elapsed:.1}s");
             println!("  deepest depth      1e{:.1}x", d.deepest_log10);
+            println!("  iteration ask      {}",
+                match d.iter { Some(n) => format!("{n} (explicit)"), None => "auto".to_string() });
             println!("  controller readings {}", d.readings);
             println!("  peak measured iterate {:.1}ms (lethal band >= {:.0}ms)",
                 d.peak_ms, crate::tunables::cost().tdr_lethal_ms);

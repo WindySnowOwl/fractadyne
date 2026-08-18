@@ -3007,7 +3007,15 @@ impl FractadyneApp {
                 .and_then(|v| v.parse::<f64>().ok())
                 .filter(|v| v.is_finite() && *v > 0.0)
                 .unwrap_or(900.0);
-            Some(autopilot::AutoDive::new(target, secs))
+            // Default 250_000 = the field crash manifest's explicit count. `--autodive-iter 0`
+            // selects auto-iter instead, which is kept only so the two can be COMPARED: it is what
+            // the first version forced, and it could not reach the regime.
+            let iter = match val("--autodive-iter").and_then(|v| v.parse::<u32>().ok()) {
+                Some(0) => None,
+                Some(n) => Some(n),
+                None => Some(250_000),
+            };
+            Some(autopilot::AutoDive::new(target, secs, iter))
         } else {
             None
         };
