@@ -468,9 +468,19 @@ Mockups: [design/mockups/](design/mockups/).
     and reference recompute — what it was built for — not the controller.
   - `--livetest` carries its OWN copy of the controller and its own trace format, so it cannot stand in
     for the app's (the beta.40 lesson, still true).
-  ⭐**What the tool must do:** drive the REAL update loop with NO tour clock — a continuous zoom that
-  submits frames as fast as they complete, full screen, auto-iter on, crossing mode 0→2 and continuing
-  deep. That is what a hand-driven dive is, and it is the only thing observed to reach the regime.
+  ⭐⭐**SCOPED — and it is NOT a new subsystem. The capability already ships; only a CLI hook is
+  missing.** `autopilot.rs` is exactly this: "a hands-free dive that re-targets the detail-richest
+  region", driven by `pointer.zoom_vel` through the NORMAL update loop with no tour clock, stopping at
+  `autopilot.dive_log2`. It is the `A` key / Tools → "Auto-zoom (autopilot)", and it re-targets
+  detail-rich regions — i.e. it dives into structure, exactly where cost explodes, which makes it a
+  BETTER repro than any tour.
+  **What is actually needed:** a flag that sets `autopilot.dive_log2`, calls the existing
+  `self.toggle_autopilot(&ctx)` once at boot, polls for the dive limit or a timeout, and exits.
+  `--juliadive` (`Option<uitest::JuliaDive>`, a small state machine polled per frame) is the template
+  to copy verbatim. Estimate ~60-100 lines, no GPU or shader work.
+  ⚠Whatever it is called MUST be added to `is_task_invocation` so a device loss during it cannot
+  spawn a GUI relaunch, and it should default `FRACTADYNE_TRACE=gpu`-equivalent measurement on so a
+  run that does not reach the regime says so.
   ⚠Until it exists, `radeon-verify -Phase 5` prints an INCONCLUSIVE verdict rather than a false pass,
   and the documented repro is manual.
   ⭐**Instrumentation that now exists** (use it for any future attempt): `FRACTADYNE_TRACE=gpu` emits a
