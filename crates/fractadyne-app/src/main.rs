@@ -974,6 +974,56 @@ pub(crate) enum RenderMode {
     Floatexp = 2,
 }
 
+/// Whether this process was launched to run a HARNESS or an offline job rather than to be sat in
+/// front of. Used only to decide that a lost device must NOT relaunch.
+///
+/// A harness that resurrects itself is worse than one that dies. `--selftest` and `--livetest` drive
+/// the real windowed app (which is why the welcome dialog once blocked them), so before this the
+/// device-lost handler would spawn a FRESH PROCESS RE-RUNNING THE SAME TASK FLAGS: a `--torture` rung
+/// would orphan a GUI window its supervisor knows nothing about, and a `--livetest` could end up with
+/// two concurrent gates writing the same log. The guard was previously `elapsed_s() > 60`, which hid
+/// this for short runs by accident; it needs to be explicit.
+///
+/// Deliberately BROADER than `launched_for_a_task` (which exists for the welcome dialog): listing an
+/// extra flag here only ever means "do not relaunch", which is the safe direction. ⚠Add new harness
+/// and offline-job flags here.
+pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
+    const TASK_FLAGS: &[&str] = &[
+        "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--play-tour",
+        "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
+        "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
+        "--find-minibrot", "--check-updates", "--crosscheck-f3",
+    ];
+    args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
+}
+
+#[cfg(test)]
+mod task_invocation {
+    use super::is_task_invocation;
+
+    #[test]
+    fn a_bare_interactive_launch_is_not_a_task() {
+        assert!(!is_task_invocation::<&str>(&[]));
+        assert!(!is_task_invocation(&["--fast"]));
+        // A view handed over on the command line is still someone sitting in front of the app.
+        assert!(!is_task_invocation(&["--center", "-0.75", "0.0"]));
+    }
+
+    #[test]
+    fn every_harness_and_offline_job_is_a_task() {
+        // These all drive the real windowed app or run long unattended, and none of them may
+        // resurrect itself on a lost device.
+        for flag in [
+            "--selftest", "--livetest", "--uitest", "--juliadive", "--torture", "--render",
+            "--render-tour", "--bench-matrix", "--gputest", "--resizetest",
+        ] {
+            assert!(is_task_invocation(&[flag]), "{flag} must count as a task invocation");
+            // ...including when it is not the first argument.
+            assert!(is_task_invocation(&["--size", "480x270", flag]), "{flag} missed mid-argv");
+        }
+    }
+}
+
 /// Whether a lost device may relaunch, and as which generation. `None` means stop.
 ///
 /// Split out as a pure function so the policy is testable: it decides whether the user sees a
@@ -2702,6 +2752,16 @@ impl FractadyneApp {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
+            let argv: Vec<String> = std::env::args().skip(1).collect();
+            if crate::is_task_invocation(&argv) {
+                // Fail visibly instead. A harness or offline job that respawns itself hides the
+                // failure it exists to surface, and can leave a window nobody is supervising.
+                diag::log_line(
+                    "wgpu",
+                    "device lost during a task invocation — not relaunching (harnesses must fail loudly)",
+                );
+                return;
+            }
             let Some(next) = crate::relaunch_decision(gen, diag::elapsed_s()) else {
                 diag::log_line(
                     "wgpu",
