@@ -1054,7 +1054,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--play-tour",
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
-        "--find-minibrot", "--check-updates", "--crosscheck-f3",
+        "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }
@@ -2650,6 +2650,9 @@ struct FractadyneApp {
     /// with periodic screenshots (see `uitest::JuliaDive`). Reproduces the dual-view Julia motion
     /// path deterministically (synthetic OS input proved unreliable for wheel/focus).
     juliadive: Option<uitest::JuliaDive>,
+    /// CLI `--autodive [LOG10]`: unpaced autopilot dive that hammers the frame-cost controller and
+    /// reports whether the lethal regime was reached. See `autopilot::AutoDive`.
+    autodive: Option<autopilot::AutoDive>,
     /// CLI `--play FILE`: start the GUI with this tour already playing in the LIVE view. The only
     /// way to exercise the on-screen playback path (present, watchdog budget, tiled settle) from a
     /// command line — a headless harness cannot reach it.
@@ -2995,6 +2998,19 @@ impl FractadyneApp {
         } else {
             None
         };
+        let autodive = if args.iter().any(|a| a == "--autodive") {
+            let target = val("--autodive")
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 1.0)
+                .unwrap_or(320.0);
+            let secs = val("--autodive-timeout")
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .unwrap_or(900.0);
+            Some(autopilot::AutoDive::new(target, secs))
+        } else {
+            None
+        };
         let juliadive = if args.iter().any(|a| a == "--juliadive") {
             let out =
                 val("--juliadive").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
@@ -3018,6 +3034,7 @@ impl FractadyneApp {
             || divetest.is_some()
             || uitest.is_some()
             || juliadive.is_some()
+            || autodive.is_some()
             || play_tour.is_some()
             || selftest
             || bench_matrix
@@ -3223,6 +3240,7 @@ impl FractadyneApp {
             livetest,
             uitest,
             juliadive,
+            autodive,
             livetest_quick,
             play_tour,
             play_tour_done: false,
@@ -6062,6 +6080,11 @@ impl eframe::App for FractadyneApp {
         // --juliadive: dev harness for the dual-view Julia motion path (same in-loop pattern).
         if self.juliadive.is_some() && gpu.is_some() {
             self.juliadive_frame(ctx);
+        }
+        // --autodive: unpaced controller hammer (same in-loop pattern). Must run AFTER the
+        // measurement apply above, so the reading it samples is this frame's.
+        if self.autodive.is_some() && gpu.is_some() {
+            self.autodive_frame(ctx);
         }
 
         // Ctrl+S → quick export (no dialog) to the last folder.

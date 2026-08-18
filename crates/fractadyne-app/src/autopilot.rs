@@ -189,3 +189,133 @@ impl FractadyneApp {
         Some(((bi as f64 + 0.5) / N as f64, (bj as f64 + 0.5) / N as f64))
     }
 }
+
+/// CLI `--autodive`: drive the autopilot dive from the command line so the frame-cost controller can
+/// be hammered UNPACED, and report whether the dangerous regime was actually reached.
+///
+/// This exists because the device-loss class could not be reproduced automatically. Every scripted
+/// attempt went through `--play`, and a tour clock DILATES on a slow frame, so pressure never
+/// accumulates: measured on an RTX 3080, `repro-e28-crossover` peaks at ~195 ms of measured iterate
+/// against a 900 ms lethal band, and twelve arms across two nights produced zero lethal readings
+/// while a human diving by hand produced 21 in one evening.
+///
+/// The autopilot is what a hand-driven dive *is* — it runs in the normal update loop with no clock,
+/// and because it re-targets the detail-richest region it dives INTO structure, which is exactly
+/// where per-step cost explodes. So this is a thin wrapper over `toggle_autopilot`, not a new
+/// harness. Ruled out first, so nobody re-treads it: `--frametest` drives `build_params` and
+/// reference recompute but never prices a frame (one `fd-gpu` line per run, "no reading"), and
+/// `--livetest` carries its own copy of the controller.
+pub(crate) struct AutoDive {
+    target_log10: f64,
+    timeout_s: f64,
+    t0: std::time::Instant,
+    /// Frames to let the GPU and first reference come up before diving.
+    warmup: u32,
+    armed: bool,
+    /// Last sampled measurement, to notice when a NEW one lands.
+    last_ms: f64,
+    readings: u32,
+    lethal: u32,
+    peak_ms: f64,
+    deepest_log10: f64,
+}
+
+impl AutoDive {
+    pub(crate) fn new(target_log10: f64, timeout_s: f64) -> Self {
+        Self {
+            target_log10,
+            timeout_s,
+            t0: std::time::Instant::now(),
+            warmup: 45,
+            armed: false,
+            last_ms: 0.0,
+            readings: 0,
+            lethal: 0,
+            peak_ms: 0.0,
+            deepest_log10: 0.0,
+        }
+    }
+}
+
+impl crate::FractadyneApp {
+    /// One frame of `--autodive`. Same in-loop shape as `uitest_frame` / `juliadive_frame`.
+    pub(crate) fn autodive_frame(&mut self, ctx: &egui::Context) {
+        const LOG2_10: f64 = 3.321_928_094_887_362;
+        let Some(mut d) = self.autodive.take() else { return };
+
+        // Sample the controller's own measurement rather than scraping the log. `gpu_iterate=` in
+        // the log only ever appears INSIDE the lethal message, so log-scraping is circular — it can
+        // only report a number once the thing being detected has already happened.
+        let ms = self.perf.last_iterate_ms[0];
+        if ms > 0.0 && (ms - d.last_ms).abs() > f64::EPSILON {
+            d.readings += 1;
+            if ms > d.peak_ms {
+                d.peak_ms = ms;
+            }
+            if ms >= crate::tunables::cost().tdr_lethal_ms {
+                d.lethal += 1;
+            }
+            d.last_ms = ms;
+        }
+        let depth = self.viewport.log2_magnification() / LOG2_10;
+        if depth.is_finite() && depth > d.deepest_log10 {
+            d.deepest_log10 = depth;
+        }
+
+        if !d.armed {
+            if d.warmup > 0 {
+                d.warmup -= 1;
+            } else {
+                // Field conditions: auto-iter ON is what both device losses ran, and it is what makes
+                // a deep frame expensive enough to matter.
+                self.render_cfg.auto_iter = true;
+                self.autopilot.dive_log2 = d.target_log10 * LOG2_10;
+                self.toggle_autopilot(ctx);
+                d.armed = true;
+                crate::diag::log_line(
+                    "autodive",
+                    &format!(
+                        "diving to 1e{:.0}x (auto-iter on, lethal band >= {:.0}ms)",
+                        d.target_log10,
+                        crate::tunables::cost().tdr_lethal_ms
+                    ),
+                );
+            }
+        }
+
+        let elapsed = d.t0.elapsed().as_secs_f64();
+        let finished = d.armed && !self.autopilot.active;
+        let timed_out = elapsed >= d.timeout_s;
+        if finished || timed_out {
+            let why = if finished { "dive limit reached" } else { "timeout" };
+            // The verdict, stated so a run that never reached the regime cannot be read as a pass.
+            // This is the whole point of the harness: a green exit with zero lethal readings means
+            // the experiment did not run, not that the code is safe.
+            let verdict = if d.lethal > 0 {
+                format!("REACHED THE REGIME: {} lethal reading(s)", d.lethal)
+            } else {
+                "DID NOT REACH THE REGIME - no lethal reading, so nothing was tested".to_string()
+            };
+            crate::diag::log_line(
+                "autodive",
+                &format!(
+                    "{why} after {elapsed:.1}s | deepest 1e{:.1}x | {} reading(s), peak measured \
+                     iterate {:.1}ms | {verdict}",
+                    d.deepest_log10, d.readings, d.peak_ms
+                ),
+            );
+            println!();
+            println!("--autodive: {why} after {elapsed:.1}s");
+            println!("  deepest depth      1e{:.1}x", d.deepest_log10);
+            println!("  controller readings {}", d.readings);
+            println!("  peak measured iterate {:.1}ms (lethal band >= {:.0}ms)",
+                d.peak_ms, crate::tunables::cost().tdr_lethal_ms);
+            println!("  lethal readings     {}", d.lethal);
+            println!("  {verdict}");
+            crate::exit(if d.lethal > 0 { 0 } else { 3 });
+        }
+
+        self.autodive = Some(d);
+        ctx.request_repaint();
+    }
+}
