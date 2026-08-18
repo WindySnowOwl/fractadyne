@@ -526,7 +526,20 @@ Mockups: [design/mockups/](design/mockups/).
 
   ### Tier 1 — corrections and cheap wins
 
-  - [ ] ⭐**T1a. Make `BLA_EPS` `--set`-overridable, THEN run the ε A/B.** Reviews recommend tightening
+  - [~] ⭐**T1a. `BLA_EPS` overridable — DONE `57247a4`. ε A/B RUN: the accuracy margin IS free at
+    1e28, in output AND time.** Measured on a 3080, 1080p, `--benchmark --ultra --burnin 3`:
+    stock 244.49 ms (score 410), **2^-24 = 5.96e-8: 247.77 ms (405)**, stock REPEAT 248.19 ms (405).
+    ⭐The 2^-24 arm lands BETWEEN the two stock runs, so the apparent 1.3% penalty is NOISE — stock
+    alone spans 244.49-248.19 ms. Reporting after two runs would have invented a regression.
+    Output: **goldens 17/17 still within tolerance**. Counters: `bla_skip` 39,672,400 -> 52,459,652
+    (+32%) with `rebase` +0.23% — more skips TAKEN at a tighter tolerance because the counter counts
+    skips, not iterations skipped: smaller radii make a pixel take several low-level skips where it
+    took one high-level skip. +32% skip count costs ~0% time, which is the interesting part.
+    ⚠**Two things before switching the default:** (1) only measured at 1e28, the SHALLOW end of
+    floatexp — BLA leverage is highest far deeper, so a deep timing point (corpus e1000-class) is the
+    missing evidence; (2) two determinism baselines drift (`floatexp-1e30-sa`/`-nosa`), so adopting it
+    means re-blessing them deliberately, not quietly.
+  - [x] ⭐**T1a-mechanism. Make `BLA_EPS` `--set`-overridable.** Reviews recommend tightening
     ~2⁻²⁰ → 2⁻²⁴ (Imagina's `LAThresholdScale`, from the author who is simultaneously the speed and
     accuracy reference). ⭐**Blocker they could not know: `BLA_EPS` is a plain `const`, not in the
     `--set` set** (only the 12 frame-cost constants route through `tunables::cost()`), so the "cheap
