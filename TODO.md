@@ -454,6 +454,27 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] 🟡**"Normalize deep colors" renders a FLAT GRAY exterior at shallow zoom with a high manual
+  iteration count.** Field report 2026-08-18 (build 1678, screenshot): after returning Home from a deep
+  view, zoom 1.06× with `iter = 250,000` and auto-scale OFF drew the set correctly in black on a
+  featureless olive-gray field. Geometry and mode selection are fine (`direct df32`); only the colour
+  mapping collapses.
+  ⭐**MECHANISM — not a counting bug.** `esc_range_commit` already excludes interior/max-iter pixels
+  (`if (sm >= 0.0)`), so the min/max is a true ESCAPED range. The problem is that the range is
+  legitimately ~1 → ~250,000 at this depth: a thin halo hugging the boundary escapes very late while
+  the bulk of the exterior escapes in 1–50. Normalising LINEARLY across that compresses everything
+  visible into a sliver of the palette. Escape counts near the boundary are heavy-tailed, so linear
+  min/max normalisation collapses whenever the iteration ceiling is high relative to the depth — it
+  was designed for deep fields, where the escaped range is narrow and high.
+  **Workarounds today:** tick "Log color scale", or enable "Auto-scale iterations with zoom" so Home
+  drops the count to suit 1×.
+  **Candidate fixes:** (a) normalise on a PERCENTILE rather than absolute min/max — needs a histogram,
+  not two atomics, so it is the real but larger change; (b) when `max/min` exceeds a ratio (~1e3),
+  switch or blend to a log mapping automatically, since that is what the user would do by hand;
+  (c) leave it and document. Prefer (b) as the cheap correct-feeling default, with (a) if a histogram
+  lands for other reasons. ⚠Whatever is chosen must not perturb the deep-field case the feature
+  exists for — gate it with a shallow AND a deep golden.
+
 - [ ] 🔴⭐⭐**DEVICE LOSS zooming HOME from a deep view — mode 2 has no iteration chunking, so
   the frame-cost controller structurally cannot protect it.** Field case 2026-08-18, RTX 3080,
   build 1675 (beta.105), crash `crash-1787014795-0.txt`, uptime 50.4 s. User loaded a deep zoom and
