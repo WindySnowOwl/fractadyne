@@ -454,6 +454,35 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] 🟢**Offline render: order frames by DECREASING MAGNIFICATION and reuse one reference across
+  them.** User idea 2026-08-18 ("render the deepest frame first and work backwards"), sharpened.
+  ⭐**Why it works:** the orbit is ZOOM-INDEPENDENT (`Z_{n+1} = Z_n² + C_ref` depends only on centre
+  and precision), and both live reuse gates are satisfied monotonically as you zoom OUT —
+  `reuse.prec >= inp.precision` (the deepest frame has the maximum precision requirement, so it covers
+  every shallower one) and drift `|dx|/span <= REUSE_MAX_DRIFT` (0.7; span grows, so the ratio shrinks,
+  and in a zoom-in tour the deep target is CONTAINED in every earlier wider frame at ~0.5 or less).
+  Surplus orbit length costs nothing — shallow frames simply iterate fewer samples of a buffer that is
+  already resident, which is "truncation" obtained for free.
+  ⚠**Order by decreasing magnification, NOT reverse timeline.** They coincide only for a monotonic
+  dive. `tours/announce-4k.toml` has five chapters with hard cuts at different depths, where
+  reverse-timeline order repeatedly returns to depth and breaks the precision gate. Sorting on
+  magnification makes the gate unfailable by construction.
+  ⚠⚠**THE BLOCKER: the offline path has NO reuse.** `scripting.rs:3556` PIPELINES instead — it starts
+  frame N+1's `spawn_export_reference` while frame N renders ("the next frame IN RENDER ORDER"). So
+  every frame still pays a full bignum build; the cost is only hidden behind the render, and at extreme
+  depth (where the build alone is minutes) the build IS the critical path and hiding stops working.
+  **Reverse ordering alone therefore buys nothing** — the work is wiring the live path's proven
+  `try_reuse_reference` into the offline renderer. Together they replace N full builds with 1 build +
+  N-1 extends, plausibly the largest offline throughput win available on deep tours.
+  ⚠Caveats: the BLA tree still rebuilds every frame regardless of order (`dc_max` changes per frame —
+  see T2c, which is the structural answer); the drift gate still resets at chapter cuts that pan far,
+  so reuse holds WITHIN a dive, not across a whole multi-chapter tour; and it collides with
+  `--order progressive` — deepest-first also gives the early look at deep frames that progressive was
+  added for (arguably a better one, since it renders the most expensive and most failure-prone frame
+  first), but bisection spreads early frames across the whole timeline and so catches problems anywhere.
+  A new order needs the same permutation property tests `progressive_frame_order` now has, and ETA
+  estimates will skew (expensive frames first).
+
 - [ ] 🟢**Peer-renderer adoption list — reconciled (2026-08-18).** Sources: `5E-324/Imagina` (+ Imagina 2),
   `mattsaccount364/FractalShark`. Consolidates three review rounds into ONE tiered list; supersedes the
   separate FractalShark and Imagina entries so there is no third overlapping copy.

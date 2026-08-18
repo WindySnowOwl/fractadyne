@@ -47,9 +47,18 @@ use std::sync::OnceLock;
 // compiler to be exactly the documented value. Widening this set is one line each — but each line
 // converts a compile-time guarantee into a runtime one, so it should be earned by a diagnosis that
 // actually needed it.
+//
+// ⚠**The thirteenth: `BLA_EPS`.** Added 2026-08-18 because the peer comparison against Imagina
+// (which ships `LAThresholdScale = 2^-24` against our 1e-6 ~ 2^-20, from the author who is
+// simultaneously the speed and the accuracy reference) asks a question only an A/B can answer: is
+// the accuracy margin free? Without an override that experiment is a REBUILD PER VALUE, which is
+// exactly the "needs to move for ONE run" case this mechanism exists for. Note `--selftest` does not
+// refuse to run under an override — it fails one check ("tunables are stock") and still reports every
+// golden's delta, so the comparison is readable while the run remains unquotable as a clean gate.
 
-/// The runtime-overridable frame-cost family. Field names are the lower-case constant names, so
-/// `--set TDR_BUDGET_MS=500` and `cost().tdr_budget_ms` are obviously the same knob.
+/// The runtime-overridable set: the frame-cost family, plus `bla_eps`. Field names are the
+/// lower-case constant names, so `--set TDR_BUDGET_MS=500` and `cost().tdr_budget_ms` are obviously
+/// the same knob.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Cost {
     pub tdr_budget_ms: f64,
@@ -67,6 +76,10 @@ pub(crate) struct Cost {
     pub explicit_dispatch_cap: u64,
     pub tdr_max_tiles: u64,
     pub tdr_tiles_ceil: u64,
+    /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
+    /// second override channel because duplicating the machinery for a single value would be worse.
+    /// See the note above on what earns a place in this set.
+    pub bla_eps: f64,
 }
 
 impl Default for Cost {
@@ -87,6 +100,7 @@ impl Default for Cost {
             explicit_dispatch_cap: EXPLICIT_DISPATCH_CAP_DEFAULT,
             tdr_max_tiles: TDR_MAX_TILES_DEFAULT,
             tdr_tiles_ceil: TDR_TILES_CEIL_DEFAULT,
+            bla_eps: BLA_EPS,
         }
     }
 }
@@ -151,6 +165,19 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
             "TDR_GROW_MAX" => { let p = c.tdr_grow_max; c.tdr_grow_max = f()?; p.to_string() }
             "TDR_SHRINK_MAX" => { let p = c.tdr_shrink_max; c.tdr_shrink_max = f()?; p.to_string() }
             "TDR_LETHAL_MS" => { let p = c.tdr_lethal_ms; c.tdr_lethal_ms = f()?; p.to_string() }
+            "BLA_EPS" => {
+                let p = c.bla_eps;
+                let v = f()?;
+                // A non-positive tolerance makes every BLA radius zero (no skip ever taken, silently
+                // ~5x slower at depth); >= 1 makes them absurdly permissive and the render wrong.
+                // Both are refusals rather than clamps: a debug knob that quietly means something
+                // else than what was typed is how a measurement gets misattributed.
+                if !(v > 0.0 && v < 1.0) {
+                    return Err(format!("--set BLA_EPS={v}: must be in (0, 1)"));
+                }
+                c.bla_eps = v;
+                p.to_string()
+            }
             "TDR_BOOTSTRAP_STEPS" => {
                 let p = c.tdr_bootstrap_steps; c.tdr_bootstrap_steps = u()?; p.to_string()
             }
@@ -193,7 +220,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_LETHAL_MS, TDR_BOOTSTRAP_STEPS, \r
     TDR_BOOTSTRAP_MS, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
-    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL";
+    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS";
 
 #[cfg(test)]
 mod override_tests {

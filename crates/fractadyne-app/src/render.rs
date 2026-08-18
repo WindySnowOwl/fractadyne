@@ -623,7 +623,7 @@ fn finish_reference(
             let levels = fc::build_bla_mandel(
                 &orbit,
                 dc_max,
-                BLA_EPS,
+                crate::tunables::cost().bla_eps,
                 aux_agg_from_orbit(&orbit, inp.stripe_freq, inp.trap_type),
             );
             let arc = if levels.is_empty() {
@@ -1723,7 +1723,7 @@ impl FractadyneApp {
         let levels = fractadyne_core::build_bla_mandel(
             orbit,
             dc_max,
-            BLA_EPS,
+            crate::tunables::cost().bla_eps,
             aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64, self.coloring.trap_type as u32),
         );
         if levels.is_empty() {
@@ -2117,7 +2117,7 @@ impl FractadyneApp {
                     let levels = fractadyne_core::build_bla_mandel(
                         &orbit,
                         dc_max,
-                        BLA_EPS,
+                        crate::tunables::cost().bla_eps,
                         aux_agg_from_orbit(
                             &orbit,
                             self.coloring.stripe_freq as f64,
