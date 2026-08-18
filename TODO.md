@@ -494,6 +494,19 @@ Mockups: [design/mockups/](design/mockups/).
   ✅**What worked:** the beta.105 emergency retreat fired correctly and on the FIRST lethal reading
   — first field confirmation of that fix. It was simply powerless here.
 
+  📐**DESIGN WRITTEN: `design/mode2-chunking.md`** (design only, nothing implemented). Key finding
+  — mode-2 running state needs **13 floats against the existing 12**: δz mantissa (4) + δz exponent (1)
+  + derivative mantissa (4) + derivative exponent (1) + status/iter (2) + `ref_n` (1). Mode 2 does not
+  need to store full `z` (reconstructible from `reference[ref_n] + δz`), which frees `st_z`, but two
+  floatexp exponents still compete for the single free `st_info.ch3`, and packing both into one f32
+  does NOT fit at our depth range (f32 is exact to 2^24 = 12 bits each; at 1e1105 the binary exponent
+  is already ≈ −3670). So: **Option A** = a 4th Rgba32Float attachment (costs bandwidth + a
+  `ChunkState`/bind-group/resolve change, keeps validation at BIT-IDENTICAL); **Option B** = drop δz's
+  lo limbs to plain f32 (fits today, but is a real precision loss exactly on AMD where the EFTs
+  survive — free on NVIDIA where they are folded anyway — and it downgrades the gate from equality to
+  tolerance). **Recommended: A.** Also flagged: rebasing must work ACROSS a chunk boundary, and each
+  pass must build its OWN BLA or it reproduces the beta.101 e100 pathology (0.04 vs 174 Gsteps/s).
+
   ⚠**Do NOT "fix" this by capping the explicit iteration ask.** Capping silently rendered deep
   corpus locations interior-black and broke the "same iterations, both apps" contract with
   Fraktaler-3. The real fix is extending chunking to mode 2 (its own `[~]` item), which needs the
