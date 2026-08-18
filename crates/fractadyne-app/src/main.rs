@@ -974,6 +974,67 @@ pub(crate) enum RenderMode {
     Floatexp = 2,
 }
 
+/// Whether a lost device may relaunch, and as which generation. `None` means stop.
+///
+/// Split out as a pure function so the policy is testable: it decides whether the user sees a
+/// recovery or a crash, and the previous version of it (`elapsed_s() > 60`) shipped untested and
+/// was wrong in the field. See `relaunch_after_device_loss` for the reasoning.
+pub(crate) fn relaunch_decision(generation: u32, elapsed_s: f64) -> Option<u32> {
+    const MAX_GENERATIONS: u32 = 3;
+    if generation >= MAX_GENERATIONS {
+        return None;
+    }
+    // A restarted generation that dies again almost immediately was not helped by restarting.
+    if generation > 0 && elapsed_s < 15.0 {
+        return None;
+    }
+    Some(generation + 1)
+}
+
+#[cfg(test)]
+mod relaunch_policy {
+    use super::relaunch_decision;
+
+    #[test]
+    fn a_first_loss_recovers_at_any_uptime() {
+        // THE FIELD CASE (2026-08-18): a deep view + Home glide lost the device at 50.4s. The old
+        // `elapsed_s() > 60` guard refused to restart, so a loss the app is designed to recover
+        // from was experienced as a hard crash. 50.4s must restart.
+        assert_eq!(relaunch_decision(0, 50.4), Some(1));
+        // And the guard must not have simply moved: an immediate first loss still recovers once,
+        // because one relaunch is cheap and the generation cap is what bounds a loop.
+        assert_eq!(relaunch_decision(0, 0.2), Some(1));
+        assert_eq!(relaunch_decision(0, 3600.0), Some(1));
+    }
+
+    #[test]
+    fn a_relaunch_that_did_not_help_stops() {
+        // Restarted, then died again within 15s: restarting is not working, so stop rather than
+        // spin. This is the case the original uptime guard was really aiming at.
+        assert_eq!(relaunch_decision(1, 2.0), None);
+        assert_eq!(relaunch_decision(2, 14.9), None);
+        // But a restarted generation that ran a while before dying gets another go.
+        assert_eq!(relaunch_decision(1, 15.0), Some(2));
+        assert_eq!(relaunch_decision(2, 600.0), Some(3));
+    }
+
+    #[test]
+    fn the_generation_cap_terminates_any_loop() {
+        // However healthy each generation looks, the chain is bounded — no restart loop can
+        // outlive the cap even with long uptimes between losses.
+        assert_eq!(relaunch_decision(3, 10_000.0), None);
+        assert_eq!(relaunch_decision(9, 10_000.0), None);
+        let mut gen = 0;
+        let mut hops = 0;
+        while let Some(next) = relaunch_decision(gen, 1_000.0) {
+            gen = next;
+            hops += 1;
+            assert!(hops <= 8, "relaunch chain did not terminate");
+        }
+        assert_eq!(hops, 3, "the chain must stop after exactly MAX_GENERATIONS hops");
+    }
+}
+
 impl RenderMode {
     /// Pick the representation for a view: direct when shallow or the formula has no perturbation,
     /// then df32, switching to floatexp past `PERT_FE_THRESHOLD`. The one place this is decided.
@@ -2622,23 +2683,49 @@ impl FractadyneApp {
         // exact view, so a fresh process resumes almost seamlessly. Both crash reports on this
         // machine (2026-08-02 shallow view, 2026-08-06 deep spar) are this exact class. The
         // panic hook still writes the crash report first (durable artifact), then we relaunch —
-        // guarded to uptime > 60 s so a boot-time device loss can't restart-loop.
+        // bounded by the generation guard in `relaunch_after_device_loss` so a loss that recurs
+        // cannot restart-loop forever.
+        // ONE place decides whether a lost device may relaunch, because the two paths below drifted
+        // apart in exactly the way that matters: both used `elapsed_s() > 60`, and that conflates
+        // "early in this process's life" with "restart loop". FIELD CASE (2026-08-18, build 1675):
+        // a deep view + Home glide lost the device at 50.4 s of uptime -- an ordinary user action,
+        // not a boot problem -- and the guard suppressed the relaunch, so a loss the app is designed
+        // to recover from was experienced as a hard crash.
+        //
+        // The honest guard counts GENERATIONS instead of reading the clock. The child already
+        // carries FRACTADYNE_RESTARTED_AFTER_GPU_LOSS, so it becomes a counter: a genuine
+        // relaunch loop still terminates (bounded at 3), while a first loss at any uptime recovers.
+        // The clock keeps one narrow job it is actually good for -- if a RESTARTED generation dies
+        // again within 15 s, restarting did not help and spinning is pointless.
+        fn relaunch_after_device_loss() {
+            let gen: u32 = std::env::var("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let Some(next) = crate::relaunch_decision(gen, diag::elapsed_s()) else {
+                diag::log_line(
+                    "wgpu",
+                    &format!(
+                        "device lost {:.1}s into generation {gen} — not restarting (relaunch policy)",
+                        diag::elapsed_s()
+                    ),
+                );
+                return;
+            };
+            if let Ok(exe) = std::env::current_exe() {
+                diag::log_line("wgpu", &format!("device lost — restarting (generation {next})"));
+                let _ = std::process::Command::new(exe)
+                    .args(std::env::args().skip(1))
+                    .env("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS", next.to_string())
+                    .spawn();
+            }
+        }
         render_state.device.on_uncaptured_error(Box::new(|e| {
             diag::log_line("wgpu", &format!("uncaptured error: {e}"));
             let msg = e.to_string();
             if msg.contains("device is lost") || msg.contains("Device is lost") || msg.contains("DeviceLost") {
                 diag::write_crash_report(&format!("wgpu device lost: {msg}"));
-                if diag::elapsed_s() > 60.0 {
-                    if let Ok(exe) = std::env::current_exe() {
-                        diag::log_line("wgpu", "device lost — restarting");
-                        let _ = std::process::Command::new(exe)
-                            .args(std::env::args().skip(1))
-                            .env("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS", "1")
-                            .spawn();
-                    }
-                } else {
-                    diag::log_line("wgpu", "device lost within 60s of boot — not restarting (loop guard)");
-                }
+                relaunch_after_device_loss();
                 crate::exit(2);
             }
             panic!("wgpu uncaptured error: {e}");
@@ -2648,23 +2735,13 @@ impl FractadyneApp {
         // a wgpu wait on the dead device, so no error ever surfaces, no panic fires, and the app
         // hangs forever with the watchdog barking — the historical "present wedge", finally
         // explained. This callback runs on another thread and is then the ONLY recovery path:
-        // write the crash report and relaunch (same loop guard as above). `Destroyed` is the
+        // write the crash report and relaunch (same generation guard as above). `Destroyed` is the
         // clean-teardown reason — never restart on it.
         render_state.device.set_device_lost_callback(|reason, msg| {
             diag::log_line("wgpu", &format!("DEVICE LOST ({reason:?}): {msg}"));
             if !matches!(reason, eframe::wgpu::DeviceLostReason::Destroyed) {
                 diag::write_crash_report(&format!("wgpu device lost ({reason:?}): {msg}"));
-                if diag::elapsed_s() > 60.0 {
-                    if let Ok(exe) = std::env::current_exe() {
-                        diag::log_line("wgpu", "device lost — restarting");
-                        let _ = std::process::Command::new(exe)
-                            .args(std::env::args().skip(1))
-                            .env("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS", "1")
-                            .spawn();
-                    }
-                } else {
-                    diag::log_line("wgpu", "device lost within 60s of boot — not restarting (loop guard)");
-                }
+                relaunch_after_device_loss();
                 crate::exit(2);
             }
         });

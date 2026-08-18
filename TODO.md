@@ -454,6 +454,44 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] 🔴⭐⭐**DEVICE LOSS zooming HOME from a deep view — mode 2 has no iteration chunking, so
+  the frame-cost controller structurally cannot protect it.** Field case 2026-08-18, RTX 3080,
+  build 1675 (beta.105), crash `crash-1787014795-0.txt`, uptime 50.4 s. User loaded a deep zoom and
+  clicked Home. `LIVE mode=2 264x361 iter=250000 orbit_len=119563 partial=false tile=false`.
+  **The log is the whole story:**
+
+  | frame | steps | budget | dt | bla_skip |
+  |---|---|---|---|---|
+  | 1303 | 6.36e9 | 4.000e8 | 218 ms | 29,102 |
+  | 1564–1581 | 3.08e9 | 6.000e10 | 218 → 969 ms | 29,102 |
+  | 1812–1813 | 5.992e10 | 6.000e10 | 1001 ms | 4,457,481 |
+  | 1814 | — | LETHAL-BAND detected → **emergency retreat to 2.387e10** | — | — |
+  | 1814–1815 | 2.383e10 | 2.387e10 | **1003, 1012 ms** | — |
+
+  ⭐**ROOT CAUSE: `chunk_over` covers Direct and `Df32Pert` ONLY** (`render.rs`, the
+  `chunk_mode.is_direct() || chunk_mode == RenderMode::Df32Pert` gate). At mode 2 a 250,000-iteration
+  ask must go in ONE dispatch, and its dependent chain runs ~1 s regardless of pixel count. The
+  retreat cut steps **2.5x and the frame time did not move** (1004 → 1003 ms) — direct proof the
+  regime is latency-bound, the pre-existing "steps ∝ time is FALSE" lesson met from the budget side.
+  No step budget can fix this view; the code's own comment already says so ("chunked path extended to
+  perturbation modes (TODO), not bigger single dispatches").
+
+  ✅**What worked:** the beta.105 emergency retreat fired correctly and on the FIRST lethal reading
+  — first field confirmation of that fix. It was simply powerless here.
+
+  ⚠**Do NOT "fix" this by capping the explicit iteration ask.** Capping silently rendered deep
+  corpus locations interior-black and broke the "same iterations, both apps" contract with
+  Fraktaler-3. The real fix is extending chunking to mode 2 (its own `[~]` item), which needs the
+  floatexp δ + derivative + `ref_n` carried across frames the way mode 0 already carries them in the
+  3 Rgba32Float ping-pongs, with bit-identical chunk-boundary selftests.
+
+  ✅**Fixed alongside (beta.105):** the relaunch guard. Both device-lost paths used
+  `elapsed_s() > 60`, which conflates "early in this process's life" with "restart loop" — so this
+  50.4 s loss was refused a relaunch and reached the user as a hard crash instead of the seamless
+  session-restoring restart the feature exists to provide. Replaced with a generation counter
+  (`relaunch_decision`, pure + 3 tests): a first loss recovers at any uptime, a relaunch that dies
+  again within 15 s stops, and the chain is bounded at 3 so no loop can outlive it.
+
 - [ ] 🔴⭐⭐**DEVICE LOSS on the RX 6800 XT two frames after a mode 0→2 switch — the AUTO budget
   target (900 ms) is inside the band this codebase documents as lethal.** Field report
   `reports/fractadyne-report-2026-08-15.txt` (beta.104, Windows, RX 6800 XT / **Vulkan**,
