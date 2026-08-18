@@ -272,6 +272,12 @@ impl FractadyneApp {
         // A square request at the seahorse, then caller overrides the mode. Takes the app
         // explicitly (no captured `self` borrow) so checks can flip `render_cfg` knobs — e.g.
         // `use_bla`, which since the SA⊂BLA gate also decides whether SA is computed — between calls.
+        // ⚠`mag` here is NOT the view magnification. This sets units_per_pixel from a 3-unit span
+        // while `Viewport::magnification()` measures against REFERENCE_HEIGHT = 4, so the view
+        // this builds sits at 4/3 × `mag`. Harmless for checks that just want "deep" (the labels
+        // below are nominal), but it silently defeats anything testing a THRESHOLD: a crossover
+        // check written at 7.9e27 renders at 1.06e28 and lands on the far side of the 1e28 switch.
+        // Scale by 3/4 when you need a specific magnification.
         let make = |app: &Self, cx: &str, cy: &str, mag: f64| -> fractadyne_gpu::ExportRequest {
             let mut vp = Viewport::new(N as f64, N as f64);
             vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
@@ -499,16 +505,36 @@ impl FractadyneApp {
 
             // (C) Independent bignum oracle across a DEPTH BATTERY — integer escape n, exact
             // on every non-boundary sample, testing whichever render mode the depth selector
-            // actually uses (df32 perturbation through ~1e24×, floatexp at ≥1e28×). This is
+            // actually uses (df32 perturbation through 9.3e27×, floatexp at ≥1.3e28×). This is
             // the only check that gives *independent* deep-zoom correctness (not internal
             // consistency). Full-precision deep coordinates use a 38-digit minibrot nucleus.
             const NX: &str = "-0.74364388703715887077806454349323251348";
             const NY: &str = "0.131825904205312292821097354874199108694";
+            // ⚠MEASURED: at these depths the nucleus above fills the frame with the minibrot's
+            // INTERIOR — at 9.3e27× all 48400 pixels reach max_iter without escaping. The oracle
+            // still agrees there, but only on "never escapes"; it never compares an escape COUNT,
+            // and a dwell comparison on that view has no pixels to average (n = 0). The crossover
+            // three entries added below therefore use a structure-rich center — validation corpus location
+            // 07, 43 digits, which at the same depth escapes on every pixel (maxiter = 0) and
+            // takes ~986k rebases, so the oracle checks real dwell values.
+            const CRX: &str = "-1.178853950372678747911373866849720956148855";
+            const CRY: &str = "0.1853420232408490265512092752061929308714979";
             let battery: &[(&str, &str, &str, f64)] = &[
                 ("1e6x", SX, SY, 1.0e6),
                 ("1e12x", SX, SY, 1.0e12),
                 ("1e16x", NX, NY, 1.0e16),
                 ("1e24x", NX, NY, 1.0e24),
+                // The df32→floatexp crossover sits at 1e28×, and this battery used to step
+                // 1e24 → 1e30, straight over it: nothing pinned mode 0 near its own ceiling,
+                // where its δ limbs are most stressed, and nothing pinned mode 2 just after it
+                // takes over. Both sides of the switch now carry an independent oracle, so a
+                // regression in either representation — or in where the selector draws the line
+                // — fails here rather than surviving to a user's zoom through the boundary.
+                // These two are pre-scaled by 3/4 (see the note on `make`) so they land where
+                // the labels say: 9.3e27× is the deepest mode 0 the selector will hand out.
+                ("1.3e26x", CRX, CRY, 1.0e26),
+                ("9.3e27x (mode 0 ceiling)", CRX, CRY, 7.0e27),
+                ("1.3e28x (mode 2 floor)", CRX, CRY, 1.0e28),
                 ("1e30x", NX, NY, 1.0e30),
             ];
             for (label, cx, cy, mag) in battery {
@@ -533,6 +559,65 @@ impl FractadyneApp {
                         pass: false,
                     });
                 }
+            }
+
+            // (C2) floatexp vs df32 AT THE TOP OF MODE 0's RANGE. Check (B) already compares the
+            // two representations, but at 1e10× — eighteen decades below the ~1e28× crossover, so
+            // it exercises df32 where nothing is close to a limit. This runs the same comparison
+            // at 9.3e27×, the deepest point the depth selector still hands to mode 0, where δ is
+            // ~1e-31 and the df32 limbs carry the least headroom they ever do. Mode 2 is the
+            // reference: it is independently oracle-pinned at 1.3e28× and 1e30× just above.
+            //
+            // ⚠This does NOT validate df32's lo limbs on NVIDIA, where the error-free transforms
+            // are compiler-folded and mode 0 is effectively f32 (see topic-gpu-arithmetic). It
+            // validates the mode as shipped on this machine, which is the thing a user renders.
+            {
+                let mut a = make(self, CRX, CRY, 7.0e27); // 3/4-scaled → 9.3e27× actual
+                let selector_mode = a.mode;
+                a.mode = 0;
+                let mut b = a.clone();
+                b.mode = 2;
+                if let (Some(aa), Some(bb)) = (render(&a), render(&b)) {
+                    let (mean, frac) = compare(&aa, &bb);
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Numeric",
+                        name: "floatexp vs df32 at the df32 ceiling".into(),
+                        params: format!("corpus loc 07, 9.3e27×, selector chose mode {selector_mode}"),
+                        result: format!("mean Δ={mean:.4} iter, >2iter {:.3}%", frac * 100.0),
+                        threshold: "selector picks mode 0, mean<0.5, <2% differ",
+                        pass: selector_mode == 0 && mean < 0.5 && frac < 0.02,
+                    });
+                }
+            }
+
+            // (C3) Pin the crossover itself. The two checks above are only meaningful if the
+            // selector still routes 9.3e27× to df32 and has switched to floatexp by 1.3e28×;
+            // if the threshold ever moves, they would silently start comparing mode 2 to mode 2
+            // (vacuously identical) and the oracle entries would stop covering both sides.
+            {
+                // Report the ACTUAL magnifications, not the 3/4-scaled arguments — reading a
+                // nominal "7e27" in a crossover check is what made this land on the wrong side
+                // of the switch the first time.
+                let magof = |m: f64| -> f64 {
+                    let mut v = Viewport::new(N as f64, N as f64);
+                    v.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * m));
+                    v.magnification()
+                };
+                let below = make(self, CRX, CRY, 7.0e27).mode; // → 9.3e27×
+                let above = make(self, CRX, CRY, 1.0e28).mode; // → 1.3e28×
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Numeric",
+                    name: "df32→floatexp crossover brackets ~1e28×".into(),
+                    params: format!(
+                        "{:.2e}× vs {:.2e}×, threshold {:.0e}×",
+                        magof(7.0e27),
+                        magof(1.0e28),
+                        crate::PERT_FE_THRESHOLD
+                    ),
+                    result: format!("mode {below} below, mode {above} above"),
+                    threshold: "0 below, 2 above",
+                    pass: below == 0 && above == 2,
+                });
             }
 
             // (D3) Series approximation — at deep zoom (mode 2) the order-3 polynomial seed
