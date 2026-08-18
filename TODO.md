@@ -379,8 +379,20 @@ to HARDWARE VARIANCE (everything blessed on one RTX 3080). Sequenced by announce
    green), and both suites were **mutation-checked** — `end += 1` in `segment_range` fails 4 of 5
    tests naming the case, dropping the `TDR_MIN_STEPS` floor fails 4 controller tests.
    ⚠`segment_range` had NO tests before this, despite being what shards a render across machines.
-5. [ ] **Coverage measurement** as a local script (`cargo llvm-cov`) — CI is manual-only, so a
-   local report is the honest version; today's gaps are inferred from structure, not measured.
+5. [~] **Coverage measurement** as a local script — `scripts/coverage.ps1` LANDED beta.105;
+   coverage itself is still UNMEASURED because the prerequisites are not installed on this box and
+   installing them was not done unasked (`rustup component add llvm-tools-preview` +
+   `cargo install cargo-llvm-cov`; a `rustup toolchain install` in this repo already moved a
+   compiler version and added 31 warnings unasked, so the script probes and instructs instead,
+   or installs on an explicit `-Install`). Verified: ASCII-only, parses under Windows PowerShell
+   5.1, and the missing-prereq path exits 2 having changed nothing.
+   ⭐Design point worth keeping: a bare `cargo llvm-cov test` UNDERSTATES this project badly —
+   `cargo test` reaches the pure logic only, while every GPU path lives in `--selftest` (121
+   checks + 17 goldens) and `--livetest`, which run as the BUILT BINARY and are invisible to it.
+   A tests-only number would argue for unit tests duplicating what the harnesses already prove.
+   So the script runs each phase with `--no-report` and merges one report at the end; `-TestsOnly`
+   exists but says loudly that it covers pure logic only.
+   Remaining: run it (needs the two installs), then read the report and file what it exposes.
    Deprioritized: egui_kittest widget tests (highest cost; the scenario harnesses have caught
    the recent UI bugs faster than widget-level tests would have).
 6. [ ] ⭐**Automate test runs on the remote GPU machines (user, 2026-08-16).** Today every

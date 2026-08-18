@@ -79,6 +79,16 @@ cargo run -p fractadyne-app -- --selftest   # GPU vs CPU/bignum oracle + goldens
   version in `Cargo.toml`.
 - New behaviour should come with a test or a validation step (a core unit test, a
   `--selftest` case, or a documented manual check).
+- **Coverage, if you want to see what your change is missing:** `scripts/coverage.ps1`
+  writes a local HTML + lcov report. It needs `cargo-llvm-cov` and the
+  `llvm-tools-preview` rustup component; the script probes for both and prints the
+  install commands rather than installing anything behind your back (pass `-Install`
+  to opt in). Note that a plain `cargo llvm-cov test` badly understates this project:
+  `cargo test` covers the pure logic only, while everything touching a GPU lives in
+  `--selftest` and `--livetest`, which run as the built binary. The script instruments
+  those too and merges them into one report, so don't substitute a bare
+  `cargo llvm-cov test` number for it -- it would argue for unit tests duplicating what
+  the harnesses already prove.
 
 ## Design docs
 
