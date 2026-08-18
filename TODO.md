@@ -468,6 +468,21 @@ Mockups: [design/mockups/](design/mockups/).
   | 1814 | — | LETHAL-BAND detected → **emergency retreat to 2.387e10** | — | — |
   | 1814–1815 | 2.383e10 | 2.387e10 | **1003, 1012 ms** | — |
 
+  ⭐⭐**THE CONTROLLER'S ONLY ACTUATOR IS ORTHOGONAL TO THE COST.** On a live frame the budget is
+  honoured by shrinking RESOLUTION and nothing else (`render.rs`: `want = px * gpu_iter;
+  budget_res_scale = sqrt(budget/want)` — its own comment says "reduce the iteration-texture
+  resolution"). It never lowers `gpu_iter`. Verified from the frame arithmetic: 264x361 x 250000 =
+  2.383e10 exactly, and the pre-retreat 5.992e10 is ~239,680 px (~417x571), so the retreat did not
+  chunk or cap iterations — **it just dropped resolution 2.5x, and the frame time went 1004 -> 1003
+  ms.** At mode 2 with a 250k ask against a 119,563-long reference the cost is dominated by the
+  dependent iteration chain, not pixel count, so the one knob the budget owns does not move the clock.
+  ⛔Two fixes this FORECLOSES: shrinking resolution harder (provably buys nothing — and the user was
+  already down to 264x361 from a full window, i.e. looking at a badly degraded view that still TDR'd),
+  and lowering the budget target (same knob, same orthogonality).
+  ⚠Also observed once (frame 1303): `steps=6.358e9` vs `budget=4.000e8`, **15.9x OVER budget** — with
+  `tile=false` and no chunking available, a mode-2 frame can be submitted over budget outright. It
+  survived only because `bla_skip` was high that frame.
+
   ⭐**ROOT CAUSE: `chunk_over` covers Direct and `Df32Pert` ONLY** (`render.rs`, the
   `chunk_mode.is_direct() || chunk_mode == RenderMode::Df32Pert` gate). At mode 2 a 250,000-iteration
   ask must go in ONE dispatch, and its dependent chain runs ~1 s regardless of pixel count. The
