@@ -500,6 +500,19 @@ Mockups: [design/mockups/](design/mockups/).
   ⛔Two fixes this FORECLOSES: shrinking resolution harder (provably buys nothing — and the user was
   already down to 264x361 from a full window, i.e. looking at a badly degraded view that still TDR'd),
   and lowering the budget target (same knob, same orthogonality).
+  ⚠⚠**A FRAME CAN BE SUBMITTED HUNDREDS OF TIMES OVER BUDGET.** Second field session, 2026-08-17
+  ~21:47 (build 1681, user's own deep zoom to ~1e105x, D:\...\config\logs), the worst seen so far:
+  `gpu_iterate=3040ms steps=1.146e11 budget=2.828e8` — **405x over budget, a 3-second frame**. The
+  budget had just been reset by a mode switch (`mode switch to 2: budget 8.31e10 → unmeasured
+  (bootstrap 2.45e8, ceiling 4.00e8), re-converging`), so the frame went out sized by the OLD regime
+  while the budget already held the new bootstrap. The resolution actuator cannot retroactively shrink
+  a frame already built.
+  ✅**The emergency retreat fired on all FIVE lethal readings in that session and the device SURVIVED**
+  (3040ms→3.721e7, 1003ms→2.848e10, 1130ms→1.008e10, 905ms→2.287e10, 940ms→9.730e9) — the
+  strongest field evidence yet that it works wherever it can act. ⚠Also seen there: `no GPU iterate
+  timing after 30 frames (TIMESTAMP_QUERY=true): pricing frames by wall clock`, then resumed — the
+  controller lost its timestamp source mid-session and fell back, which is worth understanding since
+  wall-clock pricing is what mis-measured frames before.
   ⚠Also observed once (frame 1303): `steps=6.358e9` vs `budget=4.000e8`, **15.9x OVER budget** — with
   `tile=false` and no chunking available, a mode-2 frame can be submitted over budget outright. It
   survived only because `bla_skip` was high that frame.
