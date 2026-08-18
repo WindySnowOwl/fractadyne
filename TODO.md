@@ -507,7 +507,7 @@ Mockups: [design/mockups/](design/mockups/).
   (bootstrap 2.45e8, ceiling 4.00e8), re-converging`), so the frame went out sized by the OLD regime
   while the budget already held the new bootstrap. The resolution actuator cannot retroactively shrink
   a frame already built.
-  ✅**The emergency retreat fired on all FIVE lethal readings in that session and the device SURVIVED**
+  ✅**The emergency retreat fired on all 21 lethal readings across THREE runs that night and the device SURVIVED every one** (per-run: 1 @peak 1004ms, 13 @peak 1148ms, 7 @peak 3040ms — an earlier note said "five", which was a `tail -5` of the log file, not a count)
   (3040ms→3.721e7, 1003ms→2.848e10, 1130ms→1.008e10, 905ms→2.287e10, 940ms→9.730e9) — the
   strongest field evidence yet that it works wherever it can act. ⚠Also seen there: `no GPU iterate
   timing after 30 frames (TIMESTAMP_QUERY=true): pricing frames by wall clock`, then resumed — the

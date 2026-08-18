@@ -167,8 +167,33 @@ function Run-Phase {
     }
     if ($lost) { Say "  >>> DEVICE LOST detected" }
 
+    # DID THE TRIGGER EVEN FIRE? Without this the script was worse than useless on the arm that
+    # matters. Two nights of runs (2026-08-16, 2026-08-17) reported DeviceLost=False on every arm,
+    # INCLUDING the pre-fix ones, and read as "the fix holds" -- when in fact no arm ever produced a
+    # lethal reading, so nothing was tested. An A/B whose control never fails proves nothing about
+    # the treatment. Count the lethal-band readings and the peak measured iterate so a run that did
+    # not reproduce says so out loud.
+    $lethal = 0
+    $peakMs = 0
+    $al = Join-Path $Out "$Tag-app.log"
+    if (Test-Path $al) {
+        $lethal = @(Select-String -Path $al -Pattern 'LETHAL-BAND' -SimpleMatch).Count
+        # Peak MEASURED iterate, not frame interval: `dt` includes present/idle waits, so a paced
+        # tour shows ~1000 ms dt with a ~0 ms body and no real work at all. Only gpu_iterate /
+        # wall_iterate reflect what the controller actually prices.
+        $m = Select-String -Path $al -Pattern '(?:gpu|wall)_iterate=(\d+)ms' -AllMatches
+        foreach ($hit in $m) {
+            foreach ($g in $hit.Matches) {
+                $v = [int]$g.Groups[1].Value
+                if ($v -gt $peakMs) { $peakMs = $v }
+            }
+        }
+        if ($lethal -gt 0) { Say "  >>> $lethal LETHAL-BAND reading(s), peak measured iterate ${peakMs}ms" }
+        else { Say "  (no lethal reading; peak measured iterate ${peakMs}ms - this arm did NOT reach the dangerous regime)" }
+    }
+
     $reportTimeout = $timedOut -and (-not $ExpectNoExit)
-    return [pscustomobject]@{ Tag = $Tag; Exit = $code; Seconds = $sw.Elapsed.TotalSeconds; TimedOut = $reportTimeout; DeviceLost = $lost; Cfg = $cfg }
+    return [pscustomobject]@{ Tag = $Tag; Exit = $code; Seconds = $sw.Elapsed.TotalSeconds; TimedOut = $reportTimeout; DeviceLost = $lost; Lethal = $lethal; PeakIterMs = $peakMs; Cfg = $cfg }
 }
 
 $results = @()
@@ -275,15 +300,49 @@ if (& $want 5) {
     Say "F) stock + BLA WITHHELD - if E loses the device and F does not, the fix is proven"
     $results += Run-Phase -Tag '05f-repro-NEW-noBLA' -FdArgs @('--play', $tour) -TimeoutSec 150 -ExpectNoExit
     Remove-Item Env:\FRACTADYNE_BLA_DROP_FRAMES -ErrorAction SilentlyContinue
+
+    # ------------------------------------------------------------------ 5g/5h: UNPACED
+    # Why these exist: every `--play` arm above is PACED. A tour advances a clock and dilates it when
+    # a frame runs long, so pressure never accumulates -- measured on 2026-08-16 and again on
+    # 2026-08-17, where all six arms reported an identical 976 ms slowest frame interval with ZERO
+    # lethal readings. An identical number across six different configurations is a WAIT, not work.
+    #
+    # `--frametest` steps a dive on the live path (build_params, reference cache, recompute) with
+    # auto-iter ON and no pacer, which is much closer to what the field losses actually were: a
+    # hand-driven continuous dive. `--dive 350` goes deep enough for auto-iter to ask for the large
+    # counts that make a frame expensive, and crosses mode 0 -> 2 on the way.
+    Say ""
+    Say "G) UNPACED dive, pre-fix behaviour - no tour clock to hide behind"
+    $results += Run-Phase -Tag '05g-dive-OLD' -FdArgs @('--set', 'MODE_RATE_UNKNOWN_MARGIN=1', '--frametest', '--dive', '350', '--steps', '60', '--hold', '4') -TimeoutSec 900
+
+    Kill-Stragglers
+    Start-Sleep -Seconds 5
+
+    Say ""
+    Say "H) UNPACED dive, stock"
+    $results += Run-Phase -Tag '05h-dive-NEW' -FdArgs @('--frametest', '--dive', '350', '--steps', '60', '--hold', '4') -TimeoutSec 900
 }
 
 # ---------------------------------------------------------------- verdict
 Head "Summary"
 $results | ForEach-Object {
     $d = if ($_.DeviceLost) { 'DEVICE-LOST' } elseif ($_.TimedOut) { 'TIMEOUT' } else { 'ok' }
-    Say ("  {0,-20} exit={1,-6} {2,8:N1}s  {3}" -f $_.Tag, $_.Exit, $_.Seconds, $d)
+    $trig = if ($_.Lethal -gt 0) { "lethal x$($_.Lethal)" } else { 'NO TRIGGER' }
+    Say ("  {0,-24} {1,8:N1}s  {2,-12} {3,-12} peak={4}ms" -f $_.Tag, $_.Seconds, $d, $trig, $_.PeakIterMs)
 }
 $results | Format-Table -AutoSize | Out-File (Join-Path $Out 'summary.txt') -Encoding ascii
+
+# THE GATE ON THE WHOLE EXPERIMENT. A green A/B means nothing if no arm reached the regime, and
+# reading it as "the fix holds" is the exact mistake two previous runs invited.
+$repro = $results | Where-Object { $_.Tag -like '05*' }
+if ($repro -and (($repro | Measure-Object -Property Lethal -Sum).Sum -eq 0)) {
+    Say ""
+    Say "!! INCONCLUSIVE: not one arm produced a LETHAL-BAND reading, so the pre-fix control never"
+    Say "!! failed and the fix was never exercised. Do NOT record this as a pass. Peak measured"
+    Say "!! iterate per arm is printed above; if those are all well under 900 ms the repro is too"
+    Say "!! gentle for this machine. The reliable fallback is a MANUAL dive: full screen, auto-iter"
+    Say "!! on, dive past e28 and keep going, then send the session log."
+}
 
 function Verdict([string]$label, $old, $new) {
     if (-not $old -or -not $new) { return }
