@@ -1172,8 +1172,11 @@ mod tests {
 
     #[test]
     fn the_crossover_is_covered_and_reaches_the_regime_that_matters() {
-        // G1 in the design doc: PERT_FE_THRESHOLD had no test point anywhere in the project. If
-        // someone deletes this rung, the most dangerous depth in the app goes unsampled again.
+        // G1 in the design doc: PERT_FE_THRESHOLD had no test point anywhere in the project. The
+        // CORRECTNESS half is now covered by --selftest (oracle entries at 9.3e27×/1.3e28× plus a
+        // bracket check on the selector); this rung owns the half that still is not — HOLDING at
+        // the crossover under a frame budget, which is the regime every device loss has landed in.
+        // If someone deletes it, the most dangerous depth in the app goes unsampled under load.
         let x = LADDER
             .iter()
             .find(|r| r.id == "offline/depth/e28-crossover")

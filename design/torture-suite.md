@@ -31,6 +31,26 @@ device-loss class lives and where the RX 6800 XT died. The grand tour *glides th
 t = 178.2 s and never holds there; no checkpoint, no golden, no corpus entry sits at e28. The single
 most dangerous point in the app is unsampled — it is crossed at speed and never measured.
 
+> **CORRECTNESS HALF CLOSED — beta.105 `b14058c`.** `--selftest` now brackets the switch: bignum-oracle
+> entries at 1.3e26×, **9.3e27×** (the deepest view the selector still hands to df32) and **1.3e28×**
+> (mode 2's floor), a df32-vs-floatexp comparison at that ceiling, and a bracket check asserting the
+> selector still picks mode 0 below and mode 2 above — without which a threshold move would silently
+> reduce the comparison to mode 2 vs mode 2, vacuously identical. The two representations agree
+> *exactly* at 9.3e27× (mean Δ 0.0000 iter). Suite 116 → 121 checks.
+>
+> Two traps this uncovered, both worth knowing before authoring any threshold check:
+> - **`make`'s `mag` argument is not the view magnification.** It builds `units_per_pixel` from a
+>   3-unit span while `Viewport::magnification()` measures against `REFERENCE_HEIGHT = 4`, so the view
+>   lands at 4/3 × `mag`. A crossover check written at 7.9e27 renders at 1.06e28 — the wrong side.
+>   Scale by 3/4, and report actual magnifications in the check output.
+> - **The battery's 38-digit minibrot nucleus is interior-filled at depth** — measured, all 48400
+>   pixels reach `max_iter` at 9.3e27×. The oracle agrees there only on "never escapes"; it never
+>   compares an escape *count*. Dwell checks need a structure-rich center (corpus location 07 escapes
+>   on every pixel at the same depth).
+>
+> Still open: the **cost/stability** half. Nothing *holds* at e28 under a frame budget, which is the
+> regime the device losses live in — that remains the `live/crossover/*` rungs below.
+
 **G2 — No BLA-state axis.** Per-step cost swings ~100× on whether a BLA tree is live. Every
 device loss has landed in the no-BLA regime (`bla_skip=0`, short escaped reference — the documented
 `orbit_len=626` class). Grand-tour holds run `orbit_len` 258k–4M; the ultra dive runs 5k–24k.
