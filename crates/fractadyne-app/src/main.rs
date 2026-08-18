@@ -974,6 +974,68 @@ pub(crate) enum RenderMode {
     Floatexp = 2,
 }
 
+/// A session's saved zoom, validated. `None` means "unusable — open at the default view instead".
+///
+/// The session restore was an ENTRY POINT WITHOUT A GUARD, the same shape as the tour `zoom` string
+/// that once sized a usize::MAX-bit allocation while the `.fdn` reader validated properly. Here
+/// `FloatExp::new(mantissa, exp)` was fed straight from the file, so a corrupted session handed the
+/// app a NaN zoom (field case 2026-08-18, build 1678: black screen, "iter capped", laggy desktop).
+/// `RenderMode::select` then compounded it by mapping NaN to the most expensive mode; that is fixed
+/// separately, and this stops the bad value entering at all.
+///
+/// Rejecting only the zoom, not the centre: a garbage magnification with a good centre still opens
+/// somewhere recognisable, and throwing away a 40-digit centre the user may not be able to retype is
+/// the more destructive failure.
+pub(crate) fn restored_units_per_pixel(mantissa: f64, exp: i32) -> Option<fractadyne_core::FloatExp> {
+    if !mantissa.is_finite() || mantissa <= 0.0 {
+        return None;
+    }
+    // Our deepest real views sit near a binary exponent of -7000 (about 1e2100x). Orders past that
+    // are corruption, not ambition.
+    if exp.unsigned_abs() > 1_000_000 {
+        return None;
+    }
+    let upp = fractadyne_core::FloatExp::new(mantissa, exp);
+    // The decisive test, and the one the field case would have failed: the magnification this
+    // implies has to be a real number.
+    let mut probe = Viewport::new(1280.0, 720.0);
+    probe.units_per_pixel = upp;
+    if !probe.log2_magnification().is_finite() {
+        return None;
+    }
+    Some(upp)
+}
+
+#[cfg(test)]
+mod session_zoom {
+    use super::restored_units_per_pixel;
+
+    #[test]
+    fn a_corrupted_zoom_is_refused() {
+        // The field case: whatever produced it, a non-finite zoom must not reach the viewport.
+        assert!(restored_units_per_pixel(f64::NAN, -9).is_none());
+        assert!(restored_units_per_pixel(f64::INFINITY, -9).is_none());
+        assert!(restored_units_per_pixel(f64::NEG_INFINITY, -9).is_none());
+        // Zero or negative pixel size is not a view, it is a division waiting to happen.
+        assert!(restored_units_per_pixel(0.0, -9).is_none());
+        assert!(restored_units_per_pixel(-1.44, -9).is_none());
+        // An exponent orders beyond any real depth is corruption.
+        assert!(restored_units_per_pixel(1.44, i32::MIN).is_none());
+        assert!(restored_units_per_pixel(1.44, i32::MAX).is_none());
+    }
+
+    #[test]
+    fn real_sessions_still_load() {
+        // The actual value on disk after this incident was resolved (zoom ~1.06x).
+        assert!(restored_units_per_pixel(1.449069213429062, -9).is_some());
+        // And depths across the range the app genuinely reaches, including past the df32 crossover
+        // and out to the documented e2100 wall — none of these may be mistaken for corruption.
+        for e in [0, -30, -100, -1000, -3700, -7000] {
+            assert!(restored_units_per_pixel(1.5, e).is_some(), "legitimate depth 2^{e} refused");
+        }
+    }
+}
+
 /// Whether this process was launched to run a HARNESS or an offline job rather than to be sat in
 /// front of. Used only to decide that a lost device must NOT relaunch.
 ///
@@ -1090,6 +1152,20 @@ impl RenderMode {
     /// then df32, switching to floatexp past `PERT_FE_THRESHOLD`. The one place this is decided.
     /// `julia` selects the much lower direct→perturbation crossover (see `PERT_JULIA_THRESHOLD`).
     pub(crate) fn select(supports_perturbation: bool, julia: bool, mag: f64) -> RenderMode {
+        // ⚠A NON-FINITE magnification must pick the SAFEST mode, and getting this wrong was a real
+        // field failure (2026-08-18, build 1678). Every comparison against NaN is false, so the
+        // chain below used to fall through to `Floatexp` — a NaN zoom silently selected the MOST
+        // EXPENSIVE arithmetic at maximum depth. With a 250,000 iteration ask that is precisely the
+        // regime that has no chunking and runs ~1 s per frame, so a corrupted session opened to a
+        // black screen, "iter capped", a laggy desktop, and a device loss waiting to happen. The
+        // log line was `arithmetic mode none → 2 at frame 1 (mag 2^NaN)`.
+        //
+        // Direct is the correct answer for garbage input: it needs no reference orbit, costs the
+        // least, and renders *something* rather than wedging the GPU. The view is wrong either way;
+        // the difference is whether the user can still use the app to fix it.
+        if !mag.is_finite() {
+            return RenderMode::Direct;
+        }
         let direct_below = if julia { PERT_JULIA_THRESHOLD } else { 1.0e4 };
         if !supports_perturbation || mag < direct_below {
             RenderMode::Direct
@@ -3011,8 +3087,22 @@ impl FractadyneApp {
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(s.center_x, 64));
         viewport.center_y = fractadyne_core::parse_bf(&s.center_y_str)
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(s.center_y, 64));
-        viewport.units_per_pixel =
-            fractadyne_core::FloatExp::new(s.units_per_pixel, s.units_per_pixel_e);
+        viewport.units_per_pixel = match restored_units_per_pixel(
+            s.units_per_pixel,
+            s.units_per_pixel_e,
+        ) {
+            Some(upp) => upp,
+            None => {
+                diag::log_line(
+                    "start",
+                    &format!(
+                        "session zoom is UNUSABLE (mantissa={}, exp={}) — opening at the default view, keeping the saved centre",
+                        s.units_per_pixel, s.units_per_pixel_e
+                    ),
+                );
+                Viewport::new(1280.0, 720.0).units_per_pixel
+            }
+        };
         viewport.precision =
             fractadyne_core::precision_for_octaves(viewport.log2_magnification().max(0.0).ceil() as u64);
         // Restore the saved fractal family (so the view you left is fully recreated).

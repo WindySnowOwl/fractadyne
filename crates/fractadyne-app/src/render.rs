@@ -111,6 +111,28 @@ mod frame_cost_tests {
         assert!(!RenderMode::select(false, false, 1.0e300).is_floatexp());
     }
 
+    /// A garbage magnification must pick the SAFEST mode, never the most expensive one.
+    #[test]
+    fn a_non_finite_magnification_falls_back_to_direct() {
+        // THE FIELD CASE (2026-08-18, build 1678): a corrupted session gave a NaN zoom, and because
+        // every comparison against NaN is false the selector fell through to Floatexp — the most
+        // expensive arithmetic at maximum depth. Logged as
+        // `arithmetic mode none → 2 at frame 1 (mag 2^NaN)`. With a 250k iteration ask that is the
+        // un-chunkable ~1 s/frame regime, so the app opened to a black screen, "iter capped", a
+        // laggy desktop, and a device loss waiting to happen.
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let m = RenderMode::select(true, false, bad);
+            assert!(!m.is_floatexp(), "mag {bad} selected floatexp — the field failure");
+            assert_eq!(m, RenderMode::Direct, "mag {bad} must fall back to Direct");
+            // Julia uses a different direct threshold and must be just as safe.
+            assert_eq!(RenderMode::select(true, true, bad), RenderMode::Direct);
+        }
+        // And the ordinary partition is untouched by the guard.
+        assert_eq!(RenderMode::select(true, false, 1.0), RenderMode::Direct);
+        assert_eq!(RenderMode::select(true, false, 1.0e10), RenderMode::Df32Pert);
+        assert_eq!(RenderMode::select(true, false, 1.0e30), RenderMode::Floatexp);
+    }
+
     /// Moving frames are throttled by regime; settled frames get the full budget regardless.
     #[test]
     fn moving_budget_is_throttled_by_regime() {
