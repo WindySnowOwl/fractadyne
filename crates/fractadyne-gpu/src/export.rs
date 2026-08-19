@@ -1051,24 +1051,32 @@ pub fn render_iter(
 /// status) between passes in ping-pong textures — so an arbitrarily high iteration count can never
 /// run as a single watchdog-tripping dispatch. Output is bit-identical to `render_iter` for the
 /// supported scope (the resumable shader replicates the direct branch's arithmetic and order
-/// exactly, and the state carries full df32 precision). Scope: DIRECT mode (`mode == 1`),
-/// holomorphic formulas 0..=3; anything else falls back to plain `render_iter`. Always `ss = 1`,
-/// like `render_iter`. `iterate_ms` is not measured on this path (0.0).
+/// exactly, and the state carries full df32 precision). Scope: DIRECT (`mode == 1`), df32
+/// perturbation (`mode == 0`) and floatexp perturbation (`mode == 2`), holomorphic formulas 0..=3,
+/// glitch detection off on the perturbation modes; anything else falls back to plain `render_iter`.
+/// Always `ss = 1`, like `render_iter`. `iterate_ms` is not measured on this path (0.0).
+///
+/// Mode 2 runs the four-target `fs_iterate_chunk_fe` entry point instead — floatexp state does not
+/// fit in three (see `chunking_mode2_available`) — and needs 64 bytes/sample rather than 48.
 pub fn render_iter_chunked(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     req: &ExportRequest,
     chunk_iters: u32,
 ) -> Result<ExportResult, GpuError> {
-    // The chunk pass writes three Rgba32Float state attachments (48 bytes/sample); a device that
-    // only granted the default 32 can't run it — fall back to the single-pass render (the caller's
-    // TDR exposure is then what it always was; the app requests 48 at device creation). Scope:
-    // direct (1) and df32 perturbation (0) with aux/glitch off, holomorphic formulas 0..3.
-    let mode_ok = req.mode == 1 || (req.mode == 0 && req.glitch_on == 0);
+    // The chunk pass writes Rgba32Float state attachments — three (48 bytes/sample) for direct and
+    // mode 0, four (64) for mode 2. A device that granted less can't run it: fall back to the
+    // single-pass render (the caller's TDR exposure is then what it always was; the app requests
+    // min(adapter, 64) at device creation). Scope: direct (1), df32 perturbation (0) and floatexp
+    // perturbation (2) with aux/glitch off, holomorphic formulas 0..3 — the same scope the chunk
+    // shaders are written to, which is narrower than `fs_iterate`'s.
+    let fe = req.mode == 2; // floatexp: the four-target entry point
+    let mode_ok = req.mode == 1 || ((req.mode == 0 || req.mode == 2) && req.glitch_on == 0);
+    let attach_need = if fe { 64 } else { 48 };
     if !mode_ok
         || req.formula > 3
         || chunk_iters == 0
-        || device.limits().max_color_attachment_bytes_per_sample < 48
+        || device.limits().max_color_attachment_bytes_per_sample < attach_need
     {
         return render_iter(device, queue, req);
     }
@@ -1078,15 +1086,21 @@ pub fn render_iter_chunked(
 
     let shader = shader_module(device);
     let iter_bgl = iter_bind_group_layout(device);
-    let state_bgl = crate::state_bind_group_layout(device);
+    let targets: usize = if fe { 4 } else { 3 };
+    let state_bgl = crate::state_bind_group_layout_n(device, targets as u32);
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("chunked.layout"),
         bind_group_layouts: &[&iter_bgl, &state_bgl],
         push_constant_ranges: &[],
     });
+    let chunk_formats = [ITER_FORMAT; 4];
     let chunk_pipeline = fullscreen_pipeline(
-        device, &shader, &layout, "fs_iterate_chunk",
-        &[ITER_FORMAT, ITER_FORMAT, ITER_FORMAT], "chunked.chunk_pipeline",
+        device,
+        &shader,
+        &layout,
+        if fe { "fs_iterate_chunk_fe" } else { "fs_iterate_chunk" },
+        &chunk_formats[..targets],
+        "chunked.chunk_pipeline",
     );
     let resolve_pipeline = fullscreen_pipeline(
         device, &shader, &layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
@@ -1099,11 +1113,20 @@ pub fn render_iter_chunked(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    // Mode 0 iterates against the reference orbit; direct mode binds a 1-slot placeholder.
-    check_orbit_binding(device, req.orbit.len(), 0)?;
-    let orbit_buf = make_orbit_buffer(device, req.orbit.len().max(1) as u32);
+    // Modes 0/2 iterate against the reference orbit; direct mode binds a 1-slot placeholder. The
+    // flattened BLA tree is appended after the orbit exactly as `render_iter` lays it out.
+    // ⚠It must be uploaded even though mode 0 never traverses it: mode 2's chunk pass rebuilds its
+    // BLA table every pass, and a chunk pass that ran with `bla_on = 0` and an empty tree is the
+    // beta.101 e100 pathology verbatim — 0.04 Gsteps/s against the base pass's 174 in the same
+    // frame, which reads as "chunking is slow" rather than "chunking is broken".
+    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
+    let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
     if !req.orbit.is_empty() {
         queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
+    }
+    if !req.bla.is_empty() {
+        let off = (req.orbit.len() * std::mem::size_of::<[f32; 4]>()) as u64;
+        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
     }
     let counters_buf = crate::make_counters_buf(device);
     let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1115,10 +1138,9 @@ pub fn render_iter_chunked(
     let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
 
     // Ping-pong state: pass k reads set (k % 2) and writes set ((k+1) % 2).
-    // Three targets: this path is direct/mode-0 only (see the scope check above).
     let state = [
-        crate::make_state_textures(device, [w, h], 3),
-        crate::make_state_textures(device, [w, h], 3),
+        crate::make_state_textures(device, [w, h], targets),
+        crate::make_state_textures(device, [w, h], targets),
     ];
     let state_bg = [
         crate::make_state_bg(device, &state_bgl, &state[0]),
@@ -1156,7 +1178,9 @@ pub fn render_iter_chunked(
         sa_a_exp: req.sa_a_exp,
         sa_b_exp: req.sa_b_exp,
         sa_c_exp: req.sa_c_exp,
-        bla_on: 0,
+        // ⚠Passed through, not zeroed. It is inert for direct and mode 0 (neither branch reads it —
+        // BLA lives in the mode-2 loop), and load-bearing for mode 2: see the orbit upload above.
+        bla_on: req.bla_on,
         start_iter: 0,
         end_iter: 0,
         _pad_ir: [0; 2],
@@ -1182,13 +1206,10 @@ pub fn render_iter_chunked(
                     store: wgpu::StoreOp::Store,
                 },
             });
+            let attachments: Vec<_> = state[write_set].iter().map(|v| attach(v)).collect();
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("chunked.chunk_pass"),
-                color_attachments: &[
-                    attach(&state[write_set][0]),
-                    attach(&state[write_set][1]),
-                    attach(&state[write_set][2]),
-                ],
+                color_attachments: &attachments,
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,

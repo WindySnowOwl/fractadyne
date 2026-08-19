@@ -290,10 +290,47 @@ coloring off (the chunk pass carries no orbit statistics)". So the mode-2 chunk 
    121/121 + 17/17 (including `iter-chunk`'s five mode-0 bit-identity checks), and the app boots
    and renders — which is what proves naga validated the new entry point, since the pipeline is
    built in `Renderer::new`.
-2. **Flip the `chunk_over` gate** for mode 2, behind `chunking_mode2_available`.
-3. **The gates** (§6): bit-identical at 2/3/7 splits, a split landing ON a rebase, and a split at an
-   orbit wrap — plus the reference-shorter-than-the-ask shape from the field case (250k against a
-   119,563-long orbit).
+2. ~~**The gates** (§6)~~ — **DONE, and they run OFFLINE, which reorders the plan.** §8 put the live
+   `chunk_over` flip second and the gates third; that is backwards, because a bit-identity gate needs
+   a *dispatchable* chunked mode 2 and the live path cannot be driven from a selftest. The mode-0
+   gates already run through the offline `render_iter_chunked`, so mode 2 was added to that path's
+   scope (four-target plumbing, `fs_iterate_chunk_fe`, the BLA tree uploaded and `bla_on` passed
+   through) and the `iter-chunk` group grew five rows. Live behaviour is still untouched.
+3. **Flip the `chunk_over` gate** for mode 2, behind `chunking_mode2_available` — the only remaining
+   step, and now the only one whose blast radius is the live view.
+
+### What the gates actually cover (2026-08-19)
+
+| row | mode | rebases | BLA skips | split |
+|---|---|---|---|---|
+| corpus loc 07, 1.3e30× | 2 | 187,097 | 124 | 2, 3 and 7 passes |
+| 38-digit nucleus, 1.3e30× (interior-filled) | 2 | 361,830 | 12,325,890 | 7 passes |
+| 97-sample reference, 21k ask | 2 | 1,790,800 | — (BLA off) | 8 passes |
+
+All bit-identical, 0 texels differing. The counters are **identical across the 2-, 3- and 7-pass
+splits** (187,097 and 124 every time), which is a stronger statement than the pixel equality: the
+chunk boundary does not perturb the rebase or skip *sequence* at all. The interior row is the one
+that exercises §5 hardest — every pixel runs all 21,000 iterations across seven boundaries with BLA
+live. The 97-sample row is the field case's shape (an ask far above the reference length) in
+miniature, at ~1.8M orbit wraps.
+
+⚠**Two traps the gates had to be repaired for, both worth remembering.**
+
+*A deep magnification is not a deep test.* The first draft used the group's 15-digit seahorse
+coordinate at 1e30×. That coordinate is garbage past ~1e15×: its reference escaped after 3,090
+samples, SA seeded every pixel at 3,088, the pixels escaped ~2 iterations later, and the chunked
+render agreed **trivially** — zero rebases, zero BLA skips, nothing of the chunk path exercised, and
+four green checks. Mode-2 rows use corpus loc 07 (44 digits) and the 38-digit nucleus instead.
+
+*Bit-identity alone cannot certify that BLA survived chunking.* If BLA silently switched off in
+**both** renders they would still agree, and the chunked path would be running the beta.101 e100
+pathology behind a green gate. So the untruncated mode-2 rows additionally require `bla_skip > 0`,
+and every row prints its rebase and skip counts. This is what caught the seahorse problem above —
+the equality check was perfectly happy.
+
+The rows also assert the mode they claim: `make`'s `mag` argument is 3/4 of the view magnification,
+so a mode-2 row written at 1e28 would silently render in mode 0 and the group would quietly become
+five more mode-0 checks.
 
 ### What slice 1 changed about the plan (three corrections, found by writing it)
 

@@ -392,18 +392,45 @@ impl FractadyneApp {
                 }
                 (diffs, maxd)
             };
-            // (view, mag, max_iter, chunk) — direct mode (mag < 1e4) AND df32 perturbation
-            // (mag ≥ 1e4; mode 0 resumes δz + the floatexp derivative + ref_n, rebasing across
-            // chunk boundaries). The truncated-orbit case forces an end-of-orbit rebase STORM —
-            // the 99-sample-reference grind regime of the 197k× spar, in miniature.
-            let cases: &[(&str, &str, f64, u32, u32, bool, &str)] = &[
-                ("-0.5", "0.0", 1.0, 2_000, 137, false, "home 1×, 2000 iter, chunk 137"),
-                (SX, SY, 2.0e3, 2_000, 137, false, "seahorse 2e3×, 2000 iter, chunk 137"),
-                ("-0.5", "0.0", 1.0, 50_000, 7_000, false, "home 1×, 50k iter, chunk 7000"),
-                (SX, SY, 2.0e4, 3_000, 517, false, "mode0 seahorse 2e4×, 3000 iter, chunk 517"),
-                (SX, SY, 2.0e4, 20_000, 700, true, "mode0 97-sample ref (rebase storm), 20k iter, chunk 700"),
+            // (view, mag, max_iter, chunk, truncate, expected mode, desc) — direct mode
+            // (mag < 1e4), df32 perturbation (mag ≥ 1e4; mode 0 resumes δz + the floatexp
+            // derivative + ref_n, rebasing across chunk boundaries) and floatexp perturbation
+            // (mode 2, four state targets). The truncated-orbit cases force an end-of-orbit rebase
+            // STORM — the 99-sample-reference grind regime of the 197k× spar, in miniature, and the
+            // 250k-against-119,563 shape of the 2026-08-18 field device loss.
+            //
+            // ⚠The expected mode is CHECKED, not assumed. `make`'s `mag` is 3/4 of the view
+            // magnification (a 3-unit span against REFERENCE_HEIGHT = 4), so a mode-2 case written
+            // at 1e28 would render in mode 0 and this group would quietly become five more mode-0
+            // checks — the same silent-downgrade shape as a harness that runs a config it isn't.
+            //
+            // The mode-2 rows split 21,000 iterations into 2, 3 and 7 passes over the same view, so
+            // the boundaries land at different absolute iterations each time; with a rebase every
+            // ~97 steps in the truncated row, boundaries land ON rebases across the grid rather than
+            // by luck at one hand-picked iteration.
+            // ⚠Mode 2 needs a coordinate with enough DIGITS, not just a big magnification. The
+            // 15-digit seahorse above is garbage past ~1e15×: at 1e30× its reference escapes after
+            // 3090 samples and SA seeds every pixel at 3088, so the pixels escape ~2 iterations
+            // later and the "chunked" render agrees trivially — zero rebases, zero BLA skips, and
+            // nothing of the chunk path exercised. Corpus loc 07 (44 digits) and the 38-digit
+            // minibrot nucleus are the real deep points the numeric battery uses.
+            const CRX: &str = "-1.178853950372678747911373866849720956148855";
+            const CRY: &str = "0.1853420232408490265512092752061929308714979";
+            const NX: &str = "-0.74364388703715887077806454349323251348";
+            const NY: &str = "0.131825904205312292821097354874199108694";
+            let cases: &[(&str, &str, f64, u32, u32, bool, u32, &str)] = &[
+                ("-0.5", "0.0", 1.0, 2_000, 137, false, 1, "home 1×, 2000 iter, chunk 137"),
+                (SX, SY, 2.0e3, 2_000, 137, false, 1, "seahorse 2e3×, 2000 iter, chunk 137"),
+                ("-0.5", "0.0", 1.0, 50_000, 7_000, false, 1, "home 1×, 50k iter, chunk 7000"),
+                (SX, SY, 2.0e4, 3_000, 517, false, 0, "mode0 seahorse 2e4×, 3000 iter, chunk 517"),
+                (SX, SY, 2.0e4, 20_000, 700, true, 0, "mode0 97-sample ref (rebase storm), 20k iter, chunk 700"),
+                (CRX, CRY, 1.0e30, 21_000, 10_500, false, 2, "mode2 corpus07 1.3e30×, 21k iter, 2 passes"),
+                (CRX, CRY, 1.0e30, 21_000, 7_000, false, 2, "mode2 corpus07 1.3e30×, 21k iter, 3 passes"),
+                (CRX, CRY, 1.0e30, 21_000, 3_000, false, 2, "mode2 corpus07 1.3e30×, 21k iter, 7 passes"),
+                (NX, NY, 1.0e30, 21_000, 3_000, false, 2, "mode2 nucleus 1.3e30× (interior), 21k iter, 7 passes"),
+                (CRX, CRY, 1.0e30, 21_000, 2_600, true, 2, "mode2 97-sample ref (orbit wraps), 21k iter, chunk 2600"),
             ];
-            for (cx, cy, mag, max_iter, chunk, truncate, desc) in cases {
+            for (cx, cy, mag, max_iter, chunk, truncate, want_mode, desc) in cases {
                 let mut req = make(self, cx, cy, *mag);
                 req.max_iter = *max_iter;
                 if *truncate {
@@ -419,22 +446,42 @@ impl FractadyneApp {
                 }
                 let single = render(&req);
                 let chunked = fractadyne_gpu::render_iter_chunked(device, queue, &req, *chunk)
-                    .map(|r| r.pixels)
                     .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_chunked): {e}"))
                     .ok();
-                let (pass, result) = match (&single, &chunked) {
-                    (Some(a), Some(b)) if a.len() == b.len() => {
-                        let (diffs, maxd) = bit_exact(a, b);
-                        (diffs == 0, format!("{diffs} texels differ (max Δ {maxd:.3e})"))
+                let (pass, result) = if req.mode != *want_mode {
+                    // Not "the arithmetic differs" — the case did not test what it is named after,
+                    // and a bit-identity pass in the wrong mode is worse than a failure.
+                    (false, format!("ran in mode {} not {want_mode}", req.mode))
+                } else {
+                    match (&single, &chunked) {
+                        (Some(a), Some(r)) if a.len() == r.pixels.len() => {
+                            let (diffs, maxd) = bit_exact(a, &r.pixels);
+                            let bla = r.counters[fractadyne_gpu::CTR_BLA_SKIP];
+                            let reb = r.counters[fractadyne_gpu::CTR_REBASE];
+                            // ⚠Mode 2 is the only mode that traverses the BLA tree, and each chunk
+                            // pass rebuilds its own table — so the untruncated mode-2 rows must SHOW
+                            // skips, not merely agree. Bit-identity alone cannot certify this:
+                            // if BLA silently switched off in BOTH renders they would still agree,
+                            // and the chunked path would be running the beta.101 e100 pathology
+                            // (0.04 Gsteps/s against 174 in the same frame) with a green gate.
+                            let bla_ok = *want_mode != 2 || *truncate || bla > 0;
+                            (
+                                diffs == 0 && bla_ok,
+                                format!(
+                                    "mode {} — {diffs} texels differ (max Δ {maxd:.3e}), bla_skip {bla}, rebase {reb}",
+                                    req.mode
+                                ),
+                            )
+                        }
+                        _ => (false, "render failed".into()),
                     }
-                    _ => (false, "render failed".into()),
                 };
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "IterChunk",
-                    name: "chunked direct render is bit-identical".into(),
+                    name: "chunked render is bit-identical".into(),
                     params: (*desc).into(),
                     result,
-                    threshold: "0 texels differ",
+                    threshold: "0 texels differ (mode 2: and BLA engaged)",
                     pass,
                 });
             }

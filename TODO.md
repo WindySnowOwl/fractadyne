@@ -839,6 +839,33 @@ Mockups: [design/mockups/](design/mockups/).
   mid-settle (the e72/e82/e94 shape, and mode 2 is exactly where that happens) would resume `ref_n`
   against a different orbit than the pass that stored it.
 
+  ✅**SLICE 2 LANDED: mode 2 chunks OFFLINE, and it is BIT-IDENTICAL (2026-08-19).** The plan had
+  the live `chunk_over` flip second and the §6 gates third; that is backwards, because a bit-identity
+  gate needs a *dispatchable* chunked mode 2 and the live path cannot be driven from a selftest. The
+  mode-0 gates already run through the offline `render_iter_chunked`, so mode 2 joined that path's
+  scope — four-target plumbing, `fs_iterate_chunk_fe`, and ⚠**the BLA tree uploaded with `bla_on`
+  passed through instead of hard-zeroed** (it was `bla_on: 0`, which is inert for direct/mode 0 but
+  would have been the beta.101 e100 pathology verbatim for mode 2). Live behaviour is still
+  untouched. `iter-chunk` grew five rows, suite now **126 checks + 17 goldens**:
+  corpus loc 07 @1.3e30× split into **2, 3 and 7 passes** (187,097 rebases + 124 BLA skips, and the
+  counters are IDENTICAL across all three splits — the boundary does not perturb the rebase/skip
+  sequence at all); the 38-digit nucleus @1.3e30×, interior-filled so every pixel runs all 21,000
+  iterations across 7 boundaries with BLA live (**12,325,890 skips**, 361,830 rebases); and a
+  97-sample reference against a 21k ask — the field case's shape — at **1,790,800 orbit wraps**. All
+  0 texels differing.
+  ⚠⚠**TWO TRAPS THE GATES HAD TO BE REPAIRED FOR.** (1) **A deep magnification is not a deep test.**
+  The first draft used the group's 15-digit seahorse at 1e30×, which is garbage past ~1e15×: its
+  reference escaped after 3,090 samples, SA seeded every pixel at 3,088, pixels escaped ~2 iterations
+  later, and the chunked render agreed TRIVIALLY — zero rebases, zero BLA skips, four green checks
+  testing nothing. (2) **Bit-identity alone cannot certify that BLA survived chunking**: if BLA
+  switched off in BOTH renders they would still agree, behind a green gate. The untruncated mode-2
+  rows therefore also require `bla_skip > 0`, and every row prints its rebase/skip counts — which is
+  what caught trap (1); the equality check was perfectly happy. Rows also assert the MODE they claim
+  (`make`'s `mag` is 3/4 of the view magnification, so a row written at 1e28 renders in mode 0).
+
+  🔜**REMAINING: flip the live `chunk_over` gate** for mode 2 behind `chunking_mode2_available` — the
+  only step left, and the only one whose blast radius is the live view.
+
   ⚠**Do NOT "fix" this by capping the explicit iteration ask.** Capping silently rendered deep
   corpus locations interior-black and broke the "same iterations, both apps" contract with
   Fraktaler-3. The real fix is extending chunking to mode 2 (its own `[~]` item), which needs the
