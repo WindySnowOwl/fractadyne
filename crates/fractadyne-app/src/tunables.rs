@@ -521,6 +521,23 @@ pub(crate) const REFRESH_MAX_SECS: f64 = 0.15;
 
 pub(crate) const REFRESH_MIN_DRIFT: f64 = 0.02;
 
+/// Pinned refresh (option C, design/mode2-chunking.md §10-§11): a chunked view's refresh runs its
+/// progression across frames at a PINNED view while the display reprojects the previous complete
+/// frame. Abandon the pin when the LIVE view zooms this many octaves past it — the detail it would
+/// land is already a whole refresh interval stale, and re-pinning at the live view is cheaper than
+/// finishing. Must sit well above REFRESH_OCTAVES × (pin length in refresh cadences), or a fast
+/// dive abandons every pin and no detail ever lands (the option-B freeze by another road).
+pub(crate) const PIN_ABANDON_OCTAVES: f64 = 2.0;
+
+/// Same, for PAN drift, in live view-spans: past this the pinned content is out of the picture.
+pub(crate) const PIN_ABANDON_SPANS: f64 = 1.5;
+
+/// Age backstop, frames. Not a cadence: the budget controller measures every pin pass, so even a
+/// bootstrap-collapsed 256-step opening grows ×1.5 per measured pass and completes in ~20–25
+/// frames; a pin this old means measurements stopped resolving, and holding a stale pin open
+/// forever would magnify the held frame without limit (the recorded ever-larger-blocks shape).
+pub(crate) const PIN_MAX_FRAMES: u64 = 240;
+
 /// Hard drift ceiling for reusing a cached reference: a point beyond this fraction of a span
 /// off-centre is re-anchored (fresh pick) instead. Held at the `out_of_view` gate that already
 /// filters the caller, so a reused reference is never worse than one the live path already trusts.

@@ -604,11 +604,21 @@ A view is in exactly one of these shapes per frame while `chunk_over`:
 `reuse_hold` is decided early (render.rs:2925), the chunk step late (render.rs:3493), and the
 freeze verdict (`too_stale` → `reproject = Some`) later still (render.rs:3998-4056). A pin must
 not start (or advance) on a frame the freeze then converts to a reprojection: the cursor would
-advance with no pass dispatched and the resume would be garbage. So the chunk block only computes
-the CANDIDATE range, and a commit point AFTER the freeze verdict (immediately before the `hold_uv`
-capture) starts/advances the pin, does the cursor bookkeeping the chunk block skipped, and decides
-`hold_copy`/`display_hold`. Nothing between the old gate site (render.rs:3662) and the commit
-point consumes those flags — verified before moving them.
+advance with no pass dispatched and the resume would be garbage. So a START is decided at a commit
+point AFTER the freeze verdict (immediately before the `hold_uv` capture), which also does the
+cursor bookkeeping the interacting chunk block deliberately skipped. A CONTINUE frame, by
+contrast, advances its cursor in the chunk block directly: the pre-step already abandoned on
+every input that could freeze it (orbit change, caller reproject, drift, pan, panel, settle), so
+the freeze is unreachable by analysis — and a belt at the commit point discards the progression
+if it ever fires anyway.
+
+**As built, the display decision did NOT move** (the plan above said it would): direct-mode and
+pan-reprojection frames skip the perturbation block entirely, so a decision living at the commit
+point would leave their flags undecided. Instead the original site keeps the settled gate
+unchanged and gains a middle arm — pin active OR dirty residue, while interacting → serve the
+snapshot, preserving it across re-pins (`hold_active` staying up is what stops `hold_copy` from
+retaking the snapshot over a mid-compose texture) — and the commit point flips the flags only for
+the START it alone can see.
 
 ### What is NOT changed, deliberately
 
@@ -666,3 +676,28 @@ The abandon/adopt/continue verdict is a pure function (`pin_verdict`) over a cop
 (drifts precomputed as f64), `controller_props`/`relaunch_policy` house style: adopt only at
 cursor==ask; every abandon reason; start eligibility (incl. the single-pass bypass `step >=
 gpu_iter`, which keeps shallow refreshes exactly as they are today); the settle edge.
+
+### Landed (2026-08-19), and what the gate measured
+
+Both halves are on the branch: the gate first (RED against the held flip, as it had to be), then
+the pin (GREEN). Same run shape, same machine, ~23 s each:
+
+|                         | held flip (RED) | with the pin (GREEN) |
+|-------------------------|-----------------|----------------------|
+| interacting chunk frames| 585             | 536                  |
+| adopt partial (A1)      | **131**         | **0**                |
+| adopt complete (A2)     | **0**           | **3**                |
+| dirty shown (A3)        | 0               | 0                    |
+
+Three complete refreshes landed DURING motion — detail streams and is never partial. The cadence
+is lower than the pre-flip ~7/s because a complete deep refresh now costs its honest number of
+budget-bounded passes; the pre-flip cadence was purchased with the 1 s dispatches that lost the
+device. During sustained fast motion a pin whose view runs more than `PIN_ABANDON_OCTAVES` ahead
+abandons and re-pins, so the held frame can magnify up to ~2 octaves before fresh detail lands —
+the §10 "streamed detail lags the dive slightly" cost, in numbers. If the field finds that too
+coarse, `PIN_ABANDON_OCTAVES`/`PIN_MAX_FRAMES` are the calibrated knobs, and the motiontest's A2
+floor is the regression fence behind any retune.
+
+One deliberate scope note: `pin_verdict` orders Adopt before every abandon reason, so a
+progression that completes at the settle edge (or past the drift threshold) still adopts — the
+work is done and the texture is whole; discarding it would buy nothing.

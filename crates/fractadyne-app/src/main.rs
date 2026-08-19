@@ -297,6 +297,14 @@ struct Perf {
     adopt_complete: [u64; 2],
     chunk_motion_frames: [u64; 2],
     dirty_shown: [u64; 2],
+    /// A pinned refresh in flight per view (option C, design/mode2-chunking.md §10-§11): the
+    /// chunked refresh renders across frames at this captured view while the display keeps
+    /// reprojecting the previous complete frozen texture; adopted only on completion.
+    pin: [Option<crate::render::PinnedRefresh>; 2],
+    /// The live iteration texture diverged from the frozen bookkeeping (a pin dispatched into it
+    /// and has not adopted): while interacting, the display must serve the hold snapshot, never
+    /// the texture. Cleared by adoption, by any real (non-pin) latch, and at the settle edge.
+    chunk_dirty: [bool; 2],
     /// Budget-climb probe (see `MandelbrotParams::probe_nonce`): bumped on settled frames while
     /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
     /// where budget growth is too small to re-key the frame and the climb freezes.
@@ -512,6 +520,8 @@ impl Default for Perf {
             adopt_complete: [0, 0],
             chunk_motion_frames: [0, 0],
             dirty_shown: [0, 0],
+            pin: [None, None],
+            chunk_dirty: [false, false],
             probe_nonce: [0, 0],
             hold_active: [false, false],
             hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],

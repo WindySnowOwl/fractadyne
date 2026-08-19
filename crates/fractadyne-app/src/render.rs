@@ -2499,6 +2499,136 @@ impl FractadyneApp {
         // at deep zoom (mode ≠ 1) once a reference exists for this view.
         reproject: Option<[f32; 2]>,
     ) -> MandelbrotParams {
+        // ---- pinned refresh, pre-step (option C, design/mode2-chunking.md §10-§11) ----
+        // While a chunked refresh is PINNED, this frame renders the pinned view — the view
+        // parameters are shadowed below, so every derivation downstream (offsets, SA/BLA gating,
+        // step math) is exactly what it would be if the user sat at the pinned view — while the
+        // display keeps serving the hold snapshot under a transform that tracks the LIVE view.
+        // The pin's verdict runs FIRST, on the live inputs: `Adopt` must land before `reuse_hold`
+        // reads `frozen_l2`, and only `Continue` licenses the shadowing.
+        let vsub = (view_id as usize).min(1);
+        // The panel-size PARAM, saved before `resolution` is rebound downstream: the pin captures
+        // it, and any change abandons (a resize re-scales everything derived from it).
+        let panel_res = resolution;
+        // Live-view values the display transform needs on pin frames (after the shadowing, the
+        // locals describe the pinned view). The delta_exp/mantissa/precision trio is derived from
+        // the LIVE span so the hold transform's offsets stay O(1) at any depth.
+        let live_l2 = log2mag;
+        let (live_de, live_smx, live_smy, live_prec) = {
+            let de = if span.0.m == 0.0 { 0 } else { span.0.log2().floor() as i32 };
+            let s = -(de as f64);
+            (
+                de,
+                span.0.mul_pow2(s).to_f64(),
+                span.1.mul_pow2(s).to_f64(),
+                fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64),
+            )
+        };
+        let mut pin_frame = false;
+        if self.perf.pin[vsub].is_some() {
+            let verdict = {
+                let pin = self.perf.pin[vsub].as_ref().unwrap();
+                // Pan drift in LIVE view-spans. The shared exponent cancels in the ratio, and the
+                // live values keep both mantissas O(1), so this is depth-safe.
+                let pan_spans = if interacting {
+                    let dx = fractadyne_core::ref_offset_mantissa(
+                        &center_bf[0], &pin.center_bf[0], live_de, live_prec,
+                    ) / live_smx;
+                    let dy = fractadyne_core::ref_offset_mantissa(
+                        &center_bf[1], &pin.center_bf[1], live_de, live_prec,
+                    ) / live_smy;
+                    dx.abs().max(dy.abs())
+                } else {
+                    0.0 // the verdict stops on `interacting` before this can matter
+                };
+                let rc = &self.ref_cache[vsub];
+                pin_verdict(
+                    pin,
+                    &PinInputs {
+                        interacting,
+                        caller_reproject: reproject.is_some(),
+                        drift_oct: (log2mag - pin.log2mag).abs(),
+                        pan_spans,
+                        orbit_id: rc.orbit_id,
+                        orbit_len: rc.orbit_len,
+                        panel: panel_res,
+                        frame_idx: self.perf.frame_idx,
+                        cursor: self.perf.chunk_cursor[vsub],
+                    },
+                )
+            };
+            match verdict {
+                PinVerdict::Adopt => {
+                    let pin = self.perf.pin[vsub].take().unwrap();
+                    // ADOPT-ON-COMPLETION: the last pass landed, so the live G-buffer holds a
+                    // COMPLETE render of the pinned view. Latch it as the frozen frame — the
+                    // write every pin frame deferred — and let this frame proceed live: small
+                    // drift → `reuse_hold` reprojects the new texture (the reveal, through the
+                    // ordinary freeze path — a proven drop, not a new gate); large drift → the
+                    // next pin starts this same frame, snapshotting the fresh texture.
+                    self.ref_cache[vsub].frozen_center = Some(pin.center_bf.clone());
+                    self.ref_cache[vsub].frozen_l2 = pin.log2mag;
+                    self.ref_cache[vsub].frozen_upp_l2 = pin.upp_l2;
+                    self.ref_cache[vsub].frozen_at = Some(Instant::now());
+                    self.perf.chunk_dirty[vsub] = false;
+                    self.perf.adopt_complete[vsub] =
+                        self.perf.adopt_complete[vsub].wrapping_add(1);
+                    if crate::diag::trace_on("tile") {
+                        crate::diag::trace(
+                            "tile",
+                            format!(
+                                "pin-adopt v={vsub} f={} ask={} lag_oct={:.2}",
+                                self.perf.frame_idx,
+                                pin.gpu_iter,
+                                (live_l2 - pin.log2mag).abs()
+                            ),
+                        );
+                    }
+                }
+                PinVerdict::Stop(reason) => {
+                    self.perf.pin[vsub] = None;
+                    // The dirty residue survives most abandons (the texture still diverges from
+                    // the frozen bookkeeping, and the display must keep serving the snapshot
+                    // until something complete lands) — except at the settle edge, where the
+                    // settled path recomposes and its progressive partials are the accepted
+                    // settled UX.
+                    if reason == PinStop::Settled {
+                        self.perf.chunk_dirty[vsub] = false;
+                    }
+                    if crate::diag::trace_on("tile") {
+                        crate::diag::trace(
+                            "tile",
+                            format!(
+                                "pin-abandon v={vsub} f={} reason={reason:?} cur={} ask={}",
+                                self.perf.frame_idx,
+                                self.perf.chunk_cursor[vsub],
+                                self.perf.chunk_sig[vsub].1
+                            ),
+                        );
+                    }
+                }
+                PinVerdict::Continue => pin_frame = true,
+            }
+        }
+        // The live center survives only on pin frames (the hold transform needs it); everything
+        // else the transform needs was derived above.
+        let live_center_bf = if pin_frame { Some(center_bf.clone()) } else { None };
+        let (center_bf, center, span, magnification, log2mag, eff_iter, aa_target, pin_geom) =
+            if pin_frame {
+                let p = self.perf.pin[vsub].as_ref().unwrap();
+                (
+                    p.center_bf.clone(),
+                    p.center,
+                    p.span,
+                    p.magnification,
+                    p.log2mag,
+                    p.eff_iter,
+                    1,
+                    Some((p.resolution, p.ss, p.gpu_iter)),
+                )
+            } else {
+                (center_bf, center, span, magnification, log2mag, eff_iter, aa_target, None)
+            };
         let (stops, stop_count) = self.active_stops();
         let (cx, cy) = center;
         // Extended-range scale → shared base-2 exponent + O(1) span mantissas, so nothing
@@ -2764,6 +2894,14 @@ impl FractadyneApp {
             )
             .min(iter_cap)
         };
+        // A pinned refresh renders the ASK captured at pin time: every pass of one progression
+        // must target the same count (the resume contract). The inputs above are all pinned or
+        // interaction-stable, so this usually re-derives the same number — forcing it turns that
+        // argument into a guarantee.
+        let gpu_iter = match pin_geom {
+            Some((_, _, iter)) => iter,
+            None => gpu_iter,
+        };
         // Build the reference orbit a bit longer than the pixels need (`zoom_iter_cap` grows 256
         // iters/octave). The spare length lets one reference serve ~32 more octaves of zoom before
         // its orbit is too short — so a continuous dive doesn't rebuild the (slow, bignum) orbit
@@ -2842,7 +2980,12 @@ impl FractadyneApp {
         // seconds on a clock and must spend them on iterations, while a view the user is parked at
         // has as long as it likes and should spend it on resolution. A FINISHED tour is not
         // "playing", so a parked tour sharpens — which is the reported case.
-        let res_scale = if !interacting && !self.tour_playing() {
+        let res_scale = if pin_frame {
+            // Pinned refresh: geometry is captured, not derived — the motion scale was baked into
+            // the pin's resolution at pin time, and applying it again would double-shrink (the
+            // final geometry is forced to the pin's below, after the ss chain).
+            1.0
+        } else if !interacting && !self.tour_playing() {
             1.0
         } else if interacting && is_pert && self.render_cfg.prefer_detail {
             // "Prefer detail while zooming": the periodic refresh frames (REFRESH_OCTAVES cadence,
@@ -3329,6 +3472,22 @@ impl FractadyneApp {
             && self.perf.chunk_ok
             && !offscreen
             && spx.saturating_mul(gpu_iter.max(1) as u64) > tdr_allowed;
+        // A pin outliving `chunk_over` (the budget grew past the ask mid-progression) hands off:
+        // this frame still renders the PINNED view — un-chunked and COMPLETE, affordable by the
+        // gate's own arithmetic — and the ordinary latch below re-synchronizes the frozen
+        // bookkeeping with the texture, clearing the dirty residue. Next frame is live again.
+        if pin_frame && !chunk_over {
+            self.perf.pin[vsub] = None;
+            if crate::diag::trace_on("tile") {
+                crate::diag::trace(
+                    "tile",
+                    format!(
+                        "pin-abandon v={vsub} f={} reason=Unchunked cur={}",
+                        self.perf.frame_idx, self.perf.chunk_cursor[vsub]
+                    ),
+                );
+            }
+        }
         // First line of defence is lowering ss (`max_ss_tdr` below), but that floors at 1. If even ss=1
         // would blow the budget — `spx·gpu_iter` alone > the budget, i.e. a large floatexp panel at
         // a high fixed iteration count — the ss cap can't help, so shrink the render RESOLUTION too.
@@ -3427,6 +3586,15 @@ impl FractadyneApp {
         } else {
             (resolution, ss)
         };
+        // Pinned refresh: every pass renders the exact geometry captured at pin time — the state
+        // ping-pong resumes only against identical texture dimensions, and the progression sig
+        // below must stay constant for the pin's whole life. (`chunk_over` above was computed
+        // from the pre-force resolution; the pin's is never larger, so that gate only errs toward
+        // chunking — the safe direction.)
+        let (resolution, ss) = match pin_geom {
+            Some((res, pss, _)) => (res, pss),
+            None => (resolution, ss),
+        };
         let spx = (resolution[0] as u64) * (resolution[1] as u64);
         // Arm a probe only on a frame that actually RE-ITERATES (a cached frame's interval is
         // ~vsync and would wildly over-authorize): the iterate re-runs when its key inputs change
@@ -3509,7 +3677,14 @@ impl FractadyneApp {
                 resolution,
                 ss,
             );
-            if self.perf.chunk_sig[vs] != sig || interacting {
+            if pin_frame {
+                // The pin owns the progression: every sig input above is captured, so the sig is
+                // constant by construction, and the interacting reset below — the §10 defect — is
+                // bypassed. The freeze verdict cannot flip a pin frame into a reprojection (the
+                // pre-step abandons on every input that could: orbit change, caller reproject,
+                // drift, pan, panel), so the cursor advance further down is safe — and
+                // belt-checked at the commit point after the freeze anyway.
+            } else if self.perf.chunk_sig[vs] != sig || interacting {
                 self.perf.chunk_sig[vs] = sig;
                 self.perf.chunk_cursor[vs] = 0;
                 self.perf.chunk_idx[vs] = 0;
@@ -3527,7 +3702,7 @@ impl FractadyneApp {
                     "tile",
                     format!(
                         "chunk f={} vs={vs} cur={cur} step={step} gpu_iter={gpu_iter} \
-                         sig=({:x},{},{}x{},{}) interacting={interacting}",
+                         sig=({:x},{},{}x{},{}) interacting={interacting} pin={pin_frame}",
                         self.perf.frame_idx, sig.0, sig.1, sig.2[0], sig.2[1], sig.3
                     ),
                 );
@@ -3536,12 +3711,14 @@ impl FractadyneApp {
                 let end = cur.saturating_add(step).min(gpu_iter);
                 chunk_range = Some([cur, end]);
                 chunk_idx = self.perf.chunk_idx[vs];
-                // Moving frames restart at 0 next frame (the sig reset above); settled frames
-                // advance until the full count is honoured.
-                if !interacting {
+                // Moving frames restart at 0 next frame (the sig reset above); settled frames and
+                // PIN frames advance until the full count is honoured. A pin keeps
+                // `chunk_pending` up through its completing pass, so repaints keep coming for the
+                // adoption frame even if the user's input pauses inside the settle window.
+                if !interacting || pin_frame {
                     self.perf.chunk_cursor[vs] = end;
                     self.perf.chunk_idx[vs] = chunk_idx.wrapping_add(1);
-                    self.perf.chunk_pending[vs] = end < gpu_iter;
+                    self.perf.chunk_pending[vs] = end < gpu_iter || pin_frame;
                 }
                 // This frame runs a real bounded pass; pair the measurement with ITS cost.
                 self.perf.fe_steps_last[vs] =
@@ -3666,7 +3843,20 @@ impl FractadyneApp {
                     g.next < total
                 }
             });
-        let (hold_copy, display_hold) = if gate_capable && composing {
+        let mut pin_gate = false;
+        let (mut hold_copy, mut display_hold) = if gate_capable && composing {
+            let fresh = !self.perf.hold_active[vs];
+            self.perf.hold_active[vs] = true;
+            (fresh, true)
+        } else if interacting && (self.perf.pin[vsub].is_some() || self.perf.chunk_dirty[vsub]) {
+            // Pin CONTINUE frames, and any interacting frame while the live texture diverges
+            // from the frozen bookkeeping (an abandoned pin's residue — holds, freezes, pan
+            // reprojections): serve the hold snapshot, never the diverged texture. `fresh` fires
+            // only on the FIRST such frame — an abandoned pin's re-pin must NOT retake the
+            // snapshot over the dirty texture, and `hold_active` staying up is what prevents it.
+            // (A pin START cannot be seen here — it is decided at the commit point after the
+            // freeze verdict, which flips these flags itself.)
+            pin_gate = true;
             let fresh = !self.perf.hold_active[vs];
             self.perf.hold_active[vs] = true;
             (fresh, true)
@@ -4063,6 +4253,81 @@ impl FractadyneApp {
                     None => reproject = Some([0.0, 0.0]), // nothing rendered yet → static hold
                 }
             }
+            // ---- pinned refresh, commit point (option C, design/mode2-chunking.md §11) ----
+            // Runs AFTER the freeze verdict, because a pin may only START on a frame that really
+            // renders: `reuse_hold` is decided early, the chunk step late, and the freeze later
+            // still — starting (or advancing) a pin on a frame that then reprojects would move
+            // the cursor with no pass behind it.
+            if pin_frame && reproject.is_some() {
+                // Belt: the pre-step abandons on every input that could freeze a pin frame, so
+                // this is unreachable by analysis — but if it ever fires, the cursor advanced
+                // with no dispatch and the resume state is untrustworthy. Discard it.
+                self.perf.pin[vsub] = None;
+                self.perf.chunk_cursor[vs] = 0;
+                self.perf.chunk_idx[vs] = 0;
+                self.perf.chunk_pending[vs] = false;
+                pin_frame = false;
+                if crate::diag::trace_on("tile") {
+                    crate::diag::trace(
+                        "tile",
+                        format!("pin-abandon v={vsub} f={} reason=Froze", self.perf.frame_idx),
+                    );
+                }
+            }
+            let pin_started = self.perf.pin[vsub].is_none()
+                && !pin_frame
+                && interacting
+                && chunk_over
+                && is_pert
+                && reproject.is_none()
+                && self.ref_cache[vi].frozen_center.is_some()
+                && chunk_range.is_some_and(|[s, e]| s == 0 && e < gpu_iter);
+            if pin_started {
+                // PIN-START: this frame is a real chunked refresh that cannot complete in one
+                // pass (`e < gpu_iter`; a single-pass refresh stays exactly as it always was).
+                // Capture the view — this frame's locals ARE the pinned view — commit the first
+                // pass's cursor bookkeeping (the interacting chunk block deliberately skipped
+                // it), and gate the display on the snapshot `hold_copy` takes this same frame,
+                // which still holds the last COMPLETE frame because held frames do not iterate.
+                // The frozen latch below is deferred until adoption.
+                let end = chunk_range.unwrap()[1];
+                self.perf.pin[vsub] = Some(PinnedRefresh {
+                    center_bf: center_bf.clone(),
+                    center,
+                    span,
+                    magnification,
+                    log2mag,
+                    upp_l2,
+                    eff_iter,
+                    gpu_iter,
+                    resolution,
+                    panel: panel_res,
+                    ss,
+                    orbit_id: self.ref_cache[vi].orbit_id,
+                    orbit_len: self.ref_cache[vi].orbit_len,
+                    started_frame: self.perf.frame_idx,
+                });
+                self.perf.chunk_cursor[vs] = end;
+                self.perf.chunk_idx[vs] = 1;
+                self.perf.chunk_pending[vs] = true;
+                self.perf.chunk_dirty[vsub] = true;
+                // The display gate engages NOW — the early decision could not see a start.
+                // `hold_active` was cleared there this frame, so the snapshot is fresh by
+                // construction (it must be: this pass is about to compose over the texture).
+                hold_copy = !self.perf.hold_active[vs];
+                self.perf.hold_active[vs] = true;
+                display_hold = true;
+                pin_gate = true;
+                if crate::diag::trace_on("tile") {
+                    crate::diag::trace(
+                        "tile",
+                        format!(
+                            "pin-start v={vsub} f={} ask={gpu_iter} step0={end} res={}x{} ss={ss}",
+                            self.perf.frame_idx, resolution[0], resolution[1]
+                        ),
+                    );
+                }
+            }
             // Present-gate snapshot transform: captured ONCE from the same math as the freeze —
             // the snapshot holds the frame `frozen_center` still describes at this instant, and
             // the very next block overwrites that bookkeeping with the current view. The view is
@@ -4086,10 +4351,41 @@ impl FractadyneApp {
                     None => [0.0, 0.0, 1.0],
                 };
             }
+            // While a PIN (or its dirty residue) gates the display, the snapshot transform is
+            // recomputed EVERY frame against the LIVE view — the frozen bookkeeping still
+            // describes the snapshot's content precisely because the pin defers the latch below.
+            // (The settled gate must capture once for the opposite reason: its compose iterate
+            // overwrites `frozen_center` on its very first frame.) On pin frames the frame locals
+            // describe the PINNED view, so the live values saved in the pre-step are used.
+            if pin_gate && !hold_copy {
+                self.perf.hold_uv[vs] = match self.ref_cache[vi].frozen_center.clone() {
+                    Some(fc) => {
+                        let l2 = if pin_frame { live_l2 } else { log2mag };
+                        let cbf = live_center_bf.as_ref().unwrap_or(&center_bf);
+                        let (de, smx, smy, prec) = if pin_frame {
+                            (live_de, live_smx, live_smy, live_prec)
+                        } else {
+                            (delta_exp, span_mantissa.x, span_mantissa.y, precision)
+                        };
+                        let scale = ((self.ref_cache[vi].frozen_l2 - l2) as f32)
+                            .exp2()
+                            .clamp(9.094_947e-13, 1.099_512e12); // 2^-40 .. 2^40 (see the freeze)
+                        let px =
+                            fractadyne_core::ref_offset_mantissa(&cbf[0], &fc[0], de, prec) / smx;
+                        let py =
+                            fractadyne_core::ref_offset_mantissa(&cbf[1], &fc[1], de, prec) / smy;
+                        [(-px as f32) * scale, (py as f32) * scale, scale]
+                    }
+                    None => [0.0, 0.0, 1.0],
+                };
+            }
             // When this frame will actually re-iterate (not a freeze/pan reprojection), remember the
             // view it renders — the next freeze reprojects the resulting texture relative to it —
             // and WHEN, so the reuse-hold's time floor can age it (see `REFRESH_MAX_SECS`).
-            if reproject.is_none() {
+            // ⚠NOT on pin frames: the pin's passes compose a texture that is not yet complete —
+            // the latch is DEFERRED to adoption (the §10 requirement: a partial refresh can never
+            // become the held frame).
+            if reproject.is_none() && !pin_frame && !pin_started {
                 // Gate observability (design/mode2-chunking.md §11, asserted by `--motiontest`):
                 // DURING INTERACTION at a chunked view, count whether the texture this latch
                 // adopts is COMPLETE. A chunked motion frame that latches with its range short of
@@ -4122,6 +4418,10 @@ impl FractadyneApp {
                 self.ref_cache[vi].frozen_l2 = log2mag;
                 self.ref_cache[vi].frozen_upp_l2 = upp_l2;
                 self.ref_cache[vi].frozen_at = Some(Instant::now());
+                // A real latch re-synchronizes the frozen bookkeeping with the texture this frame
+                // renders — any pin residue is settled (e.g. the un-chunked handoff's complete
+                // render, or a cold view's honest first frame).
+                self.perf.chunk_dirty[vsub] = false;
             }
             // δ = center − reference, carried as a mantissa scaled by 2^-delta_exp (O(1) in df32 at
             // any depth; the GPU re-applies the exponent). Skipped during a cold-start hold — no
@@ -4326,6 +4626,14 @@ impl FractadyneApp {
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64),
         };
+        // Display-honesty tripwire (`--motiontest` A3): an interacting frame whose live texture
+        // diverges from the frozen bookkeeping must be serving the hold snapshot. If this ever
+        // counts, some path displayed under-iterated content — the exact defect the pin exists to
+        // prevent. (Pan-reproject frames display the snapshot too; their transform can lag the
+        // pan by design — a recorded edge, not a defect.)
+        if interacting && self.perf.chunk_dirty[vsub] && !display_hold {
+            self.perf.dirty_shown[vsub] = self.perf.dirty_shown[vsub].wrapping_add(1);
+        }
         let params = MandelbrotParams {
             iterate_ms,
             iterate_steps,
@@ -4379,10 +4687,11 @@ impl FractadyneApp {
             resolution,
             ss,
             reproject: reproject.is_some() as u32,
-            // A gated frame's DISPLAY samples the hold snapshot with its pinned transform;
-            // reproject frames keep their own. (The two never co-assert meaningfully: the gate
-            // requires a settled view, and a settled freeze frame just pauses composition for a
-            // frame while the display stays on the hold.)
+            // A gated frame's DISPLAY samples the hold snapshot with its transform; reproject
+            // frames keep their own. When the two co-assert — a freeze or pan while a PINNED
+            // refresh (or its dirty residue) gates the display — the hold wins: the snapshot is
+            // the last COMPLETE frame, and the live texture it would otherwise reproject is
+            // mid-composition. (The settled gate never co-asserts: it requires a settled view.)
             uv_offset: if display_hold {
                 [self.perf.hold_uv[vs][0], self.perf.hold_uv[vs][1]]
             } else {
@@ -4509,6 +4818,223 @@ pub(crate) fn bootstrap_steps(rate_this_mode: f64, rate_other_mode: f64) -> u64 
     // saturating: a very fast rate overflows u64 before the clamp would catch it.
     let steps = (rate * c.tdr_bootstrap_ms).max(0.0);
     (steps as u64).clamp(c.tdr_min_steps, c.tdr_bootstrap_steps)
+}
+
+/// A PINNED REFRESH (option C, design/mode2-chunking.md §10-§11): one refresh of a chunked view,
+/// spread across frames at the view captured when the refresh came due, while the display keeps
+/// reprojecting the previous COMPLETE frozen texture. Everything a resumed pass depends on is
+/// captured here, because the resume contract is absolute: pass k+1 may only ever run against the
+/// exact view, ask, geometry and reference that pass k stored its state under.
+///
+/// The progression's cursor deliberately lives where it always did (`Perf::chunk_cursor` /
+/// `chunk_idx`) — the pin only stops the interacting reset from firing, which is the entire
+/// mechanical fix for the §9 motion regression.
+#[derive(Clone)]
+pub(crate) struct PinnedRefresh {
+    pub(crate) center_bf: [fractadyne_core::BigFloat; 2],
+    pub(crate) center: (f64, f64),
+    pub(crate) span: (fractadyne_core::FloatExp, fractadyne_core::FloatExp),
+    pub(crate) magnification: f64,
+    pub(crate) log2mag: f64,
+    pub(crate) upp_l2: f64,
+    /// The caller's iteration appetite at pin time (substituted as the frame's `eff_iter`).
+    pub(crate) eff_iter: u32,
+    /// The derived ask every pass targets — completion is `chunk_cursor >= gpu_iter`.
+    pub(crate) gpu_iter: u32,
+    /// FINAL iterate geometry (post motion-scale), not the panel size.
+    pub(crate) resolution: [u32; 2],
+    /// The panel-size PARAM at pin time: a resize re-scales everything downstream, so it abandons.
+    pub(crate) panel: [u32; 2],
+    pub(crate) ss: u32,
+    /// Reference identity at pin time. Any change (install, extension) abandons: a pass must
+    /// never resume `ref_n` against a different orbit than the one that stored it (the §8 hazard).
+    pub(crate) orbit_id: u64,
+    pub(crate) orbit_len: u32,
+    pub(crate) started_frame: u64,
+}
+
+/// The per-frame inputs `pin_verdict` decides on — plain copyable data so the decision table is a
+/// pure function with its own tests (`mod pin_policy`), not an untested inline comparison.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PinInputs {
+    pub(crate) interacting: bool,
+    /// The caller passed a pan-reprojection this frame — the frame will not iterate.
+    pub(crate) caller_reproject: bool,
+    /// |live log2mag − pin log2mag|, octaves.
+    pub(crate) drift_oct: f64,
+    /// |live center − pin center| in live view-spans (max over the two axes).
+    pub(crate) pan_spans: f64,
+    pub(crate) orbit_id: u64,
+    pub(crate) orbit_len: u32,
+    pub(crate) panel: [u32; 2],
+    pub(crate) frame_idx: u64,
+    /// The view's chunk cursor (the pin's progress lives in the ordinary cursor slot).
+    pub(crate) cursor: u32,
+}
+
+/// Why a pinned refresh stopped without adopting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PinStop {
+    /// Interaction ended with the progression incomplete — the settled path recomposes from
+    /// scratch, and its progressive partials are the accepted settled UX.
+    Settled,
+    /// The reference changed (install or extension) — resume state is for another orbit.
+    Orbit,
+    /// The live view zoomed past `PIN_ABANDON_OCTAVES` — re-pin at the live view instead.
+    Drift,
+    /// The live view panned the pinned content out of the picture.
+    Pan,
+    /// The panel resized.
+    Panel,
+    /// `PIN_MAX_FRAMES` without completing — measurements stopped resolving; re-pin.
+    Age,
+    /// The caller supplied a pan-reprojection: this frame will not dispatch a pass.
+    CallerReproject,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PinVerdict {
+    /// The progression completed: latch the PIN's view as the frozen frame and drop the gate —
+    /// the reveal is the ordinary reproject of the now-complete texture. Checked before every
+    /// abandon reason on purpose: a finished progression adopts even at the settle edge or past
+    /// the drift threshold (the work is done; discarding it buys nothing).
+    Adopt,
+    Continue,
+    Stop(PinStop),
+}
+
+/// The pin's per-frame decision. Runs at the TOP of `build_params`, before anything reads the
+/// view: `Adopt` must land before `reuse_hold` reads `frozen_l2`, and `Continue` is what licenses
+/// shadowing the view parameters for the rest of the frame.
+pub(crate) fn pin_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
+    if i.cursor >= pin.gpu_iter {
+        return PinVerdict::Adopt;
+    }
+    if !i.interacting {
+        return PinVerdict::Stop(PinStop::Settled);
+    }
+    if i.orbit_id != pin.orbit_id || i.orbit_len != pin.orbit_len {
+        return PinVerdict::Stop(PinStop::Orbit);
+    }
+    if i.panel != pin.panel {
+        return PinVerdict::Stop(PinStop::Panel);
+    }
+    if i.caller_reproject {
+        return PinVerdict::Stop(PinStop::CallerReproject);
+    }
+    if i.drift_oct > crate::tunables::PIN_ABANDON_OCTAVES {
+        return PinVerdict::Stop(PinStop::Drift);
+    }
+    if i.pan_spans > crate::tunables::PIN_ABANDON_SPANS {
+        return PinVerdict::Stop(PinStop::Pan);
+    }
+    if i.frame_idx.saturating_sub(pin.started_frame) > crate::tunables::PIN_MAX_FRAMES {
+        return PinVerdict::Stop(PinStop::Age);
+    }
+    PinVerdict::Continue
+}
+
+#[cfg(test)]
+mod pin_policy {
+    use super::*;
+
+    fn pin() -> PinnedRefresh {
+        let bf = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+        PinnedRefresh {
+            center_bf: [bf(-1.0), bf(0.2)],
+            center: (-1.0, 0.2),
+            span: (
+                fractadyne_core::FloatExp::from_f64(1.0),
+                fractadyne_core::FloatExp::from_f64(1.0),
+            ),
+            magnification: 1.0e31,
+            log2mag: 103.0,
+            upp_l2: -110.0,
+            eff_iter: 1_000_000,
+            gpu_iter: 1_000_000,
+            resolution: [480, 270],
+            panel: [960, 540],
+            ss: 1,
+            orbit_id: 7,
+            orbit_len: 868,
+            started_frame: 1_000,
+        }
+    }
+
+    fn inputs() -> PinInputs {
+        PinInputs {
+            interacting: true,
+            caller_reproject: false,
+            drift_oct: 0.3,
+            pan_spans: 0.0,
+            orbit_id: 7,
+            orbit_len: 868,
+            panel: [960, 540],
+            frame_idx: 1_010,
+            cursor: 400_000,
+        }
+    }
+
+    #[test]
+    fn a_mid_flight_pin_continues() {
+        assert_eq!(pin_verdict(&pin(), &inputs()), PinVerdict::Continue);
+    }
+
+    #[test]
+    fn adoption_requires_the_full_ask_and_nothing_else() {
+        // Complete → adopt, even at the settle edge, past the drift threshold, or old: the work
+        // is done and the texture is whole — discarding it buys nothing.
+        let mut i = inputs();
+        i.cursor = 1_000_000;
+        i.interacting = false;
+        i.drift_oct = 5.0;
+        i.frame_idx = 10_000;
+        assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Adopt);
+        // One iteration short is not complete — a partial refresh can never become the held
+        // frame (the §9 regression, requirement 3 of §10).
+        i.cursor = 999_999;
+        i.interacting = true;
+        i.drift_oct = 0.0;
+        i.frame_idx = 1_010;
+        assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+    }
+
+    #[test]
+    fn every_abandon_reason_fires_and_is_ordered_after_adopt() {
+        let cases: &[(&dyn Fn(&mut PinInputs), PinStop)] = &[
+            (&|i| i.interacting = false, PinStop::Settled),
+            (&|i| i.orbit_id = 8, PinStop::Orbit),
+            (&|i| i.orbit_len = 900, PinStop::Orbit),
+            (&|i| i.panel = [961, 540], PinStop::Panel),
+            (&|i| i.caller_reproject = true, PinStop::CallerReproject),
+            (&|i| i.drift_oct = 2.1, PinStop::Drift),
+            (&|i| i.pan_spans = 1.6, PinStop::Pan),
+            (&|i| i.frame_idx = 1_000 + crate::tunables::PIN_MAX_FRAMES + 1, PinStop::Age),
+        ];
+        for (mutate, want) in cases {
+            let mut i = inputs();
+            mutate(&mut i);
+            assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Stop(*want), "expected {want:?}");
+            // The same violation with a COMPLETE cursor still adopts.
+            i.cursor = 1_000_000;
+            assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Adopt, "adopt outranks {want:?}");
+        }
+    }
+
+    #[test]
+    fn the_thresholds_are_boundaries_not_bands() {
+        // Exactly AT a threshold continues; strictly past it stops — a pin must not flap on a
+        // value that sits on the line for several frames.
+        let mut i = inputs();
+        i.drift_oct = crate::tunables::PIN_ABANDON_OCTAVES;
+        assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+        i.drift_oct = 0.0;
+        i.pan_spans = crate::tunables::PIN_ABANDON_SPANS;
+        assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+        i.pan_spans = 0.0;
+        i.frame_idx = 1_000 + crate::tunables::PIN_MAX_FRAMES;
+        assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+    }
 }
 
 /// `bootstrap` is what `bootstrap_steps` derived for this view and mode.

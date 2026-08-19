@@ -16,6 +16,18 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Very deep views now stay safe for the graphics card while zooming, without the picture turning
+  to noise** (beta.106). Deep views with very high iteration counts used to be drawn in a single
+  huge piece of GPU work per frame — occasionally so large that Windows reset the graphics card
+  mid-zoom (reported when pressing Home from a deep view). The work is now split into many small,
+  safely-sized pieces. The first version of that split had a visible cost: while the view was
+  moving, the screen showed whichever piece had finished, so deep interiors looked like noise.
+  Now, when a moving view is due a detail refresh, the refresh is computed invisibly over several
+  frames at a fixed point of the dive and shown only once it is COMPLETE — the picture you see is
+  always a whole frame, smoothly following the zoom, with fresh detail streaming in a beat behind.
+  A new automated gate (`--motiontest`) drives a zoom and a Home glide and fails the build if a
+  partial frame is ever shown or adopted, so this cannot quietly regress.
+
 - **Fixed: two crashes where the app pushed the graphics card too hard and lost it** (beta.105).
   Both were reported from the same machine and both ended the same way — the window vanishing and
   reappearing with your view restored. The app decides how much work one frame may ask of the card

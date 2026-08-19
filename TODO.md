@@ -927,6 +927,38 @@ Mockups: [design/mockups/](design/mockups/).
   SETTLED results, which is why the flip passes 24/24 *with* the regression present. A
   motion-presentation change needs a gate that samples frames DURING motion. Write that gate FIRST.
 
+  ✅**OPTION C IMPLEMENTED, GATE-FIRST, ON THE BRANCH (2026-08-19; design/mode2-chunking.md §11).**
+  Two commits on `mode2-live-flip`, in the order the TODO demanded:
+  - **The gate** (`--motiontest`, ~23 s): counts what was previously unobservable — whether the
+    frozen-texture latch adopted a partial chunk progression during interaction (`adopt_partial` /
+    `adopt_complete` in `Perf`, plus a `dirty_shown` display-honesty tripwire and an anti-vacuity
+    floor of 100 interacting chunk frames). **Measured RED on the held flip: 585 motion chunk
+    frames, adopt partial=131 complete=0** — the field report as two numbers, while `--livetest`
+    stayed 24/24 green over the same defect.
+  - **The pinned refresh**: when an interacting chunked refresh can't complete in one budgeted
+    pass, the view is PINNED (BigFloat center + span + ask + final geometry + orbit identity) and
+    `build_params` renders the pinned view across frames — the view params are shadowed at the top,
+    so every derivation downstream is exactly a frame at that view — while the display serves the
+    existing hold-snapshot machinery under a per-frame transform that tracks the LIVE view. The
+    frozen latch is DEFERRED to adoption (cursor == ask), so a partial refresh can never become the
+    held frame; abandons (orbit change, >2.0 oct drift, pan, panel, age, settle, un-chunked
+    handoff) re-pin or hand off to paths that render complete content, with the snapshot preserved
+    across re-pins. Decision table is a pure `pin_verdict` + 4 `pin_policy` tests (adopt outranks
+    every abandon; thresholds are boundaries, not bands).
+    **GREEN: adopt partial=0 complete=3 dirty=0 over 536 motion chunk frames.** Cadence note: ~3
+    complete refreshes per 23 s of continuous motion is the honest budget-bounded rate — the
+    pre-flip ~7/s was purchased with the 1 s dispatches that lost the device; the held frame can
+    magnify up to ~2 octaves (PIN_ABANDON_OCTAVES) during sustained fast motion before fresh
+    detail lands, the §10 latency cost in numbers.
+  - Gates: suite **126+17 OK**, workspace tests 106+56+9 (4 new), `--livetest` grand tour and
+    `--autodive 32 --autodive-home 3` recorded below at their run. ⭐The settled path, tours,
+    direct/mode-0 cold starts, and the settled prefer-detail gate are structurally untouched (the
+    pin engages only on interacting pert frames with frozen content and a multi-pass ask).
+  - ⚠Recorded residuals (§11): a settled progression still latches per pass (pre-existing mode-0
+    gap, now self-healing via the pin); a PAN while the dirty residue displays holds the snapshot
+    at a transform that lags the pan; autopilot stepped dives now wait for a COMPLETE frame at
+    depth before stepping (`frozen_l2`'s stated meaning, honestly enforced).
+
   🔧**Harness facts learned the hard way (2026-08-19):**
   - ⚠**`--autodive 22` NEVER REACHES MODE 2** (1e22 is below the 1e28 threshold): measured 1032
     mode-0 / 354 mode-1 / **0 mode-2** frames. The `live/home/glide-from-depth` torture rung uses
