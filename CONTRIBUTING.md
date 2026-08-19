@@ -79,6 +79,14 @@ cargo run -p fractadyne-app -- --selftest   # GPU vs CPU/bignum oracle + goldens
   version in `Cargo.toml`.
 - New behaviour should come with a test or a validation step (a core unit test, a
   `--selftest` case, or a documented manual check).
+- **Don't use `\` line-continuations inside Rust string literals here.** The repo is CRLF, and a
+  continuation followed by `
+` does not strip the next line's indentation the way it does with a
+  bare `
+` — so the text reaches the user with a long run of spaces mid-sentence. Three user-facing
+  messages shipped that way in one day before this was written down. Put the string on one line (long
+  lines are fine for messages), or build it with `concat!` / separate pushes. Doc comments and normal
+  code wrapping are unaffected; this is only about `"..."` string bodies.
 - **Coverage, if you want to see what your change is missing:** `scripts/coverage.ps1`
   writes a local HTML + lcov report. It needs `cargo-llvm-cov` and the
   `llvm-tools-preview` rustup component; the script probes for both and prints the

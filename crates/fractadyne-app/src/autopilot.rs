@@ -257,6 +257,8 @@ pub(crate) struct AutoDive {
     /// Peak measured iterate observed DURING a Home glide, so the report can say whether Home is
     /// harder than the dive rather than leaving it to inference.
     peak_home_ms: f64,
+    /// Cleared by the normal exit paths so the watchdog thread stands down. See `new`.
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// CURRENT depth, distinct from `deepest_log10`, which is a high-water mark.
     ///
     /// ⚠Using the high-water mark for the explicit-count switch broke multi-cycle runs: after a Home
@@ -280,7 +282,52 @@ const EXPLICIT_FROM_LOG10: f64 = 6.0;
 
 impl AutoDive {
     pub(crate) fn new(target_log10: f64, timeout_s: f64, iter: Option<u32>, home_cycles: u32) -> Self {
+        // ⚠**THE TIMEOUT NEEDS ITS OWN THREAD.** Every other check in this harness runs inside
+        // `autodive_frame`, i.e. inside `update()` — so `--autodive-timeout` could only fire while
+        // frames were still being DELIVERED, which is exactly not the case that needs bounding. A
+        // deep reference build runs arbitrary-precision on the main thread (hundreds of bits at
+        // 1e150), and the historical "present wedge" blocks the main thread inside a wgpu wait
+        // forever; both look identical from outside — the app reports "idle" with a frozen zoom, and
+        // nothing enforced the deadline. Reported from the field 2026-08-18 at 1e149.
+        //
+        // The watchdog is deliberately dumb: sleep, check a flag, and hard-exit if the deadline
+        // passes. It gets a grace margin so that whenever frames ARE flowing the in-frame path wins
+        // and prints the full summary; the watchdog only ever speaks when nothing else can.
+        //
+        // ⚠This is why `--torture live/home/glide-from-depth` was the trustworthy way to run it
+        // before now: the supervisor bounds each rung as a CHILD PROCESS from outside. Fixing the
+        // flag does not make that redundant, it makes the two agree.
+        const WATCHDOG_GRACE_S: f64 = 10.0;
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let done = std::sync::Arc::clone(&done);
+            let budget = timeout_s + WATCHDOG_GRACE_S;
+            std::thread::spawn(move || {
+                let start = std::time::Instant::now();
+                while start.elapsed().as_secs_f64() < budget {
+                    if done.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+                if done.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                // ⚠One line on purpose. A `\` line-continuation inside a Rust string literal does
+                // NOT strip the following indentation in this CRLF repo, so the message reaches the
+                // user with a long run of spaces in the middle. Three messages shipped that way today
+                // before it was worth writing down; see CONTRIBUTING.
+                let msg = format!(
+                    "WATCHDOG: no completion {budget:.0}s after the {timeout_s:.0}s timeout — the frame loop stopped delivering (deep reference build on the main thread, or a wedge). Nothing was measured."
+                );
+                crate::diag::log_line("autodive", &msg);
+                eprintln!();
+                eprintln!("--autodive: {msg}");
+                crate::exit(4);
+            });
+        }
         Self {
+            done,
             target_log10,
             timeout_s,
             iter,
@@ -374,6 +421,15 @@ impl crate::FractadyneApp {
             d.iter_applied = true;
         }
 
+        // Test hook: freeze the frame loop on purpose so the watchdog above can be OBSERVED firing.
+        // A safety net nobody has seen catch anything is a guess.
+        if std::env::var("FRACTADYNE_AUTODIVE_FREEZE").is_ok() && d.armed {
+            crate::diag::log_line("autodive", "FRACTADYNE_AUTODIVE_FREEZE — blocking the frame loop");
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3600));
+            }
+        }
+
         let elapsed = d.t0.elapsed().as_secs_f64();
         let dive_done = d.armed && !self.autopilot.active;
         let timed_out = elapsed >= d.timeout_s;
@@ -464,6 +520,7 @@ impl crate::FractadyneApp {
             // FailAssert, where any other non-zero code becomes FailCrash. A clean run that simply
             // did not reach the regime is an assertion failure, not a crash, and mislabelling it
             // would send whoever reads the ladder report hunting a crash that never happened.
+            d.done.store(true, std::sync::atomic::Ordering::Relaxed);
             crate::exit(if d.lethal > 0 { 0 } else { 2 });
         }
 
