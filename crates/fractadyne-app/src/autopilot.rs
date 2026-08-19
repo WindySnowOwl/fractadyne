@@ -228,7 +228,14 @@ pub(crate) struct AutoDive {
     warmup: u32,
     armed: bool,
     /// Last sampled measurement, to notice when a NEW one lands.
+    ///
+    /// ⚠Paired with the step count, because ms ALONE undercounts. Field run 2026-08-18 on the
+    /// RX 6800 XT logged four LETHAL-BAND frames and this harness reported three: two consecutive
+    /// readings were both exactly 1155 ms, and a value-only comparison cannot tell a repeat from a
+    /// stale sample. Two identical (ms, steps) pairs back to back remain indistinguishable, so the
+    /// figure is reported as DISTINCT readings rather than claimed as a total.
     last_ms: f64,
+    last_steps: u64,
     readings: u32,
     lethal: u32,
     peak_ms: f64,
@@ -335,6 +342,7 @@ impl AutoDive {
             warmup: 45,
             armed: false,
             last_ms: 0.0,
+            last_steps: 0,
             readings: 0,
             lethal: 0,
             peak_ms: 0.0,
@@ -359,7 +367,8 @@ impl crate::FractadyneApp {
         // the log only ever appears INSIDE the lethal message, so log-scraping is circular — it can
         // only report a number once the thing being detected has already happened.
         let ms = self.perf.last_iterate_ms[0];
-        if ms > 0.0 && (ms - d.last_ms).abs() > f64::EPSILON {
+        let steps = self.perf.fe_steps_last[0];
+        if ms > 0.0 && ((ms - d.last_ms).abs() > f64::EPSILON || steps != d.last_steps) {
             d.readings += 1;
             if ms > d.peak_ms {
                 d.peak_ms = ms;
@@ -371,6 +380,7 @@ impl crate::FractadyneApp {
                 d.peak_home_ms = ms;
             }
             d.last_ms = ms;
+            d.last_steps = steps;
         }
         let depth = self.viewport.log2_magnification() / LOG2_10;
         if depth.is_finite() {
@@ -513,7 +523,7 @@ impl crate::FractadyneApp {
                 d.peak_ms, crate::tunables::cost().tdr_lethal_ms);
             println!("  home glides         {} (peak during home {:.1}ms)",
                 d.homes_done, d.peak_home_ms);
-            println!("  lethal readings     {}", d.lethal);
+            println!("  lethal readings     {} (distinct)", d.lethal);
             println!("  {verdict}");
             // Exit 2, not 3: this codebase reserves 2 for "ran fine, the RESULT is wrong"
             // (`--bench-matrix` uses it for algorithmic drift) and `torture::classify` maps it to

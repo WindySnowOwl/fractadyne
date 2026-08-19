@@ -551,7 +551,11 @@ pub(crate) const LADDER: &[Rung] = &[
         id: "live/home/glide-from-depth",
         lane: Lane::Live,
         motivation: "ZOOM HOME FROM DEPTH — the only automated reproduction of the device-loss regime,                      and the button that actually lost a device (2026-08-18, crash-1787014795-0.txt).                      One continuous sweep from depth to 1x crosses every mode boundary while the budget                      is still sized for the deep regime, which is the shape of both field losses: a                      frame ALREADY SIZED by the old regime going out at 405x over budget (3040 ms)                      after a mode switch reset it, and bla_skip collapsing 4,457,481 -> 9,343 so                      per-step cost jumped ~100x under a stale budget. Measured 3/3 glides from 1e22                      each produced a lethal reading (peaks 1025/1042/1605 ms against a 900 ms band);                      the emergency retreat survived all three. A MONOTONIC DIVE CANNOT DO THIS - it                      peaked at 36 ms on the RX 6800 XT at 1e150 because the controller was starved,                      not stressed. --autodive exits 3 if no lethal reading occurs, so this rung fails                      loudly when it stops reproducing rather than passing vacuously.",
-        cmd: Cmd::SelfExe(&["--autodive", "22", "--autodive-timeout", "420", "--autodive-home", "3"]),
+        // 600 s, not 420: the Radeon run reached 1e22 in 113 s and each further cycle costs ~135 s
+        // (dive + glide + re-dive), so 3 cycles do not fit 420 s — it timed out after 2. The rung still
+        // PASSED (it only needs one lethal reading), but a cycle count the run cannot finish is a
+        // deadline that lies about what was tested.
+        cmd: Cmd::SelfExe(&["--autodive", "22", "--autodive-timeout", "600", "--autodive-home", "3"]),
         deadline: Duration::from_secs(10 * MIN),
         requires: &[],
         needs_disk: 256 * MB,

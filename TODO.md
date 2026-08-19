@@ -454,6 +454,33 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [x] ✅⭐⭐**HW-1 ANSWERED: the three frame-budget fixes HOLD on the card that died (RX 6800 XT,
+  2026-08-18).** `--torture live/home/glide-from-depth` on the Radeon, log at
+  `share/Fractadyne/reports/home-glide/`: **peak measured iterate 1208.4 ms**, 4 LETHAL-BAND frames,
+  **NO DEVICE LOST**. A week of tour arms and monotonic dives produced nothing; the zoom-home glide
+  reproduced it in ~2 minutes.
+  ⭐**The retreat sequence is the evidence — and the over-budget factor is far worse than the field's:**
+
+  | reading | steps | budget | over | retreat to |
+  |---|---|---|---|---|
+  | 1155 ms | 1.684e10 | 3.883e8 | **43x** | 1.344e8 |
+  | 1155 ms | 3.881e8 | 1.344e8 | 2.9x | 4.655e7 |
+  | 1208 ms | 1.667e10 | 1.344e7 | **1240x** | 4.448e6 |
+  | 1030 ms | 1.340e7 | 4.448e6 | 3x | 4.000e6 (floor) |
+
+  **1240x over budget**, against the 405x recorded from the field — a frame sized by the deep regime
+  going out while the budget has already been driven to 1.3e7. The retreat walked all the way to
+  `TDR_MIN_STEPS` and STILL measured 1030 ms, which is the latency-bound property restated: cutting
+  steps does not cut time here. The device survived every one.
+  ⚠**What this does NOT prove:** the underlying loss is still possible — mode 2 has no iteration
+  chunking (see the entry below), so the budget's only actuator remains resolution. What is now
+  established is that the retreat contains it on the hardware that failed.
+  ✅Two harness flaws this exposed, both fixed: the reading counter compared ms ONLY, so two
+  consecutive 1155 ms readings counted as one (reported 3 against 4 logged) — now paired with the step
+  count and labelled "distinct"; and the rung's 420 s timeout could not fit 3 cycles at ~135 s each, so
+  it timed out after 2 — raised to 600 s, because a cycle count the run cannot finish is a deadline
+  that lies about what was tested.
+
 - [ ] 🔴⭐**AUTOPILOT'S 56x56 TARGET PROBE BUILDS A FULL EXPORT-APPETITE REFERENCE ON THE MAIN
   THREAD, EVERY EVALUATION.** `autopilot.rs:149` — `autopilot_pick_target` renders a 56x56 = 3,136-pixel
   probe to choose the next zoom target, and gets its request from `current_export_request_for`, which
