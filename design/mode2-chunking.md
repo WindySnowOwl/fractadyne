@@ -247,6 +247,38 @@ exponent is already ≈ −3670 and needs 13.
 `info_pack`: a `u32` bitcast can be flushed as a denormal by a render target, so both halves are held
 as small exact integers instead.
 
+### The state budget holds, because `chunk_over` already narrows the scope
+
+Reading the whole mode-2 loop in `fs_iterate` (lines 718–1052) turned up per-pixel state the 13-float
+budget above does not include:
+
+- **Phoenix (formula 8)** carries `dz_prev: Fe` AND `Dprev: Fe` — ten more values. Alone this would
+  blow four targets.
+- **Aux coloring** carries an accumulator (`trap`, `tia_sum`, `sac_sum`, `n`, `prev_abs`) — ~5 floats.
+
+Neither is a problem, because the chunked path is already gated to a narrower scope than the general
+iterate loop, and the mode-2 body inherits the same gate:
+
+```rust
+let chunk_over = (chunk_mode.is_direct() || chunk_mode == RenderMode::Df32Pert)
+    && fractal.formula_id() <= 3                 // holomorphic only ⇒ NO Phoenix
+    && !self.coloring.color_method.needs_aux()   // aux coloring OFF
+    && self.perf.chunk_ok && !offscreen && ...
+```
+
+Its comment says so directly: "Gated to the chunk shader's scope: holomorphic formulas 0..3, aux
+coloring off (the chunk pass carries no orbit statistics)". So the mode-2 chunk body needs **formulas
+0–3 only, no `dz_prev`/`Dprev`, no aux accumulator** — and the 13-of-16 layout stands.
+
+⚠Consequences for the implementation, all of them simplifying:
+- The BLA skip loop is `formula == 0` only, exactly as in `fs_iterate`.
+- Tricorn (4) and the abs families (5–7) are out of scope; do not port their δ-updates.
+- Glitch detection: the live path never enables it (`glitch_on == 0` there) and mode-0 chunking is
+  additionally gated glitch-free. Mode 2's chunk body should still return `GLITCH_SENTINEL` if it is
+  ever on, rather than silently diverging from `fs_iterate`.
+- The per-pass counters (`n_rebase`, `n_ext`, `n_bla`) are diagnostics committed at exit; per-pass
+  commits change their totals' meaning slightly, which is acceptable but worth not being surprised by.
+
 ### Remaining slices, in order
 
 1. **Plumbing + entry point together** — they cannot land separately, because a four-target pipeline
