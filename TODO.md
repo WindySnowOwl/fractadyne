@@ -863,8 +863,82 @@ Mockups: [design/mockups/](design/mockups/).
   what caught trap (1); the equality check was perfectly happy. Rows also assert the MODE they claim
   (`make`'s `mag` is 3/4 of the view magnification, so a row written at 1e28 renders in mode 0).
 
-  🔜**REMAINING: flip the live `chunk_over` gate** for mode 2 behind `chunking_mode2_available` — the
-  only step left, and the only one whose blast radius is the live view.
+  ⏸🔴**SLICE 3 IS WRITTEN, FULLY GATED, AND HELD ON A MOTION REGRESSION (2026-08-19).** It lives on
+  branch **`mode2-live-flip` (`5804728`, pushed)**, NOT on main. `chunk_over` accepts
+  `RenderMode::Floatexp` behind `chunk_fe_ok`, and `chunk_sig` grows the reference length so a pass
+  can never resume `ref_n` against a different orbit than the one that stored it. Every gate passes:
+  suite **126+17**, `--livetest` grand tour **24/24, 0 drifted, 0 new** (six deep mode-2 holds
+  1e55→1e95 at explicit counts to 4,000,000, all +0.0pt), and `--autodive 32 --autodive-home 3`
+  reached 1e32×, **6 lethal readings, peak measured iterate 1348 ms, NO DEVICE LOST**, no crash file.
+  ✅**And it does the job**: traced on the saved spar session (2^341.5×, explicit 4,000,000,
+  auto-iter off), a SETTLED view now walks the cursor to the full 4,000,000 by frame 39 — **3.4 s**
+  after settling, across ~35 bounded passes — where before it was one unbounded dispatch.
+
+  🔴**Why it is held (user's call):** it degrades the MOVING picture. `FRACTADYNE_TRACE=tile` shows
+  `cur=0` on EVERY interacting frame — the progression restarts each frame, so a moving frame renders
+  only `step` of the ask (312,755 of 4M = 7.8% with a measured budget; **256 = 0.006%** at bootstrap
+  or after a budget collapse). Worse, the REAL refresh frame the hold takes every `REFRESH_OCTAVES`
+  is now one of those partial frames **and it becomes the frozen texture** reprojected until the next
+  refresh — under-iterated content gets latched. Reported from the field as "the interior regions
+  look mostly like noise". ⚠It is NOT an artifact that can be rendered away: a frame that affords
+  312k of 4M iterations at 2^341× genuinely looks like that, and the pre-flip picture looked complete
+  during motion only by ignoring the frame budget — those were the 1000 ms+ frames that lost the
+  device.
+
+  📐**MOTION PRESENTATION IS DESIGNED (`659841f`, design/mode2-chunking.md §10) — three options, only
+  one survives. START THE NEXT SESSION THERE.**
+  - ⛔**A (show the partial frame)** = what the held flip does = the reported noise.
+  - ⛔**B (hold instead of refreshing when the pass would be partial)** — **DO NOT IMPLEMENT: it
+    reintroduces a FIELD-REPORTED bug.** Such a gate holds FOREVER while moving, because the
+    progression restarts every frame and never completes during motion. `render.rs` already records
+    that exact shape: freezing every interacting frame "disabled the reuse-hold's REFRESH_OCTAVES
+    cadence entirely, so a continuous dive just magnified the frozen frame into ever-larger blocks
+    (field report: giant pixels at 3.5e12× despite the toggle)". The fraction-of-ask variant that
+    would narrow B is separately refuted by measurement — see below.
+  - ✅**C: pin the view when a refresh is due, run its chunk progression across SEVERAL FRAMES while
+    the display keeps reprojecting the previous COMPLETE frozen texture, and adopt it only on
+    completion.** Each dispatch stays budget-bounded (device-loss fix preserved), the display never
+    shows partial content, and the refresh cadence still lands real detail so nothing magnifies
+    without limit. ⭐**The reframe that makes this obviously right: mode 2 ALREADY paid ~1 s for a
+    complete deep motion frame before the flip — that is exactly what lost the device — so C buys the
+    same picture for the same work in watchdog-safe pieces. It is STRICTLY BETTER than the pre-flip
+    status quo, not a new compromise.** Precedent is in-tree twice: `render_iter_chunked` submits one
+    bounded pass per range and polls between them, and beta.81's hold-prefetch already builds
+    references DURING a glide and installs them when ready.
+
+  ⛔**MEASURED-FALSE — do not write "refresh only if the pass covers a useful FRACTION of the ask".**
+  At corpus loc 07, 1e30×, via `--compare`: rendering **1,638** iterations differs from the full
+  **21,000** by **2 pixels in 160,000** (5,250 and 10,500 differ by 0). That location resolves fully
+  below 1,638 — the ask is simply OVERSIZED, which is the common case whenever one large count covers
+  many depths. Such a gate would hold and go blocky there for nothing.
+  ✅The gate has to key on **whether pixels are still unresolved** (`CTR_MAXITER` → `maxiter_sink` →
+  `capped_frac`) — ⚠but `capped_frac` is **deliberately cleared on every interacting frame** ("a
+  moving frame's reading describes another view"), and that clear is load-bearing: it stuck a real
+  session at boost 1.0 on a black screen. So the signal is absent exactly where a predictive gate
+  needs it, which is *why* option C measures after rendering instead of predicting before.
+
+  ⚠**Two traps waiting in C**: (1) do NOT finish the progression by blocking main (submit +
+  `poll(Wait)` inside the paint callback) — right picture, pre-flip freeze, and blocking main inside
+  a wgpu wait is the one shape only the device-lost CALLBACK can recover; (2) any present gate needs
+  a PROVEN DROP PATH — beta.103 shipped a gate that never dropped because a completed grid repeats
+  its final rect, so the finished sharp frame was never shown.
+
+  ⚠⚠**THE EXISTING LIVE GATE IS STRUCTURALLY BLIND TO THIS** — `--livetest` checkpoints measure
+  SETTLED results, which is why the flip passes 24/24 *with* the regression present. A
+  motion-presentation change needs a gate that samples frames DURING motion. Write that gate FIRST.
+
+  🔧**Harness facts learned the hard way (2026-08-19):**
+  - ⚠**`--autodive 22` NEVER REACHES MODE 2** (1e22 is below the 1e28 threshold): measured 1032
+    mode-0 / 354 mode-1 / **0 mode-2** frames. The `live/home/glide-from-depth` torture rung uses
+    exactly that while citing the mode-2 crash `crash-1787014795-0.txt` in its motivation — so the
+    repo's only automated device-loss repro never exercises the arm the crash came from. Use
+    `--autodive 32` (dive ≈946 s, then the home glides).
+  - ⚠**`fe_steps_last` cannot distinguish a chunked frame from an unchunked one** — the `if
+    key_changed` block overwrites it with the FULL ask, which is every frame of a dive. The honest
+    signal is `FRACTADYNE_TRACE=tile` `chunk f=… cur=… step=…`, printed ONLY when `chunk_over` is true.
+  - ⭐**Fast mode-2 repro without a 15-minute dive**: copy `session.toml` (+ `last_reference.bin`)
+    into a throwaway `FRACTADYNE_CONFIG_DIR` — the saved spar view boots straight into mode 2 at
+    2^341.5× with an explicit 4,000,000 count.
 
   ⚠**Do NOT "fix" this by capping the explicit iteration ask.** Capping silently rendered deep
   corpus locations interior-black and broke the "same iterations, both apps" contract with
