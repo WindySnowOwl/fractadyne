@@ -77,6 +77,66 @@ mod welcome_tests {
 }
 
 impl FractadyneApp {
+    /// Post-crash prompt: offer to send a report when the PREVIOUS session ended without a clean
+    /// shutdown, with a "don't ask again" opt-out.
+    ///
+    /// ⚠Asking, not sending. `diag` has already written the report to disk either way; this only
+    /// offers to open the existing Report-an-issue dialog, which previews the full text before
+    /// anything leaves the machine and carries the crash report as one selectable artifact. Nothing
+    /// is transmitted from here.
+    ///
+    /// ⚠Suppressed for `launched_for_a_task` (see where `crash_prompt_open` is initialised): a modal
+    /// in front of `--uitest` / `--livetest` would block them exactly the way the welcome dialog
+    /// once did.
+    pub(crate) fn draw_crash_prompt(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.crash_prompt_open {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("Fractadyne didn't shut down cleanly")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label("The previous session ended unexpectedly. A report has been saved on this machine — would you like to send it?");
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new("Nothing is sent until you review it: the next screen shows exactly what would be included, and system information is one checkbox to exclude.")
+                        .weak()
+                        .small(),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(egui::RichText::new("Report it…").strong())
+                        .on_hover_text("Opens Report an issue, with the crash report attached.")
+                        .clicked()
+                    {
+                        self.report.open = true;
+                        self.dialogs.crash_prompt_open = false;
+                    }
+                    if ui.button("Not now").clicked() {
+                        self.dialogs.crash_prompt_open = false;
+                    }
+                });
+                ui.add_space(4.0);
+                // Persisted, and phrased as the user's intent ("stop asking") rather than the
+                // implementation ("suppress prompt").
+                let mut dont_ask = self.crash_prompt_disabled;
+                if ui
+                    .checkbox(&mut dont_ask, "Don't ask again after a crash")
+                    .on_hover_text("Reports are still saved locally, and Help ▸ Report an issue always works.")
+                    .changed()
+                {
+                    self.crash_prompt_disabled = dont_ask;
+                }
+            });
+        if !open {
+            self.dialogs.crash_prompt_open = false;
+        }
+    }
+
     /// First-run welcome overlay: a short quick-start shown once on a fresh install (and
     /// re-openable from Help). Deep-zoom explorers are opaque to newcomers — this covers the
     /// first-two-minutes controls and offers a couple of one-click destinations, then gets out of
@@ -147,6 +207,14 @@ impl FractadyneApp {
                         }
                     }
                     ui.add_space(12.0);
+                    // The brand-mark opt-out belongs at first run, not in a menu: someone who is
+                    // going to publish frames wants that choice BEFORE they render, not after
+                    // finding it later. Applies to the live view and to exports.
+                    ui.checkbox(&mut self.show_watermark, "Show \"Fd\" mark")
+                        .on_hover_text("The small brand mark in the lower-right of the view. Off removes it from the live view and from exported images.");
+                });
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Updates").weak().small());
                     // ⚠The one CONSENT item on this screen: a network request the app makes on the
                     // user's behalf. That belongs at first run rather than buried in a menu.
                     ui.checkbox(&mut self.update_check_on_launch, "Check for updates")

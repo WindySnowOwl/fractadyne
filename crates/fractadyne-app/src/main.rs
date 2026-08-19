@@ -2504,6 +2504,9 @@ struct DialogState {
     reset_confirm_open: bool,
     /// First-run welcome overlay open (shown once on a fresh install; re-openable from Help).
     welcome_open: bool,
+    /// Post-crash "send a report?" prompt. Opened at startup when the previous session ended
+    /// unclean and the user has not opted out.
+    crash_prompt_open: bool,
     /// Keyboard/help overlay window open.
     help_open: bool,
     /// Selected Help section index.
@@ -2726,6 +2729,10 @@ struct FractadyneApp {
     /// Update-check track (Stable / Beta) + whether to check on launch; both persisted.
     update_track: update::UpdateTrack,
     update_check_on_launch: bool,
+    /// Draw the "Fd" brand mark (live view + exports). Persisted; opt-out offered on first run.
+    show_watermark: bool,
+    /// "Don't ask again" for the post-crash report prompt. Persisted.
+    crash_prompt_disabled: bool,
     /// In-flight update check (worker → UI) and its last result, and whether the launch check has
     /// fired this session. Not persisted.
     update_rx: Option<std::sync::mpsc::Receiver<update::UpdateStatus>>,
@@ -3205,6 +3212,11 @@ impl FractadyneApp {
                 // block on EVERY live rung. Suppressing it for harness modes is what lets the
                 // gates be reproducible.
                 welcome_open: !s.welcome_seen && !launched_for_a_task,
+                // Never in front of a harness: a modal would block --uitest/--livetest exactly the
+                // way the welcome dialog once did.
+                crash_prompt_open: crate::diag::previous_session_unclean()
+                    && !s.crash_prompt_disabled
+                    && !launched_for_a_task,
                 help_open: false,
                 help_section: 0,
                 right_panel_open: s.right_panel_open,
@@ -3371,6 +3383,8 @@ impl FractadyneApp {
             theme,
             update_track: update::UpdateTrack::from_str(&s.update_track),
             update_check_on_launch: s.update_check_on_launch,
+            show_watermark: s.show_watermark,
+            crash_prompt_disabled: s.crash_prompt_disabled,
             update_rx: None,
             update_status: None,
             update_launch_checked: false,
@@ -3692,6 +3706,8 @@ impl FractadyneApp {
             theme: self.theme.key().to_string(),
             update_track: self.update_track.as_str().to_string(),
             update_check_on_launch: self.update_check_on_launch,
+            show_watermark: self.show_watermark,
+            crash_prompt_disabled: self.crash_prompt_disabled,
             show_orbits: self.anim.show_orbits,
             orbit_normalize: self.anim.orbit_normalize,
             orbit_anim: self.anim.orbit_anim,
@@ -6012,7 +6028,8 @@ impl eframe::App for FractadyneApp {
         // Rasterize the export watermark once from the font atlas (main thread — the export worker
         // has no egui context). Lazy so it uses the loaded fonts + final DPI.
         if self.watermark && self.watermark_overlay.is_none() {
-            self.watermark_overlay = export::build_watermark_overlay(ctx);
+            self.watermark_overlay =
+                self.show_watermark.then(|| export::build_watermark_overlay(ctx)).flatten();
         }
         // Apply the UI scale preference (egui zoom factor) when it changes.
         if (ctx.zoom_factor() - self.ui_scale).abs() > 1.0e-4 {

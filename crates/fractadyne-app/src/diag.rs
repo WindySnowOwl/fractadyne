@@ -414,6 +414,18 @@ pub(crate) fn end_session() {
 /// naming what it was doing — the log's last breadcrumb is the only evidence such a death leaves.
 /// Deliberately worded as "no clean shutdown" rather than asserting a crash: a hard kill (Task
 /// Manager, a `Stop-Process` from a test harness, a power loss) lands here too.
+/// Did the PREVIOUS session end without a clean shutdown? Set during `init` by
+/// `report_unclean_previous_session`, so the UI can offer to send the report it just wrote.
+///
+/// The `session.running` marker covers both shapes: a panic (whose own crash report was written by
+/// the dying process) and a hard kill or device loss that never reached the panic hook. Either way
+/// the marker survives, which is exactly the signal a user cares about — "it didn't come back
+/// cleanly last time".
+pub(crate) fn previous_session_unclean() -> bool {
+    PREV_UNCLEAN.load(std::sync::atomic::Ordering::Relaxed)
+}
+static PREV_UNCLEAN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn report_unclean_previous_session() {
     let Some(p) = marker_path() else { return };
     let Ok(prev) = std::fs::read_to_string(&p) else { return };
@@ -440,6 +452,7 @@ fn report_unclean_previous_session() {
     );
     log_line("unclean", &msg);
     write_crash_report_at(&msg, "<previous session>");
+    PREV_UNCLEAN.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn install_panic_hook() {

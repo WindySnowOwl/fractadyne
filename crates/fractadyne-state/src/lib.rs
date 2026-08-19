@@ -225,6 +225,14 @@ pub struct SessionState {
     /// Automatically check for updates on launch (off by default — no network calls unless enabled).
     #[serde(default)]
     pub update_check_on_launch: bool,
+    /// Draw the "Fd" brand mark on the live view and exports. Default ON; the first-run overlay
+    /// offers the opt-out, because someone publishing frames wants that choice up front rather than
+    /// after discovering it in a menu.
+    #[serde(default = "default_true")]
+    pub show_watermark: bool,
+    /// Stop offering to send a report after an unclean shutdown ("Don't ask again").
+    #[serde(default)]
+    pub crash_prompt_disabled: bool,
     /// Interactive orbit overlay: shown, normalized-to-view, animated (racing dot), and its
     /// animation speed.
     #[serde(default)]
@@ -436,6 +444,8 @@ impl Default for SessionState {
             theme: default_theme(),
             update_track: default_update_track(),
             update_check_on_launch: false,
+            show_watermark: true,
+            crash_prompt_disabled: false,
             show_orbits: false,
             orbit_normalize: false,
             orbit_anim: false,

@@ -951,7 +951,9 @@ impl FractadyneApp {
 
         // ---- brand watermark (lower-right of the fractal area) ----
         if self.watermark {
-            self.draw_watermark(ctx, central.response.rect);
+            if self.show_watermark {
+                self.draw_watermark(ctx, central.response.rect);
+            }
         }
 
         // ---- guided-tour annotations (captions + coordinate-anchored callouts) ----
@@ -969,5 +971,6 @@ impl FractadyneApp {
         // ---- keyboard / help overlay ----
         self.help_window(ctx);
         self.draw_welcome_dialog(ctx);
+        self.draw_crash_prompt(ctx);
     }
 }
