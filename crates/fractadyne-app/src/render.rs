@@ -3300,11 +3300,30 @@ impl FractadyneApp {
         // pixellation (mode 0, 99-sample reference at an explicit 4M). Such frames render through
         // the resumable CHUNKED path instead (the block after the tile decision): full resolution,
         // one bounded pass over an iteration RANGE per frame — so skip the shrink (it would defeat
-        // the full-res payoff) and the settle tiling (wrong axis). Gated to the chunk shader's
-        // scope: holomorphic formulas 0..3, aux coloring off (the chunk pass carries no orbit
-        // statistics), and mode 0 additionally glitch-free (live never runs glitch detection).
+        // the full-res payoff) and the settle tiling (wrong axis). Gated to the chunk shaders'
+        // scope: holomorphic formulas 0..3, aux coloring off (a chunk pass carries no orbit
+        // statistics), and the perturbation modes additionally glitch-free (live never runs glitch
+        // detection).
+        //
+        // ⭐**MODE 2 (floatexp) IS INCLUDED SINCE beta.106, and it is why this gate now reads the
+        // way it does.** The 2026-08-18 field device loss (RTX 3080, crash-1787014795-0) was a
+        // home-from-deep sweep at mode 2: a 250,000-iteration ask against a 119,563-long reference
+        // went out as ONE dispatch whose cost is dependent-CHAIN dominated, and this controller's
+        // only actuator is RESOLUTION. The emergency retreat cut steps 2.5× (417×571 → 264×361) and
+        // the frame time went 1004 → 1003 ms. Removing pixels cannot bound a chain, so the
+        // iteration axis had to become splittable. Mode 2 needs FOUR state targets rather than
+        // three (`chunk_fe_ok`), because floatexp state is 13 floats against 12 — see
+        // `fs_iterate_chunk_fe` and design/mode2-chunking.md.
+        //
+        // ⚠With mode 2 the iteration axis and the COST axis come apart: a BLA skip advances `iter`
+        // by 2^l for one iteration's work, so the `step` below (derived from `tdr_allowed / px`) is
+        // conservative rather than exact. The error is in the safe direction — a pixel that skips
+        // past the requested `end` idles in later passes until the cursor catches up, costing some
+        // wasted passes, never an over-budget dispatch.
         let chunk_mode = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
-        let chunk_over = (chunk_mode.is_direct() || chunk_mode == RenderMode::Df32Pert)
+        let chunk_over = (chunk_mode.is_direct()
+            || chunk_mode == RenderMode::Df32Pert
+            || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
             && fractal.formula_id() <= 3
             && !self.coloring.color_method.needs_aux()
             && self.perf.chunk_ok
@@ -3474,10 +3493,18 @@ impl FractadyneApp {
             let step = ((tdr_allowed / spx.saturating_mul(ss2).max(1)) as u32)
                 .clamp(floor, gpu_iter.max(floor));
             // View signature: anything that shapes the render restarts the progression.
+            // ⚠The REFERENCE LENGTH is part of it. `orbit_len` feeds both the per-pass BLA table
+            // (mode 2 rebuilds it every pass) and the `ref_n + 1 >= orbit_len` rebase trigger, so a
+            // reference extended mid-settle — the e72/e82/e94 shape, and mode 2 is exactly where
+            // that happens — would have a pass resume `ref_n` against a DIFFERENT orbit than the
+            // pass that stored it. The install runs later in this frame than this check, so the
+            // change is seen one frame late; that is harmless, because a sig change resets the
+            // cursor to 0 and the offending pass's state is discarded rather than resumed.
             let sig = (
                 center.0.to_bits()
                     ^ center.1.to_bits().rotate_left(17)
-                    ^ magnification.to_bits().rotate_left(34),
+                    ^ magnification.to_bits().rotate_left(34)
+                    ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51),
                 gpu_iter,
                 resolution,
                 ss,

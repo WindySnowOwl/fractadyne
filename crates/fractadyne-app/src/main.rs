@@ -268,13 +268,16 @@ struct Perf {
     bla_suppress_until: [u64; 2],
     /// Tiled-settle progress per view (see `render::TileGrid`); `None` = no grid armed or running.
     tile_state: [Option<render::TileGrid>; 2],
-    /// Iteration-range tiling (direct mode). `chunk_ok`: the device granted the 48-byte
-    /// color-attachment limit the resumable pass needs (probed once). `chunk_cursor`: the next
+    /// Iteration-range tiling. `chunk_ok`: the device granted the 48-byte color-attachment limit
+    /// the three-target resumable pass needs (probed once). `chunk_fe_ok`: it also granted the 64
+    /// bytes MODE 2 needs, because floatexp state does not fit in three targets — kept separate so
+    /// a device that can do one and not the other loses only the one. `chunk_cursor`: the next
     /// iteration to resume from per view (0 = fresh). `chunk_idx`: pass counter (ping-pong
     /// parity). `chunk_sig`: the view identity the cursor belongs to — any change restarts the
     /// progression. `chunk_pending`: a progression is mid-flight (drives repaints, like
     /// `tile_pending`).
     chunk_ok: bool,
+    chunk_fe_ok: bool,
     chunk_cursor: [u32; 2],
     chunk_idx: [u32; 2],
     chunk_sig: [(u64, u32, [u32; 2], u32); 2],
@@ -485,6 +488,7 @@ impl Default for Perf {
             tile_state: [None, None],
             tile_pending: [false, false],
             chunk_ok: false,
+            chunk_fe_ok: false,
             chunk_cursor: [0, 0],
             chunk_idx: [0, 0],
             chunk_sig: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
@@ -6075,6 +6079,7 @@ impl eframe::App for FractadyneApp {
                     dev.features().contains(eframe::wgpu::Features::TIMESTAMP_QUERY);
                 // Whether the live iteration-range (chunked) path can run — see `Perf::chunk_ok`.
                 self.perf.chunk_ok = fractadyne_gpu::chunking_available(dev);
+                self.perf.chunk_fe_ok = fractadyne_gpu::chunking_mode2_available(dev);
                 self.attach_bytes_per_sample = (
                     dev.limits().max_color_attachment_bytes_per_sample,
                     adapter_attach.unwrap_or(0),
