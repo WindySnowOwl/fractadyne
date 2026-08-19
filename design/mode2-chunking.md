@@ -111,7 +111,7 @@ mode 2 on exactly the vendor that currently does the arithmetic properly. That a
 validation gate could not be an equality check, and a tolerance gate on the chunk boundary is far
 weaker.
 
-**Recommendation: Option A.** The bandwidth is a known, bounded cost on a path that is already
+**Recommendation: Option A.** (DECIDED — see §8 for the decision record, the measured VRAM figures behind it, and the concrete channel layout.) The bandwidth is a known, bounded cost on a path that is already
 render-target bound, and it keeps the validation gate at bit-identical — which is the only gate strong
 enough for this. Option B trades a hard guarantee for a soft one, and does it in the direction that
 penalises the vendor whose arithmetic we just confirmed is the correct one.
@@ -160,3 +160,84 @@ extended-range plumbing has precedent rather than needing invention.
 It should be started deliberately, with the gates in §6 written before the shader work — a
 half-migrated chunk path that renders *almost* the same is worse than no chunk path, because every
 subsequent deep-zoom result becomes suspect.
+
+## 8. Decision record and channel layout (2026-08-19)
+
+**Chosen: Option A, as two fragment entry points in ONE WGSL module** sharing the state pack/unpack
+helpers. Not two pipelines with two copies of the layout, and not one four-target pipeline for
+everything.
+
+### Why not the single four-target pipeline
+
+It is simpler and keeps the state layout single-sourced, which was the original argument for it. The
+numbers killed it. Chunk state is ping-ponged, so each `Rgba32Float` target costs `W·H·16·2`:
+
+| resolution | 3 targets (today) | 4 targets | extra |
+|---|---|---|---|
+| 1920×1080 | 199 MB | 265 MB | +66 MB |
+| 2560×1440 | 354 MB | 472 MB | +118 MB |
+| 3840×2160 | 796 MB | 1,062 MB | +265 MB |
+
+A single four-target pipeline makes direct/mode-0 carry a fourth full-resolution target it never
+reads. At 4K that pushes chunk state past a gigabyte for nothing. (Live views are often
+resolution-scaled and offline renders tile, so real figures are frequently smaller — the ratio is
+what matters, and VRAM pressure here is already a live concern.)
+
+Runtime compute is NOT the differentiator: the wasted write is ~33 MB per chunk pass at 1080p, so
+~530 MB per settled frame at ~16 passes, ≈0.7 ms on a 3080 against a 400 ms budget. Noise. VRAM is
+the whole difference.
+
+### Why the duplication worry was overstated
+
+The concern was two drifting copies of the most safety-critical state layout in the renderer. But the
+module ALREADY has six fragment entry points (`fs_iterate`, `fs_iterate_chunk`, `fs_resolve`,
+`fs_seed`, `fs_color`, `fs_gputest`), so a second chunk entry point is the existing idiom rather than
+a new pattern — and only the output struct and the attachment list differ. The state encoding stays
+in shared helpers.
+
+It also makes the device question moot: mode-0 chunking keeps exactly today's 48-byte requirement and
+only mode 2 asks for 64, so a hypothetical 48–63-byte device loses nothing it has now.
+
+### The channel layout, derived from what mode 0 actually does
+
+Read from the real save/resume in `fs_iterate_chunk`, not estimated. Mode 0 while RUNNING stores
+`st_z` ← δz (df32), `st_dz` ← derivative MANTISSA (complex df32), `st_info` ← `(status+iter_hi,
+iter_lo, ref_n, D.e)`; at ESCAPE it swaps `st_z` → full `z` and `ch2` → `smit`. So mode 0 already
+carries a floatexp derivative through three targets — the extended-range plumbing is precedent, as
+§3 said.
+
+Mode 2 needs the same plus a second exponent (δz is `Fe`, not `Cdf`). Four targets = 16 channels:
+
+| target | while RUNNING | at ESCAPE |
+|---|---|---|
+| T0 `st_z` | δz mantissa (`Cdf`: re.hi, re.lo, im.hi, im.lo) | full `z` (df32), as mode 0 |
+| T1 `st_dz` | derivative mantissa (`Cdf`) | derivative mantissa |
+| T2 `st_info` | ch0 `status·2^20 + iter>>12`, ch1 `iter & 4095`, ch2 `ref_n`, ch3 **δz exponent** | ch2 → `smit` |
+| T3 `st_exp` | ch0 **derivative exponent**, ch1–3 spare | ch0 same |
+
+13 of 16 channels used. The two exponents are in separate channels because they cannot share one: an
+f32 holds integers exactly only to 2^24, so two fields get 12 bits each, and at 1e1105 the binary
+exponent is already ≈ −3670 and needs 13.
+
+⚠Keep `iter` split across two channels exactly as mode 0 does. The reason is recorded at
+`info_pack`: a `u32` bitcast can be flushed as a denormal by a render target, so both halves are held
+as small exact integers instead.
+
+### Remaining slices, in order
+
+1. **Plumbing + entry point together** — they cannot land separately, because a four-target pipeline
+   needs a four-output entry point to exist. `make_state_textures`/`make_state_bg` gain 4-target
+   variants, a second bind-group layout, a second pipeline, and `fs_iterate_chunk_fe` with the layout
+   above. `chunk_over` still excludes mode 2, so nothing changes behaviourally and the commit is
+   verifiable by "mode-0 chunking still bit-identical" plus naga validating the new shader.
+2. **Flip the `chunk_over` gate** for mode 2, behind `chunking_mode2_available`.
+3. **The gates** (§6): bit-identical at 2/3/7 splits, a split landing ON a rebase, and a split at an
+   orbit wrap — plus the reference-shorter-than-the-ask shape from the field case (250k against a
+   119,563-long orbit).
+
+⚠Slice 1's shader body is the substantive work and must mirror the mode-2 loop in `fs_iterate`
+faithfully, including that **each pass builds its own BLA** (the beta.101 e100 lesson: correction
+passes with `bla_on = 0` and an empty tree ran at 0.04 Gsteps/s against the base pass's 174 in the
+same frame). Writing it from a partial read of that loop is how a plausible-but-wrong shader gets
+shipped; it wants the whole mode-2 path read first.
+
