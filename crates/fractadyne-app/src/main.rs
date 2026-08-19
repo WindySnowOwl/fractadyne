@@ -1519,12 +1519,21 @@ fn main() -> eframe::Result<()> {
                         let adapter_limits = adapter.limits();
                         let binding = adapter_limits.max_storage_buffer_binding_size.min(want_binding);
                         let buffer = adapter_limits.max_buffer_size.min(want_binding as u64);
-                        // Iteration-range tiling writes THREE Rgba32Float state attachments per
-                        // chunk pass (48 bytes/sample; the default limit is 32). Ask for 48 where
-                        // the adapter offers it; a lesser adapter grants what it has and the
-                        // chunked path gates itself off (`render_iter_chunked` falls back to the
-                        // single-pass render) — nothing here assumes a big GPU.
-                        let attach_bytes = adapter_limits.max_color_attachment_bytes_per_sample.min(48);
+                        // Iteration-range tiling writes Rgba32Float state attachments per chunk
+                        // pass: THREE for direct/mode-0 (48 bytes/sample; the wgpu default limit is
+                        // 32), and FOUR for mode-2, whose floatexp state does not fit in three —
+                        // δz mantissa (4) + δz exponent (1) + derivative mantissa (4) + derivative
+                        // exponent (1) + status/iter (2) + ref_n (1) = 13 floats against 12, and the
+                        // two exponents cannot share one f32 channel at our depths (at 1e1105 the
+                        // binary exponent is ≈ −3670, so two fields need 13 bits each = 26 > the 24
+                        // an f32 holds exactly). So ask for 64.
+                        //
+                        // ⚠MEASURED before choosing this: the RTX 3080 reports 128 AVAILABLE while we
+                        // were requesting only 48, so the old ceiling was self-imposed, not hardware.
+                        // A lesser adapter grants what it has and the affected chunk path gates itself
+                        // off (`chunking_available` / `chunking_mode2_available`) — nothing here
+                        // assumes a big GPU.
+                        let attach_bytes = adapter_limits.max_color_attachment_bytes_per_sample.min(64);
                         eframe::wgpu::DeviceDescriptor {
                             label: Some("fractadyne device"),
                             required_features: features,
@@ -2729,6 +2738,13 @@ struct FractadyneApp {
     /// Update-check track (Stable / Beta) + whether to check on launch; both persisted.
     update_track: update::UpdateTrack,
     update_check_on_launch: bool,
+    /// `max_color_attachment_bytes_per_sample`: (granted, adapter-available).
+    ///
+    /// ⚠These differ and the difference matters. We REQUEST `min(adapter, 48)` — 48 = the three
+    /// Rgba32Float chunk-state targets the iteration-range path writes today — so `device.limits()`
+    /// reports 48 by construction and says nothing about the hardware. A fourth attachment (mode-2
+    /// chunking) needs 64, and only the ADAPTER limit can answer whether that is available.
+    attach_bytes_per_sample: (u32, u32),
     /// Draw the "Fd" brand mark (live view + exports). Persisted; opt-out offered on first run.
     show_watermark: bool,
     /// "Don't ask again" for the post-crash report prompt. Persisted.
@@ -3383,6 +3399,7 @@ impl FractadyneApp {
             theme,
             update_track: update::UpdateTrack::from_str(&s.update_track),
             update_check_on_launch: s.update_check_on_launch,
+            attach_bytes_per_sample: (0, 0), // (granted, available) — filled on the first frame
             show_watermark: s.show_watermark,
             crash_prompt_disabled: s.crash_prompt_disabled,
             update_rx: None,
@@ -6041,6 +6058,10 @@ impl eframe::App for FractadyneApp {
             .map(|rs| (rs.device.clone(), rs.queue.clone()));
         // Adapter name for the --uitest report header (once is enough; cheap to read each frame).
         let gpu_name = frame.wgpu_render_state().map(|rs| rs.adapter.get_info().name);
+        // The ADAPTER limit, not the device's: see `attach_bytes_per_sample`.
+        let adapter_attach = frame
+            .wgpu_render_state()
+            .map(|rs| rs.adapter.limits().max_color_attachment_bytes_per_sample);
         // Capability probe, once. Recorded for the crash report and the perf HUD only — the
         // wall-clock fallback trips on observed starvation, not on this bit, so a device that
         // advertises the feature but never delivers a reading is covered too. Deliberately NOT
@@ -6054,6 +6075,10 @@ impl eframe::App for FractadyneApp {
                     dev.features().contains(eframe::wgpu::Features::TIMESTAMP_QUERY);
                 // Whether the live iteration-range (chunked) path can run — see `Perf::chunk_ok`.
                 self.perf.chunk_ok = fractadyne_gpu::chunking_available(dev);
+                self.attach_bytes_per_sample = (
+                    dev.limits().max_color_attachment_bytes_per_sample,
+                    adapter_attach.unwrap_or(0),
+                );
                 diag::log_line(
                     "wgpu",
                     // The BACKEND belongs in every log (and so every crash report): it names the
@@ -6062,8 +6087,12 @@ impl eframe::App for FractadyneApp {
                     // (see `--gputest`). It is also the check that the pinned backend set in
                     // `native_options` is doing what it claims.
                     &format!(
-                        "adapter: {} · {} · capability: TIMESTAMP_QUERY={}",
-                        self.gpu_name, self.gpu_backend, self.perf.ts_supported
+                        "adapter: {} · {} · capability: TIMESTAMP_QUERY={} attach_bytes/sample={} granted of {} available (48 = 3 chunk-state targets, 64 = 4)",
+                        self.gpu_name,
+                        self.gpu_backend,
+                        self.perf.ts_supported,
+                        self.attach_bytes_per_sample.0,
+                        self.attach_bytes_per_sample.1
                     ),
                 );
             }

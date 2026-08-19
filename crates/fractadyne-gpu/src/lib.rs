@@ -1610,6 +1610,21 @@ pub fn chunking_available(device: &wgpu::Device) -> bool {
     device.limits().max_color_attachment_bytes_per_sample >= 48
 }
 
+/// Can the MODE-2 (floatexp) chunked path run here? It needs a FOURTH `Rgba32Float` state target,
+/// because floatexp chunk state does not fit in three: δz mantissa (4 floats) + δz exponent (1) +
+/// derivative mantissa (4) + derivative exponent (1) + status/iter (2) + `ref_n` (1) = 13 against the
+/// 12 that three targets hold. Mode 2 does not need to store full `z` (it is reconstructible as
+/// `reference[ref_n] + δz`), which frees one target — but the two floatexp exponents still compete
+/// for a single free channel, and they cannot share one: an f32 holds integers exactly only to 2^24,
+/// so two fields get 12 bits each, while at 1e1105 the binary exponent is already ≈ −3670 and needs
+/// 13. Hence four targets, 64 bytes/sample.
+///
+/// Separate from [`chunking_available`] on purpose: a device that can do the 48-byte direct/mode-0
+/// path but not 64 keeps that path and loses only this one, rather than losing both.
+pub fn chunking_mode2_available(device: &wgpu::Device) -> bool {
+    device.limits().max_color_attachment_bytes_per_sample >= 64
+}
+
 pub fn install_renderer(render_state: &egui_wgpu::RenderState) {
     let renderer = Renderer::new(&render_state.device, &render_state.queue, render_state.target_format);
     render_state
