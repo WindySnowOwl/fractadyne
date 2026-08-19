@@ -461,3 +461,84 @@ independent of it: the four-target shader path and the offline bit-identity gate
 During the grand-tour run the watchdog reported `possible hang: no activity for 130s — building
 reference [export]: iter=4000000 prec=379`. The tour passed and cold deep reference builds are known
 to be slow, but a 130-second silent stretch on the export path deserves its own look.
+
+## 10. Motion presentation: the three options, and why only one survives (2026-08-19)
+
+§9 leaves one question: what SHOULD a moving mode-2 frame show when the ask is 4,000,000 and the
+frame budget affords 312,755? There are exactly three answers, and two are already known-bad from
+this repo's own history.
+
+At 2^341x with a 4M ask, fresh complete detail costs ~1 s per frame. That is not a tuning failure —
+pixels are not the lever (§1), so no budget setting produces "fresh" and "complete" and "fast" at
+once. Each option below is a choice about which of those three to give up.
+
+### Option A — show the partial frame (what the held flip does today)
+
+Give up COMPLETE. The refresh frame renders `step` of the ask and is displayed.
+⛔**Rejected: this is the reported defect.** At depth most pixels need most of their iterations, so a
+7.8% frame is interior colour plus sparse escapes — and because that frame becomes the frozen
+texture, it is reprojected until the next refresh. Field description: "the interior regions look
+mostly like noise".
+
+### Option B — hold instead of refreshing when the pass would be partial
+
+Give up FRESH. Keep reprojecting the last complete frame; skip the refresh.
+⛔**Rejected, and this is the important one: it re-introduces a FIELD-REPORTED bug.** The comment at
+`render.rs` ("Prefer detail does NOT add a freeze here") records that its first cut froze every
+interacting frame, "which disabled the reuse-hold's REFRESH_OCTAVES cadence entirely, so a continuous
+dive just magnified the frozen frame into ever-larger blocks (field report: giant pixels at 3.5e12x
+despite the toggle)".
+⚠A gate keyed on "would this pass be partial" holds FOREVER while moving, at any view where
+`chunk_over` is true — because the progression restarts every frame, so it never completes during
+motion. That is exactly the always-freeze shape above. Trading noise for a known regression is not a
+fix, and the fraction-of-ask variant that would narrow this option was already refuted by measurement
+in §9.
+
+### Option C — spread ONE refresh across several frames at a PINNED view ✅
+
+Give up nothing visible; pay a latency. When a refresh is due, snapshot the view and run its chunk
+progression across successive frames while the display keeps reprojecting the PREVIOUS complete
+frozen texture. Adopt the result as the new frozen texture only when the progression finishes.
+
+- Each dispatch stays inside the frame budget ⇒ the device-loss fix is preserved.
+- The display never shows partial content ⇒ fixes A.
+- The refresh cadence still fires and still lands real detail ⇒ avoids B.
+- Cost: a refresh lands a few frames after it was requested, so streamed detail lags the dive
+  slightly. That is the only thing given up.
+
+⭐**The reframe that makes this obviously right:** before the flip, mode 2 already paid ~1 s for a
+complete deep motion frame — that is exactly what lost the device. Option C pays the same total work
+for the same picture, split into watchdog-safe pieces. **It is strictly better than the pre-flip
+status quo**, not a new compromise.
+
+Precedent exists in-tree, so this is not invention: the offline `render_iter_chunked` already submits
+one bounded pass per range and polls between them, and beta.81's hold-prefetch already builds
+references DURING a glide and installs them when ready. Option C applies the same pattern to the
+refresh frame's pixels instead of its reference.
+
+⛔**Do NOT implement C by blocking the main thread** — submit + `poll(Wait)` inside the paint callback
+to finish the progression in one frame gives the right picture and reproduces the pre-flip freeze,
+and blocking main inside a wgpu wait is the specific shape where a device loss can only be recovered
+by the device-lost CALLBACK (see the beta.29/30 wedge notes). The passes must land across frames.
+
+### What implementing C requires
+
+1. A per-view "refresh in flight" state: the pinned view signature, the chunk cursor, and the frame
+   it started on. The pinned signature is what stops `chunk_sig` resetting the cursor while the live
+   view keeps moving — the reason the progression cannot accumulate today.
+2. Present-gating for its duration, reusing the existing gate rather than adding a second one
+   (⚠beta.103: a gate that never drops means the finished frame is never shown — whatever engages it
+   needs a proven drop path, and a completed grid repeating its final rect is how that was missed).
+3. Adopt-on-completion: update `frozen_l2` / `frozen_at` / `frozen_upp_l2` only when the progression
+   finished, so a partial refresh can never become the held frame.
+4. An abandon path: if the view moves far enough that the pinned refresh is worthless before it
+   completes, drop it and start a new one rather than landing stale detail.
+
+### How it has to be gated
+
+⚠**The existing live gate cannot see this defect** — `--livetest` checkpoints measure SETTLED results,
+which is why the flip passes 24/24 with the regression present. A motion-presentation change needs a
+gate that samples frames DURING motion. `--autodive 32 --autodive-home 3` reaches the regime (⚠`22`
+does not: 1e22 is below the 1e28 mode-2 threshold — measured 0 mode-2 frames), and the honest signal
+is `FRACTADYNE_TRACE=tile` `chunk f=… cur=… step=…` plus whether a partial progression was ever
+adopted, not the checkpoint table.
