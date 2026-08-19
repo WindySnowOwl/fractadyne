@@ -57,6 +57,7 @@ mod fractal;
 mod gputest;
 mod help;
 mod livetest;
+mod motiontest;
 mod profile;
 mod refcache_persist;
 mod render;
@@ -282,6 +283,20 @@ struct Perf {
     chunk_idx: [u32; 2],
     chunk_sig: [(u64, u32, [u32; 2], u32); 2],
     chunk_pending: [bool; 2],
+    /// Motion-presentation observability (design/mode2-chunking.md §11, asserted by
+    /// `--motiontest`). Counted only DURING INTERACTION at a chunk-eligible perturbation view
+    /// that already had frozen content: `adopt_partial` = frozen-texture latches that adopted a
+    /// texture whose chunk progression was mid-flight (the §9 regression — under-iterated content
+    /// becomes the held frame and is reprojected as if it were real detail); `adopt_complete` =
+    /// latches/adoptions of complete content (during motion, this is streamed detail — its floor
+    /// is the anti-freeze assertion). `chunk_motion_frames` counts the frames those assertions
+    /// cover (anti-vacuity: a run with none tested nothing). `dirty_shown` counts frames that
+    /// DISPLAYED the live texture while it diverged from the frozen bookkeeping during
+    /// interaction — must stay 0 once the pinned refresh lands.
+    adopt_partial: [u64; 2],
+    adopt_complete: [u64; 2],
+    chunk_motion_frames: [u64; 2],
+    dirty_shown: [u64; 2],
     /// Budget-climb probe (see `MandelbrotParams::probe_nonce`): bumped on settled frames while
     /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
     /// where budget growth is too small to re-key the frame and the climb freezes.
@@ -493,6 +508,10 @@ impl Default for Perf {
             chunk_idx: [0, 0],
             chunk_sig: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
             chunk_pending: [false, false],
+            adopt_partial: [0, 0],
+            adopt_complete: [0, 0],
+            chunk_motion_frames: [0, 0],
+            dirty_shown: [0, 0],
             probe_nonce: [0, 0],
             hold_active: [false, false],
             hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
@@ -1058,7 +1077,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--play-tour",
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
-        "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive",
+        "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }
@@ -1081,7 +1100,7 @@ mod task_invocation {
         // resurrect itself on a lost device.
         for flag in [
             "--selftest", "--livetest", "--uitest", "--juliadive", "--torture", "--render",
-            "--render-tour", "--bench-matrix", "--gputest", "--resizetest",
+            "--render-tour", "--bench-matrix", "--gputest", "--resizetest", "--motiontest",
         ] {
             assert!(is_task_invocation(&[flag]), "{flag} must count as a task invocation");
             // ...including when it is not the first argument.
@@ -2669,6 +2688,10 @@ struct FractadyneApp {
     /// CLI `--autodive [LOG10]`: unpaced autopilot dive that hammers the frame-cost controller and
     /// reports whether the lethal regime was reached. See `autopilot::AutoDive`.
     autodive: Option<autopilot::AutoDive>,
+    /// CLI `--motiontest`: the motion-presentation gate (design/mode2-chunking.md §11) — the
+    /// in-loop harness that can see what `--livetest`'s settled checkpoints cannot: what a
+    /// chunked view ADOPTS as its frozen texture while the camera is moving.
+    motiontest: Option<motiontest::MotionTest>,
     /// CLI `--play FILE`: start the GUI with this tour already playing in the LIVE view. The only
     /// way to exercise the on-screen playback path (present, watchdog budget, tiled settle) from a
     /// command line — a headless harness cannot reach it.
@@ -3052,6 +3075,14 @@ impl FractadyneApp {
         } else {
             None
         };
+        // --motiontest: the motion-presentation gate (design/mode2-chunking.md §11) — asserts a
+        // partial chunk progression is never adopted as the frozen texture during motion, and that
+        // complete refreshes keep streaming. Self-contained: it jumps its own deep view.
+        let motiontest = if args.iter().any(|a| a == "--motiontest") {
+            Some(motiontest::MotionTest::new())
+        } else {
+            None
+        };
         let juliadive = if args.iter().any(|a| a == "--juliadive") {
             let out =
                 val("--juliadive").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
@@ -3076,6 +3107,7 @@ impl FractadyneApp {
             || uitest.is_some()
             || juliadive.is_some()
             || autodive.is_some()
+            || motiontest.is_some()
             || play_tour.is_some()
             || selftest
             || bench_matrix
@@ -3287,6 +3319,7 @@ impl FractadyneApp {
             uitest,
             juliadive,
             autodive,
+            motiontest,
             livetest_quick,
             play_tour,
             play_tour_done: false,
@@ -6201,6 +6234,11 @@ impl eframe::App for FractadyneApp {
         // measurement apply above, so the reading it samples is this frame's.
         if self.autodive.is_some() && gpu.is_some() {
             self.autodive_frame(ctx);
+        }
+        // --motiontest: the motion-presentation gate (same in-loop pattern). It sets this frame's
+        // input state (zoom_vel / the Home glide), so it runs BEFORE the central draw below.
+        if self.motiontest.is_some() && gpu.is_some() {
+            self.motiontest_frame(ctx);
         }
 
         // Ctrl+S → quick export (no dialog) to the last folder.

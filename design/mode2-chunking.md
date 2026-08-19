@@ -542,3 +542,127 @@ gate that samples frames DURING motion. `--autodive 32 --autodive-home 3` reache
 does not: 1e22 is below the 1e28 mode-2 threshold — measured 0 mode-2 frames), and the honest signal
 is `FRACTADYNE_TRACE=tile` `chunk f=… cur=… step=…` plus whether a partial progression was ever
 adopted, not the checkpoint table.
+
+## 11. Option C, engineered against the actual code (2026-08-19)
+
+§10 chose WHAT to build; this section is the result of walking §10 through every line it has to
+touch, before writing any of it. Everything below cites the tree at `903bab9` (slice 3, rebased
+onto `02f96a3`).
+
+### The one fact that makes the implementation small
+
+`build_params` is FULLY PARAMETERIZED on the view (`center_bf/center/span/magnification/log2mag`
+are arguments), and the frozen latch at the end records whatever view was passed in. Nothing in the
+live path renders a non-live view today — but nothing prevents it either. So a pinned refresh is
+not a second render path: it is the SAME frame build, with the view inputs shadowed at the top of
+`build_params` and the latch deferred. The display side needs literally nothing new: the present
+gate (`hold_copy`/`display_hold`/`hold_uv`) already displays a snapshot while chunk passes compose
+into the live G-buffer — that combination is proven in the settled prefer-detail gate — and the
+freeze math already computes a per-frame transform that tracks a moving view over frozen content.
+
+### The frame shapes
+
+A view is in exactly one of these shapes per frame while `chunk_over`:
+
+- **Hold** (unchanged): `reuse_hold` true → reproject the texture, no iterate.
+- **Pin-start**: interacting, a refresh is due (`reuse_hold` false), the frame really renders
+  (`reproject.is_none()` survives the freeze block), `step < gpu_iter`, a frozen frame exists.
+  Capture the pin (BigFloat center, span, mag, log2mag, upp_l2, final resolution/ss/gpu_iter,
+  orbit_id+orbit_len), dispatch pass `[0, step)`, take the hold snapshot (`hold_copy` — the
+  texture still holds the last COMPLETE frame, because holds don't iterate), engage
+  `display_hold`, and DEFER the frozen latch.
+- **Pin-continue**: view inputs shadowed with the pin's at the top of `build_params`; the frame
+  computes exactly what it would if the user sat at the pinned view — same reference offsets, same
+  SA/BLA gating, same step math — and dispatches the next range. The cursor lives where it always
+  did (`chunk_cursor`/`chunk_idx`; the interacting reset is bypassed while pinned, which is the
+  entire mechanical fix). `display_hold` stays up; `hold_uv` is recomputed EVERY frame from the
+  LIVE view against the (un-overwritten) frozen bookkeeping, so the held image keeps tracking the
+  dive. `chunk_pending` stays true so repaints keep coming through the settle-delay tail.
+- **Adopt** (the frame after the last pass): cursor reached the pinned ask → write
+  `frozen_center/frozen_l2/frozen_upp_l2/frozen_at` = the PIN's view, clear the pin, drop
+  `display_hold`. The frame then proceeds live: small drift → `reuse_hold` → the reveal is the
+  ordinary reproject of the now-complete texture; large drift → the next pin starts the same frame
+  (and `hold_copy` retakes the snapshot from the just-completed texture, because adoption cleared
+  `hold_active`).
+- **Abandon**: clear the pin WITHOUT adopting; the state-texture progress is discarded (cursor
+  resets via the ordinary sig mismatch). Triggers, checked at the top of the frame:
+  settle edge (`!interacting`); orbit changed (`orbit_id`/`orbit_len` differ from capture — the
+  §8 hazard, now a pin guard); live view drifted past `PIN_ABANDON_OCTAVES` (2.0) or panned past
+  `PIN_ABANDON_SPANS` (1.5 view-spans); pin older than `PIN_MAX_FRAMES` (240 — a backstop, not a
+  cadence: the budget controller measures every pin pass, so a bootstrap-collapsed step of 256
+  grows ×1.5 per pass and completes in ~20-25 frames); `chunk_over` went false (the frame then
+  renders complete un-chunked and re-latches coherently); or the frame unexpectedly froze
+  (`reproject.is_some()` mid-pin — pan grab, reference starvation).
+  Every abandon path either re-pins immediately at the live view (snapshot retained —
+  `hold_active` stays true, so `hold_copy` is NOT retaken over the dirty texture) or hands off to
+  a path that renders complete content. The residue is `chunk_dirty`: while the texture diverges
+  from the frozen bookkeeping and the view is interacting, any freeze frame keeps `display_hold`
+  up instead of reprojecting the dirty texture.
+
+### Why pin-start commits LATE in the frame
+
+`reuse_hold` is decided early (render.rs:2925), the chunk step late (render.rs:3493), and the
+freeze verdict (`too_stale` → `reproject = Some`) later still (render.rs:3998-4056). A pin must
+not start (or advance) on a frame the freeze then converts to a reprojection: the cursor would
+advance with no pass dispatched and the resume would be garbage. So the chunk block only computes
+the CANDIDATE range, and a commit point AFTER the freeze verdict (immediately before the `hold_uv`
+capture) starts/advances the pin, does the cursor bookkeeping the chunk block skipped, and decides
+`hold_copy`/`display_hold`. Nothing between the old gate site (render.rs:3662) and the commit
+point consumes those flags — verified before moving them.
+
+### What is NOT changed, deliberately
+
+- Non-pin behavior is bit-identical: settled progressions, mode-0/direct chunked motion without a
+  frozen frame (cold start), tours, offscreen renders, the settled prefer-detail gate (its
+  capture-once `hold_uv` semantics stay — the pin recomputes per frame only because it defers the
+  latch that would otherwise stale the transform).
+- The budget/measurement plumbing: pin passes are real dispatches and price themselves exactly as
+  settled chunk passes do (`fe_steps_last` = range cost). Probes stay `!interacting`-gated.
+- `capped_frac` stays cleared on interacting frames (the load-bearing clear).
+- The step floor (1 unmeasured / 256 measured) and the explicit-count ceilings are untouched.
+
+### Known residual, accepted and recorded
+
+A SETTLED chunk progression still latches `frozen_*` per pass (each pass is `reproject.is_none()`),
+so a user who grabs the view mid-settle can briefly hold a partial texture — the same narrow gap
+mode-0 chunking has had since beta.64-69, self-healing within one refresh cadence now that the pin
+lands complete refreshes during motion. Fixing it means gating the settled latch on progression
+completeness AND snapshotting settled non-prefer-detail progressions; out of scope here.
+
+Also accepted: `frozen_l2` is the autopilot stepped-dive readiness signal (autopilot.rs:96-99), so
+adopt-on-completion makes stepped dives wait for a COMPLETE frame at depth before stepping — a
+pacing change that matches the signal's stated meaning.
+
+### The gate, which lands FIRST and must be RED on the held flip
+
+Two counters in `Perf`, written where the latch runs: `adopt_partial` (the latch ran while this
+frame's chunk pass left `end < gpu_iter` — the latched texture is under-iterated) and
+`adopt_complete`. A `FRACTADYNE_TRACE=tile` `adopt …` line accompanies them. These are the
+observables §10 said do not exist.
+
+`--motiontest`: an in-loop harness in the `autodive_frame`/`uitest_frame` house shape (flag added
+to `is_task_invocation` AND `launched_for_a_task`). Phases: jump to corpus loc 07 at 1.3e31×
+with an explicit 4,000,000 ask (auto-iter off); wait for the reference; drive a continuous
+zoom-in via `pointer.zoom_vel` (~6 s — the wheel-dive shape); `zoom_home` (the field-crash
+shape) and ride the glide down; settle. Per-frame it samples the counters plus
+`interacting`/`chunk_over` frame counts (anti-vacuity: the run FAILS if no interacting chunked
+frames occurred). Verdict:
+
+- **A1 (the regression)**: `adopt_partial == 0` for the whole run. On the held flip this is
+  violated within the first refresh cadence — the RED that proves the gate can see the defect.
+- **A2 (anti-option-B)**: `adopt_complete ≥ 1` DURING the interacting window — detail must keep
+  streaming; a hold-forever "fix" fails here.
+- **A3 (post-fix invariant)**: `dirty_shown == 0` — no frame displayed the live texture while it
+  diverged from the frozen bookkeeping during interaction.
+- Exit 0 pass / 2 assert-fail (torture `classify` contract); prints one verdict block.
+
+Flap doctrine applies: the assertions are invariants and floors, never raw per-frame numbers.
+`--autodive 32 --autodive-home 3` remains the device-loss rung; motiontest is the presentation
+rung — it asserts what the autodive cannot, and it runs in ~2 minutes instead of ~20.
+
+### Unit tests
+
+The abandon/adopt/continue verdict is a pure function (`pin_verdict`) over a copyable input struct
+(drifts precomputed as f64), `controller_props`/`relaunch_policy` house style: adopt only at
+cursor==ask; every abandon reason; start eligibility (incl. the single-pass bypass `step >=
+gpu_iter`, which keeps shallow refreshes exactly as they are today); the settle edge.

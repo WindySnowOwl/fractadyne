@@ -3515,6 +3515,13 @@ impl FractadyneApp {
                 self.perf.chunk_idx[vs] = 0;
             }
             let cur = self.perf.chunk_cursor[vs];
+            // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
+            // during interaction is the regime the motion-presentation assertions cover —
+            // `--motiontest` fails a run that never produced any (anti-vacuity).
+            if interacting {
+                self.perf.chunk_motion_frames[vs] =
+                    self.perf.chunk_motion_frames[vs].wrapping_add(1);
+            }
             if crate::diag::trace_on("tile") {
                 crate::diag::trace(
                     "tile",
@@ -4083,6 +4090,34 @@ impl FractadyneApp {
             // view it renders — the next freeze reprojects the resulting texture relative to it —
             // and WHEN, so the reuse-hold's time floor can age it (see `REFRESH_MAX_SECS`).
             if reproject.is_none() {
+                // Gate observability (design/mode2-chunking.md §11, asserted by `--motiontest`):
+                // DURING INTERACTION at a chunked view, count whether the texture this latch
+                // adopts is COMPLETE. A chunked motion frame that latches with its range short of
+                // the ask is the §9/§10 regression in one number — the partial frame becomes the
+                // frozen texture and is reprojected as if it were real detail ("the interior
+                // regions look mostly like noise"). Scoped to frames that had frozen content to
+                // replace: a cold view latching its first (partial) frame is showing the best it
+                // has, not discarding better. Settled progressions latch per pass by design (the
+                // §11 recorded residual), so settled frames are deliberately not counted.
+                if interacting && chunk_over && self.ref_cache[vi].frozen_center.is_some() {
+                    let partial = chunk_range.is_some_and(|[_, e]| e < gpu_iter);
+                    let ctr = if partial {
+                        &mut self.perf.adopt_partial[vi]
+                    } else {
+                        &mut self.perf.adopt_complete[vi]
+                    };
+                    *ctr = ctr.wrapping_add(1);
+                    if crate::diag::trace_on("tile") {
+                        crate::diag::trace(
+                            "tile",
+                            format!(
+                                "adopt v={vi} f={} partial={partial} range={chunk_range:?} \
+                                 ask={gpu_iter}",
+                                self.perf.frame_idx
+                            ),
+                        );
+                    }
+                }
                 self.ref_cache[vi].frozen_center = Some(center_bf.clone());
                 self.ref_cache[vi].frozen_l2 = log2mag;
                 self.ref_cache[vi].frozen_upp_l2 = upp_l2;
