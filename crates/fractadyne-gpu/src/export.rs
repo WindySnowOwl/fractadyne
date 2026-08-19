@@ -1115,7 +1115,11 @@ pub fn render_iter_chunked(
     let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
 
     // Ping-pong state: pass k reads set (k % 2) and writes set ((k+1) % 2).
-    let state = [crate::make_state_textures(device, [w, h]), crate::make_state_textures(device, [w, h])];
+    // Three targets: this path is direct/mode-0 only (see the scope check above).
+    let state = [
+        crate::make_state_textures(device, [w, h], 3),
+        crate::make_state_textures(device, [w, h], 3),
+    ];
     let state_bg = [
         crate::make_state_bg(device, &state_bgl, &state[0]),
         crate::make_state_bg(device, &state_bgl, &state[1]),

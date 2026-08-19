@@ -815,6 +815,30 @@ Mockups: [design/mockups/](design/mockups/).
   tolerance). **Recommended: A.** Also flagged: rebasing must work ACROSS a chunk boundary, and each
   pass must build its OWN BLA or it reproduces the beta.101 e100 pathology (0.04 vs 174 Gsteps/s).
 
+  🔨**SLICE 1 LANDED (2026-08-19), and it is behaviourally inert by design.** The four-target
+  plumbing and the `fs_iterate_chunk_fe` entry point had to land together — a four-target pipeline
+  needs a four-output entry point to exist — so this one commit adds: `ChunkOut4` +
+  `@group(1) @binding(3) st_exp` + the mode-2 loop (holomorphic formulas 0..3, no Phoenix, no aux,
+  no glitch) in the SAME WGSL module as `fs_iterate_chunk`, sharing `info_pack`/`info_iter`; and on
+  the Rust side `state_bind_group_layout_n`, a `targets`-taking `make_state_textures`, a
+  slice-taking `make_state_bg`, a `chunk_fe_pipeline`/`resolve_fe_pipeline`/`state_bgl4` trio built
+  whenever the device grants 64 bytes/sample, and `prepare` picking the trio on `self.mode == 2`.
+  `chunk_over` still excludes mode 2, so nothing changes for any user yet. Verified: suite 121/121 +
+  17/17 (the five `iter-chunk` mode-0 bit-identity checks among them), and the app boots and renders
+  — which is the proof naga validated the new entry point, since the pipeline is built in
+  `Renderer::new`. ⚠**Three corrections to the design, all found by writing it** (detail in
+  `design/mode2-chunking.md` §8): (1) `fs_resolve`'s SOURCE is untouched but it needs a SECOND
+  PIPELINE — a bind group must match its pipeline's layout exactly, so the same entry point is
+  compiled against both the 3- and 4-entry layouts; (2) a glitch sentinel cannot be expressed in the
+  state layout without teaching resolve a fourth status, so the chunk body omits glitch detection
+  exactly as mode 0's does and the GATE is what guarantees `glitch_on == 0`; (3) ⚠**a BLA skip can
+  carry `iter` past the pass's `stop` in one cheap step**, so slice 2 must not assume `steps =
+  px · (end − cur)` — mode 0 had no BLA, and this is the first time the iteration axis and the cost
+  axis come apart. ⚠**Open hazard for slice 2**: `chunk_sig` does not include the reference orbit, and
+  `orbit_len` feeds both the per-pass BLA table and the rebase trigger — a reference extended
+  mid-settle (the e72/e82/e94 shape, and mode 2 is exactly where that happens) would resume `ref_n`
+  against a different orbit than the pass that stored it.
+
   ⚠**Do NOT "fix" this by capping the explicit iteration ask.** Capping silently rendered deep
   corpus locations interior-black and broke the "same iterations, both apps" contract with
   Fraktaler-3. The real fix is extending chunking to mode 2 (its own `[~]` item), which needs the

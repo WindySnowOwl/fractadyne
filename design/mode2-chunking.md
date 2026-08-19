@@ -281,19 +281,52 @@ coloring off (the chunk pass carries no orbit statistics)". So the mode-2 chunk 
 
 ### Remaining slices, in order
 
-1. **Plumbing + entry point together** — they cannot land separately, because a four-target pipeline
-   needs a four-output entry point to exist. `make_state_textures`/`make_state_bg` gain 4-target
-   variants, a second bind-group layout, a second pipeline, and `fs_iterate_chunk_fe` with the layout
-   above. `chunk_over` still excludes mode 2, so nothing changes behaviourally and the commit is
-   verifiable by "mode-0 chunking still bit-identical" plus naga validating the new shader.
+1. ~~**Plumbing + entry point together**~~ — **DONE.** `fs_iterate_chunk_fe` + a `ChunkOut4` output
+   struct + `@group(1) @binding(3) st_exp` in the same module; `state_bind_group_layout_n`,
+   `make_state_textures(.., targets)` and a slice-taking `make_state_bg` on the Rust side; a
+   `chunk_fe_pipeline`/`resolve_fe_pipeline`/`state_bgl4` trio on `Renderer` built whenever the
+   device grants 64 bytes/sample; and `prepare` selecting the trio on `self.mode == 2`.
+   `chunk_over` still excludes mode 2, so this is behaviourally inert. Verified: full suite
+   121/121 + 17/17 (including `iter-chunk`'s five mode-0 bit-identity checks), and the app boots
+   and renders — which is what proves naga validated the new entry point, since the pipeline is
+   built in `Renderer::new`.
 2. **Flip the `chunk_over` gate** for mode 2, behind `chunking_mode2_available`.
 3. **The gates** (§6): bit-identical at 2/3/7 splits, a split landing ON a rebase, and a split at an
    orbit wrap — plus the reference-shorter-than-the-ask shape from the field case (250k against a
    119,563-long orbit).
 
-⚠Slice 1's shader body is the substantive work and must mirror the mode-2 loop in `fs_iterate`
-faithfully, including that **each pass builds its own BLA** (the beta.101 e100 lesson: correction
-passes with `bla_on = 0` and an empty tree ran at 0.04 Gsteps/s against the base pass's 174 in the
-same frame). Writing it from a partial read of that loop is how a plausible-but-wrong shader gets
-shipped; it wants the whole mode-2 path read first.
+### What slice 1 changed about the plan (three corrections, found by writing it)
 
+**`fs_resolve` needs no WGSL change — but it does need a second PIPELINE.** §8 said resolve was
+untouched, and its *source* is. A bind group must match its pipeline's layout exactly (a layout may
+declare bindings the entry point never reads, but a 4-entry group cannot be set on a 3-entry
+pipeline), so the same `fs_resolve` entry point is compiled twice: once against `state_bgl` and once
+against `state_bgl4`. One extra pipeline object, zero extra per-frame work, and it beats carrying a
+second narrow bind group per ping-pong side.
+
+**Glitch detection is omitted, and the GATE is what guarantees that.** §8 suggested the mode-2 chunk
+body "should still return `GLITCH_SENTINEL` if it is ever on". It cannot: a chunk pass writes state,
+not a `FragOut`, so a sentinel would need a fourth status that `fs_resolve` learns to translate —
+which reopens the resolve contract this design worked to keep closed. The body therefore does what
+`fs_iterate_chunk`'s mode-0 branch already does: no glitch code at all, with the app's `chunk_over`
+required to keep `glitch_on == 0` (live never enables it). Recorded here as a decision rather than
+left as a silent divergence from the paragraph above.
+
+**⚠A BLA skip can carry `iter` past the pass's `stop`, so slice 2's cost model over-counts.** The
+skip is the first thing the loop tries, and `iter += span` can land well beyond `end_iter` in one
+step. That is harmless for correctness — the skip sequence is the same one the unchunked loop takes,
+and the next pass finds `stop` already behind it and passes the state through — and it is nearly
+free in time, because a span of 2^l costs one iteration's work. But `render.rs` prices a chunk frame
+as `steps = px · (end − cur)`, and mode 0 had no BLA, so this is the first time the iteration axis
+and the cost axis come apart. Slice 2 must not assume the two are the same number.
+
+### ⚠Open hazard for slice 2: the progression signature ignores the reference
+
+`chunk_sig` is `(center, magnification, gpu_iter, resolution, ss)` — it does **not** include the
+reference orbit. A reference rebuilt or extended while the view sits settled changes `orbit_len`
+mid-progression, and `orbit_len` feeds both the per-pass BLA table and the `ref_n + 1 >= orbit_len`
+rebase trigger. Mode 0 is exposed to the second of those already; mode 2 is exposed to both, and mode
+2 is exactly where deep views extend their references mid-settle (the e72/e82/e94 family). A pass
+that resumes `ref_n` against a *different* orbit than the pass that stored it is not covered by any
+gate in §6. Decide in slice 2 whether the signature grows an orbit identity or the progression is
+explicitly restarted on an orbit swap.

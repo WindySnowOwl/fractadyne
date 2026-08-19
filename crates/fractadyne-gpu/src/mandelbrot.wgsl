@@ -1281,12 +1281,26 @@ fn fs_iterate(in: VsOut) -> FragOut {
 @group(1) @binding(0) var st_z: texture_2d<f32>;
 @group(1) @binding(1) var st_dz: texture_2d<f32>;
 @group(1) @binding(2) var st_meta: texture_2d<f32>;
+// Fourth state target, MODE-2 (floatexp) chunking only. Declared at module scope so both
+// chunk entry points share one binding table; `fs_iterate_chunk` and `fs_resolve` never
+// read it, so their 3-entry pipeline layouts stay valid (a layout may declare bindings an
+// entry point does not use, but not the reverse).
+@group(1) @binding(3) var st_exp: texture_2d<f32>;
 
 struct ChunkOut {
     @location(0) z: vec4<f32>,
     @location(1) dz: vec4<f32>,
     // ⚠`meta` is a WGSL reserved word (like `smooth`) — hence `info`.
     @location(2) info: vec4<f32>,
+};
+
+// Mode-2 (floatexp) chunk output: the three above plus the derivative's floatexp EXPONENT.
+// `dexp` rather than `exp` — same caution as `info` above, since `exp` is a builtin name.
+struct ChunkOut4 {
+    @location(0) z: vec4<f32>,
+    @location(1) dz: vec4<f32>,
+    @location(2) info: vec4<f32>,
+    @location(3) dexp: vec4<f32>,
 };
 
 const ST_RUNNING: f32 = 0.0;
@@ -1565,6 +1579,336 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             info_pack(iter, status, f32(ref_n), f32(D.e)),
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Resumable MODE-2 (floatexp) chunk pass — FOUR state targets.
+//
+// Why a second entry point rather than widening `fs_iterate_chunk`: a shared four-target
+// pipeline would make direct/mode-0 carry a fourth full-resolution Rgba32Float target they
+// never read, and chunk state is ping-ponged — +265 MB at 4K, where the three existing targets
+// already cost ~796 MB. The wasted write is only ~0.7 ms/settled frame, so VRAM is the whole
+// argument. This module already has six fragment entries, so a seventh is the existing idiom;
+// the state encoding stays in the shared `info_pack`/`info_iter`/`info_status` helpers.
+//
+// Why four targets at all: mode 2's running state is 13 floats against the 12 that three hold —
+// δz mantissa (4) + δz exponent (1) + derivative mantissa (4) + derivative exponent (1) +
+// status/iter (2) + ref_n (1). Mode 2 does not need to store full `z` while running (it is
+// reconstructible as reference[ref_n] + δz), which frees a target — but the two floatexp
+// exponents still cannot share one channel: an f32 holds integers exactly only to 2^24, so two
+// packed fields get 12 bits each, and at 1e1105 the binary exponent is already ~ -3670.
+//
+// THE ESCAPE LAYOUT IS A CONTRACT WITH `fs_resolve`, NOT A FREE CHOICE. `fs_resolve` is
+// deliberately mode-agnostic: at escape it reads the FULL z (df32) from st_z, the display
+// derivative's MANTISSA from st_dz, smit from info ch2 and the derivative's floatexp EXPONENT
+// from info ch3 (`sm.w`). So while RUNNING info ch3 carries the δz exponent and st_exp.ch0
+// carries the derivative's; at ESCAPE info ch3 reverts to the derivative's exponent and st_exp
+// goes unused. Parking the derivative exponent in st_exp unconditionally would leave resolve
+// reading a δz exponent as the DE exponent and quietly corrupt distance-estimate shading and
+// relief lighting on every chunked mode-2 escape. With the layout below, `fs_resolve` needs no
+// change at all.
+//
+//   st_z    RUNNING δz mantissa (re.hi, re.lo, im.hi, im.lo)  | ESCAPE full z (df32)
+//   st_dz   RUNNING derivative mantissa                       | ESCAPE derivative mantissa
+//   st_meta RUNNING (status+iter_hi, iter_lo, ref_n, δz.e)    | ESCAPE ch2 smit, ch3 D.e
+//   st_exp  RUNNING ch0 D.e, ch1..3 spare                     | ESCAPE unused
+//
+// Scope, inherited from the app's `chunk_over` gate exactly as mode 0's chunk body is: the
+// HOLOMORPHIC formulas 0..3 only, aux coloring off, glitch detection off. That is what keeps
+// the 13-float budget honest — Phoenix (formula 8) additionally carries δz_{n-1} AND D_{n-1}
+// (ten more values, which alone would blow four targets), and aux coloring carries a five-float
+// orbit accumulator. Tricorn (4) and the abs families (5..7) are out of scope, so their
+// δ-updates are deliberately not ported. Glitch detection is omitted for the same reason
+// `fs_iterate_chunk` omits it: the live path never enables it, and a glitch sentinel cannot be
+// expressed in the state layout without teaching `fs_resolve` a fourth status — so the GATE,
+// not this shader, is what guarantees `glitch_on == 0` here.
+//
+// Each pass rebuilds its own BLA level table from `iu.orbit_len` below, and the host must keep
+// passing `bla_on` on chunk frames. The e100 device loss (beta.101) was glitch-correction passes
+// running with `bla_on = 0` and an empty tree at 0.04 Gsteps/s against the base pass's 174 in the
+// same frame — a chunk pass that silently lost its BLA would reproduce that exactly, and it would
+// read as "chunking is slow" rather than "chunking is broken".
+//
+// A BLA skip can carry `iter` PAST `stop` in one cheap step (the whole point of a skip is that a
+// span of 2^l costs one iteration's work, so this does not cost time) — the pass then simply
+// stores an `iter` above the range it was asked for, and the next pass's `stop` is already behind
+// it and passes the state through. Bit-identity is unaffected because the skip sequence is the
+// same one the unchunked loop takes; but the host's `steps = px * delta_iter` cost model
+// over-counts whenever BLA is live, which mode 0 never had to account for.
+@fragment
+fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
+    // Pixel coordinate mapping — identical to fs_iterate's prologue.
+    let step_re = iu.step.xy;
+    let step_im = iu.step.zw;
+    let gx = iu.px_offset.x + in.pos.x;
+    let gy = iu.px_offset.y + in.pos.y;
+    let coord_re = gx - iu.res.x * 0.5;
+    let coord_im = iu.res.y * 0.5 - gy;
+    let off_re = df_mul_f32(step_re, coord_re);
+    let off_im = df_mul_f32(step_im, coord_im);
+
+    let bail2 = 256.0 * 256.0;
+    let stop = min(iu.end_iter, iu.max_iter);
+
+    // Prior state, when resuming.
+    let p = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
+    var sz = vec4<f32>(0.0);
+    var sdz = vec4<f32>(0.0);
+    var sm = vec4<f32>(0.0);
+    var se = vec4<f32>(0.0);
+    if (iu.start_iter > 0u) {
+        sz = textureLoad(st_z, p, 0);
+        sdz = textureLoad(st_dz, p, 0);
+        sm = textureLoad(st_meta, p, 0);
+        se = textureLoad(st_exp, p, 0);
+        if (info_status(sm) != ST_RUNNING) {
+            // Already settled (escaped or interior) — pass state through unchanged.
+            return ChunkOut4(sz, sdz, sm, se);
+        }
+    }
+
+    // Pixel deviation as floatexp, exactly as fs_iterate's mode-2 branch derives it: `off_*` and
+    // `ref_offset` are mantissas sharing the `delta_exp` exponent (no `dsc` rescale on this path).
+    let pert_m = cset(
+        df_add(off_re, vec2<f32>(iu.ref_offset.x, iu.ref_offset.z)),
+        df_add(off_im, vec2<f32>(iu.ref_offset.y, iu.ref_offset.w)),
+    );
+    let pert = fe_norm(pert_m, iu.delta_exp);
+    var dz: Fe;
+    var dc: Fe;
+    if (iu.julia == 1u) {
+        dz = pert;
+        dc = fe_zero();
+    } else {
+        dz = fe_zero();
+        dc = pert;
+    }
+    var D: Fe;
+    if (iu.julia == 1u) { D = fe_one(); } else { D = fe_zero(); }
+    var iter: u32 = 0u;
+    var ref_n: u32 = 0u;
+    var status: f32 = ST_RUNNING;
+    var n_rebase: u32 = 0u;
+    var n_ext: u32 = 0u;
+    var n_bla: u32 = 0u;
+
+    // BLA level layout, rebuilt per pass from the reference length — see the note above.
+    var bla_off: array<u32, 32>;
+    var bla_len: array<u32, 32>;
+    var bla_levels = 0u;
+    if (iu.bla_on == 1u && iu.formula == 0u && iu.orbit_len > 1u) {
+        var blen = iu.orbit_len - 1u;
+        var boff = 0u;
+        loop {
+            bla_off[bla_levels] = boff;
+            bla_len[bla_levels] = blen;
+            boff = boff + blen;
+            bla_levels = bla_levels + 1u;
+            if (blen <= 1u || bla_levels >= 32u) { break; }
+            blen = (blen + 1u) / 2u;
+        }
+    }
+
+    if (iu.start_iter > 0u) {
+        // `fe_make`, not `fe_norm`: the stored pair is already normalized, and re-normalizing a
+        // restored value would make a pixel depend on where the frame happened to split.
+        dz = fe_make(cset(vec2<f32>(sz.x, sz.y), vec2<f32>(sz.z, sz.w)), i32(sm.w));
+        D = fe_make(cset(vec2<f32>(sdz.x, sdz.y), vec2<f32>(sdz.z, sdz.w)), i32(se.x));
+        iter = info_iter(sm);
+        ref_n = u32(sm.z);
+    } else if (iu.sa_skip > 0u && iu.julia == 0u) {
+        // Series-approximation seeding, exactly as the single-pass branch does it.
+        let A = fe_norm(cset(iu.sa_a.xy, iu.sa_a.zw), iu.sa_a_exp);
+        let B = fe_norm(cset(iu.sa_b.xy, iu.sa_b.zw), iu.sa_b_exp);
+        let C = fe_norm(cset(iu.sa_c.xy, iu.sa_c.zw), iu.sa_c_exp);
+        let dc2 = fe_sqr(dc);
+        let dc3 = fe_mul(dc2, dc);
+        dz = fe_add(fe_add(fe_mul(A, dc), fe_mul(B, dc2)), fe_mul(C, dc3));
+        D = fe_add(fe_add(A, fe_scale(fe_mul(B, dc), 2.0)), fe_scale(fe_mul(C, dc2), 3.0));
+        iter = iu.sa_skip;
+        ref_n = iu.sa_skip;
+    }
+
+    // Fixed up front from the formula (the single-pass loop assigns it inside each branch, which
+    // is the same value for formulas 0..3 — but only if the loop body runs, and a resumed pass
+    // may escape on its first iteration).
+    var power_f = 2.0;
+    if (iu.formula == 1u) { power_f = 3.0; }
+    else if (iu.formula == 2u) { power_f = 4.0; }
+    else if (iu.formula == 3u) { power_f = 5.0; }
+
+    var zf = vec2<f32>(0.0, 0.0);
+    var z_full: Fe = fe_zero(); // full z = Z_{n+1} + δz, kept for the escape store
+    var escaped = false;
+    loop {
+        if (iter >= stop) { break; }
+        // BLA: skip 2^l reference steps at once while |δz| is within the merged validity radius;
+        // revert to a lower level (ultimately a full step) on escape overshoot. Verbatim from
+        // fs_iterate's mode-2 branch minus the aux aggregate (aux is out of scope here).
+        if (bla_levels > 0u) {
+            let dzmag = fe_abs_sf(dz);
+            var applied = false;
+            var l = bla_levels;
+            loop {
+                if (l == 0u) { break; }
+                l = l - 1u;
+                let stepn = 1u << l;
+                if ((ref_n & (stepn - 1u)) != 0u) { continue; } // ref_n not aligned to 2^l
+                let j = ref_n >> l;
+                if (j >= bla_len[l]) { continue; }
+                let node = iu.orbit_len + (bla_off[l] + j) * 4u;
+                let v2 = reference[node + 2u];
+                let span = u32(reference[node + 3u].x);
+                // A ZERO span must never be applied — it is the only forward progress in this
+                // loop, so span == 0 spins the fragment until the driver watchdog fires. See the
+                // full note in fs_iterate.
+                if (span == 0u) { continue; }
+                if (ref_n + span >= iu.orbit_len) { continue; } // keep reference[nref] valid
+                if (!sf_lt(dzmag, sf_norm(vec2<f32>(v2.w, 0.0), i32(v2.z)))) { continue; }
+                let v0 = reference[node];
+                let v1 = reference[node + 1u];
+                let A = fe_norm(cset(v0.xy, v0.zw), i32(v2.x));
+                let B = fe_norm(cset(v1.xy, v1.zw), i32(v2.y));
+                let ndz = fe_add(fe_mul(A, dz), fe_mul(B, dc));
+                let nref = ref_n + span;
+                // orbit_cdf: the landing sample may be an extended-range dip (NaN-marked).
+                let rn = orbit_cdf(reference[nref]);
+                let ndzf = fe_lo_f32(ndz);
+                let zx = rn.re.x + ndzf.x;
+                let zy = rn.im.x + ndzf.y;
+                if (zx * zx + zy * zy > bail2) { continue; } // overshoot → drop a level
+                D = fe_add(fe_mul(A, D), B); // formula <= 3 by scope
+                dz = ndz;
+                ref_n = nref;
+                iter = iter + span;
+                zf = vec2<f32>(zx, zy);
+                n_bla = n_bla + 1u;
+                // Rebase at the BLA landing: a near-zero orbit dip makes |z_full| ~ |δz|, so the
+                // Zhuoran condition can hold even here. Mirrors the full-step rebase below — see
+                // the corpus-15 dendrite note in fs_iterate.
+                let zfe = fe_add(orbit_fe(reference[nref]), dz);
+                if (sf_lt(fe_abs_sf(zfe), fe_abs_sf(dz))) {
+                    n_rebase = n_rebase + 1u;
+                    dz = fe_sub(zfe, orbit_fe(reference[0]));
+                    ref_n = 0u;
+                }
+                applied = true;
+                break;
+            }
+            if (applied) { continue; }
+        }
+        let r = reference[ref_n];
+        let Z = orbit_cdf(r); // reference Z_n (df32; an extended dip reads (0,0) here)
+
+        // Derivative update D <- f'(z_n)*D (+1 Mandelbrot) using the full z_n = Z_n + δz_n,
+        // BEFORE the δ advances — the same order as the single-pass loop.
+        let dzc = fe_lo_f32(dz);
+        let zfn = vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y);
+        let fp = deriv_factor(iu.formula, zfn);
+        D = fe_mul_c(D, fp.x, fp.y);
+        if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
+
+        if (iu.formula == 1u) {
+            // z^3: δz' = 3Z²δz + 3Z δz² + δz³ + δc
+            let Z2 = c_sqr(Z);
+            let dz2 = fe_sqr(dz);
+            var t = fe_scale(fe_mul_cdf(dz, Z2), 3.0);
+            t = fe_add(t, fe_scale(fe_mul_cdf(dz2, Z), 3.0));
+            t = fe_add(t, fe_mul(dz2, dz));
+            dz = fe_add(t, dc);
+        } else if (iu.formula == 2u) {
+            // z^4: δz' = 4Z³δz + 6Z²δz² + 4Z δz³ + δz⁴ + δc
+            let Z2 = c_sqr(Z);
+            let Z3 = c_mul(Z2, Z);
+            let dz2 = fe_sqr(dz);
+            let dz3 = fe_mul(dz2, dz);
+            var t = fe_scale(fe_mul_cdf(dz, Z3), 4.0);
+            t = fe_add(t, fe_scale(fe_mul_cdf(dz2, Z2), 6.0));
+            t = fe_add(t, fe_scale(fe_mul_cdf(dz3, Z), 4.0));
+            t = fe_add(t, fe_sqr(dz2));
+            dz = fe_add(t, dc);
+        } else if (iu.formula == 3u) {
+            // z^5: δz' = 5Z⁴δz + 10Z³δz² + 10Z²δz³ + 5Z δz⁴ + δz⁵ + δc
+            let Z2 = c_sqr(Z);
+            let Z3 = c_mul(Z2, Z);
+            let Z4 = c_sqr(Z2);
+            let dz2 = fe_sqr(dz);
+            let dz3 = fe_mul(dz2, dz);
+            let dz4 = fe_sqr(dz2);
+            var t = fe_scale(fe_mul_cdf(dz, Z4), 5.0);
+            t = fe_add(t, fe_scale(fe_mul_cdf(dz2, Z3), 10.0));
+            t = fe_add(t, fe_scale(fe_mul_cdf(dz3, Z2), 10.0));
+            t = fe_add(t, fe_scale(fe_mul_cdf(dz4, Z), 5.0));
+            t = fe_add(t, fe_mul(dz4, dz));
+            dz = fe_add(t, dc);
+        } else {
+            // Mandelbrot: δz' = 2Z·δz + δz² + δc. THE LOAD-BEARING dip handling — at an
+            // extended-range sample the 2Z·δz term must be computed in extended range; dropping
+            // it re-glues every pixel to the reference each dip period (corpus 14/15).
+            var t: Fe;
+            if (orbit_is_ext(r)) {
+                n_ext = n_ext + 1u;
+                t = fe_two(fe_mul(dz, orbit_fe(r)));
+            } else {
+                t = fe_two(fe_mul_cdf(dz, Z));
+            }
+            t = fe_add(t, fe_sqr(dz));
+            dz = fe_add(t, dc);
+        }
+
+        ref_n = ref_n + 1u;
+        iter = iter + 1u;
+
+        // Full value z = Z_{n+1} + δz in EXTENDED range. The f32 shortcut underflows on BOTH
+        // sides at depth and silently disables Zhuoran rebasing — see the long note in fs_iterate.
+        let rn = reference[ref_n];
+        let Znfe = orbit_fe(rn);
+        z_full = fe_add(Znfe, dz);
+        zf = fe_lo_f32(z_full);
+        let z2 = dot(zf, zf);
+        if (z2 > bail2) { escaped = true; break; }
+
+        if (sf_lt(fe_abs_sf(z_full), fe_abs_sf(dz)) || ref_n + 1u >= iu.orbit_len) {
+            n_rebase = n_rebase + 1u;
+            // Rebase onto reference index 0: δz = (Z_{n+1} + δz) − Z₀ (Z₀ = 0 for Mandelbrot,
+            // the reference point for Julia). A pass ending one iteration either side of this
+            // must produce the same pixel — that is what the chunk-boundary gates assert.
+            dz = fe_sub(z_full, orbit_fe(reference[0]));
+            ref_n = 0u;
+        }
+    }
+    ctr_commit(n_rebase, n_ext, n_bla);
+    if (escaped) {
+        status = ST_ESCAPED;
+        let mag2 = dot(zf, zf);
+        let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+        let smit = f32(iter) + 1.0 - nu;
+        esc_range_commit(smit);
+        // At escape the δ is no longer needed: store the FULL z as df32 so the mode-agnostic
+        // resolve can shade without the reference. |z| > 256 here, so fe_to_cdf's exponent range
+        // is never the binding constraint, and its hi limbs equal fs_iterate's `fe_lo_f32(zfull)`
+        // bit for bit (both scale by the same clamped exp2).
+        let zc = fe_to_cdf(z_full);
+        return ChunkOut4(
+            vec4<f32>(zc.re.x, zc.re.y, zc.im.x, zc.im.y),
+            vec4<f32>(D.m.re.x, D.m.re.y, D.m.im.x, D.m.im.y),
+            info_pack(iter, status, smit, f32(D.e)),
+            vec4<f32>(0.0),
+        );
+    }
+    if (iter >= iu.max_iter) {
+        status = ST_INTERIOR;
+        atomicAdd(&counters[CTR_MAXITER], 1u);
+    }
+    // Still running: δz mantissa + its exponent in info ch3, derivative mantissa + its exponent
+    // in st_exp ch0. FE_ZERO_E (-1e9) round-trips exactly through f32 (1e9 = 1953125 * 2^9, and
+    // 1953125 < 2^24), as does a -3670-ish exponent at 1e1105x.
+    return ChunkOut4(
+        vec4<f32>(dz.m.re.x, dz.m.re.y, dz.m.im.x, dz.m.im.y),
+        vec4<f32>(D.m.re.x, D.m.re.y, D.m.im.x, D.m.im.y),
+        info_pack(iter, status, f32(ref_n), f32(dz.e)),
+        vec4<f32>(f32(D.e), 0.0, 0.0, 0.0),
+    );
 }
 
 // State → the normal iteration G-buffer (smooth/normal/DE + aux), same contract as fs_iterate's

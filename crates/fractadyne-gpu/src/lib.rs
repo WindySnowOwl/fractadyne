@@ -412,9 +412,12 @@ struct HoldState {
 
 /// Ping-pong state for a live chunked progression (see `MandelbrotParams::chunk_range`).
 struct ChunkState {
-    tex: [[wgpu::TextureView; 3]; 2],
+    tex: [Vec<wgpu::TextureView>; 2],
     bg: [wgpu::BindGroup; 2],
     size: [u32; 2],
+    /// 3 for direct/mode-0, 4 for mode 2 — part of the identity, not just the shape: switching
+    /// mode mid-progression must rebuild the state, not reinterpret the old channels.
+    targets: usize,
 }
 
 struct Renderer {
@@ -431,6 +434,16 @@ struct Renderer {
     chunk_pipeline: Option<wgpu::RenderPipeline>,
     resolve_pipeline: Option<wgpu::RenderPipeline>,
     state_bgl: wgpu::BindGroupLayout,
+    /// The same three, widened to FOUR state targets for mode-2 (floatexp) chunking — floatexp
+    /// state is 13 floats and three targets hold 12 (see `chunking_mode2_available`). `None` when
+    /// the device couldn't grant the 64-byte color-attachment limit; mode-0 chunking above keeps
+    /// working at 48 either way, which is why these are separate and not one capability.
+    /// `resolve_fe_pipeline` is the *same* `fs_resolve` entry point compiled against the 4-entry
+    /// layout — resolve reads bindings 0..2 in both, but a bind group must match its pipeline's
+    /// layout exactly, so the wider state cannot be fed to the narrow pipeline.
+    chunk_fe_pipeline: Option<wgpu::RenderPipeline>,
+    resolve_fe_pipeline: Option<wgpu::RenderPipeline>,
+    state_bgl4: wgpu::BindGroupLayout,
     /// 4-byte u32::MAX source for seeding the escape-range MIN counter slot per frame.
     esc_min_seed: wgpu::Buffer,
     views: std::collections::HashMap<u32, ViewResources>,
@@ -647,9 +660,16 @@ pub(crate) fn color_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupL
 }
 
 /// Bind-group layout for the iteration-range state inputs (`@group(1)` in the chunk/resolve
-/// entries): the three per-pixel state textures a resumable pass reads — z (df32), dz (df32),
-/// and (iter, status, smit). Bound alongside the normal iterate group(0).
-pub(crate) fn state_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+/// entries): the per-pixel state textures a resumable pass reads. `targets == 3` is the
+/// direct/mode-0 layout — z (df32), dz (df32), and (iter, status, smit); `targets == 4` adds the
+/// floatexp derivative exponent mode-2 chunking needs (see `chunking_mode2_available`). Bound
+/// alongside the normal iterate group(0).
+///
+/// ⚠A pipeline layout may declare bindings its entry point never reads, but not the reverse — and
+/// a bind GROUP must match its pipeline's layout exactly. So `fs_resolve` is compiled against both
+/// widths (it reads bindings 0..2 either way) rather than the 4-target chunk state being rebound
+/// through a narrower group.
+pub(crate) fn state_bind_group_layout_n(device: &wgpu::Device, targets: u32) -> wgpu::BindGroupLayout {
     let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -660,17 +680,32 @@ pub(crate) fn state_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupL
         },
         count: None,
     };
+    let entries: Vec<wgpu::BindGroupLayoutEntry> = (0..targets).map(tex_entry).collect();
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("fractadyne.state_bgl"),
-        entries: &[tex_entry(0), tex_entry(1), tex_entry(2)],
+        label: Some(if targets >= 4 { "fractadyne.state_bgl4" } else { "fractadyne.state_bgl" }),
+        entries: &entries,
     })
 }
 
-/// One set of iteration-range state textures (z / dz / info), sized to the iteration grid.
-/// Written as render attachments by `fs_iterate_chunk`, read via `textureLoad` by the next
-/// chunk and by `fs_resolve` — the same attachment+sampled ping-pong `seeded_resize` uses
-/// (no STORAGE_BINDING, so no extra device features).
-pub(crate) fn make_state_textures(device: &wgpu::Device, size: [u32; 2]) -> [wgpu::TextureView; 3] {
+/// The three-target layout (direct + mode-0 chunking) — what every existing caller wants.
+pub(crate) fn state_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    state_bind_group_layout_n(device, 3)
+}
+
+/// One set of iteration-range state textures (z / dz / info, plus the mode-2 exponent target when
+/// `targets == 4`), sized to the iteration grid. Written as render attachments by the chunk entry
+/// points, read via `textureLoad` by the next chunk and by `fs_resolve` — the same
+/// attachment+sampled ping-pong `seeded_resize` uses (no STORAGE_BINDING, so no extra device
+/// features).
+///
+/// ⚠These are ping-ponged, so a set costs `W·H·16·targets·2` bytes: at 4K, 796 MB at three targets
+/// and 1,062 MB at four. That is why mode 2 gets its own entry point instead of every mode paying
+/// for a fourth target it never reads.
+pub(crate) fn make_state_textures(
+    device: &wgpu::Device,
+    size: [u32; 2],
+    targets: usize,
+) -> Vec<wgpu::TextureView> {
     let mk = |label: &str| {
         device
             .create_texture(&wgpu::TextureDescriptor {
@@ -689,22 +724,34 @@ pub(crate) fn make_state_textures(device: &wgpu::Device, size: [u32; 2]) -> [wgp
             })
             .create_view(&wgpu::TextureViewDescriptor::default())
     };
-    [mk("fractadyne.state_z"), mk("fractadyne.state_dz"), mk("fractadyne.state_info")]
+    const LABELS: [&str; 4] = [
+        "fractadyne.state_z",
+        "fractadyne.state_dz",
+        "fractadyne.state_info",
+        "fractadyne.state_exp",
+    ];
+    (0..targets.min(LABELS.len())).map(|i| mk(LABELS[i])).collect()
 }
 
+/// The bind group for one side of the ping-pong. `state.len()` must equal the `targets` the
+/// layout was built with — 3 for direct/mode-0, 4 for mode 2.
 pub(crate) fn make_state_bg(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    state: &[wgpu::TextureView; 3],
+    state: &[wgpu::TextureView],
 ) -> wgpu::BindGroup {
+    let entries: Vec<wgpu::BindGroupEntry> = state
+        .iter()
+        .enumerate()
+        .map(|(i, v)| wgpu::BindGroupEntry {
+            binding: i as u32,
+            resource: wgpu::BindingResource::TextureView(v),
+        })
+        .collect();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fractadyne.state_bg"),
         layout,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&state[0]) },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&state[1]) },
-            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&state[2]) },
-        ],
+        entries: &entries,
     })
 }
 
@@ -766,6 +813,33 @@ impl Renderer {
                 (None, None)
             };
 
+        // Mode-2 (floatexp) chunking: the same pair over FOUR state targets = 64 bytes/sample.
+        // Built whenever the device granted 64 even though `chunk_over` does not yet route mode 2
+        // here — so naga validates `fs_iterate_chunk_fe` on every startup rather than the first
+        // time a deep view happens to need it.
+        let state_bgl4 = state_bind_group_layout_n(device, 4);
+        let (chunk_fe_pipeline, resolve_fe_pipeline) =
+            if device.limits().max_color_attachment_bytes_per_sample >= 64 {
+                let chunk_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("fractadyne.chunk_fe_layout"),
+                    bind_group_layouts: &[&iter_bgl, &state_bgl4],
+                    push_constant_ranges: &[],
+                });
+                (
+                    Some(fullscreen_pipeline(
+                        device, &shader, &chunk_layout, "fs_iterate_chunk_fe",
+                        &[ITER_FORMAT, ITER_FORMAT, ITER_FORMAT, ITER_FORMAT],
+                        "fractadyne.chunk_fe_pipeline",
+                    )),
+                    Some(fullscreen_pipeline(
+                        device, &shader, &chunk_layout, "fs_resolve",
+                        &[ITER_FORMAT, ITER_FORMAT], "fractadyne.resolve_fe_pipeline",
+                    )),
+                )
+            } else {
+                (None, None)
+            };
+
         // 4-byte constant source used to seed the escape-range MIN counter slot to u32::MAX via an
         // in-encoder copy each frame (the per-frame clear zeroes it, and a zero floor would make
         // the shader's atomicMin a no-op).
@@ -786,6 +860,9 @@ impl Renderer {
             chunk_pipeline,
             resolve_pipeline,
             state_bgl,
+            chunk_fe_pipeline,
+            resolve_fe_pipeline,
+            state_bgl4,
             esc_min_seed,
             views: std::collections::HashMap::new(),
         }
@@ -1153,9 +1230,15 @@ impl CallbackTrait for MandelbrotParams {
         let color_bgl = &r.color_bgl;
         let iter_pipeline = &r.iter_pipeline;
         let seed_pipeline = &r.seed_pipeline;
-        let chunk_pipeline = r.chunk_pipeline.as_ref();
-        let resolve_pipeline = r.resolve_pipeline.as_ref();
-        let state_bgl = &r.state_bgl;
+        // Mode 2 (floatexp) chunks through its OWN four-target pipelines; every other mode uses
+        // the three-target pair. Resolved once here so the chunk block below stays mode-agnostic —
+        // and note the fallback is the same one a 48-byte device already takes: if the mode-2 pair
+        // is `None`, `chunk` resolves to `None` and this dispatch is clamped instead of split.
+        let (chunk_pipeline, resolve_pipeline, state_bgl, chunk_targets) = if self.mode == 2 {
+            (r.chunk_fe_pipeline.as_ref(), r.resolve_fe_pipeline.as_ref(), &r.state_bgl4, 4usize)
+        } else {
+            (r.chunk_pipeline.as_ref(), r.resolve_pipeline.as_ref(), &r.state_bgl, 3usize)
+        };
         let esc_min_seed = &r.esc_min_seed;
         let view = r.views.get_mut(&self.view_id).unwrap();
 
@@ -1451,14 +1534,23 @@ impl CallbackTrait for MandelbrotParams {
                 // cheap resolve of the settled state into the display G-buffer. Full-frame only
                 // (`tile` is ignored on chunked frames — chunking bounds the iteration axis, which
                 // is the axis a scissor can't). Ensure the state pair exists at this size.
-                let need = view.chunk_state.as_ref().is_none_or(|s| s.size != size);
+                // Rebuild on a size change OR a target-count change: the two widths encode
+                // different things in the same channels, so reusing one as the other would resume
+                // a floatexp orbit from df32 state (or the reverse) rather than fail loudly.
+                let need = view
+                    .chunk_state
+                    .as_ref()
+                    .is_none_or(|s| s.size != size || s.targets != chunk_targets);
                 if need {
-                    let tex = [make_state_textures(device, size), make_state_textures(device, size)];
+                    let tex = [
+                        make_state_textures(device, size, chunk_targets),
+                        make_state_textures(device, size, chunk_targets),
+                    ];
                     let bg = [
                         make_state_bg(device, state_bgl, &tex[0]),
                         make_state_bg(device, state_bgl, &tex[1]),
                     ];
-                    view.chunk_state = Some(ChunkState { tex, bg, size });
+                    view.chunk_state = Some(ChunkState { tex, bg, size, targets: chunk_targets });
                 }
                 let st = view.chunk_state.as_ref().unwrap();
                 let write = (self.chunk_idx % 2) as usize;
@@ -1478,13 +1570,11 @@ impl CallbackTrait for MandelbrotParams {
                         beginning_of_pass_write_index: Some(0),
                         end_of_pass_write_index: Some(1),
                     });
+                    let attachments: Vec<_> =
+                        st.tex[write].iter().map(|v| attach(v)).collect();
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("fractadyne.chunk_pass"),
-                        color_attachments: &[
-                            attach(&st.tex[write][0]),
-                            attach(&st.tex[write][1]),
-                            attach(&st.tex[write][2]),
-                        ],
+                        color_attachments: &attachments,
                         depth_stencil_attachment: None,
                         timestamp_writes: ts_writes,
                         occlusion_query_set: None,
