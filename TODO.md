@@ -959,6 +959,39 @@ Mockups: [design/mockups/](design/mockups/).
     at a transform that lags the pan; autopilot stepped dives now wait for a COMPLETE frame at
     depth before stepping (`frozen_l2`'s stated meaning, honestly enforced).
 
+  🔴✅**FIELD DEVICE LOSS SAME DAY (beta.106, crash-1787158916-0, 17:01 UTC): a SETTLED chunked
+  pass was sized from the TILE ALLOWANCE — 16 dispatch budgets in ONE submission. FIXED.**
+  User recipe: zoomed into a minibrot (2^151.2×) and set iterations to maximum (explicit 4M);
+  settled; device lost at 165.7 s. **The log's fingerprint: every over-budget dispatch was exactly
+  16.0× its budget** (9.600e11 vs 6.000e10, 5.070e11 vs 3.169e10, 2.224e11 vs 1.390e10…), two
+  lethal-band readings (1136 ms, 912 ms) whose retreats could not help because the NEXT pass was
+  again 16× the retreated budget. 16 = `TDR_MAX_TILES`: on a settled tiling-eligible frame
+  `tdr_allowed = tdr_steps × max_tiles`, and the chunk step was computed from `tdr_allowed` —
+  the allowance is for TILES (many bounded dispatches); a chunk pass is ONE submission. ⭐The
+  16.0× exactness also proves `fe_budget_ok` was FALSE (a converged allowance covers the whole
+  need and un-chunks the frame — tiles bound it instead): the budget was CLIMBING, held there by
+  a reference-install derate (885k orbit landed mid-session) plus a `no GPU iterate timing after
+  30 frames` timestamp outage, and `bla_skip` collapsed 893M → 0 at the minibrot interior, making
+  nominal cost real cost at exactly the wrong moment.
+  ⭐**Latent since beta.64-69** (mode-0 chunking sized settled passes the same way) — mode-2
+  chunking made it reachable at lethal cost, and NO gate could see it: `--motiontest` exercises
+  MOTION (tiling=false → single-budget passes), `--autodive` is motion-dominated, and
+  `--livetest` never dispatches the live chunk pass at all (`params_to_request` drops the chunk
+  fields). The user's settled session found it in three minutes.
+  ✅**FIX**: the chunk step is sized from `tdr_steps` (one dispatch budget). Pinned GATE-FIRST by
+  a new Live-budget selftest row, "a settled chunked pass stays inside ONE dispatch budget"
+  (1920×1102, 4M @1.3e30×, injected CLIMBING budget): **RED 16.00× → GREEN 1.00×**. Verified on
+  a copy of the user's exact crashed session: 100 s settled at the minibrot, zero over-budget
+  dispatches, no device loss (one bounded pass measured 1160 ms → retreat handled it; see open
+  item below). Suite grows to **127 checks**.
+  ⚠**OPEN, same family (the real residual)**: a nominally-bounded budget-sized pass can still
+  measure 2-3× the 400 ms target at a minibrot interior, because the cost of `[cur, cur+step)`
+  varies WITHIN one progression (interior-heavy ranges skip nothing; escaped-early ranges are
+  nearly free) — the budget prices the average, the worst slice spikes. The retreat catches it
+  (survived in the repro), but the margin is thinner than the target intends. Related standing
+  opens it braids with: the timestamp-outage blind stretch ("no GPU iterate timing after 30
+  frames", seen again in this crash log), and nominal-vs-real repricing on `bla_skip` collapse.
+
   🔧**Harness facts learned the hard way (2026-08-19):**
   - ⚠**`--autodive 22` NEVER REACHES MODE 2** (1e22 is below the 1e28 threshold): measured 1032
     mode-0 / 354 mode-1 / **0 mode-2** frames. The `live/home/glide-from-depth` torture rung uses

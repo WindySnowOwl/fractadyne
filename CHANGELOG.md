@@ -16,6 +16,15 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: sitting on a deep minibrot at maximum iterations could still reset the graphics card**
+  (beta.107). Reported the same day beta.106 landed: zoom into a minibrot, set iterations to
+  maximum, wait — the card reset within minutes. The work-splitting introduced for deep views had
+  one mis-sized case: on a resting (settled) view, each piece was accidentally sized from the
+  budget meant for a whole GROUP of pieces — sixteen frames' worth of work in a single submission,
+  at the exact moment a minibrot interior makes every unit of work cost its full price. Each piece
+  is now sized from a single frame's budget. A new self-test pins this permanently, and the fix
+  was verified by replaying the crashed session unharmed.
+
 - **Very deep views now stay safe for the graphics card while zooming, without the picture turning
   to noise** (beta.106). Deep views with very high iteration counts used to be drawn in a single
   huge piece of GPU work per frame — occasionally so large that Windows reset the graphics card

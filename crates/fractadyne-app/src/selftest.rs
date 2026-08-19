@@ -2284,7 +2284,7 @@ impl FractadyneApp {
                 self.viewport.set_center_log2mag(
                     fractadyne_core::parse_bf(SX).unwrap(),
                     fractadyne_core::parse_bf(SY).unwrap(),
-                    100.0, // 1.3e30× — floatexp (mode 2), where no iteration chunking exists
+                    100.0, // 1.3e30× — floatexp (mode 2); chunk-eligible since the slice-3 flip
                 );
                 self.ref_cache[0].ref_pt = None;
                 self.perf.tile_state = [None, None];
@@ -2398,6 +2398,85 @@ impl FractadyneApp {
                     pass: deep_ref && held_any && !held_last,
                 });
                 self.render_cfg.prefer_detail = saved_detail;
+
+                // ---- one chunked pass = ONE dispatch budget, even with the tile allowance up ----
+                // ⭐Field device loss 2026-08-19 17:01 UTC (crash-1787158916-0, RTX 3080,
+                // beta.106, 165.7 s uptime: a minibrot interior at an explicit 4,000,000). On a
+                // SETTLED frame `tiling` is true, so `tdr_allowed = tdr_steps × max_tiles` — and
+                // the chunk step was sized from that ALLOWANCE, submitting single passes worth
+                // exactly SIXTEEN dispatch budgets (the log's ratios: 9.600e11 vs 6.000e10,
+                // 5.070e11 vs 3.169e10, 2.224e11 vs 1.390e10 — 16.0× each; measured 1136 ms and
+                // 912 ms lethal-band frames, and the emergency retreat could not help because the
+                // NEXT pass was again 16× the retreated budget). The allowance exists for TILES —
+                // many bounded dispatches per frame-equivalent; a chunk pass is ONE submission and
+                // must be sized from ONE budget. `bla_skip` collapsing to 0 at the minibrot
+                // interior made nominal cost real cost at exactly the wrong moment — the regime
+                // iteration chunking exists for, met with a 16× dispatch.
+                {
+                    self.perf.chunk_sig[0] = (0, 0, [0, 0], 0);
+                    self.perf.chunk_cursor = [0, 0];
+                    self.perf.chunk_idx = [0, 0];
+                    self.perf.tile_state = [None, None];
+                    self.perf.tile_pending = [false, false];
+                    // The bound under test: what ONE dispatch may cost on this frame — the
+                    // injected converged budget through the same clamps `build_params` applies
+                    // (explicit ask ⇒ the explicit ceiling).
+                    let budget_now =
+                        crate::render::budget_base(FIELD_BUDGET, self.perf.bootstrap_steps(0))
+                            .min(crate::tunables::cost().explicit_steps_ceil);
+                    // Several frames, worst pass: `tiling` (and with it the ×16 allowance) only
+                    // engages once the settle grid has ARMED under a stable key, which takes a
+                    // frame or two — the field session had been settled for minutes. A one-frame
+                    // harness measures the pre-arm state and passes vacuously.
+                    let mut disp: Option<u64> = None;
+                    for _ in 0..8 {
+                        self.perf.fe_budget = [FIELD_BUDGET, FIELD_BUDGET];
+                        // ok=FALSE, deliberately: the field session's budget was CLIMBING (a
+                        // reference-install derate plus a timestamp outage kept it unconverged),
+                        // which pins the allowance at exactly TDR_MAX_TILES — the log's 16.0×
+                        // ratios are this state's fingerprint. A CONVERGED allowance covers the
+                        // whole need and un-chunks the frame (tiles bound it instead), so the
+                        // climbing state is the only one where the chunk step can meet the
+                        // allowance at all.
+                        self.perf.fe_budget_ok = [false, false];
+                        self.perf.frame_idx += 1;
+                        let center_bf =
+                            [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+                        let center = self.viewport.center_f64();
+                        let span = self.viewport.complex_span_fe();
+                        let mag = self.viewport.magnification();
+                        let l2 = self.viewport.log2_magnification();
+                        let pr = self.build_params(
+                            center_bf, center, span, mag, l2, self.fractal, false, DEEP_ITER,
+                            false, 1, DEEP, 0, None,
+                        );
+                        let d = pr.chunk_range.map(|[s, e]| {
+                            (pr.resolution[0] as u64)
+                                * (pr.resolution[1] as u64)
+                                * (pr.ss as u64).pow(2)
+                                * (e.saturating_sub(s).max(1) as u64)
+                        });
+                        disp = disp.max(d);
+                    }
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Live budget",
+                        name: "a settled chunked pass stays inside ONE dispatch budget".into(),
+                        params: format!(
+                            "{}×{} panel, {DEEP_ITER} iter @1.3e30×, allowance up, budget {:.3e} CLIMBING",
+                            DEEP[0], DEEP[1], budget_now as f64
+                        ),
+                        result: match disp {
+                            Some(d) => format!(
+                                "chunk pass = {:.3e} nominal ({:.2}× budget)",
+                                d as f64,
+                                d as f64 / budget_now as f64
+                            ),
+                            None => "frame did not chunk".into(),
+                        },
+                        threshold: "chunked, and ≤ 1× the single-dispatch budget",
+                        pass: deep_ref && disp.is_some_and(|d| d <= budget_now),
+                    });
+                }
                 self.viewport.set_size(PANEL[0] as f64, PANEL[1] as f64);
                 self.perf.fe_budget = [0, 0];
                 self.perf.fe_budget_ok = [false, false];

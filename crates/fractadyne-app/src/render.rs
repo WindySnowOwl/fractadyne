@@ -3658,7 +3658,18 @@ impl FractadyneApp {
             // the floor applies from the first measured budget onward.
             let floor = if self.perf.fe_budget[vidx] == 0 { 1 } else { 256 };
             // Per-frame iteration step that keeps this frame's dispatch inside the budget.
-            let step = ((tdr_allowed / spx.saturating_mul(ss2).max(1)) as u32)
+            // ⚠`tdr_steps` — ONE dispatch budget — NOT `tdr_allowed`. The allowance multiplies
+            // the budget by `max_tiles` on a settled tiling-eligible frame because TILES spend it
+            // as many bounded dispatches; a chunk pass is ONE submission, and sizing it from the
+            // allowance dispatched single passes worth exactly 16 budgets — field device loss
+            // 2026-08-19 (crash-1787158916-0, RTX 3080, minibrot interior at an explicit 4M,
+            // settled with the budget still CLIMBING so the allowance was pinned at
+            // TDR_MAX_TILES): 9.600e11-step passes against a 6.000e10 budget, 1136 ms and 912 ms
+            // lethal-band readings, and the emergency retreat could not help because the next
+            // pass was again 16× the retreated budget. `bla_skip` collapsing to 0 at the interior
+            // made nominal cost real cost at exactly that moment. Pinned by the "a settled
+            // chunked pass stays inside ONE dispatch budget" selftest.
+            let step = ((tdr_steps / spx.saturating_mul(ss2).max(1)) as u32)
                 .clamp(floor, gpu_iter.max(floor));
             // View signature: anything that shapes the render restarts the progression.
             // ⚠The REFERENCE LENGTH is part of it. `orbit_len` feeds both the per-pass BLA table
