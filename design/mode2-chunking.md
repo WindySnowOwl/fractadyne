@@ -210,12 +210,36 @@ Mode 2 needs the same plus a second exponent (δz is `Fe`, not `Cdf`). Four targ
 
 | target | while RUNNING | at ESCAPE |
 |---|---|---|
-| T0 `st_z` | δz mantissa (`Cdf`: re.hi, re.lo, im.hi, im.lo) | full `z` (df32), as mode 0 |
-| T1 `st_dz` | derivative mantissa (`Cdf`) | derivative mantissa |
-| T2 `st_info` | ch0 `status·2^20 + iter>>12`, ch1 `iter & 4095`, ch2 `ref_n`, ch3 **δz exponent** | ch2 → `smit` |
-| T3 `st_exp` | ch0 **derivative exponent**, ch1–3 spare | ch0 same |
+| T0 `st_z` | δz mantissa (`Cdf`: re.hi, re.lo, im.hi, im.lo) | **full `z` (df32)** — contract |
+| T1 `st_dz` | derivative mantissa (`Cdf`) | **derivative mantissa** — contract |
+| T2 `st_info` | ch0 `status·2^20 + iter>>12`, ch1 `iter & 4095`, ch2 `ref_n`, ch3 **δz exponent** | ch2 **`smit`**, ch3 **derivative exponent** — contract |
+| T3 `st_exp` | ch0 **derivative exponent**, ch1–3 spare | unused |
 
-13 of 16 channels used. The two exponents are in separate channels because they cannot share one: an
+13 of 16 channels used while running.
+
+⚠⚠**THE ESCAPE LAYOUT IS A CONTRACT WITH `fs_resolve`, NOT A FREE CHOICE — and the first draft of this
+table got it wrong.** `fs_resolve` is deliberately mode-agnostic: its own comment records that "both
+modes store the FULL z (df32) in `st_z` at escape and the display derivative's mantissa in `st_dz`;
+info ch2 = smit, ch3 = the derivative's floatexp exponent (0 for direct…) — so the shading below is
+mode-agnostic". It reads the derivative exponent as `sm.w`, i.e. `st_info.ch3`. An earlier version of
+this section parked the derivative exponent in `T3.ch0` unconditionally, which would have left resolve
+reading a δz exponent (or zero) as the DE exponent and quietly corrupted distance-estimate shading and
+relief lighting on every chunked mode-2 escape — output wrong in a way the bit-identity gate WOULD
+catch, but only after the whole shader was written.
+So: while RUNNING, `st_info.ch3` carries the δz exponent and `T3.ch0` carries the derivative's; at
+ESCAPE, `st_info.ch3` reverts to the derivative's exponent and `T3` goes unused. **`fs_resolve` then
+needs no change at all**, which is one fewer thing the implementation touches.
+
+⚠**The three existing targets already mean different things per mode**, which is why a mode-2 layout
+being different again is normal rather than a smell — but §3's table shows only the DIRECT (mode 1)
+usage and should be read as such:
+
+| | T0 `st_z` | T1 `st_dz` | T2 ch3 |
+|---|---|---|---|
+| direct (mode 1) | `z` (df32) | derivative (df32) | `0.0` |
+| mode 0 | δz running / full `z` escaped | derivative **mantissa** | `D.e` |
+
+Only the RUNNING half is mode-private; the ESCAPE half is the shared contract above. The two exponents are in separate channels because they cannot share one: an
 f32 holds integers exactly only to 2^24, so two fields get 12 bits each, and at 1e1105 the binary
 exponent is already ≈ −3670 and needs 13.
 
