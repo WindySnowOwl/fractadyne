@@ -454,6 +454,36 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] 🔴⭐**AUTOPILOT'S 56x56 TARGET PROBE BUILDS A FULL EXPORT-APPETITE REFERENCE ON THE MAIN
+  THREAD, EVERY EVALUATION.** `autopilot.rs:149` — `autopilot_pick_target` renders a 56x56 = 3,136-pixel
+  probe to choose the next zoom target, and gets its request from `current_export_request_for`, which
+  sets `orbit_len_cap: u32::MAX` ("export: full appetite (only the device buffer bounds it)"). The live
+  path has that cap precisely to bound this cost; the export path deliberately removes it. Then
+  `recompute_worker` runs SYNCHRONOUSLY inside `update()`.
+  ⭐**This one line explains most of a day's investigation:**
+  - 882 `building reference [export]` crumbs tagged `(main)` during a live autopilot dive (against 990
+    `[live]`), which is what first looked wrong.
+  - Dive frames CPU-bound at `body 200-639 ms` against `1-2 ms` of wait.
+  - **The frame-cost controller STARVED, not stressed** — peak measured iterate 36 ms against a 400 ms
+    target on the RX 6800 XT at 1e150. Three harness designs failed to reproduce the device-loss regime
+    partly because of this: the GPU never gets a large dispatch while the main thread is doing bignum.
+  - ~7.4 s per decade of dive; 889 s to reach 1e150.
+  - ⚠**Very likely the field "idle, frozen zoom" at 1e149 (2026-08-18)**: an uncapped main-thread
+    bignum build at ~560-bit precision presents exactly as a wedge. Worth confirming against a log
+    before closing that as explained.
+  ⭐**Fix:** the probe is a HEURISTIC for choosing a pivot — it does not need export accuracy or an
+  uncapped orbit. Reuse the live view's already-resident reference (pass it as `precomputed` to
+  `current_export_request_with_ref`, or build the request through the live path so `orbit_len_cap`
+  applies). At minimum, cap it.
+  ⚠⚠**SEQUENCING: do NOT land this while `live/home/glide-from-depth` is being validated.** A different
+  probe reference picks different targets, which changes the dive path, which may change whether the
+  Home glides still fire 3/3 (measured peaks 1025/1042/1605 ms from 1e22). Land it, then RE-BLESS the
+  rung by re-measuring, and expect the dive to get much faster — which may mean the rung needs a
+  deeper target to reach the same transient.
+  ⭐Bonus if it works: a faster autopilot dive makes every dive-based harness cheaper, and it is the
+  one change here that could plausibly move `--autodive` from "reproduces in ~2 min" to "reproduces in
+  seconds".
+
 - [ ] 🟢**Offline render: order frames by DECREASING MAGNIFICATION and reuse one reference across
   them.** User idea 2026-08-18 ("render the deepest frame first and work backwards"), sharpened.
   ⭐**Why it works:** the orbit is ZOOM-INDEPENDENT (`Z_{n+1} = Z_n² + C_ref` depends only on centre
