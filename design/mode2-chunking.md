@@ -367,3 +367,97 @@ rebase trigger. Mode 0 is exposed to the second of those already; mode 2 is expo
 that resumes `ref_n` against a *different* orbit than the pass that stored it is not covered by any
 gate in §6. Decide in slice 2 whether the signature grows an orbit identity or the progression is
 explicitly restarted on an orbit swap.
+
+## 9. The live flip is BUILT AND PROVEN CORRECT, but HELD on a motion-presentation regression (2026-08-19)
+
+Slice 3 (`chunk_over` accepting `RenderMode::Floatexp` behind `chunk_fe_ok`, plus `chunk_sig`
+growing the reference length) is written, builds, and passes every gate:
+
+- suite **126 checks + 17 goldens**;
+- `--livetest` grand tour **24/24 checkpoints, 0 drifted, 0 new** vs the blessed baseline — including
+  six deep mode-2 holds (1e55 → 1e95) at explicit counts up to 4,000,000, all at +0.0pt;
+- `--autodive 32 --autodive-home 3`: reached 1e32x, 6 lethal readings, peak measured iterate
+  1348 ms, **no device lost**, no crash file.
+
+And it does the thing it was built for. Traced at the user's saved session (spar, 2^341.5x, explicit
+4,000,000, auto-iter off), a SETTLED view now walks the cursor to the full 4,000,000 by frame 39 —
+**3.4 s** after settling, across ~35 bounded passes — where before it was one unbounded dispatch.
+
+**It is held anyway, at the user's decision, because it degrades the MOVING picture at mode 2.**
+
+### The mechanism, traced not guessed
+
+`FRACTADYNE_TRACE=tile` on that session:
+
+```
+chunk f=1 cur=0 step=235    gpu_iter=4000000 interacting=true
+chunk f=4 cur=0 step=256    gpu_iter=4000000 interacting=true
+...
+chunk f=39 cur=4000000 step=208503 interacting=false
+```
+
+While `interacting`, the progression restarts every frame (`cur=0`), so a moving frame renders only
+`step` of the ask — 312,755 of 4,000,000 (7.8%) with a measured budget, 256 (0.006%) at bootstrap or
+after a budget collapse. During motion the app holds and reprojects the last good frame but takes one
+REAL refresh frame every `REFRESH_OCTAVES` to stream detail; that refresh frame is now chunked, and
+it then **becomes the frozen texture** reprojected until the next refresh. Under-iterated content gets
+latched and held. Reported from the field as "the interior regions look mostly like noise".
+
+⚠It is NOT an artifact that can be rendered away. A frame that can only afford 312k of 4M iterations
+at 2^341x genuinely looks like that, and pixels are not the lever (that is the same finding in §1 that
+motivated this whole document). The pre-flip picture looked complete during motion only because it
+ignored the frame budget — those were the 1000 ms+ frames that lost the device.
+
+### ⛔The obvious fix is REFUTED — do not implement it
+
+"Refresh only when the pass can cover a useful FRACTION of the ask" is wrong, and cheap to disprove.
+Measured at corpus loc 07, 1e30x, `--compare` against the full 21,000-iteration render:
+
+| iterations rendered | vs full 21,000 |
+|---|---|
+| 1,638 (7.8% of the ask) | **2 of 160,000 pixels differ** |
+| 5,250 (25%) | 0 differ |
+| 10,500 (50%) | 0 differ |
+
+That location resolves fully below 1,638 iterations — the 21,000 ask is simply OVERSIZED, which is
+the common case whenever a user sets one large count to cover many depths. A fraction-of-ask gate
+would hold and go blocky there for no reason, re-introducing precisely the regression recorded at
+`reuse_hold`: floatexp used to hold THROUGHOUT, so a fast dive past ~1e28x "went increasingly blocky
+until you stopped to let it settle".
+
+### What the gate actually has to key on, and why it is not free
+
+The distinguishing signal is not the fraction of the ask but **whether pixels are still unresolved at
+the iterations the frame can afford**. The app already measures that (`CTR_MAXITER` via
+`maxiter_sink` → `capped_frac`).
+
+⚠**But `capped_frac` is deliberately CLEARED on every interacting frame** (`render.rs`, the
+`if interacting` block): "a moving frame's reading describes another view". That clear is
+load-bearing — comparing one view's capped fraction against another's falsely reads as "the raise
+did not help", latches `iter_plateau`, and stuck a real session at boost 1.0 on a black screen. So
+the signal is unavailable exactly where the gate needs it, and carrying the last settled reading
+through motion is the "heuristic tuned at one depth" shape this codebase has been bitten by before
+([[topic-spar-family]]).
+
+Whoever picks this up: the hold/refresh path is the most regression-scarred code in the renderer (its
+own comments record the dual-Julia reprojection latch, the prefer-detail freeze that disabled the
+refresh cadence entirely, the resize squash, and the e590 stepping regression). It wants a designed
+gate with its own selftest, not a condition bolted onto `reuse_hold`.
+
+### Scope, honestly
+
+The regression is confined to CONTINUOUS motion that never settles, and it resolves in ~3.4 s once
+motion stops. `--autodive` is unpaced by construction, so it displays that worst frame forever; the
+paced grand tour settles and matches the blessed baseline exactly. That is why the live gate is green
+and the defect is still real — **the checkpoints measure SETTLED results and say nothing about the
+frames between them**, which is the same "measures what is RENDERED, not what is DISPLAYED" trap as
+[[topic-pixellation-settle]].
+
+The flip is saved as `local/mode2-live-flip.patch`. Slices 1 and 2 are committed, pushed and
+independent of it: the four-target shader path and the offline bit-identity gates stand on their own.
+
+### ⚠Also observed, unrelated and unfiled
+
+During the grand-tour run the watchdog reported `possible hang: no activity for 130s — building
+reference [export]: iter=4000000 prec=379`. The tour passed and cold deep reference builds are known
+to be slow, but a 130-second silent stretch on the export path deserves its own look.
