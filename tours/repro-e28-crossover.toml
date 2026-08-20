@@ -19,11 +19,16 @@
 # Play LIVE (the only path that reproduces it — an offline --render never crosses live):
 #   fractadyne --play tours/repro-e28-crossover.toml
 #
-# A/B the fix on ONE binary, since `--set` restores the pre-fix behaviour exactly:
-#   fractadyne --set MODE_RATE_UNKNOWN_MARGIN=1 --play tours/repro-e28-crossover.toml   # OLD → expect loss
-#   fractadyne --play tours/repro-e28-crossover.toml                                    # NEW → expect survival
-# With the margin at 1 the undivided mode-0 rate (~8.6e7 steps/ms × 40 ms = 3.46e9) clamps straight
-# back to TDR_BOOTSTRAP_STEPS = 4e8 — bit-for-bit the guess that lost the device.
+# A/B history. `--set MODE_RATE_UNKNOWN_MARGIN=1` restores the pre-fix BOOTSTRAP bit-for-bit
+# (the undivided mode-0 rate clamps back to TDR_BOOTSTRAP_STEPS = 4e8, the guess that lost the
+# device) — and on builds up to beta.105 that was enough to reproduce the loss. ⚠SINCE beta.106
+# IT NO LONGER KILLS, and that is the finding, not a failed repro: the chunked walk independently
+# bounds the same post-switch frames, so the old guess buys budget-sized passes instead of a
+# lethal single. Verified on the reporting RX 6800 XT itself (2026-08-20, beta.115): the crash-era
+# frames dispatched 3.9-5.9e8-step singles at 1038 ms; with the margin at 1 the same crossing ran
+# 1.8e8-step passes at ~218 ms and converged calmly. To see the historical RED, run the published
+# v0.2.40-beta.104 binary — the build the field report came from.
+#   fractadyne --play tours/repro-e28-crossover.toml        # current builds: expect survival
 format_version = 2
 name = "Repro: e28 crossover device loss (RX 6800 XT, 2026-08-15)"
 
