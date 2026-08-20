@@ -845,6 +845,14 @@ impl FractadyneApp {
                     (rect.width() as f64 * ppp) as u32,
                     (rect.height() as f64 * ppp) as u32,
                 ];
+                // The central rect in PHYSICAL pixels — what a bookmark thumbnail crops out of
+                // the window screenshot (see `process_pending_thumb`).
+                self.central_rect_px = [
+                    (rect.min.x as f64 * ppp) as u32,
+                    (rect.min.y as f64 * ppp) as u32,
+                    resolution[0],
+                    resolution[1],
+                ];
                 // Pan reprojection: while dragging, translate the last detailed frame instead
                 // of re-rendering coarse (see `nav_and_draw` for the full rationale).
                 let panning = !zoom_boxing && self.pointer.box_start.is_none();

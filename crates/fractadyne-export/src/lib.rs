@@ -571,6 +571,49 @@ fn thumbnail_exr(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportErr
 }
 
 /// Read the embedded Fractadyne view-state metadata from a PNG, if present.
+/// Box-downsample an in-memory RGBA8 image to at most `max` px on the long edge (the same
+/// kernel `read_thumbnail` applies to files). Returns the input untouched when it already fits.
+/// Used by the bookmark thumbnail, which snapshots the SCREEN instead of re-rendering — a
+/// bookmark preview should show exactly what the user bookmarked, and a re-render at a deep
+/// view costs a reference build plus seconds of GPU (crash-1787194989).
+pub fn box_thumbnail_rgba8(w: u32, h: u32, rgba: &[u8], max: u32) -> (u32, u32, Vec<u8>) {
+    let max = max.max(1);
+    let long = w.max(h);
+    if long <= max || w == 0 || h == 0 {
+        return (w, h, rgba.to_vec());
+    }
+    let scale = long.div_ceil(max); // integer box size; output ≤ max on the long edge
+    let ow = (w / scale).max(1);
+    let oh = (h / scale).max(1);
+    let mut out = Vec::with_capacity((ow * oh * 4) as usize);
+    for oy in 0..oh {
+        for ox in 0..ow {
+            let (mut r, mut g, mut b, mut a, mut n) = (0u32, 0u32, 0u32, 0u32, 0u32);
+            for sy in 0..scale {
+                let y = oy * scale + sy;
+                if y >= h {
+                    break;
+                }
+                for sx in 0..scale {
+                    let x = ox * scale + sx;
+                    if x >= w {
+                        break;
+                    }
+                    let i = ((y * w + x) * 4) as usize;
+                    r += rgba[i] as u32;
+                    g += rgba[i + 1] as u32;
+                    b += rgba[i + 2] as u32;
+                    a += rgba[i + 3] as u32;
+                    n += 1;
+                }
+            }
+            let n = n.max(1);
+            out.extend_from_slice(&[(r / n) as u8, (g / n) as u8, (b / n) as u8, (a / n) as u8]);
+        }
+    }
+    (ow, oh, out)
+}
+
 pub fn read_png_metadata(path: &Path) -> Result<Option<String>, ExportError> {
     let file = std::fs::File::open(path)?;
     let reader = png::Decoder::new(std::io::BufReader::new(file)).read_info()?;

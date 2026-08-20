@@ -16,6 +16,15 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Exports now pace themselves by measured cost, and bookmark thumbnails are instant**
+  (beta.111). Completes the beta.110 fix pair: every export (and the glitch-correction pass)
+  now watches how long each piece of work actually took and halves the next piece when one runs
+  hot — so a 4K export of a worst-case deep view stays watchdog-safe end to end instead of
+  trusting estimates. And adding a bookmark no longer renders anything at all: the thumbnail is
+  snapped from what is already on screen (exactly what you bookmarked — palette, zoom state and
+  all) and saved in milliseconds, where it previously rebuilt a full-precision reference and
+  re-rendered on the spot.
+
 - **Fixed: adding a bookmark at a deep view could reset the graphics card** (beta.110). The
   bookmark thumbnail renders through the export path, and two inherited settings made a 160-pixel
   preview into heavyweight work: it picked up the export dialog's supersampling (so 2x the pixels

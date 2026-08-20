@@ -1060,12 +1060,18 @@ Mockups: [design/mockups/](design/mockups/).
   it now forces ss=1 + `work_budget = 1e9` (which also floors its tiles at 16² ≈ bounded ms even
   where nominal = real). Verified: the exact thumb shape (160 px, ss2, 4M) at the crash view
   renders clean (~27 s, no loss); suite 127/127 + 17/17 (goldens pin tile-size bit-neutrality).
-  ⚠**OPEN follow-ups, same family**: (a) the export tile loop is still NOMINAL-priced — it
-  polls Wait per tile, so wall-pricing each tile and halving the side when hot (§12's design,
-  offline flavour) is straightforward and closes the residual for real exports at storm views;
-  (b) the thumbnail (reference build INCLUDED — 1.15M samples at prec 350, seconds of bignum)
-  runs on the MAIN THREAD and freezes the UI; route it through the background export task, or
-  better, downsample the already-rendered live texture (WYSIWYG, zero new GPU work).
+  ✅**Both follow-ups DONE beta.111**: (a) `export_tile_cap` (pure + the gpu crate's FIRST
+  tests): every `render_export` and `render_iter_tiled` tile is wall-timed around its own
+  poll(Wait); hot (>500 ms) halves the next tile's side, clearly-cheap (<100 ms) doubles it back,
+  clamped [16, static-bound]. Verified: 480px ss2 4M at the crash view renders clean (2m07s);
+  goldens bit-identical (tile boundaries never change pixels). ⚠Residual: the FIRST tile of a
+  render is still nominal-priced — one bounded opening overshoot, not a sequence. (b) bookmark
+  thumbnails no longer render AT ALL: `ViewportCommand::Screenshot` → crop the central rect
+  (physical px, stored per frame) → `box_thumbnail_rgba8` → PNG. Zero GPU iterate, no reference
+  build, no main-thread freeze — and WYSIWYG (the thumb shows exactly what was bookmarked,
+  palette/normalization/settle state included; a mid-motion bookmark shows the held frame, which
+  is honest). ⚠Note: uitest's screenshot harvest matches ANY `Event::Screenshot` — harmless
+  today (uitest never adds bookmarks), tag with `UserData` if that ever changes.
 
   🔧**Harness facts learned the hard way (2026-08-19):**
   - ⚠**`--autodive 22` NEVER REACHES MODE 2** (1e22 is below the 1e28 threshold): measured 1032

@@ -133,6 +133,58 @@ pub struct ExportResult {
 /// (blocks until the GPU finishes). Single-texture for now, so the result is clamped
 /// to the device's max 2D texture dimension (e.g. 8192); supersampling is reduced if
 /// `resolution × ss` would exceed it.
+/// Wall-priced tile cap for the NEXT export tile (design/mode2-chunking.md §12, offline
+/// flavour). The static tile bound prices work NOMINALLY (`tile²·ss²·iter`), and nominal is not
+/// real: at a wrap-storm view (BLA skips nothing, rebases every few hundred iterations) a
+/// nominally-budgeted tile runs seconds — crash-1787194989 was 64²-px thumbnail tiles at
+/// 6.55e10 nominal racing the live walk. Every tile's WALL time is already observable (the loop
+/// polls Wait per tile), so the next tile halves when this one ran hot and doubles back when
+/// clearly cheap — bounded oscillation-free by the [16, static-bound] clamp. The FIRST tile of a
+/// render is still nominal-priced (no observation yet): that single opening overshoot is the
+/// recorded residual, and it is one tile, not a sustained sequence.
+pub(crate) fn export_tile_cap(cap: u32, wall_ms: f64, ceiling: u32) -> u32 {
+    /// Past this, halve: comfortably under the ~900 ms band even if the NEXT (halved) tile is
+    /// as mispriced as this one was.
+    const HOT_MS: f64 = 500.0;
+    /// Under this, double: a clearly-cheap region should not pay 4× the tile count forever.
+    const CHEAP_MS: f64 = 100.0;
+    let next = if !wall_ms.is_finite() || wall_ms < 0.0 {
+        cap
+    } else if wall_ms > HOT_MS {
+        cap / 2
+    } else if wall_ms < CHEAP_MS {
+        cap.saturating_mul(2)
+    } else {
+        cap
+    };
+    next.clamp(16, ceiling.max(16))
+}
+
+#[cfg(test)]
+mod tile_cap {
+    use super::export_tile_cap;
+
+    #[test]
+    fn a_hot_tile_halves_the_next_and_a_cheap_one_doubles_it() {
+        assert_eq!(export_tile_cap(64, 800.0, 2048), 32);
+        assert_eq!(export_tile_cap(64, 50.0, 2048), 128);
+        assert_eq!(export_tile_cap(64, 250.0, 2048), 64, "the band between holds");
+    }
+
+    #[test]
+    fn the_floor_and_the_static_ceiling_both_hold() {
+        assert_eq!(export_tile_cap(16, 5000.0, 2048), 16, "never below 16");
+        assert_eq!(export_tile_cap(70, 10.0, 70), 70, "never above the nominal bound");
+        assert_eq!(export_tile_cap(2048, 10.0, 2048), 2048);
+    }
+
+    #[test]
+    fn garbage_walls_change_nothing()  {
+        assert_eq!(export_tile_cap(64, f64::NAN, 2048), 64);
+        assert_eq!(export_tile_cap(64, -1.0, 2048), 64);
+    }
+}
+
 pub fn render_export(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -268,8 +320,12 @@ pub fn render_export(
     let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
 
-    let total_tiles = (w.div_ceil(tile) * h.div_ceil(tile)).max(1);
-    let mut done_tiles = 0u32;
+    // Wall-adaptive cap (see `export_tile_cap`): starts at the nominal bound, then prices every
+    // subsequent tile from the last one's measured wall time. Progress is by PIXELS because the
+    // tile count is no longer fixed.
+    let mut cap = tile;
+    let total_px = (w as u64).saturating_mul(h as u64).max(1);
+    let mut done_px = 0u64;
     let (mut sum_iterate_ms, mut sum_color_ms) = (0.0f64, 0.0f64);
     // Event counters summed across tiles in u64 (each tile is zeroed + read below, so the
     // per-tile u32 never wraps, and the whole-render total can exceed 2^32).
@@ -277,13 +333,14 @@ pub fn render_export(
 
     let mut ty0 = 0u32;
     while ty0 < h {
-        let th = tile.min(h - ty0);
+        let th = cap.min(h - ty0);
         let mut tx0 = 0u32;
         while tx0 < w {
             if cancel.load(Relaxed) {
                 return Err(GpuError::Canceled);
             }
-            let tw = tile.min(w - tx0);
+            let t_tile = std::time::Instant::now();
+            let tw = cap.min(w - tx0).min(th.max(16));
             let iw = tw * ss;
             let ih = th * ss;
 
@@ -514,8 +571,9 @@ pub fn render_export(
             drop(data);
             out_buf.unmap();
 
-            done_tiles += 1;
-            progress.store(done_tiles * 1000 / total_tiles, Relaxed);
+            done_px += (tw as u64) * (th as u64);
+            progress.store(((done_px.saturating_mul(1000)) / total_px) as u32, Relaxed);
+            cap = export_tile_cap(cap, t_tile.elapsed().as_secs_f64() * 1000.0, tile);
             tx0 += tw;
         }
         ty0 += th;
@@ -615,15 +673,19 @@ pub fn render_iter_tiled(
     let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
     let mut ctr_sum = [0u64; crate::COUNTER_SLOTS];
 
+    // Wall-adaptive cap, same rule as `render_export` (see `export_tile_cap`): the correction
+    // loop's budget is nominal too, and its dark-core tiles are exactly where nominal != real.
+    let mut cap = tile;
     let mut ty0 = 0u32;
     while ty0 < h {
-        let th = tile.min(h - ty0);
+        let th = cap.min(h - ty0);
         let mut tx0 = 0u32;
         while tx0 < w {
+            let t_tile = std::time::Instant::now();
             if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
                 return Err(GpuError::Canceled);
             }
-            let tw = tile.min(w - tx0);
+            let tw = cap.min(w - tx0).min(th.max(16));
             let iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
                 ref_offset: req.ref_offset.to_array(),
@@ -762,6 +824,7 @@ pub fn render_iter_tiled(
             }
             drop(data);
             out_buf.unmap();
+            cap = export_tile_cap(cap, t_tile.elapsed().as_secs_f64() * 1000.0, tile);
             tx0 += tw;
         }
         ty0 += th;

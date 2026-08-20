@@ -2759,6 +2759,12 @@ struct FractadyneApp {
     /// A just-added bookmark whose thumbnail still needs rendering (deferred to `update`,
     /// where the GPU is available and the current view still matches the bookmark).
     pending_thumb: Option<usize>,
+    /// A bookmark-thumbnail SCREENSHOT is in flight (the reply lands next frame as
+    /// `egui::Event::Screenshot`); holds the bookmark index it belongs to.
+    thumb_shot: Option<usize>,
+    /// The central fractal panel's rect in PHYSICAL pixels ([x, y, w, h]), stored each frame by
+    /// the central draw — what the bookmark thumbnail crops out of the window screenshot.
+    central_rect_px: [u32; 4],
     /// Decoded bookmark-thumbnail textures, keyed by thumb id (lazy-loaded for the dialog).
     thumb_cache: std::collections::HashMap<String, egui::TextureHandle>,
     /// Navigation history (location undo/redo) + settle-edge tracking.
@@ -3395,6 +3401,8 @@ impl FractadyneApp {
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             bookmarks: Self::load_bookmarks(),
             pending_thumb: None,
+            thumb_shot: None,
+            central_rect_px: [0, 0, 0, 0],
             thumb_cache: std::collections::HashMap::new(),
             bookmark_name: String::new(),
             nav: NavHistory::default(),
@@ -4060,53 +4068,66 @@ impl FractadyneApp {
         Self::bookmark_thumbs_dir().map(|d| d.join(format!("{id}.png")))
     }
 
-    /// Render + save the pending bookmark's thumbnail (a small PNG of the current view). Called
-    /// from `update` where the GPU device/queue are available.
-    fn process_pending_thumb(&mut self, gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>) {
-        let Some(i) = self.pending_thumb else { return };
-        let Some((dev, q)) = gpu else { return };
-        self.pending_thumb = None;
-        if i >= self.bookmarks.len() {
-            return;
+    /// Bookmark thumbnails come from a SCREENSHOT of the central panel, not a re-render: a
+    /// preview should show exactly what the user bookmarked (WYSIWYG — palette, normalization,
+    /// settle state and all), and it costs zero GPU iterate work. The old path re-rendered
+    /// through `render_export` synchronously on the main thread — a full reference build plus
+    /// seconds of storm-priced tiles racing the live walk, which lost the device
+    /// (crash-1787194989). Two-phase: request the shot this frame, harvest it the next
+    /// (`ViewportCommand::Screenshot` replies as `egui::Event::Screenshot` — the uitest idiom).
+    fn process_pending_thumb(&mut self, ctx: &egui::Context) {
+        // Harvest first: a reply may be waiting from last frame's request.
+        if let Some(i) = self.thumb_shot {
+            let shot = ctx.input(|inp| {
+                inp.events.iter().find_map(|e| match e {
+                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(img) = shot {
+                self.thumb_shot = None;
+                if i < self.bookmarks.len() {
+                    let (iw, ih) = (img.size[0] as u32, img.size[1] as u32);
+                    // Crop the central panel (physical px), clamped to the shot's bounds.
+                    let [cx, cy, cw, chh] = self.central_rect_px;
+                    let x0 = cx.min(iw.saturating_sub(1));
+                    let y0 = cy.min(ih.saturating_sub(1));
+                    let cw = cw.min(iw - x0).max(1);
+                    let chh = chh.min(ih - y0).max(1);
+                    let mut rgba = Vec::with_capacity((cw * chh * 4) as usize);
+                    for y in y0..y0 + chh {
+                        let row = &img.pixels[(y * iw + x0) as usize..(y * iw + x0 + cw) as usize];
+                        for p in row {
+                            rgba.extend_from_slice(&p.to_array());
+                        }
+                    }
+                    let (tw, th, tpx) = fractadyne_export::box_thumbnail_rgba8(cw, chh, &rgba, 160);
+                    let id = format!(
+                        "{}-{i}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_nanos())
+                            .unwrap_or(0)
+                    );
+                    if let Some(path) = Self::bookmark_thumb_path(&id) {
+                        if let Some(parent) = path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if fractadyne_export::write_png_rgba8(&path, tw, th, &tpx, None).is_ok() {
+                            self.bookmarks[i].thumb = id;
+                            self.save_bookmarks();
+                        }
+                    }
+                }
+            }
+            return; // one round-trip at a time; the reply arrives on a later frame
         }
-        // Small render of the current view (matches the just-saved bookmark).
-        let w = 160u32;
-        let h = ((w as f64) * self.viewport.height_px / self.viewport.width_px.max(1.0))
-            .round()
-            .clamp(60.0, 160.0) as u32;
-        let mut req = self.current_export_request_for(&self.viewport, self.julia_mode);
-        req.width = w;
-        req.height = h;
-        // A 160-px preview needs neither the export dialog's supersampling (ss was inherited —
-        // crash-1787194989 rendered a THUMBNAIL at ss=2 × 4,000,000) nor the default per-tile
-        // budget: the small budget also drops the tile floor to 16², so even a wrap-storm view
-        // (nominal ≈ real) prices a thumb tile in bounded milliseconds, not seconds.
-        req.ss = 1;
-        req.work_budget = Some(1_000_000_000);
-        req.ss = 1;
-        // Keep the zoom-appropriate iteration count (the reference orbit is already built at that
-        // depth). Clamping this low renders deep views as all-interior — a solid black thumbnail.
-        req.max_iter = req.max_iter.max(200);
-        let progress = std::sync::atomic::AtomicU32::new(0);
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        let Ok(res) = fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel) else {
-            return;
-        };
-        // A stable id from the current time (nanos) + index; write the PNG.
-        let id = format!(
-            "{}-{i}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        );
-        let Some(path) = Self::bookmark_thumb_path(&id) else { return };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if fractadyne_export::write_png(&path, res.width, res.height, &res.pixels, None).is_ok() {
-            self.bookmarks[i].thumb = id;
-            self.save_bookmarks();
+        // Request: fire the screenshot for a freshly added bookmark.
+        if let Some(i) = self.pending_thumb.take() {
+            if i < self.bookmarks.len() {
+                self.thumb_shot = Some(i);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            }
         }
     }
 
@@ -6802,7 +6823,7 @@ impl eframe::App for FractadyneApp {
 
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
         // view still matches the bookmark, since adding it didn't move the view).
-        self.process_pending_thumb(&gpu);
+        self.process_pending_thumb(ctx);
 
         self.draw_bench_config_dialog(ctx);
         self.draw_bench_progress_dialog(ctx);
