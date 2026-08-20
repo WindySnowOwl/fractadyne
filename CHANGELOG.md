@@ -16,6 +16,15 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: deep views near minibrots sometimes rendered flat instead of detailed** (beta.112).
+  With "Normalize deep colors" on, the palette window is measured from what escapes on each piece
+  of GPU work — and since deep refinement became piece-by-piece, the window was following the
+  LAST few pieces of a refinement rather than the whole picture: when those pieces contained
+  escapes, the window collapsed onto a sliver of the range and the entire exterior mapped to one
+  color (the reported "sometimes flat, sometimes noise" — which of the two you got depended on
+  timing). The window is now accumulated across the whole refinement and applied once, complete —
+  the same behavior deep views had before the piece-splitting existed.
+
 - **Exports now pace themselves by measured cost, and bookmark thumbnails are instant**
   (beta.111). Completes the beta.110 fix pair: every export (and the glitch-correction pass)
   now watches how long each piece of work actually took and halves the next piece when one runs

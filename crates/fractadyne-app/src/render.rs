@@ -2759,15 +2759,31 @@ impl FractadyneApp {
                 if min_b != u32::MAX && max_b >= min_b {
                     let (mn, mx) = (f32::from_bits(min_b), f32::from_bits(max_b));
                     if mn.is_finite() && mx.is_finite() && mx >= mn {
-                        self.perf.norm_range[vb] = Some(match self.perf.norm_range[vb] {
-                            Some((emn, emx)) => (emn + 0.3 * (mn - emn), emx + 0.3 * (mx - emx)),
-                            None => (mn, mx),
-                        });
+                        // A chunked frame's reading spans ONE PASS's iteration band, not the
+                        // frame — see `norm_window_feed` (the noise-vs-flat field report).
+                        // Readings accumulate while the walk is mid-flight and feed the EMA
+                        // once, whole, on completion.
+                        let mid_walk = {
+                            let ask = self.perf.chunk_sig[vb].1;
+                            ask > 0
+                                && self.perf.chunk_cursor[vb] > 0
+                                && self.perf.chunk_cursor[vb] < ask
+                        };
+                        let (acc, ema) = norm_window_feed(
+                            self.perf.norm_acc[vb],
+                            (mn, mx),
+                            mid_walk,
+                            self.perf.norm_range[vb],
+                        );
+                        self.perf.norm_acc[vb] = acc;
+                        if let Some(e) = ema {
+                            self.perf.norm_range[vb] = Some(e);
+                        }
                         crate::diag::trace(
                             "gpu",
                             format!(
-                                "norm range: frame [{mn:.0},{mx:.0}] ema {:?}",
-                                self.perf.norm_range[vb]
+                                "norm range: frame [{mn:.0},{mx:.0}] mid_walk={mid_walk} acc {:?} ema {:?}",
+                                self.perf.norm_acc[vb], self.perf.norm_range[vb]
                             ),
                         );
                     }
@@ -3782,6 +3798,8 @@ impl FractadyneApp {
                 self.perf.chunk_idx[vs] = 0;
                 self.perf.chunk_last_range[vs] = None;
                 self.perf.chunk_inflight[vs] = None;
+                // A restarted walk's escape bands are a different progression's data.
+                self.perf.norm_acc[vs] = None;
             }
             let cur = self.perf.chunk_cursor[vs];
             // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
@@ -5227,6 +5245,74 @@ mod chunk_pace {
         assert_eq!(chunk_step_factor(0.0, 400.0), 1.0);
         assert_eq!(chunk_step_factor(-5.0, 400.0), 1.0);
         assert_eq!(chunk_step_factor(f64::NAN, 400.0), 1.0);
+    }
+}
+
+/// Fold one drained escape-range reading into the auto-normalization state. Chunked frames
+/// report the escape range OF ONE PASS's iteration band, not of the whole frame — feeding those
+/// straight into the EMA made the palette window follow the LAST few bands of a settled walk:
+/// when the tail bands contained escapes the window collapsed onto the top of the range and the
+/// whole exterior rendered FLAT; when they did not, an earlier wider window survived and the
+/// same view rendered its true noise. (Field report: "near this minibrot it sometimes resolves
+/// to noise or a flat coloring" — same neighbourhood, nondeterministic by escape distribution.)
+/// So: readings ACCUMULATE (min-min/max-max) while a progression is mid-flight, and the EMA is
+/// fed once, with the whole-ask range, when it completes — which is also exactly one feed per
+/// settled frame in the un-chunked case, the pre-walk behaviour.
+pub(crate) fn norm_window_feed(
+    acc: Option<(f32, f32)>,
+    reading: (f32, f32),
+    mid_walk: bool,
+    ema: Option<(f32, f32)>,
+) -> (Option<(f32, f32)>, Option<(f32, f32)>) {
+    let widened = match acc {
+        Some((amn, amx)) => (amn.min(reading.0), amx.max(reading.1)),
+        None => reading,
+    };
+    if mid_walk {
+        (Some(widened), ema)
+    } else {
+        let fed = match ema {
+            Some((emn, emx)) => (emn + 0.3 * (widened.0 - emn), emx + 0.3 * (widened.1 - emx)),
+            None => widened,
+        };
+        (None, Some(fed))
+    }
+}
+
+#[cfg(test)]
+mod norm_window {
+    use super::norm_window_feed;
+
+    #[test]
+    fn mid_walk_readings_accumulate_and_do_not_touch_the_ema() {
+        let (acc, ema) = norm_window_feed(None, (100.0, 200.0), true, Some((5.0, 10.0)));
+        assert_eq!(acc, Some((100.0, 200.0)));
+        assert_eq!(ema, Some((5.0, 10.0)), "the palette window must not follow one band");
+        let (acc, ema) = norm_window_feed(acc, (900.0, 950.0), true, ema);
+        assert_eq!(acc, Some((100.0, 950.0)), "bands widen, never replace");
+        assert_eq!(ema, Some((5.0, 10.0)));
+    }
+
+    #[test]
+    fn completion_feeds_the_whole_ask_range_once_and_clears_the_accumulator() {
+        let acc = Some((100.0f32, 900.0f32));
+        let (acc, ema) = norm_window_feed(acc, (950.0, 1000.0), false, None);
+        assert_eq!(acc, None);
+        assert_eq!(ema, Some((100.0, 1000.0)), "first feed seeds the EMA with the full range");
+    }
+
+    #[test]
+    fn an_unchunked_frame_is_one_reading_one_feed_the_pre_walk_behaviour() {
+        let (acc, ema) = norm_window_feed(None, (10.0, 20.0), false, Some((10.0, 20.0)));
+        assert_eq!(acc, None);
+        assert_eq!(ema, Some((10.0, 20.0)));
+    }
+
+    #[test]
+    fn the_ema_still_smooths_across_completed_walks() {
+        let (_, ema) = norm_window_feed(None, (200.0, 300.0), false, Some((100.0, 200.0)));
+        let (emn, emx) = ema.unwrap();
+        assert!((emn - 130.0).abs() < 1e-3 && (emx - 230.0).abs() < 1e-3);
     }
 }
 

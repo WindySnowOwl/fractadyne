@@ -1073,6 +1073,22 @@ Mockups: [design/mockups/](design/mockups/).
   is honest). ⚠Note: uitest's screenshot harvest matches ANY `Event::Screenshot` — harmless
   today (uitest never adds bookmarks), tag with `UserData` if that ever changes.
 
+- [x] ✅**FIXED beta.112 — the noise-vs-flat nondeterminism near minibrots** (user report with
+  side-by-side screenshots: two views 6% apart in zoom, one true noise, one FLAT exterior; the
+  same spot "sometimes" either). ⭐**Root cause: the auto-normalization window drained the GPU's
+  PER-DISPATCH escape range** — correct when a settled frame was one dispatch, wrong since the
+  walk: each pass reports only its iteration band's escapes, so the EMA followed the walk's LAST
+  bands. Tail bands with escapes → the window collapsed onto the top of the range (measured live:
+  the final band [3.93M, 3.96M] of a [288k, 3.96M] true range) → everything below clamps → FLAT.
+  Tail bands without escapes → an earlier wider window survived → noise (correct). Fix =
+  `norm_window_feed` (pure + 4 tests): readings ACCUMULATE (min-min/max-max) while
+  `chunk_cursor ∈ (0, ask)` and feed the EMA once, whole, on completion — bit-for-bit the
+  pre-walk cadence for un-chunked frames. Verified live at the reporting view: one feed,
+  `ema Some((288040, 3962684))`, full range. ⚠The same trap-shape to keep in mind for ANY
+  per-frame GPU readback now that frames can be partial passes: `capped_frac` (already
+  ask-tagged ✔), the AA probe (settled-only ✔), the iter boost (reads capped_frac ✔) — audited,
+  all guarded; the norm sink was the one that wasn't.
+
   🔧**Harness facts learned the hard way (2026-08-19):**
   - ⚠**`--autodive 22` NEVER REACHES MODE 2** (1e22 is below the 1e28 threshold): measured 1032
     mode-0 / 354 mode-1 / **0 mode-2** frames. The `live/home/glide-from-depth` torture rung uses

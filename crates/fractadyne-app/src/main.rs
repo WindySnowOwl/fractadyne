@@ -411,6 +411,10 @@ struct Perf {
     work_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
+    /// Escape-range accumulator for a mid-flight chunked walk: per-pass band readings widen this
+    /// (min-min/max-max) and it feeds `norm_range`'s EMA once, whole, when the walk completes —
+    /// see `render::norm_window_feed` (the noise-vs-flat field report).
+    norm_acc: [Option<(f32, f32)>; 2],
     /// Adaptive deep-motion resolution scale (AIMD), driven by `frame_ms` in `build_params`. The
     /// WORK_BUDGET `res_scale` sizes moving frames from the *no-BLA-skip* cost and over-shrinks them
     /// where the BLA skips; this measured scale grows toward native while frames stay near vsync and
@@ -578,6 +582,7 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             norm_range: [None, None],
+            norm_acc: [None, None],
             motion_res: 0.6,
         }
     }
@@ -3902,6 +3907,7 @@ impl FractadyneApp {
         self.perf.capped_frac = [None, None];
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
+        self.perf.norm_acc = [None, None];
     }
 
     /// Request the next animation frame. Frame pacing (the cap) is enforced at the end
