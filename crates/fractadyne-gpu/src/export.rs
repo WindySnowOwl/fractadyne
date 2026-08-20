@@ -159,11 +159,19 @@ pub fn render_export(
     // lowers the tile-size floor so the cap is actually honoured — at extreme `max_iter` a 64²
     // floor tile could still exceed a small budget, so drop the floor to 16² when one is set.
     let budget = req.work_budget.unwrap_or(TILE_WORK_BUDGET);
-    let work_floor = if req.work_budget.is_some() { 16 } else { 64 };
     let by_tex = (max_dim / ss).max(1);
     let by_buf = (((max_buf / 16) as f64).sqrt() as u32).max(256);
     let work_per_px = (ss as u64 * ss as u64) * (req.max_iter.max(1) as u64);
-    let by_work = (((budget / work_per_px.max(1)) as f64).sqrt() as u32).max(work_floor);
+    // ⚠The 64² efficiency floor may NEVER override the work budget upward — it did, and at an
+    // extreme ask the floor tile was 3.3× the budget: a bookmark thumbnail (which had inherited
+    // the export dialog's ss=2 on top of an explicit 4,000,000) dispatched 64²-px tiles of
+    // 6.55e10 nominal each at a view where nominal ≈ real, racing the live session's settle walk
+    // on the same queue — device lost (crash-1787194989, beta.109). The floor drops to 16²
+    // whenever the budget asks for less than 64²; readback-overhead efficiency is a luxury the
+    // watchdog budget outranks. (Nominal pricing itself is still the residual here: a wall-
+    // adaptive tile loop — the §12 design, offline flavour — is the recorded follow-up.)
+    let by_work_raw = ((budget / work_per_px.max(1)) as f64).sqrt() as u32;
+    let by_work = by_work_raw.max(if by_work_raw < 64 { 16 } else { 64 });
     let tile = by_tex.min(by_buf).min(by_work).clamp(1, 2048);
 
     let shader = shader_module(device);

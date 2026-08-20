@@ -4077,6 +4077,12 @@ impl FractadyneApp {
         let mut req = self.current_export_request_for(&self.viewport, self.julia_mode);
         req.width = w;
         req.height = h;
+        // A 160-px preview needs neither the export dialog's supersampling (ss was inherited —
+        // crash-1787194989 rendered a THUMBNAIL at ss=2 × 4,000,000) nor the default per-tile
+        // budget: the small budget also drops the tile floor to 16², so even a wrap-storm view
+        // (nominal ≈ real) prices a thumb tile in bounded milliseconds, not seconds.
+        req.ss = 1;
+        req.work_budget = Some(1_000_000_000);
         req.ss = 1;
         // Keep the zoom-appropriate iteration count (the reference orbit is already built at that
         // depth). Clamping this low renders deep views as all-interior — a solid black thumbnail.

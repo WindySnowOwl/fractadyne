@@ -16,6 +16,17 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: adding a bookmark at a deep view could reset the graphics card** (beta.110). The
+  bookmark thumbnail renders through the export path, and two inherited settings made a 160-pixel
+  preview into heavyweight work: it picked up the export dialog's supersampling (so 2x the pixels
+  in each direction), and the export path's tile-size floor — an efficiency optimization — was
+  allowed to override its own safety budget, making each piece of work up to 3x larger than
+  intended. At extreme views where estimated cost equals real cost, those pieces ran for seconds
+  each while the live view was still rendering on the same card. Thumbnails now render without
+  supersampling under a small strict budget, and the floor can no longer override the budget for
+  any export. The remaining refinement (pacing export pieces by their measured cost, like the
+  live path now does) is queued.
+
 - **Fixed: the deep-minibrot crash is closed — the worst view we know of now settles to
   completion** (beta.109). The beta.108 note admitted the danger was reduced but not eliminated;
   this closes it. Two final causes: refinement work was entering unexplored cost territory at

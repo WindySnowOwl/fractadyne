@@ -1047,6 +1047,26 @@ Mockups: [design/mockups/](design/mockups/).
   Gates: tests 205+6 new band tests, suite 127/127+17/17, motiontest PASS, grand tour 24/24
   0-drift, autodive 32×3homes no loss (all on the final build; recorded at the commit).
 
+- [x] ✅**FIXED beta.110 — adding a BOOKMARK at a deep view lost the device** (crash-1787194989,
+  beta.109, 134 s uptime; user report "I was adding a bookmark"). The thumbnail renders through
+  `render_export` SYNCHRONOUSLY ON MAIN inside `update` (backtrace: `render_export` ←
+  bookmark machinery ← `egui::Context::run`), racing the live session's settle walk on the same
+  queue. Two inherited-size defects made a 160-px preview into heavyweight work, both fixed:
+  (1) ⭐**the export tile-size floor (64²) overrode the work budget upward** — at ss²·4M the
+  budget asks for 35² but the floor forced 64² = 3.3× the 2e10-nominal budget per tile,
+  nominal-priced (the third instance of the nominal-cost fallacy: live tiles, the chunk
+  allowance, now export tiles). The floor now drops to 16² whenever the budget computes below
+  64². (2) the thumb request inherited the EXPORT DIALOG's ss (=2) on top of the explicit 4M —
+  it now forces ss=1 + `work_budget = 1e9` (which also floors its tiles at 16² ≈ bounded ms even
+  where nominal = real). Verified: the exact thumb shape (160 px, ss2, 4M) at the crash view
+  renders clean (~27 s, no loss); suite 127/127 + 17/17 (goldens pin tile-size bit-neutrality).
+  ⚠**OPEN follow-ups, same family**: (a) the export tile loop is still NOMINAL-priced — it
+  polls Wait per tile, so wall-pricing each tile and halving the side when hot (§12's design,
+  offline flavour) is straightforward and closes the residual for real exports at storm views;
+  (b) the thumbnail (reference build INCLUDED — 1.15M samples at prec 350, seconds of bignum)
+  runs on the MAIN THREAD and freezes the UI; route it through the background export task, or
+  better, downsample the already-rendered live texture (WYSIWYG, zero new GPU work).
+
   🔧**Harness facts learned the hard way (2026-08-19):**
   - ⚠**`--autodive 22` NEVER REACHES MODE 2** (1e22 is below the 1e28 threshold): measured 1032
     mode-0 / 354 mode-1 / **0 mode-2** frames. The `live/home/glide-from-depth` torture rung uses
