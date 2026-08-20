@@ -16,6 +16,16 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The performance panel now watches the danger zones for you** (beta.114). New rows for
+  process memory (current and peak — deep reference builds have quietly peaked over 2 GB) and an
+  estimated GPU-resident figure assembled from the allocations the app makes. And the statistics
+  with documented danger bands now carry annunciators: measured frame cost turns amber past the
+  controller's target and red inside the band where cards have been lost; the budget shows amber
+  while it is still calibrating; the timing row turns red if cost measurement falls back to wall
+  clock (the blind state behind several crashes); and the reference-orbit length warns as it
+  approaches this GPU's ceiling — the practical depth wall — before you hit it. Every threshold
+  is read live from the same constants the engine itself uses.
+
 - **Deep refinements no longer show a black screen with no cue** (beta.113). Two halves,
   both from one field report. The busy spinner had stopped appearing during long refinements:
   its idle-gap detector was tuned for rapid repaints, and the new piece-by-piece refinement

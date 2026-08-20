@@ -202,6 +202,12 @@ struct Perf {
     /// bugs, which is exactly when a fallback is worth having. Global because every cause is
     /// (device features, a starved sink); either view may trip it.
     wall_fallback: bool,
+    /// Process working set / peak, polled at ~1 Hz for the perf panel (one Win32 call each —
+    /// the sysinfo doc says "NOT on anything per-frame", so this caches).
+    mem_rss: u64,
+    mem_peak: u64,
+    mem_total: Option<u64>,
+    mem_poll: Option<std::time::Instant>,
     /// Duration of the PREVIOUS frame's `update` body (ms) — see the slow-frame attribution log.
     prev_body_ms: f64,
     /// In-flight wall-clock cost probe per view: `(steps, frame it was armed on, max interval
@@ -524,6 +530,10 @@ impl Default for Perf {
             ts_reading_frame: [0, 0],
             fe_dispatch_frame: [0, 0],
             wall_fallback: false,
+            mem_rss: 0,
+            mem_peak: 0,
+            mem_total: None,
+            mem_poll: None,
             prev_body_ms: 0.0,
             wall_probe: [None, None],
             ts_supported: false,
@@ -4575,15 +4585,64 @@ impl FractadyneApp {
         } else {
             format!("FPS        {fps:6.1}")
         };
+        // Annunciated row: default color and no marker when healthy; amber " !" at a warning
+        // and red " !!" in a danger band. The marker is trailing ASCII so a level change never
+        // moves the label column, and the glyph+color pair stays legible without color vision.
+        // ⚠Thresholds are read from the live tunables / device limits at draw time — never
+        // mirrored constants (the profile.rs SETTLE_DELAY 0.35-vs-0.18 drift is the recorded
+        // warning about restating a number the code already owns).
+        let level_row = |ui: &mut egui::Ui, level: u8, text: String| -> egui::Response {
+            match level {
+                2 => ui.monospace(
+                    egui::RichText::new(format!("{text} !!"))
+                        .color(egui::Color32::from_rgb(235, 90, 70)),
+                ),
+                1 => ui.monospace(
+                    egui::RichText::new(format!("{text} !"))
+                        .color(egui::Color32::from_rgb(235, 170, 50)),
+                ),
+                _ => ui.monospace(text),
+            }
+        };
         ui.monospace(line);
         ui.monospace(format!("frame      {:6.2} ms", p.frame_ms));
         ui.monospace(format!("cpu        {:6.2} ms", p.cpu_ms));
         ui.monospace(format!("gpu/idle   {gpu_idle:6.2} ms"));
+        // The cost controller's measurement source. Wall-clock FALLBACK is the danger state:
+        // the budget is pricing frames without GPU timings, which is exactly how both fatal
+        // 2026-08-19 sessions ran ~1 s frames with the budget still growing.
+        let (timing_lvl, timing_txt) = if p.wall_fallback {
+            (2u8, "wall clock (timestamps starved)")
+        } else if p.ts_supported {
+            (0, "GPU timestamps")
+        } else {
+            (1, "wall clock (no TIMESTAMP_QUERY)")
+        };
+        level_row(ui, timing_lvl, format!("timing     {timing_txt}")).on_hover_text(
+            "How frame cost is measured. GPU timestamps are the precise source; the wall-clock              fallback engages when timings stop arriving, and a budget priced by wall clock has              repeatedly mis-sized deep frames — treat red here as 'the safety margins are              estimates right now'.",
+        );
         ui.separator();
         ui.monospace(format!("mode       {mode}"));
         ui.monospace(format!("eff iter   {:>7}", p.last_eff_iter));
         ui.monospace(format!("precision  {:>5} bit", p.last_precision));
-        ui.monospace(format!("orbit len  {:>7}", p.last_orbit_len));
+        {
+            // The device's orbit ceiling (storage-binding limit): past it the live view cannot
+            // resolve deeper — the documented ~1e95 depth wall. Announce the approach.
+            let cap = crate::render::orbit_len_cap();
+            let lvl = if cap != u32::MAX && p.last_orbit_len as u64 * 10 > cap as u64 * 9 {
+                2
+            } else if cap != u32::MAX && p.last_orbit_len as u64 * 10 > cap as u64 * 7 {
+                1
+            } else {
+                0
+            };
+            level_row(ui, lvl, format!("orbit len  {:>7}", p.last_orbit_len)).on_hover_text(
+                format!(
+                    "Reference orbit samples. This GPU holds at most {} — approaching it is the                      practical depth wall: past it the live view cannot resolve deeper locations                      that need a longer orbit.",
+                    if cap == u32::MAX { "(uncapped)".to_string() } else { cap.to_string() }
+                ),
+            );
+        }
         if p.last_sa_skip > 0 {
             ui.monospace(format!("SA skip    {:>7}", p.last_sa_skip));
         }
@@ -4595,14 +4654,81 @@ impl FractadyneApp {
         if p.last_mode == 2 && p.last_iterate_ms[0] > 0.0 {
             let gsps = p.fe_steps_last[0] as f64 / (p.last_iterate_ms[0] / 1000.0) / 1.0e9;
             ui.separator();
-            ui.monospace(format!("iterate    {:6.1} ms (GPU)", p.last_iterate_ms[0]));
+            // The one number every device loss this release cycle shared: measured iterate
+            // time creeping toward the ~900 ms lethal band. Amber past the controller's own
+            // target, red inside the band.
+            let c = crate::tunables::cost();
+            let target = if self.render_cfg.auto_iter {
+                c.tdr_budget_ms
+            } else {
+                c.tdr_explicit_budget_ms
+            };
+            let it_lvl = if p.last_iterate_ms[0] >= c.tdr_lethal_ms {
+                2
+            } else if p.last_iterate_ms[0] >= target {
+                1
+            } else {
+                0
+            };
+            level_row(ui, it_lvl, format!("iterate    {:6.1} ms (GPU)", p.last_iterate_ms[0]))
+                .on_hover_text(format!(
+                    "Measured GPU time of the last iterate dispatch. The controller aims at                      {target:.0} ms; sustained readings near {:.0} ms are the band where this                      hardware class has lost the device.",
+                    c.tdr_lethal_ms
+                ));
             ui.monospace(format!("steps/s    {gsps:6.2} G"));
-            ui.monospace(format!(
-                "budget     {:.2e}{}",
-                p.fe_budget[0] as f64,
-                if p.fe_budget_ok[0] { " ✓" } else { " (settling)" }
-            ));
+            // Amber while the budget is still CLIMBING: an unconverged budget is priced from
+            // sparse readings, and every mis-sized settled dispatch this cycle happened in
+            // exactly this state.
+            level_row(
+                ui,
+                if p.fe_budget_ok[0] { 0 } else { 1 },
+                format!(
+                    "budget     {:.2e}{}",
+                    p.fe_budget[0] as f64,
+                    if p.fe_budget_ok[0] { " ✓" } else { " (settling)" }
+                ),
+            );
         }
+
+        ui.separator();
+        // Process memory (polled ~1 Hz) — deep reference builds have peaked at 2.3 GB in the
+        // field with nothing on screen saying so. Amber past 3/4 of system RAM.
+        let rss_lvl = match self.perf.mem_total {
+            Some(total) if total > 0 && self.perf.mem_rss.saturating_mul(4) > total.saturating_mul(3) => 1u8,
+            _ => 0,
+        };
+        level_row(
+            ui,
+            rss_lvl,
+            format!("rss        {:>5} MB (peak {})", p.mem_rss >> 20, p.mem_peak >> 20),
+        );
+        // Estimated GPU-resident bytes, assembled from the allocation sizes the app knows:
+        // reference orbits + BLA trees (both views), the iteration G-buffer pair, the
+        // chunk-state ping-pong while a walk holds one, and the present-gate hold snapshot.
+        // An estimate — wgpu cannot portably report the driver's true figure — so it is
+        // labelled as one and carries no annunciator.
+        let gpu_est: u64 = {
+            let mut b = 0u64;
+            for vi in 0..2 {
+                b += self.ref_cache[vi].orbit_len as u64 * 16;
+                b += self.ref_cache[vi].bla.len() as u64 * 16;
+                let (ss, res, _) = p.aa_last_key[vi];
+                let tex =
+                    (res[0] as u64 * ss.max(1) as u64) * (res[1] as u64 * ss.max(1) as u64) * 16;
+                b += tex * 2; // iteration G-buffer pair (tex + aux)
+                if p.chunk_pending[vi] || p.chunk_last_range[vi].is_some() {
+                    let targets = if p.last_mode == 2 { 4 } else { 3 };
+                    b += tex * 2 * targets; // state ping-pong, two sets
+                }
+                if p.hold_active[vi] {
+                    b += tex * 2; // hold snapshot pair
+                }
+            }
+            b
+        };
+        ui.monospace(format!("gpu est.   {:>5} MB", gpu_est >> 20)).on_hover_text(
+            "Estimated GPU-resident memory: reference orbits, BLA trees, iteration textures,              the chunk-state ping-pong while a refinement runs, and the present-gate snapshot.              Assembled from known allocation sizes; the driver's true figure is not portably              readable.",
+        );
 
         // Julia parameter the Julia / dual view renders, plus how much c-space the
         // whole Mandelbrot panel covers. When "c/panel" drops far below one Julia
@@ -6830,6 +6956,16 @@ impl eframe::App for FractadyneApp {
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
         // view still matches the bookmark, since adding it didn't move the view).
         self.process_pending_thumb(ctx);
+        // ~1 Hz process-memory poll for the perf panel (deliberately not per-frame).
+        if self.perf.mem_poll.is_none_or(|t| t.elapsed().as_secs_f64() > 1.0) {
+            self.perf.mem_poll = Some(std::time::Instant::now());
+            let (ws, peak) = crate::sysinfo::process_memory();
+            self.perf.mem_rss = ws;
+            self.perf.mem_peak = peak;
+            if self.perf.mem_total.is_none() {
+                self.perf.mem_total = crate::sysinfo::total_memory();
+            }
+        }
 
         self.draw_bench_config_dialog(ctx);
         self.draw_bench_progress_dialog(ctx);
