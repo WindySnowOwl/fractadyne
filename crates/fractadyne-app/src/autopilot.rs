@@ -150,6 +150,15 @@ impl FractadyneApp {
         req.width = N as u32;
         req.height = N as u32;
         req.ss = 1;
+        // The builder above stamped the crash manifest with the PANEL dims before these
+        // overrides — in the Radeon autodive triage (crash-1787261212-0) that stamp read as a
+        // 3840x2903 ss=2 export and misdirected the diagnosis toward the export path, when the
+        // probe merely SURFACED a loss the inflated budget had already caused. State what this
+        // probe actually submits, so the next crash report names the right suspect.
+        crate::diag::set_manifest(format!(
+            "PROBE {N}x{N} ss=1 mode={} (autopilot target probe, synchronous)",
+            req.mode
+        ));
         let px = fractadyne_gpu::render_iter(dev, q, &req).ok()?.pixels;
         if px.len() < N * N * 4 {
             return None;

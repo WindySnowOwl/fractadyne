@@ -4783,7 +4783,18 @@ impl FractadyneApp {
         // view is pinned at 205x162 upscaled to a 1431x1134 panel. The timing itself only ever
         // arrives from a dispatch that really ran, so pairing it with the last key change is safe;
         // a stale pairing costs one mis-priced measurement, which the ratio search corrects.
-        if key_changed {
+        // ⚠NOT on chunked frames. The chunk block has already paired this frame's dispatch
+        // with its RANGE cost, and overwriting that with the full-frame count priced readings
+        // against ~250× too many steps — Radeon autodive, 2026-08-20 (crash-1787261212-0): the
+        // saved session booted DEEP, reference installs re-keyed a chunked dive frame every
+        // ~300 ms, each stamped 1.838e11 against a ~210 ms bounded pass, and the budget rocketed
+        // 6.8e9 → 6.0e10 in three seconds on rates the hardware never produced — every margin on
+        // the Home glide's shallow side was then sized from that fantasy, and the device died at
+        // the re-dive. The stamp still applies to un-chunked frames (R12: key on `key_changed`
+        // alone, never `!will_reproject`); a chunked frame's completed-tail re-key goes unstamped
+        // on purpose — one stale pairing costs one mis-priced measurement, which the ratio
+        // search corrects, exactly as the paragraph above records.
+        if key_changed && chunk_range.is_none() {
             self.perf.fe_steps_last[vs] = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);

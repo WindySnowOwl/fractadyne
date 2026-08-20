@@ -746,3 +746,37 @@ Verdict at the lethal session: 300 s, zero device losses, zero tiles, and the wa
 full 4,000,000 through the storm — the first time this view has ever finished settling on this
 hardware. Both compose paths produce bit-identical pixels (each equals the single-dispatch frame,
 selftest-pinned), so handing the deep compose to the walk changes timing only.
+
+## 13. The pricing that fed the walk was itself poisoned: the key-changed stamp vs the range cost (2026-08-20)
+
+The RX 6800 XT autodive death (`crash-1787261212-0`) was not a failure of the walk — it was a
+failure of the ledger the walk is priced from. Two independent rules collided:
+
+- **R12** (the readback-starvation fix): a frame whose iterate KEY changed must stamp
+  `fe_steps_last` with its nominal cost, because a real timing with no step count to price
+  against is a measurement thrown away.
+- **The chunk pairing** (§12): a chunked frame's dispatch is a RANGE, so the chunk block stamps
+  the range's cost, not the frame's.
+
+Both are right alone. Together, order decided: the R12 stamp ran AFTER the chunk block and
+overwrote the range cost with the full-frame count whenever an install re-keyed a chunked frame.
+On the dev 3080 this almost never fires — dives start shallow and installs are sparse. The
+Radeon run booted DEEP from a saved session: installs re-keyed a chunked frame every ~300 ms,
+each ~210 ms bounded pass was recorded as `1.838e11` steps (an implied ~875 Gsteps/s), and the
+budget — already converged honestly at `6.834e9` — walked ×1.5 per fantasy reading to its
+`6.0e10` ceiling in three seconds. The Home sweep's shallow side then dispatched budget-sized
+chunks that were real 1–2 s submissions (`bla_skip=0`, nominal ≈ real), and the device loss
+surfaced in the autopilot probe's synchronous readback at the re-dive moment. The probe's
+manifest stamp — panel dims inherited from `current_export_request_for` before the 56×56
+override — pointed the first hour of triage at the export path.
+
+The fix is one guard: `if key_changed && chunk_range.is_none()`. A chunked frame's pairing is
+already correct and must win; an un-chunked re-key still stamps exactly as R12 requires. The
+completed-walk tail re-key goes unstamped on purpose — one stale pairing costs one mis-priced
+measurement, which the ratio search corrects (R12's own tolerance, now actually honoured).
+
+**The lesson in one line: a cost ledger with two writers needs an owner per frame, not an
+order of operations.** And its corollary, already proven twice this cycle in the other
+direction (nominal-vs-real): every safety margin downstream of a mispriced ledger is sized
+from fantasy — the walk, the bands, the licenses were all doing their jobs correctly against
+numbers that were wrong at the source.

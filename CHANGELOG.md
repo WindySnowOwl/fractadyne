@@ -16,6 +16,17 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: the frame-cost budget could inflate on misrecorded step counts, oversizing dispatches
+  on the way home from a deep dive** (beta.116). Found in an RX 6800 XT validation run: a
+  refinement pass's bounded cost was overwritten with the full frame's nominal count whenever a
+  reference install re-keyed the same frame, so ~210 ms passes were priced as if the GPU ran
+  ~875 billion steps per second. The budget — already correctly converged — walked to its ceiling
+  in three seconds on those fantasy rates, and the shallow side of the zoom home then dispatched
+  real 1–2 s frames until the device was lost. A frame under refinement now always keeps its
+  bounded pairing (the misrecording is gone), and the crash report's manifest now names the
+  autopilot's small target probe honestly instead of inheriting full-panel export dimensions —
+  the misdirection that pointed this triage at the export path first.
+
 - **Fixed: correct colors could flash and then flatten on deep views** (beta.115). The remaining
   half of the beta.112 normalization fix. The palette window was fed correctly the moment a
   refinement completed — the brief flash of proper coloring — but each measurement arrives a few
