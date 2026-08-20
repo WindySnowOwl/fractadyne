@@ -28,15 +28,94 @@ fn known_long_flags() -> std::collections::HashSet<String> {
     set
 }
 
-/// The first argument that looks like an unrecognized option, or `None`. Only `--long` tokens (not
-/// in the known set) are flagged: values — numbers, paths, negative coords like `-0.5` — are never
-/// `--`-prefixed, so this can't misfire on them. (`/?`-style help is handled separately.)
-fn first_unknown_flag(args: &[String]) -> Option<&str> {
+/// The single-dash tokens that are legitimately options (everything else long-form takes two
+/// dashes). `-o`/`-y` are documented shorthands, the rest are help/version conventions; negative
+/// numbers (`-0.5` for `--center`) are excluded by the numeric parse in the classifier.
+const SHORT_FLAGS: &[&str] = &["-h", "-?", "-V", "-o", "-y"];
+
+/// What is wrong with a command line, if anything. Pure, so the rules are pinned by test —
+/// a mis-typed option must never silently launch the GUI (field case 2026-08-20: `-play tour`
+/// booted the saved session instead of the tour, and a validation run measured the wrong thing).
+#[derive(Debug, PartialEq, Eq)]
+enum BadOption {
+    /// `--xyz` that matches nothing in the CLI reference.
+    UnknownLong(String),
+    /// A single-dash spelling of a real long option: `-play` for `--play`.
+    SingleDash { given: String, correct: String },
+    /// A single-dash token that is neither a known short flag, a number, nor a long option.
+    UnknownShort(String),
+}
+
+fn first_bad_option(args: &[String]) -> Option<BadOption> {
     let known = known_long_flags();
-    args.iter().skip(1).find_map(|s| {
+    for s in args.iter().skip(1) {
         let a = s.as_str();
-        (a.starts_with("--") && a.len() > 2 && !known.contains(a)).then_some(a)
-    })
+        if a.starts_with("--") && a.len() > 2 {
+            if !known.contains(a) {
+                return Some(BadOption::UnknownLong(a.to_string()));
+            }
+        } else if a.starts_with('-') && a.len() > 1 && !a.starts_with("--") {
+            if SHORT_FLAGS.contains(&a) || a.parse::<f64>().is_ok() {
+                continue; // documented shorthand, or a negative numeric value
+            }
+            let long = format!("-{a}"); // "-play" -> "--play"
+            if known.contains(long.as_str()) {
+                return Some(BadOption::SingleDash { given: a.to_string(), correct: long });
+            }
+            return Some(BadOption::UnknownShort(a.to_string()));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod bad_options {
+    use super::*;
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn a_single_dash_spelling_of_a_real_option_is_named_and_corrected() {
+        // The field case: `-play tour.toml` silently launched the GUI and a validation run
+        // measured the saved session instead of the tour.
+        match first_bad_option(&s(&["exe", "-play", "t.toml"])) {
+            Some(BadOption::SingleDash { given, correct }) => {
+                assert_eq!(given, "-play");
+                assert_eq!(correct, "--play");
+            }
+            other => panic!("expected SingleDash, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn values_and_documented_shorthands_never_trip_it() {
+        assert_eq!(first_bad_option(&s(&["exe", "--center", "-0.75", "0.0"])), None);
+        assert_eq!(first_bad_option(&s(&["exe", "--zoom", "-1e-3"])), None);
+        assert_eq!(first_bad_option(&s(&["exe", "--render", "-o", "out.png"])), None);
+        assert_eq!(first_bad_option(&s(&["exe", "--reset-state", "-y"])), None);
+        assert_eq!(first_bad_option(&s(&["exe", "-V"])), None);
+    }
+
+    #[test]
+    fn unknown_options_are_flagged_in_both_spellings() {
+        assert_eq!(
+            first_bad_option(&s(&["exe", "--nonsense"])),
+            Some(BadOption::UnknownLong("--nonsense".into()))
+        );
+        assert_eq!(
+            first_bad_option(&s(&["exe", "-x"])),
+            Some(BadOption::UnknownShort("-x".into()))
+        );
+    }
+
+    #[test]
+    fn a_correct_command_line_passes() {
+        assert_eq!(
+            first_bad_option(&s(&["exe", "--set", "TDR_BUDGET_MS=500", "--play", "t.toml"])),
+            None
+        );
+    }
 }
 
 /// Dispatch the headless CLI modes. Returns true if one ran (caller should exit).
@@ -102,12 +181,27 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         crate::exit(if fails > 0 { 1 } else { 0 });
     }
 
-    // An unrecognized option shouldn't silently launch the GUI — report it and print the reference
-    // to stderr, then exit non-zero (like a conventional CLI).
-    if let Some(bad) = first_unknown_flag(args) {
-        eprintln!("fractadyne: unrecognized option '{bad}'\n");
-        eprint!("{}", crate::help::cli_help_text());
-        crate::exit(2);
+    // A bad option must never silently launch the GUI — report it and exit non-zero (like a
+    // conventional CLI). The single-dash case gets a targeted one-liner instead of the full
+    // reference: the correction IS the usage, and a page of help scrolling past is how an
+    // error line goes unread.
+    match first_bad_option(args) {
+        Some(BadOption::SingleDash { given, correct }) => {
+            eprintln!(
+                "fractadyne: options take two dashes: '{given}' is not accepted — use '{correct}'"
+            );
+            eprintln!("fractadyne: run with --help for the full reference");
+            crate::exit(2);
+        }
+        Some(BadOption::UnknownLong(bad)) | Some(BadOption::UnknownShort(bad)) => {
+            eprintln!("fractadyne: unrecognized option '{bad}'\n");
+            eprint!("{}", crate::help::cli_help_text());
+            // Repeated after the reference on purpose: with a page of help above it, the
+            // top line has already scrolled away.
+            eprintln!("\nfractadyne: unrecognized option '{bad}' — see the reference above");
+            crate::exit(2);
+        }
+        None => {}
     }
 
     // --reset-state [-y|--yes]: permanently delete all persisted application state (session,
