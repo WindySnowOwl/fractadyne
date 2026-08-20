@@ -538,23 +538,23 @@ pub(crate) const PIN_ABANDON_SPANS: f64 = 1.5;
 /// forever would magnify the held frame without limit (the recorded ever-larger-blocks shape).
 pub(crate) const PIN_MAX_FRAMES: u64 = 240;
 
-/// Backpressure pacer for the SETTLED chunk walk (crash-1787183917/-930, reproduced with the
-/// cursor untouched): a walk that dispatches one budget-sized pass EVERY frame saturates the
-/// queue when passes run hot — back-to-back ~1 s submissions with zero idle, the recorded
-/// beta.48 lethal profile — and saturation also breaks the SENSOR, because the iterate
-/// timestamps only arm when nothing is already in flight, so the budget only ever hears from
-/// the occasional cheap frame and cannot shrink. When the last frame interval ran past this,
-/// the walk holds its range (unchanged triple → the GPU dedupes, zero work) until
-/// `CHUNK_PACE_GAP` frames have passed since the last dispatch: the queue drains, presents
-/// happen, timestamps arm, and the controller can see again. A healthy walk (16–60 ms frames)
-/// never trips it.
-pub(crate) const CHUNK_PACE_DT_MS: f64 = 250.0;
+/// PRICE-SERIALIZED WALKING (design/mode2-chunking.md §12; crash-1787183518/-587 and five repro
+/// deaths behind it): the settled chunk walk holds AT MOST ONE unpriced pass in flight. A
+/// dispatched pass accumulates the following frame intervals until a frame comes back quicker
+/// than this — proof the queue drained — and that sum is the pass's wall price. A quick frame
+/// really is proof: with one pass in flight, nothing else can be blocking the present. This is
+/// the one cost signal saturation cannot silence (the GPU timestamps arm only when nothing is in
+/// flight, which is exactly never on a saturated queue — the fatal sessions contain not a single
+/// lethal reading while ~1 s frames flowed).
+pub(crate) const CHUNK_DRAIN_DT_MS: f64 = 100.0;
 
-/// Minimum frames between settled chunk dispatches once `CHUNK_PACE_DT_MS` trips — the same
-/// ≥3-frame spacing the budget-climb probe uses, for the same reason (its comment: "the gap
-/// leaves present-able frames between dispatches (~⅓ duty), which is the profile the converged
-/// controller already runs").
-pub(crate) const CHUNK_PACE_GAP: u64 = 3;
+/// Regional price memory: the walk's license ledger is kept per cursor BAND (this many bands over
+/// [0, ask)), because the cost of one ask is REGIONAL — the wrap-storm band at cur ≈ orbit_len
+/// runs ~10-70× the cold rate, and a license earned on the cold side is exactly what killed the
+/// device on the hot side. Bands survive same-sig restarts (every hold/refresh cycle restarts the
+/// walk; re-crossing the storm with amnesia re-rolled the dice dozens of times a session) and
+/// clear when the sig changes (another view's prices describe another walk).
+pub(crate) const CHUNK_BANDS: usize = 16;
 
 /// Hard drift ceiling for reusing a cached reference: a point beyond this fraction of a span
 /// off-centre is re-anchored (fresh pick) instead. Held at the `out_of_view` gate that already

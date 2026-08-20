@@ -16,6 +16,18 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: the deep-minibrot crash is closed — the worst view we know of now settles to
+  completion** (beta.109). The beta.108 note admitted the danger was reduced but not eliminated;
+  this closes it. Two final causes: refinement work was entering unexplored cost territory at
+  sizes it had only earned in cheap territory (now: every region of the refinement starts at a
+  provably safe size and earns growth from its own measured prices, with at most one unpriced
+  piece ever in flight); and a second, older refinement path — the spatial tiling — was quietly
+  taking over whenever the scheduler felt confident, and each of its tiles pays the FULL
+  iteration depth, which at these views is exactly the unbounded cost the piece-splitting exists
+  to avoid. Deep refinements now always split along the iteration axis when available. The crash
+  recipe (minibrot, maximum iterations, wait) now runs to a fully-settled image and stays up
+  indefinitely — the first time that view has ever finished rendering on this hardware.
+
 - **Deep settled views now pace their own work by what it actually costs** (beta.108). Follow-up
   to the beta.107 crash: the same recipe (a minibrot at maximum iterations, left to settle) could
   still reset the card, because the view refined itself with back-to-back pieces of work and the

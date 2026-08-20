@@ -3471,7 +3471,18 @@ impl FractadyneApp {
             && !self.coloring.color_method.needs_aux()
             && self.perf.chunk_ok
             && !offscreen
-            && spx.saturating_mul(gpu_iter.max(1) as u64) > tdr_allowed;
+            // ⚠ONE budget — `tdr_steps`, NOT the multi-tile allowance. This gate used the
+            // allowance, which handed the settled compose to TILES whenever the converged
+            // allowance covered the whole need — and a TILE prices itself nominally while its
+            // real cost is its FULL iteration chain: at a wrap-storm ask every 122×122 tile ran
+            // all 4,000,000 iterations through the storm, ~1 s each, one per frame, back to back
+            // (crash-1787183518/-587 and the serialized repro's session-1 death: the fatal
+            // manifests all say tile=true, and the ok=true flip to max_tiles=121 is in the
+            // trace). The eligibility comment above has said it from the start: this cost axis
+            // is per-pixel iteration DEPTH, and no spatial split bounds it. So the ITERATION
+            // axis wins wherever the chunk path can serve; tiles remain for what it cannot
+            // (aux coloring, formulas > 3, missing device capability).
+            && spx.saturating_mul(gpu_iter.max(1) as u64) > tdr_steps;
         // A pin outliving `chunk_over` (the budget grew past the ask mid-progression) hands off:
         // this frame still renders the PINNED view — un-chunked and COMPLETE, affordable by the
         // gate's own arithmetic — and the ordinary latch below re-synchronizes the frozen
@@ -3649,6 +3660,15 @@ impl FractadyneApp {
         let mut chunk_idx = 0u32;
         self.perf.chunk_pending[vs] = false;
         if chunk_over {
+            // The iteration axis owns this compose (see the eligibility above): a settle grid
+            // must not stay ARMED underneath it — its tiles can never form (emission requires
+            // `!chunk_over`), and an armed-forever grid pins the present gate's `composing` true,
+            // which is the beta.103 never-reveals shape through a third door. Caught by the
+            // "a completed tiled settle REVEALS" selftest the moment the eligibility widened.
+            if !interacting {
+                self.perf.tile_state[vidx] = None;
+                self.perf.tile_pending[vidx] = false;
+            }
             let ss2 = (ss as u64).saturating_mul(ss as u64);
             // The 256-iteration floor keeps a MEASURED progression from thrashing in slivers, but
             // an UNMEASURED opening dispatch must honour the bootstrap bound at ANY panel size —
@@ -3657,55 +3677,56 @@ impl FractadyneApp {
             // 4K panel would be 5×). Until a measurement exists the plain division is the bound;
             // the floor applies from the first measured budget onward.
             let floor = if self.perf.fe_budget[vidx] == 0 { 1 } else { 256 };
-            // The last pass's wall price lands in the NEXT frame's interval (the dispatch
-            // frame's own dt predates its submission) — sample it once, the frame after each
-            // settled dispatch. This is the price signal `chunk_step_factor` sizes the next
-            // pass from; unlike the GPU timestamps it cannot be starved by a saturated queue.
-            if !interacting
-                && self.perf.frame_idx == self.perf.fe_dispatch_frame[vs].wrapping_add(1)
-            {
-                self.perf.chunk_pass_dt[vs] = self.perf.last_dt_ms;
-                // SLOW-START ledger: this price is evidence. A pass whose wall price came in at
-                // an acceptable cost licenses the next size up (x1.5, mirroring TDR_GROW_MAX);
-                // a hot price licenses nothing — growth WAITS, which is what keeps the 2-3
-                // passes a deep swapchain can hold in flight from ever outrunning their pricing.
-                if let Some([s, e]) = self.perf.chunk_last_range[vs] {
-                    let target = if self.render_cfg.auto_iter {
-                        crate::tunables::cost().tdr_budget_ms
+            // ---- PRICE-SERIALIZED WALKING, pricing half (design/mode2-chunking.md §12) ----
+            // The settled walk holds AT MOST ONE unpriced pass in flight. The in-flight pass
+            // accumulates every following frame interval until a frame comes back quicker than
+            // CHUNK_DRAIN_DT_MS — with one pass in flight, a quick present is PROOF the queue
+            // drained — and that sum is the pass's wall price (conservative: it includes present
+            // overhead, which is the safe direction). This is the signal a saturated queue
+            // cannot silence; the fatal sessions' timestamps were silent precisely because
+            // saturation never let them arm.
+            let target_ms = if self.render_cfg.auto_iter {
+                crate::tunables::cost().tdr_budget_ms
+            } else {
+                crate::tunables::cost().tdr_explicit_budget_ms
+            };
+            if !interacting && !pin_frame {
+                if let Some((size, band, acc)) = self.perf.chunk_inflight[vs] {
+                    let acc = acc + self.perf.last_dt_ms.max(0.0);
+                    // ⚠The backstop is a WEDGE escape only (a compositor that never goes
+                    // idle), far beyond any survivable pass — releasing the next dispatch onto
+                    // a pass that is merely SLOW is how a 10 s single got company on its way
+                    // to the TDR. The genuine release is the quick frame.
+                    if self.perf.last_dt_ms < crate::tunables::CHUNK_DRAIN_DT_MS
+                        || acc > target_ms * 60.0
+                    {
+                        // Drained (or the absolute backstop, so a machine whose presents never
+                        // come back quick cannot wedge the walk): price the pass, feed both
+                        // ledgers, release the next dispatch.
+                        self.perf.chunk_pass_dt[vs] = acc;
+                        chunk_band_update(
+                            &mut self.perf.chunk_bands[vs],
+                            band as usize,
+                            size,
+                            acc,
+                            target_ms,
+                        );
+                        self.perf.chunk_inflight[vs] = None;
                     } else {
-                        crate::tunables::cost().tdr_explicit_budget_ms
-                    };
-                    // Acceptance is AT the target, not above it: a price accepted at 1.5x and
-                    // then grown 1.5x lands the next single at ~2.25x the target — the 900 ms
-                    // band's doorstep — and the walk oscillates across it, rolling the Event-153
-                    // dice every pass (measured: 14k and 35k steps alternating, ~1 s singles).
-                    if self.perf.last_dt_ms > 0.0 && self.perf.last_dt_ms <= target {
-                        self.perf.chunk_ok_step[vs] =
-                            self.perf.chunk_ok_step[vs].max(e.saturating_sub(s));
-                    } else if self.perf.last_dt_ms > target * 2.0 {
-                        // A COST CLIFF (every repro death sat at cur ~ orbit_len, where pixels
-                        // begin wrapping the reference — a rebase-storm region ~10-70x the cold
-                        // rate): the license earned on the cold side is worthless on the hot
-                        // side, and holding it re-rolls the Event-153 dice every pass. Shed it —
-                        // the walk re-slow-starts INSIDE the region at a trivially safe size and
-                        // re-earns its way up at the hot region's own prices.
-                        self.perf.chunk_ok_step[vs] /= 4;
+                        self.perf.chunk_inflight[vs] = Some((size, band, acc));
                     }
                 }
+            } else {
+                // Motion abandons the walk (the cursor resets below); a stale in-flight record
+                // must not price itself against unrelated frames after the next settle.
+                self.perf.chunk_inflight[vs] = None;
             }
-            // Wall-clock pass pricing (crash-1787183917/-930): the cost of [cur, cur+step)
-            // varies enormously within ONE progression, and the scalar budget hears mostly
-            // from the cheap slices — so a settled pass is sized from the budget SCALED by
-            // what the previous pass actually cost. Motion and pin passes keep the budget's
-            // own sizing (their cadence is priced by the retreat as before).
+            // Wall-clock pass pricing: a settled pass is the budget scaled by what the previous
+            // pass actually cost. Motion and pin passes keep the budget's own sizing (their
+            // cadence is priced by the retreat as before).
             let pace = if interacting || pin_frame {
                 1.0
             } else {
-                let target_ms = if self.render_cfg.auto_iter {
-                    crate::tunables::cost().tdr_budget_ms
-                } else {
-                    crate::tunables::cost().tdr_explicit_budget_ms
-                };
                 chunk_step_factor(self.perf.chunk_pass_dt[vs], target_ms)
             };
             // Per-frame iteration step that keeps this frame's dispatch inside the budget.
@@ -3720,25 +3741,8 @@ impl FractadyneApp {
             // pass was again 16× the retreated budget. `bla_skip` collapsing to 0 at the interior
             // made nominal cost real cost at exactly that moment. Pinned by the "a settled
             // chunked pass stays inside ONE dispatch budget" selftest.
-            // SLOW-START cap (settled walks): at most 1.5x the largest step whose wall price
-            // has been SEEN and was acceptable this progression. The budget's own climb feeds on
-            // whatever readings arrive — at a heterogeneous ask those are the cheap slices, and
-            // it walked straight into single ~1 s submissions (the Event-153 band) with the hot
-            // prices still in flight behind the swapchain. Evidence-gated growth cannot: the
-            // first pass is floor-sized, and every size increase requires a priced predecessor.
-            let slow_start = if interacting || pin_frame {
-                u32::MAX // motion/pin cadence unchanged; their passes are budget-sized as before
-            } else {
-                // x1.25 growth on x1.0-accepted prices: a licensed single stays under ~1.25x
-                // the target (~500 ms) — real margin below the ~900 ms lethal band, unlike the
-                // budget's own x1.5-on-anything climb.
-                self.perf.chunk_ok_step[vs]
-                    .saturating_add(self.perf.chunk_ok_step[vs] / 4)
-                    .max(floor.max(256))
-            };
-            let step = (((tdr_steps as f64 * pace) as u64 / spx.saturating_mul(ss2).max(1))
-                as u32)
-                .min(slow_start)
+            let budget_step = (((tdr_steps as f64 * pace) as u64
+                / spx.saturating_mul(ss2).max(1)) as u32)
                 .clamp(floor, gpu_iter.max(floor));
             // View signature: anything that shapes the render restarts the progression.
             // ⚠The REFERENCE LENGTH is part of it. `orbit_len` feeds both the per-pass BLA table
@@ -3765,12 +3769,19 @@ impl FractadyneApp {
                 // drift, pan, panel), so the cursor advance further down is safe — and
                 // belt-checked at the commit point after the freeze anyway.
             } else if self.perf.chunk_sig[vs] != sig || interacting {
+                if self.perf.chunk_sig[vs] != sig {
+                    // Another view/ask: its prices describe another walk entirely.
+                    self.perf.chunk_bands[vs] = [0; crate::tunables::CHUNK_BANDS];
+                    self.perf.chunk_pass_dt[vs] = 0.0;
+                }
+                // ⭐The band ledger SURVIVES a same-sig restart on purpose: every hold/refresh
+                // cycle restarts the walk, and re-crossing the wrap-storm band with amnesia is
+                // how the cliff got re-rolled dozens of times in one session.
                 self.perf.chunk_sig[vs] = sig;
                 self.perf.chunk_cursor[vs] = 0;
                 self.perf.chunk_idx[vs] = 0;
                 self.perf.chunk_last_range[vs] = None;
-                self.perf.chunk_pass_dt[vs] = 0.0;
-                self.perf.chunk_ok_step[vs] = 0;
+                self.perf.chunk_inflight[vs] = None;
             }
             let cur = self.perf.chunk_cursor[vs];
             // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
@@ -3784,47 +3795,48 @@ impl FractadyneApp {
                 crate::diag::trace(
                     "tile",
                     format!(
-                        "chunk f={} vs={vs} cur={cur} step={step} gpu_iter={gpu_iter} \
+                        "chunk f={} vs={vs} cur={cur} step={budget_step} gpu_iter={gpu_iter} \
                          sig=({:x},{},{}x{},{}) interacting={interacting} pin={pin_frame}",
                         self.perf.frame_idx, sig.0, sig.1, sig.2[0], sig.2[1], sig.3
                     ),
                 );
             }
             if cur < gpu_iter {
-                // BACKPRESSURE PACER, settled walks only (crash-1787183917/-930, reproduced with
-                // the cursor untouched — see CHUNK_PACE_DT_MS). A hot walk dispatching one
-                // budget-sized pass EVERY frame is back-to-back ~1 s submissions with zero idle —
-                // the beta.48 lethal profile — and saturation also silences the iterate
-                // timestamps (they only arm when nothing is in flight), so the budget cannot
-                // shrink: the device died with every pass at exactly 1× budget and not a single
-                // lethal reading fired. When the last interval ran long, hold the LAST DISPATCHED
-                // range (unchanged triple → the GPU dedupes, zero work — never price this frame)
-                // until the gap since the last dispatch reaches CHUNK_PACE_GAP. The first pass of
-                // a progression is never paced (reveal latency), and interacting/pin frames keep
-                // their own cadence.
-                let target_now = if self.render_cfg.auto_iter {
-                    crate::tunables::cost().tdr_budget_ms
-                } else {
-                    crate::tunables::cost().tdr_explicit_budget_ms
-                };
-                let paced_out = !interacting
+                // ---- PRICE-SERIALIZED WALKING, dispatch half ----
+                // A settled pass may only launch when the previous one has been PRICED
+                // (chunk_inflight is None). While one is in flight, hold the LAST DISPATCHED
+                // range — the (key, tile, chunk, probe) triple stays unchanged, the GPU dedupes
+                // it, zero work runs, and the drain frame this produces is the very measurement
+                // that releases the next pass. Motion frames keep their per-frame cadence
+                // (the cursor resets each frame anyway) and PIN frames their own (§10-§11).
+                let serialized_hold = !interacting
                     && !pin_frame
-                    && self.perf.chunk_last_range[vs].is_some()
-                    && ((self.perf.last_dt_ms > crate::tunables::CHUNK_PACE_DT_MS
-                        && self.perf.frame_idx.saturating_sub(self.perf.fe_dispatch_frame[vs])
-                            < crate::tunables::CHUNK_PACE_GAP)
-                        // After a pass priced PAST the band's approach, hold until the queue has
-                        // demonstrably DRAINED — a frame whose own interval came back quick. A
-                        // gap counted in frames does not drain anything when the swapchain is
-                        // 2-3 presents deep in ~1 s submissions; a quick frame is proof of idle.
-                        || (self.perf.chunk_pass_dt[vs] > target_now * 2.0
-                            && self.perf.last_dt_ms > 100.0));
-                if paced_out {
+                    && self.perf.chunk_inflight[vs].is_some()
+                    && self.perf.chunk_last_range[vs].is_some();
+                if serialized_hold {
                     chunk_range = self.perf.chunk_last_range[vs];
                     chunk_idx = self.perf.chunk_idx[vs];
-                    // Still mid-flight: keep repaints coming so the gap frames actually happen.
+                    // Still mid-flight: keep repaints coming so the drain frames actually happen.
                     self.perf.chunk_pending[vs] = true;
                 } else {
+                    // The REGIONAL license (see chunk_band_license): the walk may spend the
+                    // budget's sizing only where prices have earned it; new territory starts at
+                    // half its predecessor's license, so a cost cliff is met with at most ONE
+                    // modestly-sized unpriced pass — and serialization guarantees its price is
+                    // seen before anything else launches.
+                    let band = ((cur as u64 * crate::tunables::CHUNK_BANDS as u64)
+                        / (gpu_iter.max(1) as u64))
+                        .min(crate::tunables::CHUNK_BANDS as u64 - 1)
+                        as u8;
+                    let step = if interacting || pin_frame {
+                        budget_step
+                    } else {
+                        budget_step.min(chunk_band_license(
+                            &self.perf.chunk_bands[vs],
+                            band as usize,
+                            floor.max(256),
+                        ))
+                    };
                     let end = cur.saturating_add(step).min(gpu_iter);
                     chunk_range = Some([cur, end]);
                     chunk_idx = self.perf.chunk_idx[vs];
@@ -3838,6 +3850,10 @@ impl FractadyneApp {
                         self.perf.chunk_pending[vs] = end < gpu_iter || pin_frame;
                     }
                     self.perf.chunk_last_range[vs] = chunk_range;
+                    if !interacting && !pin_frame {
+                        self.perf.chunk_inflight[vs] =
+                            Some((end.saturating_sub(cur), band, 0.0));
+                    }
                     // This frame runs a real bounded pass; pair the measurement with ITS cost.
                     self.perf.fe_steps_last[vs] =
                         spx.saturating_mul(ss2).saturating_mul((end - cur).max(1) as u64);
@@ -5211,6 +5227,132 @@ mod chunk_pace {
         assert_eq!(chunk_step_factor(0.0, 400.0), 1.0);
         assert_eq!(chunk_step_factor(-5.0, 400.0), 1.0);
         assert_eq!(chunk_step_factor(f64::NAN, 400.0), 1.0);
+    }
+}
+
+/// The regional license: how many iterations one settled pass may cover in this cursor BAND.
+/// A priced band licenses ×1.25 growth on its best accepted size; an unpriced band inherits HALF
+/// its predecessor's license — a cliff can only halve into new territory, never jump — and the
+/// very first band starts at the floor. (See `chunk_band_update` for how prices become licenses,
+/// and the CHUNK_BANDS tunable for why the ledger is regional at all.)
+pub(crate) fn chunk_band_license(
+    bands: &[u32; crate::tunables::CHUNK_BANDS],
+    band: usize,
+    floor: u32,
+) -> u32 {
+    let b = bands[band.min(crate::tunables::CHUNK_BANDS - 1)];
+    if b > 0 {
+        b.max(floor)
+    } else {
+        // ⚠UNVISITED territory opens at the FLOOR — never at a neighbour's license. The final
+        // repro death was exactly an inherited license: a 36k-step pass earned on a band's cold
+        // beginning ran TEN SECONDS when the band turned hot mid-way (the storm starts before
+        // the wrap point, inside the band). The floor is the worst-case-prior sizing: ~256
+        // iterations is ~70 ms even at the worst rate ever measured on this hardware, so first
+        // contact with ANY region — however hostile — is a survivable single. Everything bigger
+        // must be earned by that region's own prices.
+        floor
+    }
+}
+
+/// Feed one priced pass into the band ledger. Acceptance is AT the target (a price accepted
+/// above it and then grown compounds straight into the ~900 ms lethal band — measured, twice);
+/// a price past 2× target is a cliff and QUARTERS the record (never zeroes it: a shed band is
+/// still priced knowledge — "small is what this region affords" — where zero would fall back to
+/// the neighbour's license, which is exactly the license that just failed). Prices between 1×
+/// and 2× hold: neither evidence for growth nor a cliff.
+pub(crate) fn chunk_band_update(
+    bands: &mut [u32; crate::tunables::CHUNK_BANDS],
+    band: usize,
+    size: u32,
+    price_ms: f64,
+    target_ms: f64,
+) {
+    let band = band.min(crate::tunables::CHUNK_BANDS - 1);
+    // NaN/negative are garbage; ZERO is not — it is a pass whose accumulated wall time was
+    // literally unmeasurable (headless harnesses, and any pass cheaper than the clock), which is
+    // the strongest possible "clearly cheap" and takes the fast lane below.
+    if !price_ms.is_finite() || price_ms < 0.0 {
+        return;
+    }
+    if price_ms <= target_ms * 0.5 {
+        // Clearly cheap: the fast lane (×2) is what keeps healthy walks quick despite every
+        // band opening at the floor — full size in ~8 priced passes.
+        bands[band] = bands[band].max(size.saturating_mul(2));
+    } else if price_ms <= target_ms {
+        bands[band] = bands[band].max(size.saturating_add(size / 4));
+    } else if price_ms > target_ms * 2.0 {
+        // A cliff: quarter the record (never to zero — a shed band is still priced knowledge;
+        // zero would reopen at the floor, which is FINE, but keeping a small non-zero record
+        // spares the re-climb from scratch).
+        bands[band] = (size / 4).max(1);
+    } else {
+        // Above target but short of a cliff: drift DOWN (×0.5). Holding the line here let an
+        // over-target size re-dispatch itself forever inside the (1x, 2x] gap.
+        bands[band] = (size / 2).max(1);
+    }
+}
+
+#[cfg(test)]
+mod chunk_bands {
+    use super::*;
+    const N: usize = crate::tunables::CHUNK_BANDS;
+
+    #[test]
+    fn every_unvisited_band_opens_at_the_floor_never_a_neighbours_license() {
+        // The 10-second-single lesson: a 36k license earned on a band's cold beginning met a
+        // mid-band storm. First contact is floor-sized everywhere, hostile or not.
+        let mut b = [0u32; N];
+        b[3] = 20_000;
+        assert_eq!(chunk_band_license(&b, 4, 256), 256);
+        assert_eq!(chunk_band_license(&b, 0, 256), 256);
+        chunk_band_update(&mut b, 4, 256, 30.0, 400.0);
+        assert_eq!(chunk_band_license(&b, 4, 256), 512); // earned, not inherited
+    }
+
+    #[test]
+    fn clearly_cheap_prices_take_the_fast_lane() {
+        let mut b = [0u32; N];
+        chunk_band_update(&mut b, 0, 256, 100.0, 400.0); // ≤ half target → ×2
+        assert_eq!(b[0], 512);
+        chunk_band_update(&mut b, 0, 512, 300.0, 400.0); // ≤ target → ×1.25
+        assert_eq!(b[0], 640);
+    }
+
+    #[test]
+    fn every_price_above_target_moves_the_size_down() {
+        // No hold gap: (1x, 2x] halves, past 2x quarters — an over-target size must never
+        // re-dispatch itself unchanged.
+        let mut b = [0u32; N];
+        b[5] = 20_000;
+        chunk_band_update(&mut b, 5, 20_000, 600.0, 400.0);
+        assert_eq!(b[5], 10_000);
+        chunk_band_update(&mut b, 5, 10_000, 1200.0, 400.0);
+        assert_eq!(b[5], 2_500);
+        chunk_band_update(&mut b, 5, 2, 1200.0, 400.0);
+        assert_eq!(b[5], 1); // never zero: a shed band is still priced knowledge
+    }
+
+    #[test]
+    fn a_hot_band_does_not_shrink_its_cold_neighbours() {
+        let mut b = [0u32; N];
+        b[4] = 30_000;
+        b[5] = 30_000;
+        chunk_band_update(&mut b, 5, 30_000, 2000.0, 400.0);
+        assert_eq!(b[4], 30_000, "the cold side keeps its own prices");
+        assert_eq!(b[5], 7_500);
+    }
+
+    #[test]
+    fn garbage_prices_are_ignored_but_zero_is_clearly_cheap() {
+        let mut b = [0u32; N];
+        b[1] = 5_000;
+        chunk_band_update(&mut b, 1, 5_000, -3.0, 400.0);
+        chunk_band_update(&mut b, 1, 5_000, f64::NAN, 400.0);
+        assert_eq!(b[1], 5_000, "NaN/negative license nothing");
+        // Zero = a pass cheaper than the clock (and every headless-harness pass): fast lane.
+        chunk_band_update(&mut b, 1, 5_000, 0.0, 400.0);
+        assert_eq!(b[1], 10_000);
     }
 }
 

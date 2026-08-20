@@ -992,7 +992,7 @@ Mockups: [design/mockups/](design/mockups/).
   opens it braids with: the timestamp-outage blind stretch ("no GPU iterate timing after 30
   frames", seen again in this crash log), and nominal-vs-real repricing on `bla_skip` collapse.
 
-- [ ] 🔴🔴**THE SETTLED WALK STILL LOSES THE DEVICE AT A WRAP-STORM VIEW — the residual above,
+- [x] ✅✅**FIXED beta.109 — THE SETTLED WALK LOSES THE DEVICE NO MORE (four layers, one night)**. Original entry follows; resolution appended at the end. 🔴🔴~~THE SETTLED WALK STILL LOSES THE DEVICE AT A WRAP-STORM VIEW~~ — the residual above,
   field-confirmed the same night (crash-1787183518/-587, beta.107), five repro deaths, four
   mitigation layers built, the structural fix DESIGN-READY but not implemented.**
   User recipe (again): minibrot at 2^151.2×, explicit 4M, settled; also reported "moving the
@@ -1031,6 +1031,21 @@ Mockups: [design/mockups/](design/mockups/).
   remains device-lethal on this hardware — the same view at ≤250k, or with auto-iter on, is fine.
   ⚠The pin (motion) dispatches per-frame too and shares the queue-depth exposure in principle;
   autodive passes today, but apply the same discipline there when this lands.
+  ✅✅**RESOLVED beta.109 (2026-08-20, design/mode2-chunking.md §12).** Price-serialized walking
+  landed (≤1 unpriced pass in flight; wall price = accumulated dts to a quick-frame drain proof;
+  backstop 60× target and it never releases onto a running pass — a 20× backstop that did was
+  itself a kill). Regional licenses are FLOOR-OPENED per band (⚠half-predecessor inheritance was
+  the fifth repro death: an inherited 36k license met a mid-band storm and ran a TEN-SECOND
+  single; the 256 floor is worst-case-prior sizing, ~70 ms at the worst rate ever measured).
+  ⭐⭐**And the DECISIVE fix was a THIRD dispatcher**: with a converged budget the tile allowance
+  covered the whole need, `chunk_over` (allowance-compared) flipped false, and the settle TILED —
+  every 122×122 tile ran the full 4M chain, ~1 s each, back-to-back; the fatal manifests all say
+  `tile=true`. `chunk_over` now compares ONE budget (`tdr_steps`): the iteration axis owns the
+  deep compose wherever chunking can serve; tiles keep aux/formula>3/no-capability. Verdict at
+  the lethal session: **300 s, zero losses, zero tiles, and the walk COMPLETED all 4,000,000
+  through the storm** — the first time this view ever finished settling on this hardware.
+  Gates: tests 205+6 new band tests, suite 127/127+17/17, motiontest PASS, grand tour 24/24
+  0-drift, autodive 32×3homes no loss (all on the final build; recorded at the commit).
 
   🔧**Harness facts learned the hard way (2026-08-19):**
   - ⚠**`--autodive 22` NEVER REACHES MODE 2** (1e22 is below the 1e28 threshold): measured 1032

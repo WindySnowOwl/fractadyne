@@ -701,3 +701,48 @@ floor is the regression fence behind any retune.
 One deliberate scope note: `pin_verdict` orders Adopt before every abandon reason, so a
 progression that completes at the settle edge (or past the drift threshold) still adopts — the
 work is done and the texture is whole; discarding it would buy nothing.
+
+## 12. The settled walk: price-serialized, regionally licensed, and owner of the deep compose (2026-08-20)
+
+Three field device losses and seven repro deaths at one recipe — a minibrot interior at an
+explicit 4,000,000, left to settle — took four design iterations in one night to close. Each
+iteration exposed the next layer; all four are in the shipped design because each guards a
+distinct measured kill:
+
+1. **Price-serialized walking.** The settled walk holds AT MOST ONE unpriced pass in flight. A
+   dispatched pass accumulates the following frame intervals until a frame returns quicker than
+   `CHUNK_DRAIN_DT_MS` — with one pass in flight, a quick present is PROOF the queue drained —
+   and that sum is the pass's wall price. Wall time is the one signal saturation cannot silence:
+   the GPU timestamps arm only when nothing is in flight, which on a saturated queue is never —
+   the fatal sessions contain not a single lethal reading while ~1 s frames flowed, and the
+   budget GREW mid-kill on cheap-slice readings. While a pass is in flight the walk emits its
+   last range verbatim (unchanged triple → the GPU dedupes, zero work — chunking's version of
+   the zero-area tile hold). ⚠The pricing backstop (60× target) is a wedge escape only; an
+   earlier 20× backstop released the next dispatch ONTO a still-running 10 s pass.
+2. **Wall-price sizing** (`chunk_step_factor`, pure + tests): the next pass is the budget scaled
+   by target/last-price, clamped [1/16, 1]. The budget's own ×1.5-per-reading climb walked
+   straight into the lethal band because its readings were the cheap slices.
+3. **Regional licenses, floor-opened** (`chunk_band_license`/`chunk_band_update`, pure + tests):
+   the ask's cost is REGIONAL — the wrap/rebase-storm band around cur ≈ orbit_len runs ~10-70×
+   the cold rate — so the license ledger is per cursor band (`CHUNK_BANDS`), survives same-sig
+   restarts (re-crossing the storm with amnesia re-rolled the dice dozens of times a session),
+   and clears on a sig change. ⚠**Every unvisited band opens at the FLOOR, never at a
+   neighbour's license**: an inherited 36k license met a mid-band storm and ran TEN SECONDS in
+   one submission. The floor (~256 iterations) is worst-case-prior sizing — ~70 ms even at the
+   worst rate ever measured here — so first contact with any region is a survivable single;
+   everything larger is earned from that region's own prices (×2 below half-target, ×1.25 at
+   target, ×0.5 above it, ×0.25 past double — no hold gap where an over-target size
+   re-dispatches itself).
+4. **The iteration axis owns the deep compose.** `chunk_over` now triggers past ONE dispatch
+   budget (`tdr_steps`), not past the multi-tile allowance. The allowance comparison handed the
+   settled compose to TILES whenever a converged budget covered the need — and a tile prices
+   itself nominally while its real cost is its FULL iteration chain: at the storm ask every
+   122×122 tile ran all 4,000,000 iterations, ~1 s each, back to back. The fatal manifests all
+   say `tile=true`. The eligibility comment had stated the principle since beta.64: this cost
+   axis is per-pixel iteration DEPTH, and no spatial split bounds it. Tiles remain for what
+   chunking cannot serve (aux coloring, formulas > 3, missing device capability).
+
+Verdict at the lethal session: 300 s, zero device losses, zero tiles, and the walk COMPLETED the
+full 4,000,000 through the storm — the first time this view has ever finished settling on this
+hardware. Both compose paths produce bit-identical pixels (each equals the single-dispatch frame,
+selftest-pinned), so handing the deep compose to the walk changes timing only.

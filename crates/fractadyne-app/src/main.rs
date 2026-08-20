@@ -316,13 +316,15 @@ struct Perf {
     /// cost — the signal that keeps working when a saturated queue starves the GPU timestamps.
     /// 0.0 = no pass measured since the progression (re)started.
     chunk_pass_dt: [f64; 2],
-    /// SLOW-START ledger for the settled walk: the largest step whose wall price has actually
-    /// been SEEN at an acceptable cost this progression (0 = none yet). The next pass may be at
-    /// most 1.5× this — growth waits for evidence, so with a 2-3 frame deep swapchain the passes
-    /// in flight can never outrun their pricing the way the budget's own climb did
-    /// (crash-1787184558/-571: the walk's cheap early slices grew the budget ×1.5 per reading
-    /// straight into single ~1 s submissions before the first hot price landed).
-    chunk_ok_step: [u32; 2],
+    /// PRICE-SERIALIZED WALKING (design/mode2-chunking.md §12): the one pass a settled walk may
+    /// have in flight — (size, cursor band, accumulated wall ms). Priced and released when a
+    /// quick frame proves the queue drained; only then may the next pass launch.
+    chunk_inflight: [Option<(u32, u8, f64)>; 2],
+    /// The regional license ledger: per cursor band, the largest pass size whose wall price came
+    /// in AT or under the target (quartered on a cliff price; see `render::chunk_band_update`).
+    /// Survives same-sig restarts — re-crossing the wrap-storm band with amnesia was the kill —
+    /// and clears when the sig changes.
+    chunk_bands: [[u32; crate::tunables::CHUNK_BANDS]; 2],
     /// Budget-climb probe (see `MandelbrotParams::probe_nonce`): bumped on settled frames while
     /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
     /// where budget growth is too small to re-key the frame and the climb freezes.
@@ -542,7 +544,8 @@ impl Default for Perf {
             chunk_dirty: [false, false],
             chunk_last_range: [None, None],
             chunk_pass_dt: [0.0, 0.0],
-            chunk_ok_step: [0, 0],
+            chunk_inflight: [None, None],
+            chunk_bands: [[0; crate::tunables::CHUNK_BANDS], [0; crate::tunables::CHUNK_BANDS]],
             probe_nonce: [0, 0],
             hold_active: [false, false],
             hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
