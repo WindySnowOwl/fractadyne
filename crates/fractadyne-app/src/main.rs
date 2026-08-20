@@ -418,9 +418,17 @@ struct Perf {
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
     /// Escape-range accumulator for a mid-flight chunked walk: per-pass band readings widen this
-    /// (min-min/max-max) and it feeds `norm_range`'s EMA once, whole, when the walk completes —
-    /// see `render::norm_window_feed` (the noise-vs-flat field report).
+    /// (min-min/max-max) and it feeds `norm_range`'s EMA once, whole, at the walk's COMPLETION
+    /// EVENT — see `render::norm_window_feed` (the noise-vs-flat field report, both rounds).
     norm_acc: [Option<(f32, f32)>; 2],
+    /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
+    /// `build_params`. The norm drain keys on THIS, not on the cursor: escape readings lag their
+    /// dispatches by 2-3 frames, so a completed walk's LAST band lands with the cursor already at
+    /// the ask — classified by cursor it read as a whole-frame range and dragged the palette
+    /// window onto one band (field report round two: "flashed correct coloring briefly, then
+    /// flat"). Classified by regime it accumulates, and same-view stragglers folding into the
+    /// next walk's accumulator are harmless.
+    chunk_governed: [bool; 2],
     /// Adaptive deep-motion resolution scale (AIMD), driven by `frame_ms` in `build_params`. The
     /// WORK_BUDGET `res_scale` sizes moving frames from the *no-BLA-skip* cost and over-shrinks them
     /// where the BLA skips; this measured scale grows toward native while frames stay near vsync and
@@ -593,6 +601,7 @@ impl Default for Perf {
             ],
             norm_range: [None, None],
             norm_acc: [None, None],
+            chunk_governed: [false, false],
             motion_res: 0.6,
         }
     }

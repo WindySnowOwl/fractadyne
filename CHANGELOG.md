@@ -16,6 +16,16 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: correct colors could flash and then flatten on deep views** (beta.115). The remaining
+  half of the beta.112 normalization fix. The palette window was fed correctly the moment a
+  refinement completed — the brief flash of proper coloring — but each measurement arrives a few
+  frames after the work it describes, so the final piece's late reading landed after completion
+  and was mistaken for a whole-frame range, dragging the window onto a sliver and flattening the
+  picture. Measurements are now classified by whether the view is under piece-by-piece
+  refinement, not by refinement progress: while it is, they only ever widen the pending window,
+  which is applied exactly once, complete, at the moment of completion — verified live at the
+  reporting view, late reading and all.
+
 - **The performance panel now watches the danger zones for you** (beta.114). New rows for
   process memory (current and peak — deep reference builds have quietly peaked over 2 GB) and an
   estimated GPU-resident figure assembled from the allocations the app makes. And the statistics

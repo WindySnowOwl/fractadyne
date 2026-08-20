@@ -2761,29 +2761,44 @@ impl FractadyneApp {
                     if mn.is_finite() && mx.is_finite() && mx >= mn {
                         // A chunked frame's reading spans ONE PASS's iteration band, not the
                         // frame — see `norm_window_feed` (the noise-vs-flat field report).
-                        // Readings accumulate while the walk is mid-flight and feed the EMA
-                        // once, whole, on completion.
-                        let mid_walk = {
-                            let ask = self.perf.chunk_sig[vb].1;
-                            ask > 0
-                                && self.perf.chunk_cursor[vb] > 0
-                                && self.perf.chunk_cursor[vb] < ask
-                        };
-                        let (acc, ema) = norm_window_feed(
-                            self.perf.norm_acc[vb],
-                            (mn, mx),
-                            mid_walk,
-                            self.perf.norm_range[vb],
-                        );
-                        self.perf.norm_acc[vb] = acc;
-                        if let Some(e) = ema {
-                            self.perf.norm_range[vb] = Some(e);
+                        // ⚠Classified by REGIME (`chunk_governed`), never by the cursor:
+                        // readings lag their dispatches by 2-3 frames, so a completed walk's
+                        // last band arrives with the cursor already at the ask — by-cursor
+                        // classification fed that lone band to the EMA as a whole-frame range
+                        // and dragged the palette window onto it ("flashed correct coloring
+                        // briefly, then flat"). Under chunk governance readings ONLY accumulate;
+                        // the feed fires at the completion EVENT in the chunk block, and
+                        // stragglers fold into the next walk's accumulator, where same-view
+                        // bands are harmless.
+                        if self.perf.chunk_governed[vb] {
+                            let (acc, _) = norm_window_feed(
+                                self.perf.norm_acc[vb],
+                                (mn, mx),
+                                true,
+                                self.perf.norm_range[vb],
+                            );
+                            self.perf.norm_acc[vb] = acc;
+                        } else {
+                            // Leaving chunk governance orphans any half-walk bands: drop them —
+                            // an un-chunked frame's reading IS the whole range.
+                            self.perf.norm_acc[vb] = None;
+                            let (_, ema) = norm_window_feed(
+                                None,
+                                (mn, mx),
+                                false,
+                                self.perf.norm_range[vb],
+                            );
+                            if let Some(e) = ema {
+                                self.perf.norm_range[vb] = Some(e);
+                            }
                         }
                         crate::diag::trace(
                             "gpu",
                             format!(
-                                "norm range: frame [{mn:.0},{mx:.0}] mid_walk={mid_walk} acc {:?} ema {:?}",
-                                self.perf.norm_acc[vb], self.perf.norm_range[vb]
+                                "norm range: frame [{mn:.0},{mx:.0}] governed={} acc {:?} ema {:?}",
+                                self.perf.chunk_governed[vb],
+                                self.perf.norm_acc[vb],
+                                self.perf.norm_range[vb]
                             ),
                         );
                     }
@@ -3675,6 +3690,7 @@ impl FractadyneApp {
         let mut chunk_range: Option<[u32; 2]> = None;
         let mut chunk_idx = 0u32;
         self.perf.chunk_pending[vs] = false;
+        self.perf.chunk_governed[vs] = chunk_over;
         if chunk_over {
             // The iteration axis owns this compose (see the eligibility above): a settle grid
             // must not stay ARMED underneath it — its tiles can never form (emission requires
@@ -3866,6 +3882,30 @@ impl FractadyneApp {
                         self.perf.chunk_cursor[vs] = end;
                         self.perf.chunk_idx[vs] = chunk_idx.wrapping_add(1);
                         self.perf.chunk_pending[vs] = end < gpu_iter || pin_frame;
+                        // THE COMPLETION EVENT: the walk's whole-ask escape range feeds the
+                        // palette window here, once. The completing pass's own band is still in
+                        // flight (readings lag) — it folds into the NEXT walk's accumulator,
+                        // which at the same view is a head start, not pollution. A restarted
+                        // walk that never completed feeds nothing (its accumulator is cleared
+                        // with the reset above).
+                        if end == gpu_iter {
+                            if let Some(a) = self.perf.norm_acc[vs].take() {
+                                let (_, ema) =
+                                    norm_window_feed(None, a, false, self.perf.norm_range[vs]);
+                                if let Some(e) = ema {
+                                    self.perf.norm_range[vs] = Some(e);
+                                }
+                                if crate::diag::trace_on("gpu") {
+                                    crate::diag::trace(
+                                        "gpu",
+                                        format!(
+                                            "norm range: walk complete, fed [{:.0},{:.0}] ema {:?}",
+                                            a.0, a.1, self.perf.norm_range[vs]
+                                        ),
+                                    );
+                                }
+                            }
+                        }
                     }
                     self.perf.chunk_last_range[vs] = chunk_range;
                     if !interacting && !pin_frame {
