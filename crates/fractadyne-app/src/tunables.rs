@@ -538,6 +538,24 @@ pub(crate) const PIN_ABANDON_SPANS: f64 = 1.5;
 /// forever would magnify the held frame without limit (the recorded ever-larger-blocks shape).
 pub(crate) const PIN_MAX_FRAMES: u64 = 240;
 
+/// Backpressure pacer for the SETTLED chunk walk (crash-1787183917/-930, reproduced with the
+/// cursor untouched): a walk that dispatches one budget-sized pass EVERY frame saturates the
+/// queue when passes run hot — back-to-back ~1 s submissions with zero idle, the recorded
+/// beta.48 lethal profile — and saturation also breaks the SENSOR, because the iterate
+/// timestamps only arm when nothing is already in flight, so the budget only ever hears from
+/// the occasional cheap frame and cannot shrink. When the last frame interval ran past this,
+/// the walk holds its range (unchanged triple → the GPU dedupes, zero work) until
+/// `CHUNK_PACE_GAP` frames have passed since the last dispatch: the queue drains, presents
+/// happen, timestamps arm, and the controller can see again. A healthy walk (16–60 ms frames)
+/// never trips it.
+pub(crate) const CHUNK_PACE_DT_MS: f64 = 250.0;
+
+/// Minimum frames between settled chunk dispatches once `CHUNK_PACE_DT_MS` trips — the same
+/// ≥3-frame spacing the budget-climb probe uses, for the same reason (its comment: "the gap
+/// leaves present-able frames between dispatches (~⅓ duty), which is the profile the converged
+/// controller already runs").
+pub(crate) const CHUNK_PACE_GAP: u64 = 3;
+
 /// Hard drift ceiling for reusing a cached reference: a point beyond this fraction of a span
 /// off-centre is re-anchored (fresh pick) instead. Held at the `out_of_view` gate that already
 /// filters the caller, so a reused reference is never worse than one the live path already trusts.

@@ -305,6 +305,24 @@ struct Perf {
     /// and has not adopted): while interacting, the display must serve the hold snapshot, never
     /// the texture. Cleared by adoption, by any real (non-pin) latch, and at the settle edge.
     chunk_dirty: [bool; 2],
+    /// The last chunk range actually DISPATCHED per view — what a backpressure-paced frame
+    /// re-emits verbatim so the GPU's (key, tile, chunk, probe) triple stays unchanged and no
+    /// pass runs (the zero-work hold, chunking's version of the zero-area tile). `None` = no
+    /// dispatch since the last progression reset.
+    chunk_last_range: [Option<[u32; 2]>; 2],
+    /// Wall price of the last settled chunk pass: the frame interval measured one frame AFTER
+    /// the dispatch (the dispatch frame's own dt predates its submission). Feeds
+    /// `render::chunk_step_factor`, which sizes the next pass from what the last one actually
+    /// cost — the signal that keeps working when a saturated queue starves the GPU timestamps.
+    /// 0.0 = no pass measured since the progression (re)started.
+    chunk_pass_dt: [f64; 2],
+    /// SLOW-START ledger for the settled walk: the largest step whose wall price has actually
+    /// been SEEN at an acceptable cost this progression (0 = none yet). The next pass may be at
+    /// most 1.5× this — growth waits for evidence, so with a 2-3 frame deep swapchain the passes
+    /// in flight can never outrun their pricing the way the budget's own climb did
+    /// (crash-1787184558/-571: the walk's cheap early slices grew the budget ×1.5 per reading
+    /// straight into single ~1 s submissions before the first hot price landed).
+    chunk_ok_step: [u32; 2],
     /// Budget-climb probe (see `MandelbrotParams::probe_nonce`): bumped on settled frames while
     /// the budget is unconverged so the GPU re-measures — breaks the resolution-floor deadlock
     /// where budget growth is too small to re-key the frame and the climb freezes.
@@ -522,6 +540,9 @@ impl Default for Perf {
             dirty_shown: [0, 0],
             pin: [None, None],
             chunk_dirty: [false, false],
+            chunk_last_range: [None, None],
+            chunk_pass_dt: [0.0, 0.0],
+            chunk_ok_step: [0, 0],
             probe_nonce: [0, 0],
             hold_active: [false, false],
             hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],

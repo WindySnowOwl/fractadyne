@@ -3657,6 +3657,57 @@ impl FractadyneApp {
             // 4K panel would be 5×). Until a measurement exists the plain division is the bound;
             // the floor applies from the first measured budget onward.
             let floor = if self.perf.fe_budget[vidx] == 0 { 1 } else { 256 };
+            // The last pass's wall price lands in the NEXT frame's interval (the dispatch
+            // frame's own dt predates its submission) — sample it once, the frame after each
+            // settled dispatch. This is the price signal `chunk_step_factor` sizes the next
+            // pass from; unlike the GPU timestamps it cannot be starved by a saturated queue.
+            if !interacting
+                && self.perf.frame_idx == self.perf.fe_dispatch_frame[vs].wrapping_add(1)
+            {
+                self.perf.chunk_pass_dt[vs] = self.perf.last_dt_ms;
+                // SLOW-START ledger: this price is evidence. A pass whose wall price came in at
+                // an acceptable cost licenses the next size up (x1.5, mirroring TDR_GROW_MAX);
+                // a hot price licenses nothing — growth WAITS, which is what keeps the 2-3
+                // passes a deep swapchain can hold in flight from ever outrunning their pricing.
+                if let Some([s, e]) = self.perf.chunk_last_range[vs] {
+                    let target = if self.render_cfg.auto_iter {
+                        crate::tunables::cost().tdr_budget_ms
+                    } else {
+                        crate::tunables::cost().tdr_explicit_budget_ms
+                    };
+                    // Acceptance is AT the target, not above it: a price accepted at 1.5x and
+                    // then grown 1.5x lands the next single at ~2.25x the target — the 900 ms
+                    // band's doorstep — and the walk oscillates across it, rolling the Event-153
+                    // dice every pass (measured: 14k and 35k steps alternating, ~1 s singles).
+                    if self.perf.last_dt_ms > 0.0 && self.perf.last_dt_ms <= target {
+                        self.perf.chunk_ok_step[vs] =
+                            self.perf.chunk_ok_step[vs].max(e.saturating_sub(s));
+                    } else if self.perf.last_dt_ms > target * 2.0 {
+                        // A COST CLIFF (every repro death sat at cur ~ orbit_len, where pixels
+                        // begin wrapping the reference — a rebase-storm region ~10-70x the cold
+                        // rate): the license earned on the cold side is worthless on the hot
+                        // side, and holding it re-rolls the Event-153 dice every pass. Shed it —
+                        // the walk re-slow-starts INSIDE the region at a trivially safe size and
+                        // re-earns its way up at the hot region's own prices.
+                        self.perf.chunk_ok_step[vs] /= 4;
+                    }
+                }
+            }
+            // Wall-clock pass pricing (crash-1787183917/-930): the cost of [cur, cur+step)
+            // varies enormously within ONE progression, and the scalar budget hears mostly
+            // from the cheap slices — so a settled pass is sized from the budget SCALED by
+            // what the previous pass actually cost. Motion and pin passes keep the budget's
+            // own sizing (their cadence is priced by the retreat as before).
+            let pace = if interacting || pin_frame {
+                1.0
+            } else {
+                let target_ms = if self.render_cfg.auto_iter {
+                    crate::tunables::cost().tdr_budget_ms
+                } else {
+                    crate::tunables::cost().tdr_explicit_budget_ms
+                };
+                chunk_step_factor(self.perf.chunk_pass_dt[vs], target_ms)
+            };
             // Per-frame iteration step that keeps this frame's dispatch inside the budget.
             // ⚠`tdr_steps` — ONE dispatch budget — NOT `tdr_allowed`. The allowance multiplies
             // the budget by `max_tiles` on a settled tiling-eligible frame because TILES spend it
@@ -3669,7 +3720,25 @@ impl FractadyneApp {
             // pass was again 16× the retreated budget. `bla_skip` collapsing to 0 at the interior
             // made nominal cost real cost at exactly that moment. Pinned by the "a settled
             // chunked pass stays inside ONE dispatch budget" selftest.
-            let step = ((tdr_steps / spx.saturating_mul(ss2).max(1)) as u32)
+            // SLOW-START cap (settled walks): at most 1.5x the largest step whose wall price
+            // has been SEEN and was acceptable this progression. The budget's own climb feeds on
+            // whatever readings arrive — at a heterogeneous ask those are the cheap slices, and
+            // it walked straight into single ~1 s submissions (the Event-153 band) with the hot
+            // prices still in flight behind the swapchain. Evidence-gated growth cannot: the
+            // first pass is floor-sized, and every size increase requires a priced predecessor.
+            let slow_start = if interacting || pin_frame {
+                u32::MAX // motion/pin cadence unchanged; their passes are budget-sized as before
+            } else {
+                // x1.25 growth on x1.0-accepted prices: a licensed single stays under ~1.25x
+                // the target (~500 ms) — real margin below the ~900 ms lethal band, unlike the
+                // budget's own x1.5-on-anything climb.
+                self.perf.chunk_ok_step[vs]
+                    .saturating_add(self.perf.chunk_ok_step[vs] / 4)
+                    .max(floor.max(256))
+            };
+            let step = (((tdr_steps as f64 * pace) as u64 / spx.saturating_mul(ss2).max(1))
+                as u32)
+                .min(slow_start)
                 .clamp(floor, gpu_iter.max(floor));
             // View signature: anything that shapes the render restarts the progression.
             // ⚠The REFERENCE LENGTH is part of it. `orbit_len` feeds both the per-pass BLA table
@@ -3699,6 +3768,9 @@ impl FractadyneApp {
                 self.perf.chunk_sig[vs] = sig;
                 self.perf.chunk_cursor[vs] = 0;
                 self.perf.chunk_idx[vs] = 0;
+                self.perf.chunk_last_range[vs] = None;
+                self.perf.chunk_pass_dt[vs] = 0.0;
+                self.perf.chunk_ok_step[vs] = 0;
             }
             let cur = self.perf.chunk_cursor[vs];
             // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
@@ -3719,22 +3791,58 @@ impl FractadyneApp {
                 );
             }
             if cur < gpu_iter {
-                let end = cur.saturating_add(step).min(gpu_iter);
-                chunk_range = Some([cur, end]);
-                chunk_idx = self.perf.chunk_idx[vs];
-                // Moving frames restart at 0 next frame (the sig reset above); settled frames and
-                // PIN frames advance until the full count is honoured. A pin keeps
-                // `chunk_pending` up through its completing pass, so repaints keep coming for the
-                // adoption frame even if the user's input pauses inside the settle window.
-                if !interacting || pin_frame {
-                    self.perf.chunk_cursor[vs] = end;
-                    self.perf.chunk_idx[vs] = chunk_idx.wrapping_add(1);
-                    self.perf.chunk_pending[vs] = end < gpu_iter || pin_frame;
+                // BACKPRESSURE PACER, settled walks only (crash-1787183917/-930, reproduced with
+                // the cursor untouched — see CHUNK_PACE_DT_MS). A hot walk dispatching one
+                // budget-sized pass EVERY frame is back-to-back ~1 s submissions with zero idle —
+                // the beta.48 lethal profile — and saturation also silences the iterate
+                // timestamps (they only arm when nothing is in flight), so the budget cannot
+                // shrink: the device died with every pass at exactly 1× budget and not a single
+                // lethal reading fired. When the last interval ran long, hold the LAST DISPATCHED
+                // range (unchanged triple → the GPU dedupes, zero work — never price this frame)
+                // until the gap since the last dispatch reaches CHUNK_PACE_GAP. The first pass of
+                // a progression is never paced (reveal latency), and interacting/pin frames keep
+                // their own cadence.
+                let target_now = if self.render_cfg.auto_iter {
+                    crate::tunables::cost().tdr_budget_ms
+                } else {
+                    crate::tunables::cost().tdr_explicit_budget_ms
+                };
+                let paced_out = !interacting
+                    && !pin_frame
+                    && self.perf.chunk_last_range[vs].is_some()
+                    && ((self.perf.last_dt_ms > crate::tunables::CHUNK_PACE_DT_MS
+                        && self.perf.frame_idx.saturating_sub(self.perf.fe_dispatch_frame[vs])
+                            < crate::tunables::CHUNK_PACE_GAP)
+                        // After a pass priced PAST the band's approach, hold until the queue has
+                        // demonstrably DRAINED — a frame whose own interval came back quick. A
+                        // gap counted in frames does not drain anything when the swapchain is
+                        // 2-3 presents deep in ~1 s submissions; a quick frame is proof of idle.
+                        || (self.perf.chunk_pass_dt[vs] > target_now * 2.0
+                            && self.perf.last_dt_ms > 100.0));
+                if paced_out {
+                    chunk_range = self.perf.chunk_last_range[vs];
+                    chunk_idx = self.perf.chunk_idx[vs];
+                    // Still mid-flight: keep repaints coming so the gap frames actually happen.
+                    self.perf.chunk_pending[vs] = true;
+                } else {
+                    let end = cur.saturating_add(step).min(gpu_iter);
+                    chunk_range = Some([cur, end]);
+                    chunk_idx = self.perf.chunk_idx[vs];
+                    // Moving frames restart at 0 next frame (the sig reset above); settled frames
+                    // and PIN frames advance until the full count is honoured. A pin keeps
+                    // `chunk_pending` up through its completing pass, so repaints keep coming for
+                    // the adoption frame even if the user's input pauses inside the settle window.
+                    if !interacting || pin_frame {
+                        self.perf.chunk_cursor[vs] = end;
+                        self.perf.chunk_idx[vs] = chunk_idx.wrapping_add(1);
+                        self.perf.chunk_pending[vs] = end < gpu_iter || pin_frame;
+                    }
+                    self.perf.chunk_last_range[vs] = chunk_range;
+                    // This frame runs a real bounded pass; pair the measurement with ITS cost.
+                    self.perf.fe_steps_last[vs] =
+                        spx.saturating_mul(ss2).saturating_mul((end - cur).max(1) as u64);
+                    self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
                 }
-                // This frame runs a real bounded pass; pair the measurement with ITS cost.
-                self.perf.fe_steps_last[vs] =
-                    spx.saturating_mul(ss2).saturating_mul((end - cur).max(1) as u64);
-                self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
             } else {
                 // Progression complete: emit the empty tail range — the (key, tile, chunk) triple
                 // stops changing after one cheap pass-through frame, and the view is served from
@@ -5045,6 +5153,64 @@ mod pin_policy {
         i.pan_spans = 0.0;
         i.frame_idx = 1_000 + crate::tunables::PIN_MAX_FRAMES;
         assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+    }
+}
+
+/// Wall-clock step factor for a settled chunk pass — the fraction of one dispatch budget the
+/// NEXT pass may spend, derived from what the LAST pass actually cost in wall time.
+///
+/// WHY WALL TIME (crash-1787183917/-930, the settled-minibrot kill): the iterate timestamps only
+/// arm when nothing is in flight, so a saturated walk starves them — and the readings that do
+/// land come from the CHEAP slices of the ask, growing a scalar budget that the hot slices then
+/// blow as single ~1 s submissions (the Event-153 band). The cost of `[cur, cur+step)` varies
+/// enormously within ONE progression (interior-heavy ranges skip nothing; escaped-early ranges
+/// are nearly free), so no single converged number can size every pass. The frame interval after
+/// a dispatch IS that pass's wall price — available every frame, unstarveable — and pricing the
+/// next pass from it makes the walk self-regulate around the target the way the AIMD motion
+/// controller does (`motion_res_step`, same philosophy, same signal).
+///
+/// Clamped to [1/16, 1]: never grows the pass past the budget's own sizing (growth is the
+/// budget's job, on its own evidence), never shrinks below a sixteenth (the 256-iteration step
+/// floor is the real lower bound; a pass 16× too hot has the retreat and the pacer behind this).
+/// `pass_dt_ms <= 0` (no dispatch measured yet — fresh progression) is 1.0: the opening pass
+/// runs at the budget's size, and the first interval reprices from there.
+pub(crate) fn chunk_step_factor(pass_dt_ms: f64, target_ms: f64) -> f64 {
+    if pass_dt_ms <= 0.0 || !pass_dt_ms.is_finite() || target_ms <= 0.0 {
+        return 1.0;
+    }
+    (target_ms / pass_dt_ms).clamp(1.0 / 16.0, 1.0)
+}
+
+#[cfg(test)]
+mod chunk_pace {
+    use super::chunk_step_factor;
+
+    #[test]
+    fn a_healthy_walk_is_untouched() {
+        // Present-paced frames (16–60 ms) sit far under any target: full budget, factor 1.
+        assert_eq!(chunk_step_factor(16.0, 400.0), 1.0);
+        assert_eq!(chunk_step_factor(399.0, 400.0), 1.0);
+    }
+
+    #[test]
+    fn a_hot_pass_prices_the_next_one_down_proportionally() {
+        // The field kill: ~1000 ms passes against a 400 ms target → next pass 0.4× the budget.
+        let f = chunk_step_factor(1000.0, 400.0);
+        assert!((f - 0.4).abs() < 1e-12, "got {f}");
+    }
+
+    #[test]
+    fn the_floor_holds_against_absurd_readings() {
+        // A 2 s (watchdog-scale) interval floors at 1/16 — the retreat and the pacer own the
+        // regime below this; the factor must never zero the step.
+        assert_eq!(chunk_step_factor(400.0 * 64.0, 400.0), 1.0 / 16.0);
+    }
+
+    #[test]
+    fn no_reading_means_no_opinion() {
+        assert_eq!(chunk_step_factor(0.0, 400.0), 1.0);
+        assert_eq!(chunk_step_factor(-5.0, 400.0), 1.0);
+        assert_eq!(chunk_step_factor(f64::NAN, 400.0), 1.0);
     }
 }
 

@@ -992,6 +992,46 @@ Mockups: [design/mockups/](design/mockups/).
   opens it braids with: the timestamp-outage blind stretch ("no GPU iterate timing after 30
   frames", seen again in this crash log), and nominal-vs-real repricing on `bla_skip` collapse.
 
+- [ ] 🔴🔴**THE SETTLED WALK STILL LOSES THE DEVICE AT A WRAP-STORM VIEW — the residual above,
+  field-confirmed the same night (crash-1787183518/-587, beta.107), five repro deaths, four
+  mitigation layers built, the structural fix DESIGN-READY but not implemented.**
+  User recipe (again): minibrot at 2^151.2×, explicit 4M, settled; also reported "moving the
+  mouse in and out caused recomputes" — ⛔**the mouse is exonerated**: the repro dies with the
+  cursor untouched (and once grabbed a bogus 15×15 window and still died). What looked like
+  re-computing was a walk that runs ~1 s/frame and never finishes.
+  ⭐⭐**THE MECHANISM CHAIN, each link measured**:
+  (1) the settled walk dispatches one budget-sized pass EVERY frame → back-to-back ~1 s
+  submissions with zero idle (the beta.48 lethal profile);
+  (2) saturation SILENCES THE SENSOR — iterate timestamps arm only "when nothing is in flight" —
+  so the budget hears mostly cheap slices and GROWS (readings 4.6e10→5.9e10 while 1 s frames
+  flowed unmeasured; NO lethal reading ever fired in the fatal sessions);
+  (3) the ask's cost is REGIONAL, with a CLIFF at cur ≈ orbit_len (634,214 here) where pixels
+  wrap the reference — a rebase-storm band ~10-70× the cold rate. Every repro death sat at
+  cur ≈ 830k-900k (pre-mitigation) or in the 634k+ band (post);
+  (4) with the swapchain 2-4 presents deep, entering the cliff puts SEVERAL full-size passes in
+  flight before the first honest price can land — frames 96-99 of the final repro: four
+  consecutive ~1 s singles, then loss.
+  🔨**BUILT (settled-walk-only, all evidence-gated, all floor-guarded)**: a backpressure PACER
+  (hold the last range — unchanged triple, GPU dedupes — until CHUNK_PACE_GAP frames since the
+  last dispatch when dt > CHUNK_PACE_DT_MS); WALL-PRICE sizing (`chunk_step_factor`, pure + 4
+  tests: next pass = budget × target/last-pass-wall-price, clamped [1/16, 1] — the signal
+  timestamps can't starve); SLOW-START (`chunk_ok_step`: a pass may be ≤1.25× the largest step
+  whose wall price was SEEN ≤ target; reset per progression); CLIFF-SHED (a price >2× target
+  quarters the license) + DRAIN-WAIT (after a hot pass, dispatch only after a quick frame proves
+  the queue drained). Net effect measured: survival 13 s → 25 s, sizes moderate at the crossing —
+  **the device still dies inside the cliff's detection-latency window.**
+  📐**THE STRUCTURAL FIX (next session)**: PRICE-SERIALIZED WALKING — never more than ONE
+  unpriced pass in flight (dispatch pass k+1 only once pass k's wall price has been observed).
+  Zero regression on healthy views (a quick pass's price arrives by the next frame anyway); at
+  unknown-cost regions the walk advances at exactly the rate its prices arrive, so a cliff can
+  cost at most ONE marginal single. Design it with the controller_props treatment (pure fn +
+  property tests), and consider regional rate memory (the mode_rate MIN-latch precedent, keyed
+  on cur-bands relative to orbit_len) so re-walks of the same ask price the storm band correctly
+  from pass one. ⚠Until it lands: a settled minibrot interior at a multi-million explicit ask
+  remains device-lethal on this hardware — the same view at ≤250k, or with auto-iter on, is fine.
+  ⚠The pin (motion) dispatches per-frame too and shares the queue-depth exposure in principle;
+  autodive passes today, but apply the same discipline there when this lands.
+
   🔧**Harness facts learned the hard way (2026-08-19):**
   - ⚠**`--autodive 22` NEVER REACHES MODE 2** (1e22 is below the 1e28 threshold): measured 1032
     mode-0 / 354 mode-1 / **0 mode-2** frames. The `live/home/glide-from-depth` torture rung uses

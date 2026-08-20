@@ -16,6 +16,19 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Deep settled views now pace their own work by what it actually costs** (beta.108). Follow-up
+  to the beta.107 crash: the same recipe (a minibrot at maximum iterations, left to settle) could
+  still reset the card, because the view refined itself with back-to-back pieces of work and the
+  cost of a piece varies enormously across one refinement — the cheap stretches kept talking the
+  scheduler into sizes the expensive stretches then blew, and a saturated card also silences the
+  very measurements that would have corrected it. Each piece is now priced by the wall-clock cost
+  of the previous one (a signal saturation cannot silence), grows only on evidence, sheds its
+  size the moment a stretch turns expensive, and leaves the card idle gaps under pressure.
+  ⚠Honestly: this measurably reduces the danger but does not yet eliminate it at the worst case —
+  a minibrot interior at a multi-million iteration count can still reset the card while settling
+  (the fix that closes it fully is designed and queued). Until then, such views are safe at
+  moderate iteration counts or with automatic iterations on.
+
 - **Fixed: sitting on a deep minibrot at maximum iterations could still reset the graphics card**
   (beta.107). Reported the same day beta.106 landed: zoom into a minibrot, set iterations to
   maximum, wait — the card reset within minutes. The work-splitting introduced for deep views had
