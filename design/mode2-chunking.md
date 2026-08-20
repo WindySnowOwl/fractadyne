@@ -780,3 +780,55 @@ order of operations.** And its corollary, already proven twice this cycle in the
 direction (nominal-vs-real): every safety margin downstream of a mispriced ledger is sized
 from fantasy — the walk, the bands, the licenses were all doing their jobs correctly against
 numbers that were wrong at the source.
+
+## 14. Price-serialized motion: the discipline was right, it was just missing from one path (2026-08-20)
+
+The beta.116 rerun on the RX 6800 XT died again — 63.8 s, `crash-1787263152-0` — and this log is
+the clean experiment the first crash could not be: with the ledger honest, every governed frame
+shows `steps == budget` and the walk growing ×1.5 per real reading. The controller did nothing
+wrong, and the device still died. That isolates the remaining defect exactly:
+
+1. **The budget is nominal, and nominal is not a unit of work.** The dive's escape-fast frames
+   earned the 6e10 ceiling honestly (~450–520 ms real). The home turn's dwell-bound frames made
+   the same 6e10 cost 1.0–1.25 s. Nothing misrecorded, nothing stale — the fourth recorded
+   instance of the nominal-vs-real fallacy, this time with every number in the ledger true.
+2. **Readings lag 2–3 frames, and the queue accepts work faster than prices return.** Frames
+   989–996: five 6e10 dispatches submitted, body ~0 ms, outside ~500 ms each — five monsters in
+   flight, none priced. When the first slow reading landed, three more were already queued behind
+   it. `budget_step`'s emergency-retreat comment had already written this postmortem: "it died
+   after three." Frame 1081's present wait: 2030 ms — the Windows TDR line.
+
+The settled walk solved exactly this in §12 with price-serialization (≤1 unpriced pass in
+flight, wall-priced drains). The live motion path had no equivalent — it trusted the budget and
+submitted every frame. beta.117 ports the discipline: `unpriced_full` counts dispatches ≥0.7×
+the learned budget (the same representativeness threshold `budget_step` uses to accept a
+reading, so "counts as backlog" and "would move the budget" are one definition) that no returned
+reading has yet priced; at `MOTION_UNPRICED_MAX = 2` the frame's allowance clamps to the
+rate-derived bootstrap. Any returned reading clears the backlog, because the queue is FIFO — one
+price proves everything submitted before it has drained. A clamped frame is sub-threshold by
+construction, so a jam never counts itself, and the gate releases the moment the queue moves.
+
+Worst-case queue depth is now bounded by construction: two full-size dispatches ≈ 2×400 ms
+target ≈ 0.8–2.5 s even across a 5× regime cliff, under the watchdog, with the retreat live.
+
+The probe's role, both crashes: the synchronous readback where a pending loss SURFACES, plus a
+1–2 s main-thread wedge building its export-appetite reference at re-dive (the standing open
+perf item). Messenger both times; its truthful `PROBE 56x56` manifest stamp (§13) paid for
+itself on the second crash within the hour.
+
+**The lesson, §13's corollary completed: a correct ledger is necessary but not sufficient — the
+submission path must also never outrun the ledger.** Pricing discipline is one invariant with
+two halves: record honestly (§13), and submit only what has been priced (§14). Every path that
+dispatches budget-sized work needs both, and the settled walk had both first because it died
+first.
+
+**§14 calibration note (same day).** `MOTION_UNPRICED_MAX` opened at 2 and one 3080 autodive
+engaged the gate **1,323 times** while passing — readings lag their dispatches by 2–3 frames, so
+healthy pipelining *holds* 2–3 unpriced dispatches at steady state, and a cap of 2 clamped every
+third frame of ordinary motion (a motion-only quality regression no checkpoint gate can see —
+the pixellation lesson again). Default is 3: above healthy latency, two under the five-deep kill.
+The residual risk stays named: the gate bounds STACKING, but the first budget-sized dispatch at a
+virgin regime cliff still goes out once at the old price — if the Radeon rerun still finds a
+single ≥2 s packet, the next layer is range-chunking the motion frame itself (the option C pin
+machinery already runs bounded interacting passes; the res-shrink pre-fits motion frames to the
+budget, which is why `chunk_over` alone can never catch this case).

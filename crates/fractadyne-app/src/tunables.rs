@@ -73,6 +73,7 @@ pub(crate) struct Cost {
     pub tdr_min_steps: u64,
     pub tdr_steps_ceil: u64,
     pub explicit_steps_ceil: u64,
+    pub motion_unpriced_max: u64,
     pub explicit_dispatch_cap: u64,
     pub tdr_max_tiles: u64,
     pub tdr_tiles_ceil: u64,
@@ -97,6 +98,7 @@ impl Default for Cost {
             tdr_min_steps: TDR_MIN_STEPS_DEFAULT,
             tdr_steps_ceil: TDR_STEPS_CEIL_DEFAULT,
             explicit_steps_ceil: EXPLICIT_STEPS_CEIL_DEFAULT,
+            motion_unpriced_max: MOTION_UNPRICED_MAX_DEFAULT,
             explicit_dispatch_cap: EXPLICIT_DISPATCH_CAP_DEFAULT,
             tdr_max_tiles: TDR_MAX_TILES_DEFAULT,
             tdr_tiles_ceil: TDR_TILES_CEIL_DEFAULT,
@@ -192,6 +194,9 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
             "EXPLICIT_STEPS_CEIL" => {
                 let p = c.explicit_steps_ceil; c.explicit_steps_ceil = u()?; p.to_string()
             }
+            "MOTION_UNPRICED_MAX" => {
+                let p = c.motion_unpriced_max; c.motion_unpriced_max = u()?; p.to_string()
+            }
             "EXPLICIT_DISPATCH_CAP" => {
                 let p = c.explicit_dispatch_cap; c.explicit_dispatch_cap = u()?; p.to_string()
             }
@@ -210,6 +215,12 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
     if c.tdr_max_tiles > c.tdr_tiles_ceil {
         return Err("--set: TDR_MAX_TILES must not exceed TDR_TILES_CEIL".to_string());
     }
+    // Zero would clamp every motion frame to the bootstrap forever — an app that looks broken is
+    // not a diagnostic setting. To disable the gate for a bisection, set it large (e.g. 999).
+    if c.motion_unpriced_max == 0 {
+        return Err("--set: MOTION_UNPRICED_MAX must be at least 1 (use a large value to disable)"
+            .to_string());
+    }
     let _ = ACTIVE.set(c);
     let _ = APPLIED.set(applied);
     Ok(())
@@ -217,8 +228,8 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
 
 /// The names `--set` accepts, for the error message and `--help`.
 pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
-    TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_LETHAL_MS, TDR_BOOTSTRAP_STEPS, \r
-    TDR_BOOTSTRAP_MS, \
+    TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_LETHAL_MS, TDR_BOOTSTRAP_STEPS, \
+    TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS";
 
@@ -237,6 +248,7 @@ mod override_tests {
         assert_eq!(d.mode_rate_unknown_margin, MODE_RATE_UNKNOWN_MARGIN_DEFAULT);
         assert_eq!(d.tdr_min_steps, TDR_MIN_STEPS_DEFAULT);
         assert_eq!(d.tdr_steps_ceil, TDR_STEPS_CEIL_DEFAULT);
+        assert_eq!(d.motion_unpriced_max, MOTION_UNPRICED_MAX_DEFAULT);
         assert_eq!(d.explicit_dispatch_cap, EXPLICIT_DISPATCH_CAP_DEFAULT);
         assert_eq!(d.tdr_max_tiles, TDR_MAX_TILES_DEFAULT);
         assert_eq!(d.tdr_tiles_ceil, TDR_TILES_CEIL_DEFAULT);
@@ -315,6 +327,26 @@ mod override_tests {
 /// G3). The resolution cost lands at full-window deep views, which is exactly where no automated
 /// coverage currently exists.
 pub(crate) const TDR_BUDGET_MS_DEFAULT: f64 = 400.0;
+
+/// How many FULL-SIZE dispatches (>= 0.7x the learned budget — `budget_step`'s own
+/// representativeness threshold) may sit in the GPU queue UNPRICED before motion frames stop
+/// submitting more and dispatch at the rate-derived bootstrap instead.
+///
+/// The budget walk is sound per reading, but readings lag their dispatches by 2-3 frames, and the
+/// budget is NOMINAL: a home sweep moves the nominal-to-real ratio ~5x, so a budget converged in
+/// one regime prices fantasy in the next even when every reading is honest. Radeon autodive,
+/// 2026-08-20 (`crash-1787263152-0`): the home turn stacked FIVE unpriced 6e10 dispatches
+/// (frames 989-996, body ~0, outside ~500 ms each); the cliff made each 1.0-1.25 s real, and the
+/// emergency retreat's first reading landed behind three more of them — the shape `budget_step`'s
+/// retreat comment records as "it died after three".
+///
+/// ⚠Three, not two — two was MEASURED to sit INSIDE healthy pipelining: readings lag their
+/// dispatches by 2-3 frames, so ordinary motion holds 2-3 unpriced dispatches at steady state,
+/// and at max=2 one 3080 autodive engaged the gate 1,323 times — clamping (and logging) every
+/// third frame of normal operation. Three clears the healthy latency and still caps the backlog
+/// two under the observed five-deep kill. The settled walk needs none of this because it already
+/// serializes (<= 1 unpriced pass, `CHUNK_DRAIN_DT_MS`).
+pub(crate) const MOTION_UNPRICED_MAX_DEFAULT: u64 = 3;
 
 /// Per-measurement budget change limits. Growth is capped well under 2× so the next frame cannot leap
 /// from the target into the watchdog; shrink is allowed to halve at once.

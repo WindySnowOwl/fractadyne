@@ -202,6 +202,14 @@ struct Perf {
     /// bugs, which is exactly when a fallback is worth having. Global because every cause is
     /// (device features, a starved sink); either view may trip it.
     wall_fallback: bool,
+    /// Full-size dispatches (>= 0.7x the learned budget) submitted and not yet priced by any
+    /// returned reading. The motion-jam gate (`MOTION_UNPRICED_MAX`) reads this in `build_params`;
+    /// any consumed reading clears it — the queue is FIFO, so one returned price proves everything
+    /// submitted before it has drained.
+    unpriced_full: [u32; 2],
+    /// Throttle for the motion-jam log line: episodes recur every few frames while a heavy dive
+    /// outruns its readings, and a line per episode buried a real session under ~1,300 of them.
+    jam_log_at: Option<std::time::Instant>,
     /// Process working set / peak, polled at ~1 Hz for the perf panel (one Win32 call each —
     /// the sysinfo doc says "NOT on anything per-frame", so this caches).
     mem_rss: u64,
@@ -538,6 +546,8 @@ impl Default for Perf {
             ts_reading_frame: [0, 0],
             fe_dispatch_frame: [0, 0],
             wall_fallback: false,
+            unpriced_full: [0, 0],
+            jam_log_at: None,
             mem_rss: 0,
             mem_peak: 0,
             mem_total: None,
@@ -6255,6 +6265,7 @@ impl FractadyneApp {
             );
             self.perf.wall_probe[v] = probe;
             if let Some((ms, steps)) = priced {
+                self.perf.unpriced_full[v] = 0; // a wall price is a price — same drain proof
                 self.apply_iterate_measurement(v, ms, steps, "wall_iterate");
             }
         }
@@ -6399,6 +6410,9 @@ impl eframe::App for FractadyneApp {
                 continue;
             }
             self.perf.ts_reading_frame[v] = self.perf.frame_idx;
+            // FIFO drain proof: this price returning means every dispatch submitted before it has
+            // completed — the motion-jam backlog is gone whichever dispatch the price describes.
+            self.perf.unpriced_full[v] = 0;
             // A real GPU timing arrived, so the fallback's premise is gone — UNLATCH it. It used to
             // be a one-way switch, so a single 30-frame gap (a settle, a long reference install, an
             // alt-tab) turned the wall clock into a permanent SECOND measurement source competing

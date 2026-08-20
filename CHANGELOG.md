@@ -16,6 +16,18 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: a fast zoom-out from depth could stack oversized GPU work faster than measurements
+  could brake it** (beta.117). The companion to the beta.116 fix, from the same validation
+  campaign's second crash: with the bookkeeping honest, the cost controller is still fed nominal
+  step counts, and what a nominal step costs for real changes several-fold across a zoom home.
+  Measurements arrive a few frames after the work they describe, so the sweep queued five
+  full-budget dispatches before the first "this regime is slower" reading could land — and by
+  then each queued dispatch ran over a second. Motion frames now stop submitting full-size work
+  while two of them are still unmeasured, dropping to the small opening-guess size until a
+  measurement returns; the queue stays shallow, the retreat gets to act, and no single dispatch
+  approaches the driver's watchdog. Settled views are untouched (their refinement already
+  self-serializes), and the new `MOTION_UNPRICED_MAX` is `--set`-overridable for field bisection.
+
 - **Fixed: the frame-cost budget could inflate on misrecorded step counts, oversizing dispatches
   on the way home from a deep dive** (beta.116). Found in an RX 6800 XT validation run: a
   refinement pass's bounded cost was overwritten with the full frame's nominal count whenever a

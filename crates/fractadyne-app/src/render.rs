@@ -3293,6 +3293,39 @@ impl FractadyneApp {
         } else {
             tdr_steps
         };
+        // *PRICE-SERIALIZED MOTION — the live path's port of the settled walk's discipline
+        // (design/mode2-chunking.md sections 12-13). Readings lag their dispatches by 2-3 frames,
+        // so a motion sweep can stack full-budget dispatches faster than their prices return; and
+        // the budget is NOMINAL, so one converged in a skip-rich or escape-fast regime prices
+        // fantasy in the next even when every reading is honest — the nominal-to-real ratio moves
+        // ~5x across a home sweep (the fourth recorded instance of the nominal-vs-real fallacy).
+        // Radeon autodive, 2026-08-20 (crash-1787263152-0): the home turn stacked FIVE unpriced
+        // 6e10 dispatches, the cliff made each 1.0-1.25 s real, and the emergency retreat's first
+        // reading landed behind three more of them. While MOTION_UNPRICED_MAX full-size dispatches
+        // are unpriced, a motion frame dispatches at the rate-derived bootstrap instead: the queue
+        // drains, prices land, the retreat can act, and no single packet approaches the watchdog.
+        // Settled paths need none of this: the chunked walk serializes itself, and tiles arm only
+        // on a converged budget.
+        let motion_jammed = motion_jammed(
+            self.perf.unpriced_full[vidx],
+            crate::tunables::cost().motion_unpriced_max,
+            interacting,
+            offscreen,
+            will_reproject,
+        );
+        let tdr_steps = if motion_jammed {
+            let clamped = tdr_steps.min(self.perf.bootstrap_steps(vidx));
+            crate::diag::trace(
+                "gpu",
+                format!(
+                    "motion jam: {} unpriced full-size dispatches — frame clamped {tdr_steps:.3e}                      -> {clamped:.3e}",
+                    self.perf.unpriced_full[vidx]
+                ),
+            );
+            clamped
+        } else {
+            tdr_steps
+        };
         if !offscreen && !will_reproject {
             self.perf.frozen_budget[vidx] = tdr_steps;
         }
@@ -4801,6 +4834,40 @@ impl FractadyneApp {
             self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
             self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
         }
+        // MOTION-JAM ACCOUNTING — one site, after every dispatch path has stamped its cost.
+        // Whatever shape this frame dispatched (full frame, settle tile, chunk range, climb
+        // probe), `fe_dispatch_frame` says it ran and `fe_steps_last` says what it cost; count it
+        // toward the unpriced backlog when it is full-size against the learned budget. Readings
+        // clear the counter in `update` (FIFO — one returned price proves everything before it
+        // drained). A jam-clamped frame stays under the threshold by construction, so a jam
+        // never counts itself and the gate releases the moment any price returns.
+        if !will_reproject && self.perf.fe_dispatch_frame[vs] == self.perf.frame_idx {
+            let learned = budget_base(self.perf.fe_budget[vs], self.perf.bootstrap_steps(vs));
+            if motion_jam_counts(self.perf.fe_steps_last[vs], learned) {
+                let n = self.perf.unpriced_full[vs].saturating_add(1);
+                self.perf.unpriced_full[vs] = n;
+                if interacting && n as u64 == crate::tunables::cost().motion_unpriced_max {
+                    // Logged, not trace-gated (the lethal-band rule): if the field needed this
+                    // gate, the log must already say so. But THROTTLED to one line per 5 s —
+                    // episodes recur every few frames while a heavy dive outruns its readings,
+                    // and a line per episode buried a session under ~1,300 of them.
+                    let due = self
+                        .perf
+                        .jam_log_at
+                        .is_none_or(|at| at.elapsed().as_secs_f64() > 5.0);
+                    if due {
+                        self.perf.jam_log_at = Some(std::time::Instant::now());
+                        crate::diag::log_line(
+                            "render",
+                            &format!(
+                                "motion jam: {n} full-size dispatches unpriced (budget {:.3e}) —                                  motion frames dispatch at bootstrap until a price returns",
+                                learned as f64
+                            ),
+                        );
+                    }
+                }
+            }
+        }
         // The sink is what carries the GPU timestamp back at all. Attaching it only on floatexp was
         // the root of the whole floatexp-only budget: with no sink there is no measurement, so no
         // budget, so nothing for the shrink or the tiled settle to size a frame against — and those
@@ -5602,6 +5669,58 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     // (a ceiling-pinned explicit budget is as converged as it is allowed to get; this is what
     // lets `fe_budget_ok` arm the tiled settle without a special case).
     Some((next, next == cur || (0.8..=1.25).contains(&factor)))
+}
+
+/// Does this dispatch count toward the motion-jam backlog? Full-size means >= 0.7x the learned
+/// budget — deliberately the SAME representativeness threshold `budget_step` uses to accept a
+/// reading, so "counts as backlog" and "would move the budget" are one definition.
+pub(crate) fn motion_jam_counts(dispatch_steps: u64, learned_budget: u64) -> bool {
+    dispatch_steps as f64 >= learned_budget as f64 * 0.7
+}
+
+/// The motion-jam gate: clamp this frame's allowance to the bootstrap? Pure so the rules are
+/// pinned by test — motion only (settled paths serialize themselves), never on a reproject frame
+/// (nothing dispatches), never offscreen (exports have their own wall-priced cap).
+pub(crate) fn motion_jammed(
+    unpriced: u32,
+    max: u64,
+    interacting: bool,
+    offscreen: bool,
+    will_reproject: bool,
+) -> bool {
+    interacting && !offscreen && !will_reproject && unpriced as u64 >= max
+}
+
+#[cfg(test)]
+mod motion_jam {
+    use super::*;
+
+    #[test]
+    fn the_backlog_counts_only_representative_dispatches() {
+        // The same 0.7 boundary budget_step uses to accept a reading.
+        assert!(motion_jam_counts(70, 100));
+        assert!(!motion_jam_counts(69, 100));
+        // A jam-clamped bootstrap dispatch against a grown budget must never count itself,
+        // or the gate would never release.
+        assert!(!motion_jam_counts(4_000_000, 60_000_000_000));
+    }
+
+    #[test]
+    fn the_gate_trips_at_the_cap_and_only_during_motion() {
+        assert!(motion_jammed(2, 2, true, false, false));
+        assert!(!motion_jammed(1, 2, true, false, false));
+        // Settled frames are the walk's business, not this gate's.
+        assert!(!motion_jammed(5, 2, false, false, false));
+        // Reproject frames dispatch nothing; offscreen renders have their own cap.
+        assert!(!motion_jammed(5, 2, true, true, false));
+        assert!(!motion_jammed(5, 2, true, false, true));
+    }
+
+    #[test]
+    fn a_large_override_disables_it() {
+        // The no-rebuild bisection lever: --set MOTION_UNPRICED_MAX=999.
+        assert!(!motion_jammed(u32::MAX, 999_999_999_999, true, false, false));
+    }
 }
 
 /// One AIMD step of the deep-motion resolution scale, from a REAL re-iterate frame's interval.
