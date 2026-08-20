@@ -450,7 +450,13 @@ impl FractadyneApp {
             // threshold MUST exceed the repaint-while-building interval (main.rs throttles idle
             // recompute repaints to ~50 ms) — otherwise every build frame counts as a gap and the
             // delay never accumulates, so the spinner never appears.
-            if now - self.pointer.spin_last[vi] > 0.2 {
+            // ⚠0.2 s was tuned for ~50 ms build repaints and broke the moment settled walks
+            // arrived: a serialized walk's frames run 200-400+ ms apart (each pass is a real
+            // budget-priced dispatch), so EVERY frame counted as a gap, the delay re-armed
+            // forever, and the spinner never appeared — field report: a black screen refining at
+            // 19.8% with no cue at all. The threshold must exceed one WALK frame, not one build
+            // repaint; a genuine between-builds gap is seconds.
+            if now - self.pointer.spin_last[vi] > 1.5 {
                 self.pointer.spin_since[vi] = now;
             }
             self.pointer.spin_last[vi] = now;

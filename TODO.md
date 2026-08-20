@@ -1089,6 +1089,20 @@ Mockups: [design/mockups/](design/mockups/).
   ask-tagged ✔), the AA probe (settled-only ✔), the iter boost (reads capped_frac ✔) — audited,
   all guarded; the norm sink was the one that wasn't.
 
+- [x] ✅**FIXED beta.113 — black screen + no spinner during a deep settled walk** (field report:
+  "the screen is black and it's calculating, but the spinner isn't showing" at refining 19.8%).
+  (1) The spinner's gap-rearm threshold (0.2 s) was tuned for ~50 ms build repaints; walk frames
+  run 200-400+ ms, so EVERY frame read as a gap and the delay re-armed forever — the exact hazard
+  its own comment recorded. Now 1.5 s (must exceed one WALK frame; a genuine between-builds gap
+  is seconds). (2) A walk's progressive display shows nothing below the view's minimum dwell —
+  at deep views that sits near the orbit length, so the screen is solid interior color for most
+  of the walk. Settled chunked walks now use the present gate BY DEFAULT (`gate_capable`
+  gains `|| chunk_over`): hold the previous complete content under its captured transform,
+  reveal whole on completion — the REVEALS-selftest-pinned machinery, no longer prefer-detail-
+  only. Fresh views (nothing rendered) fall through gracefully to progressive + spinner. Tiled
+  settles keep their progressive default (each landed tile is complete content). Gates: 211/0,
+  127/127+17/17, motiontest PASS, tour 24/24 0-drift.
+
   🔧**Harness facts learned the hard way (2026-08-19):**
   - ⚠**`--autodive 22` NEVER REACHES MODE 2** (1e22 is below the 1e28 threshold): measured 1032
     mode-0 / 354 mode-1 / **0 mode-2** frames. The `live/home/glide-from-depth` torture rung uses

@@ -16,6 +16,17 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Deep refinements no longer show a black screen with no cue** (beta.113). Two halves,
+  both from one field report. The busy spinner had stopped appearing during long refinements:
+  its idle-gap detector was tuned for rapid repaints, and the new piece-by-piece refinement
+  paces frames a few hundred milliseconds apart — every frame read as a gap, so the spinner
+  never armed. And the refinement itself drew progressively, which at a deep view means
+  nothing at all is drawable until the work crosses the view's minimum escape count — a solid
+  interior-color screen that is indistinguishable from a hang. Deep refinements now keep the
+  previous image on screen (tracking position correctly) and reveal the finished frame whole,
+  the same behavior "prefer detail" always had; a brand-new view with nothing to hold shows
+  the honest progressive fill with the (now working) spinner and the "refining N%" readout.
+
 - **Fixed: deep views near minibrots sometimes rendered flat instead of detailed** (beta.112).
   With "Normalize deep colors" on, the palette window is measured from what escapes on each piece
   of GPU work — and since deep refinement became piece-by-piece, the window was following the

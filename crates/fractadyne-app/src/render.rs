@@ -3971,7 +3971,17 @@ impl FractadyneApp {
         // breaks the gate (Stage A's motion reprojection takes over); direct mode is excluded
         // (cheap and sharp live). Between ss-ramp stages the gate re-engages per stage, so each
         // REVEALED image is complete at its quality level — a stage-wise progressive reveal.
-        let gate_capable = self.render_cfg.prefer_detail
+        // Settled CHUNKED walks hold-then-reveal BY DEFAULT (`|| chunk_over`), prefer-detail or
+        // not: a walk's progressive display shows nothing until the cursor crosses the view's
+        // minimum dwell — which at a deep view sits near the orbit length, so the screen is
+        // solid interior color for most of the walk, indistinguishable from a hang (field
+        // report: black at "refining 19.8%"). The gate serves the previous complete content
+        // under its captured transform and reveals the finished frame whole; a fresh view with
+        // nothing rendered falls through gracefully (the GPU gate needs `view.rendered`) to the
+        // honest progressive-plus-spinner. Non-chunked tiled settles keep their progressive
+        // default — each landed tile is complete content, which reads as sharpening, not as a
+        // hang.
+        let gate_capable = (self.render_cfg.prefer_detail || chunk_over)
             && !offscreen
             && !interacting
             && !chunk_mode.is_direct();
