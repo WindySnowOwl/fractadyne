@@ -487,6 +487,110 @@ impl FractadyneApp {
             }
         }
 
+        // (D4) The TILED chunked iterate — the per-tile windowed dispatch that fixed the 5K
+        // export device loss (crash-1787292746). Same shaders as the battery above, but through
+        // the tile loops' integration: scissored shared ping-pong state reused across tiles,
+        // wall-priced windows (`ChunkPricer`), per-tile counter epochs, and `fs_resolve` into
+        // each tile's G-buffer. `max_iter` is far above the 400k opening window and the 2e10
+        // nominal tile bound, so every tile runs several windows and the frame runs 16 tiles —
+        // both integrations must reproduce their single-dispatch control bit-for-bit.
+        if want("iter-chunk") {
+            let mag = 1.0e30;
+            const CRX: &str = "-1.178853950372678747911373866849720956148855";
+            const CRY: &str = "0.1853420232408490265512092752061929308714979";
+            let mut vp = Viewport::new(N as f64, N as f64);
+            vp.center_x = fractadyne_core::parse_bf(CRX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(CRY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+            vp.precision = fractadyne_core::precision_for_magnification(mag);
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            let saved_method = self.coloring.color_method;
+            self.render_cfg.max_iter = 4_000_000;
+            self.render_cfg.auto_iter = false;
+            // Aux methods are out of chunk scope by design; pin Smooth so the case exercises
+            // the chunked path regardless of what the session left selected.
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = N;
+            req.height = N;
+            req.ss = 1;
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            self.coloring.color_method = saved_method;
+            let bit_exact = |a: &[f32], b: &[f32]| -> usize {
+                a.iter().zip(b).filter(|(x, y)| x.to_bits() != y.to_bits()).count()
+            };
+            if req.mode != 2 {
+                // The case did not test what it is named after (mode-2 fe chunking through the
+                // tile loops) — a bit-identity pass in the wrong mode would be worse than a fail.
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "IterChunk",
+                    name: "tiled chunked export is bit-identical".into(),
+                    params: "corpus07 1e30x, 4M iter, 16 tiles".into(),
+                    result: format!("ran in mode {} not 2", req.mode),
+                    threshold: "mode 2",
+                    pass: false,
+                });
+            } else {
+                use std::sync::atomic::{AtomicBool, AtomicU32};
+                let progress = AtomicU32::new(0);
+                let cancel = AtomicBool::new(false);
+                let a = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export): {e}"))
+                    .ok();
+                let b =
+                    fractadyne_gpu::render_export_unchunked(device, queue, &req, &progress, &cancel)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export_unchunked): {e}"))
+                        .ok();
+                let (pass, result) = match (&a, &b) {
+                    (Some(a), Some(b)) if a.pixels.len() == b.pixels.len() => {
+                        let diffs = bit_exact(&a.pixels, &b.pixels);
+                        (
+                            diffs == 0 && a.max_dispatch_ms > 0.0,
+                            format!(
+                                "{diffs} texels differ; max dispatch {:.0}ms vs control {:.0}ms",
+                                a.max_dispatch_ms, b.max_dispatch_ms
+                            ),
+                        )
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "IterChunk",
+                    name: "tiled chunked export is bit-identical".into(),
+                    params: "corpus07 1e30x, 4M iter, 16 tiles, colored".into(),
+                    result,
+                    threshold: "0 texels differ",
+                    pass,
+                });
+
+                // Same claim for `render_iter_tiled` (the normalized export's pass 1): raw
+                // iteration buffer against the trusted single-dispatch `render_iter`.
+                let t = fractadyne_gpu::render_iter_tiled(device, queue, &req, 20_000_000_000, None)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_tiled): {e}"))
+                    .ok();
+                let u = fractadyne_gpu::render_iter(device, queue, &req)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter): {e}"))
+                    .ok();
+                let (pass, result) = match (&t, &u) {
+                    (Some(t), Some(u)) if t.pixels.len() == u.pixels.len() => {
+                        let diffs = bit_exact(&t.pixels, &u.pixels);
+                        (diffs == 0, format!("{diffs} texels differ"))
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "IterChunk",
+                    name: "tiled chunked iter buffer is bit-identical".into(),
+                    params: "corpus07 1e30x, 4M iter, 16 tiles, raw".into(),
+                    result,
+                    threshold: "0 texels differ",
+                    pass,
+                });
+            }
+        }
+
         // ---- numeric & render-path checks (local closures borrow self immutably) ----
         if want("numeric") {
             // (A) df32 perturbation vs an independent CPU f64 dwell @2e4× (f64 exact here).

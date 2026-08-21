@@ -16,6 +16,26 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: a deep high-iteration export could lose the GPU device hours in** (beta.122) — the
+  crash behind the 5K/2xSS/4,000,000-iteration report: near a minibrot interior a tile is
+  latency-bound (its cost is the deepest pixel's iteration chain, no matter how small the
+  tile), so the wall-priced tile cap — which can only shrink AREA — could not keep a single
+  dispatch under the OS watchdog, and at 2.6 h in one tile crossed it. Export tiles now split
+  along the ITERATION axis instead: each tile runs as a sequence of resumable, wall-priced
+  iteration windows (the same chunk shaders the live view uses, bit-identical output — gated
+  by a new selftest), every window is bounded by the worst serial cost observed so far, and
+  the exact crash workload now completes with its longest single dispatch under 300 ms. As a
+  bonus, dwell-heavy regions render ~4x faster (the cap no longer shrinks tiles in a regime
+  where that only multiplied the work), interrupted exports cancel promptly, and the per-export
+  perf line now records `max_dispatch=` for field diagnosis. Scope: smooth/distance/relief/glow
+  coloring on the holomorphic formulas; aux colorings and the glitch-corrected path keep the
+  previous tiling for now.
+
+- **Fixed: an export no longer dies if its output folder disappears mid-render** (beta.122) —
+  a tour rendering to a network share or USB drive that dropped out lost the whole render at
+  the final write. File writes now retry with escalating backoff while the destination is
+  unreachable, and give up with a clear error only after the retry budget is exhausted.
+
 - **The finish sound is now FRACTINT's actual completion tune** (beta.121) — sourced from the
   DOS original's `general.asm` rather than guessed: three rising 100 ms notes at 1047, 1109 and
   1175 Hz (C6, C#6, D6), played through Windows' PC-speaker shim exactly as `buzzer0` encoded

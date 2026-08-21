@@ -127,6 +127,11 @@ pub struct ExportResult {
     /// zeroes + reads them PER TILE and sums into these u64s so the whole-render total does
     /// not wrap (a single tile stays well under u32 by the tile work budget).
     pub counters: [u64; crate::COUNTER_SLOTS],
+    /// Longest single GPU submission this render made, wall-clock ms (chunked paths measure per
+    /// iteration window; unchunked tiled paths report the whole tile incl. readback as an upper
+    /// bound; 0.0 = not measured on this path). The TDR-forensics figure: a render that stayed
+    /// bounded shows a few hundred ms here no matter how long it ran in total.
+    pub max_dispatch_ms: f64,
 }
 
 /// Render `req` offscreen and read the colored image back to the CPU. Synchronous
@@ -160,6 +165,18 @@ pub(crate) fn export_tile_cap(cap: u32, wall_ms: f64, ceiling: u32) -> u32 {
     next.clamp(16, ceiling.max(16))
 }
 
+/// One-time gate for the export tile trace: `FRACTADYNE_TRACE` containing `tile` prints one
+/// stderr line per export tile (origin, size, wall, cap) — the offline counterpart of the app's
+/// live `tile` trace category, so a tile-cost curve can be captured without a debugger.
+pub(crate) fn tile_trace_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("FRACTADYNE_TRACE")
+            .map(|v| v.split(',').any(|c| c.trim() == "tile"))
+            .unwrap_or(false)
+    })
+}
+
 #[cfg(test)]
 mod tile_cap {
     use super::export_tile_cap;
@@ -185,12 +202,268 @@ mod tile_cap {
     }
 }
 
+/// Iteration-window pricing for the per-tile chunked iterate — the actuator the area cap cannot
+/// be (crash-1787292746): a dwell-bound tile is LATENCY-bound, so its wall is
+/// `max_dwell / serial_chain_rate` regardless of tile area (measured: a 20x20 tile cost the same
+/// 0.5 s as the 50x50 beside it). Only splitting the ITERATION range bounds the dispatch. Windows
+/// are wall-priced like the area cap (halve hot, double cheap), and every tile OPENS at a window
+/// bounded by the worst serial cost observed so far this render (`worst_ms_per_iter`, a
+/// high-water mark seeded from a pessimistic 1M iters/s serial floor) — so the first tile of a
+/// dwell cliff can overshoot the target band at most by the ratio of the true serial rate to the
+/// worst observed one, instead of arbitrarily (the "first tile is nominal-priced" hole, closed).
+const CHUNK_HOT_MS: f64 = 400.0;
+/// Under this, the next window doubles — a settled-cheap tile sweeps its range in a few passes.
+const CHUNK_CHEAP_MS: f64 = 100.0;
+/// Opening-window serial-rate floor, iters/ms (1M iters/s). Pessimistic on purpose: on hardware
+/// where the true serial chain rate is lower, the FIRST hot chunk halves the window and raises
+/// the high-water mark, so subsequent openings tighten; the exposure is one bounded overshoot.
+const CHUNK_SERIAL_FLOOR_IPMS: f64 = 1000.0;
+/// Window floor: keeps the pass count bounded (a 4M ask is at most ~244 passes) — per-pass fixed
+/// overhead is ~1 ms, so the floor bounds chunking overhead well under the serial work it prices.
+const CHUNK_MIN_ITERS: u32 = 16_384;
+
+/// Cross-tile pricing state for the chunked iterate. One per render; both tiled loops carry it.
+pub(crate) struct ChunkPricer {
+    /// High-water mark of observed `wall_ms / window_iters` — an upper bound on the serial cost
+    /// per iteration. Only ever rises: a cheap (BLA-skipping, parallel-bound) chunk must never
+    /// re-widen the openings that protect the next dwell-bound tile.
+    worst_ms_per_iter: f64,
+}
+
+impl ChunkPricer {
+    pub(crate) fn new() -> Self {
+        Self { worst_ms_per_iter: 1.0 / CHUNK_SERIAL_FLOOR_IPMS }
+    }
+    /// Opening window for a tile: the largest window that stays under `CHUNK_HOT_MS` even if some
+    /// pixel runs it fully serial at the worst rate seen so far.
+    pub(crate) fn open(&self, max_iter: u32) -> u32 {
+        let w = (CHUNK_HOT_MS / self.worst_ms_per_iter) as u32;
+        w.max(CHUNK_MIN_ITERS).min(max_iter.max(1))
+    }
+    /// Record a chunk's measured wall. Garbage walls (NaN/negative) are ignored.
+    pub(crate) fn observe(&mut self, window: u32, wall_ms: f64) {
+        if window > 0 && wall_ms.is_finite() && wall_ms > 0.0 {
+            self.worst_ms_per_iter = self.worst_ms_per_iter.max(wall_ms / window as f64);
+        }
+    }
+    /// Next window within the same tile: halve hot, double cheap, hold the band between. Doubling
+    /// past the opening bound is allowed on purpose — within one tile the pixels are the same, so
+    /// a cheap chunk is direct evidence the survivors are skipping, not grinding.
+    pub(crate) fn next(&self, window: u32, wall_ms: f64, max_iter: u32) -> u32 {
+        let next = if !wall_ms.is_finite() || wall_ms < 0.0 {
+            window
+        } else if wall_ms > CHUNK_HOT_MS {
+            window / 2
+        } else if wall_ms < CHUNK_CHEAP_MS {
+            window.saturating_mul(2)
+        } else {
+            window
+        };
+        next.max(CHUNK_MIN_ITERS.min(max_iter.max(1))).min(max_iter.max(1))
+    }
+}
+
+#[cfg(test)]
+mod chunk_pricer {
+    use super::*;
+
+    #[test]
+    fn openings_are_bounded_by_the_serial_floor_and_tighten_on_worse_evidence() {
+        let mut p = ChunkPricer::new();
+        assert_eq!(p.open(4_000_000), 400_000, "1M it/s floor x 400 ms target");
+        p.observe(400_000, 800.0); // twice as slow as assumed
+        assert_eq!(p.open(4_000_000), 200_000);
+        p.observe(400_000, 8.0); // a cheap chunk must never re-widen the opening
+        assert_eq!(p.open(4_000_000), 200_000);
+        assert_eq!(p.open(50_000), 50_000, "never past the ask");
+    }
+
+    #[test]
+    fn windows_halve_hot_double_cheap_and_hold_the_band() {
+        let p = ChunkPricer::new();
+        assert_eq!(p.next(400_000, 800.0, 4_000_000), 200_000);
+        assert_eq!(p.next(400_000, 20.0, 4_000_000), 800_000);
+        assert_eq!(p.next(400_000, 250.0, 4_000_000), 400_000);
+        assert_eq!(p.next(20_000, 5000.0, 4_000_000), CHUNK_MIN_ITERS, "floor holds");
+        assert_eq!(p.next(3_000_000, 20.0, 4_000_000), 4_000_000, "ask caps growth");
+        assert_eq!(p.next(400_000, f64::NAN, 4_000_000), 400_000);
+    }
+}
+
+/// Per-render plumbing for the chunked per-tile iterate: the resumable chunk pipeline, the
+/// state->G-buffer resolve pipeline, and one max-tile-sized pair of ping-pong state texture sets
+/// shared by every tile (chunk 0 of each tile initializes from scratch, so no cross-tile state
+/// survives; passes are scissored to the tile's sample rect so out-of-tile texels neither burn
+/// iterations nor pollute the per-tile event counters).
+struct TileChunker {
+    chunk_pipeline: wgpu::RenderPipeline,
+    resolve_pipeline: wgpu::RenderPipeline,
+    state: [Vec<wgpu::TextureView>; 2],
+    state_bg: [wgpu::BindGroup; 2],
+}
+
+impl TileChunker {
+    /// `max_size` is the largest sample grid any tile can ask for (static tile bound x ss).
+    fn new(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        iter_bgl: &wgpu::BindGroupLayout,
+        fe: bool,
+        max_size: [u32; 2],
+    ) -> Self {
+        let targets: usize = if fe { 4 } else { 3 };
+        let state_bgl = crate::state_bind_group_layout_n(device, targets as u32);
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("export.tilechunk_layout"),
+            bind_group_layouts: &[iter_bgl, &state_bgl],
+            push_constant_ranges: &[],
+        });
+        let chunk_formats = [ITER_FORMAT; 4];
+        let chunk_pipeline = fullscreen_pipeline(
+            device,
+            shader,
+            &layout,
+            if fe { "fs_iterate_chunk_fe" } else { "fs_iterate_chunk" },
+            &chunk_formats[..targets],
+            "export.tilechunk_pipeline",
+        );
+        let resolve_pipeline = fullscreen_pipeline(
+            device, shader, &layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
+            "export.tilechunk_resolve",
+        );
+        let state = [
+            crate::make_state_textures(device, max_size, targets),
+            crate::make_state_textures(device, max_size, targets),
+        ];
+        let state_bg = [
+            crate::make_state_bg(device, &state_bgl, &state[0]),
+            crate::make_state_bg(device, &state_bgl, &state[1]),
+        ];
+        Self { chunk_pipeline, resolve_pipeline, state, state_bg }
+    }
+
+    /// Run one tile's iterate as bounded chunk passes over `[0, max_iter)`, one submission each
+    /// (polled to completion, so every dispatch the watchdog sees is one priced window). The
+    /// caller's `iu` must already describe the tile (res/px_offset/step); its iteration range is
+    /// overwritten per pass and left at the final range, exactly as `render_iter_chunked` leaves
+    /// it for the resolve. Returns `(passes, read_set, max_chunk_ms)`; the caller resolves from
+    /// `state_bg[read_set]`. `wall_sum_ms` collects the summed chunk walls (the iterate-time
+    /// figure for chunked tiles — GPU timestamps would cost a readback per pass for <1% accuracy).
+    #[allow(clippy::too_many_arguments)]
+    fn run_tile(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        iter_bg: &wgpu::BindGroup,
+        counters_buf: &wgpu::Buffer,
+        iu: &mut IterUniforms,
+        iter_uniform: &wgpu::Buffer,
+        grid: [u32; 2],
+        max_iter: u32,
+        pricer: &mut ChunkPricer,
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+        deadline: Option<std::time::Instant>,
+        wall_sum_ms: &mut f64,
+    ) -> Result<(u32, usize, f64), GpuError> {
+        let mut window = pricer.open(max_iter);
+        let mut read_set = 0usize;
+        let mut passes = 0u32;
+        let mut max_chunk_ms = 0.0f64;
+        let mut s = 0u32;
+        while s < max_iter {
+            if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+                return Err(GpuError::Canceled);
+            }
+            if passes > 0 && deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                // Between chunks, like the tile loop between tiles; never before the first pass
+                // (a tile that starts must settle, or the caller would merge an unresolved tile).
+                return Err(GpuError::Canceled);
+            }
+            let e = s.saturating_add(window).min(max_iter);
+            iu.start_iter = s;
+            iu.end_iter = e;
+            queue.write_buffer(iter_uniform, 0, bytemuck::bytes_of(iu));
+            let write_set = 1 - read_set;
+            let t = std::time::Instant::now();
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("export.tilechunk_enc"),
+            });
+            if passes == 0 {
+                // The tile's counter epoch starts with its first chunk; later passes accumulate.
+                enc.clear_buffer(counters_buf, 0, None);
+            }
+            {
+                let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                });
+                let attachments: Vec<_> = self.state[write_set].iter().map(|v| attach(v)).collect();
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("export.tilechunk_pass"),
+                    color_attachments: &attachments,
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.chunk_pipeline);
+                pass.set_bind_group(0, iter_bg, &[]);
+                pass.set_bind_group(1, &self.state_bg[read_set], &[]);
+                pass.set_scissor_rect(0, 0, grid[0], grid[1]);
+                pass.draw(0..3, 0..1);
+            }
+            queue.submit(std::iter::once(enc.finish()));
+            let _ = device.poll(wgpu::Maintain::Wait);
+            let wall = t.elapsed().as_secs_f64() * 1000.0;
+            if tile_trace_on() {
+                eprintln!("[fd-export] chunk [{s},{e}) wall={wall:.1}ms");
+            }
+            *wall_sum_ms += wall;
+            max_chunk_ms = max_chunk_ms.max(wall);
+            pricer.observe(e - s, wall);
+            window = pricer.next(window, wall, max_iter);
+            read_set = write_set;
+            passes += 1;
+            s = e;
+        }
+        Ok((passes, read_set, max_chunk_ms))
+    }
+}
+
 pub fn render_export(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     req: &ExportRequest,
     progress: &std::sync::atomic::AtomicU32,
     cancel: &std::sync::atomic::AtomicBool,
+) -> Result<ExportResult, GpuError> {
+    render_export_impl(device, queue, req, progress, cancel, true)
+}
+
+/// [`render_export`] with the chunked per-tile iterate disabled — the single-dispatch control
+/// for the selftest's bit-identity gate. Not for production use: this is exactly the unbounded
+/// dispatch shape that lost the device (crash-1787292746).
+#[doc(hidden)]
+pub fn render_export_unchunked(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    progress: &std::sync::atomic::AtomicU32,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<ExportResult, GpuError> {
+    render_export_impl(device, queue, req, progress, cancel, false)
+}
+
+fn render_export_impl(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    progress: &std::sync::atomic::AtomicU32,
+    cancel: &std::sync::atomic::AtomicBool,
+    allow_chunking: bool,
 ) -> Result<ExportResult, GpuError> {
     use std::sync::atomic::Ordering::Relaxed;
     let max_dim = device.limits().max_texture_dimension_2d;
@@ -246,6 +519,23 @@ pub fn render_export(
     let color_pipeline = fullscreen_pipeline(
         device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "export.color_pipeline",
     );
+
+    // Chunked per-tile iterate (crash-1787292746, the export-TDR fix): when the request fits the
+    // resumable chunk shaders' scope, every tile's iterate runs as wall-priced iteration windows
+    // (see `ChunkPricer`) instead of one unbounded dispatch — a dwell-bound tile is LATENCY-bound
+    // (wall = max dwell / serial chain rate, independent of area), so the area cap below cannot
+    // price it. Out of scope (aux coloring, glitch detection, non-holomorphic formulas, or a
+    // device without the state-attachment width) keeps the single-dispatch path unchanged.
+    let fe = req.mode == 2;
+    let chunk_scope = allow_chunking
+        && (req.mode == 1 || ((req.mode == 0 || req.mode == 2) && req.glitch_on == 0))
+        && req.formula <= 3
+        && !method_needs_aux(req.color_method)
+        && device.limits().max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
+    let chunker = chunk_scope
+        .then(|| TileChunker::new(device, &shader, &iter_bgl, fe, [tile * ss, tile * ss]));
+    let mut pricer = ChunkPricer::new();
+    let mut max_dispatch_ms = 0.0f64;
 
     let uniform = |label, size| {
         device.create_buffer(&wgpu::BufferDescriptor {
@@ -344,7 +634,7 @@ pub fn render_export(
             let iw = tw * ss;
             let ih = th * ss;
 
-            let iu = IterUniforms {
+            let mut iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
                 ref_offset: req.ref_offset.to_array(),
                 center: req.center,
@@ -427,12 +717,29 @@ pub fn render_export(
                 None
             };
 
+            // Chunked tiles iterate BEFORE the main encoder: each window is its own polled
+            // submission (that is the whole point), and the first window clears the counters.
+            let chunked = match chunker.as_ref() {
+                Some(ch) => {
+                    let (passes, read_set, max_chunk) = ch.run_tile(
+                        device, queue, &iter_bg, &counters_buf, &mut iu, &iter_uniform,
+                        [iw, ih], req.max_iter, &mut pricer, Some(cancel), None,
+                        &mut sum_iterate_ms,
+                    )?;
+                    max_dispatch_ms = max_dispatch_ms.max(max_chunk);
+                    Some((passes, read_set))
+                }
+                None => None,
+            };
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("export.encoder"),
             });
-            // Zero the event counters before THIS tile's iterate pass, so each tile's counts
-            // are read back independently and summed in u64 (no cross-tile u32 wrap).
-            enc.clear_buffer(&counters_buf, 0, None);
+            if chunked.is_none() {
+                // Zero the event counters before THIS tile's iterate pass, so each tile's counts
+                // are read back independently and summed in u64 (no cross-tile u32 wrap). On a
+                // chunked tile the first window's encoder already did this.
+                enc.clear_buffer(&counters_buf, 0, None);
+            }
             {
                 let attach = |v| Some(wgpu::RenderPassColorAttachment {
                     view: v,
@@ -442,6 +749,10 @@ pub fn render_export(
                         store: wgpu::StoreOp::Store,
                     },
                 });
+                // Chunked: settle the ping-pong state into the tile's G-buffer (`fs_resolve`),
+                // so the color pass below is oblivious to how the iterate was dispatched.
+                // Unchunked: the classic single-dispatch iterate. Either way the pass writes
+                // iter/aux and the iterate timestamps bracket it.
                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("export.iter_pass"),
                     color_attachments: &[attach(&iter_view), attach(&aux_view)],
@@ -455,9 +766,19 @@ pub fn render_export(
                     }),
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(&iter_pipeline);
-                pass.set_bind_group(0, &iter_bg, &[]);
-                pass.draw(0..3, 0..1);
+                match (chunker.as_ref(), chunked) {
+                    (Some(ch), Some((_, read_set))) => {
+                        pass.set_pipeline(&ch.resolve_pipeline);
+                        pass.set_bind_group(0, &iter_bg, &[]);
+                        pass.set_bind_group(1, &ch.state_bg[read_set], &[]);
+                        pass.draw(0..3, 0..1);
+                    }
+                    _ => {
+                        pass.set_pipeline(&iter_pipeline);
+                        pass.set_bind_group(0, &iter_bg, &[]);
+                        pass.draw(0..3, 0..1);
+                    }
+                }
             }
             {
                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -573,7 +894,24 @@ pub fn render_export(
 
             done_px += (tw as u64) * (th as u64);
             progress.store(((done_px.saturating_mul(1000)) / total_px) as u32, Relaxed);
-            cap = export_tile_cap(cap, t_tile.elapsed().as_secs_f64() * 1000.0, tile);
+            let wall_ms = t_tile.elapsed().as_secs_f64() * 1000.0;
+            let chunk_passes = chunked.map_or(0, |(p, _)| p);
+            if chunked.is_none() {
+                max_dispatch_ms = max_dispatch_ms.max(wall_ms);
+            }
+            if tile_trace_on() {
+                eprintln!(
+                    "[fd-export] tile {tx0},{ty0} {tw}x{th} ss={ss} wall={wall_ms:.1}ms \
+cap={cap} chunks={chunk_passes}"
+                );
+            }
+            if chunk_passes <= 1 {
+                cap = export_tile_cap(cap, wall_ms, tile);
+            }
+            // else: serial regime — the wall is dwell-chain time, which shrinking the AREA cannot
+            // reduce (it only multiplies how many chains the frame pays; the same wrong-actuator
+            // retreat as the home-from-deep device loss). The chunk windows already bound every
+            // dispatch, so the area cap holds its value here.
             tx0 += tw;
         }
         ty0 += th;
@@ -587,6 +925,7 @@ pub fn render_export(
         iterate_ms: sum_iterate_ms,
         color_ms: sum_color_ms,
         counters: ctr_sum,
+        max_dispatch_ms,
     })
 }
 
@@ -634,6 +973,20 @@ pub fn render_iter_tiled(
         device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
         "itertiled.pipeline",
     );
+
+    // Chunked per-tile iterate, same rule and reason as `render_export` (the correction path's
+    // dark-core tiles are latency-bound too). Correction passes run `glitch_on = 1`, which the
+    // chunk shaders do not carry — those keep the single-dispatch path for now; the normalized
+    // export's pass 1 (`glitch_on = 0`) chunks.
+    let chunk_scope = (req.mode == 1 || ((req.mode == 0 || req.mode == 2) && req.glitch_on == 0))
+        && req.formula <= 3
+        && device.limits().max_color_attachment_bytes_per_sample
+            >= if req.mode == 2 { 64 } else { 48 };
+    let chunker =
+        chunk_scope.then(|| TileChunker::new(device, &shader, &iter_bgl, req.mode == 2, [tile, tile]));
+    let mut pricer = ChunkPricer::new();
+    let mut max_dispatch_ms = 0.0f64;
+    let mut chunk_wall_sink = 0.0f64; // iterate_ms stays 0.0 on this path (see the result)
 
     let iter_uniform = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("itertiled.uniform"),
@@ -686,7 +1039,7 @@ pub fn render_iter_tiled(
                 return Err(GpuError::Canceled);
             }
             let tw = cap.min(w - tx0).min(th.max(16));
-            let iu = IterUniforms {
+            let mut iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
                 ref_offset: req.ref_offset.to_array(),
                 center: req.center,
@@ -744,11 +1097,28 @@ pub fn render_iter_tiled(
                 mapped_at_creation: false,
             });
 
+            // Chunked tiles iterate BEFORE the main encoder, one polled submission per window;
+            // the first window clears the counters. The deadline is honoured between windows.
+            let chunked = match chunker.as_ref() {
+                Some(ch) => {
+                    let (passes, read_set, max_chunk) = ch.run_tile(
+                        device, queue, &iter_bg, &counters_buf, &mut iu, &iter_uniform,
+                        [tw, th], req.max_iter, &mut pricer, None, deadline,
+                        &mut chunk_wall_sink,
+                    )?;
+                    max_dispatch_ms = max_dispatch_ms.max(max_chunk);
+                    Some((passes, read_set))
+                }
+                None => None,
+            };
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("itertiled.enc"),
             });
-            // Zero counters before THIS tile so per-tile u32 counts can't wrap; summed in u64.
-            enc.clear_buffer(&counters_buf, 0, None);
+            if chunked.is_none() {
+                // Zero counters before THIS tile so per-tile u32 counts can't wrap; summed in
+                // u64. On a chunked tile the first window's encoder already did this.
+                enc.clear_buffer(&counters_buf, 0, None);
+            }
             {
                 let attach = |v| Some(wgpu::RenderPassColorAttachment {
                     view: v,
@@ -765,9 +1135,19 @@ pub fn render_iter_tiled(
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(&iter_pipeline);
-                pass.set_bind_group(0, &iter_bg, &[]);
-                pass.draw(0..3, 0..1);
+                match (chunker.as_ref(), chunked) {
+                    (Some(ch), Some((_, read_set))) => {
+                        pass.set_pipeline(&ch.resolve_pipeline);
+                        pass.set_bind_group(0, &iter_bg, &[]);
+                        pass.set_bind_group(1, &ch.state_bg[read_set], &[]);
+                        pass.draw(0..3, 0..1);
+                    }
+                    _ => {
+                        pass.set_pipeline(&iter_pipeline);
+                        pass.set_bind_group(0, &iter_bg, &[]);
+                        pass.draw(0..3, 0..1);
+                    }
+                }
             }
             enc.copy_buffer_to_buffer(
                 &counters_buf, 0, &counters_read, 0, (crate::COUNTER_SLOTS * 4) as u64,
@@ -824,7 +1204,21 @@ pub fn render_iter_tiled(
             }
             drop(data);
             out_buf.unmap();
-            cap = export_tile_cap(cap, t_tile.elapsed().as_secs_f64() * 1000.0, tile);
+            let wall_ms = t_tile.elapsed().as_secs_f64() * 1000.0;
+            let chunk_passes = chunked.map_or(0, |(p, _)| p);
+            if chunked.is_none() {
+                max_dispatch_ms = max_dispatch_ms.max(wall_ms);
+            }
+            if tile_trace_on() {
+                eprintln!(
+                    "[fd-export] itile {tx0},{ty0} {tw}x{th} wall={wall_ms:.1}ms cap={cap} \
+chunks={chunk_passes}"
+                );
+            }
+            if chunk_passes <= 1 {
+                cap = export_tile_cap(cap, wall_ms, tile);
+            }
+            // else: serial regime — hold the area cap (see `render_export`; same reasoning).
             tx0 += tw;
         }
         ty0 += th;
@@ -837,6 +1231,7 @@ pub fn render_iter_tiled(
         iterate_ms: 0.0, // per-tile GPU timestamps omitted here; the loop tracks wall-clock
         color_ms: 0.0,
         counters: ctr_sum,
+        max_dispatch_ms,
     })
 }
 
@@ -1114,7 +1509,10 @@ pub fn render_iter(
     out_buf.unmap();
 
     let counters = read_counters(device, queue, &counters_buf, &counters_read);
-    Ok(ExportResult { width: w, height: h, ss: 1, pixels, iterate_ms, color_ms: 0.0, counters })
+    Ok(ExportResult {
+        width: w, height: h, ss: 1, pixels, iterate_ms, color_ms: 0.0, counters,
+        max_dispatch_ms: 0.0,
+    })
 }
 
 /// `render_iter`, but with **iteration-range tiling**: the `0..max_iter` loop is split across
@@ -1386,7 +1784,10 @@ pub fn render_iter_chunked(
     out_buf.unmap();
 
     let counters = read_counters(device, queue, &counters_buf, &counters_read);
-    Ok(ExportResult { width: w, height: h, ss: 1, pixels, iterate_ms: 0.0, color_ms: 0.0, counters })
+    Ok(ExportResult {
+        width: w, height: h, ss: 1, pixels, iterate_ms: 0.0, color_ms: 0.0, counters,
+        max_dispatch_ms: 0.0,
+    })
 }
 
 /// Color an already-computed iteration buffer (main target, `w*h*4` floats: smooth-iter, normal.x,
@@ -1579,6 +1980,7 @@ pub fn color_iter_buffer(
         iterate_ms: 0.0,
         color_ms: 0.0,
         counters: [0u64; crate::COUNTER_SLOTS],
+        max_dispatch_ms: 0.0,
     })
 }
 

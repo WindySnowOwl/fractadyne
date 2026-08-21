@@ -631,7 +631,8 @@ impl FractadyneApp {
             "perf",
             &format!(
                 "{kind}: {}x{} ss={} mode={} iter={} gpu_iterate={:.1}ms gpu_color={:.1}ms \
-                 ~{gsps:.2} Gsteps/s (nominal) | counters: rebase={} ext={} glitch={} bla_skip={} maxiter={}",
+                 max_dispatch={:.0}ms ~{gsps:.2} Gsteps/s (nominal) | counters: rebase={} ext={} \
+                 glitch={} bla_skip={} maxiter={}",
                 r.width,
                 r.height,
                 r.ss,
@@ -639,6 +640,7 @@ impl FractadyneApp {
                 req.max_iter,
                 r.iterate_ms,
                 r.color_ms,
+                r.max_dispatch_ms,
                 c[fractadyne_gpu::CTR_REBASE],
                 c[fractadyne_gpu::CTR_EXT_SAMPLE],
                 c[fractadyne_gpu::CTR_GLITCH],
@@ -648,7 +650,8 @@ impl FractadyneApp {
         );
         crate::diag::perf_jsonl(&format!(
             "\"kind\":\"{kind}\",\"w\":{},\"h\":{},\"ss\":{},\"mode\":{},\"iter\":{},\
-             \"gpu_iterate_ms\":{:.3},\"gpu_color_ms\":{:.3},\"gsteps_nominal\":{gsps:.3},\
+             \"gpu_iterate_ms\":{:.3},\"gpu_color_ms\":{:.3},\"max_dispatch_ms\":{:.1},\
+             \"gsteps_nominal\":{gsps:.3},\
              \"ctr_rebase\":{},\"ctr_ext\":{},\"ctr_glitch\":{},\"ctr_bla\":{},\"ctr_maxiter\":{}",
             r.width,
             r.height,
@@ -657,6 +660,7 @@ impl FractadyneApp {
             req.max_iter,
             r.iterate_ms,
             r.color_ms,
+            r.max_dispatch_ms,
             c[fractadyne_gpu::CTR_REBASE],
             c[fractadyne_gpu::CTR_EXT_SAMPLE],
             c[fractadyne_gpu::CTR_GLITCH],
