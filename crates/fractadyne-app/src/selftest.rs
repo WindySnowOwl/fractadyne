@@ -3560,7 +3560,7 @@ zoom = \"1e94\"
         }
 
         // ---- build the human-readable + verifiable report ----
-        let sys = gather_system_info();
+        let sys = gather_system_info(None);
         let checks_pass = checks.iter().filter(|c| c.pass).count();
         let gold_pass = goldens.iter().filter(|g| g.4).count();
         let ok = checks_pass == checks.len() && (bless || gold_pass == goldens.len());

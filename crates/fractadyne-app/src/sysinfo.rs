@@ -361,7 +361,10 @@ pub(crate) struct SysInfo {
     pub(crate) vram_mb: u64,
 }
 
-pub(crate) fn gather_system_info() -> SysInfo {
+/// `active_gpu` is the wgpu adapter name when the caller has one — the Windows VRAM probe uses
+/// it to pick the RIGHT display adapter out of the registry (see `gpu_vram_bytes`). `None` is
+/// fine for harness contexts and falls back to the widest scan.
+pub(crate) fn gather_system_info(active_gpu: Option<&str>) -> SysInfo {
     let logical = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(0);
@@ -372,7 +375,7 @@ pub(crate) fn gather_system_info() -> SysInfo {
         physical: if physical == 0 { logical } else { physical },
         l2_kb,
         l3_kb,
-        vram_mb: gpu_vram_bytes() / (1024 * 1024),
+        vram_mb: gpu_vram_bytes(active_gpu) / (1024 * 1024),
     }
 }
 
@@ -536,10 +539,36 @@ fn cpu_topology() -> (usize, u64, u64) {
     (0, 0, 0)
 }
 
-/// Dedicated VRAM (bytes) read from the display-adapter registry keys (largest of
-/// the first few adapters). Best-effort; returns 0 if unavailable.
+/// The render-finished tone (user request 2026-08-16 — FRACTINT played a distinct sound when a
+/// long render completed). `MessageBeep` is asynchronous and touches no audio state of ours; the
+/// system "asterisk" is the closest modern equivalent of a completion chime and respects the
+/// user's sound scheme (including "no sounds"). Non-Windows: no-op until the Linux build lands.
 #[cfg(windows)]
-fn gpu_vram_bytes() -> u64 {
+pub(crate) fn play_finish_sound() {
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBeep(utype: u32) -> i32;
+    }
+    const MB_ICONASTERISK: u32 = 0x40;
+    // SAFETY: MessageBeep queues the sound and returns immediately; no pointers involved.
+    unsafe {
+        MessageBeep(MB_ICONASTERISK);
+    }
+}
+#[cfg(not(windows))]
+pub(crate) fn play_finish_sound() {}
+
+/// Dedicated VRAM (bytes) read from the display-adapter registry keys.
+///
+/// ⚠Every GPU ever installed leaves a class subkey behind, so on a swap-bench machine "max over
+/// the first 8 subkeys" reported a STALE adapter: the RX 6800 XT field report said 8192 MB for a
+/// 16 GB card (finding ① of the 2026-08-15 device-loss report) — a previously installed 8 GB
+/// card's entry sat in 0000-0007 while the live card's entry was further down. The probe now
+/// scans 64 subkeys, reads each entry's `DriverDesc`, and prefers entries matching the ACTIVE
+/// wgpu adapter name; the widest max is only the fallback when no name is available or nothing
+/// matches. Best-effort; returns 0 if unavailable.
+#[cfg(windows)]
+fn gpu_vram_bytes(active_gpu: Option<&str>) -> u64 {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "advapi32")]
@@ -559,8 +588,11 @@ fn gpu_vram_bytes() -> u64 {
         OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
     };
     let value = wide("HardwareInformation.qwMemorySize");
-    let mut best = 0u64;
-    for i in 0..8 {
+    let desc_value = wide("DriverDesc");
+    let want = active_gpu.map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty());
+    let mut matched = 0u64;
+    let mut any = 0u64;
+    for i in 0..64 {
         let key = wide(&format!(
             "SYSTEM\\CurrentControlSet\\Control\\Class\\{{4d36e968-e325-11ce-bfc1-08002be10318}}\\{i:04}"
         ));
@@ -580,15 +612,44 @@ fn gpu_vram_bytes() -> u64 {
                 &mut cb,
             )
         };
-        if rc == 0 {
-            best = best.max(u64::from_le_bytes(data));
+        if rc != 0 {
+            continue;
+        }
+        let bytes = u64::from_le_bytes(data);
+        any = any.max(bytes);
+        if let Some(want) = want.as_deref() {
+            let mut desc = [0u16; 256];
+            let mut dcb = (desc.len() * 2) as u32;
+            // SAFETY: same contract as above; `desc` is a fixed buffer and `dcb` its byte size.
+            let rc = unsafe {
+                RegGetValueW(
+                    hklm,
+                    key.as_ptr(),
+                    desc_value.as_ptr(),
+                    0x0000_0002, // RRF_RT_REG_SZ
+                    std::ptr::null_mut(),
+                    desc.as_mut_ptr() as *mut core::ffi::c_void,
+                    &mut dcb,
+                )
+            };
+            if rc == 0 {
+                let n = desc.iter().position(|&c| c == 0).unwrap_or(desc.len());
+                let d = String::from_utf16_lossy(&desc[..n]).trim().to_ascii_lowercase();
+                // Containment either way: the driver and wgpu phrase the same card slightly
+                // differently across vendors (suffixes like "(TM)" on one side).
+                if !d.is_empty() && (d.contains(want) || want.contains(d.as_str())) {
+                    matched = matched.max(bytes);
+                }
+            }
         }
     }
-    best
+    if matched > 0 { matched } else { any }
 }
 #[cfg(target_os = "linux")]
-fn gpu_vram_bytes() -> u64 {
-    // amdgpu/i915 expose VRAM bytes directly in sysfs; take the largest card.
+fn gpu_vram_bytes(_active_gpu: Option<&str>) -> u64 {
+    // amdgpu/i915 expose VRAM bytes directly in sysfs; take the largest card. (Stale-adapter
+    // selection is a Windows-registry problem; sysfs lists only PRESENT cards, so the name is
+    // unused here.)
     let mut best = 0u64;
     if let Ok(rd) = std::fs::read_dir("/sys/class/drm") {
         for e in rd.flatten() {
@@ -613,6 +674,6 @@ fn gpu_vram_bytes() -> u64 {
         .unwrap_or(0)
 }
 #[cfg(not(any(windows, target_os = "linux")))]
-fn gpu_vram_bytes() -> u64 {
+fn gpu_vram_bytes(_active_gpu: Option<&str>) -> u64 {
     0
 }

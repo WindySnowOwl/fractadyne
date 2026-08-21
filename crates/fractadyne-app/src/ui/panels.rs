@@ -407,6 +407,12 @@ impl FractadyneApp {
 
                 // KF-style stepping: hold the last detailed frame (geometrically tracked) through
                 // motion instead of rendering coarse intermediate frames.
+                ui.checkbox(&mut self.render_cfg.finish_sound, "Sound when a render finishes")
+                    .on_hover_text(
+                        "Play the system notification sound when an export or tour render \
+                         completes — the FRACTINT tradition. Uses your Windows sound scheme, so \
+                         it is silent if the scheme is.",
+                    );
                 ui.checkbox(&mut self.render_cfg.prefer_detail, "Prefer detail while zooming")
                     .on_hover_text(
                         "While zooming or panning, keep showing the last fully detailed frame — \

@@ -86,6 +86,10 @@ pub struct SessionState {
     /// Supersampling / anti-alias factor (1 = off, 2/3/4/8 = N×N).
     #[serde(default = "default_aa")]
     pub aa: u32,
+    /// Play a sound when a render/export finishes (user request 2026-08-16, FRACTINT-style).
+    /// Default ON; the checkbox lives next to the other render settings.
+    #[serde(default = "default_finish_sound")]
+    pub finish_sound: bool,
     /// Frame-rate cap in FPS; **`0` = uncapped**. Defaults to 60. Stored as a plain `f64`
     /// (not `Option`) so the *uncapped* choice round-trips: TOML omits `None`, which would
     /// otherwise reload as the default 60 instead of staying uncapped.
@@ -285,6 +289,9 @@ fn default_click_zoom_factor() -> f32 {
     10.0
 }
 
+fn default_finish_sound() -> bool {
+    true
+}
 fn default_aa() -> u32 {
     2
 }
@@ -398,6 +405,7 @@ impl Default for SessionState {
             min_motion_res: default_min_motion_res(),
             prefer_detail: false,
             aa: default_aa(),
+            finish_sound: default_finish_sound(),
             fps_cap: default_fps_cap(), // 60 (0 = uncapped)
             export_width: default_export_width(),
             export_ss: default_export_ss(),

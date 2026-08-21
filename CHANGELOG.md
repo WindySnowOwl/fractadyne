@@ -16,6 +16,19 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **New: a sound plays when a render finishes** (beta.120) — the FRACTINT tradition, by request.
+  Fires when a GUI export, a tour render, or a command-line `--render` completes (success or
+  failure — either way the wait is over), via the system notification sound so it respects your
+  Windows sound scheme. Off-switchable next to the other render settings ("Sound when a render
+  finishes").
+
+- **Fixed: the reported VRAM figure could belong to a GPU no longer in the machine** (beta.120).
+  Windows keeps a registry entry for every display adapter ever installed, and the probe took
+  the largest figure among the first few entries — on a bench that has seen several cards, that
+  could be a stale one (the RX 6800 XT field report said 8192 MB for a 16 GB card). The probe
+  now scans the full class list and prefers the entry matching the active adapter's name,
+  falling back to the widest scan only when no name is available.
+
 - **Fixed: the beta.117 motion backpressure could be re-armed by stale measurements, letting
   oversized work stack anyway** (beta.119). Found by the fourth validation crash on the same
   hardware: the backlog of unmeasured full-size dispatches was cleared whenever any measurement

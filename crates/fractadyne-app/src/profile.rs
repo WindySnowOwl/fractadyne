@@ -196,7 +196,7 @@ impl FractadyneApp {
         json.push_str("  \"tool\": \"fractadyne --profile\",\n");
         json.push_str(&format!("  \"version\": {},\n", js(&crate::version_string())));
         json.push_str(&format!("  \"utc\": {},\n", js(&crate::utc_string(now_unix()))));
-        let sys = crate::gather_system_info();
+        let sys = crate::gather_system_info(None);
         json.push_str(&format!("  \"gpu\": {},\n", js(&self.gpu_name)));
         json.push_str(&format!("  \"cpu\": {},\n", js(&sys.cpu)));
         json.push_str(&format!("  \"os\": {},\n", js(std::env::consts::OS)));

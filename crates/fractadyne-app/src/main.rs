@@ -2384,6 +2384,11 @@ struct RenderConfig {
     prefer_detail: bool,
     /// Supersampling / anti-alias factor (1 = off, 2 = 2×2, 3 = 3×3).
     aa: u32,
+    /// Play a sound when a render/export finishes (FRACTINT played a distinct tone; user
+    /// request 2026-08-16). Fires on GUI export completion, tour-render completion, and CLI
+    /// `--render` — never in harnesses, which don't reach those sites (and the uitest walk is
+    /// explicitly excluded where it could).
+    finish_sound: bool,
 }
 
 /// How a pixel is *colored* (not animated): the active palette (preset index / custom gradient /
@@ -3378,9 +3383,9 @@ impl FractadyneApp {
             std_res,
             std_passes,
             std_depth,
+            sysinfo: gather_system_info(Some(&gpu_name)),
             gpu_name,
             gpu_backend,
-            sysinfo: gather_system_info(),
             report: ReportState::default(),
             auto_benchmark,
             auto_benchmark_out,
@@ -3510,6 +3515,7 @@ impl FractadyneApp {
                 work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
                 min_motion_res: s.min_motion_res.clamp(0.30, 1.0),
                 prefer_detail: s.prefer_detail,
+                finish_sound: s.finish_sound,
                 aa: s.aa,
             },
             effects: EffectsConfig {
@@ -3798,6 +3804,7 @@ impl FractadyneApp {
             work_budget_scale: self.render_cfg.work_budget_scale,
             min_motion_res: self.render_cfg.min_motion_res,
             prefer_detail: self.render_cfg.prefer_detail,
+            finish_sound: self.render_cfg.finish_sound,
             aa: self.render_cfg.aa,
             fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
             export_width: self.export.width,
@@ -6753,6 +6760,9 @@ impl eframe::App for FractadyneApp {
                         .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_render.png"));
                     self.render_to_file(ctx, dev, q, &out)
                 };
+                if self.render_cfg.finish_sound {
+                    crate::sysinfo::play_finish_sound();
+                }
                 match result {
                     Ok(m) => println!("{m}  (in {})", Self::fmt_export_duration(t0.elapsed())),
                     Err(e) => {
@@ -6863,6 +6873,11 @@ impl eframe::App for FractadyneApp {
                 Ok(msg) => {
                     self.export.status = Some(self.finish_export_status(msg));
                     self.export.task = None;
+                    // The finish tone — success or failure, the user asked to be told the long
+                    // wait is over. Not during the scripted UI walk, which exercises exports.
+                    if self.render_cfg.finish_sound && self.uitest.is_none() {
+                        crate::sysinfo::play_finish_sound();
+                    }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
