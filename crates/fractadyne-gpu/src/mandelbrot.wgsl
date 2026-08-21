@@ -1264,7 +1264,8 @@ fn fs_iterate(in: VsOut) -> FragOut {
 // `[start_iter, min(end_iter, max_iter))` per dispatch, carrying per-pixel state between passes in
 // three ping-pong textures; `fs_resolve` converts settled state into the normal iteration
 // G-buffer that the color pass consumes. Scope: DIRECT mode (1) and DF32-PERTURBATION mode (0),
-// holomorphic formulas 0..3, aux/glitch off; everything else keeps single-pass `fs_iterate`,
+// holomorphic formulas 0..3, aux off (glitch detection IS supported — see ST_GLITCHED);
+// everything else keeps single-pass `fs_iterate`,
 // whose behaviour is untouched. Mode 0 carries δz + the floatexp derivative + ref_n between
 // passes, rebasing across chunk boundaries exactly as the single pass would.
 //
@@ -1306,6 +1307,13 @@ struct ChunkOut4 {
 const ST_RUNNING: f32 = 0.0;
 const ST_ESCAPED: f32 = 1.0;
 const ST_INTERIOR: f32 = 2.0;
+// Pauldelbrot-glitched (`glitch_on == 1` only): the pixel's low-precision δz lost the reference,
+// so it is UNRELIABLE and the multi-reference corrector must re-render it against a nearer one.
+// A settled status like the other two — the pass-through at the top of each chunk entry carries
+// it to the end of the progression, and `fs_resolve` turns it into GLITCH_SENTINEL. ⚠The packing
+// ceiling: `info_pack` stores `status·2^20 + (iter >> 12)`, so status ≤ 3 keeps the sum under
+// 2^24 and therefore exact in an f32 render target. A fifth status would NOT be exact.
+const ST_GLITCHED: f32 = 3.0;
 
 // Unified info-channel layout (direct AND mode-0 perturbation):
 //   ch0 = status·2^20 + (iter >> 12)   — both small integers, exact in f32
@@ -1489,6 +1497,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         var z_full_re = vec2<f32>(0.0, 0.0); // full z, df32 — stored at escape for the resolve
         var z_full_im = vec2<f32>(0.0, 0.0);
         var escaped = false;
+        var glitched = false;
         var n_rebase: u32 = 0u;
         loop {
             if (iter >= stop) { break; }
@@ -1528,6 +1537,17 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             z_full_im = df_add(rn.im, dz.im);
             zf = vec2<f32>(z_full_re.x, z_full_im.x);
             let z2m = dot(zf, zf);
+            // Pauldelbrot glitch detection — the same test, operands and ORDER as fs_iterate's
+            // mode-0 branch (glitch BEFORE escape; a pixel that satisfies both must land on the
+            // same one either way, or a chunk boundary could change the answer).
+            if (iu.glitch_on == 1u) {
+                let zr2 = rn.re.x * rn.re.x + rn.im.x * rn.im.x;
+                if (z2m < GLITCH_TOL2 * zr2) {
+                    atomicAdd(&counters[CTR_GLITCH], 1u);
+                    glitched = true;
+                    break;
+                }
+            }
             if (z2m > bail2) { escaped = true; break; }
             // Zhuoran rebase: the δ overtook the reference (or the orbit ran out) — fold the
             // full value back onto the orbit start. Identical to the single-pass branch.
@@ -1555,6 +1575,15 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             }
         }
         ctr_commit(n_rebase, 0u, 0u);
+        if (glitched) {
+            // Settled as unreliable: the stored δz/derivative/ref_n are inert (the resolve reads
+            // only the status), and every later chunk passes this through untouched.
+            return ChunkOut(
+                vec4<f32>(dz.re.x, dz.re.y, dz.im.x, dz.im.y),
+                vec4<f32>(D.m.re.x, D.m.re.y, D.m.im.x, D.m.im.y),
+                info_pack(iter, ST_GLITCHED, f32(ref_n), f32(D.e)),
+            );
+        }
         if (escaped) {
             status = ST_ESCAPED;
             let mag2 = dot(zf, zf);
@@ -1614,14 +1643,17 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
 //   st_exp  RUNNING ch0 D.e, ch1..3 spare                     | ESCAPE unused
 //
 // Scope, inherited from the app's `chunk_over` gate exactly as mode 0's chunk body is: the
-// HOLOMORPHIC formulas 0..3 only, aux coloring off, glitch detection off. That is what keeps
-// the 13-float budget honest — Phoenix (formula 8) additionally carries δz_{n-1} AND D_{n-1}
-// (ten more values, which alone would blow four targets), and aux coloring carries a five-float
-// orbit accumulator. Tricorn (4) and the abs families (5..7) are out of scope, so their
-// δ-updates are deliberately not ported. Glitch detection is omitted for the same reason
-// `fs_iterate_chunk` omits it: the live path never enables it, and a glitch sentinel cannot be
-// expressed in the state layout without teaching `fs_resolve` a fourth status — so the GATE,
-// not this shader, is what guarantees `glitch_on == 0` here.
+// HOLOMORPHIC formulas 0..3 only, aux coloring off. That is what keeps the 13-float budget
+// honest — Phoenix (formula 8) additionally carries δz_{n-1} AND D_{n-1} (ten more values,
+// which alone would blow four targets), and aux coloring carries a five-float orbit
+// accumulator. Tricorn (4) and the abs families (5..7) are out of scope, so their δ-updates are
+// deliberately not ported.
+//
+// ⭐Glitch detection IS in scope since beta.124: the sentinel needed no extra state after all,
+// only a fourth SETTLED STATUS (ST_GLITCHED) in the existing status field, which `fs_resolve`
+// maps back to GLITCH_SENTINEL. That closes the last latency-bound single-dispatch tile in the
+// export family — the multi-reference corrector's base pass, which the 5K device loss
+// (crash-1787292746) reached only because its 120 s deadline is checked BETWEEN tiles.
 //
 // Each pass rebuilds its own BLA level table from `iu.orbit_len` below, and the host must keep
 // passing `bla_on` on chunk frames. The e100 device loss (beta.101) was glitch-correction passes
@@ -1740,6 +1772,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     var zf = vec2<f32>(0.0, 0.0);
     var z_full: Fe = fe_zero(); // full z = Z_{n+1} + δz, kept for the escape store
     var escaped = false;
+    var glitched = false;
     loop {
         if (iter >= stop) { break; }
         // BLA: skip 2^l reference steps at once while |δz| is within the merged validity radius;
@@ -1866,6 +1899,18 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
         z_full = fe_add(Znfe, dz);
         zf = fe_lo_f32(z_full);
         let z2 = dot(zf, zf);
+        // Pauldelbrot glitch detection — same test, operands and ORDER as fs_iterate's mode-2
+        // branch: compared in scalar floatexp, never squared f32 (the f32 form underflows to
+        // `0 < 0` at flushed samples and misses glitches at exactly the sensitive orbit indices).
+        if (iu.glitch_on == 1u) {
+            let zr = fe_abs_sf(Znfe);
+            let ztol = sf_norm(vec2<f32>(zr.m.x * 1.0e-2, zr.m.y * 1.0e-2), zr.e);
+            if (sf_lt(fe_abs_sf(z_full), ztol)) {
+                atomicAdd(&counters[CTR_GLITCH], 1u);
+                glitched = true;
+                break;
+            }
+        }
         if (z2 > bail2) { escaped = true; break; }
 
         if (sf_lt(fe_abs_sf(z_full), fe_abs_sf(dz)) || ref_n + 1u >= iu.orbit_len) {
@@ -1878,6 +1923,16 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
         }
     }
     ctr_commit(n_rebase, n_ext, n_bla);
+    if (glitched) {
+        // Settled as unreliable — stored δz/derivative/ref_n are inert (the resolve reads only
+        // the status), and every later chunk passes this through untouched.
+        return ChunkOut4(
+            vec4<f32>(dz.m.re.x, dz.m.re.y, dz.m.im.x, dz.m.im.y),
+            vec4<f32>(D.m.re.x, D.m.re.y, D.m.im.x, D.m.im.y),
+            info_pack(iter, ST_GLITCHED, f32(ref_n), f32(dz.e)),
+            vec4<f32>(f32(D.e), 0.0, 0.0, 0.0),
+        );
+    }
     if (escaped) {
         status = ST_ESCAPED;
         let mag2 = dot(zf, zf);
@@ -1921,7 +1976,13 @@ fn fs_resolve(in: VsOut) -> FragOut {
     let sz = textureLoad(st_z, p, 0);
     let sdz = textureLoad(st_dz, p, 0);
     let sm = textureLoad(st_meta, p, 0);
-    if (info_status(sm) != ST_ESCAPED) {
+    let st = info_status(sm);
+    if (st == ST_GLITCHED) {
+        // The -2 sentinel the multi-reference corrector selects on (`smooth_iter < -1.5`). A
+        // chunked glitch must read EXACTLY as a single-pass one or correction would miss it.
+        return FragOut(GLITCH_SENTINEL, AUX_NONE);
+    }
+    if (st != ST_ESCAPED) {
         return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);
     }
     // Both modes store the FULL z (df32) in st_z at escape and the display derivative's mantissa

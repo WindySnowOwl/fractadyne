@@ -524,11 +524,12 @@ fn render_export_impl(
     // resumable chunk shaders' scope, every tile's iterate runs as wall-priced iteration windows
     // (see `ChunkPricer`) instead of one unbounded dispatch — a dwell-bound tile is LATENCY-bound
     // (wall = max dwell / serial chain rate, independent of area), so the area cap below cannot
-    // price it. Out of scope (aux coloring, glitch detection, non-holomorphic formulas, or a
-    // device without the state-attachment width) keeps the single-dispatch path unchanged.
+    // price it. Out of scope (aux coloring, non-holomorphic formulas, or a device without the
+    // state-attachment width) keeps the single-dispatch path unchanged. Glitch detection IS in
+    // scope since beta.124 (`ST_GLITCHED`).
     let fe = req.mode == 2;
     let chunk_scope = allow_chunking
-        && (req.mode == 1 || ((req.mode == 0 || req.mode == 2) && req.glitch_on == 0))
+        && (req.mode == 1 || req.mode == 0 || req.mode == 2)
         && req.formula <= 3
         && !method_needs_aux(req.color_method)
         && device.limits().max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
@@ -974,11 +975,12 @@ pub fn render_iter_tiled(
         "itertiled.pipeline",
     );
 
-    // Chunked per-tile iterate, same rule and reason as `render_export` (the correction path's
-    // dark-core tiles are latency-bound too). Correction passes run `glitch_on = 1`, which the
-    // chunk shaders do not carry — those keep the single-dispatch path for now; the normalized
-    // export's pass 1 (`glitch_on = 0`) chunks.
-    let chunk_scope = (req.mode == 1 || ((req.mode == 0 || req.mode == 2) && req.glitch_on == 0))
+    // Chunked per-tile iterate, same rule and reason as `render_export`. ⭐Glitch detection is
+    // IN scope since beta.124 (`ST_GLITCHED`), which is what matters here: this is the multi-
+    // reference corrector's own base pass, whose BLA-less dark-core tiles are the most
+    // latency-bound dispatches the app issues, and its 120 s deadline is only checked BETWEEN
+    // tiles — so before chunking, one such tile could still overrun the watchdog inside it.
+    let chunk_scope = (req.mode == 1 || req.mode == 0 || req.mode == 2)
         && req.formula <= 3
         && device.limits().max_color_attachment_bytes_per_sample
             >= if req.mode == 2 { 64 } else { 48 };
@@ -1522,7 +1524,9 @@ pub fn render_iter(
 /// supported scope (the resumable shader replicates the direct branch's arithmetic and order
 /// exactly, and the state carries full df32 precision). Scope: DIRECT (`mode == 1`), df32
 /// perturbation (`mode == 0`) and floatexp perturbation (`mode == 2`), holomorphic formulas 0..=3,
-/// glitch detection off on the perturbation modes; anything else falls back to plain `render_iter`.
+/// aux coloring off (glitch detection is supported since beta.124 — a glitched pixel settles as
+/// `ST_GLITCHED` and resolves to the same `-2` sentinel the single pass emits); anything else
+/// falls back to plain `render_iter`.
 /// Always `ss = 1`, like `render_iter`. `iterate_ms` is not measured on this path (0.0).
 ///
 /// Mode 2 runs the four-target `fs_iterate_chunk_fe` entry point instead — floatexp state does not
@@ -1537,10 +1541,10 @@ pub fn render_iter_chunked(
     // mode 0, four (64) for mode 2. A device that granted less can't run it: fall back to the
     // single-pass render (the caller's TDR exposure is then what it always was; the app requests
     // min(adapter, 64) at device creation). Scope: direct (1), df32 perturbation (0) and floatexp
-    // perturbation (2) with aux/glitch off, holomorphic formulas 0..3 — the same scope the chunk
-    // shaders are written to, which is narrower than `fs_iterate`'s.
+    // perturbation (2) with aux off, holomorphic formulas 0..3 — the same scope the chunk shaders
+    // are written to, which is narrower than `fs_iterate`'s.
     let fe = req.mode == 2; // floatexp: the four-target entry point
-    let mode_ok = req.mode == 1 || ((req.mode == 0 || req.mode == 2) && req.glitch_on == 0);
+    let mode_ok = req.mode == 1 || req.mode == 0 || req.mode == 2;
     let attach_need = if fe { 64 } else { 48 };
     if !mode_ok
         || req.formula > 3

@@ -1029,6 +1029,40 @@ impl FractadyneApp {
                     });
                 }
 
+                // (D2b2) Glitch detection SURVIVES CHUNKING (beta.124). The corrector's base pass
+                // runs `glitch_on = 1` through `render_iter_tiled`, which since beta.124 splits
+                // each tile's iterate into wall-priced iteration windows — so a glitched pixel
+                // now settles as `ST_GLITCHED` mid-progression, is passed through every later
+                // window, and is turned back into the -2 sentinel by `fs_resolve`. Compared
+                // against the trusted single-dispatch `render_iter` on the SAME far-offset
+                // reference, which flags plenty of pixels: bit-identity alone could pass
+                // vacuously if detection silently stopped firing in BOTH, so the flagged count
+                // is asserted non-zero too.
+                {
+                    let mut g = with_ref(0.45 * span, 0.35 * span);
+                    g.glitch_on = 1;
+                    let tiled = fractadyne_gpu::render_iter_tiled(device, queue, &g, 2_000_000_000, None)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_tiled): {e}"))
+                        .ok();
+                    if let (Some(single), Some(t)) = (render(&g), &tiled) {
+                        let flagged = |px: &[f32]| px.iter().step_by(4).filter(|&&r| r < -1.5).count();
+                        let (gs, gt) = (flagged(&single), flagged(&t.pixels));
+                        let diffs = single
+                            .iter()
+                            .zip(&t.pixels)
+                            .filter(|(a, b)| a.to_bits() != b.to_bits())
+                            .count();
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Glitch",
+                            name: "chunked glitch detection is bit-identical".into(),
+                            params: "seahorse, 1e8×, far-offset ref, tiled+chunked vs single".into(),
+                            result: format!("{diffs} texels differ; flagged single {gs}, chunked {gt}"),
+                            threshold: "0 texels differ, and detection actually fired (>0)",
+                            pass: diffs == 0 && gs > 0 && gt == gs,
+                        });
+                    }
+                }
+
                 // (D2c) End-to-end multi-reference CORRECTION. Starting from the auto reference
                 // (which flags a few glitches here), the corrector drops in extra references and
                 // must resolve every flagged pixel — residual glitches → 0.
