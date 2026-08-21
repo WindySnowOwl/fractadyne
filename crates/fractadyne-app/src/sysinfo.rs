@@ -539,49 +539,8 @@ fn cpu_topology() -> (usize, u64, u64) {
     (0, 0, 0)
 }
 
-/// The render-finished tone: FRACTINT's actual "normal completion" tune, read out of the DOS
-/// source rather than guessed (user request 2026-08-16; sourcing done 2026-08-21). From
-/// `general.asm` in the FRACTINT source (mirror: LegalizeAdulthood/fractint), verbatim:
-///
-/// ```text
-/// buzzer0         dw      1047,100        ; "normal" completion
-///                 dw      1109,100
-///                 dw      1175,100
-///                 dw      0,0
-/// ```
-///
-/// Three rising 100 ms notes — C6, C#6, D6 — on the PC speaker. (`dos/sound.c`'s soundcard path
-/// uses the same three frequencies, confirming the tune; "interrupted" was the descending
-/// mirror 2093/1976/1857 and "error" a 40 Hz razzberry, neither used here.) `kernel32 Beep` is
-/// the modern PC-speaker shim (synthesized through the default output device since Windows 7),
-/// so this is the faithful reproduction. ⚠Beep BLOCKS for the note's duration.
-///
-/// `blocking`: the GUI passes false (the tune plays on its own thread; a 300 ms stall in
-/// `update` would be a real hitch); the CLI `--render` path passes true — the process exits
-/// right after the completion message, which would kill a detached tune mid-note, and 300 ms
-/// added to a finished render is nothing.
-#[cfg(windows)]
-pub(crate) fn play_finish_sound(blocking: bool) {
-    fn tune() {
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn Beep(freq: u32, ms: u32) -> i32;
-        }
-        for (freq, ms) in [(1047u32, 100u32), (1109, 100), (1175, 100)] {
-            // SAFETY: no pointers; Beep plays synchronously and returns.
-            unsafe {
-                Beep(freq, ms);
-            }
-        }
-    }
-    if blocking {
-        tune();
-    } else {
-        std::thread::spawn(tune);
-    }
-}
-#[cfg(not(windows))]
-pub(crate) fn play_finish_sound(_blocking: bool) {}
+// The render-finished tone moved to `crate::tone` (beta.123): the kernel32 `Beep` shim was
+// replaced by our own band-limited synthesis with a PC-speaker-model high-pass.
 
 /// Dedicated VRAM (bytes) read from the display-adapter registry keys.
 ///

@@ -411,7 +411,8 @@ impl FractadyneApp {
                     .on_hover_text(
                         "Play FRACTINT's completion tune when an export or tour render finishes: \
                          three rising notes (1047, 1109, 1175 Hz for 100 ms each), exactly as the \
-                         DOS original played them on the PC speaker.",
+                         DOS original encoded them — synthesized as a band-limited square and \
+                         high-passed to sound like the little PC-speaker cone that played it.",
                     );
                 ui.checkbox(&mut self.render_cfg.prefer_detail, "Prefer detail while zooming")
                     .on_hover_text(

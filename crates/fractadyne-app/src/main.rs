@@ -68,6 +68,7 @@ mod selftest;
 mod sysinfo;
 mod theme;
 mod torture;
+mod tone;
 mod tunables;
 mod ui;
 mod uitest;
@@ -6763,7 +6764,7 @@ impl eframe::App for FractadyneApp {
                 if self.render_cfg.finish_sound {
                     // Blocking on purpose: the process exits right after the message prints,
                     // which would cut a detached tune mid-note.
-                    crate::sysinfo::play_finish_sound(true);
+                    crate::tone::play_finish_sound(true);
                 }
                 match result {
                     Ok(m) => println!("{m}  (in {})", Self::fmt_export_duration(t0.elapsed())),
@@ -6878,7 +6879,7 @@ impl eframe::App for FractadyneApp {
                     // The finish tone — success or failure, the user asked to be told the long
                     // wait is over. Not during the scripted UI walk, which exercises exports.
                     if self.render_cfg.finish_sound && self.uitest.is_none() {
-                        crate::sysinfo::play_finish_sound(false);
+                        crate::tone::play_finish_sound(false);
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),
