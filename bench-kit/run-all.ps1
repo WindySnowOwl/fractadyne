@@ -106,9 +106,17 @@ if ($have.fractadyne) {
 if ($have.fraktaler3) {
     $wisdom = Join-Path $outDir 'f3-wisdom.toml'
     if (-not (Test-Path $wisdom)) {
-        Write-Host 'Fraktaler-3: generating tuning wisdom (once)...'
-        $w = Invoke-TimedRender $Fraktaler3Exe ('-W "' + $wisdom + '"') 1800 $outDir
-        Write-Host ('  wisdom: ' + $w.status + ' in ' + $w.wall_s + 's')
+        # The file goes through -w and the MODE flag follows: `-w path -W` writes the initial
+        # hardware config there, `-w path -B` then benchmarks number types for optimal
+        # efficiency (the real tuning; bounded - a timeout leaves the initial config in place,
+        # which is only a slower F3, honestly noted in the console). A bare `-W "path"` treats
+        # the path as an INPUT file and silently writes nothing - the first real kit run
+        # benchmarked F3 on built-in defaults that way.
+        Write-Host 'Fraktaler-3: generating + benchmarking tuning wisdom (once)...'
+        $w = Invoke-TimedRender $Fraktaler3Exe ('-w "' + $wisdom + '" -W') 300 $outDir
+        Write-Host ('  wisdom init: ' + $w.status + ' in ' + $w.wall_s + 's')
+        $w = Invoke-TimedRender $Fraktaler3Exe ('-w "' + $wisdom + '" -B') 1800 $outDir
+        Write-Host ('  wisdom benchmark: ' + $w.status + ' in ' + $w.wall_s + 's')
     }
     foreach ($rep in 1..$Reps) {
         foreach ($s in $sceneRows) {

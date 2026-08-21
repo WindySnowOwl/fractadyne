@@ -291,9 +291,14 @@ fi
 if [ -n "$FRAKTALER3_EXE" ] && ! skipped fraktaler3; then
     wisdom="$OUT/f3-wisdom.toml"
     if [ ! -f "$wisdom" ]; then
-        step "Fraktaler-3: generating tuning wisdom (once)..."
-        sw=$(timed_run "$FRAKTALER3_EXE" -W "$wisdom")
-        echo "  wisdom: ${sw% *} in ${sw#* }s"
+        # `-w path -W` writes the initial hardware config to OUR file, `-w path -B` benchmarks
+        # number types (the real tuning). A bare `-W path` treats the path as an input file and
+        # silently writes nothing (see run-all.ps1 for the full story).
+        step "Fraktaler-3: generating + benchmarking tuning wisdom (once)..."
+        sw=$(timed_run "$FRAKTALER3_EXE" -w "$wisdom" -W)
+        echo "  wisdom init: ${sw% *} in ${sw#* }s"
+        sw=$(timed_run "$FRAKTALER3_EXE" -w "$wisdom" -B)
+        echo "  wisdom benchmark: ${sw% *} in ${sw#* }s"
     fi
     for rep in $(seq 1 "$REPS"); do
         for row in "${SCENES[@]}"; do

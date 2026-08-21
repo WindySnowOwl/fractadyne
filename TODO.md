@@ -107,26 +107,26 @@ most editors; sections are the `##` headings the items live under.
 | Numeric egress (P2, §3.11 absent) — iteration grids, orbits, ray data as CSV/NumPy via the … | Proposed feature set — reconciled backlog (2026-08-06) | 5112 |
 | Auto-stretch (P2, §4.5 absent) — unskew sheared deep locations from iteration histograms … | Proposed feature set — reconciled backlog (2026-08-06) | 5117 |
 | `.kfr` export / `.kfb` support (§4.2 gap) — `.kfr` import ships (hardened + fuzzed); … | Proposed feature set — reconciled backlog (2026-08-06) | 5119 |
-| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 5177 |
-| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 5190 |
-| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 5195 |
-| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 5199 |
-| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 5201 |
-| Periodic references for nucleus-centred views — the autopilot/NR-zoom deliberately … | Performance & throughput (M7) | 5218 |
-| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 5226 |
-| Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 5231 |
-| Level 2 groundwork: bignum backend benchmark — cheap and decisive: bench astro-float … | Performance & throughput (M7) | 5234 |
-| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 5240 |
-| Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 5246 |
-| By-frame render farm = a documented script, not a subsystem. Frames are independent and … | Performance & throughput (M7) | 5257 |
-| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 5291 |
-| Shippable reference files — the head node computes the sequence reference once and … | Performance & throughput (M7) | 5294 |
-| Distributed normalize coherence — per-machine `--normalize` ranges flicker at shard … | Performance & throughput (M7) | 5300 |
-| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 5308 |
-| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 5340 |
-| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 5437 |
-| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 5450 |
-| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 5453 |
+| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 5190 |
+| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 5203 |
+| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 5208 |
+| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 5212 |
+| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 5214 |
+| Periodic references for nucleus-centred views — the autopilot/NR-zoom deliberately … | Performance & throughput (M7) | 5231 |
+| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 5239 |
+| Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 5244 |
+| Level 2 groundwork: bignum backend benchmark — cheap and decisive: bench astro-float … | Performance & throughput (M7) | 5247 |
+| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 5253 |
+| Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 5259 |
+| By-frame render farm = a documented script, not a subsystem. Frames are independent and … | Performance & throughput (M7) | 5270 |
+| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 5304 |
+| Shippable reference files — the head node computes the sequence reference once and … | Performance & throughput (M7) | 5307 |
+| Distributed normalize coherence — per-machine `--normalize` ranges flicker at shard … | Performance & throughput (M7) | 5313 |
+| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 5321 |
+| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 5353 |
+| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 5450 |
+| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 5463 |
+| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 5466 |
 <!-- TODO-INDEX:END -->
 
 ## ▶ Announce readiness (fractalforums) — TRIAGE 2026-08-08
@@ -5131,11 +5131,24 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   (GPL-3, CUDA/NVIDIA-only, auto-detected → N/A on AMD) is GUI-driven on Windows. Two timing
   columns on purpose (wall vs self-reported — never mixed; README explains). Scenes: 03/04/08/
   14/17/10 (1e6 → 4.6e1105).
-  **Remaining to close**: ①first real run on the dev box (after the current 5K export
-  completes — the automated lanes contend for GPU/CPU); ②validate Imagina + FractalShark
-  actually import our `.kfr` (format drift → DNF instructions are in place but untested);
-  ③a Radeon-box run (FractalShark lane exercises the N/A path); ④link the kit zip from the
-  site/README once validated.
+  ⭐AUTO-FETCH ADDED 2026-08-21 `ae69dbf` (user ask): `bench-latest.ps1` + `bench-latest.sh`
+  download the LATEST release of every renderer (GitHub /releases WITH prereleases for
+  fractadyne/Imagina; mathr download/latest for F3; FractalShark only on NVIDIA boxes), verify
+  target-folder free space (-AppsDir/-RequiredGB), run sequentially, and stamp app versions +
+  binary hashes into the summary (apps-manifest.txt). Archive traps handled + documented in the
+  scripts: Imagina = Deflate64 (Expand-Archive can't, bsdtar SILENTLY CORRUPTS — Explorer COM
+  is the fallback); F3's 7z fails extractors on ARM entries while x86_64 extracts byte-perfect
+  (tolerate + validate). ⚠Four latent run-all bugs found by the FIRST EVER real run, all fixed:
+  $args automatic-variable assignment (renders launched with NO args → GUI until timeout),
+  [string[]]$Scenes type-constraining the case-insensitive $scenes slot (rows→strings),
+  `-File` comma-list non-splitting, reported-time unit suffixes breaking the summary sort.
+  ✅①first real run DONE 2026-08-21 (dev box, automated lanes, 6 scenes — results in the
+  session log / memory; fractadyne 1.7–15.7 s wall, on par with F3 at the shallow end).
+  **Remaining to close**: ②validate Imagina + FractalShark actually import our `.kfr`
+  (operator-assisted — needs the user at the keyboard; DNF instructions in place but untested);
+  ③a Radeon-box run (FractalShark lane exercises the N/A path; bench-latest skips its download
+  there); ④link the kit zip from the site/README once validated; ④b (new) a Linux-box run of
+  `bench-latest.sh` — written and syntax-checked but never executed on real Linux.
   Original scope for reference:
   ~~F3 relative-performance benchmark matrix (user, 2026-08-10)** — a standardized head-to-head
   wall-clock harness vs Fraktaler-3 across a location/zoom matrix, reporting the SPEED RATIO per
