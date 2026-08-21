@@ -26,6 +26,16 @@ try {
         foreach ($ext in '.kfr', '.f3.toml', '.fdn') {
             Copy-Item (Join-Path $repo ('validation\corpus\locations\' + $s + $ext)) (Join-Path $stage 'scenes')
         }
+        # ⚠The corpus .f3.toml files are CORRECTNESS fixtures and render 1280x720; the benchmark
+        # protocol is 1920x1080 for every lane. Copying them verbatim silently gave Fraktaler-3
+        # 2.25x FEWER PIXELS than every other lane while the README promised equal work - the
+        # first published run compared 0.92 MP against 2.07 MP. Rewrite the size in the kit's
+        # copy only; the corpus originals must stay at their blessed resolution.
+        $toml = Join-Path $stage ('scenes\' + $s + '.f3.toml')
+        (Get-Content $toml) `
+            -replace '^\s*width\s*=\s*\d+', 'width = 1920' `
+            -replace '^\s*height\s*=\s*\d+', 'height = 1080' |
+            Set-Content $toml -Encoding ascii
     }
     # Fraktaler-3: binary, manual, and source (AGPL) from the vendored copy.
     New-Item -ItemType Directory -Force (Join-Path $stage 'fraktaler3') | Out-Null

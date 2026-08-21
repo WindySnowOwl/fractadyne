@@ -16,6 +16,16 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: views deeper than 1e308× rendered a BLANK image** (beta.125) — a regression that had
+  been live since 2026-08-17. A guard added for corrupted sessions (where a NaN zoom used to
+  select the most expensive arithmetic) rejected every *non-finite* magnification, not just
+  NaN — but the magnification figure is a plain 64-bit float, so it saturates to infinity past
+  about 1e308×. Every genuinely extreme view therefore looked like garbage input to the mode
+  selector and was quietly demoted to the shallow, non-perturbation renderer, which at that
+  depth produces an empty frame. Views past 1e308× now correctly use the extended-range
+  arithmetic they were always meant to. If you visited a very deep location since mid-August
+  and found it blank, this was why.
+
 - **Fixed: glitch-corrected exports could still lose the device on a single tile** (beta.124) —
   the last piece of the export watchdog family. The beta.122 fix bounded every dispatch in the
   plain export path, but the multi-reference glitch corrector's own passes were out of scope

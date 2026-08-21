@@ -113,24 +113,38 @@ mod frame_cost_tests {
 
     /// A garbage magnification must pick the SAFEST mode, never the most expensive one.
     #[test]
-    fn a_non_finite_magnification_falls_back_to_direct() {
+    fn a_nan_magnification_falls_back_to_direct_but_an_infinite_one_goes_deepest() {
         // THE FIELD CASE (2026-08-18, build 1678): a corrupted session gave a NaN zoom, and because
         // every comparison against NaN is false the selector fell through to Floatexp — the most
         // expensive arithmetic at maximum depth. Logged as
         // `arithmetic mode none → 2 at frame 1 (mag 2^NaN)`. With a 250k iteration ask that is the
         // un-chunkable ~1 s/frame regime, so the app opened to a black screen, "iter capped", a
         // laggy desktop, and a device loss waiting to happen.
-        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let m = RenderMode::select(true, false, bad);
-            assert!(!m.is_floatexp(), "mag {bad} selected floatexp — the field failure");
-            assert_eq!(m, RenderMode::Direct, "mag {bad} must fall back to Direct");
-            // Julia uses a different direct threshold and must be just as safe.
-            assert_eq!(RenderMode::select(true, true, bad), RenderMode::Direct);
-        }
+        assert_eq!(RenderMode::select(true, false, f64::NAN), RenderMode::Direct);
+        assert_eq!(RenderMode::select(true, true, f64::NAN), RenderMode::Direct);
+        // A NEGATIVE magnification is garbage too, and the ordinary `< direct_below` compare
+        // already handles it — no guard needed.
+        assert_eq!(RenderMode::select(true, false, f64::NEG_INFINITY), RenderMode::Direct);
+
+        // ⭐**`+∞` IS A REAL VIEW, NOT GARBAGE** — and the version of this test written alongside
+        // the NaN guard asserted the opposite, which is how the defect survived four days.
+        // `Viewport::magnification()` saturates past ~1e308×, so `+∞` is exactly what every
+        // genuinely extreme location reports. Demoting it to Direct drops perturbation entirely
+        // and renders a BLANK frame (the 4.6e1105× bench scene, "144× faster than Fraktaler-3",
+        // was an empty image). Floatexp is the mode that exists for "deeper than f64 can say".
+        assert_eq!(RenderMode::select(true, false, f64::INFINITY), RenderMode::Floatexp);
+        assert_eq!(RenderMode::select(true, true, f64::INFINITY), RenderMode::Floatexp);
+        // ...unless the formula has no perturbation at all, which still wins over everything.
+        assert_eq!(RenderMode::select(false, false, f64::INFINITY), RenderMode::Direct);
+
         // And the ordinary partition is untouched by the guard.
         assert_eq!(RenderMode::select(true, false, 1.0), RenderMode::Direct);
         assert_eq!(RenderMode::select(true, false, 1.0e10), RenderMode::Df32Pert);
         assert_eq!(RenderMode::select(true, false, 1.0e30), RenderMode::Floatexp);
+        // The saturation boundary itself: both sides of ~1e308 must choose the same mode, or the
+        // f64's limit becomes a visible seam in the image at a depth the user can reach.
+        assert_eq!(RenderMode::select(true, false, 1.0e308), RenderMode::Floatexp);
+        assert_eq!(RenderMode::select(true, false, 1.0e308 * 10.0), RenderMode::Floatexp);
     }
 
     /// Moving frames are throttled by regime; settled frames get the full budget regardless.

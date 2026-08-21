@@ -1263,18 +1263,26 @@ impl RenderMode {
     /// then df32, switching to floatexp past `PERT_FE_THRESHOLD`. The one place this is decided.
     /// `julia` selects the much lower direct→perturbation crossover (see `PERT_JULIA_THRESHOLD`).
     pub(crate) fn select(supports_perturbation: bool, julia: bool, mag: f64) -> RenderMode {
-        // ⚠A NON-FINITE magnification must pick the SAFEST mode, and getting this wrong was a real
-        // field failure (2026-08-18, build 1678). Every comparison against NaN is false, so the
-        // chain below used to fall through to `Floatexp` — a NaN zoom silently selected the MOST
-        // EXPENSIVE arithmetic at maximum depth. With a 250,000 iteration ask that is precisely the
-        // regime that has no chunking and runs ~1 s per frame, so a corrupted session opened to a
-        // black screen, "iter capped", a laggy desktop, and a device loss waiting to happen. The
-        // log line was `arithmetic mode none → 2 at frame 1 (mag 2^NaN)`.
+        // ⚠**NaN ONLY — never `!is_finite()`.** A NaN zoom is garbage input and must pick the
+        // safest mode: every comparison against NaN is false, so the chain below falls through to
+        // `Floatexp`, and a corrupted session (2026-08-18, build 1678) silently selected the most
+        // expensive arithmetic at maximum depth — black screen, "iter capped", laggy desktop, a
+        // device loss waiting to happen (`arithmetic mode none → 2 at frame 1 (mag 2^NaN)`).
+        // Direct is right for garbage: no reference orbit, cheapest, and it renders *something*
+        // rather than wedging the GPU.
         //
-        // Direct is the correct answer for garbage input: it needs no reference orbit, costs the
-        // least, and renders *something* rather than wedging the GPU. The view is wrong either way;
-        // the difference is whether the user can still use the app to fix it.
-        if !mag.is_finite() {
+        // ⭐But `+∞` IS NOT GARBAGE, and catching it here was a REGRESSION (`c59bda0`, 2026-08-17
+        // → fixed beta.124). `Viewport::magnification()` returns an f64 and therefore SATURATES
+        // to `+∞` past ~1e308×, so this guard silently demoted every genuinely extreme view to
+        // non-perturbation Direct — no reference, no BLA — and rendered a BLANK IMAGE. It reached
+        // the bench kit: the 4.6e1105× corpus scene "finished" in 1.8 s against Fraktaler-3's
+        // 258 s, and the 144× win was measuring an empty frame. Nothing caught it for four days
+        // because the F3 corpus gate (the only thing that renders past 1e308) last ran green on
+        // 2026-08-14, three days BEFORE the guard landed — and the unit test written with it
+        // asserted `INFINITY → Direct`, enshrining the defect. An infinite magnification means
+        // "deeper than an f64 can say", which is precisely what `Floatexp` exists for, so it must
+        // fall through to the bottom of the chain.
+        if mag.is_nan() {
             return RenderMode::Direct;
         }
         let direct_below = if julia { PERT_JULIA_THRESHOLD } else { 1.0e4 };
