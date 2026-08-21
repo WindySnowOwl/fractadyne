@@ -832,3 +832,51 @@ virgin regime cliff still goes out once at the old price — if the Radeon rerun
 single ≥2 s packet, the next layer is range-chunking the motion frame itself (the option C pin
 machinery already runs bounded interacting passes; the res-shrink pre-fits motion frames to the
 budget, which is why `chunk_over` alone can never catch this case).
+
+## 15. The credit rule: a price retires its own dispatch, nothing else (2026-08-21)
+
+Crash #4 (`crash-1787275348-0`, beta.118) against the beta.117 pass 90 minutes earlier — same
+render code, same recipe, opposite outcomes — is the cleanest possible demonstration that §14's
+gate had a soundness hole, because the only difference was timing luck in which readings arrived
+when. The hole: the backlog cleared to zero on ANY returned reading, on the argument "the queue
+is FIFO, one price proves everything before it drained." The argument is true and the code was
+still wrong: it proves everything *before* the priced dispatch — and during a post-switch budget
+climb, the readings arriving are those of the small dispatches from seconds earlier. Each stale
+arrival re-credited the gate to admit MOTION_UNPRICED_MAX fresh ceiling-sized dispatches.
+Frames 986–988: three 6e10 passes back-to-back, one jam line that never repeated, no retreat
+(the monsters' readings never returned), device lost.
+
+The repair is the credit rule stated positively: **a price retires exactly the dispatch it
+prices.** The sink already pairs readings to dispatches 1:1 by published step count, so the
+backlog becomes a bounded FIFO of counted step values and retirement is an exact match. Two
+cheaper rules were rejected: clear-on-any-reading (above), and retire-if-the-reading-is-
+full-size-versus-the-budget-now, which fails in the other direction — during a ×1.5-per-reading
+climb the budget outgrows a dispatch before its own reading returns, so every climb-era monster
+fails its retire test and the backlog ratchets upward permanently, degrading motion to an
+alternating full/clamped duty cycle after every deep dive.
+
+Same-day corollary to the manifest honesty rule (§13): the crash manifest priced this chunked
+frame at the full-frame nominal (`steps=1.810e11` against `budget=6.000e10`), which misread as
+"a frame that ignored its budget" and cost the first half hour of the triage. A chunked frame's
+manifest now states its range and its range's cost.
+
+The §14 lesson refines to: **record honestly, submit only what has been priced, and credit a
+price only against the work it measured.** Ledger, admission, settlement — three invariants,
+and each of the four Radeon crashes broke exactly one of them.
+
+**§15 correction, same day — the exact-match retire never fired.** The first battery on it
+failed loudly (once the harness chain was fixed to propagate real exit codes — a grep pipeline
+had been masking gate verdicts): `--motiontest` FAILED A2 and `--autodive` never reached the
+lethal regime, peaks of 36.8 ms on a full-throttle torture — the signature of a gate stuck
+closed. The sink's paired count is the MEASURED executed step count from the GPU counters, not
+the nominal stamp the backlog stored, so no reading ever matched, nothing ever retired, and the
+backlog pinned at cap. Readings also travel through a single overwrite slot, so they are not
+even reliably 1:1. The settlement signal is now what it should have been from the start:
+`Queue::on_submitted_work_done` — a real, ordered, per-registration completion callback —
+registered one frame after the counted dispatch (eframe submits a frame's work after `update`
+returns, so same-frame registration would cover only the previous frame's queue tail and retire
+the new dispatch before it ran). Readings now play no part in admission control at all.
+The §15 rule survives with a sharper statement: **credit settlement against completion, and only
+completion — a measurement is a price, never a receipt.** And the operational lesson that found
+it: a torture harness that suddenly measures everything fast is not passing, it is not running —
+"DID NOT REACH THE REGIME" exists as an exit distinct from success for exactly this reason.

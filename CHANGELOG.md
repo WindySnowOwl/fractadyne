@@ -16,6 +16,19 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: the beta.117 motion backpressure could be re-armed by stale measurements, letting
+  oversized work stack anyway** (beta.119). Found by the fourth validation crash on the same
+  hardware: the backlog of unmeasured full-size dispatches was cleared whenever any measurement
+  returned — but a measurement only vouches for work submitted before it, and the measurements
+  arriving during a zoom-home's budget climb belong to the small frames from seconds earlier.
+  Each stale arrival re-credited the gate to admit more full-budget dispatches, three of which
+  queued back-to-back at the ceiling right before the loss. Retirement is now driven by the
+  GPU's own completion signal (one ordered callback per counted dispatch), so measurements play
+  no part in admission control at all: work is admitted when prior work is confirmed done, and
+  measurements only price it. The crash manifest also now prices a piece-by-piece frame by its
+  actual piece, not the whole frame's nominal cost, which had made the killer frame read as 3x
+  over a budget it was honoring.
+
 - **New: `--log-dir DIR` (and `FRACTADYNE_LOG_DIR`) redirect the log file and crash reports**
   (beta.118) — for example onto a network share while validating on another machine. Only the
   logs move; the session and settings stay in the config directory (unlike

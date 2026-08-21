@@ -329,7 +329,8 @@ mod override_tests {
 pub(crate) const TDR_BUDGET_MS_DEFAULT: f64 = 400.0;
 
 /// How many FULL-SIZE dispatches (>= 0.7x the learned budget — `budget_step`'s own
-/// representativeness threshold) may sit in the GPU queue UNPRICED before motion frames stop
+/// representativeness threshold) may sit in the GPU queue UNCOMPLETED (per
+/// `Queue::on_submitted_work_done`) before motion frames stop
 /// submitting more and dispatch at the rate-derived bootstrap instead.
 ///
 /// The budget walk is sound per reading, but readings lag their dispatches by 2-3 frames, and the

@@ -3307,7 +3307,7 @@ impl FractadyneApp {
         // Settled paths need none of this: the chunked walk serializes itself, and tiles arm only
         // on a converged budget.
         let motion_jammed = motion_jammed(
-            self.perf.unpriced_full[vidx],
+            self.perf.full_inflight[vidx],
             crate::tunables::cost().motion_unpriced_max,
             interacting,
             offscreen,
@@ -3318,8 +3318,8 @@ impl FractadyneApp {
             crate::diag::trace(
                 "gpu",
                 format!(
-                    "motion jam: {} unpriced full-size dispatches — frame clamped {tdr_steps:.3e}                      -> {clamped:.3e}",
-                    self.perf.unpriced_full[vidx]
+                    "motion jam: {} unpriced full-size dispatches — frame clamped {tdr_steps:.3e} -> {clamped:.3e}",
+                    self.perf.full_inflight[vidx]
                 ),
             );
             clamped
@@ -4775,13 +4775,27 @@ impl FractadyneApp {
         // resolution, supersampling, or the iteration budget. Only on re-iterating frames, so a
         // reproject/cached frame costs nothing.
         if !will_reproject {
-            let steps = spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(shader_iter.max(1) as u64);
+            // A chunked frame's real dispatch is its RANGE, not the full-frame nominal — the
+            // same honesty rule the fe_steps stamp follows. The 985x735 "steps=1.810e11 vs
+            // budget=6.000e10" manifest in crash-1787275348-0 read as a frame that ignored its
+            // budget; it was a budget-sized chunk pass wearing the whole frame's price tag.
+            let steps = match chunk_range {
+                Some([s, e]) => spx
+                    .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                    .saturating_mul(u64::from(e.saturating_sub(s)).max(1)),
+                None => spx
+                    .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                    .saturating_mul(shader_iter.max(1) as u64),
+            };
+            let chunk_note = match chunk_range {
+                Some([s, e]) => format!(" chunk=[{s},{e})"),
+                None => String::new(),
+            };
             crate::diag::set_manifest(format!(
                 "LIVE view={vs} mode={} {}x{} ss={ss} iter={shader_iter} (gpu_iter={gpu_iter}, \
-                 eff={eff_iter}, boost={:.2}) steps={steps:.3e} budget={tdr_steps:.3e} \
-                 tile={} orbit_len={} partial={} settled={} since_mode_switch={}",
+                 eff={eff_iter}, boost={:.2}) steps={steps:.3e}{chunk_note} \
+                 budget={tdr_steps:.3e} tile={} orbit_len={} partial={} settled={} \
+                 since_mode_switch={}",
                 mode.to_u32(),
                 resolution[0],
                 resolution[1],
@@ -4837,15 +4851,23 @@ impl FractadyneApp {
         // MOTION-JAM ACCOUNTING — one site, after every dispatch path has stamped its cost.
         // Whatever shape this frame dispatched (full frame, settle tile, chunk range, climb
         // probe), `fe_dispatch_frame` says it ran and `fe_steps_last` says what it cost; count it
-        // toward the unpriced backlog when it is full-size against the learned budget. Readings
-        // clear the counter in `update` (FIFO — one returned price proves everything before it
-        // drained). A jam-clamped frame stays under the threshold by construction, so a jam
-        // never counts itself and the gate releases the moment any price returns.
+        // toward the unpriced backlog when it is full-size against the learned budget. A consumed
+        // full-size reading retires exactly ONE dispatch in `update` — see `Perf::unpriced_full`
+        // for why any looser credit (the original clear-on-any-reading) re-arms the gate off
+        // stale small readings and lets monsters stack anyway (crash-1787275348-0). A
+        // jam-clamped frame stays under the threshold by construction, so a jam never counts
+        // itself.
         if !will_reproject && self.perf.fe_dispatch_frame[vs] == self.perf.frame_idx {
             let learned = budget_base(self.perf.fe_budget[vs], self.perf.bootstrap_steps(vs));
             if motion_jam_counts(self.perf.fe_steps_last[vs], learned) {
-                let n = self.perf.unpriced_full[vs].saturating_add(1);
-                self.perf.unpriced_full[vs] = n;
+                self.perf.full_inflight[vs] = self.perf.full_inflight[vs].saturating_add(1);
+                // Retirement is a REAL completion signal, not a reading: `update` registers a
+                // `Queue::on_submitted_work_done` callback for this dispatch on the next frame
+                // (after eframe has submitted this one) and decrements when it fires. Two
+                // reading-based credits were tried and both were unsound — see the field doc on
+                // `Perf::full_inflight` for the incidents.
+                self.perf.full_reg_pending[vs] = self.perf.full_reg_pending[vs].saturating_add(1);
+                let n = self.perf.full_inflight[vs];
                 if interacting && n as u64 == crate::tunables::cost().motion_unpriced_max {
                     // Logged, not trace-gated (the lethal-band rule): if the field needed this
                     // gate, the log must already say so. But THROTTLED to one line per 5 s —
@@ -4860,7 +4882,7 @@ impl FractadyneApp {
                         crate::diag::log_line(
                             "render",
                             &format!(
-                                "motion jam: {n} full-size dispatches unpriced (budget {:.3e}) —                                  motion frames dispatch at bootstrap until a price returns",
+                                "motion jam: {n} full-size dispatches unpriced (budget {:.3e}) — motion frames dispatch at bootstrap until a price returns",
                                 learned as f64
                             ),
                         );
@@ -5721,6 +5743,7 @@ mod motion_jam {
         // The no-rebuild bisection lever: --set MOTION_UNPRICED_MAX=999.
         assert!(!motion_jammed(u32::MAX, 999_999_999_999, true, false, false));
     }
+
 }
 
 /// One AIMD step of the deep-motion resolution scale, from a REAL re-iterate frame's interval.

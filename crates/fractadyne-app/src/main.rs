@@ -202,11 +202,25 @@ struct Perf {
     /// bugs, which is exactly when a fallback is worth having. Global because every cause is
     /// (device features, a starved sink); either view may trip it.
     wall_fallback: bool,
-    /// Full-size dispatches (>= 0.7x the learned budget) submitted and not yet priced by any
-    /// returned reading. The motion-jam gate (`MOTION_UNPRICED_MAX`) reads this in `build_params`;
-    /// any consumed reading clears it — the queue is FIFO, so one returned price proves everything
-    /// submitted before it has drained.
-    unpriced_full: [u32; 2],
+    /// Full-size dispatches (>= 0.7x the learned budget at dispatch) whose completion the GPU
+    /// has not yet confirmed; the motion-jam gate (`MOTION_UNPRICED_MAX`) compares this count.
+    /// Retirement is `Queue::on_submitted_work_done` — a real, ordered completion callback per
+    /// counted dispatch — because both reading-based credits proved unsound:
+    /// clear-to-zero on any reading (crash-1787275348-0, RX 6800 XT) let stale small readings
+    /// re-admit three ceiling-sized monsters at a time — FIFO proof covers work submitted
+    /// BEFORE the priced dispatch, not after — and retire-by-matching-the-reading never fired
+    /// at all, because the sink publishes the MEASURED executed count, not the nominal stamp
+    /// (caught on the dev 3080: the backlog pinned at cap, every motion frame clamped to
+    /// bootstrap, `--motiontest` failed A2 and `--autodive` never reached the lethal regime —
+    /// a full-throttle harness suddenly measuring 36.8 ms peaks is a gate stuck closed).
+    full_inflight: [u32; 2],
+    /// Completion registrations owed: incremented when a full-size dispatch is counted, drained
+    /// in `update` on the FOLLOWING frame — eframe submits a frame's work after `update`
+    /// returns, so registering immediately would arm the callback against the PREVIOUS frame's
+    /// queue tail and retire the new dispatch before it ran.
+    full_reg_pending: [u8; 2],
+    /// Fired completion callbacks since last drain (one per registration, in order).
+    full_done: [std::sync::Arc<std::sync::atomic::AtomicU32>; 2],
     /// Throttle for the motion-jam log line: episodes recur every few frames while a heavy dive
     /// outruns its readings, and a line per episode buried a real session under ~1,300 of them.
     jam_log_at: Option<std::time::Instant>,
@@ -546,7 +560,12 @@ impl Default for Perf {
             ts_reading_frame: [0, 0],
             fe_dispatch_frame: [0, 0],
             wall_fallback: false,
-            unpriced_full: [0, 0],
+            full_inflight: [0, 0],
+            full_reg_pending: [0, 0],
+            full_done: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            ],
             jam_log_at: None,
             mem_rss: 0,
             mem_peak: 0,
@@ -6265,7 +6284,12 @@ impl FractadyneApp {
             );
             self.perf.wall_probe[v] = probe;
             if let Some((ms, steps)) = priced {
-                self.perf.unpriced_full[v] = 0; // a wall price is a price — same drain proof
+                // The wall fallback prices "the interval at which the queue finally STALLS" —
+                // unlike a GPU timestamp it genuinely proves the whole queue drained, so
+                // clear-to-zero is honest here (and it only runs once timestamps are starved).
+                self.perf.full_inflight[v] = 0;
+                self.perf.full_reg_pending[v] = 0;
+                self.perf.full_done[v].store(0, std::sync::atomic::Ordering::Relaxed);
                 self.apply_iterate_measurement(v, ms, steps, "wall_iterate");
             }
         }
@@ -6306,6 +6330,23 @@ impl eframe::App for FractadyneApp {
         let gpu = frame
             .wgpu_render_state()
             .map(|rs| (rs.device.clone(), rs.queue.clone()));
+        // Motion-jam bookkeeping: retire completed full-size dispatches (the callbacks fired
+        // since last frame), then arm registrations owed from LAST frame's dispatches — eframe
+        // has submitted that work by now, so `on_submitted_work_done` covers it and nothing
+        // newer. Order matters within the frame: drain before arming, so a callback can never
+        // retire the dispatch whose registration it accompanies.
+        if let Some((_, q)) = gpu.as_ref() {
+            for v in 0..2 {
+                let done = self.perf.full_done[v].swap(0, std::sync::atomic::Ordering::Relaxed);
+                self.perf.full_inflight[v] = self.perf.full_inflight[v].saturating_sub(done);
+                for _ in 0..std::mem::take(&mut self.perf.full_reg_pending[v]) {
+                    let c = self.perf.full_done[v].clone();
+                    q.on_submitted_work_done(move || {
+                        c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    });
+                }
+            }
+        }
         // Adapter name for the --uitest report header (once is enough; cheap to read each frame).
         let gpu_name = frame.wgpu_render_state().map(|rs| rs.adapter.get_info().name);
         // The ADAPTER limit, not the device's: see `attach_bytes_per_sample`.
@@ -6410,9 +6451,6 @@ impl eframe::App for FractadyneApp {
                 continue;
             }
             self.perf.ts_reading_frame[v] = self.perf.frame_idx;
-            // FIFO drain proof: this price returning means every dispatch submitted before it has
-            // completed — the motion-jam backlog is gone whichever dispatch the price describes.
-            self.perf.unpriced_full[v] = 0;
             // A real GPU timing arrived, so the fallback's premise is gone — UNLATCH it. It used to
             // be a one-way switch, so a single 30-frame gap (a settle, a long reference install, an
             // alt-tab) turned the wall clock into a permanent SECOND measurement source competing
