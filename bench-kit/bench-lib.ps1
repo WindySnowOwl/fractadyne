@@ -26,10 +26,12 @@ function Read-Scenes($kitRoot) {
 
 # Run one external render attempt and time it. Returns a result object; never throws.
 # The timeout is a DNF, not an error - a renderer that cannot finish is a data point.
-function Invoke-TimedRender($exe, $args, $timeoutS, $cwd) {
+# $argLine, never $args: $args is the automatic variable, and binding a parameter over it is
+# exactly the silent-empty-arguments trap that had the first kit run launch a GUI (2026-08-21).
+function Invoke-TimedRender($exe, $argLine, $timeoutS, $cwd) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $exe
-    $psi.Arguments = $args
+    $psi.Arguments = $argLine
     $psi.WorkingDirectory = $cwd
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true

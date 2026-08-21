@@ -13,12 +13,19 @@ param(
     [string]$Fraktaler3Exe = '',
     [string]$ImaginaExe = '',
     [string]$FractalSharkExe = '',
-    [int]$TimeoutS = 7200
+    [int]$TimeoutS = 7200,
+    [string[]]$Scenes = @()
 )
 
 $ErrorActionPreference = 'Stop'
 $kit = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $kit 'bench-lib.ps1')
+
+# `powershell -File` does NOT parse `-Skip imagina,fractalshark` into an array the way an
+# interactive call does - the whole thing arrives as one comma-bearing string. Normalize both
+# list parameters so the documented invocation actually works.
+$Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+$Scenes = @($Scenes | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 
 # ---- resolve tools ----
 if (-not $FractadyneExe) { $FractadyneExe = Join-Path $kit 'bin\fractadyne.exe' }
@@ -31,6 +38,7 @@ $have = @{
 }
 foreach ($k in $Skip) { $have[$k.ToLower()] = $false }
 # FractalShark is CUDA: without an NVIDIA GPU the lane is N/A, not a failure.
+$fsNa = $false
 if ($have.fractalshark) {
     $nv = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA' }
     if (-not $nv) {
@@ -46,28 +54,48 @@ $outDir = Join-Path $kit ('results\' + $env:COMPUTERNAME + '-' + $stamp)
 New-Item -ItemType Directory -Force $outDir | Out-Null
 $csv = Join-Path $outDir 'results.csv'
 Write-SysInfo (Join-Path $outDir 'sysinfo.txt')
-$scenes = Read-Scenes $kit
+# -Scenes filters by slug or two-digit id: a smoke run or a re-measure of one regime should
+# not have to pay for all six. The full set stays the default (and the published protocol).
+# The data rows are $sceneRows, NOT $scenes: variables are case-insensitive and the
+# [string[]]$Scenes parameter TYPE-CONSTRAINS the slot, so `$scenes = Import-Csv ...` would
+# silently coerce every row to a string (and strict mode then fails on `.slug`).
+$sceneFilter = @($Scenes)
+$sceneRows = Read-Scenes $kit
+if ($sceneFilter.Count) {
+    $sceneRows = @($sceneRows | Where-Object { $sceneFilter -contains $_.slug -or $sceneFilter -contains $_.id })
+    if (-not $sceneRows.Count) { Write-Host 'ERROR: -Scenes matched nothing in scenes.csv'; exit 1 }
+}
 Write-Host ''
 Write-Host ('Lanes: ' + (($have.GetEnumerator() | Where-Object Value | ForEach-Object Key) -join ', '))
-Write-Host ('Scenes: ' + ($scenes.slug -join ', '))
+Write-Host ('Scenes: ' + ($sceneRows.slug -join ', '))
 Write-Host ('Reps: ' + $Reps + '   Timeout per render: ' + $TimeoutS + 's')
 
 # ---- lane: Fractadyne (automated; hermetic config so nothing local leaks in) ----
 if ($have.fractadyne) {
     $cfg = Join-Path $outDir 'fd-config'
     foreach ($rep in 1..$Reps) {
-        foreach ($s in $scenes) {
+        foreach ($s in $sceneRows) {
             if (Test-Path $cfg) { Remove-Item -Recurse -Force $cfg }
             New-Item -ItemType Directory -Force $cfg | Out-Null
             $env:FRACTADYNE_CONFIG_DIR = $cfg
             $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
             $png = Join-Path $outDir ('fd-' + $s.slug + '.png')
             $zl2 = [double]$s.mag_log10 * [math]::Log(10.0, 2.0)
-            $args = ('--render --out "{0}" --size 1920x1080 --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1 --palette 0' -f $png, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations)
-            if ($s.normalize -eq '1') { $args += ' --normalize' }
-            $r = Invoke-TimedRender $FractadyneExe $args $TimeoutS $kit
+            # $argLine, never $args: $args is PowerShell's AUTOMATIC variable and assigning it
+            # at script scope silently does not stick in 5.1 - the render launched with NO
+            # arguments and sat in the GUI event loop until the timeout.
+            $argLine = ('--render --out "{0}" --size 1920x1080 --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1 --palette 0' -f $png, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations)
+            if ($s.normalize -eq '1') { $argLine += ' --normalize' }
+            $r = Invoke-TimedRender $FractadyneExe $argLine $TimeoutS $kit
+            # The app prints "(in 40.8s)" / "(in 2m07s)" / "(in 1h02m)"; the CSV stores plain
+            # SECONDS so the summary can compare numbers, not strings.
             $reported = ''
-            if ($r.stdout -match '\(in ([0-9hms. ]+)\)') { $reported = $Matches[1].Trim() }
+            if ($r.stdout -match '\(in ([0-9hms. ]+)\)') {
+                $t = $Matches[1].Trim()
+                if ($t -match '^(?:(\d+)h)?(?:(\d+)m)?(?:([0-9.]+)s)?$') {
+                    $reported = 3600 * [double]('0' + $Matches[1]) + 60 * [double]('0' + $Matches[2]) + [double]('0' + $Matches[3])
+                }
+            }
             Write-Result $csv 'fractadyne' $s.slug $rep $r.status $r.wall_s $reported ''
         }
     }
@@ -83,10 +111,10 @@ if ($have.fraktaler3) {
         Write-Host ('  wisdom: ' + $w.status + ' in ' + $w.wall_s + 's')
     }
     foreach ($rep in 1..$Reps) {
-        foreach ($s in $scenes) {
+        foreach ($s in $sceneRows) {
             $toml = Join-Path $kit ('scenes\' + $s.slug + '.f3.toml')
-            $args = ('-w "{0}" -b "{1}"' -f $wisdom, $toml)
-            $r = Invoke-TimedRender $Fraktaler3Exe $args $TimeoutS $outDir
+            $argLine = ('-w "{0}" -b "{1}"' -f $wisdom, $toml)
+            $r = Invoke-TimedRender $Fraktaler3Exe $argLine $TimeoutS $outDir
             Write-Result $csv 'fraktaler3' $s.slug $rep $r.status $r.wall_s '' ''
         }
     }
@@ -99,7 +127,7 @@ if ($have.imagina) {
         'iteration limit as shown in the scene table, then read the computation time it reports.'
     )
     foreach ($rep in 1..$Reps) {
-        foreach ($s in $scenes) {
+        foreach ($s in $sceneRows) {
             Invoke-AssistedLane 'imagina' $ImaginaExe (Join-Path $kit ('scenes\' + $s.slug + '.kfr')) $s.slug $rep $csv $hints
         }
     }
@@ -110,12 +138,12 @@ if ($have.fractalshark) {
         'with the scene iteration cap, then transcribe the render time it displays.'
     )
     foreach ($rep in 1..$Reps) {
-        foreach ($s in $scenes) {
+        foreach ($s in $sceneRows) {
             Invoke-AssistedLane 'fractalshark' $FractalSharkExe (Join-Path $kit ('scenes\' + $s.slug + '.kfr')) $s.slug $rep $csv $hints
         }
     }
 } elseif ($fsNa) {
-    foreach ($s in $scenes) { Write-Result $csv 'fractalshark' $s.slug 1 'NA-no-nvidia' '' '' 'CUDA renderer, no NVIDIA GPU present' }
+    foreach ($s in $sceneRows) { Write-Result $csv 'fractalshark' $s.slug 1 'NA-no-nvidia' '' '' 'CUDA renderer, no NVIDIA GPU present' }
 }
 
 # ---- summary: fastest run per renderer x scene, ratio vs fractadyne where possible ----
@@ -125,11 +153,12 @@ $md = @('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp, '',
         '`reported_s` is each renderer''s own figure (see README for why they are never mixed).', '',
         '| Scene | fractadyne wall | fraktaler3 wall | fd reported | imagina reported | fractalshark reported |',
         '|---|---|---|---|---|---|')
-foreach ($s in $scenes) {
+foreach ($s in $sceneRows) {
     $cell = @{}
     foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark') {
         $best = $rows | Where-Object { $_.renderer -eq $ren -and $_.scene -eq $s.slug -and $_.status -eq 'ok' } |
-            Sort-Object { [double]($_.wall_s + 0 + $_.reported_s) } | Select-Object -First 1
+            Sort-Object { if ($_.wall_s) { [double]$_.wall_s } else { [double]('0' + $_.reported_s) } } |
+            Select-Object -First 1
         if ($best) {
             $cell[$ren] = @{ wall = $best.wall_s; rep = $best.reported_s }
         } else {

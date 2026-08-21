@@ -44,7 +44,28 @@ supersampling semantics differ per renderer and would silently benchmark differe
 - A scene a renderer cannot complete (crash, >2 h timeout, unsupported hardware) is recorded
   as `DNF` — a result, not a gap.
 
-## Running
+## One command: fetch the latest apps and run everything
+
+`bench-latest` downloads the newest release of every renderer, verifies the target drive has
+enough free space first, runs the benchmark sequentially, and writes the summary report with
+the exact app versions stamped into it:
+
+- **Windows**: `powershell -ExecutionPolicy Bypass -File bench-latest.ps1`
+  (options: `-AppsDir <folder>` where the apps land, `-RequiredGB 2` free-space floor,
+  `-Reps`, `-Skip`, `-Scenes`, `-TimeoutS`, `-SkipDownload` for offline reuse,
+  `-FractadyneExe <path>` to benchmark a local build instead of the release).
+- **Linux**: `./bench-latest.sh` (same options in `--flag` form; `--fraktaler3 <path>` points
+  at a locally built Fraktaler-3, since mathr publishes no Linux binary — the script tells
+  you where the source lives).
+
+Sources: Fractadyne and Imagina from their GitHub releases (prereleases included — that is
+where the current builds live), Fraktaler-3 from `fraktaler.mathr.co.uk/download/latest`,
+FractalShark from its GitHub releases (downloaded only on NVIDIA machines, where its lane can
+actually run). Published sha256 side-files are verified. Each result folder gains an
+`apps-manifest.txt` recording version, source URL, and binary hash per app — a "latest"
+benchmark that doesn't say which latest it measured is not reproducible.
+
+## Running by hand
 
 1. Unzip anywhere writable. Install what you want to compare:
    - Fractadyne: place `fractadyne.exe` in `bin\` (or pass `-FractadyneExe <path>`).

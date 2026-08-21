@@ -17,7 +17,8 @@ $scenes = (Import-Csv (Join-Path $kit 'scenes.csv')).slug
 $stage = Join-Path $env:TEMP ('fd-bench-kit-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $stage | Out-Null
 try {
-    foreach ($f in 'README.md', 'scenes.csv', 'bench-lib.ps1', 'run-all.ps1') {
+    foreach ($f in 'README.md', 'scenes.csv', 'bench-lib.ps1', 'run-all.ps1',
+                   'bench-latest.ps1', 'bench-latest.sh') {
         Copy-Item (Join-Path $kit $f) $stage
     }
     New-Item -ItemType Directory -Force (Join-Path $stage 'scenes') | Out-Null
