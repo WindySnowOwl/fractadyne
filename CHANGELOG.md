@@ -16,6 +16,13 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **New: `--log-dir DIR` (and `FRACTADYNE_LOG_DIR`) redirect the log file and crash reports**
+  (beta.118) — for example onto a network share while validating on another machine. Only the
+  logs move; the session and settings stay in the config directory (unlike
+  `FRACTADYNE_CONFIG_DIR`, which relocates everything and so also resets the session). The flag
+  wins over the variable; an unwritable directory falls back to the default location loudly, and
+  a missing value is a fatal error rather than a silent default.
+
 - **Fixed: a fast zoom-out from depth could stack oversized GPU work faster than measurements
   could brake it** (beta.117). The companion to the beta.116 fix, from the same validation
   campaign's second crash: with the bookkeeping honest, the cost controller is still fed nominal

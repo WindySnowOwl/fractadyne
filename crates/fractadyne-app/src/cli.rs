@@ -110,6 +110,16 @@ mod bad_options {
     }
 
     #[test]
+    fn log_dir_with_a_value_is_a_known_option() {
+        // Derived from the help reference — this test is what notices if the help entry is
+        // ever dropped (which would make the guard reject the flag).
+        assert_eq!(
+            first_bad_option(&s(&["exe", "--log-dir", "D:/share/logs", "--selftest"])),
+            None
+        );
+    }
+
+    #[test]
     fn a_correct_command_line_passes() {
         assert_eq!(
             first_bad_option(&s(&["exe", "--set", "TDR_BUDGET_MS=500", "--play", "t.toml"])),
@@ -202,6 +212,16 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
             crate::exit(2);
         }
         None => {}
+    }
+    // A value-taking option with its value missing is fatal, never a silent default — the same
+    // family as the single-dash guard: `--log-dir` swallowing the next option, or silently
+    // logging to the default location, is how a validation run's logs end up not where the
+    // operator is watching.
+    if let Some(i) = args.iter().position(|a| a == "--log-dir") {
+        if !args.get(i + 1).is_some_and(|v| !v.starts_with('-')) {
+            eprintln!("fractadyne: --log-dir needs a directory path, e.g. --log-dir D:\\logs");
+            crate::exit(2);
+        }
     }
 
     // --reset-state [-y|--yes]: permanently delete all persisted application state (session,

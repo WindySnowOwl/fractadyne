@@ -134,8 +134,34 @@ pub(crate) fn init(args: &[String]) {
 
     // FRACTADYNE_LOG=0 disables the file (stderr behavior is unchanged either way).
     let file_log_on = std::env::var("FRACTADYNE_LOG").map_or(true, |v| v != "0");
+    // `--log-dir DIR` / FRACTADYNE_LOG_DIR redirect the LOGS ONLY (log file, crash reports,
+    // perf.jsonl, session.running) — the session and settings stay in the config dir. Built for
+    // pointing validation-run logs at a network share without also making the run hermetic the
+    // way FRACTADYNE_CONFIG_DIR does. The flag wins over the variable.
+    let (over, over_src) = log_dir_override(
+        args,
+        std::env::var("FRACTADYNE_LOG_DIR").ok().as_deref(),
+    );
+    let mut start_notes: Vec<String> = Vec::new();
     let dir = if file_log_on {
-        fractadyne_state::config_dir().map(|d| d.join("logs"))
+        match over {
+            // An explicitly requested dir that cannot be created must not SILENTLY become "no
+            // file logging" — a validation run that quietly logs nowhere is the harness lesson
+            // all over again. Fall back to the default location and say so in it.
+            Some(d) => {
+                if std::fs::create_dir_all(&d).is_ok() {
+                    start_notes.push(format!("logs directed to {} ({over_src})", d.display()));
+                    Some(d)
+                } else {
+                    start_notes.push(format!(
+                        "log dir {} ({over_src}) is not writable — using the config dir instead",
+                        d.display()
+                    ));
+                    fractadyne_state::config_dir().map(|d| d.join("logs"))
+                }
+            }
+            None => fractadyne_state::config_dir().map(|d| d.join("logs")),
+        }
     } else {
         None
     };
@@ -148,6 +174,9 @@ pub(crate) fn init(args: &[String]) {
             let _ = std::fs::rename(&path, dir.join("fractadyne.log.1"));
         }
         *LOG_FILE.lock().unwrap() = Some(path);
+        for n in &start_notes {
+            log_line("start", n);
+        }
     }
     // BEFORE the start line, so the "last log lines" it quotes belong to the dead session.
     report_unclean_previous_session();
@@ -227,6 +256,69 @@ pub(crate) fn trace(cat: &str, msg: String) {
 pub(crate) fn perf_on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("FRACTADYNE_PERF").is_ok_and(|v| v != "0"))
+}
+
+/// Resolve a log-directory override from the command line and environment: `--log-dir DIR`
+/// wins, `FRACTADYNE_LOG_DIR` is the fallback, and no override means the default
+/// `<config>/logs`. Pure so the precedence and the malformed-flag case are pinned by test.
+/// A `--log-dir` whose value is missing (end of line, or the next token is another option)
+/// yields no override here — the CLI guard exits fatally on it, and this resolver must not
+/// guess a directory in the meantime.
+pub(crate) fn log_dir_override(
+    args: &[String],
+    env: Option<&str>,
+) -> (Option<PathBuf>, &'static str) {
+    if let Some(i) = args.iter().position(|a| a == "--log-dir") {
+        if let Some(v) = args.get(i + 1) {
+            if !v.starts_with('-') {
+                return (Some(PathBuf::from(v)), "--log-dir");
+            }
+        }
+        return (None, "--log-dir");
+    }
+    match env.filter(|v| !v.is_empty()) {
+        Some(v) => (Some(PathBuf::from(v)), "FRACTADYNE_LOG_DIR"),
+        None => (None, ""),
+    }
+}
+
+#[cfg(test)]
+mod log_dir {
+    use super::*;
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn the_flag_wins_over_the_variable() {
+        let (d, src) = log_dir_override(&s(&["exe", "--log-dir", "D:/share"]), Some("E:/env"));
+        assert_eq!(d, Some(PathBuf::from("D:/share")));
+        assert_eq!(src, "--log-dir");
+    }
+
+    #[test]
+    fn the_variable_applies_when_the_flag_is_absent() {
+        let (d, src) = log_dir_override(&s(&["exe", "--selftest"]), Some("//vger/share/logs"));
+        assert_eq!(d, Some(PathBuf::from("//vger/share/logs")));
+        assert_eq!(src, "FRACTADYNE_LOG_DIR");
+        assert_eq!(log_dir_override(&s(&["exe"]), Some("")).0, None); // empty var = unset
+    }
+
+    #[test]
+    fn a_missing_value_yields_no_override_rather_than_a_guess() {
+        // The CLI guard exits fatally on these; the resolver must not invent a directory
+        // (or silently fall back to the env var) for the lines it logs before that exit.
+        assert_eq!(log_dir_override(&s(&["exe", "--log-dir"]), Some("E:/env")).0, None);
+        assert_eq!(
+            log_dir_override(&s(&["exe", "--log-dir", "--play"]), None).0,
+            None
+        );
+    }
+
+    #[test]
+    fn no_override_means_the_default_location() {
+        assert_eq!(log_dir_override(&s(&["exe", "--selftest"]), None).0, None);
+    }
 }
 
 /// The resolved logs directory (`<config>/logs`), or `None` if file logging is off/unavailable.
