@@ -6761,7 +6761,9 @@ impl eframe::App for FractadyneApp {
                     self.render_to_file(ctx, dev, q, &out)
                 };
                 if self.render_cfg.finish_sound {
-                    crate::sysinfo::play_finish_sound();
+                    // Blocking on purpose: the process exits right after the message prints,
+                    // which would cut a detached tune mid-note.
+                    crate::sysinfo::play_finish_sound(true);
                 }
                 match result {
                     Ok(m) => println!("{m}  (in {})", Self::fmt_export_duration(t0.elapsed())),
@@ -6876,7 +6878,7 @@ impl eframe::App for FractadyneApp {
                     // The finish tone — success or failure, the user asked to be told the long
                     // wait is over. Not during the scripted UI walk, which exercises exports.
                     if self.render_cfg.finish_sound && self.uitest.is_none() {
-                        crate::sysinfo::play_finish_sound();
+                        crate::sysinfo::play_finish_sound(false);
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint(),

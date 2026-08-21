@@ -4482,9 +4482,11 @@ perturbation + series approximation + glitch correction. The headline feature.
 - [x] ✅⭐**DONE beta.120 `6ed041c` (2026-08-21)** — system notification sound (MessageBeep
   asterisk) on GUI export / tour render / CLI `--render` completion, success or failure alike;
   `finish_sound` session setting, checkbox next to the render settings, default ON, respects the
-  Windows sound scheme. Deliberately NOT the resurrected FRACTINT PC-speaker tone (below):
-  sourcing the exact frequency/duration remains open flavor-work if ever wanted — the shipped
-  version answers the actual need (come back to the machine when the long render ends).
+  Windows sound scheme. ⭐SOURCING DONE beta.121: the tone is now
+  FRACTINT's ACTUAL `buzzer0` tune, read from `general.asm` (mirror LegalizeAdulthood/fractint)
+  — `dw 1047,100 / 1109,100 / 1175,100` = three rising 100 ms notes (C6, C#6, D6), played via
+  the kernel32 `Beep` PC-speaker shim. GUI plays it detached; CLI `--render` blocks ~300 ms on
+  purpose (the process exits right after and would cut a detached tune mid-note).
   Original item:
   ~~"Render finished" sound, off-switchable (user, 2026-08-16).~~ FRACTINT played a distinct
   tone through the PC speaker when an image completed, and it was genuinely useful: deep renders were

@@ -539,24 +539,49 @@ fn cpu_topology() -> (usize, u64, u64) {
     (0, 0, 0)
 }
 
-/// The render-finished tone (user request 2026-08-16 — FRACTINT played a distinct sound when a
-/// long render completed). `MessageBeep` is asynchronous and touches no audio state of ours; the
-/// system "asterisk" is the closest modern equivalent of a completion chime and respects the
-/// user's sound scheme (including "no sounds"). Non-Windows: no-op until the Linux build lands.
+/// The render-finished tone: FRACTINT's actual "normal completion" tune, read out of the DOS
+/// source rather than guessed (user request 2026-08-16; sourcing done 2026-08-21). From
+/// `general.asm` in the FRACTINT source (mirror: LegalizeAdulthood/fractint), verbatim:
+///
+/// ```text
+/// buzzer0         dw      1047,100        ; "normal" completion
+///                 dw      1109,100
+///                 dw      1175,100
+///                 dw      0,0
+/// ```
+///
+/// Three rising 100 ms notes — C6, C#6, D6 — on the PC speaker. (`dos/sound.c`'s soundcard path
+/// uses the same three frequencies, confirming the tune; "interrupted" was the descending
+/// mirror 2093/1976/1857 and "error" a 40 Hz razzberry, neither used here.) `kernel32 Beep` is
+/// the modern PC-speaker shim (synthesized through the default output device since Windows 7),
+/// so this is the faithful reproduction. ⚠Beep BLOCKS for the note's duration.
+///
+/// `blocking`: the GUI passes false (the tune plays on its own thread; a 300 ms stall in
+/// `update` would be a real hitch); the CLI `--render` path passes true — the process exits
+/// right after the completion message, which would kill a detached tune mid-note, and 300 ms
+/// added to a finished render is nothing.
 #[cfg(windows)]
-pub(crate) fn play_finish_sound() {
-    #[link(name = "user32")]
-    extern "system" {
-        fn MessageBeep(utype: u32) -> i32;
+pub(crate) fn play_finish_sound(blocking: bool) {
+    fn tune() {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn Beep(freq: u32, ms: u32) -> i32;
+        }
+        for (freq, ms) in [(1047u32, 100u32), (1109, 100), (1175, 100)] {
+            // SAFETY: no pointers; Beep plays synchronously and returns.
+            unsafe {
+                Beep(freq, ms);
+            }
+        }
     }
-    const MB_ICONASTERISK: u32 = 0x40;
-    // SAFETY: MessageBeep queues the sound and returns immediately; no pointers involved.
-    unsafe {
-        MessageBeep(MB_ICONASTERISK);
+    if blocking {
+        tune();
+    } else {
+        std::thread::spawn(tune);
     }
 }
 #[cfg(not(windows))]
-pub(crate) fn play_finish_sound() {}
+pub(crate) fn play_finish_sound(_blocking: bool) {}
 
 /// Dedicated VRAM (bytes) read from the display-adapter registry keys.
 ///

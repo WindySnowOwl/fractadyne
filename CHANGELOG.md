@@ -16,6 +16,12 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The finish sound is now FRACTINT's actual completion tune** (beta.121) — sourced from the
+  DOS original's `general.asm` rather than guessed: three rising 100 ms notes at 1047, 1109 and
+  1175 Hz (C6, C#6, D6), played through Windows' PC-speaker shim exactly as `buzzer0` encoded
+  them. The beta.120 system chime is replaced; the same "Sound when a render finishes" checkbox
+  controls it.
+
 - **New: a sound plays when a render finishes** (beta.120) — the FRACTINT tradition, by request.
   Fires when a GUI export, a tour render, or a command-line `--render` completes (success or
   failure — either way the wait is over), via the system notification sound so it respects your

@@ -409,9 +409,9 @@ impl FractadyneApp {
                 // motion instead of rendering coarse intermediate frames.
                 ui.checkbox(&mut self.render_cfg.finish_sound, "Sound when a render finishes")
                     .on_hover_text(
-                        "Play the system notification sound when an export or tour render \
-                         completes — the FRACTINT tradition. Uses your Windows sound scheme, so \
-                         it is silent if the scheme is.",
+                        "Play FRACTINT's completion tune when an export or tour render finishes: \
+                         three rising notes (1047, 1109, 1175 Hz for 100 ms each), exactly as the \
+                         DOS original played them on the PC speaker.",
                     );
                 ui.checkbox(&mut self.render_cfg.prefer_detail, "Prefer detail while zooming")
                     .on_hover_text(
