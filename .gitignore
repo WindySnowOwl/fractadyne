@@ -48,3 +48,5 @@ __pycache__/
 
 # Torture-suite output: per-rung logs, failure artifacts, throwaway config dirs.
 validation/torture/
+bench-kit/*.zip
+bench-kit/results/

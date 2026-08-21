@@ -377,6 +377,112 @@ pub const META_KEYWORD: &str = "Fractadyne";
 /// (`width*height*4` floats). The colors are quantized directly — no linear→sRGB transfer —
 /// so the PNG matches the live view byte-for-byte (see the color-space note above).
 /// `metadata`, if present, is embedded as a `tEXt` chunk (reloadable view state).
+impl ExportError {
+    /// The underlying `io::ErrorKind` when this failure is an I/O failure at any layer — the
+    /// write-retry policy classifies on it. A PNG encode that died because the destination
+    /// vanished mid-write surfaces as `PngEncode(IoError)`, and counts. `None` means the failure
+    /// is not a destination problem (a real encode bug), and retrying cannot help.
+    pub fn io_kind(&self) -> Option<std::io::ErrorKind> {
+        match self {
+            ExportError::Io(e) => Some(e.kind()),
+            ExportError::PngEncode(png::EncodingError::IoError(e)) => Some(e.kind()),
+            _ => None,
+        }
+    }
+}
+
+/// What to do about a failed frame write. See `write_retry_policy`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum WriteVerdict {
+    /// Wait this long, then try the same write again.
+    RetryAfter(std::time::Duration),
+    /// Report and abort — retrying cannot help (or the cap is spent).
+    Fatal,
+}
+
+/// Classify a frame-write failure and say whether/when to retry (user request 2026-08-17: an
+/// eight-hour 4K soak died at frame 6721 because the SMB host serving the destination was
+/// rebooting; the share came back minutes later and nothing needed to be lost).
+///
+/// The classification IS the design, not a detail:
+/// - A destination that VANISHED (`NotFound`, network kinds, timeouts — and every kind we cannot
+///   name, because Windows maps SMB failures like `ERROR_BAD_NETPATH` to uncategorized) will very
+///   likely come back: retry, backing off from seconds (a blip) to minutes (a rebooting host).
+/// - A FULL disk, a permissions error, a read-only or invalid destination will not fix
+///   themselves: fatal immediately, so the operator hears about it while it is fixable.
+/// - The total wait is capped (`GIVE_UP`): after that, give up cleanly — the completed frames
+///   are intact and `--resume` continues from the gap (verified 2026-08-17).
+///
+/// Deliberately RETRY-BIASED for unknown kinds: misclassifying an exotic fatal error costs a
+/// bounded 30 minutes; misclassifying a network blip as fatal kills an overnight render.
+pub fn write_retry_policy(
+    kind: std::io::ErrorKind,
+    total_waited: std::time::Duration,
+    attempt: u32,
+) -> WriteVerdict {
+    use std::io::ErrorKind as K;
+    const GIVE_UP: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+    match kind {
+        K::StorageFull
+        | K::QuotaExceeded
+        | K::PermissionDenied
+        | K::ReadOnlyFilesystem
+        | K::InvalidFilename
+        | K::InvalidInput
+        | K::Unsupported => WriteVerdict::Fatal,
+        _ if total_waited >= GIVE_UP => WriteVerdict::Fatal,
+        _ => {
+            // 1 s, 2 s, 5 s, 10 s, 30 s, 60 s, 2 min, 5 min, then 10 min forever (the cap above
+            // bounds the sum): fast enough to catch a blip, patient enough for a reboot.
+            const LADDER: [u64; 8] = [1, 2, 5, 10, 30, 60, 120, 300];
+            let s = LADDER.get(attempt as usize).copied().unwrap_or(600);
+            WriteVerdict::RetryAfter(std::time::Duration::from_secs(s))
+        }
+    }
+}
+
+#[cfg(test)]
+mod write_retry {
+    use super::*;
+    use std::io::ErrorKind as K;
+    use std::time::Duration;
+
+    #[test]
+    fn a_vanished_destination_retries_with_an_escalating_ladder() {
+        // The field case: the SMB host rebooted, the path read as NotFound for minutes.
+        let d = |a| match write_retry_policy(K::NotFound, Duration::ZERO, a) {
+            WriteVerdict::RetryAfter(d) => d.as_secs(),
+            WriteVerdict::Fatal => panic!("attempt {a} must retry"),
+        };
+        assert_eq!((d(0), d(1), d(4), d(7)), (1, 2, 30, 300));
+        assert_eq!(d(20), 600); // past the ladder: 10 min, forever (the cap bounds it)
+    }
+
+    #[test]
+    fn conditions_that_cannot_fix_themselves_are_fatal_immediately() {
+        for k in [K::StorageFull, K::PermissionDenied, K::ReadOnlyFilesystem, K::QuotaExceeded] {
+            assert_eq!(write_retry_policy(k, Duration::ZERO, 0), WriteVerdict::Fatal);
+        }
+    }
+
+    #[test]
+    fn unknown_kinds_retry_because_windows_hides_smb_errors_in_them() {
+        // ERROR_BAD_NETPATH and friends surface as uncategorized kinds; retry-biased on purpose.
+        assert!(matches!(
+            write_retry_policy(K::Other, Duration::ZERO, 0),
+            WriteVerdict::RetryAfter(_)
+        ));
+    }
+
+    #[test]
+    fn the_total_wait_is_capped_and_then_it_gives_up_cleanly() {
+        assert_eq!(
+            write_retry_policy(K::NotFound, Duration::from_secs(30 * 60), 9),
+            WriteVerdict::Fatal
+        );
+    }
+}
+
 pub fn write_png(
     path: &Path,
     width: u32,

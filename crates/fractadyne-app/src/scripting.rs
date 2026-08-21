@@ -3415,11 +3415,16 @@ impl FractadyneApp {
         let (enc_tx, enc_rx) = std::sync::mpsc::sync_channel::<EncodeJob>(inflight.saturating_sub(workers).max(1));
         let enc_rx = std::sync::Arc::new(std::sync::Mutex::new(enc_rx));
         let enc_err: std::sync::Arc<std::sync::Mutex<Option<String>>> = std::sync::Arc::new(std::sync::Mutex::new(None));
+        // Write retries survived across the whole render, for the summary line (user request
+        // 2026-08-17 — the retry loop below is what keeps a rebooting SMB host from killing an
+        // overnight render at frame 6721).
+        let enc_retries = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let encoders: Vec<_> = (0..workers)
             .map(|_| {
                 let rx = enc_rx.clone();
                 let meta = meta.clone();
                 let err = enc_err.clone();
+                let retries = enc_retries.clone();
                 std::thread::spawn(move || loop {
                     // Hold the lock only across recv() (fast dequeue); encode without it so workers
                     // compress in parallel.
@@ -3430,10 +3435,74 @@ impl FractadyneApp {
                         Ok(j) => j,
                         Err(_) => break, // channel closed → all frames handed off
                     };
-                    if let Err(e) = fractadyne_export::write_png(&job.path, job.w, job.h, &job.px, Some(&meta)) {
-                        let mut slot = err.lock().unwrap_or_else(|e| e.into_inner());
-                        if slot.is_none() {
-                            *slot = Some(format!("frame {}: {e}", job.fi));
+                    // Retry-with-backoff around the write: the frame's pixels stay in `job` until
+                    // a write SUCCEEDS or the policy says fatal. While this loop waits, the
+                    // bounded encode channel fills and the render loop blocks on send — correct
+                    // (no GPU burned on frames we cannot store), and the log lines below are what
+                    // keep that state distinguishable from a hang.
+                    let mut attempt: u32 = 0;
+                    let mut waited = std::time::Duration::ZERO;
+                    loop {
+                        match fractadyne_export::write_png(&job.path, job.w, job.h, &job.px, Some(&meta)) {
+                            Ok(()) => {
+                                if attempt > 0 {
+                                    crate::diag::log_line(
+                                        "export",
+                                        &format!(
+                                            "frame {} written after {attempt} retr{} ({}s waiting on the destination)",
+                                            job.fi,
+                                            if attempt == 1 { "y" } else { "ies" },
+                                            waited.as_secs()
+                                        ),
+                                    );
+                                }
+                                break;
+                            }
+                            Err(e) => {
+                                // ⚠Never leave a partial file: a PNG truncated by even one byte
+                                // can decode as complete (IEND's CRC is never verified), and
+                                // `--resume` would then skip a corrupt frame as done.
+                                let _ = std::fs::remove_file(&job.path);
+                                // A non-I/O failure is an encode bug, not a destination
+                                // problem — no amount of waiting fixes it.
+                                let verdict = match e.io_kind() {
+                                    Some(kind) => fractadyne_export::write_retry_policy(kind, waited, attempt),
+                                    None => fractadyne_export::WriteVerdict::Fatal,
+                                };
+                                let kind = e.io_kind();
+                                match verdict {
+                                    fractadyne_export::WriteVerdict::RetryAfter(d) => {
+                                        attempt += 1;
+                                        retries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        crate::diag::log_line(
+                                            "export",
+                                            &format!(
+                                                "frame {}: write failed ({e}; {kind:?}) — waiting for the destination, retry {attempt} in {}s ({}s waited so far)",
+                                                job.fi,
+                                                d.as_secs(),
+                                                waited.as_secs()
+                                            ),
+                                        );
+                                        // The render loop may be blocked on the full encode queue
+                                        // behind us; stamp liveness so the hang watchdog reports
+                                        // the truth (waiting, not wedged).
+                                        crate::diag::alive();
+                                        std::thread::sleep(d);
+                                        waited += d;
+                                    }
+                                    fractadyne_export::WriteVerdict::Fatal => {
+                                        let mut slot = err.lock().unwrap_or_else(|e| e.into_inner());
+                                        if slot.is_none() {
+                                            *slot = Some(format!(
+                                                "frame {}: {e} ({kind:?}; {attempt} retries, {}s waited — completed frames are intact, --resume continues from the gap)",
+                                                job.fi,
+                                                waited.as_secs()
+                                            ));
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     }
                 })
