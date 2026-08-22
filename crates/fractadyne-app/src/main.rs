@@ -132,6 +132,13 @@ struct Perf {
     last_precision: usize,
     last_orbit_len: u32,
     last_sa_skip: u32,
+    /// SA skip of the last re-iterating dispatch, PER VIEW — stamped into the LETHAL-BAND line.
+    /// Separate from `last_sa_skip` above, which is view-0-only status-bar state: a dual-view
+    /// death would otherwise be reported with the Mandelbrot view's skip. Safe to read two frames
+    /// late (a GPU timestamp comes back that far behind the dispatch it prices) because the skip
+    /// travels with the REFERENCE and so holds still across those frames. The chunk WINDOW does
+    /// not — it advances every frame — which is why it is deliberately not recorded here.
+    last_sa_skip_v: [u32; 2],
     /// Monotonic frame counter, for resolving adaptive-AA probes (below).
     frame_idx: u64,
     /// Armed adaptive-AA wall-clock probe per view: `(ss rendered, frame armed, max frame-interval
@@ -548,6 +555,7 @@ impl Default for Perf {
             last_precision: 0,
             last_orbit_len: 0,
             last_sa_skip: 0,
+            last_sa_skip_v: [0; 2],
             frame_idx: 0,
             aa_probe: [None, None],
             aa_measured: [None, None],
@@ -6234,10 +6242,11 @@ impl FractadyneApp {
                 "render",
                 &format!(
                     "⚠LETHAL-BAND FRAME: view={v} {src}={ms:.0}ms (band ≥{:.0}ms) steps={:.3e} \
-                     budget={:.3e} — emergency retreat to {:.3e}",
+                     budget={:.3e} sa_skip={} — emergency retreat to {:.3e}",
                     crate::tunables::cost().tdr_lethal_ms,
                     steps as f64,
                     cur as f64,
+                    self.perf.last_sa_skip_v[v.min(1)],
                     next as f64
                 ),
             );

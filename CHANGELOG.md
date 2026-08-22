@@ -16,6 +16,18 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **A crash report now says whether the frame that died was doing any work at all** (beta.135) —
+  when the graphics device is lost, the report records a "manifest": exactly what the frame was
+  asked to draw. Two numbers were missing from it, and both can change what a frame costs by
+  thousands of times. The first is the series-approximation skip, which lets the renderer start
+  a pixel thousands of iterations in; a slice of work that ends below the skip finishes instantly,
+  so a run of such slices looks fast and earns the renderer permission to ask for far more next
+  time. The second says whether the acceleration table was in use. Both are now stamped on the
+  crash manifest and on the warning line the log always prints when a frame comes close to the
+  driver timeout, so a report sent in from the field carries them without anyone having had to
+  turn diagnostics on beforehand. The live manifest is also traceable per frame
+  (`FRACTADYNE_TRACE=req`) for watching a zoom as it happens. Rendering is untouched.
+
 - **Tour renders now actually use the reference they prepared ahead of time** (beta.132) — the
   companion to beta.130. While rendering one frame the tour prepares the next frame's expensive
   setup on a background thread, but it prepared it using the CURRENT frame's iteration count, and

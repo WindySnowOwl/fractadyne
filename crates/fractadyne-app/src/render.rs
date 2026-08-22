@@ -5060,6 +5060,14 @@ impl FractadyneApp {
         // that caused it. State the dispatch: this is the record that says whether a TDR came from
         // resolution, supersampling, or the iteration budget. Only on re-iterating frames, so a
         // reproject/cached frame costs nothing.
+        // `sa_skip` and `bla_on` ride along because a chunk window is NOT priced by its width:
+        // `fs_iterate_chunk` seeds `iter = sa_skip`, so every window ending at or below the skip
+        // breaks on its first test and costs ~0 ms (`--chunk-sweep` measures exactly that). Without
+        // the skip stamped, `chunk=[768,1792)` in a death manifest cannot say whether the ladder
+        // that led there was climbing FREE windows — the fast lane doubles the licence on each —
+        // or real ones, and that is the open question in the field device-loss item. `bla_on=0` is
+        // the other silent multiplier: the e100 crash was a pass running an empty tree at 0.04
+        // Gsteps/s beside a 174 Gsteps/s pass in the SAME frame.
         if !will_reproject {
             // A chunked frame's real dispatch is its RANGE, not the full-frame nominal — the
             // same honesty rule the fe_steps stamp follows. The 985x735 "steps=1.810e11 vs
@@ -5077,15 +5085,20 @@ impl FractadyneApp {
                 Some([s, e]) => format!(" chunk=[{s},{e})"),
                 None => String::new(),
             };
-            crate::diag::set_manifest(format!(
+            // Per-view, for the LETHAL-BAND line in `update`: that line is ALWAYS logged, so it
+            // is what a field report carries when nobody had a trace enabled. Recorded on
+            // dispatching frames only — a reprojected frame prices nothing.
+            self.perf.last_sa_skip_v[vs.min(1)] = sa.skip;
+            let manifest = format!(
                 "LIVE view={vs} mode={} {}x{} ss={ss} iter={shader_iter} (gpu_iter={gpu_iter}, \
-                 eff={eff_iter}, boost={:.2}) steps={steps:.3e}{chunk_note} \
-                 budget={tdr_steps:.3e} tile={} orbit_len={} partial={} settled={} \
-                 since_mode_switch={}",
+                 eff={eff_iter}, boost={:.2}) steps={steps:.3e}{chunk_note} sa_skip={} \
+                 bla_on={bla_on} budget={tdr_steps:.3e} tile={} orbit_len={} partial={} \
+                 settled={} since_mode_switch={}",
                 mode.to_u32(),
                 resolution[0],
                 resolution[1],
                 self.perf.iter_boost[vs.min(1)],
+                sa.skip,
                 tile.is_some(),
                 self.ref_cache[vi].orbit_len,
                 self.ref_cache[vi].partial,
@@ -5094,7 +5107,15 @@ impl FractadyneApp {
                     u64::MAX => "never".to_string(),
                     f => format!("{} frames", self.perf.frame_idx.saturating_sub(f)),
                 },
-            ));
+            );
+            // Also emit it under `req`, the same category the export builder traces its manifest
+            // under. A crash report only ever shows the LAST frame; the field question — did the
+            // chunk ladder climb windows that sat inside the SA skip — is about the frames BEFORE
+            // it, and this is the only way to read them without waiting for another device loss.
+            if crate::diag::trace_on("req") {
+                crate::diag::trace("req", manifest.clone());
+            }
+            crate::diag::set_manifest(manifest);
         }
 
         // Record the nominal cost of a frame that will actually re-iterate, so `update` can price the
