@@ -16,6 +16,14 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Tour renders now actually use the reference they prepared ahead of time** (beta.132) — the
+  companion to beta.130. While rendering one frame the tour prepares the next frame's expensive
+  setup on a background thread, but it prepared it using the CURRENT frame's iteration count, and
+  a tour changes that count on nearly every frame of a dive — so the prepared copy no longer matched
+  the frame it was for and got rebuilt from scratch anyway. Measured on a 45-frame dive: 30
+  references prepared and 25 still rebuilt on the drawing thread; now **all 30 are used and none
+  are rebuilt**. Frames are byte-for-byte identical.
+
 - **The finish tone can be turned off** (beta.131) — `--no-sound` silences the tone that marks a
   finished render (`--sound` turns it back on). For batch work there is also a `FRACTADYNE_NO_SOUND`
   environment variable, which is the one you want when running the test suites: they launch the app

@@ -847,6 +847,28 @@ fn recompute_worker_staged(
     }
 }
 
+/// The iteration settings a reference build is priced with.
+///
+/// ⭐Explicit, and required at every call site, because it must be the budget of the frame the
+/// reference is FOR — which is not always the app's current one. The tour pipeline prefetches
+/// frame N+1's reference while `render_cfg` still holds frame N's per-keyframe count, and
+/// per-keyframe `max_iter` interpolates geometrically, so reading `self` there priced the
+/// prefetch for the wrong frame and `precomputed_matches` then rejected it — measured at **30
+/// prefetched, 25 rebuilt on the main thread anyway**. Passing it in makes that mistake visible at
+/// the call site instead of silent.
+#[derive(Clone, Copy)]
+pub(crate) struct IterBudget {
+    pub(crate) max_iter: u32,
+    pub(crate) auto_iter: bool,
+}
+
+impl IterBudget {
+    /// The app's current settings — correct whenever the reference is for the view on screen.
+    pub(crate) fn current(app: &FractadyneApp) -> Self {
+        Self { max_iter: app.render_cfg.max_iter, auto_iter: app.render_cfg.auto_iter }
+    }
+}
+
 /// Where an export request's reference comes from. Existing callers use `Fresh`/`Precomputed`
 /// exactly as before; `Live` exists for the autopilot's steering probe, which needs a *picture*
 /// rather than an export.
@@ -1897,22 +1919,27 @@ impl FractadyneApp {
 
     /// [`current_export_request_with_ref`], so a result built from these inputs matches that frame's
     /// synchronous reference. Used by the tour pipeline to precompute the next frame's reference.
-    fn export_reference_inputs_for(&self, vp: &Viewport, julia: bool) -> Option<RecomputeInputs> {
+    fn export_reference_inputs_for(
+        &self,
+        vp: &Viewport,
+        julia: bool,
+        budget: IterBudget,
+    ) -> Option<RecomputeInputs> {
         let log2mag = vp.log2_magnification();
         let mag = vp.magnification();
         let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, mag);
         if mode.is_direct() {
             return None;
         }
-        let eff_iter = if self.render_cfg.auto_iter {
-            vp.recommended_max_iter(self.render_cfg.max_iter)
+        let eff_iter = if budget.auto_iter {
+            vp.recommended_max_iter(budget.max_iter)
                 .min(self.export_auto_iter_cap(log2mag, julia))
         } else {
             // Auto-iter OFF is an explicit instruction — honor the count verbatim. The cap is an
             // auto-mode nicety; applied here it silently rendered deep validation-corpus locations
             // interior-black (their structure escapes above the cap) while Fraktaler-3 used the
             // full count, breaking the corpus contract of "same iterations, both apps".
-            self.render_cfg.max_iter
+            budget.max_iter
         };
         let scale = vp.gpu_scale();
         Some(self.export_reference_inputs(vp, julia, mode, eff_iter, vp.precision, scale.span_mantissa, scale.delta_exp))
@@ -1925,8 +1952,9 @@ impl FractadyneApp {
         &self,
         vp: &Viewport,
         julia: bool,
+        budget: IterBudget,
     ) -> Option<std::sync::mpsc::Receiver<RecomputeResult>> {
-        let inputs = self.export_reference_inputs_for(vp, julia)?;
+        let inputs = self.export_reference_inputs_for(vp, julia, budget)?;
         let (tx, rx) = std::sync::mpsc::channel();
         // Fire-and-forget deep-export reference build (see the live-path note above): if the caller
         // drops the returned `rx` (export canceled) the worker finishes and its send is discarded —

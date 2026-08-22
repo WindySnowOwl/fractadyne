@@ -3066,6 +3066,26 @@ impl FractadyneApp {
     /// Apply the per-frame render settings a script states (iteration budget, palette). The
     /// budget is EXACT — a keyframe that asks for 8M iterations at 1e94× means 8M, not 8M scaled
     /// again by depth. Settings the script leaves unset are left alone.
+    /// The effective `(max_iter, auto_iter)` a sampled tour frame renders with — the tour loop's
+    /// "reset to base, then let the keyframe override" rule, in ONE place.
+    ///
+    /// ⭐It is a function rather than two inline lines because the PREFETCH has to price the
+    /// successor's reference exactly as the successor itself will be priced. When those two
+    /// disagree the prefetched reference fails `precomputed_matches` and is silently rebuilt on the
+    /// main thread — which is precisely what happened while the prefetch read `render_cfg` (still
+    /// holding the CURRENT frame's per-keyframe count) instead of sampling the successor.
+    pub(crate) fn sampled_iter_budget(
+        s: &Sampled,
+        base_iter: u32,
+        base_auto: bool,
+    ) -> crate::render::IterBudget {
+        match s.max_iter {
+            // Mirrors `apply_sampled_settings`: an explicit per-keyframe count also pins auto off.
+            Some(m) => crate::render::IterBudget { max_iter: m, auto_iter: false },
+            None => crate::render::IterBudget { max_iter: base_iter, auto_iter: base_auto },
+        }
+    }
+
     pub(crate) fn apply_sampled_settings(&mut self, s: &Sampled) {
         if let Some(m) = s.max_iter {
             self.render_cfg.max_iter = m;
@@ -3596,8 +3616,12 @@ impl FractadyneApp {
             // what lets one script hold a 1.33× home view at a few thousand iterations and a 1e94×
             // spar at millions — a single budget either starves the deep frames or makes the
             // shallow ones cost minutes each.
-            self.render_cfg.max_iter = base_iter;
-            self.render_cfg.auto_iter = base_auto;
+            // Behaviour-identical to the old `= base_iter; = base_auto;` pair (the
+            // `apply_sampled_settings` below re-applies the same override), but routed through the
+            // helper so this frame and the prefetch of the NEXT one read the same rule.
+            let frame_budget = Self::sampled_iter_budget(&s, base_iter, base_auto);
+            self.render_cfg.max_iter = frame_budget.max_iter;
+            self.render_cfg.auto_iter = frame_budget.auto_iter;
             self.apply_sampled_settings(&s);
             // Output path for this frame; ask before clobbering an existing one (unless overwriting).
             let frame_path = out_dir.join(format!("{prefix}_{fi:05}.png"));
@@ -3634,6 +3658,12 @@ impl FractadyneApp {
                 let t2 = if pb.total <= 0.0 { 0.0 } else { (nfi as f64 / fps).min(pb.total) };
                 let s2 = pb.sample(t2);
                 if !s2.dual && s2.fractal == s.fractal && s2.julia == s.julia && s2.julia_c == s.julia_c {
+                    // ⭐The SUCCESSOR's budget, not `render_cfg`'s: the latter still holds THIS
+                    // frame's per-keyframe count, and per-keyframe `max_iter` interpolates
+                    // geometrically, so it differs on nearly every frame of a dive — which made the
+                    // consumer reject the prefetch and rebuild it synchronously instead.
+                    // (Taken before `s2`'s bignum centre is moved into the viewport below.)
+                    let budget2 = Self::sampled_iter_budget(&s2, base_iter, base_auto);
                     let mut vp2 = fractadyne_core::Viewport::new(width as f64, height as f64);
                     vp2.set_center_log2mag(s2.cx, s2.cy, s2.logmag / std::f64::consts::LN_2);
                     // Only prefetch the NEXT reference if it will fit alongside the one still
@@ -3645,7 +3675,7 @@ impl FractadyneApp {
                     let room = crate::sysinfo::available_memory()
                         .map_or(true, |avail| est.saturating_add(TOUR_MEM_MARGIN) < avail);
                     if room {
-                        if let Some(rx) = self.spawn_export_reference(&vp2, self.julia_mode) {
+                        if let Some(rx) = self.spawn_export_reference(&vp2, self.julia_mode, budget2) {
                             pending_ref = Some((nfi, rx));
                         }
                     } else if !low_mem_warned {

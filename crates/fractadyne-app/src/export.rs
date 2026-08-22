@@ -882,7 +882,9 @@ impl FractadyneApp {
         // re-block the UI); shallower exports keep the synchronous path below (fast; correction applies).
         if self.viewport.magnification() >= crate::PERT_FE_THRESHOLD {
             let map_julia = !self.dual && self.julia_mode; // the dual map panel is Mandelbrot
-            if let Some(rx) = self.spawn_export_reference(&self.viewport, map_julia) {
+            // The reference is for the view on screen, so the current settings are the right ones.
+            let budget = crate::render::IterBudget::current(self);
+            if let Some(rx) = self.spawn_export_reference(&self.viewport, map_julia, budget) {
                 self.export.prep = Some(ExportPrep {
                     rx,
                     map_vp: self.viewport.clone(),
