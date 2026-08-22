@@ -817,6 +817,23 @@ fn recompute_worker_staged(
     }
 }
 
+/// Where an export request's reference comes from. Existing callers use `Fresh`/`Precomputed`
+/// exactly as before; `Live` exists for the autopilot's steering probe, which needs a *picture*
+/// rather than an export.
+enum RefSource {
+    /// Build one now, synchronously. The export default: correct at any depth, and slow — at
+    /// extreme depth `pick_reference` alone is ~7 s of a ~15 s render.
+    Fresh,
+    /// A reference computed off-thread for this exact frame. Falls back to `Fresh` when it does
+    /// not match. ⚠See the note on the match test in `build_export_request` — it currently never
+    /// matches, which is its own filed bug.
+    Precomputed(Box<RecomputeResult>),
+    /// ⭐Borrow the LIVE view's already-resident reference: **no bignum at all**. Only valid for a
+    /// request at the live viewport, and it renders what the live view would render — including
+    /// the live path's truncation clamp. Falls back to `Fresh` when the cache cannot serve it.
+    Live,
+}
+
 /// The reference-dependent fields of an `ExportRequest`, assembled from a `RecomputeResult`.
 /// Shared by the synchronous export path and the pipelined (precomputed) tour path so both derive
 /// these fields identically.
@@ -1696,6 +1713,81 @@ impl FractadyneApp {
         }
     }
 
+    /// Assemble an export request's reference fields by BORROWING the live view's resident
+    /// reference, plus the iteration ceiling that reference can honestly support. `None` when the
+    /// cache cannot serve this view, and the caller must build a fresh one.
+    ///
+    /// Everything here is a clone of an `Arc` or a small subtraction — no orbit build, no candidate
+    /// scan, no BLA build. That is the entire point: this is what makes the autopilot probe cost
+    /// nothing instead of a full bignum reference per evaluation.
+    ///
+    /// The rules below are the LIVE path's rules, deliberately, not simplified versions of them:
+    ///
+    /// - ⚠**The truncation clamp is `partial`-only.** A `partial` reference stopped at a cap
+    ///   without escaping, so a pixel iterating past `orbit_len` rebases past the end of it into
+    ///   df32-inaccurate territory and speckles. An ESCAPED-short reference must NOT be clamped:
+    ///   those pixels escape rather than rebase, and clamping them collapses every late-escaping
+    ///   BOUNDARY pixel to interior — a hard black border with no filament detail, which for the
+    ///   probe would read as a huge fake `touches_interior` bonus exactly where it steers.
+    /// - ⚠**BLA is speed, never correctness**, so a stale tree is DROPPED rather than rebuilt
+    ///   (rebuilding is the cost we came here to avoid). Same staleness tests as the live path: a
+    ///   tree built for this orbit, for a `dc_max` at least as large as this view needs, and — when
+    ///   the active coloring bakes a parameter into the aggregate lane — for the current parameter.
+    /// - SA is carried as-is: its coefficients were computed at the BUILD-time span, which is wider
+    ///   than a dived-in view's, so reusing it is conservative.
+    fn live_ref_fields(
+        &self,
+        vp: &Viewport,
+        julia: bool,
+        eff_iter: u32,
+        delta_exp: i32,
+        precision: usize,
+    ) -> Option<(RefFields, u32)> {
+        let vi = (self.dual && julia) as usize;
+        let vc = &self.ref_cache[vi];
+        let rp = vc.ref_pt.as_ref()?;
+        if vc.orbit_len == 0 || vc.orbit.is_empty() {
+            return None; // cold start: nothing resident to borrow
+        }
+        // Same clamp the live renderer applies to its own dispatch — see the note above.
+        let max_iter = if vc.partial {
+            eff_iter.min(vc.orbit_len.saturating_sub(1))
+        } else {
+            eff_iter
+        };
+        if max_iter == 0 {
+            return None;
+        }
+        let dx = fractadyne_core::ref_offset_mantissa(&vp.center_x, &rp[0], delta_exp, precision);
+        let dy = fractadyne_core::ref_offset_mantissa(&vp.center_y, &rp[1], delta_exp, precision);
+        // Keep the cached tree only while it is valid for THIS view; otherwise render without one.
+        let aux_stale = (self.coloring.color_method.to_u32() == 1
+            && (self.coloring.stripe_freq as f64 - vc.bla_stripe_freq).abs() > 1.0e-9)
+            || (self.coloring.color_method.to_u32() == 3
+                && self.coloring.trap_type as u32 != vc.bla_trap_type);
+        let need_log2 = Self::bla_dc_max(vp.gpu_scale().span_mantissa, delta_exp).log2();
+        let bla_ok = !vc.bla.is_empty()
+            && vc.bla_id == vc.orbit_id
+            && need_log2 <= vc.bla_dc_max_log2 + 1.0e-6
+            && !aux_stale;
+        let (bla, bla_on) = if bla_ok {
+            (vc.bla.clone(), 1)
+        } else {
+            (std::sync::Arc::new(Vec::new()), 0)
+        };
+        Some((
+            RefFields {
+                ref_offset: RefOffset::from_df32(dx, dy),
+                orbit: vc.orbit.clone(),
+                orbit_len: vc.orbit_len,
+                sa: vc.sa,
+                bla,
+                bla_on,
+            },
+            max_iter,
+        ))
+    }
+
     /// Build the BLA tree (GPU-flattened) for a Mandelbrot deep view, or `None` when BLA
     /// doesn't apply (disabled, not floatexp/Mandelbrot/non-Julia, or an aux coloring method
     /// that BLA would skip). `dx`/`dy` are the reference-offset mantissas and `span_mantissa`
@@ -1864,7 +1956,31 @@ impl FractadyneApp {
         vp: &Viewport,
         julia: bool,
     ) -> fractadyne_gpu::ExportRequest {
-        self.current_export_request_with_ref(vp, julia, None)
+        self.build_export_request(vp, julia, RefSource::Fresh)
+    }
+
+    /// ⭐The autopilot's steering-probe request: identical to [`current_export_request_for`] except
+    /// that it BORROWS the live view's resident reference instead of building a fresh one.
+    ///
+    /// The probe renders a 56x56 field of the CURRENT view to decide where to zoom next, and it ran
+    /// through the export builder — which sets `orbit_len_cap: u32::MAX` ("full appetite") and then
+    /// runs `recompute_worker` SYNCHRONOUSLY inside `update()`. Measured: 882 `building reference
+    /// [export]` builds on the main thread during one dive, frames CPU-bound at body 200-639 ms
+    /// against 1-2 ms of GPU wait, ~5 s per decade of dive — and the frame-cost controller STARVED
+    /// rather than stressed (peak measured iterate 42.9 ms against a 900 ms band), because the GPU
+    /// never gets a large dispatch while the main thread is doing bignum.
+    ///
+    /// Borrowing is not an approximation: `autopilot_step` runs before the central panel draws, so
+    /// `ref_cache[0]` holds the reference the last displayed frame used, paired with the current
+    /// viewport — exactly the pairing a "where is the detail on screen" heuristic wants. It also
+    /// inherits the live path's truncation clamp, so the probe scores the picture the user is
+    /// actually looking at.
+    pub(crate) fn autopilot_probe_request(
+        &self,
+        vp: &Viewport,
+        julia: bool,
+    ) -> fractadyne_gpu::ExportRequest {
+        self.build_export_request(vp, julia, RefSource::Live)
     }
 
     /// As [`current_export_request_for`], but reuse a `precomputed` reference recompute when it was
@@ -1876,6 +1992,21 @@ impl FractadyneApp {
         vp: &Viewport,
         julia: bool,
         precomputed: Option<RecomputeResult>,
+    ) -> fractadyne_gpu::ExportRequest {
+        self.build_export_request(
+            vp,
+            julia,
+            precomputed.map_or(RefSource::Fresh, |r| RefSource::Precomputed(Box::new(r))),
+        )
+    }
+
+    /// The shared body of the three request builders above; `src` selects where the reference comes
+    /// from and changes NOTHING else.
+    fn build_export_request(
+        &self,
+        vp: &Viewport,
+        julia: bool,
+        src: RefSource,
     ) -> fractadyne_gpu::ExportRequest {
         let log2mag = vp.log2_magnification();
         let width = self.export.width.max(1);
@@ -1905,22 +2036,56 @@ impl FractadyneApp {
         // Reference orbit + series-approximation + BLA — the slow bignum bundle, computed via the
         // shared `recompute_worker` (same code the live view + the pipelined tour path use, so all
         // three produce byte-identical references). Split timings recorded for `--profile`.
+        // Iteration ceiling. Only the LIVE-borrowed reference can lower it — see `live_ref_fields`.
+        let mut req_max_iter = eff_iter;
         let RefFields { ref_offset, orbit, orbit_len, sa, bla, bla_on } = if !mode.is_direct() {
-            // Reuse the precomputed reference only if it was built for this exact frame's iteration
-            // count + precision; otherwise (stale, or none) compute it now. Fallback is always safe.
-            let res = match precomputed {
-                Some(r) if r.iter == eff_iter && r.prec == precision => r,
-                _ => {
-                    let inputs = self.export_reference_inputs(vp, julia, mode, eff_iter, precision, scale.span_mantissa, delta_exp);
-                    recompute_worker(inputs)
+            // ⭐Borrowed live reference: no bignum, and no `prof.set` (the probe fires many times a
+            // second and would otherwise clobber the `--profile` breakdown of the real render).
+            // `None` = the cache cannot serve this view, so fall through to a fresh build.
+            match match src {
+                RefSource::Live => self.live_ref_fields(vp, julia, eff_iter, delta_exp, precision),
+                _ => None,
+            } {
+                Some((fields, capped_iter)) => {
+                    req_max_iter = capped_iter;
+                    fields
                 }
-            };
-            self.prof.set(profile::ProfSetup {
-                reference_ms: res.ref_ms,
-                series_ms: res.series_ms,
-                bla_ms: res.bla_ms,
-            });
-            assemble_ref_fields(vp, precision, delta_exp, res)
+                None => {
+                    // ⚠A `Live` request that lands here re-arms the very stall this exists to remove
+                    // (cold start, after `invalidate_refs`, or the direct->perturbation crossover of a
+                    // dive). Say so: the fallback's own breadcrumb reads `building reference [export]`,
+                    // which is indistinguishable from a real export - and counting those crumbs is how
+                    // this regression was measured in the first place. An unmeasurable fallback is how
+                    // it would come back unnoticed.
+                    if matches!(src, RefSource::Live) {
+                        crate::diag::breadcrumb(
+                            "autopilot probe: no resident reference to borrow - falling back to a fresh main-thread build".to_string(),
+                        );
+                    }
+                    // Reuse the precomputed reference only if it was built for this exact frame's
+                    // iteration count + precision; otherwise (stale, or none) compute it now.
+                    // Fallback is always safe.
+                    // ⚠FILED BUG: this test can never pass. `recompute_worker` returns
+                    // `prec = inp.precision + REF_PREC_HEADROOM` (128) by construction, so
+                    // `r.prec == precision` is unsatisfiable and EVERY caller silently takes the
+                    // synchronous fallback — including the deep-export prep whose whole purpose is
+                    // to keep the UI alive during that build. Left alone here on purpose: fixing it
+                    // ENABLES three dormant paths at once and needs its own commit + corpus run.
+                    let res = match src {
+                        RefSource::Precomputed(r) if r.iter == eff_iter && r.prec == precision => *r,
+                        _ => {
+                            let inputs = self.export_reference_inputs(vp, julia, mode, eff_iter, precision, scale.span_mantissa, delta_exp);
+                            recompute_worker(inputs)
+                        }
+                    };
+                    self.prof.set(profile::ProfSetup {
+                        reference_ms: res.ref_ms,
+                        series_ms: res.series_ms,
+                        bla_ms: res.bla_ms,
+                    });
+                    assemble_ref_fields(vp, precision, delta_exp, res)
+                }
+            }
         } else {
             RefFields::default()
         };
@@ -1973,7 +2138,7 @@ impl FractadyneApp {
             orbit_len,
             bla,
             bla_on,
-            max_iter: eff_iter,
+            max_iter: req_max_iter,
             mode: mode.to_u32(),
             formula: self.fractal.formula_id(),
             julia: julia as u32,

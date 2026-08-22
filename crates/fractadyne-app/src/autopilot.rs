@@ -146,7 +146,11 @@ impl FractadyneApp {
     /// `None` when the view holds no boundary detail (dead end → stop).
     fn autopilot_pick_target(&self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue) -> Option<(f64, f64)> {
         const N: usize = 56;
-        let mut req = self.current_export_request_for(&self.viewport, self.julia_mode);
+        // ⭐Borrows the LIVE view's resident reference instead of building a full-appetite one on
+        // this thread. The probe is a HEURISTIC for choosing a pivot: it wants the picture on
+        // screen, not export accuracy, and it used to buy that picture with a synchronous bignum
+        // reference build per evaluation. See `autopilot_probe_request`.
+        let mut req = self.autopilot_probe_request(&self.viewport, self.julia_mode);
         req.width = N as u32;
         req.height = N as u32;
         req.ss = 1;

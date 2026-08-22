@@ -16,6 +16,15 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Auto-zoom dives deeper in the same time** (beta.129) — to decide where to zoom next, the
+  autopilot renders a tiny 56x56 preview of the current view. It was computing a brand-new
+  full-precision reference orbit for that preview — the most expensive thing the program does —
+  on the UI thread, several times a second, and then throwing it away. It now borrows the
+  reference the view on screen is already using, which is both free and a better answer, since the
+  preview is meant to reflect what you are looking at. Measured over a 240-second dive: **553
+  reference builds down to 0**, and the dive reaches **1e47 instead of 1e38** in the same time.
+  The graphics card had been sitting idle waiting for those builds; it is now doing the work.
+
 - **Glitch correction is no longer the slowest part of an offline render** (beta.128) — a
   correction pass exists to repair a few hundred wrong pixels, but it used to ask the GPU for the
   whole frame to do it. It now asks for exactly the pixels it is repairing: their coordinates go
