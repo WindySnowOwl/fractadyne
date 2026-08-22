@@ -3721,13 +3721,32 @@ impl FractadyneApp {
                 fractadyne_core::BigFloat::from_f64(dy, 64),
             )
         });
-        // `--zoom` is f64 (≤ ~1e308×); `--zoom-log2 L` sets magnification = 2^L for
-        // arbitrary depth past the f64 range (e.g. L=1100 ≈ 1e331×).
+        // `--zoom-log2 L` sets magnification = 2^L directly. `--zoom` takes a magnification
+        // string and goes through `parse_zoom_to_log2` — the SAME parser the go-to field uses,
+        // which accepts grouped digits, a FRACTIONAL exponent ("1.0e23.9") and magnitudes past
+        // f64 range. It used to be a bare `s.parse::<f64>().ok().unwrap_or(1.0)`, and both of
+        // that line’s failure modes were silent: "1.0e23.9" does not parse as f64, so the run
+        // fell back to 1× and rendered the WHOLE SET with exit status 0 (this is what the
+        // benchmark kit’s zoom-sequence lane was measuring against), while "4.6e1105" parses
+        // to +inf, which is the blank-frame class fixed in beta.125. A value we cannot read is
+        // now FATAL: the alternative is a render that looks perfectly fine and is of somewhere
+        // else entirely.
         if let Some(l) = val("--zoom-log2").and_then(|s| s.parse::<f64>().ok()) {
             self.viewport.set_center_log2mag(cx, cy, l);
+        } else if let Some(z) = val("--zoom") {
+            match parse_zoom_to_log2(z) {
+                Some(l2) => self.viewport.set_center_log2mag(cx, cy, l2),
+                None => {
+                    eprintln!(
+                        "fractadyne: --zoom: cannot read \"{z}\" as a magnification. Write \
+                         it as a positive number, optionally in scientific notation — 7.9e23, \
+                         1e1105, or 1.0e23.9 for a fractional exponent."
+                    );
+                    crate::exit(2);
+                }
+            }
         } else {
-            let zoom = val("--zoom").and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
-            self.viewport.set_center_mag(cx, cy, zoom.max(1.0e-300));
+            self.viewport.set_center_mag(cx, cy, 1.0);
         }
         if let Some(ss) = val("--ss").and_then(|s| s.parse::<u32>().ok()) {
             self.export.ss = ss.clamp(1, 8);
@@ -7314,6 +7333,15 @@ mod tests {
         assert!((parse_zoom_to_log2("256").unwrap() - 8.0).abs() < 1e-9);
         assert!((parse_zoom_to_log2("1,024").unwrap() - 10.0).abs() < 1e-9);
         assert!(parse_zoom_to_log2("1e400").unwrap() > 1300.0); // past f64 range, no overflow
+        // A FRACTIONAL exponent is legal and load-bearing: a zoom ladder places its rungs at
+        // |lambda|^n, which is never a whole power of ten. `f64::from_str` rejects "1.0e23.9"
+        // outright, and the CLI used to swallow that failure and render at 1x with exit 0 --
+        // the benchmark kit measured a whole-set frame that way. Pin the value, not just
+        // "parses": a ladder that lands one decade off looks entirely plausible.
+        let l2 = parse_zoom_to_log2("1.0e23.900008").expect("fractional exponent rejected");
+        assert!((l2 / std::f64::consts::LOG2_10 - 23.900008).abs() < 1e-9, "got {l2}");
+        assert!((parse_zoom_to_log2("2.5e3.5").unwrap() / std::f64::consts::LOG2_10
+            - (2.5_f64.log10() + 3.5)).abs() < 1e-9);
         // Garbage rejected, no panic.
         for g in ["", "abc", "-5", "0", "e", "1e", "nan", "inf"] {
             assert!(parse_zoom_to_log2(g).is_none(), "accepted {g:?}");

@@ -329,7 +329,31 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
                 fractadyne_core::BigFloat::from_f64(-0.5, 64),
                 fractadyne_core::BigFloat::from_f64(0.0, 64),
             ]);
-        let mag = val("--zoom").and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
+        // Same parser as `--render`, and for the same reason: a bare `f64::parse` with
+        // `unwrap_or(1.0)` swallowed "1.0e23.9" (a fractional exponent is legal notation and is
+        // what a zoom ladder produces) and searched at 1x instead, printing a confident nucleus
+        // for the wrong place. `find_nucleus` is view-accurate and genuinely wants an f64
+        // magnification, so the conversion back is honest -- but past f64 range it would
+        // saturate to +inf, and a search there means nothing. Both cases are fatal.
+        let mag = match val("--zoom") {
+            None => 1.0,
+            Some(z) => match crate::parse_zoom_to_log2(z) {
+                Some(l2) if l2 < 1000.0 => l2.exp2(),
+                other => {
+                    if other.is_some() {
+                        eprintln!(
+                            "fractadyne: --find-minibrot: \"{z}\" is past the f64 magnification range \
+                             this search works in; nucleus finding is view-accurate only."
+                        );
+                    } else {
+                        eprintln!(
+                            "fractadyne: --find-minibrot: cannot read \"{z}\" as a magnification."
+                        );
+                    }
+                    crate::exit(2);
+                }
+            },
+        };
         match fractadyne_core::find_nucleus(&center, mag, formula, 100_000) {
             Some(n) => {
                 println!(

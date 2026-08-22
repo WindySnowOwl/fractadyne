@@ -438,7 +438,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Section("View (with --render / --find-minibrot)"),
         Flag("--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\"."),
         Flag("--center X Y", "View center (full-precision decimals)."),
-        Flag("--zoom M", "Magnification (f64, up to ~1e308x)."),
+        Flag("--zoom M", "Magnification, e.g. 2e7 or 1.0e23.9 (any depth; a bad value is fatal)."),
         Flag("--zoom-log2 L", "Magnification = 2^L — for depths past f64 range (>= ~1e308x)."),
         Flag("--julia", "Julia mode."),
         Flag("--julia-c RE IM", "Julia parameter c."),
