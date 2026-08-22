@@ -3579,6 +3579,14 @@ impl FractadyneApp {
         if args.iter().any(|a| a == "--watermark") {
             app.watermark = true;
         }
+        // Sound: `--no-sound` silences the render-finished tone (and `--sound` overrides
+        // `FRACTADYNE_NO_SOUND` back on). Parsed before anything can finish a render.
+        if args.iter().any(|a| a == "--no-sound") {
+            crate::tone::set_muted(true);
+        }
+        if args.iter().any(|a| a == "--sound") {
+            crate::tone::set_muted(false); // outranks FRACTADYNE_NO_SOUND without unsetting it
+        }
         if args.iter().any(|a| a == "--glitch") {
             app.render_cfg.glitch_correct = true;
         }

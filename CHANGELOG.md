@@ -16,6 +16,12 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The finish tone can be turned off** (beta.131) — `--no-sound` silences the tone that marks a
+  finished render (`--sound` turns it back on). For batch work there is also a `FRACTADYNE_NO_SOUND`
+  environment variable, which is the one you want when running the test suites: they launch the app
+  as separate processes per case, so a flag on the command you typed never reaches them, while the
+  environment is inherited. A twenty-location validation run is silent with it set.
+
 - **Fixed: the renderer's reference-reuse check could never say yes** (beta.130) — several parts of
   the program prepare an expensive piece of setup (a "reference orbit") ahead of time on a
   background thread so the next frame does not have to wait for it. The test that decided whether

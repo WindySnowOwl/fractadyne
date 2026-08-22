@@ -153,11 +153,62 @@ fn wav_pcm16(samples: &[f32], sr: u32) -> Vec<u8> {
     w
 }
 
+/// Command-line override for the finish tone: `UNSET` = no flag given, defer to the environment.
+/// A tri-state rather than a bool so an explicit `--sound` can outrank an inherited
+/// `FRACTADYNE_NO_SOUND` **without mutating the process environment** — `std::env::remove_var` is a
+/// footgun in a program that spawns threads, and it would also strip the setting from any child
+/// this process later launches, which is the opposite of what the variable is for.
+const UNSET: u8 = 0;
+const AUDIBLE: u8 = 1;
+const SILENT: u8 = 2;
+static OVERRIDE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(UNSET);
+
+/// Silence (or un-silence) the finish tone for this process. `--no-sound` / `--sound`.
+pub(crate) fn set_muted(on: bool) {
+    OVERRIDE.store(if on { SILENT } else { AUDIBLE }, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Should the finish tone stay silent? `--no-sound`, or `FRACTADYNE_NO_SOUND` set to anything but
+/// `0`/empty.
+///
+/// ⭐**The environment variable is the one that matters for test runs**, and it is not redundant
+/// with the flag: the harnesses launch the app as CHILD PROCESSES — `--torture` runs every rung as
+/// its own exe, and `validation/corpus/generate_corpus.py` shells out once per location — so a flag
+/// passed to the parent never reaches them, while the environment is inherited. Same flag-plus-env
+/// pairing as `--log-dir` / `FRACTADYNE_LOG_DIR`, and the same precedence: an explicit `--sound`
+/// wins over the variable.
+///
+/// Read fresh rather than cached: it is consulted once per finished render, never in a hot path,
+/// and caching would make the setting untestable from inside one process.
+pub(crate) fn muted() -> bool {
+    match OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
+        SILENT => true,
+        AUDIBLE => false,
+        _ => std::env::var_os("FRACTADYNE_NO_SOUND").is_some_and(|v| !v.is_empty() && v != "0"),
+    }
+}
+
+/// Clear the command-line override (tests only — production sets it once at startup).
+#[cfg(test)]
+fn clear_override() {
+    OVERRIDE.store(UNSET, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Play the finish tone. `blocking`: the GUI passes false (the tune must not stall `update`);
 /// the CLI `--render` path passes true — the process exits right after the completion message,
 /// which would cut an async tune mid-note.
-#[cfg(windows)]
+///
+/// The mute is checked HERE rather than in the platform backend so both platforms honour it
+/// identically and the decision stays testable off Windows.
 pub(crate) fn play_finish_sound(blocking: bool) {
+    if muted() {
+        return;
+    }
+    play_finish_sound_impl(blocking);
+}
+
+#[cfg(windows)]
+fn play_finish_sound_impl(blocking: bool) {
     static WAV: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
     let wav = WAV.get_or_init(|| wav_pcm16(&finish_tone_samples(SAMPLE_RATE), SAMPLE_RATE));
     #[link(name = "winmm")]
@@ -175,11 +226,54 @@ pub(crate) fn play_finish_sound(blocking: bool) {
     }
 }
 #[cfg(not(windows))]
-pub(crate) fn play_finish_sound(_blocking: bool) {}
+fn play_finish_sound_impl(_blocking: bool) {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The mute is the whole contract of `--no-sound`; assert the real decision function, since
+    /// whether a sound actually reached the speakers is not observable from a test.
+    ///
+    /// ⚠Flag and env var are deliberately ONE test, not two. Both drive PROCESS-GLOBAL state and
+    /// cargo runs tests in parallel by default, so as separate tests they would race — the env one
+    /// setting `FRACTADYNE_NO_SOUND` while the flag one asserts `!muted()` is a genuine intermittent
+    /// failure. Within a single test the order is guaranteed.
+    #[test]
+    fn the_flag_and_the_env_var_each_silence_the_tone() {
+        clear_override();
+        std::env::remove_var("FRACTADYNE_NO_SOUND");
+        assert!(!muted(), "default is audible");
+
+        set_muted(true);
+        assert!(muted(), "--no-sound must silence it");
+        set_muted(false);
+        assert!(!muted(), "--sound must restore it");
+
+        // The env var is what reaches child processes (see `muted`).
+        clear_override();
+        std::env::set_var("FRACTADYNE_NO_SOUND", "1");
+        assert!(muted(), "FRACTADYNE_NO_SOUND=1 must silence it");
+        std::env::set_var("FRACTADYNE_NO_SOUND", "0");
+        assert!(!muted(), "an explicit 0 must NOT silence it");
+        std::env::set_var("FRACTADYNE_NO_SOUND", "");
+        assert!(!muted(), "an empty value must NOT silence it");
+
+        // ⭐The precedence rule: an explicit --sound outranks an inherited FRACTADYNE_NO_SOUND,
+        // and does so WITHOUT clearing the variable, so a child process still inherits it.
+        std::env::set_var("FRACTADYNE_NO_SOUND", "1");
+        set_muted(false);
+        assert!(!muted(), "--sound must beat the environment");
+        assert_eq!(
+            std::env::var("FRACTADYNE_NO_SOUND").as_deref(),
+            Ok("1"),
+            "--sound must not strip the variable from the environment children inherit",
+        );
+
+        clear_override();
+        std::env::remove_var("FRACTADYNE_NO_SOUND");
+        assert!(!muted(), "removing both restores the default");
+    }
 
     #[test]
     fn the_tune_is_three_notes_of_the_documented_length() {

@@ -456,6 +456,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--watermark / --no-watermark", "Force the \"Fd\" watermark on / off (overrides the saved preference)."),
         Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot."),
         Flag("--glitch / --no-glitch", "Force multi-reference glitch correction on / off for the export (default on)."),
+        Flag("--sound / --no-sound", "Play or silence the tone that marks a finished render (default on). The FRACTADYNE_NO_SOUND environment variable does the same and is what batch runs want, because it is inherited by child processes -- --torture launches each rung as its own exe and the corpus harness shells out per location, neither of which sees a flag passed to the parent. An explicit --sound wins over the variable."),
         Flag("--normalize", "Auto-normalize the palette cycle to the frame's escape-value range on export — prevents smooth-coloring aliasing (speckle) at extreme depth; the cycle slider then means palette sweeps. Falls back to normal coloring for aux methods / huge supersampled sizes."),
         Flag("--log-palette", "Spread the palette by the LOGARITHM of the escape value rather than linearly, wherever normalization is active. Escape counts crowd towards the high end at depth, so a linear map spends most of the palette on a thin shell near the boundary and flattens the rest; log keeps color readable and stable as a zoom video's range grows."),
         Flag("--no-perf / --perf", "Hide / show the performance panel."),
