@@ -242,7 +242,13 @@ pub(crate) struct RecomputeResult {
     bla_stripe_freq: f64,
     /// Trap type the BLA's `agg_trap` lane was built with (same rebuild-on-change purpose).
     bla_trap_type: u32,
+    /// Precision the orbit was BUILT at — `req_prec + REF_PREC_HEADROOM` on a fresh build, or the
+    /// (already headroom-inflated) precision of the orbit a reuse extended.
     prec: usize,
+    /// ⭐Precision this build was REQUESTED at, i.e. the caller's `vp.precision`. Recorded because
+    /// `prec` is a DERIVED value — see [`precomputed_matches`], whose predecessor compared `prec`
+    /// against the request and was therefore unsatisfiable for four years' worth of callers.
+    req_prec: usize,
     iter: u32,
     ref_ms: f64,
     /// Per-stage timings (for the export `--profile` breakdown; the live path uses only `ref_ms`).
@@ -444,6 +450,29 @@ pub(crate) fn live_orbit_cap(interacting: bool, ref_build_iter: u32, have_len: u
     } else {
         crate::LIVE_REF_CAP.max(ref_build_iter)
     }
+}
+
+/// Is a reference computed off-thread still the right one for a frame wanting `(eff_iter,
+/// precision)`? Both sides are the build's INPUTS, so this is satisfiable and the accepted result is
+/// the one a synchronous build would have produced — `recompute_worker` is deterministic in its
+/// inputs, so reusing it renders byte-identically.
+///
+/// ⚠**This used to read `r.prec == precision`, which could never be true.** `prec` is the precision
+/// the orbit was BUILT at, and a fresh build is always `inp.precision + REF_PREC_HEADROOM` (128) —
+/// so the test asked for `precision + 128 == precision`. Every caller silently took the synchronous
+/// main-thread fallback: the tour pipeline that computes frame N+1's reference while frame N
+/// renders, the normalized tour path, and the deep-export prep whose own comment says it "keeps the
+/// UI alive during the (long) bignum reference build". The work was done twice and the second copy
+/// won; nothing failed and nothing warned.
+/// ⭐**A feature guarded by an impossible condition is indistinguishable from one that is merely
+/// slow** — which is why this compares recorded INPUTS, never a derived value, and why
+/// `precomputed_matches_a_fresh_build` exists to keep it that way.
+///
+/// Deliberately `==` and not `>=`: a reference built at a DIFFERENT precision rounds to different
+/// df32 mantissas in the last bits, so "at least as precise" would not be pixel-identical to the
+/// fresh build it replaces.
+fn precomputed_matches(r: &RecomputeResult, eff_iter: u32, precision: usize) -> bool {
+    r.iter == eff_iter && r.req_prec == precision
 }
 
 /// Pick a reference (once) then build its orbit + series-approximation skip + BLA tree to
@@ -688,6 +717,7 @@ fn finish_reference(
         bla_stripe_freq: inp.stripe_freq,
         bla_trap_type: inp.trap_type,
         prec: orbit_prec,
+        req_prec: inp.precision,
         iter: orbit_iter,
         ref_ms,
         series_ms,
@@ -824,9 +854,8 @@ enum RefSource {
     /// Build one now, synchronously. The export default: correct at any depth, and slow — at
     /// extreme depth `pick_reference` alone is ~7 s of a ~15 s render.
     Fresh,
-    /// A reference computed off-thread for this exact frame. Falls back to `Fresh` when it does
-    /// not match. ⚠See the note on the match test in `build_export_request` — it currently never
-    /// matches, which is its own filed bug.
+    /// A reference computed off-thread for this exact frame; see [`precomputed_matches`]. Falls
+    /// back to `Fresh` when it does not match.
     Precomputed(Box<RecomputeResult>),
     /// ⭐Borrow the LIVE view's already-resident reference: **no bignum at all**. Only valid for a
     /// request at the live viewport, and it renders what the live view would render — including
@@ -2065,14 +2094,8 @@ impl FractadyneApp {
                     // Reuse the precomputed reference only if it was built for this exact frame's
                     // iteration count + precision; otherwise (stale, or none) compute it now.
                     // Fallback is always safe.
-                    // ⚠FILED BUG: this test can never pass. `recompute_worker` returns
-                    // `prec = inp.precision + REF_PREC_HEADROOM` (128) by construction, so
-                    // `r.prec == precision` is unsatisfiable and EVERY caller silently takes the
-                    // synchronous fallback — including the deep-export prep whose whole purpose is
-                    // to keep the UI alive during that build. Left alone here on purpose: fixing it
-                    // ENABLES three dormant paths at once and needs its own commit + corpus run.
                     let res = match src {
-                        RefSource::Precomputed(r) if r.iter == eff_iter && r.prec == precision => *r,
+                        RefSource::Precomputed(r) if precomputed_matches(&r, eff_iter, precision) => *r,
                         _ => {
                             let inputs = self.export_reference_inputs(vp, julia, mode, eff_iter, precision, scale.span_mantissa, delta_exp);
                             recompute_worker(inputs)
@@ -6614,6 +6637,29 @@ mod reuse_tests {
     const SX: &str = "-0.7436438870371587047521915061147707";
     const SY: &str = "0.131825904205311970493132056385139";
     const L2: f64 = 26.6; // ~1e8× (mode-0 df32 perturbation)
+
+    /// ⭐The guard the original test never had. `precomputed_matches` compares a
+    /// `RecomputeResult` against the inputs it was built from, so a fresh build MUST satisfy it —
+    /// otherwise reference pipelining is silently dead, which is exactly what happened when the
+    /// predicate compared the derived `prec` (request + 128 headroom) against the request itself.
+    /// Asserts the real production predicate, not a restatement of it, so the two cannot drift.
+    #[test]
+    fn precomputed_matches_a_fresh_build() {
+        let inp = inputs_for(SX, SY, L2, 3000, None);
+        let (want_iter, want_prec) = (inp.gpu_iter, inp.precision);
+        let r = recompute_worker(inp);
+        assert!(
+            precomputed_matches(&r, want_iter, want_prec),
+            "a reference built for (iter={want_iter}, prec={want_prec}) must be accepted for that \
+             same frame — got iter={} req_prec={} (built at prec={})",
+            r.iter, r.req_prec, r.prec,
+        );
+        // And it must still REJECT a frame it was not built for, or the gate is a rubber stamp.
+        assert!(!precomputed_matches(&r, want_iter + 1, want_prec), "a different iter must reject");
+        assert!(!precomputed_matches(&r, want_iter, want_prec + 1), "a different prec must reject");
+        // The headroom is what made the old test unsatisfiable; pin the relationship it broke on.
+        assert_eq!(r.prec, r.req_prec + REF_PREC_HEADROOM, "fresh build carries the headroom");
+    }
 
     #[test]
     fn reuse_extends_cached_orbit_in_place() {

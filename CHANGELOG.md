@@ -16,6 +16,16 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Fixed: the renderer's reference-reuse check could never say yes** (beta.130) — several parts of
+  the program prepare an expensive piece of setup (a "reference orbit") ahead of time on a
+  background thread so the next frame does not have to wait for it. The test that decided whether
+  that prepared work was still valid compared two numbers that are never equal by construction, so
+  the answer was always no: the prepared copy was thrown away and rebuilt from scratch, on the
+  thread that draws the window. Nothing failed and nothing warned — the work was simply done twice.
+  The check now compares what was actually asked for. Renders are unchanged (a reused reference is
+  the same one the rebuild would have produced), and a test now pins the check so it cannot quietly
+  become impossible again.
+
 - **Auto-zoom dives deeper in the same time** (beta.129) — to decide where to zoom next, the
   autopilot renders a tiny 56x56 preview of the current view. It was computing a brand-new
   full-precision reference orbit for that preview — the most expensive thing the program does —
