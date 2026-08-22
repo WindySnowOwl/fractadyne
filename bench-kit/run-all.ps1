@@ -14,7 +14,12 @@ param(
     [string]$ImaginaExe = '',
     [string]$FractalSharkExe = '',
     [int]$TimeoutS = 7200,
-    [string[]]$Scenes = @()
+    [string[]]$Scenes = @(),
+    # Render size for EVERY lane. 4K because it is what someone actually renders at, and
+    # because a benchmark should be a real load: 3840x2160 is 4x the old Fractadyne size
+    # and 9x the size Fraktaler-3 was silently given.
+    [ValidatePattern('^[0-9]+x[0-9]+$')]
+    [string]$Size = '3840x2160'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,7 +89,7 @@ if ($have.fractadyne) {
             # $argLine, never $args: $args is PowerShell's AUTOMATIC variable and assigning it
             # at script scope silently does not stick in 5.1 - the render launched with NO
             # arguments and sat in the GUI event loop until the timeout.
-            $argLine = ('--render --out "{0}" --size 1920x1080 --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1 --palette 0' -f $png, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations)
+            $argLine = ('--render --out "{0}" --size {5} --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1 --palette 0' -f $png, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations, $Size)
             if ($s.normalize -eq '1') { $argLine += ' --normalize' }
             $r = Invoke-TimedRender $FractadyneExe $argLine $TimeoutS $kit
             # The app prints "(in 40.8s)" / "(in 2m07s)" / "(in 1h02m)"; the CSV stores plain
@@ -122,7 +127,16 @@ if ($have.fraktaler3) {
     }
     foreach ($rep in 1..$Reps) {
         foreach ($s in $sceneRows) {
-            $toml = Join-Path $kit ('scenes\' + $s.slug + '.f3.toml')
+            # SIZE PARITY. The scene .f3.toml carries the CORPUS's resolution, which is
+            # not this benchmark's; rewrite width/height into a per-run copy rather than
+            # editing the corpus file, which also drives the correctness references.
+            $srcToml = Join-Path $kit ('scenes\' + $s.slug + '.f3.toml')
+            $toml    = Join-Path $outDir ($s.slug + '.bench.f3.toml')
+            $wh      = $Size -split 'x'
+            $tomlTxt = (Get-Content $srcToml) `
+                -replace '^\s*width\s*=.*',  ('width = '  + $wh[0]) `
+                -replace '^\s*height\s*=.*', ('height = ' + $wh[1])
+            Set-Content -Path $toml -Value $tomlTxt -Encoding ASCII
             $argLine = ('-w "{0}" -b "{1}"' -f $wisdom, $toml)
             $r = Invoke-TimedRender $Fraktaler3Exe $argLine $TimeoutS $outDir
             Write-Result $csv 'fraktaler3' $s.slug $rep $r.status $r.wall_s '' ''

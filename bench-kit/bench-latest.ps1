@@ -35,6 +35,8 @@ param(
     [int]$Reps = 1,
     [string[]]$Skip = @(),
     [int]$TimeoutS = 7200,
+    [ValidatePattern('^[0-9]+x[0-9]+$')]
+    [string]$Size = '3840x2160',
     [string[]]$Scenes = @(),
     [switch]$SkipDownload,
     [string]$FractadyneExe = ''
@@ -277,7 +279,7 @@ $manifestLines | Out-File -FilePath $manifest -Encoding ascii
 Write-Step ('Manifest: ' + $manifest)
 
 # ---- run the benchmark (sequential; run-all owns the protocol and the report) ----
-$runParams = @{ Reps = $Reps; TimeoutS = $TimeoutS }
+$runParams = @{ Reps = $Reps; TimeoutS = $TimeoutS; Size = $Size }
 if ($FractadyneExe) { $runParams.FractadyneExe = $FractadyneExe }
 if ($fraktaler3Exe) { $runParams.Fraktaler3Exe = $fraktaler3Exe }
 if ($imaginaExe) { $runParams.ImaginaExe = $imaginaExe }

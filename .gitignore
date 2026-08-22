@@ -50,3 +50,8 @@ __pycache__/
 validation/torture/
 bench-kit/*.zip
 bench-kit/results/
+bench-kit/apps/
+# Derived: package.ps1 stages these from validation/corpus/locations/ when building the
+# distributable. Kept out of the repo so the two copies cannot drift - but that means the
+# kit will not run IN PLACE until they are staged (run-all.ps1 should do it; see TODO).
+bench-kit/scenes/
