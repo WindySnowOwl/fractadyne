@@ -104,6 +104,23 @@ def main():
     if "--max-log10" in sys.argv:
         max_log10 = float(sys.argv[sys.argv.index("--max-log10") + 1])
     locs = read_locations()
+    # --only 21,22 / --only 21-24 : render ONLY these locations.
+    # Fraktaler-3 is NOT reproducible run to run - re-rendering the same location with the same
+    # 3.1 binary moved pixels up to maxD 218 across 72,000 px (measured 2026-08-22). So a full
+    # regeneration silently degrades every committed reference. Adding a counterpart to the set
+    # must therefore be a PER-SLUG operation, and this flag is what makes that possible.
+    if "--only" in sys.argv:
+        want = set()
+        for tok in sys.argv[sys.argv.index("--only") + 1].split(","):
+            if "-" in tok and not tok.startswith("-"):
+                a, b = tok.split("-", 1)
+                want.update("%02d" % n for n in range(int(a), int(b) + 1))
+            else:
+                want.add("%02d" % int(tok))
+        locs = [l for l in locs if l["slug"][:2] in want]
+        if not locs:
+            sys.exit("no locations match --only")
+        print("--only: %d location(s): %s" % (len(locs), ", ".join(l["slug"] for l in locs)))
     kept, blank = [], []
     for loc in locs:
         param = write_param(loc)

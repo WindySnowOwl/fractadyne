@@ -55,3 +55,6 @@ bench-kit/apps/
 # distributable. Kept out of the repo so the two copies cannot drift - but that means the
 # kit will not run IN PLACE until they are staged (run-all.ps1 should do it; see TODO).
 bench-kit/scenes/
+# FractalShark scratch, written into the CWD wherever it is launched from.
+bench-kit/HeapFile.bin
+bench-kit/*.iters
