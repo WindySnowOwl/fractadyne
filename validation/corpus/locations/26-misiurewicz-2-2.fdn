@@ -1,0 +1,18 @@
+app=Fractadyne
+format_version=1
+notes=Fractadyne reference corpus 26: Misiurewicz (2,2) c=i 8x (matches Fraktaler-3; see catalog.html)
+fractal=Mandelbrot
+julia=0
+julia_c_re=-7.43643000000000054e-1
+julia_c_im=1.31824999999999998e-1
+center_re=0.0
+center_im=1.e+0
+upp=6.94428433651173320e-4
+upp_log2=-1.04918863588296745e1
+zoom=8.000184448591042e0
+max_iter=2000
+auto_iter=0
+palette=0
+cycle=0.27
+offset=0.1
+aa=2

@@ -226,3 +226,129 @@ center_y = "1.062752280849242560235197612511891416835148196738605709240860346288
 mag_log10 = 28.2484
 iterations = 30000
 note = "COST-REGIME CONTROL, floatexp side. The same nucleus ladder one rung deeper (n=52, period 148 - the period steps by exactly the cycle length). Completes a 2x2: spar vs interior, either side of the df32->floatexp boundary, with depth, scene family and iteration ask all held fixed."
+
+[[location]]
+slug = "25-misiurewicz-2-1"
+title = "Misiurewicz (2,1) antenna tip 8x"
+center_x = "-2.0"
+center_y = "0.0"
+mag_log10 = 0.9031
+iterations = 2000
+note = "EXACT pre-periodic point, c = -2 with NO truncation: the critical orbit is 0 -> -2 -> 2 -> 2..., preperiod 2, period 1, and lambda = 2z = 4 EXACTLY. Verified by orbit closure to 1e-260. The antenna tip is a degenerate thin spar, which is the point: it is the extreme of the fast-escape regime and an exact coordinate both apps can represent without rounding, so any disagreement here is arithmetic, not precision."
+
+[[location]]
+slug = "26-misiurewicz-2-2"
+title = "Misiurewicz (2,2) c=i 8x"
+center_x = "0.0"
+center_y = "1.0"
+mag_log10 = 0.9031
+iterations = 2000
+note = "EXACT pre-periodic point, c = i: orbit 0 -> i -> -1+i -> -i -> -1+i..., preperiod 2, period 2, lambda = 4(1+i) so |lambda| = 4*sqrt(2) EXACTLY. Like location 25 an exactly-representable coordinate, and off the real axis, so it also exercises the asymmetric reference path."
+
+[[location]]
+slug = "27-misiurewicz-4-1"
+title = "Misiurewicz (4,1) three-spar 1e5x"
+center_x = "-0.10109636384562216102578544573862256546380544282625348387693117766078084074047058427482121981051677903340453190855674119397154614426091188235570390768030161575841814343545448230681066640294193782674118916078195264489953969953344668233931267"
+center_y = "0.956286510809141500771096057729977435809833336510529170034314321500524659065716732526978410787339807204344472492646928436675240656746572265620081571974155131383122805488444381057167787020373839505547727930954831195319038517002487791767011311"
+mag_log10 = 5.0
+iterations = 10000
+note = "Misiurewicz (4,1), Newton-refined to 240 digits; |lambda| = 1.32833011530030112, i.e. only 0.1233 decades per self-similar rung - the slowest ladder of the five landmarks, which is why the same centre serves bench-matrix's 1e300 segment. The three-spar structure is the classic Misiurewicz shape."
+
+[[location]]
+slug = "28-misiurewicz-7-1"
+title = "Misiurewicz (7,1) elephant spiral 1e4x"
+center_x = "0.424512719050039642442472214171890237432881195633304993564860821144724974894804721570415761516845387479358428653040146021695676016449902821484100580977996558801269354404621016170081710456873760235218077786584392255691829569293341141786610095"
+center_y = "0.207530228166745302506073482243918280177996985846994567512565152145643577625346272906232268385878912795220720702622169247415203909571579927495575646938280167660610102572573506809036876507643211701182205963007734796723438220287523603690585911"
+mag_log10 = 4.0
+iterations = 10000
+note = "Misiurewicz (7,1), Newton-refined; |lambda| = 1.0978792128559528, 0.0406 decades per rung - the tightest self-similarity here. A spiral rather than a spar, so it samples a different local geometry from 25/26/27."
+
+[[location]]
+slug = "29-nucleus-p2-basilica"
+title = "Period-2 nucleus (basilica) 50x"
+center_x = "-1.0"
+center_y = "0.0"
+mag_log10 = 0.602
+iterations = 3000
+note = "EXACT superattracting nucleus, c = -1 with no truncation (f^2(0,c) = 0 exactly). The interior is max-iter by construction, so this is the INTERIOR cost regime at its simplest and cheapest - the control the deep interior locations (23/24) are the expensive end of. FRAMING: 8x - the period-2 bulb spans ~0.5 in c, so this frames it against the exterior. At 50x the whole view was INSIDE the bulb and rendered 3 unique colours: a flat interior that would pass maxD 0 forever while testing nothing."
+
+[[location]]
+slug = "30-nucleus-p3-airplane"
+title = "Period-3 nucleus (airplane) 300x"
+center_x = "-1.75487766624669276004950889635852869189460661777279314398928397064608065512808109073822709284225030364837736791281342293829759711560627585214813332913847833804044537093686355984467244815497084222346628624986496294224179907077033884214487677"
+center_y = "0.0"
+mag_log10 = 2.477
+iterations = 3000
+note = "Period-3 nucleus on the real axis, Newton-refined (residual 1e-260). Real-axis symmetric, so the imaginary part is exactly zero - a case where any asymmetry in the reference or the shader shows up immediately."
+
+[[location]]
+slug = "31-nucleus-p3-rabbit"
+title = "Period-3 nucleus (Douady rabbit) 80x"
+center_x = "-0.122561166876653619975245551820735654052696691113603428005358014676959672435959454630886453578874848175811316043593288530851201442196862073925933335430760830979777314531568220077663775922514578888266856875067518528879100464614830578927561614"
+center_y = "0.744861766619744236593170428604392367240163084906824574201847592154415217837839767791143754932964159039252804873377366033438940727045047654259489042923780775650657326505538360482036291417505977187767702143290465723257672182957258928702637202"
+mag_log10 = 1.301
+iterations = 3000
+note = "The Douady rabbit: same period as location 30, same superattracting interior, but off the real axis. The pair 30/31 isolates real-axis symmetry at fixed period. FRAMING: 20x - frames the period-3 bulb. At 80x the view was entirely interior (3 colours)."
+
+[[location]]
+slug = "32-nucleus-p4"
+title = "Period-4 nucleus (real) 300x"
+center_x = "-1.31070264133683288356357079741218077850193162762588255299412570558877832480816175931245587889580005953027947362013015337139489769985554648904406441695268128876725343515905057151363142780904650914743155144404748791199464158176363989286535272"
+center_y = "0.0"
+mag_log10 = 1.756
+iterations = 4000
+note = "Period-4 nucleus, Newton-refined. With 29/30/32 the corpus carries a period ladder 2 -> 3 -> 4 at shallow depth, where the reference orbit is short and every difference is the shader's. FRAMING: 57x - frames the period-4 component. At 300x the view was entirely interior (3 colours)."
+
+[[location]]
+slug = "33-nucleus-p5"
+title = "Period-5 nucleus (real) 1000x"
+center_x = "-1.62541372512330373744341057502333018380225593809105241063400673817838645731602611985801876787913979110476905428655109877261835786083224762575003712642148468265670917129079240757758892102327502398040721744511697455400090069644169004902404314"
+center_y = "0.0"
+mag_log10 = 3.0
+iterations = 5000
+note = "Period-5 nucleus, Newton-refined. Completes the shallow period ladder."
+
+[[location]]
+slug = "34-vger-dive-2p06e28"
+title = "VGER field dive 2.06e28x"
+center_x = "3.563477460130438221459313496407281589129097577081654084279e-1"
+center_y = "6.551721978595704786747352603201706324799987133877257833762e-1"
+mag_log10 = 28.024348
+iterations = 300000
+note = "FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-15). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 58 digits against 28.024348 decades of depth. This one sits 5.8% above PERT_FE_THRESHOLD (1e28), i.e. essentially ON our df32->floatexp boundary, which makes it the real-dive counterpart to the synthetic boundary pair at locations 21/22. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline."
+
+[[location]]
+slug = "35-vger-dive-1p47e77"
+title = "VGER field dive 1.47e77x"
+center_x = "3.5634774601304382214593134944855658665333542382319826904819524052878394297711653798870071071230880055625454711405583e-1"
+center_y = "6.5517219785957047867473526044384060240158237433104919183695119307267363068091251654291035030800580107809850539974573e-1"
+mag_log10 = 77.167101
+iterations = 300000
+note = "FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 116 digits against 77.167101 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline."
+
+[[location]]
+slug = "36-vger-dive-1p08e104"
+title = "VGER field dive 1.08e104x"
+center_x = "3.56347746013043822145931349448556586653335423823198269048195240528783942977116561938702036938961180671145001922408870110665454418522876e-1"
+center_y = "6.55172197859570478674735260443840602401582374331049191836951193072673630680912015999416665912371947818955962449966676423886514895763942e-1"
+mag_log10 = 104.033211
+iterations = 300000
+note = "FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 135 digits against 104.033211 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline."
+
+[[location]]
+slug = "37-vger-dive-3p11e114"
+title = "VGER field dive 3.11e114x"
+center_x = "3.56347746013043822145931349448556586653335423823198269048195240528783942977116561938702036938961180671147174823504254235327620350125415e-1"
+center_y = "6.55172197859570478674735260443840602401582374331049191836951193072673630680912015999416665912371947818956192898010241991894396558897805e-1"
+mag_log10 = 114.492336
+iterations = 300000
+note = "FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 135 digits against 114.492336 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline."
+
+[[location]]
+slug = "38-vger-dive-2p87e140"
+title = "VGER field dive 2.87e140x"
+center_x = "3.56347746013043822145931349448556586653335423823198269048195240528783942977116561938702036938961180671147174823504308415066636902511050205828455506574950826961702160014187469e-1"
+center_y = "6.55172197859570478674735260443840602401582374331049191836951193072673630680912015999416665912371947818956192898010214682820273096699440691041832465141338913686318349078826342e-1"
+mag_log10 = 140.457649
+iterations = 300000
+note = "FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 174 digits against 140.457649 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline."

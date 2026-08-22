@@ -1,0 +1,19 @@
+[location]
+real = "3.563477460130438221459313496407281589129097577081654084279e-1"
+imag = "6.551721978595704786747352603201706324799987133877257833762e-1"
+zoom = "1.057665e28"
+[image]
+width = 1280
+height = 720
+subframes = 4
+[bailout]
+iterations = 300000
+maximum_reference_iterations = 300000
+maximum_perturb_iterations = 300000
+maximum_bla_steps = 8192
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "34-vger-dive-2p06e28-f3"
+save_png = true

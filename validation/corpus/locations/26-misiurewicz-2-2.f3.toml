@@ -1,0 +1,19 @@
+[location]
+real = "0.0"
+imag = "1.0"
+zoom = "8.00018"
+[image]
+width = 1280
+height = 720
+subframes = 4
+[bailout]
+iterations = 2000
+maximum_reference_iterations = 2000
+maximum_perturb_iterations = 2000
+maximum_bla_steps = 8192
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "26-misiurewicz-2-2-f3"
+save_png = true

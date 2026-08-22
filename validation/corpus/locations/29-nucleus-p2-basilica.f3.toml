@@ -1,0 +1,19 @@
+[location]
+real = "-1.0"
+imag = "0.0"
+zoom = "3.99945"
+[image]
+width = 1280
+height = 720
+subframes = 4
+[bailout]
+iterations = 3000
+maximum_reference_iterations = 3000
+maximum_perturb_iterations = 3000
+maximum_bla_steps = 8192
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "29-nucleus-p2-basilica-f3"
+save_png = true
