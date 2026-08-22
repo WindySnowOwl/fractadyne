@@ -993,8 +993,17 @@ pub fn render_iter_tiled(
     let by_buf = (((max_buf / 16) as f64).sqrt() as u32).max(256);
     let work_per_px = req.max_iter.max(1) as u64;
     let by_work = (((work_budget / work_per_px.max(1)) as f64).sqrt() as u32).max(16);
+    // ⛔**MEASURED-FALSE, 2026-08-21: do not shrink the tile when an `roi` is set.** The idea was
+    // that a big tile defeats ROI twice over — it catches a scattered glitch almost everywhere
+    // (10/11 tiles wanted at 816 px) and allocates ~32 MB of textures + readback to repair a
+    // handful of pixels. Tried at 128 px: skipping improved (58/155 tiles) and output was
+    // byte-identical, but correction got SLOWER — 138 → 161 ms per pass, 9.0 → 10.6 s total.
+    // The extra submissions cost more than the allocation they save, so per-tile FIXED overhead
+    // dominates, not bytes. The way out is fewer, smaller dispatches — i.e. the gather pass in
+    // the TODO — not a different tile size.
     let tile = by_tex.min(by_buf).min(by_work).clamp(1, 2048);
 
+    let t_setup = std::time::Instant::now();
     let shader = shader_module(device);
     let iter_bgl = iter_bind_group_layout(device);
     let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1006,6 +1015,7 @@ pub fn render_iter_tiled(
         device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
         "itertiled.pipeline",
     );
+    let setup_ms = t_setup.elapsed().as_secs_f64() * 1000.0;
 
     // Chunked per-tile iterate, same rule and reason as `render_export`. ⭐Glitch detection is
     // IN scope since beta.124 (`ST_GLITCHED`), which is what matters here: this is the multi-
@@ -1284,7 +1294,10 @@ chunks={chunk_passes}"
         ty0 += th;
     }
     if roi.is_some() && tile_trace_on() {
-        eprintln!("[fd-export] roi: {roi_skipped}/{roi_total} tiles skipped (tile={tile}px)");
+        eprintln!(
+            "[fd-export] roi: {roi_skipped}/{roi_total} tiles skipped (tile={tile}px) setup={setup_ms:.0}ms total={:.0}ms",
+            t_setup.elapsed().as_secs_f64() * 1000.0
+        );
     }
     Ok(ExportResult {
         width: w,
