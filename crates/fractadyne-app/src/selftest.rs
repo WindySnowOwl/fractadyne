@@ -1063,6 +1063,67 @@ impl FractadyneApp {
                     }
                 }
 
+                // (D2b3) The scattered-GATHER pass is BIT-IDENTICAL to the full-frame pass.
+                // This is the check the whole gather idea rests on: `fs_iterate_gather` renders a
+                // tiny texture whose texel i takes its pixel coordinate from a list instead of from
+                // the rasterizer, and shares the iteration kernel (`iterate_at`) verbatim with
+                // `fs_iterate`. If that were even one ULP off, glitch correction would silently
+                // start adopting different pixels than the renderer it is correcting. The sample is
+                // deliberately SCATTERED (a coprime stride walks the whole frame, plus all four
+                // corners and the last pixel) because a contiguous one would not exercise the
+                // indirection at all, and the run asserts that the sample actually spans the
+                // outcome classes — a comparison over 500 identical interior pixels would pass
+                // vacuously. Repeated with a work budget small enough to force ~32 batches, which
+                // is what exercises the batch loop's last-row padding and its scatter back.
+                {
+                    let mut g = with_ref(0.45 * span, 0.35 * span);
+                    g.glitch_on = 1;
+                    let full = fractadyne_gpu::render_iter_tiled(device, queue, &g, 2_000_000_000, None, None)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_tiled): {e}"))
+                        .ok();
+                    let nn = N as usize;
+                    let npx = nn * nn;
+                    let mut idx: Vec<usize> = vec![0, nn - 1, npx - nn, npx - 1];
+                    idx.extend((0..500).map(|k: usize| (k * 7919) % npx));
+                    let coords: Vec<[u32; 2]> =
+                        idx.iter().map(|&i| [(i % nn) as u32, (i / nn) as u32]).collect();
+                    let gather = |budget| {
+                        fractadyne_gpu::render_iter_gather(device, queue, &g, &coords, budget, None)
+                            .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_gather): {e}"))
+                            .ok()
+                    };
+                    if let (Some(f), Some(one), Some(many)) = (&full, gather(2_000_000_000), gather(1)) {
+                        let diff = |g: &fractadyne_gpu::GatherResult| {
+                            idx.iter().enumerate().filter(|(k, &i)| {
+                                (0..4).any(|c| {
+                                    f.pixels[i * 4 + c].to_bits() != g.pixels[k * 4 + c].to_bits()
+                                })
+                            }).count()
+                        };
+                        let (d1, dn) = (diff(&one), diff(&many));
+                        let class = |p: f32| if p < -1.5 { 0 } else if p < 0.0 { 1 } else { 2 };
+                        let mut seen = [0usize; 3];
+                        for &i in &idx {
+                            seen[class(f.pixels[i * 4])] += 1;
+                        }
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Glitch",
+                            name: "scattered-gather iterate is bit-identical".into(),
+                            params: format!(
+                                "seahorse, 1e8×, far-offset ref, {} scattered px, 1 batch vs {} batches",
+                                idx.len(),
+                                idx.len().div_ceil(16),
+                            ),
+                            result: format!(
+                                "{d1} differ (1 batch), {dn} differ (batched); sample: {} glitched, {} interior, {} escaped",
+                                seen[0], seen[1], seen[2]
+                            ),
+                            threshold: "0 texels differ either way, and the sample spans glitched + escaped",
+                            pass: d1 == 0 && dn == 0 && seen[0] > 0 && seen[2] > 0,
+                        });
+                    }
+                }
+
                 // (D2c) End-to-end multi-reference CORRECTION. Starting from the auto reference
                 // (which flags a few glitches here), the corrector drops in extra references and
                 // must resolve every flagged pixel — residual glitches → 0.

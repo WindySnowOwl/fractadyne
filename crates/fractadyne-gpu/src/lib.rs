@@ -54,9 +54,13 @@ pub(crate) struct IterUniforms {
     // resumable `fs_iterate_chunk` uses them. `start_iter == 0` means "initialize from scratch".
     pub(crate) start_iter: u32,
     pub(crate) end_iter: u32,
-    // Pad the uniform to a 16-byte multiple so the Rust `#[repr(C)]` size matches WGSL's std140
-    // struct size (WGSL rounds a struct up to its 16-byte alignment; Rust does not).
-    pub(crate) _pad_ir: [u32; 2],
+    /// Scattered-gather pass (`fs_iterate_gather`) only: `[gather_w, gather_n]` — the tiny gather
+    /// texture's width in texels, and how many of its texels carry a real coordinate. Zero on every
+    /// other path. These are the two words that already padded the uniform to a 16-byte multiple (so
+    /// the Rust `#[repr(C)]` size matches WGSL's std140 size), which is why the gather pass could
+    /// take them without moving a single existing field — this one struct is bound by every iterate
+    /// pipeline in the app, the live view included.
+    pub(crate) gather: [u32; 2],
 }
 
 #[repr(C)]
@@ -656,6 +660,29 @@ pub(crate) fn color_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupL
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("fractadyne.color_bgl"),
         entries: &[uniform_bgl_entry(), tex_entry(1), tex_entry(2)],
+    })
+}
+
+/// Bind-group layout for the **scattered-gather** iterate pass: the pixel-coordinate list the
+/// tiny gather texture indexes, at `@group(1) @binding(4)`.
+///
+/// ⚠It shares `@group(1)` with the chunk-state textures (bindings 0..2, plus 3 for mode 2) but
+/// declares only binding 4, because a pipeline layout need cover only what its entry point reads —
+/// `fs_iterate_gather` reads no state texture and no chunk entry point reads the coordinate list.
+/// Group 0, which every iterate pipeline in the app shares (live view included), stays untouched.
+pub(crate) fn gather_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("fractadyne.gather_bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 4,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
     })
 }
 
@@ -1474,7 +1501,7 @@ impl CallbackTrait for MandelbrotParams {
                 bla_on: self.bla_on,
                 start_iter: 0,
                 end_iter: 0,
-                _pad_ir: [0; 2],
+                gather: [0; 2],
             };
             // Effective chunk: requested AND the resumable pipelines exist (the device granted the
             // 48-byte color-attachment limit). A device that couldn't grant it clamps THIS dispatch

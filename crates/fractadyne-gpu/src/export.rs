@@ -668,7 +668,7 @@ fn render_export_impl(
                 bla_on: req.bla_on,
                 start_iter: 0,
                 end_iter: 0,
-                _pad_ir: [0; 2],
+                gather: [0; 2],
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1131,7 +1131,7 @@ pub fn render_iter_tiled(
                 bla_on: req.bla_on,
                 start_iter: 0,
                 end_iter: 0,
-                _pad_ir: [0; 2],
+                gather: [0; 2],
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1311,6 +1311,415 @@ chunks={chunk_passes}"
     })
 }
 
+/// Raw iteration data for a **list of pixels** rather than a rectangle — the result of
+/// [`render_iter_gather`].
+pub struct GatherResult {
+    /// RGBA32F per requested coordinate, **in the caller's order** — `coords.len() * 4` floats.
+    /// Same channel layout as `render_iter_tiled`'s `pixels`: `(smooth_iter, normal.x, normal.y,
+    /// DE_log2)`, with `r = -1` interior and `r = -2` glitched.
+    pub pixels: Vec<f32>,
+    /// Shader event counters summed over every batch (`CTR_*` in the crate root).
+    pub counters: [u64; crate::COUNTER_SLOTS],
+    /// Longest single batch, wall-clock ms including readback — the TDR-forensics figure.
+    pub max_dispatch_ms: f64,
+}
+
+/// Is a whole `0..max_iter` chain safe to run as ONE dispatch — i.e. does the gather pass apply?
+///
+/// A gather batch renders a handful of pixels, so it cannot be split along the iteration axis the
+/// way `render_iter_tiled` splits a tile (the resumable chunk entry points carry their state in
+/// full-size textures). Its dispatch length is therefore one pixel's entire dependent chain, and no
+/// batch size can shorten it — 500 pixels and 5 cost the same wall. This is exactly the question
+/// [`ChunkPricer::open`] already answers for a tile, priced by the same assumed serial floor, so ask
+/// it rather than inventing a second threshold that would drift from the one the device-loss work
+/// calibrated.
+///
+/// Above the limit the caller must keep to the tiled + ROI path, which does chunk.
+pub fn gather_dispatch_safe(max_iter: u32) -> bool {
+    ChunkPricer::new().open(max_iter) >= max_iter.max(1)
+}
+
+/// Render the iteration pass for an arbitrary **scattered list of pixels** and read back exactly
+/// those pixels — the multi-reference glitch corrector's natural pass shape.
+///
+/// ⭐**Why this exists.** Correction wants "iterate exactly these N pixels", and N is a few hundred
+/// out of two million; asking for whole frames is what made it the offline render's dominant cost.
+/// Measured at 1.3e6× / 3,000 iter / 1920×1080: correction was **9.9 s of an 11.1 s render** and
+/// repaired **197 pixels**, because passes 5..64 each re-iterated all 2,073,600 to resolve one or
+/// two. Skipping tiles that hold no glitched pixel (the first fix) is capped by tile granularity —
+/// scattered glitches touch 10 of 11 tiles — and leaves the ~33 MB/pass of allocate-copy-map
+/// untouched. This removes both: one small dispatch, and a readback proportional to N.
+///
+/// Output is **bit-identical** to the same pixels rendered full-frame: `fs_iterate_gather` and
+/// `fs_iterate` share `iterate_at` verbatim and are handed the same texel-centre coordinate, so
+/// this is a pure cost removal — no quality trade, no policy decision.
+///
+/// ⚠Precondition: [`gather_dispatch_safe`]. Coordinates are absolute texels in the full
+/// `req.width × req.height` grid; duplicates are allowed but wasteful. `work_budget` bounds one
+/// batch's nominal work exactly as it bounds a tile's, and `deadline` is honoured **between**
+/// batches.
+pub fn render_iter_gather(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    coords: &[[u32; 2]],
+    work_budget: u64,
+    deadline: Option<std::time::Instant>,
+) -> Result<GatherResult, GpuError> {
+    GatherPass::new(device).run(device, queue, req, coords, work_budget, deadline)
+}
+
+/// The gather pass's device-level scaffolding, built ONCE and reused across correction passes.
+///
+/// ⭐Hoisted because the economics inverted. Rebuilding the shader module + pipeline per call was
+/// measured at **12 ms of a 138 ms tiled pass — 8%**, and caching it was written off as unable to
+/// pay for itself. Once the gather turned the pass itself into a **3 ms** dispatch, that same 11 ms
+/// became the LARGEST single cost in the loop: 63 passes × 11 ms ≈ 0.7 s of a 1.3 s correction.
+/// Nothing about the setup changed — the thing it was 8% *of* did. ⚠A cost measured as a FRACTION
+/// expires the moment its denominator moves.
+///
+/// Built lazily by the corrector, same reason as the lazy `TileChunker`: a render whose base pass
+/// comes back clean must not pay for a pipeline it never dispatches.
+pub struct GatherPass {
+    /// Owned so the pipeline's module outlives it; never read again.
+    _shader: wgpu::ShaderModule,
+    iter_bgl: wgpu::BindGroupLayout,
+    gather_bgl: wgpu::BindGroupLayout,
+    pipeline: wgpu::RenderPipeline,
+    iter_uniform: wgpu::Buffer,
+    counters_buf: wgpu::Buffer,
+    counters_read: wgpu::Buffer,
+}
+
+impl GatherPass {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let shader = shader_module(device);
+        let iter_bgl = iter_bind_group_layout(device);
+        let gather_bgl = crate::gather_bind_group_layout(device);
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("gather.layout"),
+            bind_group_layouts: &[&iter_bgl, &gather_bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline = fullscreen_pipeline(
+            device,
+            &shader,
+            &layout,
+            "fs_iterate_gather",
+            &[ITER_FORMAT, ITER_FORMAT],
+            "gather.pipeline",
+        );
+        let iter_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gather.uniform"),
+            size: std::mem::size_of::<IterUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let counters_buf = crate::make_counters_buf(device);
+        let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gather.counters_read"),
+            size: (crate::COUNTER_SLOTS * 4) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            _shader: shader,
+            iter_bgl,
+            gather_bgl,
+            pipeline,
+            iter_uniform,
+            counters_buf,
+            counters_read,
+        }
+    }
+
+    /// One gather pass — see [`render_iter_gather`] for what it does and why. `self` carries only
+    /// device scaffolding, so each call may bring a different reference orbit and pixel list.
+    pub fn run(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        req: &ExportRequest,
+        coords: &[[u32; 2]],
+        work_budget: u64,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<GatherResult, GpuError> {
+        let n_total = coords.len();
+        let mut out = GatherResult {
+            // Pre-filled with the GLITCH sentinel, not zero. Every entry is overwritten on the success
+            // path, but the failure mode matters: the corrector adopts any pixel whose `r >= -1.5`, and
+            // a stray 0.0 is a perfectly plausible escape value it would take. Seeded at -2 an entry
+            // that somehow went unwritten stays glitched and is simply retried by the next pass.
+            // (The tiled path gets this structurally — a skipped ROI tile's zeros are never read.)
+            pixels: vec![-2.0_f32; n_total * 4],
+            counters: [0u64; crate::COUNTER_SLOTS],
+            max_dispatch_ms: 0.0,
+        };
+        if n_total == 0 {
+            return Ok(out);
+        }
+        let max_dim = device.limits().max_texture_dimension_2d.max(1) as u64;
+        let max_buf = device.limits().max_buffer_size;
+        let w = req.width.max(1);
+        let h = req.height.max(1);
+
+        // Batch ceiling, in PIXELS. Same currency and the same reason as `render_iter_tiled`'s tile:
+        // `work_budget` caps one dispatch's nominal iteration work (`n · max_iter`) so the OS watchdog
+        // never sees a long submission, bounded further by what a square-ish texture and its readback
+        // can hold.
+        // ⭐The floor behaves differently here than for tiles: a few hundred pixels do not fill the GPU,
+        // so a gather dispatch is latency-bound by ONE pixel's dependent chain and its wall time is
+        // nearly flat in `n` until `n` reaches thousands. Shrinking a batch therefore buys
+        // interruptibility, not speed — which is exactly what the deadline wants from it.
+        let by_work = (work_budget / req.max_iter.max(1) as u64).max(16);
+        let by_tex = max_dim * max_dim;
+        let by_buf = (max_buf / 32).max(16); // 16 B/texel + row-padding headroom
+        let ceiling = by_work
+            .min(by_tex)
+            .min(by_buf)
+            .min(n_total as u64)
+            .clamp(1, u32::MAX as u64) as u32;
+
+        // Per-pass only: a fresh reference orbit + BLA tree, and the coordinate list. Everything else
+        // (shader, layouts, pipeline, uniform, counters) lives on `self` - see the struct's note.
+        check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
+        let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
+        if !req.orbit.is_empty() {
+            queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
+        }
+        if !req.bla.is_empty() {
+            let off = (req.orbit.len() * 16) as u64;
+            queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
+        }
+        let iter_bg = make_iter_bg(
+            device,
+            &self.iter_bgl,
+            &self.iter_uniform,
+            &orbit_buf,
+            &self.counters_buf,
+        );
+
+        // One coordinate buffer for the whole render: batches are a fixed `ceiling` wide (see below).
+        let coords_cap = ceiling.max(1) as u64;
+        let coords_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gather.coords"),
+            size: coords_cap * 8,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let gather_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gather.bg"),
+            layout: &self.gather_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 4,
+                resource: coords_buf.as_entire_binding(),
+            }],
+        });
+
+        let split = |v: f64| -> (f32, f32) {
+            let hi = v as f32;
+            (hi, (v - hi as f64) as f32)
+        };
+        // Step mantissa is per full-resolution pixel of the FULL frame — the gather texture's own size
+        // is irrelevant to the arithmetic, since every coordinate is absolute (`px_offset` stays 0).
+        let (sxh, sxl) = split(req.span_mantissa.x / w as f64);
+        let (syh, syl) = split(req.span_mantissa.y / h as f64);
+
+        let bpp = 16u32;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        // ⛔The batch size is FIXED, deliberately — do not add `export_tile_cap` here. That actuator is
+        // an AREA one: it halves a hot tile because a tile's cost is dominated by how many pixels it
+        // covers. A gather batch's is not. Its wall is `max(one pixel's chain, n / throughput)`, the
+        // chain term is bounded by `gather_dispatch_safe` and the area term by `work_budget` — so
+        // halving a hot batch cannot shorten the chain, and in the latency-bound regime (n below the
+        // GPU's width, i.e. exactly where this pass lives) it leaves the wall unchanged while doubling
+        // the batch COUNT. Applied repeatedly to the floor that turns a 20-batch pass into a
+        // 6,000-batch one at the same wall each — the >1 h pathology, rebuilt.
+        let mut done = 0usize;
+        while done < n_total {
+            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                return Err(GpuError::Canceled);
+            }
+            let t_batch = std::time::Instant::now();
+            let n = (ceiling as usize).min(n_total - done);
+            // Square-ish, so neither dimension reaches the texture cap before the other. The last row is
+            // padded out; those texels return before iterating (see `fs_iterate_gather`), so they cost
+            // nothing and — importantly — do not inflate the shared event counters.
+            let gw = ((n as f64).sqrt().ceil() as u32).clamp(1, max_dim as u32);
+            let gh = (n as u32).div_ceil(gw);
+            queue.write_buffer(
+                &coords_buf,
+                0,
+                bytemuck::cast_slice(&coords[done..done + n]),
+            );
+
+            let iu = IterUniforms {
+                step: [sxh, sxl, syh, syl],
+                ref_offset: req.ref_offset.to_array(),
+                center: req.center,
+                julia_c: req.julia_c,
+                res: [w as f32, h as f32],
+                px_offset: [0.0, 0.0], // unused: gather coordinates are already absolute
+                max_iter: req.max_iter,
+                orbit_len: req.orbit_len,
+                mode: req.mode,
+                formula: req.formula,
+                julia: req.julia,
+                delta_exp: req.delta_exp,
+                color_method: 0,
+                stripe_freq: 1.0,
+                trap_type: 0,
+                aux_on: 0,
+                sa_skip: req.sa_skip,
+                glitch_on: req.glitch_on,
+                sa_a: req.sa_a,
+                sa_b: req.sa_b,
+                sa_c: req.sa_c,
+                sa_a_exp: req.sa_a_exp,
+                sa_b_exp: req.sa_b_exp,
+                sa_c_exp: req.sa_c_exp,
+                bla_on: req.bla_on,
+                start_iter: 0,
+                end_iter: 0,
+                gather: [gw, n as u32],
+            };
+            queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
+
+            let mk = |label| {
+                device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: gw,
+                        height: gh,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: ITER_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                })
+            };
+            let main_tex = mk("gather.main");
+            let aux_tex = mk("gather.aux"); // written, never read: aux colorings can't use this path
+            let main_view = main_tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let aux_view = aux_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let unpadded_bpr = gw * bpp;
+            let padded_bpr = unpadded_bpr.div_ceil(align) * align;
+            let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gather.readback"),
+                size: (padded_bpr * gh) as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("gather.enc"),
+            });
+            // Zero the counters before THIS batch so the per-batch u32 slots can't wrap; summed in u64.
+            enc.clear_buffer(&self.counters_buf, 0, None);
+            {
+                let attach = |v| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: v,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })
+                };
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("gather.iter_pass"),
+                    color_attachments: &[attach(&main_view), attach(&aux_view)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &iter_bg, &[]);
+                pass.set_bind_group(1, &gather_bg, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            enc.copy_buffer_to_buffer(
+                &self.counters_buf,
+                0,
+                &self.counters_read,
+                0,
+                (crate::COUNTER_SLOTS * 4) as u64,
+            );
+            enc.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &main_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &out_buf,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bpr),
+                        rows_per_image: Some(gh),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: gw,
+                    height: gh,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit(std::iter::once(enc.finish()));
+
+            let slice = out_buf.slice(..);
+            let (tx, rx) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |r| {
+                let _ = tx.send(r);
+            });
+            let (ctx_, ctr_rx) = std::sync::mpsc::channel();
+            self.counters_read
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = ctx_.send(r);
+                });
+            let _ = device.poll(wgpu::Maintain::Wait);
+            rx.recv()
+                .map_err(|e| GpuError::Readback(e.to_string()))?
+                .map_err(|e| GpuError::Readback(e.to_string()))?;
+            if ctr_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+                let mapped = self.counters_read.slice(..).get_mapped_range();
+                let batch_ctr: &[u32] = bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]);
+                for (sum, &c) in out.counters.iter_mut().zip(batch_ctr) {
+                    *sum += c as u64;
+                }
+                drop(mapped);
+                self.counters_read.unmap();
+            }
+            let data = slice.get_mapped_range();
+            for r in 0..gh {
+                let base = (r * gw) as usize; // index of this row's first entry within the batch
+                let take = (n - base).min(gw as usize); // the last row is partly padding
+                let src = (r * padded_bpr) as usize;
+                let row: &[f32] = bytemuck::cast_slice(&data[src..src + unpadded_bpr as usize]);
+                let dst = (done + base) * 4;
+                out.pixels[dst..dst + take * 4].copy_from_slice(&row[..take * 4]);
+            }
+            drop(data);
+            out_buf.unmap();
+
+            let wall_ms = t_batch.elapsed().as_secs_f64() * 1000.0;
+            out.max_dispatch_ms = out.max_dispatch_ms.max(wall_ms);
+            if tile_trace_on() {
+                eprintln!("[fd-export] gather {n}px {gw}x{gh} wall={wall_ms:.1}ms of {n_total}");
+            }
+            done += n;
+        }
+        Ok(out)
+    }
+}
+
 /// Copy the event-counter atomics to a MAP_READ staging buffer and read them back
 /// (blocking; every caller is already synchronous), widened to u64. Zeros on any failure.
 /// Used by the single-pass `render_iter` (one texture, no cross-tile accumulation, so the
@@ -1429,7 +1838,7 @@ pub fn render_iter(
         bla_on: req.bla_on,
         start_iter: 0,
         end_iter: 0,
-        _pad_ir: [0; 2],
+        gather: [0; 2],
     };
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1730,7 +2139,7 @@ pub fn render_iter_chunked(
         bla_on: req.bla_on,
         start_iter: 0,
         end_iter: 0,
-        _pad_ir: [0; 2],
+        gather: [0; 2],
     };
 
     // One bounded submission per iteration range; poll-wait between them so each stays a short,

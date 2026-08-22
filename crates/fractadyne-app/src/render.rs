@@ -211,6 +211,12 @@ pub(crate) struct CorrectedIter {
     pub residual: usize,
     pub counters: [u64; fractadyne_gpu::COUNTER_SLOTS],
     pub iterate_ms: f64,
+    /// Longest single GPU submission across the base pass and every correction pass, wall-clock ms.
+    /// ⭐This path is where the app lost the device twice, and until now it threw the number away —
+    /// a glitch-corrected export logged `max_dispatch=0ms` no matter what it had just done. It is
+    /// also the field instrument for the gather's one assumption: a gather batch cannot be split
+    /// along the iteration axis, so `gather_dispatch_safe` predicts rather than measures its wall.
+    pub max_dispatch_ms: f64,
 }
 
 // `FRACTADYNE_TRACE` tracing moved to `diag` (categories: req, ref, gpu, tile, glitch —
@@ -2041,15 +2047,19 @@ impl FractadyneApp {
         // zeros, which is why a glitch-corrected export used to log all-zero counters).
         let mut counters = [0u64; fractadyne_gpu::COUNTER_SLOTS];
         let mut iterate_ms = 0.0f64;
+        let mut max_dispatch_ms = 0.0f64;
         let base = fractadyne_gpu::render_iter_tiled(device, queue, &req, CORRECT_WORK_BUDGET, deadline, None).ok()?;
         for (c, v) in counters.iter_mut().zip(base.counters) {
             *c += v;
         }
         iterate_ms += base.iterate_ms;
+        max_dispatch_ms = max_dispatch_ms.max(base.max_dispatch_ms);
         let mut merged = base.pixels;
         // Direct path never glitches; nothing to correct.
         if RenderMode::from_u32(req.mode).is_direct() {
-            return Some(CorrectedIter { pixels: merged, refs_used: 1, residual: 0, counters, iterate_ms });
+            return Some(CorrectedIter {
+                pixels: merged, refs_used: 1, residual: 0, counters, iterate_ms, max_dispatch_ms,
+            });
         }
         let center_bf = [vp.center_x.clone(), vp.center_y.clone()];
         let span = vp.complex_span_fe();
@@ -2062,6 +2072,10 @@ impl FractadyneApp {
         // F3/F14) — every pass names itself for the watchdog and, under the `glitch` trace
         // category, reports its cost, so "slow" and "hung" are distinguishable.
         let t_glitch = Instant::now();
+        // Built at most once per render, and only if a pass actually reaches the gather (same
+        // laziness as the chunker): the pipeline costs ~11 ms to create against the ~3 ms dispatch
+        // it drives, so building it per pass would cost nearly 4x the work it does.
+        let mut gather: Option<fractadyne_gpu::GatherPass> = None;
 
         for _ in 1..max_refs {
             // Time-box: if the deadline has passed, stop and return the best-effort merge so far
@@ -2153,36 +2167,62 @@ impl FractadyneApp {
             r.sa_skip = 0;
             r.bla_on = bla_on;
             r.bla = bla;
-            // Tiled + deadline-aware: a pass over the dark cores (BLA off) is split into short
-            // dispatches; if the deadline lands mid-pass the tiled render returns Canceled and we
-            // keep the merge accumulated by earlier passes rather than blocking on one huge dispatch.
+            // ⭐⭐A correction pass exists to repair `glitch`, and the adoption below reads NOTHING
+            // else — so ask the GPU for exactly those pixels and nothing else. `render_iter_gather`
+            // renders a tiny ceil(sqrt(N))-wide texture whose texel i takes its coordinate from the
+            // list, which is ~4,000× less work per pass at the measured 1.3e6× scene (489 glitched
+            // of 2,073,600) and reads back 2 KB instead of ~33 MB. Output is bit-identical by
+            // construction: the gather entry point and `fs_iterate` share the same kernel and are
+            // handed the same texel-centre coordinate, so this is cost removal, not a quality trade.
             //
-            // ⭐Restricted to the tiles that still hold glitched pixels. A correction pass exists
-            // to repair `glitch` and the adoption below reads NOTHING else, so re-iterating the
-            // rest of the frame was pure waste — measured at 1.3e6×, passes 5..64 each re-rendered
-            // all 2,073,600 pixels to resolve one or two, and correction cost 10.2 s of an 11.1 s
-            // render. Output is unchanged by construction: every index this loop reads is in the
-            // mask, and a skipped tile's zeros are never touched.
-            let mut roi = vec![false; w * h];
-            for &i in &glitch {
-                roi[i] = true;
-            }
-            let pass_res = match fractadyne_gpu::render_iter_tiled(
-                device, queue, &r, CORRECT_WORK_BUDGET, deadline, Some(&roi),
-            ) {
-                Ok(p) => p,
-                Err(_) => break,
+            // The tiled + ROI path stays as the fallback for the one regime the gather cannot bound:
+            // a gather batch is a handful of pixels, so its dispatch is one pixel's entire dependent
+            // chain and no batch size shortens it, whereas a tile can be split along the ITERATION
+            // axis. `gather_dispatch_safe` asks the chunk pricer the same question it asks for a
+            // tile, so the two agree on what "too long for one dispatch" means. Either way the
+            // deadline is honoured between dispatches: a mid-pass expiry returns Canceled and we
+            // keep the merge earlier passes accumulated rather than blocking on one huge dispatch.
+            let coords: Vec<[u32; 2]> =
+                glitch.iter().map(|&i| [(i % w) as u32, (i / w) as u32]).collect();
+            // Both branches yield the same thing: the G-buffer for `glitch`, in `glitch` order.
+            let pass = if fractadyne_gpu::gather_dispatch_safe(r.max_iter) {
+                let gp = gather.get_or_insert_with(|| fractadyne_gpu::GatherPass::new(device));
+                match gp.run(device, queue, &r, &coords, CORRECT_WORK_BUDGET, deadline) {
+                    Ok(g) => {
+                        for (c, v) in counters.iter_mut().zip(g.counters) {
+                            *c += v;
+                        }
+                        max_dispatch_ms = max_dispatch_ms.max(g.max_dispatch_ms);
+                        debug_assert_eq!(g.pixels.len(), glitch.len() * 4);
+                        g.pixels
+                    }
+                    Err(_) => break,
+                }
+            } else {
+                let mut roi = vec![false; w * h];
+                for &i in &glitch {
+                    roi[i] = true;
+                }
+                match fractadyne_gpu::render_iter_tiled(
+                    device, queue, &r, CORRECT_WORK_BUDGET, deadline, Some(&roi),
+                ) {
+                    Ok(p) => {
+                        for (c, v) in counters.iter_mut().zip(p.counters) {
+                            *c += v;
+                        }
+                        iterate_ms += p.iterate_ms;
+                        max_dispatch_ms = max_dispatch_ms.max(p.max_dispatch_ms);
+                        glitch.iter().flat_map(|&i| p.pixels[i * 4..i * 4 + 4].to_vec()).collect()
+                    }
+                    Err(_) => break,
+                }
             };
-            for (c, v) in counters.iter_mut().zip(pass_res.counters) {
-                *c += v;
-            }
-            iterate_ms += pass_res.iterate_ms;
-            let pass = pass_res.pixels;
             refs_used += 1;
-            // Adopt pixels this reference resolved (no longer glitched).
-            for &i in &glitch {
-                if pass[i * 4] >= -1.5 {
-                    merged[i * 4..i * 4 + 4].copy_from_slice(&pass[i * 4..i * 4 + 4]);
+            // Adopt pixels this reference resolved (no longer glitched). `k` indexes the pass
+            // result, `i` the full frame — the pass only ever held the glitched pixels.
+            for (k, &i) in glitch.iter().enumerate() {
+                if pass[k * 4] >= -1.5 {
+                    merged[i * 4..i * 4 + 4].copy_from_slice(&pass[k * 4..k * 4 + 4]);
                 }
             }
         }
@@ -2192,12 +2232,12 @@ impl FractadyneApp {
             crate::diag::trace(
                 "glitch",
                 format!(
-                    "correction done: refs={refs_used} residual={residual} in {:.1}s",
+                    "correction done: refs={refs_used} residual={residual} in {:.1}s, max_dispatch={max_dispatch_ms:.0}ms",
                     t_glitch.elapsed().as_secs_f64()
                 ),
             );
         }
-        Some(CorrectedIter { pixels: merged, refs_used, residual, counters, iterate_ms })
+        Some(CorrectedIter { pixels: merged, refs_used, residual, counters, iterate_ms, max_dispatch_ms })
     }
 
     /// Full glitch-corrected offscreen render → colored image. Runs multi-reference correction on
@@ -2237,6 +2277,9 @@ impl FractadyneApp {
         // the perf line and counters reflect what the multi-reference render actually did.
         res.counters = ci.counters;
         res.iterate_ms = ci.iterate_ms;
+        // The color pass is one small dispatch; the correction loop is where a submission can run
+        // long, so the reported peak must be the max of the two rather than the colorer's alone.
+        res.max_dispatch_ms = res.max_dispatch_ms.max(ci.max_dispatch_ms);
         Some(res)
     }
 

@@ -16,6 +16,17 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Glitch correction is no longer the slowest part of an offline render** (beta.128) — a
+  correction pass exists to repair a few hundred wrong pixels, but it used to ask the GPU for the
+  whole frame to do it. It now asks for exactly the pixels it is repairing: their coordinates go
+  into a list, and the renderer draws a tiny image — a few dozen pixels on a side — in which each
+  texel stands for one entry in that list. On the 1.3e6× benchmark scene correction drops from
+  **9.0 s to 0.4 s** and the whole render from 11.9 s to 2.4 s; the 6.6e43× scene goes from 15.2 s
+  to 2.5 s. The repaired image is **byte-for-byte the one it produced before** — same references,
+  same corrected pixels — because both paths run the identical arithmetic on the identical
+  coordinate. Frames whose iteration count is high enough that a single pass has to be split into
+  bounded pieces (above 400,000) keep the previous method, which can split them.
+
 - **Glitch correction only re-renders where it needs to** (beta.127) — each extra reference pass
   used to re-compute the entire frame in order to repair a handful of pixels; it now skips the
   areas with nothing left to fix. Where the correction was running out of passes, that makes the

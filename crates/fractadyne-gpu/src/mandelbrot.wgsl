@@ -426,8 +426,13 @@ struct IterU {
     bla_on: u32,           // 1 = use the BLA tree (appended after the orbit at index orbit_len)
     start_iter: u32,       // iteration-range tiling (direct mode): resume the loop at this iteration
     end_iter: u32,         // ...and stop this dispatch here (fs_iterate_chunk); fs_iterate ignores both
-    _pad_ir0: u32,         // pad to a 16-byte multiple (matches the Rust IterUniforms mirror)
-    _pad_ir1: u32,
+    // Scattered-gather pass (`fs_iterate_gather`) only; zero on every other path. These are the two
+    // words that already padded the struct to a 16-byte multiple (WGSL rounds a struct up to its
+    // alignment, Rust does not), so giving them a meaning moved no existing field and changed no
+    // size - which matters, because this one uniform is bound by EVERY iterate pipeline in the app,
+    // the live view included.
+    gather_w: u32,         // width in texels of the tiny gather texture
+    gather_n: u32,         // how many of its texels carry a real coordinate
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -551,16 +556,26 @@ const AUX_NONE: vec4<f32> = vec4<f32>(0.0, 0.0, 1.0e30, 0.0);
 const GLITCH_TOL2: f32 = 1.0e-4;
 const GLITCH_SENTINEL: vec4<f32> = vec4<f32>(-2.0, 0.0, 0.0, 1.0e30);
 
-@fragment
-fn fs_iterate(in: VsOut) -> FragOut {
+// ---------------- the iteration kernel ----------------
+// Factored out of `fs_iterate` so a SECOND entry point can drive the identical arithmetic with a
+// coordinate that does NOT come from the rasterizer - see `fs_iterate_gather`, which iterates a
+// scattered LIST of pixels for multi-reference glitch correction.
+// `gx`/`gy` are GLOBAL texel coordinates in the full iteration grid at the texel CENTRE
+// (integer + 0.5), which is exactly what `iu.px_offset + in.pos` yields in a tiled fragment pass -
+// so from here down both entry points evaluate the same expressions on the same inputs. Both the
+// integer part and the +0.5 are exact in f32 below 2^24, and so is their sum, so a coordinate
+// rebuilt from an integer index reproduces the rasterized one bit-for-bit.
+// !! Keep this body free of fragment-only operations (dpdx/dpdy/fwidth, discard, implicit-LOD
+// sampling): the gather entry point's own fragment position is NOT the pixel being computed.
+// !! And it must never read `gather_coords`. naga's global-use analysis is TRANSITIVE through
+// callees, so a reference here would make `fs_iterate` require @group(1) @binding(4) too - and
+// every one of its pipelines is built against a group-0-only layout, the live view included.
+fn iterate_at(gx: f32, gy: f32) -> FragOut {
     // Pixel offset from the view center, from the *exact integer* texel coordinate
-    // (in.pos is the texel center = integer + 0.5, exact in f32 up to 2^24) times
+    // (the texel center = integer + 0.5, exact in f32 up to 2^24) times
     // the df32 per-texel step.
     let step_re = iu.step.xy;
     let step_im = iu.step.zw;
-    // Global texel coordinate = this tile's offset + local fragment position.
-    let gx = iu.px_offset.x + in.pos.x;
-    let gy = iu.px_offset.y + in.pos.y;
     let coord_re = gx - iu.res.x * 0.5;
     let coord_im = iu.res.y * 0.5 - gy;
     let off_re = df_mul_f32(step_re, coord_re);
@@ -1256,6 +1271,47 @@ fn fs_iterate(in: VsOut) -> FragOut {
     }
 }
 
+@fragment
+fn fs_iterate(in: VsOut) -> FragOut {
+    // Global texel coordinate = this tile's offset + local fragment position.
+    return iterate_at(iu.px_offset.x + in.pos.x, iu.px_offset.y + in.pos.y);
+}
+
+// ---------------- scattered-gather iterate (multi-reference glitch correction) ----------------
+// Glitch correction wants "iterate exactly THESE N pixels", and N is a few hundred out of two
+// million. Asking for whole frames is what made it the offline render's dominant cost: measured at
+// 1.3e6x, passes 5..64 each re-iterated all 2,073,600 pixels to resolve one or two, and correction
+// was 9.9 s of an 11.1 s render - about 4,000x the work it actually did. (Skipping tiles with no
+// glitched pixel helped but is capped by tile granularity: scattered glitches touch 10 of 11 tiles.)
+//
+// So this entry point renders a TINY texture - ceil(sqrt(N)) wide - whose texel i takes its pixel
+// coordinate from `gather_coords[i]` instead of from the rasterizer. The arithmetic below the
+// coordinate is `iterate_at`, shared verbatim with `fs_iterate`, so a gathered pixel is
+// bit-identical to the same pixel rendered in a full-frame pass: this is a pure cost removal with
+// no quality trade and no policy decision. It also removes the readback, which dominated what the
+// tile skip left behind (2 KB back instead of ~33 MB of allocate-copy-map per pass).
+//
+// Binding note: @group(1) bindings 0..3 are the chunk-state textures, which no gather pipeline
+// binds and this entry point never reads. A pipeline layout may declare bindings its entry point
+// does not use, but not the reverse, and each entry point is validated against its own layout - so
+// a fifth, differently-typed binding in the same group is legal, and it keeps @group(0) (shared by
+// every iterate pipeline, live view included) completely untouched.
+@group(1) @binding(4) var<storage, read> gather_coords: array<vec2<u32>>;
+
+@fragment
+fn fs_iterate_gather(in: VsOut) -> FragOut {
+    // in.pos is the texel centre (integer + 0.5); truncation recovers the integer texel.
+    let idx = u32(in.pos.y) * iu.gather_w + u32(in.pos.x);
+    if (idx >= iu.gather_n) {
+        // Padding texel in the last row - never read back. Returning before the loop keeps it free
+        // AND keeps it out of the shared event counters, which a duplicated coordinate would inflate.
+        return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);
+    }
+    let c = gather_coords[idx];
+    // Rebuild the exact texel centre the tiled pass would have rasterized for this pixel.
+    return iterate_at(f32(c.x) + 0.5, f32(c.y) + 0.5);
+}
+
 // ---------------- iteration-range tiling (direct mode, resumable) ----------------
 // Splits a pixel's 0..max_iter loop across several bounded dispatches so an arbitrarily high
 // EXPLICIT iteration count can't run as one watchdog-tripping submission (zooming OUT from a deep
@@ -1279,6 +1335,8 @@ fn fs_iterate(in: VsOut) -> FragOut {
 // inside the chunk pass — so `fs_resolve` is pure and safe to run after every batch (progressive
 // display). During progression a frame's escape-range only covers newly-escaped pixels; the
 // normalize EMA absorbs that.
+// (@group(1) @binding(4) is the gather pass's coordinate list - declared with `fs_iterate_gather`
+// above, since nothing here reads it and nothing there reads these.)
 @group(1) @binding(0) var st_z: texture_2d<f32>;
 @group(1) @binding(1) var st_dz: texture_2d<f32>;
 @group(1) @binding(2) var st_meta: texture_2d<f32>;
