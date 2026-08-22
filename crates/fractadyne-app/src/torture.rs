@@ -555,8 +555,18 @@ pub(crate) const LADDER: &[Rung] = &[
         // (dive + glide + re-dive), so 3 cycles do not fit 420 s — it timed out after 2. The rung still
         // PASSED (it only needs one lethal reading), but a cycle count the run cannot finish is a
         // deadline that lies about what was tested.
-        cmd: Cmd::SelfExe(&["--autodive", "22", "--autodive-timeout", "600", "--autodive-home", "3"]),
-        deadline: Duration::from_secs(10 * MIN),
+        //
+        // ⭐**32, not 22 — the rung never reached the mode it was built for.** `PERT_FE_THRESHOLD`
+        // is 1.0e28 (`tunables.rs`), so a dive limit of 1e22 selects `Df32Pert` for the whole run
+        // and `RenderMode::Floatexp` is unreachable by construction. The motivation above cites
+        // crash-1787014795 — a MODE 2 loss — and the mode-2 iteration chunking of beta.106–113
+        // exists for exactly that regime, none of which this rung has ever exercised. 1e32 clears
+        // the threshold with margin on both the dive and the home glide back through it, which is
+        // where the budget is stale across a mode boundary — the shape being reproduced.
+        // Timeout and deadline rise with it: ten more decades of dive per cycle, and a cycle count
+        // the run cannot finish is the deadline-that-lies this comment already warns about.
+        cmd: Cmd::SelfExe(&["--autodive", "32", "--autodive-timeout", "900", "--autodive-home", "3"]),
+        deadline: Duration::from_secs(20 * MIN),
         requires: &[],
         needs_disk: 256 * MB,
     },

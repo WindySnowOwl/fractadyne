@@ -57,6 +57,90 @@ const M41: (&str, &str) = (
     "0.9562865108091415007710960577299774358098333365105291700343143215005246590657167325269784107873398072043444724926469284366752406567465722656200815719741551313831228054884443810571677870203738395055477279309548311953190385170024877917670113105649462054553485859930615004427397447762045980085973915977603864276670744042253335354323566859404712",
 );
 
+/// Misiurewicz (4,3), the "north antenna" — Newton-refined to 200 digits and verified
+/// (`f^7(0,c) == f^4(0,c)` to 1e-260). **|λ| = 3.49331342397577021**, i.e. 0.5432 decades per
+/// self-similar rung.
+///
+/// ⭐**WHY THIS CENTRE CARRIES THE MODE-BOUNDARY PAIRS.** At a Misiurewicz point the neighbourhood
+/// is self-similar under magnification by |λ|: the picture at |λ|^n and at |λ|^(n+1) is the SAME
+/// picture. And this particular λ lands its rungs either side of both arithmetic thresholds:
+///
+/// | boundary | rung below | rung above |
+/// |---|---|---|
+/// | direct → df32 (1e4)      | n=7  → 1e3.8027  | n=8  → 1e4.3459  |
+/// | df32 → floatexp (1e28)   | n=51 → 1e27.7051 | n=52 → 1e28.2484 |
+///
+/// So each pair renders the same scene at the same iteration count with the ONLY variable being
+/// the arithmetic mode. Every other zoom-band segment confounds "deeper" with "different scene";
+/// these two pairs do not, which is what makes them a control rather than another sample.
+/// Six device losses sit on the 0→2 crossover, and a mode switch resets the budget to unmeasured
+/// — this is the segment that prices that transition honestly.
+///
+/// ⚠The `MISIUREWICZ_POI` table in `main.rs` stores this point at **30 digits**, which is fine for
+/// its purpose (jump there at 1e4) and NOT enough here: the n=52 rung at 1e28.2 needs ~43. Use
+/// this constant for anything deep.
+const M43: (&str, &str) = (
+    "-0.17300671609209016477613828946770372458888764012137959744393547643020180353562520419771537653705885405166925649896461064949139318317341128327473274939564013861471073570747748645616285570542524292",
+    "1.062752280849242560235197612681136690229320617854029710218025383997229644009518733109036931633002903184739525797020239071889093827262374176800484266893692470946462136107956050977216146050440014861",
+);
+
+/// Period-3 nucleus on the real axis (the "airplane"), Newton-refined and verified
+/// (`f^3(0,c) == 0` to 1e-260). Superattracting, so the interior is max-iter by construction.
+///
+/// ⭐**A DIFFERENT COST REGIME, NOT A DIFFERENT DEPTH.** Every other segment here is a
+/// boundary/filament field where escape is fast for most pixels. A minibrot centred in frame is
+/// the opposite: interior pixels run the FULL iteration count and nothing skips them. That is the
+/// regime behind the e100 crash and crash-1787158916 (`bla_skip` collapsing to 0 made nominal cost
+/// equal real cost at exactly the wrong moment), and the suite has had exactly one sample of it
+/// (`deep-interior-1e148`).
+#[allow(dead_code)]
+const NUC_P3_AIRPLANE: (&str, &str) = (
+    "-1.75487766624669276004950889635852869189460661777279314398928397064608065512808109073822709284225030928424250332290264124860835485690618977164965994632469966813104274946982261440371534869499455838",
+    "0.0",
+);
+
+/// Period-3 nucleus off the real axis (the Douady rabbit), Newton-refined and verified. The
+/// complex-plane counterpart to the airplane: same period, same superattracting interior, but a
+/// centre with a non-zero imaginary part, so it also exercises the asymmetric reference path.
+#[allow(dead_code)]
+const NUC_P3_RABBIT: (&str, &str) = (
+    "-0.12256116687665361997524555182073565405269669111360342800535801467695967243595945463088645357887481240949056222668565608737687927706348295237058440387498128664371745018100604771442604213417107462",
+    "0.744861766619744236593170428604392367240163084906824574201847592154415217837839767791143754932964152277675885011581938530388519940683928434900568426896172321353023546715478213108387944760024089761",
+);
+
+/// Minibrot nucleus of period **145**, embedded in the M(4,3) neighbourhood at rung n=51 —
+/// i.e. at magnification |λ|^51 = 1e27.7051, the SAME depth as `m43-n51-df32`.
+///
+/// ⭐**THIS IS THE SUITE'S FIRST MATCHED-DEPTH COST-REGIME CONTROL.** Paired with the `M43`
+/// segment at the identical magnification and iteration count, the only thing that differs is
+/// what is in frame: a filament/spar field where most pixels escape fast, against a minibrot
+/// whose interior runs the full count and which BLA cannot skip. Every other cost comparison in
+/// this matrix confounds "harder" with "deeper" or with "another scene"; this pair does not.
+///
+/// **Found by continuation, not by search.** At a Misiurewicz point the neighbourhood maps to
+/// itself under `c → c_M + (c − c_M)/λ` with λ COMPLEX, and the embedded minibrots' periods step
+/// by the cycle length (3) per rung. So each rung's nucleus is predicted from the previous one
+/// and Newton only polishes it. Re-detecting the period at every rung instead — the obvious
+/// approach — dies at 1e12: it keeps re-converging on the same shallow minibrots, which then sit
+/// outside the shrinking view.
+///
+/// ✅Verified: `f^145(0,c)` residual 1e-182, and `|c − c_M| / span` came out **1.205 at every one
+/// of the 37 rungs** from n=23 to n=59 — the nucleus holds the same relative position in frame at
+/// every depth, which is the self-similarity showing up as a measured invariant.
+const NUC_M43_N51_P145: (&str, &str) = (
+    "-0.17300671609209016477613828892344937818294446303608009957806281757183195507977072742348294212708588386692297082665678755113272002744005837554630926432536299603122427863386902200227993785523168373931237",
+    "1.0627522808492425602351976134607669691825780821170443838668797303774200334994733831709142678496588175434975862964984603506843104167050701809784184697102877667661049049374093963121168780435528196423078",
+);
+
+/// The same ladder one rung deeper: period **148** at |λ|^52 = 1e28.2484, matching
+/// `m43-n52-fe`. Period steps by exactly the cycle length, so this and `NUC_M43_N51_P145`
+/// straddle the df32→floatexp threshold as an interior-regime pair, mirroring the filament-regime
+/// pair on `M43`. Four segments, two depths, two cost regimes, one arithmetic boundary.
+const NUC_M43_N52_P148: (&str, &str) = (
+    "-0.17300671609209016477613828968086492263222461633159461350151396646757272565776747890496804435693173209396615447468249693735678404193195389654559498706732625582328961673621848801329031469756953684956742",
+    "1.0627522808492425602351976125118914168351481967386057092408603462880065133013660108479767697883824279792457362691209904052076797116947765222391392158185731241429722491655792590185276866057337474176758",
+);
+
 /// One matrix segment: a pinned render that exercises a specific path.
 pub(crate) struct Segment {
     pub group: &'static str,
@@ -117,6 +201,30 @@ pub(crate) fn matrix() -> Vec<Segment> {
         seg("zoom-band", "deep-interior-1e148", F::Mandelbrot, DEEP_INTERIOR, 148.077, 800_000, 0, true, true, false),
         // Extreme floatexp: a ~330-digit bignum reference — the cold reference-build lever.
         seg("zoom-band", "floatexp-1e300", F::Mandelbrot, M41, 300.0, 200_000, 0, true, true, false),
+        // ── λ-LADDER: exactly self-similar rungs straddling both arithmetic-mode boundaries ──
+        // Same centre, same iteration count, same scene (M(4,3) is self-similar under ×|λ|) — the
+        // ONLY difference across each pair is which arithmetic the renderer selects. A cost ratio
+        // here is the mode's price; anywhere else in this matrix it is confounded with the view.
+        // ⚠Read the pairs, not the absolute numbers: n=7/8 is near the set where self-similarity
+        // is still approximate, while n=51/52 is deep enough to be exact for this purpose.
+        seg("lambda-ladder", "m43-n7-direct-1e3.80", F::Mandelbrot, M43, 3.8027, 1_500, 0, true, true, true),
+        seg("lambda-ladder", "m43-n8-df32-1e4.35", F::Mandelbrot, M43, 4.3459, 1_500, 0, true, true, true),
+        seg("lambda-ladder", "m43-n51-df32-1e27.71", F::Mandelbrot, M43, 27.7051, 30_000, 0, true, true, true),
+        seg("lambda-ladder", "m43-n52-fe-1e28.25", F::Mandelbrot, M43, 28.2484, 30_000, 0, true, true, true),
+        // ── COST REGIME at MATCHED DEPTH — the axis this matrix did not have ──
+        // Same magnification and iteration count as the two `m43-n51/n52` segments above, same
+        // neighbourhood, different scene: a period-145/148 minibrot instead of the spar field.
+        // So `interior-n51 / m43-n51` is a pure cost-regime ratio with depth, scene family, mode
+        // and ask all held fixed — and the n52 pair repeats it on the far side of the
+        // df32→floatexp boundary. `bla-skip` and `maxiter` in the counters are where to read it.
+        //
+        // ⚠A previous revision put a period-3 minibrot at 1e2 here and called it the interior
+        // regime. It measured 31% max-iter pixels against `direct-1e2`'s 39% — LESS
+        // interior-dominated than the segment it was meant to contrast with — and direct mode has
+        // no BLA to collapse in the first place. The regime needs depth, which needs a deep
+        // nucleus; that is what these two constants are.
+        seg("regime", "interior-n51-df32-1e27.71", F::Mandelbrot, NUC_M43_N51_P145, 27.7051, 30_000, 0, true, true, true),
+        seg("regime", "interior-n52-fe-1e28.25", F::Mandelbrot, NUC_M43_N52_P148, 28.2484, 30_000, 0, true, true, true),
         // ── Coloring paths (Mandelbrot @1e20×): smooth vs the iteration-skip-blocking methods ──
         seg("coloring", "color-smooth", F::Mandelbrot, SEAHORSE, 20.0, 15_000, 0, true, true, true),
         seg("coloring", "color-stripe", F::Mandelbrot, SEAHORSE, 20.0, 15_000, 1, true, true, true),

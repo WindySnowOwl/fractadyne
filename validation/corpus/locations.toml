@@ -191,3 +191,38 @@ iterations = 600008
 normalize = true
 note = "User-saved Fraktaler-3 location (me1007.exr); 1020-digit center. Auto-normalized coloring (--normalize): at this depth the smooth-iter counts are ~1e6 and the fixed palette cycle aliases the correct escape field into speckle, so the frame's escape range is mapped to the palette instead (see the catalog intro). Renders the dendrite structure on a clean field, matching F3 arm-for-arm."
 
+[[location]]
+slug = "21-m43-spar-1e27.7"
+title = "M(4,3) spar 5.07e27x"
+center_x = "-0.17300671609209016477613828946770372458888764012137959744393547643020180353562520419771537653705885405166925649896461064949139318317341128327473274939564013861471073570747748645616285570542524292"
+center_y = "1.062752280849242560235197612681136690229320617854029710218025383997229644009518733109036931633002903184739525797020239071889093827262374176800484266893692470946462136107956050977216146050440014861"
+mag_log10 = 27.7051
+iterations = 30000
+note = "MODE-BOUNDARY CONTROL, df32 side. Misiurewicz (4,3), Newton-refined; |lambda|=3.49331342397577021, and this is self-similar rung n=51 - so it renders the SAME picture as location 22 at rung n=52, and the ONLY difference across the pair is which arithmetic each app selects. Ours crosses df32->floatexp at 1e28 (PERT_FE_THRESHOLD). Matching on BOTH rungs shows our mode switch is pixel-neutral against an independent implementation; matching on one but not the other localises the fault to the switch itself."
+
+[[location]]
+slug = "22-m43-spar-1e28.2"
+title = "M(4,3) spar 1.77e28x"
+center_x = "-0.17300671609209016477613828946770372458888764012137959744393547643020180353562520419771537653705885405166925649896461064949139318317341128327473274939564013861471073570747748645616285570542524292"
+center_y = "1.062752280849242560235197612681136690229320617854029710218025383997229644009518733109036931633002903184739525797020239071889093827262374176800484266893692470946462136107956050977216146050440014861"
+mag_log10 = 28.2484
+iterations = 30000
+note = "MODE-BOUNDARY CONTROL, floatexp side. Same centre and iteration count as location 21, one self-similar rung deeper (n=52), so the scene is unchanged and only our arithmetic mode differs. See location 21."
+
+[[location]]
+slug = "23-nucleus-p145-1e27.7"
+title = "Period-145 minibrot 5.07e27x"
+center_x = "-0.17300671609209016477613828892344937818294446303608009957806281757183195507977072742348294212708588386692297082665678755113272002744005837554630926432536299603122427863386902200227993785523168373931237"
+center_y = "1.0627522808492425602351976134607669691825780821170443838668797303774200334994733831709142678496588175434975862964984603506843104167050701809784184697102877667661049049374093963121168780435528196423078"
+mag_log10 = 27.7051
+iterations = 30000
+note = "COST-REGIME CONTROL, df32 side. A period-145 minibrot nucleus embedded in the M(4,3) neighbourhood at the same rung and depth as location 21, found by continuation along the self-similar ladder (c -> c_M + (c-c_M)/lambda, period stepping by the 3-cycle length per rung; residual 1e-182). Where 21 is a fast-escaping spar field, this is an interior: series approximation gives up, every pixel takes extended-range samples, and the reference+BLA build costs ~58x more at identical depth. Interiors are also where our truncation clamp and max-iter handling differ most from F3's, so this is the cross-app check location 21 cannot make."
+
+[[location]]
+slug = "24-nucleus-p148-1e28.2"
+title = "Period-148 minibrot 1.77e28x"
+center_x = "-0.17300671609209016477613828968086492263222461633159461350151396646757272565776747890496804435693173209396615447468249693735678404193195389654559498706732625582328961673621848801329031469756953684956742"
+center_y = "1.0627522808492425602351976125118914168351481967386057092408603462880065133013660108479767697883824279792457362691209904052076797116947765222391392158185731241429722491655792590185276866057337474176758"
+mag_log10 = 28.2484
+iterations = 30000
+note = "COST-REGIME CONTROL, floatexp side. The same nucleus ladder one rung deeper (n=52, period 148 - the period steps by exactly the cycle length). Completes a 2x2: spar vs interior, either side of the df32->floatexp boundary, with depth, scene family and iteration ask all held fixed."

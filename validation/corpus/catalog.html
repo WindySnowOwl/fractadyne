@@ -378,6 +378,214 @@ Iterations: 20000</pre>
   </details>
 </section>
 
+<section class="card" id="21-m43-spar-1e27.7">
+  <h2><span class="num" title="location 21 (slug 21-m43-spar-1e27.7) — matches --check / logs / --only 21">21</span> M(4,3) spar 5.07e27x <span class="zoom">5.071075e27&times;</span></h2>
+  <p class="note">MODE-BOUNDARY CONTROL, df32 side. Misiurewicz (4,3), Newton-refined; |lambda|=3.49331342397577021, and this is self-similar rung n=51 - so it renders the SAME picture as location 22 at rung n=52, and the ONLY difference across the pair is which arithmetic each app selects. Ours crosses df32-&gt;floatexp at 1e28 (PERT_FE_THRESHOLD). Matching on BOTH rungs shows our mode switch is pixel-neutral against an independent implementation; matching on one but not the other localises the fault to the switch itself.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/21-m43-spar-1e27.7-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/21-m43-spar-1e27.7-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/21-m43-spar-1e27.7.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>5.071075e27&times; (log10 = 27.705100)</td>
+        <th>Iterations</th><td>30,000 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, df32 delta (mode 0) + SA</td>
+        <th>Precision</th><td>~156 bits (195-digit center)</td></tr>
+  </table>
+  <div class="repro">
+    <a class="fdn-dl" href="locations/21-m43-spar-1e27.7.fdn" download>&#x2b07;&#xfe0e; 21-m43-spar-1e27.7.fdn</a>
+    <button class="copybtn" type="button">&#x1f4cb;&#xfe0e; Copy .fdn</button>
+    <span class="repro-hint">Reproduce in Fractadyne: <b>File &#9656; Share location &#9656; Load .fdn&hellip;</b> (or paste the copied text into Share location).</span>
+  </div>
+  <details><summary>Exact location &mdash; .fdn reload snippet, Kalles Fraktaler (.kfr), full-precision center</summary>
+    <pre class="fdn">app=Fractadyne
+format_version=1
+notes=Fractadyne reference corpus 21: M(4,3) spar 5.07e27x (matches Fraktaler-3; see catalog.html)
+fractal=Mandelbrot
+julia=0
+julia_c_re=-7.43643000000000054e-1
+julia_c_im=1.31824999999999998e-1
+center_re=-1.7300671609209016477613828946770372458888764012137959744393547643020180353562520419771537653705885405166925649896461064949139318317341128327473274939564013861471073570747748645616285570542524292e-1
+center_im=1.062752280849242560235197612681136690229320617854029710218025383997229644009518733109036931633002903184739525797020239071889093827262374176800484266893692470946462136107956050977216146050440014861e+0
+upp=1.09553812290580396e-30
+upp_log2=-9.95262031580296735e1
+zoom=5.071074606532183e27
+max_iter=30000
+auto_iter=0
+palette=0
+cycle=0.27
+offset=0.1
+aa=2</pre>
+    <pre>Re: -0.17300671609209016477613828946770372458888764012137959744393547643020180353562520419771537653705885405166925649896461064949139318317341128327473274939564013861471073570747748645616285570542524292
+Im: 1.062752280849242560235197612681136690229320617854029710218025383997229644009518733109036931633002903184739525797020239071889093827262374176800484266893692470946462136107956050977216146050440014861
+Zoom: 5.071075E27
+Iterations: 30000</pre>
+  </details>
+</section>
+
+<section class="card" id="23-nucleus-p145-1e27.7">
+  <h2><span class="num" title="location 23 (slug 23-nucleus-p145-1e27.7) — matches --check / logs / --only 23">23</span> Period-145 minibrot 5.07e27x <span class="zoom">5.071075e27&times;</span></h2>
+  <p class="note">COST-REGIME CONTROL, df32 side. A period-145 minibrot nucleus embedded in the M(4,3) neighbourhood at the same rung and depth as location 21, found by continuation along the self-similar ladder (c -&gt; c_M + (c-c_M)/lambda, period stepping by the 3-cycle length per rung; residual 1e-182). Where 21 is a fast-escaping spar field, this is an interior: series approximation gives up, every pixel takes extended-range samples, and the reference+BLA build costs ~58x more at identical depth. Interiors are also where our truncation clamp and max-iter handling differ most from F3's, so this is the cross-app check location 21 cannot make.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/23-nucleus-p145-1e27.7-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/23-nucleus-p145-1e27.7-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/23-nucleus-p145-1e27.7.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>5.071075e27&times; (log10 = 27.705100)</td>
+        <th>Iterations</th><td>30,000 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, df32 delta (mode 0) + SA</td>
+        <th>Precision</th><td>~156 bits (201-digit center)</td></tr>
+  </table>
+  <div class="repro">
+    <a class="fdn-dl" href="locations/23-nucleus-p145-1e27.7.fdn" download>&#x2b07;&#xfe0e; 23-nucleus-p145-1e27.7.fdn</a>
+    <button class="copybtn" type="button">&#x1f4cb;&#xfe0e; Copy .fdn</button>
+    <span class="repro-hint">Reproduce in Fractadyne: <b>File &#9656; Share location &#9656; Load .fdn&hellip;</b> (or paste the copied text into Share location).</span>
+  </div>
+  <details><summary>Exact location &mdash; .fdn reload snippet, Kalles Fraktaler (.kfr), full-precision center</summary>
+    <pre class="fdn">app=Fractadyne
+format_version=1
+notes=Fractadyne reference corpus 23: Period-145 minibrot 5.07e27x (matches Fraktaler-3; see catalog.html)
+fractal=Mandelbrot
+julia=0
+julia_c_re=-7.43643000000000054e-1
+julia_c_im=1.31824999999999998e-1
+center_re=-1.7300671609209016477613828892344937818294446303608009957806281757183195507977072742348294212708588386692297082665678755113272002744005837554630926432536299603122427863386902200227993785523168373931237e-1
+center_im=1.0627522808492425602351976134607669691825780821170443838668797303774200334994733831709142678496588175434975862964984603506843104167050701809784184697102877667661049049374093963121168780435528196423078e+0
+upp=1.09553812290580396e-30
+upp_log2=-9.95262031580296735e1
+zoom=5.071074606532183e27
+max_iter=30000
+auto_iter=0
+palette=0
+cycle=0.27
+offset=0.1
+aa=2</pre>
+    <pre>Re: -0.17300671609209016477613828892344937818294446303608009957806281757183195507977072742348294212708588386692297082665678755113272002744005837554630926432536299603122427863386902200227993785523168373931237
+Im: 1.0627522808492425602351976134607669691825780821170443838668797303774200334994733831709142678496588175434975862964984603506843104167050701809784184697102877667661049049374093963121168780435528196423078
+Zoom: 5.071075E27
+Iterations: 30000</pre>
+  </details>
+</section>
+
+<section class="card" id="22-m43-spar-1e28.2">
+  <h2><span class="num" title="location 22 (slug 22-m43-spar-1e28.2) — matches --check / logs / --only 22">22</span> M(4,3) spar 1.77e28x <span class="zoom">1.771740e28&times;</span></h2>
+  <p class="note">MODE-BOUNDARY CONTROL, floatexp side. Same centre and iteration count as location 21, one self-similar rung deeper (n=52), so the scene is unchanged and only our arithmetic mode differs. See location 21.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/22-m43-spar-1e28.2-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/22-m43-spar-1e28.2-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/22-m43-spar-1e28.2.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>1.771740e28&times; (log10 = 28.248400)</td>
+        <th>Iterations</th><td>30,000 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~157 bits (195-digit center)</td></tr>
+  </table>
+  <div class="repro">
+    <a class="fdn-dl" href="locations/22-m43-spar-1e28.2.fdn" download>&#x2b07;&#xfe0e; 22-m43-spar-1e28.2.fdn</a>
+    <button class="copybtn" type="button">&#x1f4cb;&#xfe0e; Copy .fdn</button>
+    <span class="repro-hint">Reproduce in Fractadyne: <b>File &#9656; Share location &#9656; Load .fdn&hellip;</b> (or paste the copied text into Share location).</span>
+  </div>
+  <details><summary>Exact location &mdash; .fdn reload snippet, Kalles Fraktaler (.kfr), full-precision center</summary>
+    <pre class="fdn">app=Fractadyne
+format_version=1
+notes=Fractadyne reference corpus 22: M(4,3) spar 1.77e28x (matches Fraktaler-3; see catalog.html)
+fractal=Mandelbrot
+julia=0
+julia_c_re=-7.43643000000000054e-1
+julia_c_im=1.31824999999999998e-1
+center_re=-1.7300671609209016477613828946770372458888764012137959744393547643020180353562520419771537653705885405166925649896461064949139318317341128327473274939564013861471073570747748645616285570542524292e-1
+center_im=1.062752280849242560235197612681136690229320617854029710218025383997229644009518733109036931633002903184739525797020239071889093827262374176800484266893692470946462136107956050977216146050440014861e+0
+upp=3.13564937878593875e-31
+upp_log2=-1.01331006691929673e2
+zoom=1.7717400399232636e28
+max_iter=30000
+auto_iter=0
+palette=0
+cycle=0.27
+offset=0.1
+aa=2</pre>
+    <pre>Re: -0.17300671609209016477613828946770372458888764012137959744393547643020180353562520419771537653705885405166925649896461064949139318317341128327473274939564013861471073570747748645616285570542524292
+Im: 1.062752280849242560235197612681136690229320617854029710218025383997229644009518733109036931633002903184739525797020239071889093827262374176800484266893692470946462136107956050977216146050440014861
+Zoom: 1.771740E28
+Iterations: 30000</pre>
+  </details>
+</section>
+
+<section class="card" id="24-nucleus-p148-1e28.2">
+  <h2><span class="num" title="location 24 (slug 24-nucleus-p148-1e28.2) — matches --check / logs / --only 24">24</span> Period-148 minibrot 1.77e28x <span class="zoom">1.771740e28&times;</span></h2>
+  <p class="note">COST-REGIME CONTROL, floatexp side. The same nucleus ladder one rung deeper (n=52, period 148 - the period steps by exactly the cycle length). Completes a 2x2: spar vs interior, either side of the df32-&gt;floatexp boundary, with depth, scene family and iteration ask all held fixed.</p>
+  <div class="pair">
+    <figure>
+      <img src="renders/24-nucleus-p148-1e28.2-fractadyne.png" alt="Fractadyne render">
+      <figcaption>Fractadyne &mdash; 1280&times;720, 2&times;SS, Ember / smooth iteration</figcaption>
+    </figure>
+    <figure>
+      <img src="renders/24-nucleus-p148-1e28.2-fraktaler.png" alt="Fraktaler render"
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption>Fraktaler-3 &mdash; from <code>locations/24-nucleus-p148-1e28.2.f3.toml</code>. Missing = no
+        reproducible cross-app match at this center&rsquo;s precision for the depth (see README).</figcaption>
+    </figure>
+  </div>
+  <table class="meta">
+    <tr><th>Magnification</th><td>1.771740e28&times; (log10 = 28.248400)</td>
+        <th>Iterations</th><td>30,000 (fixed, both apps)</td></tr>
+    <tr><th>Fractadyne path</th><td>perturbation, floatexp delta (mode 2) + BLA</td>
+        <th>Precision</th><td>~157 bits (201-digit center)</td></tr>
+  </table>
+  <div class="repro">
+    <a class="fdn-dl" href="locations/24-nucleus-p148-1e28.2.fdn" download>&#x2b07;&#xfe0e; 24-nucleus-p148-1e28.2.fdn</a>
+    <button class="copybtn" type="button">&#x1f4cb;&#xfe0e; Copy .fdn</button>
+    <span class="repro-hint">Reproduce in Fractadyne: <b>File &#9656; Share location &#9656; Load .fdn&hellip;</b> (or paste the copied text into Share location).</span>
+  </div>
+  <details><summary>Exact location &mdash; .fdn reload snippet, Kalles Fraktaler (.kfr), full-precision center</summary>
+    <pre class="fdn">app=Fractadyne
+format_version=1
+notes=Fractadyne reference corpus 24: Period-148 minibrot 1.77e28x (matches Fraktaler-3; see catalog.html)
+fractal=Mandelbrot
+julia=0
+julia_c_re=-7.43643000000000054e-1
+julia_c_im=1.31824999999999998e-1
+center_re=-1.7300671609209016477613828968086492263222461633159461350151396646757272565776747890496804435693173209396615447468249693735678404193195389654559498706732625582328961673621848801329031469756953684956742e-1
+center_im=1.0627522808492425602351976125118914168351481967386057092408603462880065133013660108479767697883824279792457362691209904052076797116947765222391392158185731241429722491655792590185276866057337474176758e+0
+upp=3.13564937878593875e-31
+upp_log2=-1.01331006691929673e2
+zoom=1.7717400399232636e28
+max_iter=30000
+auto_iter=0
+palette=0
+cycle=0.27
+offset=0.1
+aa=2</pre>
+    <pre>Re: -0.17300671609209016477613828968086492263222461633159461350151396646757272565776747890496804435693173209396615447468249693735678404193195389654559498706732625582328961673621848801329031469756953684956742
+Im: 1.0627522808492425602351976125118914168351481967386057092408603462880065133013660108479767697883824279792457362691209904052076797116947765222391392158185731241429722491655792590185276866057337474176758
+Zoom: 1.771740E28
+Iterations: 30000</pre>
+  </details>
+</section>
+
 <section class="card" id="07-deep-1e30">
   <h2><span class="num" title="location 07 (slug 07-deep-1e30) — matches --check / logs / --only 07">07</span> Deep filaments 1e30x <span class="zoom">1.000000e30&times;</span></h2>
   <p class="note">User-saved Fraktaler-3 location (me30.exr); 43-digit center. Imported verbatim from the .exr header: F3 zoom 1e30 = our magnification 1e30 (our zoom now equals Fraktaler-3's, see crosscheck-fraktaler3.md). Replaces the former 34-digit seahorse placeholder, which was too coarse for a reproducible 1e30x cross-app match. This center carries ~13 digits of margin (cf. location 04, matched at similar margin) and DOES match arm-for-arm: both apps render the same diagonal dendrite filament with a central pinch and spiral-armed clusters, closing the corpus's lone gap.</p>

@@ -2598,6 +2598,82 @@ impl FractadyneApp {
                 });
                 self.render_cfg.prefer_detail = saved_detail;
 
+                // ---- LIVE CHUNK SIZING ACROSS A GROWING BAND LEDGER ----
+                // Companion to the "allowance up, budget CLIMBING" check below, covering the axis
+                // that one does not: a CONVERGED settled walk long enough for `chunk_band_license`
+                // to ratchet. That ledger is what sized the 2026-08-22 field device loss
+                // (crash-1787401025-0) — 1024 iterations from `bands[0]`, against a budget
+                // authorising 24,457 — and its growth is a ×2 fast lane, so the invariant has to
+                // hold not on one frame but along the whole ladder.
+                //
+                // ⚠`chunk_fe_ok` is FORCED, not probed. It is false on a device that granted only
+                // 48 color-attachment bytes, and this view is mode 2 — so on such a machine the
+                // mode-2 sizing arithmetic would never be reached and the check would pass without
+                // testing it. `build_params` computes a dispatch rather than issuing one, so
+                // forcing the capability gates the arithmetic without needing the hardware.
+                //
+                // THE INVARIANT: a settled chunked pass stays inside ONE dispatch budget
+                // (`tdr_steps`), never the multi-tile allowance. Sizing a pass from the allowance
+                // dispatched single passes worth sixteen budgets and lost a device
+                // (crash-1787158916-0, 9.600e11-step passes against a 6.000e10 budget).
+                //
+                // ⚠ANTI-VACUITY: the run must actually have been chunk-governed, and the ladder
+                // must actually have MOVED — a walk pinned at the 256 floor would satisfy the
+                // budget bound trivially while testing none of the growth this exists to cover.
+                let saved_chunk = (self.perf.chunk_ok, self.perf.chunk_fe_ok);
+                let saved_method = self.coloring.color_method;
+                self.perf.chunk_ok = true;
+                self.perf.chunk_fe_ok = true;
+                // Aux colorings are out of chunk scope by design; pin a non-aux method so the case
+                // exercises the path regardless of what the loaded session left selected.
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.perf.chunk_sig = [(0, 0, [0, 0], 0); 2];
+                self.perf.chunk_cursor = [0, 0];
+                self.perf.chunk_bands = [[0; crate::tunables::CHUNK_BANDS], [0; crate::tunables::CHUNK_BANDS]];
+                self.perf.chunk_inflight = [None, None];
+                self.perf.chunk_pass_dt = [0.0, 0.0];
+                self.perf.tile_state = [None, None];
+                self.perf.tile_pending = [false, false];
+                let mut governed_frames = 0u32;
+                let mut worst_pass_steps = 0u64;
+                let mut biggest_step = 0u32;
+                for _ in 0..24 {
+                    self.perf.fe_budget = [FIELD_BUDGET, FIELD_BUDGET];
+                    self.perf.fe_budget_ok = [true, true];
+                    let before = self.perf.chunk_cursor[0];
+                    let _ = deep_build(self, DEEP_ITER);
+                    if self.perf.chunk_governed[0] {
+                        governed_frames += 1;
+                        worst_pass_steps = worst_pass_steps.max(self.perf.fe_steps_last[0]);
+                        biggest_step =
+                            biggest_step.max(self.perf.chunk_cursor[0].saturating_sub(before));
+                    }
+                }
+                let within_one_budget = worst_pass_steps <= FIELD_BUDGET;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Live budget",
+                    name: "a growing chunk band license never outgrows one dispatch budget".into(),
+                    params: format!(
+                        "{}×{} panel, {DEEP_ITER} iter @1.3e30×, converged budget {:.3e},                          24 settled frames, chunk_fe_ok forced",
+                        DEEP[0], DEEP[1], FIELD_BUDGET as f64
+                    ),
+                    result: format!(
+                        "{governed_frames}/24 frames chunk-governed, license grew to {biggest_step}                          iters, worst pass {:.3e} steps ({:.2}× budget)",
+                        worst_pass_steps as f64,
+                        worst_pass_steps as f64 / FIELD_BUDGET as f64
+                    ),
+                    threshold: "governed, ladder moved past the 256 floor, every pass ≤ one budget",
+                    pass: deep_ref && governed_frames > 0 && biggest_step > 256 && within_one_budget,
+                });
+                if governed_frames == 0 || biggest_step <= 256 {
+                    eprintln!(
+                        "[selftest] live chunk sizing: governed={governed_frames}/24, largest                          window={biggest_step} — the check above tested less than it claims.                          Either `chunk_over` is unreachable here or the band ledger never left its                          floor; fix the setup rather than the threshold."
+                    );
+                }
+                self.coloring.color_method = saved_method;
+                self.perf.chunk_ok = saved_chunk.0;
+                self.perf.chunk_fe_ok = saved_chunk.1;
+
                 // ---- one chunked pass = ONE dispatch budget, even with the tile allowance up ----
                 // ⭐Field device loss 2026-08-19 17:01 UTC (crash-1787158916-0, RTX 3080,
                 // beta.106, 165.7 s uptime: a minibrot interior at an explicit 4,000,000). On a

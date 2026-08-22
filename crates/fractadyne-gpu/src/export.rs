@@ -2020,6 +2020,46 @@ pub fn render_iter_chunked(
     req: &ExportRequest,
     chunk_iters: u32,
 ) -> Result<ExportResult, GpuError> {
+    render_iter_chunked_timed(device, queue, req, chunk_iters, &mut Vec::new())
+}
+
+/// One window's uncensored wall cost, as measured between `queue.submit` and the `poll(Wait)`
+/// that proves it finished.
+///
+/// ⭐**This is the only cost signal in the codebase that is neither right-censored nor deferred.**
+/// The live path's two prices both are: a GPU timestamp cannot arm on a saturated queue, and the
+/// wall fallback reads a frame interval, which wgpu-core caps at `FRAME_TIMEOUT_MS = 1000` in
+/// `present.rs` — so a frame that overran by 3 s and one that overran by 1.1 s report the same
+/// number. Here the submission is alone in the queue and the poll is a real completion, so the
+/// figure is the submission's own duration.
+#[derive(Clone, Copy, Debug)]
+pub struct ChunkPassTiming {
+    pub start_iter: u32,
+    pub end_iter: u32,
+    pub wall_ms: f64,
+}
+
+/// `render_iter_chunked`, additionally reporting what every individual window cost.
+///
+/// Split out for `--chunk-sweep`, which needs the per-window profile rather than the image: the
+/// question it exists to answer is whether a window's cost is proportional to its iteration count
+/// (in which case sizing the window is a sufficient actuator) or cliffs part-way through a
+/// progression (in which case it is not). `passes` is CLEARED on entry and one entry is pushed per
+/// submission, in cursor order. Pixels are unaffected — this adds two `Instant` reads per window
+/// to a loop that already blocks on `poll(Wait)`.
+///
+/// ⚠An `Ok` result with `passes` still EMPTY means the unsupported-scope fallback to `render_iter`
+/// fired (wrong mode, formula > 3, `chunk_iters == 0`, or too few color-attachment bytes) — i.e.
+/// one unbounded dispatch ran instead of the windows you asked for. A caller measuring windows
+/// must treat that as "not measured", never as "one fast window".
+pub fn render_iter_chunked_timed(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    chunk_iters: u32,
+    passes: &mut Vec<ChunkPassTiming>,
+) -> Result<ExportResult, GpuError> {
+    passes.clear();
     // The chunk pass writes Rgba32Float state attachments — three (48 bytes/sample) for direct and
     // mode 0, four (64) for mode 2. A device that granted less can't run it: fall back to the
     // single-pass render (the caller's TDR exposure is then what it always was; the app requests
@@ -2151,6 +2191,7 @@ pub fn render_iter_chunked(
         iu.end_iter = iu.start_iter.saturating_add(chunk_iters).min(req.max_iter);
         queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
         let write_set = 1 - read_set;
+        let t0 = std::time::Instant::now();
         let mut enc = device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("chunked.enc") });
         {
@@ -2177,6 +2218,11 @@ pub fn render_iter_chunked(
         }
         queue.submit(std::iter::once(enc.finish()));
         let _ = device.poll(wgpu::Maintain::Wait);
+        passes.push(ChunkPassTiming {
+            start_iter: iu.start_iter,
+            end_iter: iu.end_iter,
+            wall_ms: t0.elapsed().as_secs_f64() * 1000.0,
+        });
         read_set = write_set;
     }
 
@@ -2271,9 +2317,12 @@ pub fn render_iter_chunked(
     out_buf.unmap();
 
     let counters = read_counters(device, queue, &counters_buf, &counters_read);
+    // The doc on `max_dispatch_ms` has always promised "chunked paths measure per iteration
+    // window"; this path returned 0.0 because it measured nothing. It does now.
+    let max_dispatch_ms = passes.iter().map(|p| p.wall_ms).fold(0.0_f64, f64::max);
     Ok(ExportResult {
         width: w, height: h, ss: 1, pixels, iterate_ms: 0.0, color_ms: 0.0, counters,
-        max_dispatch_ms: 0.0,
+        max_dispatch_ms,
     })
 }
 

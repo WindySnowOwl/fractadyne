@@ -54,6 +54,7 @@ mod error;
 mod export;
 mod bench_matrix;
 mod fractal;
+mod chunksweep;
 mod gputest;
 mod help;
 mod livetest;
@@ -1166,6 +1167,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
         "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
+        "--chunk-sweep",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }
@@ -2789,6 +2791,10 @@ struct FractadyneApp {
     /// CLI `--autodive [LOG10]`: unpaced autopilot dive that hammers the frame-cost controller and
     /// reports whether the lethal regime was reached. See `autopilot::AutoDive`.
     autodive: Option<autopilot::AutoDive>,
+    /// CLI `--chunk-sweep [ITERS]`: measure the UNCENSORED per-window wall cost of a chunked
+    /// iterate at the current view. The one measurement that separates the two branches of the
+    /// 2026-08-22 device loss — see `mod chunksweep`.
+    chunk_sweep: Option<chunksweep::ChunkSweep>,
     /// CLI `--motiontest`: the motion-presentation gate (design/mode2-chunking.md §11) — the
     /// in-loop harness that can see what `--livetest`'s settled checkpoints cannot: what a
     /// chunked view ADOPTS as its frozen texture while the camera is moving.
@@ -3197,6 +3203,7 @@ impl FractadyneApp {
         } else {
             None
         };
+        let chunk_sweep = chunksweep::ChunkSweep::from_args(args);
         let play_tour = val("--play").map(std::path::PathBuf::from);
         // Was the app launched to DO something specific, rather than to be explored? If so, no
         // first-run onboarding: a modal is either something nobody will ever click (a headless
@@ -3215,6 +3222,7 @@ impl FractadyneApp {
             || juliadive.is_some()
             || autodive.is_some()
             || motiontest.is_some()
+            || chunk_sweep.is_some()
             || play_tour.is_some()
             || selftest
             || bench_matrix
@@ -3425,6 +3433,7 @@ impl FractadyneApp {
             livetest,
             uitest,
             juliadive,
+            chunk_sweep,
             autodive,
             motiontest,
             livetest_quick,
@@ -6512,6 +6521,20 @@ impl eframe::App for FractadyneApp {
         // measurement apply above, so the reading it samples is this frame's.
         if self.autodive.is_some() && gpu.is_some() {
             self.autodive_frame(ctx);
+        }
+        // --chunk-sweep: let the live view settle, then measure the chunked iterate's per-window
+        // wall cost offscreen and exit. It borrows the resident reference, so it MUST run after
+        // the reference pipeline has had frames to finish — hence the settle countdown inside.
+        if self.chunk_sweep.is_some() {
+            if let Some((dev, q)) = &gpu {
+                let dev = dev.clone();
+                let q = q.clone();
+                if self.chunk_sweep_step(&dev, &q) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    ctx.request_repaint();
+                }
+            }
         }
         // --motiontest: the motion-presentation gate (same in-loop pattern). It sets this frame's
         // input state (zoom_vel / the Home glide), so it runs BEFORE the central draw below.
