@@ -91,7 +91,9 @@ if ($have.fractadyne) {
             # SECONDS so the summary can compare numbers, not strings.
             $reported = ''
             if ($r.stdout -match '\(in ([0-9hms. ]+)\)') {
-                $t = $Matches[1].Trim()
+                # Spaces stripped: the app prints "2m 32.4s" for multi-minute renders, and the
+                # pattern below has no room for one — scene 10's reported_s came back EMPTY.
+                $t = $Matches[1] -replace '\s', ''
                 if ($t -match '^(?:(\d+)h)?(?:(\d+)m)?(?:([0-9.]+)s)?$') {
                     $reported = 3600 * [double]('0' + $Matches[1]) + 60 * [double]('0' + $Matches[2]) + [double]('0' + $Matches[3])
                 }

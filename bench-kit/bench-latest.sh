@@ -255,9 +255,11 @@ timed_run() { # exe args...
 
 kfr_field() { awk -F': *' -v k="$2" '$1 == k {print $2; exit}' "$1" | tr -d '\r'; }
 
-# "40.8s" / "2m07s" / "1h02m" -> plain seconds, so the CSV compares numbers, not strings.
+# "40.8s" / "2m 32.4s" / "1h02m" -> plain seconds, so the CSV compares numbers, not strings.
+# ⚠Spaces stripped first: the app prints "2m 32.4s" for multi-minute renders.
 to_seconds() {
     awk -v t="$1" 'BEGIN {
+        gsub(/[ \t]/, "", t)
         h = 0; m = 0; s = 0
         if (t ~ /h/) { split(t, a, "h"); h = a[1]; t = a[2] }
         if (t ~ /m/) { split(t, a, "m"); m = a[1]; t = a[2] }

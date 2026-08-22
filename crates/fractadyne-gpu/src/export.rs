@@ -533,8 +533,13 @@ fn render_export_impl(
         && req.formula <= 3
         && !method_needs_aux(req.color_method)
         && device.limits().max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
-    let chunker = chunk_scope
-        .then(|| TileChunker::new(device, &shader, &iter_bgl, fe, [tile * ss, tile * ss]));
+    // ⚠Built LAZILY, on the first tile that would actually be SPLIT. Two render pipelines over a
+    // 121 KB shader plus the state textures is real setup cost, and the corrector calls into
+    // these loops once per reference pass — eagerly building it there cost ~7 s on a 60,000-
+    // iteration frame that then ran one window per tile anyway (measured: bench scene 04 went
+    // 14.3 s → 21.7 s). When the whole ask fits one priced window, chunking is a no-op by
+    // construction, so paying for it buys nothing.
+    let mut chunker: Option<TileChunker> = None;
     let mut pricer = ChunkPricer::new();
     let mut max_dispatch_ms = 0.0f64;
 
@@ -718,6 +723,12 @@ fn render_export_impl(
                 None
             };
 
+            // Chunk only once a window is actually SHORTER than the ask — i.e. once the priced
+            // opening would split this tile. Below that the chunked and unchunked paths issue the
+            // same single dispatch, so the setup would be pure cost (see the `chunker` note).
+            if chunk_scope && chunker.is_none() && pricer.open(req.max_iter) < req.max_iter {
+                chunker = Some(TileChunker::new(device, &shader, &iter_bgl, fe, [tile * ss, tile * ss]));
+            }
             // Chunked tiles iterate BEFORE the main encoder: each window is its own polled
             // submission (that is the whole point), and the first window clears the counters.
             let chunked = match chunker.as_ref() {
@@ -899,6 +910,14 @@ fn render_export_impl(
             let chunk_passes = chunked.map_or(0, |(p, _)| p);
             if chunked.is_none() {
                 max_dispatch_ms = max_dispatch_ms.max(wall_ms);
+                // An UNCHUNKED tile is still evidence: it ran the full ask in `wall_ms`, so it
+                // prices the serial chain exactly as a window would. Feeding it in is what keeps
+                // the lazy trigger honest — a render whose ask fits one opening window but whose
+                // tiles turn out slow anyway will raise the high-water mark here, shrink the
+                // opening below the ask, and start chunking from the next tile on. (The wall
+                // includes readback and the color pass, so it over-prices slightly — the safe
+                // direction: chunking engages sooner, never later.)
+                pricer.observe(req.max_iter, wall_ms);
             }
             if tile_trace_on() {
                 eprintln!(
@@ -984,8 +1003,9 @@ pub fn render_iter_tiled(
         && req.formula <= 3
         && device.limits().max_color_attachment_bytes_per_sample
             >= if req.mode == 2 { 64 } else { 48 };
-    let chunker =
-        chunk_scope.then(|| TileChunker::new(device, &shader, &iter_bgl, req.mode == 2, [tile, tile]));
+    // Lazy for the same reason as `render_export` — and it matters most HERE, since the
+    // multi-reference corrector calls this once per pass (up to 64).
+    let mut chunker: Option<TileChunker> = None;
     let mut pricer = ChunkPricer::new();
     let mut max_dispatch_ms = 0.0f64;
     let mut chunk_wall_sink = 0.0f64; // iterate_ms stays 0.0 on this path (see the result)
@@ -1099,6 +1119,11 @@ pub fn render_iter_tiled(
                 mapped_at_creation: false,
             });
 
+            // Same lazy trigger as `render_export`.
+            if chunk_scope && chunker.is_none() && pricer.open(req.max_iter) < req.max_iter {
+                chunker =
+                    Some(TileChunker::new(device, &shader, &iter_bgl, req.mode == 2, [tile, tile]));
+            }
             // Chunked tiles iterate BEFORE the main encoder, one polled submission per window;
             // the first window clears the counters. The deadline is honoured between windows.
             let chunked = match chunker.as_ref() {
@@ -1210,6 +1235,7 @@ pub fn render_iter_tiled(
             let chunk_passes = chunked.map_or(0, |(p, _)| p);
             if chunked.is_none() {
                 max_dispatch_ms = max_dispatch_ms.max(wall_ms);
+                pricer.observe(req.max_iter, wall_ms); // see `render_export` — keeps lazy honest
             }
             if tile_trace_on() {
                 eprintln!(

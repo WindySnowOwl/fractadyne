@@ -16,6 +16,14 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Glitch-corrected exports are faster again** (beta.126) — the beta.124 chunking set up its
+  machinery on every correction pass, even for frames whose whole iteration count fits a single
+  bounded dispatch and so are never actually split. On a 60,000-iteration frame that was pure
+  overhead: the 1e12× benchmark scene went from 14.3 s to 21.7 s. The setup is now built only
+  once a render genuinely needs to split a tile, and an unsplit tile still reports its cost, so
+  a frame that turns out slower than expected starts splitting from the next tile on. Same
+  scene now renders in 12.6 s — faster than before chunking existed.
+
 - **Fixed: views deeper than 1e308× rendered a BLANK image** (beta.125) — a regression that had
   been live since 2026-08-17. A guard added for corrupted sessions (where a NaN zoom used to
   select the most expensive arithmetic) rejected every *non-finite* magnification, not just
