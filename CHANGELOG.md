@@ -16,6 +16,14 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Glitch correction only re-renders where it needs to** (beta.127) — each extra reference pass
+  used to re-compute the entire frame in order to repair a handful of pixels; it now skips the
+  areas with nothing left to fix. Where the correction was running out of passes, that makes the
+  render faster (the 1.3e6× benchmark scene, whose correction was 10.2 s of an 11.1 s render,
+  drops to 9.0 s with identical output); where it was running out of time, the saved effort goes
+  into more correction instead — the 4.6e1105× scene now fits 57 reference passes into the same
+  104 s where 37 fit before, leaving 91 unresolved pixels instead of 122.
+
 - **Glitch-corrected exports are faster again** (beta.126) — the beta.124 chunking set up its
   machinery on every correction pass, even for frames whose whole iteration count fits a single
   bounded dispatch and so are never actually split. On a 60,000-iteration frame that was pure

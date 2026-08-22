@@ -2041,7 +2041,7 @@ impl FractadyneApp {
         // zeros, which is why a glitch-corrected export used to log all-zero counters).
         let mut counters = [0u64; fractadyne_gpu::COUNTER_SLOTS];
         let mut iterate_ms = 0.0f64;
-        let base = fractadyne_gpu::render_iter_tiled(device, queue, &req, CORRECT_WORK_BUDGET, deadline).ok()?;
+        let base = fractadyne_gpu::render_iter_tiled(device, queue, &req, CORRECT_WORK_BUDGET, deadline, None).ok()?;
         for (c, v) in counters.iter_mut().zip(base.counters) {
             *c += v;
         }
@@ -2156,7 +2156,20 @@ impl FractadyneApp {
             // Tiled + deadline-aware: a pass over the dark cores (BLA off) is split into short
             // dispatches; if the deadline lands mid-pass the tiled render returns Canceled and we
             // keep the merge accumulated by earlier passes rather than blocking on one huge dispatch.
-            let pass_res = match fractadyne_gpu::render_iter_tiled(device, queue, &r, CORRECT_WORK_BUDGET, deadline) {
+            //
+            // ⭐Restricted to the tiles that still hold glitched pixels. A correction pass exists
+            // to repair `glitch` and the adoption below reads NOTHING else, so re-iterating the
+            // rest of the frame was pure waste — measured at 1.3e6×, passes 5..64 each re-rendered
+            // all 2,073,600 pixels to resolve one or two, and correction cost 10.2 s of an 11.1 s
+            // render. Output is unchanged by construction: every index this loop reads is in the
+            // mask, and a skipped tile's zeros are never touched.
+            let mut roi = vec![false; w * h];
+            for &i in &glitch {
+                roi[i] = true;
+            }
+            let pass_res = match fractadyne_gpu::render_iter_tiled(
+                device, queue, &r, CORRECT_WORK_BUDGET, deadline, Some(&roi),
+            ) {
                 Ok(p) => p,
                 Err(_) => break,
             };
@@ -2273,7 +2286,7 @@ impl FractadyneApp {
         // Pass 1 — supersampled iteration buffer (tiled → bounded dispatches, any size). The
         // caller-supplied `work_budget` keeps each tile's dispatch under the OS watchdog for a
         // shallow-view/high-iter tour frame (see `render_export`'s `work_budget`).
-        let iter = fractadyne_gpu::render_iter_tiled(device, queue, &req, work_budget, None).ok()?;
+        let iter = fractadyne_gpu::render_iter_tiled(device, queue, &req, work_budget, None, None).ok()?;
         // Escape-value range over escaped pixels (channel 0 = smooth iter; < 0 = interior).
         let (mut lo, mut hi) = (f32::MAX, f32::MIN);
         for px in iter.pixels.chunks_exact(4) {

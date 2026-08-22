@@ -958,6 +958,18 @@ cap={cap} chunks={chunk_passes}"
 /// `GpuError::Canceled`, so the correction loop can keep whatever it has already merged and stop
 /// instead of blocking. `ss = 1` (the correction path never supersamples); emits the iteration
 /// texture (not a colored image) so the caller can find glitched pixels (`smooth_iter < -1.5`).
+///
+/// ⭐`roi` (region of interest) is a `width*height` mask of the pixels the caller will actually
+/// READ; tiles containing none of them are skipped entirely and their pixels are left ZERO. This
+/// exists because the multi-reference corrector re-rendered the WHOLE FRAME once per extra
+/// reference to repair a handful of pixels — measured at 1.3e6×, passes 5..64 each re-iterated
+/// all 2,073,600 pixels to resolve one or two, and correction ate 10.2 s of an 11.1 s render.
+/// Restricting each pass to the tiles that still contain glitched pixels changes NO output (the
+/// caller adopts only the pixels it asked for) and removes almost all of that cost. `None`
+/// renders the full frame.
+///
+/// ⚠A skipped tile's pixels read back as 0.0, which is a *valid-looking* escape value — so a
+/// caller passing `roi` must never read outside its own mask.
 #[allow(clippy::too_many_arguments)]
 pub fn render_iter_tiled(
     device: &wgpu::Device,
@@ -965,6 +977,7 @@ pub fn render_iter_tiled(
     req: &ExportRequest,
     work_budget: u64,
     deadline: Option<std::time::Instant>,
+    roi: Option<&[bool]>,
 ) -> Result<ExportResult, GpuError> {
     let max_dim = device.limits().max_texture_dimension_2d;
     let max_buf = device.limits().max_buffer_size;
@@ -1009,6 +1022,10 @@ pub fn render_iter_tiled(
     let mut pricer = ChunkPricer::new();
     let mut max_dispatch_ms = 0.0f64;
     let mut chunk_wall_sink = 0.0f64; // iterate_ms stays 0.0 on this path (see the result)
+    // ROI effectiveness, reported under the `tile` trace: skipping depends entirely on whether
+    // the wanted pixels CLUSTER, and tile size falls out of the work budget, so "how much did
+    // this actually save" is not something to reason about — measure it.
+    let (mut roi_skipped, mut roi_total) = (0u32, 0u32);
 
     let iter_uniform = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("itertiled.uniform"),
@@ -1061,6 +1078,21 @@ pub fn render_iter_tiled(
                 return Err(GpuError::Canceled);
             }
             let tw = cap.min(w - tx0).min(th.max(16));
+            roi_total += 1;
+            // Region of interest: skip a tile the caller will not read from. The scan is O(tile
+            // area) of plain bools against a GPU dispatch over the same area, so it pays for
+            // itself the first time it says "no".
+            if let Some(mask) = roi {
+                let wanted = (ty0..ty0 + th).any(|y| {
+                    let row = (y as usize) * (w as usize);
+                    mask[row + tx0 as usize..row + (tx0 + tw) as usize].iter().any(|&m| m)
+                });
+                if !wanted {
+                    roi_skipped += 1;
+                    tx0 += tw;
+                    continue;
+                }
+            }
             let mut iu = IterUniforms {
                 step: [sxh, sxl, syh, syl],
                 ref_offset: req.ref_offset.to_array(),
@@ -1250,6 +1282,9 @@ chunks={chunk_passes}"
             tx0 += tw;
         }
         ty0 += th;
+    }
+    if roi.is_some() && tile_trace_on() {
+        eprintln!("[fd-export] roi: {roi_skipped}/{roi_total} tiles skipped (tile={tile}px)");
     }
     Ok(ExportResult {
         width: w,
