@@ -3679,7 +3679,22 @@ zoom = \"1e94\"
             ("multibrot4-1e6", FractalKind::Multibrot4, "2.28757960884408080137002307307431367850187620104115769219e-1", "7.625265362813602953424916065993043372187655480595946595141e-1", 1.0e6, 3000, 0, 0),
             ("multibrot5-1e6", FractalKind::Multibrot5, "2.320768669674853369085651557338865001525750889159483426277e-1", "7.735895565582844849904484291320284693154748744446630197764e-1", 1.0e6, 3000, 0, 0),
         ];
-        let (gw, gh) = (320u32, 240u32);
+        // 1920x1080, raised from 320x240 (2026-08-22). 27x the pixels: a rendering
+        // regression that survives 2M pixels is not one worth calling a golden, and the
+        // old 76,800-pixel frames were coarse enough that fine filament structure fell
+        // between samples entirely.
+        //
+        // NOT 4K, deliberately. 17 goldens at 3840x2160 is ~100-200 MB of tracked binary in
+        // a PUBLIC repo and git keeps every version, so each re-bless doubles it - and
+        // `--selftest` is the gate run constantly, where 108x the pixels is felt on every
+        // run. 1080p buys the detection sensitivity without either cost.
+        //
+        // WARNING: GOLDEN_MEAN_* tolerances were calibrated at 320x240. A mean over 2M
+        // pixels is a different statistic from a mean over 76,800 - a localized defect is
+        // diluted 27x in the mean while maxD is unchanged. If a cross-GPU run starts
+        // passing things it used to catch, the MEAN bound is why; re-derive it rather than
+        // assuming it carried over.
+        let (gw, gh) = (1920u32, 1080u32);
         // (name, max Δ, mean Δ, checksum, pass, reproduce, status). `status` is "" for a normal
         // compared golden (show maxΔ/meanΔ); otherwise a distinct reason (MISSING / SIZE MISMATCH /
         // RENDER ERROR) so those never masquerade as a pixel-diff failure.
