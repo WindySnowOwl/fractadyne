@@ -9,8 +9,9 @@ A reproducible head-to-head of deep-zoom Mandelbrot renderers on **your** hardwa
 | **Imagina** | operator-assisted | CPU (MipLA) | no headless mode; you transcribe its reported time |
 | **FractalShark** | operator-assisted | GPU (CUDA) | **NVIDIA only**; recorded N/A elsewhere |
 
-Six scenes from Fractadyne's cross-validated corpus (each verified pixel-for-pixel against
-Fraktaler-3), spanning 1e6× to 4.6e1105× magnification:
+Ten single-frame scenes from Fractadyne's cross-validated corpus (each verified pixel-for-pixel
+against Fraktaler-3), spanning 1e6× to 4.6e1105× magnification, plus a **zoom sequence** lane
+(below) that measures what no single frame can:
 
 | Scene | Magnification | Iterations | Regime |
 |---|---|---|---|
@@ -20,11 +21,45 @@ Fraktaler-3), spanning 1e6× to 4.6e1105× magnification:
 | 14-deep-1.2e148 | 1.6e148 | 800,000 | deep, dense field |
 | 17-deep-4.2e275 | 5.5e275 | 600,008 | very deep |
 | 10-deep-4.6e1105 | 6.1e1105 | 250,000 | extreme |
+| 21-m43-spar-1e27.7 | 5.1e27 | 30,000 | Misiurewicz spar |
+| 23-nucleus-p145-1e27.7 | 5.1e27 | 30,000 | period-145 nucleus (setup-dominated) |
+| 24-nucleus-p148-1e28.2 | 1.8e28 | 30,000 | period-148 nucleus |
+| 35-vger-dive-1p47e77 | 1.5e77 | 300,000 | dense field, normalized |
 
 Every scene ships in three formats with the **same** center, magnification and iteration cap:
 `.kfr` (Kalles Fraktaler text format — Imagina and FractalShark import it), `.f3.toml`
-(Fraktaler-3), `.fdn` (Fractadyne). All renders are 1920x1080, supersampling **off** —
-supersampling semantics differ per renderer and would silently benchmark different work.
+(Fraktaler-3), `.fdn` (Fractadyne). All renders are **3840x2160** by default (`-Size WxH` to
+change it, applied identically to every lane) at **one sample per pixel** — supersampling
+semantics differ per renderer and would silently benchmark different work. The scene files are
+correctness fixtures first, so they carry the corpus's own resolution and sample count
+(Fraktaler-3's `subframes = 4`, paired there with Fractadyne's `--ss 2`); `run-all.ps1` rewrites
+both into a per-run copy, and the corpus originals are never touched.
+
+## The zoom-sequence lane
+
+Every scene above is ONE frame, and one frame is blind to the optimisation that matters most
+for zoom video: a dive toward a fixed centre keeps the same reference orbit valid across many
+frames, so the expensive setup can be amortised instead of paid per frame. A single-frame
+benchmark scores that work as exactly zero.
+
+The lane descends a Misiurewicz λ-ladder — every frame is the **same picture at a different
+scale**, so per-frame cost *should* be flat and any ramp is the renderer failing to reuse its
+setup rather than the scene getting harder. The metric is each app measured against **itself**:
+
+    amortisation = frames_rendered × single_frame_wall / sequence_wall
+
+1.0 means everything is rebuilt every frame; higher means reuse. Because it is a self-ratio it
+needs no cross-app calibration.
+
+It runs automatically when Python 3 is on PATH (the ladder needs 400-digit decimal arithmetic
+to place its rungs); `-ZoomSeqFrames 0` or `-Skip zoomseq` turns it off, and without Python the
+run says so and continues. Fractadyne renders the sequence in ONE process (`--render-tour`),
+which is the mode that owns its reference prefetch.
+
+**Read Fraktaler-3's figure carefully.** Its 3.1 batch CLI renders one image per invocation, so
+its "sequence" is N processes and its amortisation is 1.0 *by construction*. That is a property
+of the command-line interface, not of its engine — F3 has zoom-sequence and exponential-map
+machinery this lane cannot reach. Do not quote it as an engine ceiling.
 
 ## Fairness protocol
 
@@ -77,7 +112,7 @@ benchmark that doesn't say which latest it measured is not reproducible.
 2. `powershell -ExecutionPolicy Bypass -File run-all.ps1` (add `-Reps 2` for repeats; skip
    lanes with `-Skip imagina,fractalshark`).
 3. Results land in `results\<hostname>-<timestamp>\`: `sysinfo.txt`, `results.csv`,
-   `summary.md`. Send the whole folder (or its zip) to feedback@fractadyne.org, or attach it
+   `summary.md`, and `zoomseq\` when the sequence lane ran. Send the whole folder (or its zip) to feedback@fractadyne.org, or attach it
    to a GitHub issue on WindySnowOwl/fractadyne.
 
 ## The assisted lanes, honestly

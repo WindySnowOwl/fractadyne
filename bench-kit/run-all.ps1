@@ -3,7 +3,7 @@
 #
 #   powershell -ExecutionPolicy Bypass -File run-all.ps1 [-Reps 2] [-Skip imagina,fractalshark]
 #       [-FractadyneExe path] [-Fraktaler3Exe path] [-ImaginaExe path] [-FractalSharkExe path]
-#       [-TimeoutS 7200]
+#       [-TimeoutS 7200] [-Size 3840x2160] [-ZoomSeqFrames 8] [-PythonExe python]
 
 [CmdletBinding()]
 param(
@@ -19,7 +19,18 @@ param(
     # because a benchmark should be a real load: 3840x2160 is 4x the old Fractadyne size
     # and 9x the size Fraktaler-3 was silently given.
     [ValidatePattern('^[0-9]+x[0-9]+$')]
-    [string]$Size = '3840x2160'
+    [string]$Size = '3840x2160',
+    # ZOOM SEQUENCE lane. Every other scene here is ONE FRAME, and a single frame is blind to
+    # the optimisation that matters most for zoom video: a dive toward a fixed centre keeps the
+    # same reference orbit valid across many frames, so the expensive setup can be amortised
+    # instead of paid per frame. The metric is each app measured against ITSELF -
+    # amortisation = (frames x single_frame_wall) / sequence_wall - so it needs no cross-app
+    # calibration. Set 0 to skip the lane (or -Skip zoomseq).
+    [int]$ZoomSeqFrames = 8,
+    # The ladder places its rungs with 400-digit decimal arithmetic, which is why that lane is
+    # Python. Without an interpreter the lane records itself as skipped; the rest of the run is
+    # unaffected.
+    [string]$PythonExe = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,6 +51,15 @@ $have = @{
     fraktaler3   = (Test-Path $Fraktaler3Exe)
     imagina      = ($ImaginaExe -and (Test-Path $ImaginaExe))
     fractalshark = ($FractalSharkExe -and (Test-Path $FractalSharkExe))
+}
+# The sequence lane needs Python and at least one automated renderer to compare against.
+if (-not $PythonExe) {
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if ($py) { $PythonExe = $py.Source }
+}
+$zsScript = Join-Path $kit 'zoom-seq.py'
+$have += @{
+    zoomseq = ($ZoomSeqFrames -gt 0 -and $PythonExe -and (Test-Path $zsScript) -and ($have.fractadyne -or $have.fraktaler3))
 }
 foreach ($k in $Skip) { $have[$k.ToLower()] = $false }
 # FractalShark is CUDA: without an NVIDIA GPU the lane is N/A, not a failure.
@@ -97,7 +117,7 @@ if ($have.fractadyne) {
             $reported = ''
             if ($r.stdout -match '\(in ([0-9hms. ]+)\)') {
                 # Spaces stripped: the app prints "2m 32.4s" for multi-minute renders, and the
-                # pattern below has no room for one — scene 10's reported_s came back EMPTY.
+                # pattern below has no room for one -- scene 10's reported_s came back EMPTY.
                 $t = $Matches[1] -replace '\s', ''
                 if ($t -match '^(?:(\d+)h)?(?:(\d+)m)?(?:([0-9.]+)s)?$') {
                     $reported = 3600 * [double]('0' + $Matches[1]) + 60 * [double]('0' + $Matches[2]) + [double]('0' + $Matches[3])
@@ -109,9 +129,12 @@ if ($have.fractadyne) {
     Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
 }
 
+# Declared out here, not inside the lane: the zoom-sequence lane below reuses the SAME tuning
+# file, and under Set-StrictMode an undefined variable is an error, not an empty string.
+$wisdom = Join-Path $outDir 'f3-wisdom.toml'
+
 # ---- lane: Fraktaler-3 (automated; wisdom generated once per machine) ----
 if ($have.fraktaler3) {
-    $wisdom = Join-Path $outDir 'f3-wisdom.toml'
     if (-not (Test-Path $wisdom)) {
         # The file goes through -w and the MODE flag follows: `-w path -W` writes the initial
         # hardware config there, `-w path -B` then benchmarks number types for optimal
@@ -127,15 +150,22 @@ if ($have.fraktaler3) {
     }
     foreach ($rep in 1..$Reps) {
         foreach ($s in $sceneRows) {
-            # SIZE PARITY. The scene .f3.toml carries the CORPUS's resolution, which is
-            # not this benchmark's; rewrite width/height into a per-run copy rather than
-            # editing the corpus file, which also drives the correctness references.
+            # SIZE AND SAMPLING PARITY. The scene .f3.toml is a CORRECTNESS fixture: it
+            # carries the corpus's resolution AND `subframes = 4`, which is Fraktaler-3's
+            # antialiasing sample count, chosen there to pair with the corpus's --ss 2 on the
+            # Fractadyne side. This benchmark renders every lane at ONE sample per pixel (see
+            # README, "supersampling off"), so copying the fixture verbatim had F3 doing 4x the
+            # sampling work of the Fractadyne lane in every number this kit ever produced -
+            # exactly the defect the size rewrite was added to fix, one field over. Rewrite both
+            # into a per-run copy; never touch the corpus file, which also drives the
+            # correctness references.
             $srcToml = Join-Path $kit ('scenes\' + $s.slug + '.f3.toml')
             $toml    = Join-Path $outDir ($s.slug + '.bench.f3.toml')
             $wh      = $Size -split 'x'
             $tomlTxt = (Get-Content $srcToml) `
                 -replace '^\s*width\s*=.*',  ('width = '  + $wh[0]) `
-                -replace '^\s*height\s*=.*', ('height = ' + $wh[1])
+                -replace '^\s*height\s*=.*', ('height = ' + $wh[1]) `
+                -replace '^\s*subframes\s*=.*', 'subframes = 1'
             Set-Content -Path $toml -Value $tomlTxt -Encoding ASCII
             $argLine = ('-w "{0}" -b "{1}"' -f $wisdom, $toml)
             $r = Invoke-TimedRender $Fraktaler3Exe $argLine $TimeoutS $outDir
@@ -170,6 +200,54 @@ if ($have.fractalshark) {
     foreach ($s in $sceneRows) { Write-Result $csv 'fractalshark' $s.slug 1 'NA-no-nvidia' '' '' 'CUDA renderer, no NVIDIA GPU present' }
 }
 
+# ---- lane: ZOOM SEQUENCE (the amortisation axis; see the -ZoomSeqFrames parameter) ----
+# Fractadyne renders the sequence IN ONE PROCESS via --render-tour, the mode that owns the
+# reference prefetch. Fraktaler-3 3.1's batch CLI renders one image per invocation, so its
+# sequence is N processes and its amortisation is ~1.0 BY CONSTRUCTION - a difference in what
+# the two CLIs offer, NOT a measurement of F3's engine, which has zoom-sequence machinery this
+# lane cannot reach. zoom-seq.py prints that caveat too; keep it attached to the number.
+$zsAmort = ''
+$zsRows = @()
+if ($have.zoomseq) {
+    $zsDir = Join-Path $outDir 'zoomseq'
+    $zsArgs = @($zsScript, '--out', $zsDir, '--size', $Size, '--frames', $ZoomSeqFrames,
+                '--timeout', $TimeoutS)
+    if ($have.fractadyne) { $zsArgs += @('--fractadyne', $FractadyneExe) }
+    if ($have.fraktaler3) { $zsArgs += @('--fraktaler3', $Fraktaler3Exe, '--f3-wisdom', $wisdom) }
+    # The kit ships the ladder's scene in its scenes folder; in the repo it lives in the corpus,
+    # which is zoom-seq.py's own default. Pass the kit copy only when it is actually there.
+    $zsTemplate = Join-Path $kit ('scenes' + [io.path]::DirectorySeparatorChar + '21-m43-spar-1e27.7.f3.toml')
+    if (Test-Path $zsTemplate) { $zsArgs += @('--f3-template', $zsTemplate) }
+    Write-Host ''
+    Write-Host ('--- zoom sequence: ' + $ZoomSeqFrames + ' frames at ' + $Size + ' ---')
+    # Hermetic, like the single-frame Fractadyne lane: a benchmark must not inherit a session.
+    $zsCfg = Join-Path $outDir 'zs-config'
+    if (Test-Path $zsCfg) { Remove-Item -Recurse -Force $zsCfg }
+    New-Item -ItemType Directory -Force $zsCfg | Out-Null
+    $env:FRACTADYNE_CONFIG_DIR = $zsCfg
+    $env:FRACTADYNE_NO_SOUND = '1'
+    & $PythonExe $zsArgs
+    Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:FRACTADYNE_NO_SOUND -ErrorAction SilentlyContinue
+    # Re-emit its rows so a run still has ONE results.csv, and derive the ratio for the summary.
+    $zsCsv = Join-Path $zsDir 'results.csv'
+    if (Test-Path $zsCsv) {
+        $zsRows = @(Import-Csv $zsCsv)
+        foreach ($r in $zsRows) {
+            Write-Result $csv $r.renderer $r.scene $r.rep $r.status $r.wall_s $r.reported_s $r.note
+        }
+        $seq = $zsRows | Where-Object { $_.renderer -eq 'fractadyne' -and $_.scene -notlike '*-single' -and $_.status -eq 'ok' } | Select-Object -First 1
+        $one = $zsRows | Where-Object { $_.renderer -eq 'fractadyne' -and $_.scene -like '*-single' -and $_.status -eq 'ok' } | Select-Object -First 1
+        if ($seq -and $one -and [double]$seq.wall_s -gt 0) {
+            $zsAmort = [math]::Round($ZoomSeqFrames * [double]$one.wall_s / [double]$seq.wall_s, 2)
+            Write-Host ('  fractadyne amortisation: ' + $zsAmort + 'x')
+        }
+    }
+} else {
+    Write-Host ''
+    Write-Host 'Zoom-sequence lane: skipped (needs Python and an automated renderer).'
+}
+
 # ---- summary: fastest run per renderer x scene, ratio vs fractadyne where possible ----
 $rows = Import-Csv $csv
 $md = @('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp, '',
@@ -191,6 +269,33 @@ foreach ($s in $sceneRows) {
         }
     }
     $md += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $s.slug, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractadyne.rep, $cell.imagina.rep, $cell.fractalshark.rep)
+}
+$md += ''
+if ($zsRows.Count) {
+    $md += ''
+    $md += '## Zoom sequence - amortisation'
+    $md += ''
+    $md += ('A ' + $ZoomSeqFrames + '-frame Misiurewicz ladder at ' + $Size + ', one frame per rung.')
+    $md += 'Every frame is the SAME picture at a different scale, so per-frame cost SHOULD be flat and'
+    $md += 'any ramp is the renderer failing to reuse its setup rather than the scene getting harder.'
+    $md += 'The ratio is `frames x single_frame_wall / sequence_wall` - each app against ITSELF, so it'
+    $md += 'needs no cross-app calibration. 1.0 means everything is rebuilt every frame.'
+    $md += ''
+    $md += '| Renderer | Sequence wall | Amortisation | Note |'
+    $md += '|---|---|---|---|'
+    foreach ($ren in 'fractadyne', 'fraktaler3') {
+        $sq = $zsRows | Where-Object { $_.renderer -eq $ren -and $_.scene -notlike '*-single' } | Select-Object -First 1
+        if (-not $sq) { continue }
+        $am = '-'
+        if ($ren -eq 'fractadyne' -and $zsAmort -ne '') { $am = [string]$zsAmort + 'x' }
+        if ($ren -eq 'fraktaler3') { $am = '1.0x by construction' }
+        $md += ('| {0} | {1} | {2} | {3} |' -f $ren, $sq.wall_s, $am, $sq.note)
+    }
+    $md += ''
+    $md += 'Fraktaler-3 3.1 has no sequence mode in its batch CLI - it renders one image per'
+    $md += 'invocation, so its figure is N processes and its amortisation is 1.0 BY CONSTRUCTION.'
+    $md += 'That is a property of the CLI, not of its engine (which has zoom-sequence and'
+    $md += 'exponential-map machinery this lane does not reach). Do not quote it as an engine ceiling.'
 }
 $md += ''
 $md += 'Send this folder (or its zip) to feedback@fractadyne.org or attach it to a GitHub issue.'

@@ -59,6 +59,31 @@ def rung_log10(n):
     return LAM_LOG10 * n
 
 
+def zoom_str(n, digits=20):
+    """The rung's magnification as a PLAIN scientific literal: mantissa e INTEGER-exponent.
+
+    This lane used to write "1.0e%s" % rung_log10(n), i.e. a FRACTIONAL exponent like
+    "1.0e23.900008". Fractadyne's tour parser accepts that (it parses the exponent as f64), but
+    two other readers did not, and neither said so:
+
+      * `fractadyne --zoom` was a bare f64 parse with `unwrap_or(1.0)`, so the SINGLE-FRAME arm
+        - the denominator of the amortisation ratio - rendered the whole Mandelbrot set at 1x
+        and exited 0. Fixed in beta.135 (it is now the real parser, and fatal on garbage), but
+        the kit must not depend on that: 3.1's Fraktaler-3 is not ours to fix.
+      * Fraktaler-3 rejects the value and falls back to the settings PERSISTED in
+        %APPDATA%/uk.co.mathr/fraktaler-3/persistence.f3.toml - i.e. it silently renders the
+        LAST scene someone rendered, at full cost, and reports success. Here that was a 1e1105
+        location: four minutes per "frame" of a benchmark that thought it was at 1e23.9.
+
+    Both failures produce a plausible number and a wrong picture, which is the worst shape a
+    benchmark defect can have. An integer exponent is understood by every reader involved.
+    """
+    l10 = rung_log10(n)
+    e = int(l10)                                  # rungs are positive; int() is floor here
+    m = Decimal(10) ** (l10 - e)                  # 1 <= m < 10
+    return "%se%d" % (round(m, digits).normalize(), e)
+
+
 def write_tour(path, frames, start_rung, size, iters, fps=1):
     """A tour whose keyframes ARE the ladder rungs, one frame per rung.
 
@@ -75,7 +100,7 @@ def write_tour(path, frames, start_rung, size, iters, fps=1):
               't = %d' % i,
               're = "%s"' % M43_RE,
               'im = "%s"' % M43_IM,
-              'zoom = "1.0e%s"' % rung_log10(n),
+              'zoom = "%s"' % zoom_str(n),
               'max_iter = %d' % iters,
               'hold = 1', '']
     with open(path, 'w', newline='\n') as f:
@@ -85,17 +110,30 @@ def write_tour(path, frames, start_rung, size, iters, fps=1):
 
 def write_f3_frame(path, template, n, size):
     w, h = size.split('x')
-    zoom = "1.0e%s" % rung_log10(n)
+    zoom = zoom_str(n)
     out = []
     for line in open(template):
         s = line.rstrip('\n')
         if re.match(r'^\s*width\s*=', s):    s = 'width = %s' % w
         elif re.match(r'^\s*height\s*=', s): s = 'height = %s' % h
+        # SAMPLING PARITY: the corpus template carries subframes = 4 (F3's antialiasing sample
+        # count, paired with the corpus's --ss 2 on our side). This lane renders one sample per
+        # pixel on both arms, and 4x the samples on one of them is not a comparison.
+        elif re.match(r'^\s*subframes\s*=', s): s = 'subframes = 1'
         elif re.match(r'^\s*zoom\s*=', s):   s = 'zoom = "%s"' % zoom
         out.append(s)
     with open(path, 'w', newline='\n') as f:
         f.write("\n".join(out) + "\n")
     return path
+
+
+def f3_out_name(toml_path):
+    """The PNG `[render] filename` in a generated F3 config promises to write."""
+    for line in open(toml_path):
+        m = re.match(r'^\s*filename\s*=\s*"(.+)"\s*$', line)
+        if m:
+            return m.group(1) + '.png'
+    return ''
 
 
 def timed(cmd, cwd=None, timeout=7200):
@@ -123,6 +161,13 @@ def main():
     ap.add_argument('--timeout', type=int, default=7200)
     a = ap.parse_args()
 
+    # ABSOLUTE, before anything is built from it. The Fraktaler-3 arm runs with cwd = a.out and
+    # used to hand F3 the config as a path relative to the REPO root, which does not resolve from
+    # there - so F3 could not open the batch file, fell back to its persisted session, rendered a
+    # completely different location at full cost, and exited 0. (generate_fraktaler.py has always
+    # passed a BASENAME with a matching cwd; this lane did not.) The frame arm below now does the
+    # same, and f3_out_name/the existence check catch it if either ever drifts again.
+    a.out = os.path.abspath(a.out)
     os.makedirs(a.out, exist_ok=True)
     csv_path = os.path.join(a.out, 'results.csv')
     new = not os.path.exists(csv_path)
@@ -153,12 +198,17 @@ def main():
         one = os.path.join(a.out, 'zoomseq-fd-single.png')
         st1, wall1, _ = timed([a.fractadyne, '--render', '--out', one, '--size', a.size,
                                '--center', M43_RE, M43_IM,
-                               '--zoom', '1.0e%s' % rung_log10(a.start_rung),
+                               '--zoom', zoom_str(a.start_rung),
                                '--iter', str(a.iters), '--ss', '1'], timeout=a.timeout)
         wr.writerow(['fractadyne', scene + '-single', 1, st1, round(wall1, 2), '', 'one frame, fresh process'])
         print("  fractadyne  %-10s %8.1fs  (single frame)" % (st1, wall1))
-        if st == 'ok' and st1 == 'ok' and wall > 0:
-            print("  -> amortisation %.2fx" % (a.frames * wall1 / wall))
+        # Divide by the frames the tour ACTUALLY wrote, not by --frames. A tour of N keyframes
+        # at hold=1 renders N+1 images (the last keyframe is held, not skipped), and dividing a
+        # 9-frame sequence by 8 quietly inflates the ratio by 12.5%.
+        rendered = len([f for f in os.listdir(frames_dir) if f.endswith('.png')])
+        if st == 'ok' and st1 == 'ok' and wall > 0 and rendered:
+            print("  -> amortisation %.2fx  (%d frames rendered, %.2fs/frame in sequence)"
+                  % (rendered * wall1 / wall, rendered, wall / rendered))
 
     # ---- Fraktaler-3: CLI batch is one image per invocation (see the module docstring) ----
     if a.fraktaler3 and os.path.exists(a.f3_template):
@@ -170,12 +220,27 @@ def main():
             cmd = [a.fraktaler3]
             if a.f3_wisdom:
                 cmd += ['-w', a.f3_wisdom]
-            cmd += ['-b', tp]
+            cmd += ['-b', os.path.basename(tp)]   # cwd is a.out; see the abspath note above
             st, w, _ = timed(cmd, cwd=a.out, timeout=a.timeout)
+            # PROVE it rendered the scene we asked for. F3 falls back to the settings persisted
+            # in %APPDATA%/uk.co.mathr/fraktaler-3/persistence.f3.toml when it cannot read the
+            # batch file, and then reports success: exit 0, a full-cost render, a PNG named
+            # after somebody else's location. Without this check the lane times the wrong scene
+            # and calls it a result (2026-08-22: four minutes a frame of a 1e1105 view while
+            # the ladder sat at 1e23.9).
+            want = os.path.join(a.out, f3_out_name(tp))
+            if st == 'ok' and not os.path.exists(want):
+                st = 'fail-wrong-scene'
             if st != 'ok':
                 ok = False
                 print("  fraktaler3  frame %d %s" % (i, st))
+                if st == 'fail-wrong-scene':
+                    print("    expected %s - F3 fell back to its PERSISTED settings; the batch"
+                          % os.path.basename(want))
+                    print("    file was rejected. Nothing timed here describes this ladder.")
                 break
+            if os.path.exists(want):
+                os.replace(want, os.path.join(a.out, 'zoomseq-f3-%02d.png' % i))
         wall = time.time() - t0
         wr.writerow(['fraktaler3', scene, 1, 'ok' if ok else 'fail', round(wall, 2), '',
                      'sequence: N invocations (CLI batch renders one image; amortisation ~1.0 BY CONSTRUCTION, not an engine limit)'])

@@ -109,26 +109,26 @@ most editors; sections are the `##` headings the items live under.
 | Numeric egress (P2, §3.11 absent) — iteration grids, orbits, ray data as CSV/NumPy via the … | Proposed feature set — reconciled backlog (2026-08-06) | 5608 |
 | Auto-stretch (P2, §4.5 absent) — unskew sheared deep locations from iteration histograms … | Proposed feature set — reconciled backlog (2026-08-06) | 5613 |
 | `.kfr` export / `.kfb` support (§4.2 gap) — `.kfr` import ships (hardened + fuzzed); … | Proposed feature set — reconciled backlog (2026-08-06) | 5615 |
-| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 5695 |
-| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 5708 |
-| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 5713 |
-| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 5717 |
-| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 5719 |
-| Periodic references for nucleus-centred views — the autopilot/NR-zoom deliberately … | Performance & throughput (M7) | 5736 |
-| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 5744 |
-| Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 5749 |
-| Level 2 groundwork: bignum backend benchmark — cheap and decisive: bench astro-float … | Performance & throughput (M7) | 5752 |
-| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 5758 |
-| Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 5764 |
-| By-frame render farm = a documented script, not a subsystem. Frames are independent and … | Performance & throughput (M7) | 5775 |
-| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 5809 |
-| Shippable reference files — the head node computes the sequence reference once and … | Performance & throughput (M7) | 5812 |
-| Distributed normalize coherence — per-machine `--normalize` ranges flicker at shard … | Performance & throughput (M7) | 5818 |
-| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 5826 |
-| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 5858 |
-| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 5955 |
-| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 5968 |
-| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 5971 |
+| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 5757 |
+| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 5770 |
+| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 5775 |
+| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 5779 |
+| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 5781 |
+| Periodic references for nucleus-centred views — the autopilot/NR-zoom deliberately … | Performance & throughput (M7) | 5798 |
+| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 5806 |
+| Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 5811 |
+| Level 2 groundwork: bignum backend benchmark — cheap and decisive: bench astro-float … | Performance & throughput (M7) | 5814 |
+| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 5820 |
+| Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 5826 |
+| By-frame render farm = a documented script, not a subsystem. Frames are independent and … | Performance & throughput (M7) | 5837 |
+| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 5871 |
+| Shippable reference files — the head node computes the sequence reference once and … | Performance & throughput (M7) | 5874 |
+| Distributed normalize coherence — per-machine `--normalize` ranges flicker at shard … | Performance & throughput (M7) | 5880 |
+| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 5888 |
+| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 5920 |
+| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 6017 |
+| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 6030 |
+| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 6033 |
 <!-- TODO-INDEX:END -->
 
 ## ▶ Offline render path: the fixed cost in the shallow/mid band (2026-08-21)
@@ -5649,6 +5649,68 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   (1920×1080 both, F3 wisdom-benchmarked): 03 12.0/11.9 · 04 13.7/5.1 · 08 15.7/4.8 ·
   14 11.7/16.9 · 17 3.8/10.6 · 10 152.4/256.3 — F3 owns shallow/mid (up to 3.3×), fractadyne
   owns deep and extreme (1.4–2.8×).
+  ⛔⛔**2026-08-22 — EVERY bench-kit number published to date is VOID, for a SECOND parity
+  defect of the same shape.** Both come from copying the corpus `.f3.toml` verbatim into the
+  benchmark. **(a)** resolution: the kit gave F3 1280×720 against everyone else's 1920×1080 —
+  fixed `ff29309` (validated `-Size`, 4K default, rewritten into a PER-RUN copy). **(b)** NEW:
+  `subframes = 4`. That is Fraktaler-3's antialiasing sample count, set in the corpus to pair
+  with the corpus's own `--ss 2` — and the benchmark renders `--ss 1`. **So F3 has been doing
+  FOUR samples per pixel against our ONE in every number this kit has ever produced**, the 4K
+  set from `results/VGER-20260822-163941/` included. Fixed 2026-08-22 the same way, in all
+  three places that write an F3 config (`run-all.ps1`, `zoom-seq.py`, `package.ps1`).
+  ⭐**LESSON, now twice: a correctness FIXTURE is not a benchmark INPUT.** Every field it
+  carries has to be restated by the harness; whatever is merely inherited is a silent handicap
+  handed to one lane. The scene files are shared on purpose (same coordinates, same iteration
+  caps) — that is exactly why the fields that are NOT coordinates must be overwritten.
+  ⚠**The 1.9×–6.8× 4K table must be re-measured before it is quoted anywhere.**
+
+  ✅**ZOOM-SEQUENCE LANE WIRED IN 2026-08-22.** `zoom-seq.py` is now a first-class lane of
+  `run-all.ps1`: auto-detected (needs Python 3 — the λ-ladder places its rungs with 400-digit
+  decimals), skippable with `-Skip zoomseq` / `-ZoomSeqFrames 0`, hermetic `FRACTADYNE_CONFIG_DIR`
+  + `FRACTADYNE_NO_SOUND` like the single-frame lane, its rows folded into the run's ONE
+  `results.csv`, and an amortisation section in `summary.md`. `package.ps1` now ships it (a lane
+  the kit invokes by name and does not contain is a lane that reports itself missing on every
+  machine), and the README documents both the metric and the F3 caveat.
+
+  🔴**Three defects the lane's first REAL 4K run exposed — all fixed, and the smoke-test
+  "amortisation 2.11×" is void because of the first one:**
+  1. **`fractadyne --zoom` silently rendered at 1×.** It was `val("--zoom").and_then(|s|
+     s.parse::<f64>().ok()).unwrap_or(1.0)`, and the ladder asks for `1.0e23.900008` — a
+     FRACTIONAL exponent, which `f64::from_str` rejects. So the single-frame arm (the
+     DENOMINATOR of the amortisation ratio) rendered the whole Mandelbrot set, at 4K, and exited
+     0. The same line turned `4.6e1105` into `+inf`, which is the blank-frame class of the
+     beta.125 regression. FIXED beta.135: `--zoom` now goes through `parse_zoom_to_log2` (the
+     parser the go-to field already used, which handles both) and a value we cannot read is
+     FATAL. A test pins the fractional exponent by VALUE, not by "it parses".
+  2. **Fraktaler-3 falls back to its PERSISTED session when it cannot read a batch file — and
+     reports success.** Given the bad zoom it silently rendered the last scene someone had
+     rendered (`%APPDATA%/uk.co.mathr/fraktaler-3/persistence.f3.toml`, a 1e1105 view), at four
+     minutes a frame, writing `10-deep-4.6e1105-f3.png` into a run that believed it was at
+     1e23.9. The lane now asserts the PNG the config promised actually appeared and records
+     `fail-wrong-scene` otherwise. ⚠**Any harness driving F3 must check its OUTPUT, not its
+     exit code.** `zoom-seq.py` also emits plain integer-exponent literals now, so no reader
+     has to cope with a fractional one.
+  3. **`frames_rendered != --frames`**: a tour of N keyframes at `hold = 1` writes N+1 images,
+     so dividing by N inflated the ratio ~12.5%. The metric now divides by the images the tour
+     actually wrote, and prints them.
+
+  ⭐**FIRST HONEST 4K SEQUENCE NUMBERS, 2026-08-22** (`bench-kit/results/zoomseq-4k-182432/`;
+  M(4,3) ladder, rungs 44..51 = 1e23.90 → 1e27.70, 3840×2160, 30,000 iters, ONE sample per
+  pixel on both arms, F3 wisdom-benchmarked):
+
+  | | sequence | per frame | single frame, fresh process | amortisation |
+  |---|---|---|---|---|
+  | fractadyne | **3.6 s** (9 frames, one `--render-tour` process) | **0.40 s** | 2.6 s | **6.46×** |
+  | fraktaler3 | 38.1 s (8 invocations) | 4.8 s | — | 1.0 by construction (CLI, not engine) |
+
+  ⭐**The story is the per-frame column, not the single-frame one.** One frame at a time we are
+  1.85× ahead of F3 here (2.6 s vs 4.8 s); in sequence we are **12×** ahead, because the
+  reference is built once and the ladder rides it. That gap is precisely what the single-frame
+  scenes score as zero, and it is the reason this lane exists.
+  ⚠**Variance**: a 3 s measurement is short. Two consecutive runs gave 8.19× and 6.46× (2.8 s vs
+  3.6 s sequence, identical 2.6 s single) — quote the range, or raise `--frames` until the
+  sequence is tens of seconds, before publishing a figure to one decimal.
+
   **Remaining to close**: ②validate Imagina + FractalShark actually import our `.kfr`
   (operator-assisted — needs the user at the keyboard; DNF instructions in place but untested);
   ③a Radeon-box run (FractalShark lane exercises the N/A path; bench-latest skips its download

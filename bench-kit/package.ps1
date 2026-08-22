@@ -2,9 +2,9 @@
 # writes fractadyne-bench-kit-<version>.zip next to this script. ASCII only.
 #
 # The kit must be self-contained for someone with none of our repo: scenes are COPIED in
-# (6 locations x 3 formats from validation/corpus), the vendored Fraktaler-3 binary is copied
-# WITH its source directory (AGPL-3.0 requires the corresponding source to travel with the
-# binary), and fractadyne.exe is included when present so the kit is runnable out of the box.
+# (every slug in scenes.csv, x3 formats, from validation/corpus), the vendored Fraktaler-3 is
+# copied WITH its source directory (AGPL-3.0 requires the corresponding source to travel
+# with the binary), and fractadyne.exe is included when present so the kit is runnable out of the box.
 
 [CmdletBinding()]
 param([string]$FractadyneExe = '')
@@ -17,8 +17,10 @@ $scenes = (Import-Csv (Join-Path $kit 'scenes.csv')).slug
 $stage = Join-Path $env:TEMP ('fd-bench-kit-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $stage | Out-Null
 try {
+    # zoom-seq.py is a LANE, not an extra: run-all.ps1 invokes it by name. Ship it or the
+    # kit's sequence lane reports itself missing on every machine that unzips this file.
     foreach ($f in 'README.md', 'scenes.csv', 'bench-lib.ps1', 'run-all.ps1',
-                   'bench-latest.ps1', 'bench-latest.sh') {
+                   'bench-latest.ps1', 'bench-latest.sh', 'zoom-seq.py') {
         Copy-Item (Join-Path $kit $f) $stage
     }
     New-Item -ItemType Directory -Force (Join-Path $stage 'scenes') | Out-Null
@@ -26,15 +28,18 @@ try {
         foreach ($ext in '.kfr', '.f3.toml', '.fdn') {
             Copy-Item (Join-Path $repo ('validation\corpus\locations\' + $s + $ext)) (Join-Path $stage 'scenes')
         }
-        # ⚠The corpus .f3.toml files are CORRECTNESS fixtures and render 1280x720; the benchmark
-        # protocol is 1920x1080 for every lane. Copying them verbatim silently gave Fraktaler-3
+        # WARNING: the corpus .f3.toml files are CORRECTNESS fixtures and render 1280x720, which
+        # is NOT the benchmark's resolution. Copying them verbatim silently gave Fraktaler-3
         # 2.25x FEWER PIXELS than every other lane while the README promised equal work - the
-        # first published run compared 0.92 MP against 2.07 MP. Rewrite the size in the kit's
-        # copy only; the corpus originals must stay at their blessed resolution.
+        # first published run compared 0.92 MP against 2.07 MP. run-all.ps1 now rewrites the
+        # size into a per-run copy from -Size (4K by default), so this rewrite is only the sane
+        # default for someone driving F3 by hand from the kit; the corpus originals must stay at
+        # their blessed resolution either way.
         $toml = Join-Path $stage ('scenes\' + $s + '.f3.toml')
         (Get-Content $toml) `
             -replace '^\s*width\s*=\s*\d+', 'width = 1920' `
-            -replace '^\s*height\s*=\s*\d+', 'height = 1080' |
+            -replace '^\s*height\s*=\s*\d+', 'height = 1080' `
+            -replace '^\s*subframes\s*=\s*\d+', 'subframes = 1' |
             Set-Content $toml -Encoding ascii
     }
     # Fraktaler-3: binary, manual, and source (AGPL) from the vendored copy.

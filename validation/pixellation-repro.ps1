@@ -1,4 +1,4 @@
-# Deep-view PIXELLATION repro — the settle grid needs more tiles than it is allowed.
+# Deep-view PIXELLATION repro -- the settle grid needs more tiles than it is allowed.
 #
 # Reproduces the 2026-08-14 field report (TODO.md "Open bugs"): park at a deep view with an
 # EXPLICIT iteration count, click to zoom 100x, and the destination settles as a coarse mosaic that
@@ -15,7 +15,7 @@
 # `!tour_playing()`. So the only way to measure it is to drive the real window. This script does
 # that headlessly enough to run unattended:
 #   1. writes a session pinned at the reporter's exact coordinates, in a THROWAWAY config dir
-#      (FRACTADYNE_CONFIG_DIR — never touches your own session),
+#      (FRACTADYNE_CONFIG_DIR -- never touches your own session),
 #   2. boots and waits for the first reference (a cold 4M-iteration build at ~550 bits is ~45 s),
 #   3. injects a real left-click on the canvas through user32 (click-to-zoom, factor from session),
 #   4. captures the trace and prints the resolution timeline plus the tiling verdict.
@@ -23,14 +23,14 @@
 #   .\validation\pixellation-repro.ps1                 # full run (~4 min)
 #   .\validation\pixellation-repro.ps1 -SettleSec 30   # shorter waits on a fast machine
 #
-# ⚠Read the RESOLUTION TIMELINE, not the verdict: a frame at 85x49 upscaled to the panel IS the
+# WARNING: read the RESOLUTION TIMELINE, not the verdict: a frame at 85x49 upscaled to the panel IS the
 # bug, and nothing in the app calls that an error.
 
 param(
     [string]$Exe = "$PSScriptRoot\..\target\release\fractadyne.exe",
     [int]$SettleSec = 55,      # time for the cold reference build before the click
     [int]$WatchSec = 100,      # time to watch after the click
-    # `gpu` adds the BUDGET controller's own readings (`view=0 iterate=NNNms cur=… -> next=… ok=…`),
+    # `gpu` adds the BUDGET controller's own readings (`view=0 iterate=NNNms cur=... -> next=... ok=...`),
     # which is what says whether the frame is coarse because the allowance binds it or because the
     # view genuinely measures that expensive. Off by default: it is one line per dispatch.
     [string]$Trace = "tile,ref",

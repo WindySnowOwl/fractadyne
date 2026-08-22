@@ -16,6 +16,33 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Benchmark kit: Fraktaler-3 had been given four times the sampling work** (beta.135) — the kit
+  compares renderers on scene files borrowed from the correctness corpus, and those files carry
+  the corpus's own antialiasing setting: four samples per pixel for Fraktaler-3, to pair with the
+  matching setting on Fractadyne's side. The benchmark renders one sample per pixel, and said so
+  in its README, but only rewrote the image SIZE when it copied the scene — so every published
+  number had one renderer sampling four times as hard as the other. It now restates the sample
+  count too, everywhere a scene file is written. **Previously published comparisons should be
+  treated as void until re-measured.** This is the second defect of exactly this shape (the first
+  was resolution), and the rule it teaches is that a correctness fixture is not a benchmark input.
+
+- **A zoom sequence is now part of the benchmark** (beta.135) — every other scene in the kit is a
+  single frame, which cannot see the thing that matters most for zoom video: diving toward a fixed
+  point lets a renderer reuse its expensive setup across many frames instead of rebuilding it for
+  each one. The new lane renders a ladder where every frame is the same picture at a different
+  scale, so any cost ramp is the renderer and not the scenery, and reports how much each app
+  saved measured against itself. On this machine Fractadyne renders that 4K ladder 8.2x cheaper
+  per frame in sequence than one frame at a time. Fraktaler-3's batch command renders one image
+  per invocation, so its figure is 1.0 by construction — a property of its command line, not of
+  its engine, and the report says so.
+
+- **Fixed: `--zoom` could silently render the wrong place** (beta.135) — a magnification the
+  option could not read was quietly treated as 1x, so the command rendered the whole Mandelbrot
+  set and reported success. Perfectly ordinary values triggered it: `1.0e23.9`, the form a zoom
+  ladder naturally produces, is not something a plain number parser accepts, and anything past
+  `1e308` became infinity. Both now go through the same parser the app's own go-to box uses, and
+  a value that cannot be read is a clean error instead of a picture of somewhere else.
+
 - **A crash report now says whether the frame that died was doing any work at all** (beta.135) —
   when the graphics device is lost, the report records a "manifest": exactly what the frame was
   asked to draw. Two numbers were missing from it, and both can change what a frame costs by
