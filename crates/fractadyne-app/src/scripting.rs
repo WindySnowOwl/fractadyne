@@ -2955,7 +2955,10 @@ fn resolve_render(r: &RenderFile) -> Result<TourRender, String> {
     let (width, height) = match &r.size {
         Some(s) => {
             let (w, h) = crate::parse_size(s);
-            if w.is_none() {
+            // Both halves, not just the width: "1920x108O" parses the width and silently drops
+            // the height, so the tour renders at an aspect nobody authored. Same rule the CLI
+            // applies in `arg_size`.
+            if w.is_none() || (h.is_none() && crate::size_has_separator(s)) {
                 return Err(format!("[render] size = \"{s}\": expected WIDTHxHEIGHT or a width"));
             }
             (w, h)

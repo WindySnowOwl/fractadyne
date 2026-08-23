@@ -723,6 +723,12 @@ impl Default for TourRenderUi {
 /// case-insensitive `x`/`X`/`×`). Returns `(width, height)` where each is `Some` when present and
 /// parseable. This lets callers accept both forms; a bare width leaves the height to `--height` or
 /// an aspect-ratio default.
+/// The separators `parse_size` splits on. Shared so a caller can ask "was a height SUPPLIED?"
+/// without re-listing the characters and drifting from the parser.
+pub(crate) fn size_has_separator(s: &str) -> bool {
+    s.contains(|c: char| c == 'x' || c == 'X' || c == '×')
+}
+
 pub(crate) fn parse_size(s: &str) -> (Option<u32>, Option<u32>) {
     let sep = |c: char| c == 'x' || c == 'X' || c == '×';
     match s.split_once(sep) {
@@ -1737,13 +1743,23 @@ fn arg_parse<T: std::str::FromStr>(name: &str, s: &str, expect: &str) -> T {
 /// here renders at the WRONG RESOLUTION and says nothing — the exact shape of the benchmark-kit
 /// defect where one renderer was handed 1280x720 while every other lane ran 1920x1080.
 fn arg_size(name: &str, s: &str) -> (Option<u32>, Option<u32>) {
-    match parse_size(s) {
-        (None, _) => {
-            eprintln!("fractadyne: {name}: cannot read \"{s}\" as WIDTH or WIDTHxHEIGHT.");
-            crate::exit(2)
-        }
-        ok => ok,
+    let parsed = parse_size(s);
+    // A bare width is legitimate, but ONLY when there was no separator for a height to have
+    // failed on. `parse_size` parses the halves independently and returns (Some(w), None) for
+    // BOTH "1920" and "1920x108O", so accepting the second drops a height that WAS supplied,
+    // without a word: the tour then renders at the script's height, and the single-image lane
+    // at whatever aspect the restored session happens to have, which is not even reproducible.
+    // That is this entire class again, inside the fix for it.
+    let readable = match parsed {
+        (Some(_), Some(_)) => true,
+        (Some(_), None) => !size_has_separator(s),
+        _ => false,
+    };
+    if !readable {
+        eprintln!("fractadyne: {name}: cannot read \"{s}\" as WIDTH or WIDTHxHEIGHT.");
+        crate::exit(2)
     }
+    parsed
 }
 
 /// A full-precision coordinate pair, fatal when either half is unreadable. `parse_bf` returns
