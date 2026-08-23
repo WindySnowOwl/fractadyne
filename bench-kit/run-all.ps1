@@ -4,7 +4,7 @@
 #   powershell -ExecutionPolicy Bypass -File run-all.ps1 [-Reps 2] [-Skip imagina,fractalshark]
 #       [-FractadyneExe path] [-Fraktaler3Exe path] [-ImaginaExe path] [-FractalSharkExe path]
 #       [-TimeoutS 7200] [-Size 3840x2160] [-ZoomSeqFrames 8] [-PythonExe python]
-#       [-F3Wisdom path]
+#       [-F3Wisdom path] [-FractalSharkCliExe path] [-FractalSharkAlgo NAME]
 
 [CmdletBinding()]
 param(
@@ -37,7 +37,24 @@ param(
     # the benchmark half of that step is bounded at 1800s, which is a long time to spend measuring
     # the same hardware again. It now persists beside the kit and is COPIED into each run folder
     # for provenance. Point -F3Wisdom at a file to reuse or share one.
-    [string]$F3Wisdom = ''
+    [string]$F3Wisdom = '',
+    # FractalShark ships a headless renderer, FractalSharkCli.exe, beside the GUI. Point at it to
+    # automate the lane; left empty it is looked for next to -FractalSharkExe.
+    [string]$FractalSharkCliExe = '',
+    # WARNING: CPU BY DEFAULT, AND THAT IS NOT A PREFERENCE. In FractalShark 0.532 every GPU
+    # render algorithm returns an EMPTY image headlessly: each pixel comes back with iteration
+    # count 1, the PNG is a single flat colour, and the exit status is 0. The CLI says so itself
+    # on the --console path ("all exterior pixels have the same iteration count 1"), and its
+    # stderr carries "OpenGL context creation FAILED, no rendering will occur" - the GPU results
+    # never reach the image. Upstream CI smoke-tests Cpu64 only, so it does not see this.
+    # AutoSelect picks a GPU algorithm, so the obvious invocation is silently broken.
+    #
+    # The CPU algorithms render correctly at shallow and mid depth - verified 1e6 through 1e27 -
+    # but ALSO come back blank on the deeper corpus locations (5.07e27, 6.6e43, 1.2e148, 1.47e77,
+    # 4.6e1105), and that is independent of how many digits of centre they are given (40, 60, 100
+    # and 196 all blank). So this lane produces real numbers for the shallow scenes and honest
+    # DNF-blank rows for the rest. That is the point of the guard: never a TIME without an IMAGE.
+    [string]$FractalSharkAlgo = 'Cpu64PerturbedBLAV2HDR'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,6 +76,12 @@ $have = @{
     imagina      = ($ImaginaExe -and (Test-Path $ImaginaExe))
     fractalshark = ($FractalSharkExe -and (Test-Path $FractalSharkExe))
 }
+# The headless binary sits beside the GUI in the release zip.
+if (-not $FractalSharkCliExe -and $FractalSharkExe) {
+    $cand = Join-Path (Split-Path -Parent $FractalSharkExe) 'FractalSharkCli.exe'
+    if (Test-Path $cand) { $FractalSharkCliExe = $cand }
+}
+$have += @{ fractalsharkcli = ($FractalSharkCliExe -and (Test-Path $FractalSharkCliExe)) }
 # The sequence lane needs Python and at least one automated renderer to compare against.
 if (-not $PythonExe) {
     $py = Get-Command python -ErrorAction SilentlyContinue
@@ -69,16 +92,20 @@ $have += @{
     zoomseq = ($ZoomSeqFrames -gt 0 -and $PythonExe -and (Test-Path $zsScript) -and ($have.fractadyne -or $have.fraktaler3))
 }
 foreach ($k in $Skip) { $have[$k.ToLower()] = $false }
-# FractalShark is CUDA: without an NVIDIA GPU the lane is N/A, not a failure.
+# FractalShark's GUI lane is CUDA: without an NVIDIA GPU it is N/A, not a failure. The CLI lane
+# runs a CPU algorithm (see -FractalSharkAlgo) and is NOT gated on the GPU.
 $fsNa = $false
 if ($have.fractalshark) {
     $nv = Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'NVIDIA' }
     if (-not $nv) {
-        Write-Host 'FractalShark lane: no NVIDIA GPU detected - recording N/A.'
+        Write-Host 'FractalShark GUI lane: no NVIDIA GPU detected - recording N/A.'
         $have.fractalshark = $false
         $fsNa = $true
     }
 }
+# The automated CLI lane supersedes the assisted one when it is available: transcription is for
+# renderers with no headless mode, and this one has had a headless mode all along.
+if ($have.fractalsharkcli) { $have.fractalshark = $false; $fsNa = $false }
 
 # ---- results folder ----
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -182,6 +209,50 @@ if ($have.fraktaler3) {
             $argLine = ('-w "{0}" -b "{1}"' -f $wisdom, $toml)
             $r = Invoke-TimedRender $Fraktaler3Exe $argLine $TimeoutS $outDir
             Write-Result $csv 'fraktaler3' $s.slug $rep $r.status $r.wall_s '' ''
+        }
+    }
+}
+
+# ---- lane: FractalShark (automated, via FractalSharkCli) ----
+# WARNING: read the algorithm note on -FractalSharkAlgo before changing it. Every GPU algorithm
+# returns a BLANK image headlessly in 0.532, at exit status 0, so this lane checks that a render
+# is actually a PICTURE before it records a TIME. What it measures is FractalShark's CPU path,
+# which must be said wherever the number appears: it is not what the app is for.
+if ($have.fractalsharkcli) {
+    Write-Host ('FractalShark: automated via ' + (Split-Path $FractalSharkCliExe -Leaf) + ', algorithm ' + $FractalSharkAlgo)
+    $wh = $Size -split 'x'
+    foreach ($rep in 1..$Reps) {
+        foreach ($s in $sceneRows) {
+            $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
+            # The magnification is a STRING, never a number: 10^1105.79 is +inf in double and the
+            # corpus goes there. FractalSharkCli accepts a fractional exponent (verified), and its
+            # zoom convention is Kalles Fraktaler's - the same one we and Fraktaler-3 use. That was
+            # CALIBRATED against a known scene here, not assumed; a 4/3 alternative scored far worse.
+            $zoom = '1e' + $s.mag_log10
+            # WARNING: the output name may not be the one you pass. FractalSharkCli strips the
+            # final extension and re-appends .png only when what remains has no dot, so
+            # "fs-21-m43-spar-1e27.7.png" lands as "fs-21-m43-spar-1e27.7" with no extension - and
+            # three of our slugs contain dots. Hand it a dot-free stem; let it add the extension.
+            $stem = Join-Path $outDir ('fs-' + ($s.slug -replace '\.', 'p'))
+            $png = $stem + '.png'
+            # SAMPLING PARITY, restated rather than inherited: one sample per pixel, like every
+            # other lane. This is the field that was silently 4x for Fraktaler-3 in every run this
+            # kit ever published.
+            $argLine = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}" --quiet' -f `
+                        $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem)
+            $r = Invoke-TimedRender $FractalSharkCliExe $argLine $TimeoutS $outDir
+            $note = 'CPU path; its GPU algorithms render blank headlessly in 0.532'
+            $status = $r.status
+            if ($status -eq 'ok') {
+                if (-not (Test-Path $png)) {
+                    $status = 'DNF-no-output'
+                    $note = 'exit 0 but no PNG at the expected path'
+                } elseif (-not (Test-RenderHasStructure $png)) {
+                    $status = 'DNF-blank'
+                    $note = 'exit 0 but the image is uniform - a time here would be meaningless'
+                }
+            }
+            Write-Result $csv 'fractalshark' $s.slug $rep $status $r.wall_s '' $note
         }
     }
 }

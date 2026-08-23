@@ -64,6 +64,36 @@ function Write-Result($csvPath, $renderer, $scene, $rep, $status, $wallS, $repor
     Write-Host ('  {0,-13} {1,-18} rep{2}  {3,-12} wall={4,-8} reported={5}' -f $renderer, $scene, $rep, $status, $wallS, $reportedS)
 }
 
+# Is this render actually a picture, or a flat field? A renderer that writes a uniform image and
+# exits 0 is the most expensive kind of wrong: this kit once published "144x faster than
+# Fraktaler-3" for a frame that was entirely blank. FractalSharkCli 0.532 does exactly that for
+# every GPU algorithm in headless mode, so no lane may record a TIME without first checking there
+# is an IMAGE. Samples a grid rather than every pixel: a flat image is flat everywhere.
+function Test-RenderHasStructure($path) {
+    if (-not (Test-Path $path)) { return $false }
+    try {
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        $bmp = [System.Drawing.Bitmap]::FromFile((Resolve-Path $path).Path)
+        try {
+            $first = $null
+            for ($i = 0; $i -lt 32; $i++) {
+                for ($j = 0; $j -lt 32; $j++) {
+                    $x = [int](($bmp.Width  - 1) * $i / 31)
+                    $y = [int](($bmp.Height - 1) * $j / 31)
+                    $c = $bmp.GetPixel($x, $y).ToArgb()
+                    if ($null -eq $first) { $first = $c }
+                    elseif ($c -ne $first) { return $true }
+                }
+            }
+            return $false
+        } finally { $bmp.Dispose() }
+    } catch {
+        # Unreadable is not the same as flat. Say so rather than silently passing or failing.
+        Write-Host ("  (could not inspect " + (Split-Path $path -Leaf) + ": " + $_.Exception.Message + ")")
+        return $true
+    }
+}
+
 # System facts for the results header: honest hardware disclosure or the numbers mean nothing.
 function Write-SysInfo($path) {
     $lines = @()

@@ -110,26 +110,26 @@ most editors; sections are the `##` headings the items live under.
 | Numeric egress (P2, §3.11 absent) — iteration grids, orbits, ray data as CSV/NumPy via the … | Proposed feature set — reconciled backlog (2026-08-06) | 5677 |
 | Auto-stretch (P2, §4.5 absent) — unskew sheared deep locations from iteration histograms … | Proposed feature set — reconciled backlog (2026-08-06) | 5682 |
 | `.kfr` export / `.kfb` support (§4.2 gap) — `.kfr` import ships (hardened + fuzzed); … | Proposed feature set — reconciled backlog (2026-08-06) | 5684 |
-| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 5920 |
-| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 5933 |
-| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 5938 |
-| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 5942 |
-| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 5944 |
-| Periodic references for nucleus-centred views — the autopilot/NR-zoom deliberately … | Performance & throughput (M7) | 5961 |
-| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 5969 |
-| Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 5974 |
-| Level 2 groundwork: bignum backend benchmark — cheap and decisive: bench astro-float … | Performance & throughput (M7) | 5977 |
-| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 5983 |
-| Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 5989 |
-| By-frame render farm = a documented script, not a subsystem. Frames are independent and … | Performance & throughput (M7) | 6000 |
-| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 6034 |
-| Shippable reference files — the head node computes the sequence reference once and … | Performance & throughput (M7) | 6037 |
-| Distributed normalize coherence — per-machine `--normalize` ranges flicker at shard … | Performance & throughput (M7) | 6043 |
-| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 6051 |
-| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 6083 |
-| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 6180 |
-| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 6193 |
-| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 6196 |
+| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 5964 |
+| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 5977 |
+| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 5982 |
+| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 5986 |
+| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 5988 |
+| Periodic references for nucleus-centred views — the autopilot/NR-zoom deliberately … | Performance & throughput (M7) | 6005 |
+| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 6013 |
+| Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 6018 |
+| Level 2 groundwork: bignum backend benchmark — cheap and decisive: bench astro-float … | Performance & throughput (M7) | 6021 |
+| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 6027 |
+| Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 6033 |
+| By-frame render farm = a documented script, not a subsystem. Frames are independent and … | Performance & throughput (M7) | 6044 |
+| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 6078 |
+| Shippable reference files — the head node computes the sequence reference once and … | Performance & throughput (M7) | 6081 |
+| Distributed normalize coherence — per-machine `--normalize` ranges flicker at shard … | Performance & throughput (M7) | 6087 |
+| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 6095 |
+| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 6127 |
+| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 6224 |
+| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 6237 |
+| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 6240 |
 <!-- TODO-INDEX:END -->
 
 ## ▶ Offline render path: the fixed cost in the shallow/mid band (2026-08-21)
@@ -5873,6 +5873,50 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   ⚠**Variance**: a 3 s measurement is short. Two consecutive runs gave 8.19× and 6.46× (2.8 s vs
   3.6 s sequence, identical 2.6 s single) — quote the range, or raise `--frames` until the
   sequence is tens of seconds, before publishing a figure to one decimal.
+
+  ✅⭐**FRACTALSHARK IS AUTOMATED NOW (2026-08-23, user ask) — and its headless CLI is much more
+  limited than it looks.** The release ships `FractalSharkCli.exe` beside the GUI, so the lane no
+  longer transcribes: `run-all.ps1` finds it next to `-FractalSharkExe` (or `-FractalSharkCliExe`),
+  drives it per scene, and supersedes the assisted prompt. Usage established by interrogating the
+  binary, not by reading about it:
+
+  * **Zoom convention CALIBRATED, not assumed**: `--zoom` is the Kalles Fraktaler magnification,
+    the same one we and F3 use. Rendered scene 03 at ×1, ×4/3 and ×3/4 and compared interior masks
+    against our corpus render — IoU 0.842 / 0.691 / 0.536, and a 0.9/1.0/1.1 sweep confirms 1.0 is
+    the optimum. Pass the magnitude as a STRING (`1e<mag_log10>`): 10^1105.79 is +inf in double,
+    and the CLI accepts a fractional exponent.
+  * ⚠**The output filename is not the one you pass.** It strips the final extension and re-appends
+    `.png` only when what remains has no dot, so `fs-21-m43-spar-1e27.7.png` lands as
+    `fs-21-m43-spar-1e27.7` — and three corpus slugs contain dots. The lane passes a dot-free stem
+    (`.` → `p`) and lets the CLI add the extension.
+  * ✅Its argument parser is HONEST: bad values exit 2 with a message (it caught a stray `
+` from
+    my own CRLF test file). That is the property our `--zoom` lacked until today.
+
+  🔴⭐⭐**BUT: EVERY GPU ALGORITHM RENDERS BLANK HEADLESSLY (0.532), AT EXIT 0.** Each pixel comes
+  back with iteration count 1; the PNG is one flat colour. The CLI admits it on `--console`
+  ("all exterior pixels have the same iteration count 1") and stderr carries "OpenGL context
+  creation FAILED, no rendering will occur" — the GPU results never reach the image. **`AutoSelect`
+  picks a GPU algorithm, so the obvious invocation is silently broken**, and upstream CI
+  smoke-tests `Cpu64` only, so it never sees this. CUDA is present and fine (RTX 3080, driver
+  596.21). ⚠The CPU algorithms render correctly 1e6–1e27 but ALSO come back blank on the deeper
+  corpus locations (5.07e27, 6.6e43, 1.2e148, 1.47e77, 4.6e1105) — independent of centre
+  precision (40/60/100/196 digits all blank). So the lane yields real numbers for 03 and 04 and
+  honest `DNF-blank` for the other eight, which is what it did on a full 10-scene run.
+
+  ⭐**Every FractalShark row is checked for STRUCTURE before a time is recorded**
+  (`Test-RenderHasStructure`, bench-lib.ps1). This kit once published "144× faster than F3" for an
+  empty frame; a lane that can silently produce blank images must never report a bare wall time.
+  ⚠**Its CPU path against another renderer's GPU path is not a like-for-like claim about the app**
+  — FractalShark is a CUDA renderer. Say which path produced the number.
+
+  ⛔⭐**MY OWN MEASUREMENT WAS WRONG FIRST TIME, AND IT INVERTED THE CONCLUSION.** I judged
+  blankness with `numpy.std()` over the flattened RGB array, which includes the CHANNEL spread of
+  a UNIFORM colour: a solid (117,0,0) field scores std 55 and reads as "has structure". On that
+  metric I concluded the CPU path covered the whole corpus to 4.6e1105 and wrote it into the
+  script. The correct test is spatial — distinct colours / modal fraction — and it says those
+  renders were flat all along. ⭐**A blankness test must measure VARIATION ACROSS PIXELS, never
+  variance across channels.**
 
   **Remaining to close**: ②validate Imagina + FractalShark actually import our `.kfr`
   (operator-assisted — needs the user at the keyboard; DNF instructions in place but untested);

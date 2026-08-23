@@ -7,7 +7,7 @@ A reproducible head-to-head of deep-zoom Mandelbrot renderers on **your** hardwa
 | **Fractadyne** | automated | GPU (wgpu: Vulkan/DX12/Metal/GL) | the app this kit ships with |
 | **Fraktaler-3** | automated | CPU (OpenMP, BLA + rebasing) | binary + source included (AGPL-3.0) |
 | **Imagina** | operator-assisted | CPU (MipLA) | no headless mode; you transcribe its reported time |
-| **FractalShark** | operator-assisted | GPU (CUDA) | **NVIDIA only**; recorded N/A elsewhere |
+| **FractalShark** | automated (CPU path) | GPU (CUDA) | headless CLI renders only its CPU algorithms - see below |
 
 Ten single-frame scenes from Fractadyne's cross-validated corpus (each verified pixel-for-pixel
 against Fraktaler-3), spanning 1e6× to 4.6e1105× magnification, plus a **zoom sequence** lane
@@ -115,12 +115,36 @@ benchmark that doesn't say which latest it measured is not reproducible.
    `summary.md`, and `zoomseq\` when the sequence lane ran. Send the whole folder (or its zip) to feedback@fractadyne.org, or attach it
    to a GitHub issue on WindySnowOwl/fractadyne.
 
-## The assisted lanes, honestly
+## FractalShark, honestly
 
-Imagina and FractalShark have no headless render mode, so their lanes launch the app per
-scene and prompt you for the render time each one displays. That is transcription, not
-automation — type what the app shows, don't estimate. If a scene doesn't import cleanly
-(both import `.kfr`, but format drift happens), record DNF and note why in the prompt.
+FractalShark ships `FractalSharkCli.exe` beside the GUI, so this lane is automated — but what it
+can measure is narrower than it looks, and the kit says so rather than papering over it:
+
+- **Every GPU algorithm renders blank headlessly** (0.532). Each pixel comes back with iteration
+  count 1, the PNG is one flat colour, and the exit status is **0**. The CLI admits it on the
+  `--console` path ("all exterior pixels have the same iteration count 1") and its stderr says
+  "OpenGL context creation FAILED, no rendering will occur". `AutoSelect` picks a GPU algorithm,
+  so the obvious invocation is silently broken. Upstream CI smoke-tests `Cpu64` only.
+- **The CPU algorithms work at shallow and mid depth** — verified 1e6 through 1e27 — and come back
+  blank on the deeper corpus locations, regardless of how many digits of centre they are given
+  (40, 60, 100 and 196 all blank). Expect real numbers for the shallow scenes, `DNF-blank` for the
+  rest.
+- Because of that, **no FractalShark row records a time without a picture**: every render is
+  checked for structure first, and a flat image becomes `DNF-blank`. This kit once published
+  "144x faster than Fraktaler-3" for a frame that was entirely empty; never again.
+
+Comparing FractalShark's CPU path against another renderer's GPU path is not a like-for-like
+statement about the app, which is a CUDA renderer. Say which path produced the number.
+
+For its GPU figures, run the GUI by hand and transcribe them: pass `-FractalSharkExe` with no CLI
+beside it and the kit falls back to the assisted prompt.
+
+## The assisted lane, honestly
+
+Imagina has no headless render mode, so its lane launches the app per scene and prompts you for
+the render time it displays. That is transcription, not automation — type what the app shows,
+don't estimate. If a scene doesn't import cleanly (it imports `.kfr`, but format drift happens),
+record DNF and note why in the prompt.
 
 ## Licenses
 
