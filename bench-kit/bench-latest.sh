@@ -233,7 +233,13 @@ while IFS=, read -r id slug mag_log10 iterations normalize; do
         esac
     fi
     SCENES+=("$id,$slug,$mag_log10,$iterations,$normalize")
-done <"$KIT/scenes.csv"
+# scenes.csv is authored and shipped from Windows, so it arrives CRLF, and `read` leaves the
+# trailing \r on the LAST field of every row. That made `normalize` the string "1\r", which is
+# not "1", so `--normalize` was silently dropped for exactly the three scenes that need it
+# (14, 17, 35) -- a different picture AND a different time, on Linux only, reported as success.
+# kfr_field() already strips \r for this reason; this reader did not. Strip once, here, so every
+# field downstream is clean rather than only the one someone remembered.
+done < <(tr -d '\r' <"$KIT/scenes.csv")
 [ "${#SCENES[@]}" -gt 0 ] || { echo "ERROR: --scenes matched nothing in scenes.csv"; exit 1; }
 
 step "Lanes: fractadyne=$([ -n "$FRACTADYNE_EXE" ] && echo yes || echo no) fraktaler3=$([ -n "$FRAKTALER3_EXE" ] && echo yes || echo no) imagina=NA-windows-only fractalshark=$([ -n "$FRACTALSHARK_EXE" ] && echo assisted || echo no)"
