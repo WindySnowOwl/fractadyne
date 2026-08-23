@@ -49,7 +49,8 @@ in the git history.
   in its README, but only rewrote the image SIZE when it copied the scene — so every published
   number had one renderer sampling four times as hard as the other. It now restates the sample
   count too, everywhere a scene file is written. **Previously published comparisons should be
-  treated as void until re-measured.** This is the second defect of exactly this shape (the first
+  treated as void until re-measured.** Re-measured at two reps on 2026-08-23: the corrected
+  picture holds. This is the second defect of exactly this shape (the first
   was resolution), and the rule it teaches is that a correctness fixture is not a benchmark input.
 
 - **A zoom sequence is now part of the benchmark** (beta.135) — every other scene in the kit is a
