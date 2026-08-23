@@ -265,10 +265,14 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
         let two = |name: &str| args.iter().position(|a| a == name).and_then(|i| Some((args.get(i + 1)?, args.get(i + 2)?)));
         let (cx, cy) = two("--center")
-            .and_then(|(x, y)| Some((fc::parse_bf(x)?, fc::parse_bf(y)?)))
+            .map(|(x, y)| crate::arg_center("--center", x, y))
             .unwrap_or((fc::BigFloat::from_f64(-0.5, 64), fc::BigFloat::from_f64(0.0, 64)));
-        let log2mag = val("--zoom-log2").and_then(|s| s.parse::<f64>().ok()).unwrap_or(133.0);
-        let max_iter = val("--iter").and_then(|s| s.parse::<u32>().ok()).unwrap_or(60_000);
+        let log2mag = val("--zoom-log2")
+            .map(|s| crate::arg_parse::<f64>("--zoom-log2", s, "a number"))
+            .unwrap_or(133.0);
+        let max_iter = val("--iter")
+            .map(|s| crate::arg_parse::<u32>("--iter", s, "a whole number"))
+            .unwrap_or(60_000);
         let p = fc::precision_for_octaves(log2mag.ceil().max(0.0) as u64);
         let mut vp = fc::Viewport::new(1000.0, 1000.0);
         vp.set_center_log2mag(cx, cy, log2mag);
@@ -319,16 +323,26 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
                 .position(|a| a == name)
                 .and_then(|i| Some((args.get(i + 1)?, args.get(i + 2)?)))
         };
-        let formula = val("--fractal")
-            .and_then(|s| FractalKind::from_name(s))
-            .map(|k| k.formula_id())
-            .unwrap_or(0);
-        let center = two("--center")
-            .and_then(|(x, y)| Some([fractadyne_core::parse_bf(x)?, fractadyne_core::parse_bf(y)?]))
-            .unwrap_or([
+        let formula = match val("--fractal") {
+            None => 0,
+            Some(name) => match FractalKind::from_name(name) {
+                Some(k) => k.formula_id(),
+                None => {
+                    eprintln!("fractadyne: --fractal: unknown family \"{name}\".");
+                    crate::exit(2)
+                }
+            },
+        };
+        let center = match two("--center") {
+            Some((x, y)) => {
+                let (cx, cy) = crate::arg_center("--center", x, y);
+                [cx, cy]
+            }
+            None => [
                 fractadyne_core::BigFloat::from_f64(-0.5, 64),
                 fractadyne_core::BigFloat::from_f64(0.0, 64),
-            ]);
+            ],
+        };
         // Same parser as `--render`, and for the same reason: a bare `f64::parse` with
         // `unwrap_or(1.0)` swallowed "1.0e23.9" (a fractional exponent is legal notation and is
         // what a zoom ladder produces) and searched at 1x instead, printing a confident nucleus
@@ -500,15 +514,42 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
                 .position(|a| a == name)
                 .and_then(|j| Some((args.get(j + 1)?, args.get(j + 2)?)))
         };
-        let center = two("--center")
-            .and_then(|(x, y)| Some([fractadyne_core::parse_bf(x)?, fractadyne_core::parse_bf(y)?]))
-            .unwrap_or([
+        // This mode is a CORRECTNESS ORACLE: it decides whether Fraktaler-3 and our independent
+        // bignum dwell computation agree. A silently defaulted coordinate or magnification here
+        // does not produce a wrong picture, it produces a wrong VERDICT — and one that reads as
+        // "the other renderer disagrees with us" rather than "you mistyped a flag".
+        let center = match two("--center") {
+            Some((x, y)) => {
+                let (cx, cy) = crate::arg_center("--center", x, y);
+                [cx, cy]
+            }
+            None => [
                 fractadyne_core::BigFloat::from_f64(-0.5, 64),
                 fractadyne_core::BigFloat::from_f64(0.0, 64),
-            ]);
-        let f3_zoom = val("--zoom-f3").and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
-        let max_iter = val("--iter").and_then(|s| s.parse::<u32>().ok()).unwrap_or(10_000);
-        let er = val("--er").and_then(|s| s.parse::<f64>().ok()).unwrap_or(256.0);
+            ],
+        };
+        let f3_zoom = val("--zoom-f3")
+            .map(|s| {
+                let z = crate::arg_parse::<f64>("--zoom-f3", s, "a number");
+                // `f64::from_str` returns +inf for an overflowing literal instead of an error,
+                // and the corpus's deepest locations are far past that. `spacing` would be 0 and
+                // every sample would land on the same coordinate.
+                if z.is_finite() && z > 0.0 {
+                    z
+                } else {
+                    eprintln!(
+                        "fractadyne: --zoom-f3: \"{s}\" is not a finite positive magnification                          (this comparison works in f64, so it cannot reach past ~1e308x)."
+                    );
+                    crate::exit(2)
+                }
+            })
+            .unwrap_or(1.0);
+        let max_iter = val("--iter")
+            .map(|s| crate::arg_parse::<u32>("--iter", s, "a whole number"))
+            .unwrap_or(10_000);
+        let er = val("--er")
+            .map(|s| crate::arg_parse::<f64>("--er", s, "a number"))
+            .unwrap_or(256.0);
         let bailout2 = er * er;
         // Our magnification convention (height 3) vs F3's (height 4): mag = 0.75·zoom.
         let our_mag = 0.75 * f3_zoom;

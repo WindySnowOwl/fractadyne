@@ -234,8 +234,10 @@ impl FractadyneApp {
             self.invalidate_refs();
 
             let mut vp = Viewport::new(r.size as f64, r.size as f64);
-            let cx = fractadyne_core::parse_bf(&r.cx).unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(-0.5, 64));
-            let cy = fractadyne_core::parse_bf(&r.cy).unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, 64));
+            // A region file that names a coordinate we cannot read used to profile the DEFAULT
+            // centre under that region's name, so the report attributed timings from the main
+            // cardioid to a deep location. Fatal instead.
+            let (cx, cy) = crate::arg_center(&format!("--regions [[region]] \"{}\"", r.name), &r.cx, &r.cy);
             vp.set_center_log2mag(cx, cy, r.zoom_log2);
 
             // Build the request once — this records reference/series timings in `self.prof`.
@@ -807,10 +809,7 @@ impl FractadyneApp {
             .frametest_center
             .clone()
             .unwrap_or_else(|| (def_x.to_string(), def_y.to_string()));
-        let cx = fractadyne_core::parse_bf(&sx)
-            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(-0.5, 64));
-        let cy = fractadyne_core::parse_bf(&sy)
-            .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, 64));
+        let (cx, cy) = crate::arg_center("--center", &sx, &sy);
         self.set_fractal(FractalKind::Mandelbrot);
         self.julia_mode = false;
         self.dual = false;

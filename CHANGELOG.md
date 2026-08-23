@@ -16,6 +16,19 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **A mistyped option is now an error instead of a different picture** (beta.135) — fixing `--zoom`
+  (below) turned out to be one instance of a pattern repeated across the command line: an option
+  whose value could not be read was quietly replaced by a default, and the program then did the
+  full expensive job and reported success. The sharpest case was `--center`, where a single stray
+  character in a pasted coordinate — or simply forgetting the second number — threw the whole
+  location away and rendered the default view at the depth you asked for, which at deep zoom is a
+  plausible-looking solid frame. `--size`, `--iter`, `--ss`, `--zoom-log2`, `--fractal`,
+  `--method`, `--trap`, `--palette` and the tour renderer's `--fps`, `--height` and sharding
+  options behaved the same way, as did the coordinates in the headless comparison and profiling
+  modes — including the cross-renderer check, where a bad value produced a wrong VERDICT about
+  whether two renderers agree rather than a wrong picture. All of them now say what they could
+  not read and stop. Leaving an option out still means what it always did: use the default.
+
 - **Benchmark kit: Fraktaler-3 had been given four times the sampling work** (beta.135) — the kit
   compares renderers on scene files borrowed from the correctness corpus, and those files carry
   the corpus's own antialiasing setting: four samples per pixel for Fraktaler-3, to pair with the

@@ -1712,6 +1712,55 @@ pub(crate) fn exit(code: i32) -> ! {
     std::process::exit(code)
 }
 
+/// Parse the value of an option that WAS SUPPLIED, or exit saying so.
+///
+/// Replaces the `val("--x").and_then(|s| s.parse::<T>().ok())` idiom, which conflates two things
+/// that are not alike: the option is ABSENT (fall back to the default — correct, and still what
+/// happens, because the caller only reaches here inside `Some`), and the option is PRESENT with a
+/// value we cannot read (fall back to the default — a bug, because the program then does real,
+/// expensive, wrong work and exits 0). `--zoom` shipped in the second state long enough for the
+/// benchmark kit to measure a whole-set frame against a deep one and report a ratio; the only
+/// reason it was ever noticed is that somebody looked at the picture. Every option that steers a
+/// render or a comparison goes through here now, so an unreadable value is a message, not a
+/// plausible-looking result.
+fn arg_parse<T: std::str::FromStr>(name: &str, s: &str, expect: &str) -> T {
+    match s.parse::<T>() {
+        Ok(v) => v,
+        Err(_) => {
+            eprintln!("fractadyne: {name}: cannot read \"{s}\" as {expect}.");
+            crate::exit(2)
+        }
+    }
+}
+
+/// `--size` as `WIDTH` or `WIDTHxHEIGHT`, fatal when supplied and unreadable. A silent fallback
+/// here renders at the WRONG RESOLUTION and says nothing — the exact shape of the benchmark-kit
+/// defect where one renderer was handed 1280x720 while every other lane ran 1920x1080.
+fn arg_size(name: &str, s: &str) -> (Option<u32>, Option<u32>) {
+    match parse_size(s) {
+        (None, _) => {
+            eprintln!("fractadyne: {name}: cannot read \"{s}\" as WIDTH or WIDTHxHEIGHT.");
+            crate::exit(2)
+        }
+        ok => ok,
+    }
+}
+
+/// A full-precision coordinate pair, fatal when either half is unreadable. `parse_bf` returns
+/// `None` on anything it cannot read and the `?` collapsed the PAIR, so one stray character in a
+/// pasted y ordinate threw the whole location away and rendered the fractal default centre at the
+/// requested depth — solid interior, full cost, exit 0.
+fn arg_center(name: &str, xs: &str, ys: &str) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat) {
+    let one = |t: &str| match fractadyne_core::parse_bf(t) {
+        Some(v) => v,
+        None => {
+            eprintln!("fractadyne: {name}: cannot read \"{t}\" as a decimal coordinate.");
+            crate::exit(2)
+        }
+    };
+    (one(xs), one(ys))
+}
+
 /// Group an integer string with commas every 3 digits (handles a leading `-`).
 fn commas(s: &str) -> String {
     let neg = s.starts_with('-');
@@ -3119,12 +3168,25 @@ impl FractadyneApp {
         // (see TourRenderConfig::resolve), so a tour renders as authored with no flags at all.
         // --size accepts a bare width (`1920`) or `WIDTHxHEIGHT` (`5120x2160`); explicit --height
         // overrides the height from --size.
-        let (size_w, size_h) = val("--size").map(|s| parse_size(s)).unwrap_or((None, None));
+        // Unreadable is FATAL, absent is not — the same rule `--order` below already states.
+        // A tour is the long job: silently rendering four hours of frames at the script's size
+        // because the `--size` you passed was mistyped is the costliest version of this defect.
+        let (size_w, size_h) = val("--size").map(|s| arg_size("--size", s)).unwrap_or((None, None));
         let tour_cli = scripting::TourRenderConfig {
-            fps: val("--fps").and_then(|s| s.parse::<f64>().ok()).filter(|f| *f > 0.0),
+            fps: val("--fps").map(|s| {
+                let f = arg_parse::<f64>("--fps", s, "a number");
+                if f > 0.0 {
+                    f
+                } else {
+                    eprintln!("fractadyne: --fps must be greater than 0 (got \"{s}\").");
+                    crate::exit(2)
+                }
+            }),
             width: size_w,
-            height: val("--height").and_then(|s| s.parse::<u32>().ok()).or(size_h),
-            ss: val("--ss").and_then(|s| s.parse::<u32>().ok()),
+            height: val("--height")
+                .map(|s| arg_parse::<u32>("--height", s, "a whole number"))
+                .or(size_h),
+            ss: val("--ss").map(|s| arg_parse::<u32>("--ss", s, "a whole number")),
             out: out_path.clone(),
             prefix: val("--prefix").cloned(),
             // --mp4 [PATH]: presence enables ffmpeg encoding after the render. A following
@@ -3135,8 +3197,13 @@ impl FractadyneApp {
             // --segment NAME: render only that chapter, keeping the global frame numbering.
             segment: val("--segment").cloned(),
             // --segments N --segment-index K: shard the timeline for multi-machine rendering.
-            segments: val("--segments").and_then(|s| s.parse::<u32>().ok()),
-            segment_index: val("--segment-index").and_then(|s| s.parse::<u32>().ok()),
+            // Sharding is the case where a silent default corrupts a DISTRIBUTED job: an
+            // unreadable --segments used to mean "no sharding", so one node quietly rendered the
+            // WHOLE timeline, and an unreadable --segment-index meant shard 0, so two nodes
+            // rendered the same frames and the rest were never rendered at all.
+            segments: val("--segments").map(|s| arg_parse::<u32>("--segments", s, "a whole number")),
+            segment_index: val("--segment-index")
+                .map(|s| arg_parse::<u32>("--segment-index", s, "a whole number")),
             // --dry-run: print the resolved frame plan and exit without rendering.
             dry_run: args.iter().any(|a| a == "--dry-run"),
             // --order sequential|progressive: which ORDER frames render in (indices unchanged).
@@ -3686,19 +3753,26 @@ impl FractadyneApp {
                 .position(|a| a == name)
                 .and_then(|i| Some((args.get(i + 1)?, args.get(i + 2)?)))
         };
-        if let Some(k) = val("--fractal").and_then(|s| FractalKind::from_name(s)) {
-            self.fractal = k;
+        if let Some(name) = val("--fractal") {
+            match FractalKind::from_name(name) {
+                Some(k) => self.fractal = k,
+                None => {
+                    eprintln!("fractadyne: --fractal: unknown family \"{name}\".");
+                    crate::exit(2)
+                }
+            }
         }
         self.julia_mode = self.fractal.supports_julia() && args.iter().any(|a| a == "--julia");
         if let Some((re, im)) = two("--julia-c") {
-            if let (Ok(r), Ok(i)) = (re.parse(), im.parse()) {
-                self.julia_c = (r, i);
-            }
+            self.julia_c = (
+                arg_parse::<f64>("--julia-c", re, "a number"),
+                arg_parse::<f64>("--julia-c", im, "a number"),
+            );
         }
         // --size: a bare width (`1920`) or `WIDTHxHEIGHT` (`5120x2160`). Set the viewport dimensions
         // *before* the center/zoom below — magnification is defined relative to the viewport height —
         // and drive the export width. A bare width keeps the current aspect.
-        let (size_w, size_h) = val("--size").map(|s| parse_size(s)).unwrap_or((None, None));
+        let (size_w, size_h) = val("--size").map(|s| arg_size("--size", s)).unwrap_or((None, None));
         if let Some(w) = size_w {
             let w = w.clamp(16, 16384);
             self.export.width = w;
@@ -3711,9 +3785,7 @@ impl FractadyneApp {
             self.viewport.height_px = h as f64;
         }
         // Center: explicit (full precision) or the fractal's default.
-        let center = two("--center").and_then(|(xs, ys)| {
-            Some((fractadyne_core::parse_bf(xs)?, fractadyne_core::parse_bf(ys)?))
-        });
+        let center = two("--center").map(|(xs, ys)| arg_center("--center", xs, ys));
         let (cx, cy) = center.unwrap_or_else(|| {
             let (dx, dy) = self.fractal.default_center();
             (
@@ -3731,7 +3803,7 @@ impl FractadyneApp {
         // to +inf, which is the blank-frame class fixed in beta.125. A value we cannot read is
         // now FATAL: the alternative is a render that looks perfectly fine and is of somewhere
         // else entirely.
-        if let Some(l) = val("--zoom-log2").and_then(|s| s.parse::<f64>().ok()) {
+        if let Some(l) = val("--zoom-log2").map(|s| arg_parse::<f64>("--zoom-log2", s, "a number")) {
             self.viewport.set_center_log2mag(cx, cy, l);
         } else if let Some(z) = val("--zoom") {
             match parse_zoom_to_log2(z) {
@@ -3748,17 +3820,17 @@ impl FractadyneApp {
         } else {
             self.viewport.set_center_mag(cx, cy, 1.0);
         }
-        if let Some(ss) = val("--ss").and_then(|s| s.parse::<u32>().ok()) {
+        if let Some(ss) = val("--ss").map(|s| arg_parse::<u32>("--ss", s, "a whole number")) {
             self.export.ss = ss.clamp(1, 8);
         }
-        if let Some(it) = val("--iter").and_then(|s| s.parse::<u32>().ok()) {
+        if let Some(it) = val("--iter").map(|s| arg_parse::<u32>("--iter", s, "a whole number")) {
             // An explicit CLI count is honored (the validation corpus renders fixed-iteration
             // frames up to the millions); the ceiling only guards against absurd typos — the real
             // practical bound is the reference-build time, which is the caller's choice to spend.
             self.render_cfg.max_iter = it.clamp(16, 100_000_000);
             self.render_cfg.auto_iter = false;
         }
-        if let Some(p) = val("--palette").and_then(|s| s.parse::<usize>().ok()) {
+        if let Some(p) = val("--palette").map(|s| arg_parse::<usize>("--palette", s, "a whole number")) {
             self.coloring.palette_idx = p.min(fractadyne_color::PRESETS.len() - 1);
             // A preset overrides any persisted binary/duotone/custom palette.
             self.coloring.use_binary = false;
@@ -3773,20 +3845,36 @@ impl FractadyneApp {
         if args.iter().any(|a| a == "--light") {
             self.effects.light = true;
         }
-        if let Some(a) = val("--light-angle").and_then(|s| s.parse::<f32>().ok()) {
+        if let Some(a) =
+            val("--light-angle").map(|s| arg_parse::<f32>("--light-angle", s, "a number"))
+        {
             self.effects.light_angle = a;
         }
         if args.iter().any(|a| a == "--de") {
             self.effects.de = true;
         }
+        // `from_key` ends in `unwrap_or_default()`, so an unknown key silently colours Smooth.
+        // Round-trip the key to tell "you asked for smooth" from "we could not read that".
         if let Some(m) = val("--method") {
-            self.coloring.color_method = ColorMethod::from_key(m);
+            let picked = ColorMethod::from_key(m);
+            if picked.key() != m.as_str() {
+                eprintln!("fractadyne: --method: unknown colouring \"{m}\".");
+                crate::exit(2)
+            }
+            self.coloring.color_method = picked;
         }
-        if let Some(f) = val("--stripe-freq").and_then(|s| s.parse::<f32>().ok()) {
+        if let Some(f) =
+            val("--stripe-freq").map(|s| arg_parse::<f32>("--stripe-freq", s, "a number"))
+        {
             self.coloring.stripe_freq = f.clamp(1.0, 24.0);
         }
         if let Some(t) = val("--trap") {
-            self.coloring.trap_type = TrapType::from_key(t);
+            let picked = TrapType::from_key(t);
+            if picked.key() != t.as_str() {
+                eprintln!("fractadyne: --trap: unknown orbit trap \"{t}\".");
+                crate::exit(2)
+            }
+            self.coloring.trap_type = picked;
         }
         // Output format from the file extension.
         if let Some(out) = &self.auto_render_out {
