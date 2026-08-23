@@ -188,13 +188,18 @@ if ((-not ($skipL -contains 'fractalshark')) -and -not $hasNvidia) {
 $fraktaler3Exe = ''
 $imaginaExe = ''
 $fractalSharkExe = ''
+$fractalSharkCliExe = ''
 
 if ($SkipDownload) {
     Write-Step ('Offline mode: using whatever ' + $AppsDir + ' already holds.')
     if (-not $FractadyneExe) { $FractadyneExe = Find-Exe $AppsDir '^fractadyne\.exe$' }
     $fraktaler3Exe = Find-Exe $AppsDir '^fraktaler-3.*x86_64\.exe$'
     $imaginaExe = Find-Exe $AppsDir '^Imagina.*\.exe$'
-    $fractalSharkExe = Find-Exe $AppsDir '^FractalShark.*\.exe$'
+    # ANCHOR the name. '^FractalShark.*\.exe$' also matches FractalSharkCli.exe and
+    # FractalSharkTest.exe, so which binary the lane got depended on enumeration order -- and
+    # handing the assisted lane the TEST RUNNER would look like a hung render.
+    $fractalSharkExe = Find-Exe $AppsDir '^FractalShark\.exe$'
+    $fractalSharkCliExe = Find-Exe $AppsDir '^FractalSharkCli\.exe$'
     Note-App 'fractadyne' 'offline-reuse' $AppsDir $FractadyneExe
     Note-App 'fraktaler3' 'offline-reuse' $AppsDir $fraktaler3Exe
     Note-App 'imagina' 'offline-reuse' $AppsDir $imaginaExe
@@ -265,7 +270,11 @@ if ($SkipDownload) {
             $a = Get-GithubAsset 'mattsaccount364/FractalShark' '^FractalShark-[0-9.]+\.zip$'
             $zip = Join-Path $AppsDir $a.name
             Get-File $a.url $zip
-            $fractalSharkExe = Find-Exe (Expand-Any $zip 'fractalshark') '^FractalShark.*\.exe$'
+            $fsDir = Expand-Any $zip 'fractalshark'
+            $fractalSharkExe = Find-Exe $fsDir '^FractalShark\.exe$'
+            # The headless renderer ships in the same zip; passing it explicitly is what makes the
+            # lane automated instead of a transcription prompt.
+            $fractalSharkCliExe = Find-Exe $fsDir '^FractalSharkCli\.exe$'
             if (-not $fractalSharkExe) { throw 'no FractalShark exe in the zip' }
             Note-App 'fractalshark' $a.tag $a.url $fractalSharkExe
         } catch {
@@ -284,6 +293,7 @@ if ($FractadyneExe) { $runParams.FractadyneExe = $FractadyneExe }
 if ($fraktaler3Exe) { $runParams.Fraktaler3Exe = $fraktaler3Exe }
 if ($imaginaExe) { $runParams.ImaginaExe = $imaginaExe }
 if ($fractalSharkExe) { $runParams.FractalSharkExe = $fractalSharkExe }
+if ($fractalSharkCliExe) { $runParams.FractalSharkCliExe = $fractalSharkCliExe }
 $effSkip = @($Skip)
 if (-not $imaginaExe) { $effSkip += 'imagina' }
 if ($effSkip.Count) { $runParams.Skip = [string[]]$effSkip }

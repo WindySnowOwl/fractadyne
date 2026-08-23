@@ -138,7 +138,9 @@ echo "Fractadyne bench-kit app manifest - $(date '+%Y-%m-%d %H:%M:%S')" >"$MANIF
 if [ "$SKIP_DOWNLOAD" -eq 1 ]; then
     step "Offline mode: using whatever $APPS already holds."
     [ -z "$FRACTADYNE_EXE" ] && FRACTADYNE_EXE=$(find "$APPS" -name fractadyne -type f 2>/dev/null | head -1)
-    FRACTALSHARK_EXE=$(find "$APPS" -iname 'FractalShark*' -type f ! -name '*.tar.gz' 2>/dev/null | head -1)
+    # An EXECUTABLE, by exact name: 'FractalShark*' also matches the .pdb and the .pdf that ship
+    # beside it, and head -1 would hand the lane a PDF.
+    FRACTALSHARK_EXE=$(find "$APPS" -type f \( -name 'FractalShark' -o -name 'FractalShark.exe' \) 2>/dev/null | head -1)
 else
     # Fractadyne
     if [ -n "$FRACTADYNE_EXE" ]; then

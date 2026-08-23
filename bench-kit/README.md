@@ -108,7 +108,9 @@ benchmark that doesn't say which latest it measured is not reproducible.
    - Imagina: download from https://github.com/5E-324/Imagina/releases (AGPL-3.0),
      pass `-ImaginaExe <path>`.
    - FractalShark: download from https://github.com/mattsaccount364/FractalShark/releases
-     (GPL-3.0), pass `-FractalSharkExe <path>`. Requires an NVIDIA GPU.
+     (GPL-3.0), pass `-FractalSharkExe <path>`. The lane finds `FractalSharkCli.exe` beside
+     it and runs automatically (`-FractalSharkCliExe <path>` to point elsewhere); see
+     "FractalShark, honestly" for what it can and cannot render headlessly.
 2. `powershell -ExecutionPolicy Bypass -File run-all.ps1` (add `-Reps 2` for repeats; skip
    lanes with `-Skip imagina,fractalshark`).
 3. Results land in `results\<hostname>-<timestamp>\`: `sysinfo.txt`, `results.csv`,
