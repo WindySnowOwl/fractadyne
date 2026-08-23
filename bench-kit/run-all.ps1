@@ -4,6 +4,7 @@
 #   powershell -ExecutionPolicy Bypass -File run-all.ps1 [-Reps 2] [-Skip imagina,fractalshark]
 #       [-FractadyneExe path] [-Fraktaler3Exe path] [-ImaginaExe path] [-FractalSharkExe path]
 #       [-TimeoutS 7200] [-Size 3840x2160] [-ZoomSeqFrames 8] [-PythonExe python]
+#       [-F3Wisdom path]
 
 [CmdletBinding()]
 param(
@@ -30,7 +31,13 @@ param(
     # The ladder places its rungs with 400-digit decimal arithmetic, which is why that lane is
     # Python. Without an interpreter the lane records itself as skipped; the rest of the run is
     # unaffected.
-    [string]$PythonExe = ''
+    [string]$PythonExe = '',
+    # Fraktaler-3's hardware tuning. The comment on the generator below has always said "once per
+    # machine" but the file lived in the per-run results folder, so every run re-derived it -- and
+    # the benchmark half of that step is bounded at 1800s, which is a long time to spend measuring
+    # the same hardware again. It now persists beside the kit and is COPIED into each run folder
+    # for provenance. Point -F3Wisdom at a file to reuse or share one.
+    [string]$F3Wisdom = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -131,7 +138,8 @@ if ($have.fractadyne) {
 
 # Declared out here, not inside the lane: the zoom-sequence lane below reuses the SAME tuning
 # file, and under Set-StrictMode an undefined variable is an error, not an empty string.
-$wisdom = Join-Path $outDir 'f3-wisdom.toml'
+if (-not $F3Wisdom) { $F3Wisdom = Join-Path $kit 'f3-wisdom.toml' }
+$wisdom = $F3Wisdom
 
 # ---- lane: Fraktaler-3 (automated; wisdom generated once per machine) ----
 if ($have.fraktaler3) {
@@ -147,7 +155,11 @@ if ($have.fraktaler3) {
         Write-Host ('  wisdom init: ' + $w.status + ' in ' + $w.wall_s + 's')
         $w = Invoke-TimedRender $Fraktaler3Exe ('-w "' + $wisdom + '" -B') 1800 $outDir
         Write-Host ('  wisdom benchmark: ' + $w.status + ' in ' + $w.wall_s + 's')
+    } else {
+        Write-Host ('Fraktaler-3: reusing tuning wisdom ' + $wisdom)
     }
+    # Provenance: the results folder must say which tuning produced these numbers.
+    Copy-Item $wisdom (Join-Path $outDir 'f3-wisdom.toml') -ErrorAction SilentlyContinue
     foreach ($rep in 1..$Reps) {
         foreach ($s in $sceneRows) {
             # SIZE AND SAMPLING PARITY. The scene .f3.toml is a CORRECTNESS fixture: it
@@ -236,10 +248,12 @@ if ($have.zoomseq) {
         foreach ($r in $zsRows) {
             Write-Result $csv $r.renderer $r.scene $r.rep $r.status $r.wall_s $r.reported_s $r.note
         }
-        $seq = $zsRows | Where-Object { $_.renderer -eq 'fractadyne' -and $_.scene -notlike '*-single' -and $_.status -eq 'ok' } | Select-Object -First 1
-        $one = $zsRows | Where-Object { $_.renderer -eq 'fractadyne' -and $_.scene -like '*-single' -and $_.status -eq 'ok' } | Select-Object -First 1
-        if ($seq -and $one -and [double]$seq.wall_s -gt 0) {
-            $zsAmort = [math]::Round($ZoomSeqFrames * [double]$one.wall_s / [double]$seq.wall_s, 2)
+        # zoom-seq.py WRITES the ratio; do not recompute it here. Deriving it a second time in
+        # PowerShell means two implementations of an arithmetic that has already been wrong twice
+        # (an N+1 frame count, and a denominator that assumed every rung costs the same).
+        $am = $zsRows | Where-Object { $_.scene -like '*-amortisation' -and $_.status -eq 'ok' } | Select-Object -First 1
+        if ($am -and $am.reported_s) {
+            $zsAmort = $am.reported_s
             Write-Host ('  fractadyne amortisation: ' + $zsAmort + 'x')
         }
     }
@@ -284,7 +298,7 @@ if ($zsRows.Count) {
     $md += '| Renderer | Sequence wall | Amortisation | Note |'
     $md += '|---|---|---|---|'
     foreach ($ren in 'fractadyne', 'fraktaler3') {
-        $sq = $zsRows | Where-Object { $_.renderer -eq $ren -and $_.scene -notlike '*-single' } | Select-Object -First 1
+        $sq = $zsRows | Where-Object { $_.renderer -eq $ren -and $_.scene -notlike '*-single*' -and $_.scene -notlike '*-amortisation' } | Select-Object -First 1
         if (-not $sq) { continue }
         $am = '-'
         if ($ren -eq 'fractadyne' -and $zsAmort -ne '') { $am = [string]$zsAmort + 'x' }

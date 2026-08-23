@@ -109,26 +109,26 @@ most editors; sections are the `##` headings the items live under.
 | Numeric egress (P2, §3.11 absent) — iteration grids, orbits, ray data as CSV/NumPy via the … | Proposed feature set — reconciled backlog (2026-08-06) | 5608 |
 | Auto-stretch (P2, §4.5 absent) — unskew sheared deep locations from iteration histograms … | Proposed feature set — reconciled backlog (2026-08-06) | 5613 |
 | `.kfr` export / `.kfb` support (§4.2 gap) — `.kfr` import ships (hardened + fuzzed); … | Proposed feature set — reconciled backlog (2026-08-06) | 5615 |
-| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 5782 |
-| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 5795 |
-| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 5800 |
-| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 5804 |
-| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 5806 |
-| Periodic references for nucleus-centred views — the autopilot/NR-zoom deliberately … | Performance & throughput (M7) | 5823 |
-| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 5831 |
-| Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 5836 |
-| Level 2 groundwork: bignum backend benchmark — cheap and decisive: bench astro-float … | Performance & throughput (M7) | 5839 |
-| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 5845 |
-| Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 5851 |
-| By-frame render farm = a documented script, not a subsystem. Frames are independent and … | Performance & throughput (M7) | 5862 |
-| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 5896 |
-| Shippable reference files — the head node computes the sequence reference once and … | Performance & throughput (M7) | 5899 |
-| Distributed normalize coherence — per-machine `--normalize` ranges flicker at shard … | Performance & throughput (M7) | 5905 |
-| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 5913 |
-| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 5945 |
-| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 6042 |
-| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 6055 |
-| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 6058 |
+| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 5825 |
+| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 5838 |
+| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 5843 |
+| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 5847 |
+| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 5849 |
+| Periodic references for nucleus-centred views — the autopilot/NR-zoom deliberately … | Performance & throughput (M7) | 5866 |
+| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 5874 |
+| Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 5879 |
+| Level 2 groundwork: bignum backend benchmark — cheap and decisive: bench astro-float … | Performance & throughput (M7) | 5882 |
+| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 5888 |
+| Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 5894 |
+| By-frame render farm = a documented script, not a subsystem. Frames are independent and … | Performance & throughput (M7) | 5905 |
+| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 5939 |
+| Shippable reference files — the head node computes the sequence reference once and … | Performance & throughput (M7) | 5942 |
+| Distributed normalize coherence — per-machine `--normalize` ranges flicker at shard … | Performance & throughput (M7) | 5948 |
+| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 5956 |
+| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 5988 |
+| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 6085 |
+| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 6098 |
+| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 6101 |
 <!-- TODO-INDEX:END -->
 
 ## ▶ Offline render path: the fixed cost in the shallow/mid band (2026-08-21)
@@ -5662,7 +5662,50 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   carries has to be restated by the harness; whatever is merely inherited is a silent handicap
   handed to one lane. The scene files are shared on purpose (same coordinates, same iteration
   caps) — that is exactly why the fields that are NOT coordinates must be overwritten.
-  ⚠**The 1.9×–6.8× 4K table must be re-measured before it is quoted anywhere.**
+  ✅**RE-MEASURED 2026-08-23** — see the table below; the old one is superseded, not merely suspect.
+
+  ⭐⭐**THE HONEST 4K TABLE (2026-08-23, `results/VGER-20260823-113347/`), AND IT REVERSES A
+  HEADLINE.** 3840×2160, ONE sample per pixel both lanes (verified in the artifacts: all 20 PNGs
+  3840×2160, all 10 F3 configs `subframes = 1`), F3 wisdom-benchmarked, 1 rep.
+
+  | scene | fd wall | F3 wall | faster |
+  |---|---|---|---|
+  | 03-seahorse-1e6 | 4.5 s | 10.3 s | fd 2.29× |
+  | 04-seahorse-1e12 | 3.5 s | 6.5 s | fd 1.86× |
+  | 08-deep-6.6e43 | 3.8 s | 7.0 s | fd 1.84× |
+  | 14-deep-1.2e148 | 19.0 s | 16.1 s | **F3 1.18×** |
+  | 17-deep-4.2e275 | 7.3 s | 14.7 s | fd 2.01× |
+  | 10-deep-4.6e1105 | 153.6 s | 69.9 s | **F3 2.20×** |
+  | 21-m43-spar-1e27.7 | 3.2 s | 4.0 s | fd 1.25× |
+  | 23-nucleus-p145-1e27.7 | 3.2 s | 4.0 s | fd 1.25× |
+  | 24-nucleus-p148-1e28.2 | 3.4 s | 3.8 s | fd 1.12× |
+  | 35-vger-dive-1p47e77 | 4.9 s | 11.2 s | fd 2.29× |
+
+  ⛔⭐⭐**"fractadyne owns deep and extreme" IS FALSE ONCE THE SAMPLING IS FAIR.** That claim came
+  from a table where F3 was doing 4 samples per pixel to our 1. With parity, **F3 WINS the two
+  heaviest scenes** — 1e148 by 1.18× and 1e1105 by 2.20× — and our remaining lead is 1.12×–2.29×,
+  not 1.9×–6.8×. The single-frame story is now "comparable, we lead modestly at shallow and mid
+  depth, F3 leads at the extreme". ⚠**Do not publish the old framing anywhere** (site, README,
+  forum post): it was an artefact of the handicap, and announcing it would be announcing a
+  measurement error.
+  ⚠1 rep only; the protocol asks for ≥2 and takes the fastest. Re-run with `-Reps 2` before
+  quoting these to a decimal, and note scene 10's 153.6 s is our WORST relative result and the
+  one most worth understanding (it is the only location past 1e308×, i.e. pure floatexp mode 2).
+
+  ⭐**ZOOM SEQUENCE, 40 frames, same run** (rungs 44..83 = 1e23.90→1e45.08, 4K, 30k iters): fd
+  sequence **9.7 s = 0.24 s/frame**; the SAME 40 frames one process at a time **102.1 s = 2.55
+  s/frame** ⇒ **amortisation 10.78×**. F3: 164.3 s for 40 invocations = 4.11 s/frame.
+  ⭐**Per frame in sequence we are 17× ahead of F3 (0.24 s vs 4.11 s) while being only 1.6× ahead
+  on one frame (2.55 s vs 4.11 s).** THAT is the architecture's actual claim, and it is the one
+  the single-frame table cannot see — which is the whole reason this lane exists. It is also the
+  honest counterweight to the reversal above: we lose the extreme SINGLE frame and win the dive.
+  ⚠**The denominator was wrong until 2026-08-23**: it multiplied ONE frame at the START rung by
+  the frame count, assuming every rung costs the same. The ladder descends, so that biased the
+  ratio DOWNWARD and the bias GREW with the frame count — lengthening the run to cut variance was
+  increasing its bias. It now sums the real per-rung cost (2.33..3.20 s across the 40), which is
+  what the metric always meant and makes any frame count valid, including across a mode boundary.
+  ⭐`zoom-seq.py` now WRITES the ratio into the CSV and `run-all.ps1` reads it — that arithmetic
+  had been wrong twice in two implementations.
 
   ✅**ZOOM-SEQUENCE LANE WIRED IN 2026-08-22.** `zoom-seq.py` is now a first-class lane of
   `run-all.ps1`: auto-detected (needs Python 3 — the λ-ladder places its rungs with 400-digit

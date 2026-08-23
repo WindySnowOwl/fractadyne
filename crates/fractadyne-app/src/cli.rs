@@ -538,7 +538,9 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
                     z
                 } else {
                     eprintln!(
-                        "fractadyne: --zoom-f3: \"{s}\" is not a finite positive magnification                          (this comparison works in f64, so it cannot reach past ~1e308x)."
+                        "fractadyne: --zoom-f3: \"{s}\" is not a finite positive \
+                         magnification (this comparison works in f64, so it cannot reach past \
+                         ~1e308x)."
                     );
                     crate::exit(2)
                 }

@@ -194,21 +194,53 @@ def main():
         print("  fractadyne  %-10s %8.1fs  (sequence)" % (st, wall))
         results['fractadyne'] = (st, wall)
 
-        # the SINGLE-FRAME reference for the ratio: same rung, same settings, fresh process
-        one = os.path.join(a.out, 'zoomseq-fd-single.png')
-        st1, wall1, _ = timed([a.fractadyne, '--render', '--out', one, '--size', a.size,
-                               '--center', M43_RE, M43_IM,
-                               '--zoom', zoom_str(a.start_rung),
-                               '--iter', str(a.iters), '--ss', '1'], timeout=a.timeout)
-        wr.writerow(['fractadyne', scene + '-single', 1, st1, round(wall1, 2), '', 'one frame, fresh process'])
-        print("  fractadyne  %-10s %8.1fs  (single frame)" % (st1, wall1))
+        # The DENOMINATOR: one fresh process PER RUNG, summed.
+        #
+        # This used to be a single frame at the start rung multiplied by the frame count, which
+        # silently assumed every rung costs the same. It does not: the ladder descends, and even
+        # at a fixed iteration cap the deeper rungs cost more, so the assumption biased the ratio
+        # DOWNWARD and got worse the longer the sequence ran -- i.e. exactly when you lengthen the
+        # measurement to reduce its variance, you increase its bias. Summing the real per-rung
+        # cost is the definition the metric always meant: what the same frames cost one at a time.
+        singles = []
+        ok_all = True
+        for i in range(a.frames):
+            n = a.start_rung + i
+            one = os.path.join(a.out, 'zoomseq-fd-single-%02d.png' % i)
+            st1, w1, _ = timed([a.fractadyne, '--render', '--out', one, '--size', a.size,
+                                '--center', M43_RE, M43_IM,
+                                '--zoom', zoom_str(n),
+                                '--iter', str(a.iters), '--ss', '1'], timeout=a.timeout)
+            if st1 != 'ok':
+                ok_all = False
+                print("  fractadyne  single rung %d %s" % (n, st1))
+                break
+            singles.append(w1)
+        sum_singles = sum(singles)
+        wr.writerow(['fractadyne', scene + '-singles', 1, 'ok' if ok_all else 'fail',
+                     round(sum_singles, 2), '',
+                     '%d frames, one fresh process each (the amortisation denominator)' % len(singles)])
+        if singles:
+            print("  fractadyne  %-10s %8.1fs  (%d single frames, %.2f..%.2fs each)"
+                  % ('ok' if ok_all else 'fail', sum_singles, len(singles),
+                     min(singles), max(singles)))
         # Divide by the frames the tour ACTUALLY wrote, not by --frames. A tour of N keyframes
         # at hold=1 renders N+1 images (the last keyframe is held, not skipped), and dividing a
         # 9-frame sequence by 8 quietly inflates the ratio by 12.5%.
         rendered = len([f for f in os.listdir(frames_dir) if f.endswith('.png')])
-        if st == 'ok' and st1 == 'ok' and wall > 0 and rendered:
-            print("  -> amortisation %.2fx  (%d frames rendered, %.2fs/frame in sequence)"
-                  % (rendered * wall1 / wall, rendered, wall / rendered))
+        if st == 'ok' and ok_all and wall > 0 and rendered:
+            # Compare like with like: the sequence rendered `rendered` frames, the singles cover
+            # `len(singles)` rungs, so scale the sum to the same frame count before dividing.
+            per_single = sum_singles / len(singles)
+            amort = rendered * per_single / wall
+            print("  -> amortisation %.2fx  (%d frames: %.2fs/frame in sequence vs %.2fs alone)"
+                  % (amort, rendered, wall / rendered, per_single))
+            # Write the ratio rather than leaving every reader to re-derive it. run-all.ps1 used
+            # to recompute it in PowerShell from --frames, which is a second implementation of an
+            # arithmetic that has already been wrong twice (the N+1 frame count, and the
+            # start-rung denominator above). One producer, one number.
+            wr.writerow(['fractadyne', scene + '-amortisation', 1, 'ok', '', round(amort, 3),
+                         '%d frames; sequence %.2fs vs %.2fs one at a time' % (rendered, wall, sum_singles)])
 
     # ---- Fraktaler-3: CLI batch is one image per invocation (see the module docstring) ----
     if a.fraktaler3 and os.path.exists(a.f3_template):

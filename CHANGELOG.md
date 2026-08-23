@@ -29,6 +29,19 @@ in the git history.
   whether two renderers agree rather than a wrong picture. All of them now say what they could
   not read and stop. Leaving an option out still means what it always did: use the default.
 
+- **The benchmark, re-measured fairly — and it changes the answer** (beta.135) — with both
+  renderers finally sampling each pixel once, Fraktaler-3 is FASTER than Fractadyne on the two
+  heaviest scenes: the 1e148 view by 1.18x and the extreme 1e1105 view by 2.20x. Fractadyne still
+  leads the other eight, but by 1.12x to 2.29x rather than the 1.9x to 6.8x the handicapped run
+  suggested. The earlier summary of "Fractadyne owns deep and extreme" was an artefact of the
+  sampling defect and should not be repeated.
+
+  Where the architecture does show a large advantage is a zoom SEQUENCE, which is what it was
+  built for: rendering forty 4K frames of a dive as one continuous descent takes 0.24 s a frame,
+  against 2.55 s a frame to render the same forty one at a time — and against 4.11 s a frame for
+  Fraktaler-3, whose batch command has no sequence mode. So: comparable on a single frame,
+  behind at the deepest, and roughly seventeen times ahead across a dive.
+
 - **Benchmark kit: Fraktaler-3 had been given four times the sampling work** (beta.135) — the kit
   compares renderers on scene files borrowed from the correctness corpus, and those files carry
   the corpus's own antialiasing setting: four samples per pixel for Fraktaler-3, to pair with the
