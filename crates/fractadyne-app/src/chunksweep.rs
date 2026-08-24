@@ -406,13 +406,21 @@ impl FractadyneApp {
         // neighbouring heights onto the same value (1098 and 1099 both floor to 549 at 0.5) and
         // silently measures the same row twice, which the first version of this axis did.
         //
-        // ⚠Only the HEIGHT varies. `autopilot_probe_request` derives the request width from the
-        // viewport and pinned it at 1280 across every scale tried here, so this axis cannot claim
-        // to sweep width; each row prints the width it actually got.
+        // ⚠**CORRECTION to an earlier note here**, which said the request width is derived from
+        // the viewport. It is not. `autopilot_probe_request` (render.rs:2069) reads
+        // `width = self.export.width`, and derives only the HEIGHT from the viewport's aspect —
+        // so the 1280 an earlier run saw came from the session's `export_width`, not the 1920-wide
+        // window. `self.export.width` IS the width knob (the area axis already drives it), and
+        // both dimensions are scaled together below so the rows match the geometry the defect was
+        // originally filed at (640x483, 320x241).
         println!("
 ── height axis · window {h_window}, [0,{iters}) ──");
         println!("      target        chunked                      unchunked control");
+        let saved_export_w = self.export.width;
         for &hs in &[1.0_f64, 0.5_f64, 0.25_f64] {
+        // Scale the WIDTH with the height, so a row is a smaller render rather than a squashed
+        // one — the filed 25x was at 640x483 and 320x241, both halvings of 1280x966.
+        self.export.width = (((saved_export_w as f64) * hs).round().max(16.0) as u32) & !1u32;
         let scaled_base = (((base_h as f64) * hs) as u32).max(32);
         for &d in HEIGHT_OFFSETS {
             let h = match scaled_base.checked_add_signed(d) {
@@ -444,9 +452,30 @@ impl FractadyneApp {
                     continue;
                 }
             };
-            let t0 = std::time::Instant::now();
-            let plain = fractadyne_gpu::render_iter(device, queue, &req).ok();
-            let plain_ms = t0.elapsed().as_secs_f64() * 1000.0;
+            // ⚠⚠THE CONTROL IS THE DANGEROUS ARM, NOT THE MEASURED ONE. `render_iter` runs the
+            // WHOLE bracket as ONE unbounded dispatch — precisely the shape that loses the device,
+            // and the shape the chunked path exists to eliminate. At [0,8192) it cost ~326 ms and
+            // was fine; at the 219-window bracket the original defect was measured on, the same
+            // call is ~2.2 s, i.e. past the ~2 s Windows TDR. Running it there would trade a
+            // measurement for a device loss.
+            //
+            // The chunked total just measured is the right predictor: both arms do the same work,
+            // so it estimates the single dispatch within the factor that is the whole question.
+            // Gate on it with the harness's own SAFETY_MS, and SAY the control was skipped —
+            // a blank column would read as "no control" rather than "control refused".
+            let est_ms = chunked.map(|(sum, _, _)| sum).unwrap_or(0.0);
+            let (plain, plain_ms, skipped) = if est_ms >= SAFETY_MS {
+                (None, 0.0, true)
+            } else {
+                let t0 = std::time::Instant::now();
+                let r = fractadyne_gpu::render_iter(device, queue, &req).ok();
+                (r, t0.elapsed().as_secs_f64() * 1000.0, false)
+            };
+            let control = match (&plain, skipped) {
+                (_, true) => format!("SKIPPED (est {est_ms:.0} ms >= {SAFETY_MS:.0} ms TDR guard)"),
+                (Some(_), _) => format!("{plain_ms:8.1} ms (1 dispatch)"),
+                (None, _) => "   GPU ERROR".to_string(),
+            };
 
             let tag = if h % 8 == 0 {
                 "h%8=0"
@@ -459,26 +488,19 @@ impl FractadyneApp {
             };
             match chunked {
                 Some((sum, worst, n)) => println!(
-                    "  {:>5}x{:<5} {tag}  total {sum:8.1} ms  worst {worst:7.1} ms ({n:>3} win)                        {}",
+                    "  {:>5}x{:<5} {tag}  total {sum:8.1} ms  worst {worst:7.1} ms ({n:>3} win)                        {control}",
                     req.width,
                     h,
-                    match plain {
-                        Some(_) => format!("{plain_ms:8.1} ms (1 dispatch)"),
-                        None => "   GPU ERROR".to_string(),
-                    }
                 ),
                 None => println!(
-                    "  {:>5}x{:<5} {tag}  NOT MEASURED (scope fallback)   {}",
+                    "  {:>5}x{:<5} {tag}  NOT MEASURED (scope fallback)   {control}",
                     req.width,
                     h,
-                    match plain {
-                        Some(_) => format!("{plain_ms:8.1} ms (1 dispatch)"),
-                        None => "   GPU ERROR".to_string(),
-                    }
                 ),
             }
         }
         }
+        self.export.width = saved_export_w;
 
         self.report_verdict(&cells, &area_pts, stopped_at);
     }
