@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.136 (build 1978)
-- **Generated:** 2026-08-24 04:49:06 UTC (unix 1787546946)
+- **Version:** 0.2.40-beta.136 (build 1979)
+- **Generated:** 2026-08-24 12:22:49 UTC (unix 1787574169)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -24,7 +24,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | IterChunk | chunked render is bit-identical | mode2 corpus07 1.3e30×, 21k iter, 7 passes | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 124, rebase 187097 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
 | IterChunk | chunked render is bit-identical | mode2 nucleus 1.3e30× (interior), 21k iter, 7 passes | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 12325890, rebase 361830 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
 | IterChunk | chunked render is bit-identical | mode2 97-sample ref (orbit wraps), 21k iter, chunk 2600 | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 0, rebase 1790800 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
-| IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; max dispatch 5ms vs control 5ms | 0 texels differ | ✅ PASS |
+| IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; max dispatch 5ms vs control 6ms | 0 texels differ | ✅ PASS |
 | IterChunk | tiled chunked iter buffer is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, raw | 0 texels differ | 0 texels differ | ✅ PASS |
 | IterChunk | mode-0 render uses ONE entry point | corpus06 1e24x, 400k iter, ss2, multi-tile | 5/5 tiles chunked | all tiles chunked | ✅ PASS |
 | Numeric | df32 perturbation vs CPU f64 dwell | seahorse, 2e4×, 5763 iter, n=6913 | 95.7% agree within 1 iter | ≥90% within 1 iter | ✅ PASS |

@@ -16,6 +16,17 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Deep renders were up to 20x slower at half of all window sizes, for no visible reason**
+  (beta.137) — at depth the renderer splits a long computation into bounded pieces so the GPU stays
+  responsive, and it keeps the work-in-progress in off-screen scratch buffers between pieces. When
+  those buffers happened to have an odd number of rows, the graphics driver fell off a fast path
+  and every piece paid a large fixed penalty, whatever it was actually computing. The same view one
+  pixel taller took 4.6 seconds instead of 0.2. It was invisible because nothing about the picture
+  changes: the app picks its resolution to hit a frame-time budget, so the penalty switched on and
+  off as you zoomed, looking like the fractal had simply got harder. The scratch buffers are now
+  allocated with an even number of rows. The rendered image is unchanged — byte for byte, checked
+  against the reference corpus — and the penalty is gone.
+
 - **An exported image no longer depends on how the render was scheduled** (beta.136) — since
   beta.122 an offline render splits each expensive tile along the iteration axis, so that no single
   piece of GPU work runs long enough for the driver to kill it. Whether to do that was decided tile

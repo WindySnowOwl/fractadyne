@@ -502,6 +502,56 @@ impl FractadyneApp {
         }
         self.export.width = saved_export_w;
 
+        // ---- axis 4: is the odd-height penalty PER-WINDOW or PER-STEP? ----------------------
+        // The height axis says an odd target costs up to 21.6x and that the odd cost barely moves
+        // with AREA. Two mechanisms fit that and they need different fixes:
+        //
+        //   PER-WINDOW  a fixed cost paid once per pass (attachment clear, state round-trip,
+        //               submit/poll). Then TOTAL scales with the WINDOW COUNT, and quadrupling
+        //               `chunk_iters` — same bracket, a quarter the passes — cuts the total ~4x.
+        //   PER-STEP    the shader itself runs slower at an odd target (a throughput collapse).
+        //               Then TOTAL is roughly INVARIANT to `chunk_iters`, because the same
+        //               iterations are executed either way.
+        //
+        // The window-size axis at the top of this report cannot answer it: it runs at whatever
+        // height the view settled to, which is one parity. This runs ONE odd/even pair across
+        // three window sizes at the smallest scale, so the totals are directly comparable.
+        //
+        // ⚠Deliberately small: two heights, three windows, smallest scale. The point is one
+        // discriminating comparison, not another table.
+        self.export.width = ((saved_export_w / 4).max(16)) & !1u32;
+        let pair_base = ((base_h / 4).max(32) & !1u32) as u32; // an EVEN anchor, +1 is its odd twin
+        println!("
+── parity x window axis · is the penalty per-WINDOW or per-STEP? ──");
+        for &hh in &[pair_base, pair_base + 1] {
+            let mut vp = self.viewport.clone();
+            vp.set_size(self.viewport.width_px, hh as f64);
+            let mut req = self.autopilot_probe_request(&vp, self.julia_mode);
+            req.max_iter = iters;
+            req.sa_skip = 0;
+            req.width &= !1u32;
+            req.height = hh;
+            for &cw in &[256u32, 1024, 4096] {
+                let mut passes = Vec::new();
+                match fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, cw, &mut passes) {
+                    Ok(_) if !passes.is_empty() => {
+                        let sum: f64 = passes.iter().map(|p| p.wall_ms).sum();
+                        println!(
+                            "  {:>5}x{:<5} {}  window {cw:>5}: {:>3} passes  total {sum:8.1} ms                               worst {:7.1} ms",
+                            req.width,
+                            hh,
+                            if hh % 2 == 0 { "even" } else { "ODD " },
+                            passes.len(),
+                            passes.iter().map(|p| p.wall_ms).fold(0.0_f64, f64::max),
+                        );
+                    }
+                    Ok(_) => println!("  {:>5}x{:<5}: NOT MEASURED (scope fallback)", req.width, hh),
+                    Err(e) => println!("  {:>5}x{:<5}: GPU ERROR — {e}", req.width, hh),
+                }
+            }
+        }
+        self.export.width = saved_export_w;
+
         self.report_verdict(&cells, &area_pts, stopped_at);
     }
 

@@ -733,13 +733,35 @@ pub(crate) fn make_state_textures(
     size: [u32; 2],
     targets: usize,
 ) -> Vec<wgpu::TextureView> {
+    // ⭐⭐**THE HEIGHT IS ROUNDED UP TO EVEN, AND IT IS WORTH ~23×.** An ODD row count on these
+    // attachments costs a fixed ~21 ms per chunk pass on this backend — measured with
+    // `--chunk-sweep`'s parity axis at 320×275, 219 passes: **4601.9 ms unpadded → 199.3 ms
+    // padded**, while its even twin 320×274 is ~200 ms either way. The penalty is
+    // PER-PASS, not per-pixel: quadrupling `chunk_iters` (a quarter the passes) cut the odd total
+    // ~4× while the worst single window stayed ~40 ms regardless of how much work it contained,
+    // and the odd cost barely moved across a 16× span in AREA. That is the shape of a driver
+    // fast-clear/compression path that an odd row count disqualifies, forcing every window to
+    // clear and store these targets the slow way.
+    //
+    // ⭐Padding is safe BY CONSTRUCTION here, which is why it belongs in this helper rather than at
+    // the call sites: these textures are only ever ping-pong STATE. Nothing resolves or reads them
+    // back at their own size — the resolve pass renders into separate `w×h` targets and the
+    // readback copies `h` rows — so the extra row is written and never observed. The image is
+    // unchanged, which the bit-identity selftests and the F3 corpus both gate.
+    //
+    // ⚠This does NOT round the RENDER resolution. Rounding live resolutions to even would hide the
+    // defect while leaving every other consumer of odd targets slow, which the TODO entry
+    // explicitly forbids; this changes only the scratch attachments' allocation.
+    // ⚠Only the HEIGHT is padded, because only height parity was measured. Whether an odd WIDTH
+    // costs the same is untested — the sweeps all ran at even widths (1280/640/320).
+    let size = [size[0].max(1), size[1].max(1).next_multiple_of(2)];
     let mk = |label: &str| {
         device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
-                    width: size[0].max(1),
-                    height: size[1].max(1),
+                    width: size[0],
+                    height: size[1],
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
