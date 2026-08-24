@@ -16,6 +16,13 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Crash reports from a near-miss now record the render size** (beta.138) — when a frame comes
+  within about 2x of losing the graphics device, the app always writes a line about it, so that a
+  report from the field carries the evidence even if nobody had diagnostics turned on. That line
+  did not include the resolution being rendered, which turned out to matter: a recent fix showed
+  that certain render sizes cost roughly 20x more than their neighbours, and the existing field
+  report could not be checked against it. It can be now.
+
 - **Deep renders were up to 20x slower at half of all window sizes, for no visible reason**
   (beta.137) — at depth the renderer splits a long computation into bounded pieces so the GPU stays
   responsive, and it keeps the work-in-progress in off-screen scratch buffers between pieces. When

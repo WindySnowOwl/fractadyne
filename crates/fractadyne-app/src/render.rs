@@ -5089,6 +5089,7 @@ impl FractadyneApp {
             // is what a field report carries when nobody had a trace enabled. Recorded on
             // dispatching frames only — a reprojected frame prices nothing.
             self.perf.last_sa_skip_v[vs.min(1)] = sa.skip;
+            self.perf.last_res_v[vs.min(1)] = [resolution[0], resolution[1]];
             let manifest = format!(
                 "LIVE view={vs} mode={} {}x{} ss={ss} iter={shader_iter} (gpu_iter={gpu_iter}, \
                  eff={eff_iter}, boost={:.2}) steps={steps:.3e}{chunk_note} sa_skip={} \

@@ -139,6 +139,14 @@ struct Perf {
     /// travels with the REFERENCE and so holds still across those frames. The chunk WINDOW does
     /// not — it advances every frame — which is why it is deliberately not recorded here.
     last_sa_skip_v: [u32; 2],
+    /// Render resolution of the last DISPATCHING frame, per view, for the same line. Added
+    /// 2026-08-24: the 2026-08-22 field loss could not be checked against the odd-render-height
+    /// defect (a ~20x per-pass cost fixed in beta.137) because the only resolution anywhere in
+    /// that log was the one-off manifest — the always-logged lethal line carried none. It does
+    /// now, so the next capture can answer it.
+    /// ⚠Same up-to-two-frame staleness as `last_sa_skip_v`, and for the same reason. Resolution
+    /// moves only when the budget resizes it, so it holds still far better than the chunk window.
+    last_res_v: [[u32; 2]; 2],
     /// Monotonic frame counter, for resolving adaptive-AA probes (below).
     frame_idx: u64,
     /// Armed adaptive-AA wall-clock probe per view: `(ss rendered, frame armed, max frame-interval
@@ -556,6 +564,7 @@ impl Default for Perf {
             last_orbit_len: 0,
             last_sa_skip: 0,
             last_sa_skip_v: [0; 2],
+            last_res_v: [[0; 2]; 2],
             frame_idx: 0,
             aa_probe: [None, None],
             aa_measured: [None, None],
@@ -6365,11 +6374,13 @@ impl FractadyneApp {
                 "render",
                 &format!(
                     "⚠LETHAL-BAND FRAME: view={v} {src}={ms:.0}ms (band ≥{:.0}ms) steps={:.3e} \
-                     budget={:.3e} sa_skip={} — emergency retreat to {:.3e}",
+                     budget={:.3e} sa_skip={} res={}x{} — emergency retreat to {:.3e}",
                     crate::tunables::cost().tdr_lethal_ms,
                     steps as f64,
                     cur as f64,
                     self.perf.last_sa_skip_v[v.min(1)],
+                    self.perf.last_res_v[v.min(1)][0],
+                    self.perf.last_res_v[v.min(1)][1],
                     next as f64
                 ),
             );
