@@ -110,26 +110,26 @@ most editors; sections are the `##` headings the items live under.
 | Numeric egress (P2, §3.11 absent) — iteration grids, orbits, ray data as CSV/NumPy via the … | Proposed feature set — reconciled backlog (2026-08-06) | 5677 |
 | Auto-stretch (P2, §4.5 absent) — unskew sheared deep locations from iteration histograms … | Proposed feature set — reconciled backlog (2026-08-06) | 5682 |
 | `.kfr` export / `.kfb` support (§4.2 gap) — `.kfr` import ships (hardened + fuzzed); … | Proposed feature set — reconciled backlog (2026-08-06) | 5684 |
-| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 5993 |
-| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 6006 |
-| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 6011 |
-| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 6015 |
-| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 6017 |
-| Periodic references for nucleus-centred views — the autopilot/NR-zoom deliberately … | Performance & throughput (M7) | 6034 |
-| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 6042 |
-| Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 6047 |
-| Level 2 groundwork: bignum backend benchmark — cheap and decisive: bench astro-float … | Performance & throughput (M7) | 6050 |
-| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 6056 |
-| Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 6062 |
-| By-frame render farm = a documented script, not a subsystem. Frames are independent and … | Performance & throughput (M7) | 6073 |
-| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 6107 |
-| Shippable reference files — the head node computes the sequence reference once and … | Performance & throughput (M7) | 6110 |
-| Distributed normalize coherence — per-machine `--normalize` ranges flicker at shard … | Performance & throughput (M7) | 6116 |
-| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 6124 |
-| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 6156 |
-| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 6253 |
-| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 6266 |
-| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 6269 |
+| F3 goldens for the tours' key steps (user, 2026-08-10). The grand tour's regression … | Proposed feature set — reconciled backlog (2026-08-06) | 6022 |
+| Tan Lei invariant goldens (P0, §5.1 absent) — at a Misiurewicz landmark, render at … | Proposed feature set — reconciled backlog (2026-08-06) | 6035 |
+| Landmark benchmark regimes (P1, §5.2 partial) — `--bench-matrix` covers zoom bands, … | Proposed feature set — reconciled backlog (2026-08-06) | 6040 |
+| λ-scaling zoom-loop test (P1, §5.3 absent) — a Misiurewicz-centered zoom must become … | Proposed feature set — reconciled backlog (2026-08-06) | 6044 |
+| Per-channel cross-tool differential testing (P2, §5.4 partial) — the F3 corpus (20 … | Proposed feature set — reconciled backlog (2026-08-06) | 6046 |
+| Periodic references for nucleus-centred views — the autopilot/NR-zoom deliberately … | Performance & throughput (M7) | 6063 |
+| One reference per zoom sequence (offline tours) — a zoom toward a fixed centre uses … | Performance & throughput (M7) | 6071 |
+| Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 6076 |
+| Level 2 groundwork: bignum backend benchmark — cheap and decisive: bench astro-float … | Performance & throughput (M7) | 6079 |
+| Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 6085 |
+| Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 6091 |
+| By-frame render farm = a documented script, not a subsystem. Frames are independent and … | Performance & throughput (M7) | 6102 |
+| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 6136 |
+| Shippable reference files — the head node computes the sequence reference once and … | Performance & throughput (M7) | 6139 |
+| Distributed normalize coherence — per-machine `--normalize` ranges flicker at shard … | Performance & throughput (M7) | 6145 |
+| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 6153 |
+| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 6185 |
+| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 6282 |
+| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 6295 |
+| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 6298 |
 <!-- TODO-INDEX:END -->
 
 ## ▶ Offline render path: the fixed cost in the shallow/mid band (2026-08-21)
@@ -5921,6 +5921,35 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   * ✅Its argument parser is HONEST: bad values exit 2 with a message (it caught a stray `
 ` from
     my own CRLF test file). That is the property our `--zoom` lacked until today.
+
+  ⭐⭐**ROOT-CAUSED 2026-08-23 — IT IS NOT A DRIVER OR A CONFIGURATION PROBLEM.** Four measurements:
+
+  1. **CUDA works headlessly.** The shipped `HpSharkFloatTest.exe` launches kernels with no window
+     (`LaunchParams: Blocks: 65, ThreadsPerBlock: 256, TotalThreads: 16640`). Driver 596.21,
+     RTX 3080. So the GPU, the driver and the CUDA runtime are all fine.
+  2. **The GPU render never DISPATCHES — it is not computing and losing the result.** Wall time is
+     INDEPENDENT of the iteration count: `Gpu1x32PerturbedLAv2` takes **1.27 s at 3,000 iterations
+     and 1.27 s at 300,000** (1280×720), while `Cpu64` on the same view goes **1.98 s → 8.84 s**.
+     1.27 s is process startup. No work happens at all.
+  3. **The blocker is a Win32 WGL context built from a window handle the CLI never creates.**
+     Strings in the binary: `OpenGlContext: null HWND` / `GetDC failed` /
+     `EnsurePixelFormatSet failed` / `MakeCurrent failed after native context creation`, then
+     `GlConsumerLoop: OpenGL context creation FAILED, no rendering will occur`. The GPU results
+     are consumed through a GL texture path (`GlConsumerLoop: context valid, software(bool)=%d,
+     maxTex=%d`), and when that loop cannot start, the render is simply never issued.
+  4. **Nothing upstream would catch it**: all seven `RenderGolden_*` tests are CPU
+     (`_cpu64`, `_cpuhdr`, `_cpu_bla`, `_cpu_perturbed_bla`, …) — there is NO GPU golden — and the
+     CI smoke test renders `--builtin-view 0 --render-algorithm Cpu64`. The suite reports
+     **261 passed, 0 failed** while printing the OpenGL failure throughout.
+
+  ⛔**No flag fixes it**: the binary contains exactly the documented options — no `--headless`,
+  `--offscreen` or GL bypass. ⭐**Likely upstream fix**: the loop already reports
+  `software(bool)`, i.e. it accepts a software GL context, so creating a HIDDEN 1×1 window (or an
+  off-screen/pbuffer context) would probably let the existing path run headlessly — alternatively
+  dispatch the CUDA render independently of the GL consumer. Either is upstream work; there is
+  nothing to configure on our side. **For its GPU numbers, use the GUI.**
+  ⚠Not verified: that the GUI itself renders GPU correctly on this box. It needs a real window on
+  the user's desktop, so it was not run unattended; (1) makes a driver fault very unlikely.
 
   🔴⭐⭐**BUT: EVERY GPU ALGORITHM RENDERS BLANK HEADLESSLY (0.532), AT EXIT 0.** Each pixel comes
   back with iteration count 1; the PNG is one flat colour. The CLI admits it on `--console`
