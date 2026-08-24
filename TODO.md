@@ -914,6 +914,15 @@ Mockups: [design/mockups/](design/mockups/).
     doubled used to sit 57 and 40 pixels off the reference.
   * ✅selftest **139/139 + 17/17**, `cargo test` 138 + all crates green, release build warning-free.
   * ✅No measurable cost: 4K single frame 7.79 / 7.30 s fixed vs 7.84 / 7.47 s stock.
+  * ✅**And no cost on FAST exports either, which the 4K figure could not have shown** (measured
+    2026-08-23, 5 reps each, median, A/B against a rebuilt lazy control verified live by the new
+    gate going red on it). `chunk_scope` does not depend on the size of the ask, so every export in
+    scope now pays the eager `TileChunker` build — the very cost the deleted beta.126 comment
+    warned about at ~110 ms/call. It does not show up: 320×180/200it **1.102 vs 1.103 s**,
+    480×270/2000it **1.205 vs 1.227 s**, 1280×720/2000it **1.422 vs 1.618 s** — equal or FASTER,
+    the HD case by 0.20 s (consistent with the recorded "dwell regions got ~4× faster" side effect
+    of chunking). ⭐The beta.126 ~7 s regression was 64 calls into `render_iter_tiled`, which still
+    builds lazily; it was never a per-export cost.
   * ⭐Mixing confirmed DIRECTLY before fixing: at corpus geometry the old build logged `chunks=0`
     on tile 0,0 and `chunks=2` on the other eight — one image, two programs.
 
