@@ -68,6 +68,11 @@ const WINDOWS: &[u32] = &[64, 128, 256, 512, 1024, 2048];
 /// CELLWALK go/no-go needs to fit an exponent over.
 const AREA_SCALES: &[f64] = &[1.0, 0.5, 0.25, 0.125];
 
+/// Heights walked on the height axis, as offsets from the settled render height. The filed
+/// defect reported ~25x for an ODD height; +-4 around the base separates "parity" from a
+/// specific alignment (4? 8?), which a two-point odd/even comparison cannot.
+const HEIGHT_OFFSETS: &[i32] = &[-4, -3, -2, -1, 0, 1, 2, 3, 4];
+
 /// Stop escalating the window once a single one costs this much. Deliberately below the ~2 s
 /// Windows TDR delay and above the 900 ms lethal band, so the sweep can measure INSIDE the band
 /// that kills without stepping past it — the next size up is ~2×, which is the margin this leaves.
@@ -368,6 +373,112 @@ impl FractadyneApp {
             }
         }
         self.export.width = saved_width;
+
+        // ---- axis 3: render-target HEIGHT ---------------------------------------------------
+        // The area axis above pins BOTH dimensions even to dodge a filed defect: an odd render
+        // height measured ~25x on this path (640x483 = 5261 ms against 640x482 = 473 ms, and
+        // 320x241 = 4909 ms against 320x240 = 193 ms). Dodging it made that axis readable but left
+        // the defect uncharacterised, so this axis measures it head-on and answers the two
+        // questions the filing could not:
+        //
+        //   1. PARITY or ALIGNMENT? A single odd/even pair cannot tell "odd is slow" from "not a
+        //      multiple of 4" or "not a multiple of 8". Walking h-4..h+4 can.
+        //   2. Is it THIS path? `render_iter` runs the same view as one unbounded dispatch with no
+        //      ping-pong state textures at all. If the unchunked control is flat across the same
+        //      heights while the chunked arm cliffs, the state targets are the suspect and the
+        //      iterate shader is exonerated. If BOTH cliff, it is not a chunking defect.
+        //
+        // Both arms force `sa_skip = 0` and hold width fixed, for the same reason the area axis
+        // does: a derived skip that moves with the request would make every row walk a different
+        // amount of real work, which is how this harness's first area axis produced a 40x
+        // non-monotonic spread that meant nothing.
+        let h_window = 256u32;
+        let base_h = (self.viewport.height_px as u32).max(16);
+        // ⚠NO WIDTH IN THIS HEADER, deliberately. `autopilot_probe_request` derives the request
+        // resolution from the viewport rather than copying it (a 1920-wide window produced a
+        // 1280-wide request here), so any width named up front is a guess. Every row prints the
+        // width it actually rendered.
+        //
+        // ⚠THREE HEIGHT SCALES. The filed 25x was measured at 640x483 and 320x241 — small
+        // targets, never the full frame — and the penalty does grow as the target shrinks, so a
+        // sweep at one size would understate it. The SCALE IS APPLIED TO THE BASE FIRST and the
+        // +-4 offsets walked around the scaled value: scaling after the offset collapses
+        // neighbouring heights onto the same value (1098 and 1099 both floor to 549 at 0.5) and
+        // silently measures the same row twice, which the first version of this axis did.
+        //
+        // ⚠Only the HEIGHT varies. `autopilot_probe_request` derives the request width from the
+        // viewport and pinned it at 1280 across every scale tried here, so this axis cannot claim
+        // to sweep width; each row prints the width it actually got.
+        println!("
+── height axis · window {h_window}, [0,{iters}) ──");
+        println!("      target        chunked                      unchunked control");
+        for &hs in &[1.0_f64, 0.5_f64, 0.25_f64] {
+        let scaled_base = (((base_h as f64) * hs) as u32).max(32);
+        for &d in HEIGHT_OFFSETS {
+            let h = match scaled_base.checked_add_signed(d) {
+                Some(v) if v >= 16 => v,
+                _ => continue,
+            };
+            let mut vp = self.viewport.clone();
+            vp.set_size(self.viewport.width_px, h as f64);
+            let mut req = self.autopilot_probe_request(&vp, self.julia_mode);
+            req.max_iter = iters;
+            req.sa_skip = 0;
+            req.width &= !1u32; // width held EVEN and fixed; height is the only variable
+            req.height = h;     // pinned, not derived — the aspect ratio would round it back
+
+            let mut passes = Vec::new();
+            let chunked = match fractadyne_gpu::render_iter_chunked_timed(
+                device, queue, &req, h_window, &mut passes,
+            ) {
+                Ok(_) if !passes.is_empty() => {
+                    let sum: f64 = passes.iter().map(|p| p.wall_ms).sum();
+                    let worst = passes.iter().map(|p| p.wall_ms).fold(0.0_f64, f64::max);
+                    Some((sum, worst, passes.len()))
+                }
+                // An empty pass list is the unbounded fallback, never a fast render (see the
+                // module header). Report it as unmeasured so it cannot read as a fast row.
+                Ok(_) => None,
+                Err(e) => {
+                    println!("  {:>5}x{:<5}: GPU ERROR — {e}", req.width, h);
+                    continue;
+                }
+            };
+            let t0 = std::time::Instant::now();
+            let plain = fractadyne_gpu::render_iter(device, queue, &req).ok();
+            let plain_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+            let tag = if h % 8 == 0 {
+                "h%8=0"
+            } else if h % 4 == 0 {
+                "h%4=0"
+            } else if h % 2 == 0 {
+                "even "
+            } else {
+                "ODD  "
+            };
+            match chunked {
+                Some((sum, worst, n)) => println!(
+                    "  {:>5}x{:<5} {tag}  total {sum:8.1} ms  worst {worst:7.1} ms ({n:>3} win)                        {}",
+                    req.width,
+                    h,
+                    match plain {
+                        Some(_) => format!("{plain_ms:8.1} ms (1 dispatch)"),
+                        None => "   GPU ERROR".to_string(),
+                    }
+                ),
+                None => println!(
+                    "  {:>5}x{:<5} {tag}  NOT MEASURED (scope fallback)   {}",
+                    req.width,
+                    h,
+                    match plain {
+                        Some(_) => format!("{plain_ms:8.1} ms (1 dispatch)"),
+                        None => "   GPU ERROR".to_string(),
+                    }
+                ),
+            }
+        }
+        }
 
         self.report_verdict(&cells, &area_pts, stopped_at);
     }
