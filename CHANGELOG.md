@@ -16,6 +16,15 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The smallest piece of work the renderer will issue now adapts to how slow the region is**
+  (beta.142) — the renderer never split work below a fixed size of 256 steps, on the reasoning that
+  256 steps is quick no matter what. Measurements from a recorded device loss show that reasoning
+  was about five times optimistic: in that region 256 steps would have taken roughly a third of a
+  second, and a region three times harsher would make even the smallest allowed piece dangerous on
+  its own. The minimum is now the smaller of 256 and however many steps actually fit the time
+  budget at the worst speed measured, so it only ever shrinks, only in regions whose own
+  measurements call for it, and never slows an ordinary render.
+
 - **A stalling render now reacts without waiting to be asked** (beta.141) — the renderer judged how
   expensive a piece of work had been only once that work reported back, and it treated a frame
   arriving promptly as the signal that the GPU had caught up. On a machine sliding toward a driver

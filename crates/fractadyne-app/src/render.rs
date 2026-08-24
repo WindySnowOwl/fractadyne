@@ -4027,7 +4027,37 @@ impl FractadyneApp {
             // bootstrap, caught by the "unmeasured budget bounds the FIRST dispatch" selftest; a
             // 4K panel would be 5×). Until a measurement exists the plain division is the bound;
             // the floor applies from the first measured budget onward.
-            let floor = if self.perf.fe_budget[vidx] == 0 { 1 } else { 256 };
+            // ⭐⭐**A WALL-AWARE FLOOR, AND IT CAN ONLY EVER GO LOWER THAN 256.**
+            //
+            // `budget_step` below is wall-derived (it divides a measured step budget by the pixel
+            // count), so the controller already sizes itself from evidence — right up until this
+            // floor overrides it. And the floor binds precisely when `budget_step` wants to go
+            // BELOW 256, i.e. exactly when the measurement is saying "this region is hostile, go
+            // smaller". A fixed ITERATION count cannot bound WALL time, because cost per iteration
+            // varies by orders of magnitude between regions.
+            //
+            // ⛔The 256 rested on a claim that has gone stale: "~256 iterations is ~70 ms even at
+            // the worst rate ever measured on this hardware" (see `chunk_band_license`). The
+            // 2026-08-22 field loss ran **1024 iterations in 1216 ms** — 1.19 ms/iteration — so 256
+            // there is **~304 ms**, not ~70, and a region only **3× more hostile than that** makes
+            // the floor ITSELF lethal (900 ms / 256 = 3.5 ms per iteration).
+            //
+            // So derive it from the worst rate actually measured for this mode (`mode_rate` is
+            // kept as a running MINIMUM, i.e. already pessimistic) and take whichever is SMALLER.
+            // ⚠`min`, deliberately: in a benign region the computed value is far above 256 and
+            // this changes nothing, so the blast radius is confined to regions whose own
+            // measurements say the old floor was too big. It can never raise the floor, never
+            // enlarge a pass, and never slow a healthy walk.
+            let floor = if self.perf.fe_budget[vidx] == 0 {
+                1
+            } else {
+                let affordable = self.perf.worst_rate_steps_per_ms(vidx).map(|rate| {
+                    // steps/ms ÷ steps-per-iteration = iterations per ms, times the target wall.
+                    let per_iter = spx.saturating_mul(ss2).max(1) as f64;
+                    ((crate::tunables::cost().tdr_budget_ms * rate) / per_iter) as u32
+                });
+                affordable.map_or(256, |a| a.clamp(1, 256))
+            };
             // ---- PRICE-SERIALIZED WALKING, pricing half (design/mode2-chunking.md §12) ----
             // The settled walk holds AT MOST ONE unpriced pass in flight. The in-flight pass
             // accumulates every following frame interval until a frame comes back quicker than
@@ -5819,10 +5849,21 @@ pub(crate) fn chunk_band_license(
         // ⚠UNVISITED territory opens at the FLOOR — never at a neighbour's license. The final
         // repro death was exactly an inherited license: a 36k-step pass earned on a band's cold
         // beginning ran TEN SECONDS when the band turned hot mid-way (the storm starts before
-        // the wrap point, inside the band). The floor is the worst-case-prior sizing: ~256
-        // iterations is ~70 ms even at the worst rate ever measured on this hardware, so first
-        // contact with ANY region — however hostile — is a survivable single. Everything bigger
+        // the wrap point, inside the band). The floor is the worst-case-prior sizing: first contact
+        // with ANY region — however hostile — must be a survivable single, and everything bigger
         // must be earned by that region's own prices.
+        //
+        // ⛔**THE "~70 ms" THIS COMMENT USED TO QUOTE FOR 256 ITERATIONS IS STALE — corrected
+        // 2026-08-24.** The 2026-08-22 field loss ran **1024 iterations in 1216 ms**, i.e.
+        // **1.19 ms per iteration**, so 256 iterations on that region is **~304 ms** (~380 ms if
+        // priced sub-linearly at the sweep's measured 1.79× per doubling). Still survivable
+        // against the 900 ms lethal band, but by ~2.4×, not the ~13× the old figure implied — and
+        // a region only **3× more hostile** would make the floor ITSELF lethal
+        // (900 / 256 = 3.5 ms per iteration).
+        // ⭐Which is why `budget_step`'s floor is no longer a bare 256: it is now the SMALLER of
+        // 256 and what the worst measured rate says fits the target wall. This licence floor is
+        // still a constant, because an unvisited band has no measured rate of its own to size
+        // from — that is the whole point of it — but it inherits the caller's `floor`.
         floor
     }
 }

@@ -487,6 +487,14 @@ impl Perf {
         ((mode as usize) < Self::MODE_RATE_SLOTS).then_some(mode as usize)
     }
 
+    /// The WORST rate (steps per ms) measured for this view's current mode, if any has been.
+    /// `mode_rate` is kept as a running MINIMUM, so this is already the pessimistic extreme rather
+    /// than an average — which is what a safety floor has to be sized from.
+    pub(crate) fn worst_rate_steps_per_ms(&self, v: usize) -> Option<f64> {
+        let r = Self::slot(self.budget_mode[v]).map_or(0.0, |s| self.mode_rate[v][s]);
+        (r.is_finite() && r > 0.0).then_some(r)
+    }
+
     /// Fold one priced dispatch into this view's per-mode rate, keeping the PESSIMISTIC extreme.
     /// See the `mode_rate` field comment for why this is a min and not an average.
     fn record_mode_rate(&mut self, v: usize, ms: f64, steps: u64) {
