@@ -4042,8 +4042,39 @@ impl FractadyneApp {
                 crate::tunables::cost().tdr_explicit_budget_ms
             };
             if !interacting && !pin_frame {
-                if let Some((size, band, acc)) = self.perf.chunk_inflight[vs] {
+                if let Some((size, band, acc, shed)) = self.perf.chunk_inflight[vs] {
                     let acc = acc + self.perf.last_dt_ms.max(0.0);
+                    // ⭐⭐WALL-CLOCK RETREAT. Until this existed the ledger learned NOTHING about a
+                    // pass until it drained or hit the wedge backstop — and the backstop is
+                    // `target × 60`, i.e. ~24 s at a 400 ms target, long after a device would be
+                    // gone. That is the gap the 2026-08-22 field loss fell through: the release
+                    // gate below wants a QUICK PRESENT as proof the queue drained, and a queue on
+                    // its way to losing the device never produces one, so the one pass whose price
+                    // would shed the licence is exactly the pass that cannot be priced.
+                    //
+                    // Accumulated wall is a conservative LOWER BOUND on what this pass has already
+                    // cost: if `acc` has reached the lethal band the pass has *already* been that
+                    // expensive, no drain required to know it. So shed the ledger on that alone.
+                    //
+                    // ⚠SHED, DO NOT RELEASE. The next dispatch stays blocked until the genuine
+                    // drain below — "releasing the next dispatch onto a pass that is merely SLOW is
+                    // how a 10 s single got company on its way to the TDR", and that reasoning is
+                    // untouched. This only updates what the NEXT pass would be allowed to ask for.
+                    // ⚠LATCHED (`shed`) so a pass sitting in the band for many frames sheds once
+                    // rather than re-shedding every frame — the ledger is already at the floor.
+                    let shed = if !shed && acc >= crate::tunables::cost().tdr_lethal_ms {
+                        chunk_band_retreat(&mut self.perf.chunk_bands[vs]);
+                        crate::diag::log_line(
+                            "render",
+                            &format!(
+                                "⚠IN-FLIGHT PASS IN THE LETHAL BAND: view={vs} size={size} band={band} acc={acc:.0}ms (band ≥{:.0}ms, no drain yet) — chunk-band licences shed",
+                                crate::tunables::cost().tdr_lethal_ms
+                            ),
+                        );
+                        true
+                    } else {
+                        shed
+                    };
                     // ⚠The backstop is a WEDGE escape only (a compositor that never goes
                     // idle), far beyond any survivable pass — releasing the next dispatch onto
                     // a pass that is merely SLOW is how a 10 s single got company on its way
@@ -4064,7 +4095,7 @@ impl FractadyneApp {
                         );
                         self.perf.chunk_inflight[vs] = None;
                     } else {
-                        self.perf.chunk_inflight[vs] = Some((size, band, acc));
+                        self.perf.chunk_inflight[vs] = Some((size, band, acc, shed));
                     }
                 }
             } else {
@@ -4226,7 +4257,7 @@ impl FractadyneApp {
                     self.perf.chunk_last_range[vs] = chunk_range;
                     if !interacting && !pin_frame {
                         self.perf.chunk_inflight[vs] =
-                            Some((end.saturating_sub(cur), band, 0.0));
+                            Some((end.saturating_sub(cur), band, 0.0, false));
                     }
                     // This frame runs a real bounded pass; pair the measurement with ITS cost.
                     self.perf.fe_steps_last[vs] =

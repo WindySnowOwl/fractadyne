@@ -364,7 +364,10 @@ struct Perf {
     /// PRICE-SERIALIZED WALKING (design/mode2-chunking.md §12): the one pass a settled walk may
     /// have in flight — (size, cursor band, accumulated wall ms). Priced and released when a
     /// quick frame proves the queue drained; only then may the next pass launch.
-    chunk_inflight: [Option<(u32, u8, f64)>; 2],
+    /// `(size, band, accumulated_wall_ms, already_shed)`. The last flag is the wall-clock
+    /// retreat's latch: a pass whose accumulation crosses the lethal band sheds the ledger ONCE,
+    /// without releasing the next dispatch. See the `acc >= lethal` branch in `render.rs`.
+    chunk_inflight: [Option<(u32, u8, f64, bool)>; 2],
     /// The regional license ledger: per cursor band, the largest pass size whose wall price came
     /// in AT or under the target (quartered on a cliff price; see `render::chunk_band_update`).
     /// Survives same-sig restarts — re-crossing the wrap-storm band with amnesia was the kill —

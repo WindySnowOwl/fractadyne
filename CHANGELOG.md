@@ -16,6 +16,15 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **A stalling render now reacts without waiting to be asked** (beta.141) — the renderer judged how
+  expensive a piece of work had been only once that work reported back, and it treated a frame
+  arriving promptly as the signal that the GPU had caught up. On a machine sliding toward a driver
+  reset, frames stop arriving promptly — so the one measurement that would have told it to back off
+  was the one it could never collect, and its fallback took roughly twenty-four seconds. It now
+  treats elapsed time alone as sufficient evidence: if a piece of work has already been running long
+  enough to be dangerous, that is known without waiting for it to finish, and the size limit for
+  subsequent work is reduced immediately. Rendered images are unaffected.
+
 - **The renderer's cost memory no longer gets blurrier the deeper you go** (beta.140) — to keep
   each piece of GPU work short, the renderer remembers how expensive each stretch of a computation
   has been and sizes the next piece from that. It divided the whole computation into sixteen equal
