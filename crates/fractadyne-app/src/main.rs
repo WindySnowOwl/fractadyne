@@ -6370,6 +6370,13 @@ impl FractadyneApp {
         // four such frames between the first one and the end. If it happens in the field the log
         // must already say so — by the time anyone thinks to enable a trace, the run is over.
         if ms >= crate::tunables::cost().tdr_lethal_ms {
+            // Shed this view's earned chunk-band licences along with the budget. The budget cut
+            // already reaches the window (`budget_step.min(chunk_band_license(..))`), but only
+            // while `budget_step` is the smaller term — and it floors at 256. The licence is the
+            // other term, and nothing else here can lower it: the cliff rule that would runs only
+            // on a pass the walk judged drained, which a saturated queue stops producing exactly
+            // when this fires. Output-neutral (see `chunk_band_retreat`).
+            render::chunk_band_retreat(&mut self.perf.chunk_bands[v.min(1)]);
             diag::log_line(
                 "render",
                 &format!(

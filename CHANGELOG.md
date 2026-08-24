@@ -16,6 +16,16 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **After a near-miss, the renderer now forgets what the region "afforded"** (beta.139) — when a
+  frame comes within about 2x of losing the graphics device, the app cuts its work budget. But the
+  size of each piece of work is also limited by a separate allowance the renderer earns from how
+  cheap that part of the image has been so far, and the emergency cut could not lower that
+  allowance. Worse, the routine that normally lowers it only runs on work that finished promptly —
+  and a machine about to lose its device is precisely one where nothing is finishing promptly. So
+  the allowance could survive the emergency that should have removed it. It is now discarded
+  outright on a near-miss, and re-earned from scratch. The rendered image is unaffected: the
+  allowance controls only where a computation pauses and resumes, never what it computes.
+
 - **Crash reports from a near-miss now record the render size** (beta.138) — when a frame comes
   within about 2x of losing the graphics device, the app always writes a line about it, so that a
   report from the field carries the evidence even if nobody had diagnostics turned on. That line

@@ -5799,6 +5799,33 @@ pub(crate) fn chunk_band_license(
     }
 }
 
+/// Shed the whole band ledger for a view: every band reopens at the floor (`chunk_band_license`
+/// treats 0 as unvisited). Called by the emergency retreat when a frame prices in the lethal band.
+///
+/// ⭐⭐**WHY THE RETREAT MUST DO THIS ITSELF, rather than trust `chunk_band_update` to shed.**
+/// The ordinary cliff rule quarters a band on a price past 2× target — but it only runs on a pass
+/// the walk judges DRAINED (`last_dt_ms < CHUNK_DRAIN_DT_MS`, the quick present). A queue on its
+/// way to losing the device is saturated, presents stop coming back quick, and the hot pass stays
+/// `chunk_inflight` — unpriced. So the one pass whose price would shed the licence is exactly the
+/// pass the gate can silence, and the band keeps a licence earned on this region's cheap frames.
+/// That is the 2026-08-22 field loss's shape: `chunk=[768,1792)`, a 1024-iteration window still
+/// sized by a licence, at a moment nothing was being priced.
+///
+/// ⭐**Shedding is OUTPUT-NEUTRAL, which is what makes it safe on a hot path.** The window size
+/// sets only where a pass stops and resumes, never what it computes: the chunked iterate's
+/// contract is bit-identical output for any `chunk_iters`, gated by the "chunked render is
+/// bit-identical" selftests and by `--chunk-sweep`'s pixel-identity assertion. Shedding costs
+/// throughput (the walk re-climbs from the floor, ~8 priced passes on the ×2 fast lane) and
+/// nothing else. On a frame that came within ~2× of losing the device, that is the right trade.
+///
+/// ⚠ALL bands, not the current one. The lethal reading arrives ~2 frames after the dispatch it
+/// prices, so by the time it lands the cursor has moved and the band it refers to is no longer
+/// the band about to be dispatched — the same staleness that keeps the window off the lethal log
+/// line. Shedding only "the" band would shed the wrong one.
+pub(crate) fn chunk_band_retreat(bands: &mut [u32; crate::tunables::CHUNK_BANDS]) {
+    *bands = [0; crate::tunables::CHUNK_BANDS];
+}
+
 /// Feed one priced pass into the band ledger. Acceptance is AT the target (a price accepted
 /// above it and then grown compounds straight into the ~900 ms lethal band — measured, twice);
 /// a price past 2× target is a cliff and QUARTERS the record (never zeroes it: a shed band is
@@ -5841,6 +5868,25 @@ pub(crate) fn chunk_band_update(
 mod chunk_bands {
     use super::*;
     const N: usize = crate::tunables::CHUNK_BANDS;
+
+    #[test]
+    fn a_lethal_retreat_sheds_every_earned_license_back_to_the_floor() {
+        // The 2026-08-22 field shape: a band has EARNED a large license from this region's cheap
+        // frames, and the pass that would shed it never gets priced because the saturated queue
+        // stops releasing quick presents. The retreat has to shed it directly.
+        let mut b = [0u32; N];
+        b[2] = 20_000;
+        b[3] = 1_024;
+        assert_eq!(chunk_band_license(&b, 3, 256), 1_024, "earned before the retreat");
+        chunk_band_retreat(&mut b);
+        for band in 0..N {
+            assert_eq!(
+                chunk_band_license(&b, band, 256),
+                256,
+                "band {band} must reopen at the floor after a lethal retreat"
+            );
+        }
+    }
 
     #[test]
     fn every_unvisited_band_opens_at_the_floor_never_a_neighbours_license() {
