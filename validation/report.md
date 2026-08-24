@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.138 (build 1985)
-- **Generated:** 2026-08-24 16:37:39 UTC (unix 1787589459)
+- **Version:** 0.2.40-beta.139 (build 1989)
+- **Generated:** 2026-08-24 17:01:22 UTC (unix 1787590882)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -96,9 +96,9 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Live budget | unmeasured budget does NOT bind settled resolution | 1445×1134 panel, 2000 iter, fe_budget=0 | settled width 1445/1445 (100% of panel) | ≥90% of panel width | ✅ PASS |
 | Live budget | tunables are stock (no --set overrides) | the suite's thresholds, goldens and baselines all assume the defaults | stock | stock | ✅ PASS |
 | Live budget | tile allowance does NOT bind settled resolution | 1920×1102 panel, 4000000 iter @1.3e30×, converged budget 1.666e10 | settled width 1920/1920 (100% of panel) | ≥90% of panel width | ✅ PASS |
-| Live budget | a completed tiled settle REVEALS (present gate drops) | 1920×1102 panel, 4000000 iter @1.3e30×, prefer detail on | gate engaged=true, still holding after 513 frames=false | engages, then drops once the grid completes | ✅ PASS |
-| Live budget | a growing chunk band license never outgrows one dispatch budget | 1920×1102 panel, 4000000 iter @1.3e30×, converged budget 1.666e10,                          24 settled frames, chunk_fe_ok forced | 24/24 frames chunk-governed, license grew to 7873                          iters, worst pass 1.666e10 steps (1.00× budget) | governed, ladder moved past the 256 floor, every pass ≤ one budget | ✅ PASS |
-| Live budget | a settled chunked pass stays inside ONE dispatch budget | 1920×1102 panel, 4000000 iter @1.3e30×, allowance up, budget 1.666e10 CLIMBING | chunk pass = 1.666e10 nominal (1.00× budget) | chunked, and ≤ 1× the single-dispatch budget | ✅ PASS |
+| Live budget | a completed tiled settle REVEALS (present gate drops) | 1920×1102 panel, 4000000 iter @1.3e30×, prefer detail on | gate engaged=true, still holding after 498 frames=false | engages, then drops once the grid completes | ✅ PASS |
+| Live budget | a growing chunk band license never outgrows one dispatch budget | 1920×1102 panel, 4000000 iter @1.3e30×, converged budget 1.666e10,                          24 settled frames, chunk_fe_ok forced | 24/24 frames chunk-governed, license grew to 4096                          iters, worst pass 8.666e9 steps (0.52× budget) | governed, ladder moved past the 256 floor, every pass ≤ one budget | ✅ PASS |
+| Live budget | a settled chunked pass stays inside ONE dispatch budget | 1920×1102 panel, 4000000 iter @1.3e30×, allowance up, budget 1.666e10 CLIMBING | chunk pass = 1.083e9 nominal (0.07× budget) | chunked, and ≤ 1× the single-dispatch budget | ✅ PASS |
 | Live budget | explicit iteration count honoured verbatim | auto off, 10,000,000 iterations, direct mode @10× | params.max_iter = 10000000 | == 10,000,000 | ✅ PASS |
 | Iter-budget | probe reach resolves a starved spar | 3.3e61× three-spar, cap 54315 → reach 848671 | flat 100.0% at cap → 0.2% at reach | >99% flat at cap, <10% at reach | ✅ PASS |
 | NR-zoom | atom size vs exactly-known components | period 1, 2 + home-view identity | all exact | exact to 1e-9 | ✅ PASS |

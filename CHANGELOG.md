@@ -16,6 +16,16 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The renderer's cost memory no longer gets blurrier the deeper you go** (beta.140) — to keep
+  each piece of GPU work short, the renderer remembers how expensive each stretch of a computation
+  has been and sizes the next piece from that. It divided the whole computation into sixteen equal
+  stretches — so the deeper the zoom, the longer each stretch, and the vaguer the memory. At the
+  depth of a device loss recorded in August, each stretch covered about fourteen thousand steps,
+  which meant a piece of work could be sized from measurements taken in a completely different and
+  much cheaper part of the computation. The stretches are now fixed, doubling in size as they go,
+  so the memory stays sharp exactly where the expensive surprises happen. Rendered images are
+  unaffected.
+
 - **After a near-miss, the renderer now forgets what the region "afforded"** (beta.139) — when a
   frame comes within about 2x of losing the graphics device, the app cuts its work budget. But the
   size of each piece of work is also limited by a separate allowance the renderer earns from how

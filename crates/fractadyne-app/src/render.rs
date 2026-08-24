@@ -4177,10 +4177,7 @@ impl FractadyneApp {
                     // half its predecessor's license, so a cost cliff is met with at most ONE
                     // modestly-sized unpriced pass — and serialization guarantees its price is
                     // seen before anything else launches.
-                    let band = ((cur as u64 * crate::tunables::CHUNK_BANDS as u64)
-                        / (gpu_iter.max(1) as u64))
-                        .min(crate::tunables::CHUNK_BANDS as u64 - 1)
-                        as u8;
+                    let band = chunk_band_of(cur) as u8;
                     let step = if interacting || pin_frame {
                         budget_step
                     } else {
@@ -5799,6 +5796,40 @@ pub(crate) fn chunk_band_license(
     }
 }
 
+/// Which band of the iteration axis does a cursor at `cur` belong to?
+///
+/// **OCTAVES FROM A FIXED BASE, NOT A FRACTION OF THE ASK** — band 0 is `[0, 256)`, band `k` is
+/// `[256·2^(k-1), 256·2^k)`, and the last band absorbs everything above.
+///
+/// ⭐⭐**WHY THIS CHANGED (2026-08-24).** It used to be `cur · CHUNK_BANDS / gpu_iter`, i.e. the
+/// ask cut into 16 equal parts — so a band's WIDTH grew with the ask, and the ledger's resolution
+/// collapsed at exactly the depths where device losses happen. At the 2026-08-22 field loss's ask
+/// of **231,676** iterations each band spanned **14,480** iterations, and the fatal window
+/// `[768, 1792)` sat in band 0 — holding a licence earned by the passes at iterations 0..768, the
+/// cheap start of the orbit. Under octaves that window is band 2, `[512, 1024)`, whose licence can
+/// only have been earned inside those 512 iterations: a **28× finer** attribution right where it
+/// mattered.
+///
+/// ⭐This is the ledger's own warning, one level up. `chunk_band_license` already refuses to let
+/// UNVISITED territory inherit a neighbour's licence, because "a 36k-step pass earned on a band's
+/// cold beginning ran TEN SECONDS when the band turned hot mid-way — the storm starts before the
+/// wrap point, INSIDE the band". That fix bounded the gap BETWEEN bands; nothing bounded the gap
+/// WITHIN one, and a 14,480-iteration band has a great deal of "within".
+///
+/// ⭐**Octaves rather than fixed width** because cost structure along an orbit is scale-free: the
+/// interesting features (wrap points, storms) sit at multiplicatively-spaced depths, and a fixed
+/// width fine enough for `cur = 768` would need thousands of bands to reach a 4M ask. 16 octaves
+/// from 256 cover `cur` up to 4.2M, past any ask this path runs.
+pub(crate) fn chunk_band_of(cur: u32) -> usize {
+    let base = 256u32;
+    if cur < base {
+        return 0;
+    }
+    // `k` such that cur ∈ [base·2^(k-1), base·2^k): the octave index of cur/base.
+    let octave = u32::BITS - (cur / base).leading_zeros(); // cur/base ≥ 1 ⇒ octave ≥ 1
+    (octave as usize).min(crate::tunables::CHUNK_BANDS - 1)
+}
+
 /// Shed the whole band ledger for a view: every band reopens at the floor (`chunk_band_license`
 /// treats 0 as unvisited). Called by the emergency retreat when a frame prices in the lethal band.
 ///
@@ -5868,6 +5899,44 @@ pub(crate) fn chunk_band_update(
 mod chunk_bands {
     use super::*;
     const N: usize = crate::tunables::CHUNK_BANDS;
+
+    #[test]
+    fn bands_are_octaves_from_a_fixed_base_not_a_fraction_of_the_ask() {
+        // Band 0 is [0,256); band k is [256*2^(k-1), 256*2^k).
+        assert_eq!(chunk_band_of(0), 0);
+        assert_eq!(chunk_band_of(255), 0);
+        assert_eq!(chunk_band_of(256), 1);
+        assert_eq!(chunk_band_of(511), 1);
+        assert_eq!(chunk_band_of(512), 2);
+        assert_eq!(chunk_band_of(1023), 2);
+        assert_eq!(chunk_band_of(1024), 3);
+        // Monotonic, and saturating at the last band rather than panicking or wrapping.
+        assert_eq!(chunk_band_of(u32::MAX), N - 1);
+        let mut prev = 0;
+        for cur in [0u32, 1, 255, 256, 700, 4096, 100_000, 5_000_000, u32::MAX] {
+            let b = chunk_band_of(cur);
+            assert!(b >= prev, "band must not go backwards at cur={cur}");
+            assert!(b < N, "band {b} out of range at cur={cur}");
+            prev = b;
+        }
+    }
+
+    #[test]
+    fn the_2026_08_22_fatal_window_no_longer_shares_a_band_with_the_cheap_orbit_start() {
+        // The field loss ran chunk=[768,1792) against an ask of 231,676. Under the old
+        // ask-proportional rule every cursor below 14,480 was band 0, so that window's licence had
+        // been earned by the passes at iterations 0..768. Octaves separate them.
+        let old_band = |cur: u32, ask: u32| -> usize {
+            ((cur as u64 * N as u64) / (ask.max(1) as u64)).min(N as u64 - 1) as usize
+        };
+        assert_eq!(old_band(0, 231_676), old_band(768, 231_676), "old rule: same band");
+        assert_ne!(
+            chunk_band_of(0),
+            chunk_band_of(768),
+            "the cheap orbit start must no longer license the fatal window"
+        );
+        assert_eq!(chunk_band_of(768), 2, "[512,1024)");
+    }
 
     #[test]
     fn a_lethal_retreat_sheds_every_earned_license_back_to_the_floor() {
