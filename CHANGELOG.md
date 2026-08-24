@@ -16,6 +16,25 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **An exported image no longer depends on how the render was scheduled** (beta.136) — since
+  beta.122 an offline render splits each expensive tile along the iteration axis, so that no single
+  piece of GPU work runs long enough for the driver to kill it. Whether to do that was decided tile
+  by tile, from measured timings. That turned out to matter to the picture: the split and unsplit
+  paths are separate programs on the graphics card, this hardware's driver optimizes the two
+  slightly differently, and a frame could therefore run some of its tiles through one and the rest
+  through the other. The result was an image that depended on the tile budget, on how fast the
+  machine happened to be, and on where the expensive part of the view sat — the same view could
+  come out a few dozen pixels different for no reason the picture itself could explain. Three views
+  in the comparison corpus had been drifting from their references this way since beta.122.
+
+  The choice is now made once, before the first tile, from the requested render alone, so a frame
+  is always drawn by a single program. The same view rendered at half, standard and double the tile
+  budget is now byte-for-byte identical, where those three settings used to disagree. There is no
+  measured speed cost: a tile that does not need splitting still runs as the one piece of work it
+  always did. The three affected reference images have been regenerated against the new,
+  schedule-independent output, and a self-test now fails if any future render mixes the two paths
+  again.
+
 - **A mistyped option is now an error instead of a different picture** (beta.135) — fixing `--zoom`
   (below) turned out to be one instance of a pattern repeated across the command line: an option
   whose value could not be read was quietly replaced by a default, and the program then did the

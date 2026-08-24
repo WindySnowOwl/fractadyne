@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.129 (build 1843)
-- **Generated:** 2026-08-22 12:35:23 UTC (unix 1787402123)
+- **Version:** 0.2.40-beta.136 (build 1972)
+- **Generated:** 2026-08-24 03:52:34 UTC (unix 1787543554)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -26,6 +26,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | IterChunk | chunked render is bit-identical | mode2 97-sample ref (orbit wraps), 21k iter, chunk 2600 | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 0, rebase 1790800 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
 | IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; max dispatch 5ms vs control 6ms | 0 texels differ | ✅ PASS |
 | IterChunk | tiled chunked iter buffer is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, raw | 0 texels differ | 0 texels differ | ✅ PASS |
+| IterChunk | mode-0 render uses ONE entry point | corpus06 1e24x, 400k iter, ss2, multi-tile | 5/5 tiles chunked | all tiles chunked | ✅ PASS |
 | Numeric | df32 perturbation vs CPU f64 dwell | seahorse, 2e4×, 5763 iter, n=6913 | 95.7% agree within 1 iter | ≥90% within 1 iter | ✅ PASS |
 | Finiteness | dwell finite (perturbation @2e4×) | all sampled pixels | all finite | all finite | ✅ PASS |
 | Numeric | floatexp vs df32 perturbation | seahorse, 1e10× | mean Δ=0.0000 iter, >2iter 0.000% | mean<0.5, <2% differ | ✅ PASS |
@@ -96,6 +97,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Live budget | tunables are stock (no --set overrides) | the suite's thresholds, goldens and baselines all assume the defaults | stock | stock | ✅ PASS |
 | Live budget | tile allowance does NOT bind settled resolution | 1920×1102 panel, 4000000 iter @1.3e30×, converged budget 1.666e10 | settled width 1920/1920 (100% of panel) | ≥90% of panel width | ✅ PASS |
 | Live budget | a completed tiled settle REVEALS (present gate drops) | 1920×1102 panel, 4000000 iter @1.3e30×, prefer detail on | gate engaged=true, still holding after 513 frames=false | engages, then drops once the grid completes | ✅ PASS |
+| Live budget | a growing chunk band license never outgrows one dispatch budget | 1920×1102 panel, 4000000 iter @1.3e30×, converged budget 1.666e10,                          24 settled frames, chunk_fe_ok forced | 24/24 frames chunk-governed, license grew to 7873                          iters, worst pass 1.666e10 steps (1.00× budget) | governed, ladder moved past the 256 floor, every pass ≤ one budget | ✅ PASS |
 | Live budget | a settled chunked pass stays inside ONE dispatch budget | 1920×1102 panel, 4000000 iter @1.3e30×, allowance up, budget 1.666e10 CLIMBING | chunk pass = 1.666e10 nominal (1.00× budget) | chunked, and ≤ 1× the single-dispatch budget | ✅ PASS |
 | Live budget | explicit iteration count honoured verbatim | auto off, 10,000,000 iterations, direct mode @10× | params.max_iter = 10000000 | == 10,000,000 | ✅ PASS |
 | Iter-budget | probe reach resolves a starved spar | 3.3e61× three-spar, cap 54315 → reach 848671 | flat 100.0% at cap → 0.2% at reach | >99% flat at cap, <10% at reach | ✅ PASS |
@@ -131,6 +133,12 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | floatexp-1e30-sa | path signature vs baseline | mode 2 eff-it 30000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | floatexp-1e30-nosa | path signature vs baseline | mode 2 eff-it 30000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | floatexp-1e30-nobla | path signature vs baseline | mode 2 eff-it 30000 sa-skip 16014 counters ok | exact | ✅ PASS |
+| bench-matrix | m43-n7-direct-1e3.80 | path signature vs baseline | mode 1 eff-it 1500 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | m43-n8-df32-1e4.35 | path signature vs baseline | mode 0 eff-it 1500 sa-skip 0 counters ok | exact | ✅ PASS |
+| bench-matrix | m43-n51-df32-1e27.71 | path signature vs baseline | mode 0 eff-it 30000 sa-skip 137 counters ok | exact | ✅ PASS |
+| bench-matrix | m43-n52-fe-1e28.25 | path signature vs baseline | mode 2 eff-it 30000 sa-skip 140 counters ok | exact | ✅ PASS |
+| bench-matrix | interior-n51-df32-1e27.71 | path signature vs baseline | mode 0 eff-it 30000 sa-skip 137 counters ok | exact | ✅ PASS |
+| bench-matrix | interior-n52-fe-1e28.25 | path signature vs baseline | mode 2 eff-it 30000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | color-smooth | path signature vs baseline | mode 0 eff-it 15000 sa-skip 7954 counters ok | exact | ✅ PASS |
 | bench-matrix | color-stripe | path signature vs baseline | mode 0 eff-it 15000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | color-trap | path signature vs baseline | mode 0 eff-it 15000 sa-skip 0 counters ok | exact | ✅ PASS |
@@ -146,7 +154,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**131/131 checks passed.**
+**139/139 checks passed.**
 
 ## Coverage & scope
 
@@ -161,29 +169,29 @@ What each oracle independently verifies, and its validity range:
 
 **Not independently oracle-checked:** non-Mandelbrot family *dwell* at depth (only their symmetry is checked); interior-coloring/decomposition exactness; coloring beyond the integer dwell. Aim scrutiny there.
 
-## Golden images (320×240)
+## Golden images (1920×1080)
 
 Stored in `validation/golden`. Compared against; current renders written to `current/` for side-by-side review. pixel tolerance: max ≤ 10, mean ≤ 2.0 (8-bit sRGB).
 
 | Image | Max Δ | Mean Δ | Checksum (FNV-1a) | Verdict | Reproduce |
 |---|---|---|---|---|---|
-| home | 0 | 0.000 | `96b38722a8c31dae` | ✅ match | `fractadyne --render --out home.png --fractal "Mandelbrot" --center -0.5 0.0 --zoom 1 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
-| seahorse | 0 | 0.000 | `fa3a3a4e7324e0c3` | ✅ match | `fractadyne --render --out seahorse.png --fractal "Mandelbrot" --center -0.743643887037151 0.131825904205330 --zoom 2000 --size 320 --iter 1500 --ss 1 --method smooth --palette 1 --no-watermark` |
-| seahorse-stripe-1e6 | 0 | 0.000 | `3c77d71c96f36486` | ✅ match | `fractadyne --render --out seahorse-stripe-1e6.png --fractal "Mandelbrot" --center -0.743643887037151 0.131825904205330 --zoom 1000000 --size 320 --iter 4000 --ss 1 --method stripe --palette 1 --no-watermark` |
-| elephant | 0 | 0.000 | `bc86bb876fd98283` | ✅ match | `fractadyne --render --out elephant.png --fractal "Mandelbrot" --center 0.2925755 -0.0149977 --zoom 1500 --size 320 --iter 1500 --ss 1 --method smooth --palette 2 --no-watermark` |
-| multibrot3 | 0 | 0.000 | `5719ecf229f457bc` | ✅ match | `fractadyne --render --out multibrot3.png --fractal "Multibrot 3" --center 0.0 0.0 --zoom 0.8 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
-| multibrot4 | 0 | 0.000 | `b7cfd7d114cc9d29` | ✅ match | `fractadyne --render --out multibrot4.png --fractal "Multibrot 4" --center 0.0 0.0 --zoom 0.8 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
-| multibrot5 | 0 | 0.000 | `15033c72cbcfe775` | ✅ match | `fractadyne --render --out multibrot5.png --fractal "Multibrot 5" --center 0.0 0.0 --zoom 0.8 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
-| tricorn | 0 | 0.000 | `e4638d1bc049278f` | ✅ match | `fractadyne --render --out tricorn.png --fractal "Tricorn" --center 0.0 0.0 --zoom 0.8 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
-| burning-ship | 0 | 0.000 | `5fa13b9bc7c0531d` | ✅ match | `fractadyne --render --out burning-ship.png --fractal "Burning Ship" --center -0.5 -0.5 --zoom 0.7 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
-| celtic | 0 | 0.000 | `0fb0f9736af2b8e4` | ✅ match | `fractadyne --render --out celtic.png --fractal "Celtic" --center -0.5 0.0 --zoom 0.8 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
-| buffalo | 0 | 0.000 | `e8e4ded2f0a4f84f` | ✅ match | `fractadyne --render --out buffalo.png --fractal "Buffalo" --center -0.5 -0.5 --zoom 0.7 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
-| phoenix | 0 | 0.000 | `79b598472ffd31bb` | ✅ match | `fractadyne --render --out phoenix.png --fractal "Phoenix" --center 0.0 0.0 --zoom 0.7 --size 320 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
-| newton | 0 | 0.000 | `8a3c4bd9ff6a401f` | ✅ match | `fractadyne --render --out newton.png --fractal "Newton" --center 0.0 0.0 --zoom 0.7 --size 320 --iter 400 --ss 1 --method smooth --palette 0 --no-watermark` |
-| mandelbrot-1e6 | 0 | 0.000 | `f8f1306d0daa50fa` | ✅ match | `fractadyne --render --out mandelbrot-1e6.png --fractal "Mandelbrot" --center -7.219621882920463979621343199249635039400777157391994056859e-1 2.406540627640154659873781066416545013133592385797331352286e-1 --zoom 1000000 --size 320 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
-| multibrot3-1e6 | 0 | 0.000 | `f580e754d25c66e8` | ✅ match | `fractadyne --render --out multibrot3-1e6.png --fractal "Multibrot 3" --center 2.19533102209775940218788168856401426185991366731348781648e-1 7.317770073659198278104833118192370226116695264984596408352e-1 --zoom 1000000 --size 320 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
-| multibrot4-1e6 | 0 | 0.000 | `b388a9aabf847dc2` | ✅ match | `fractadyne --render --out multibrot4-1e6.png --fractal "Multibrot 4" --center 2.28757960884408080137002307307431367850187620104115769219e-1 7.625265362813602953424916065993043372187655480595946595141e-1 --zoom 1000000 --size 320 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
-| multibrot5-1e6 | 0 | 0.000 | `c7ddf2beef2506c4` | ✅ match | `fractadyne --render --out multibrot5-1e6.png --fractal "Multibrot 5" --center 2.320768669674853369085651557338865001525750889159483426277e-1 7.735895565582844849904484291320284693154748744446630197764e-1 --zoom 1000000 --size 320 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
+| home | 0 | 0.000 | `d1c0e55cb02196f3` | ✅ match | `fractadyne --render --out home.png --fractal "Mandelbrot" --center -0.5 0.0 --zoom 1 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| seahorse | 0 | 0.000 | `b986dbb04528c11d` | ✅ match | `fractadyne --render --out seahorse.png --fractal "Mandelbrot" --center -0.743643887037151 0.131825904205330 --zoom 2000 --size 1920 --iter 1500 --ss 1 --method smooth --palette 1 --no-watermark` |
+| seahorse-stripe-1e6 | 0 | 0.000 | `9b17f41f811ed71f` | ✅ match | `fractadyne --render --out seahorse-stripe-1e6.png --fractal "Mandelbrot" --center -0.743643887037151 0.131825904205330 --zoom 1000000 --size 1920 --iter 4000 --ss 1 --method stripe --palette 1 --no-watermark` |
+| elephant | 0 | 0.000 | `7bbe88a2d788f3a1` | ✅ match | `fractadyne --render --out elephant.png --fractal "Mandelbrot" --center 0.2925755 -0.0149977 --zoom 1500 --size 1920 --iter 1500 --ss 1 --method smooth --palette 2 --no-watermark` |
+| multibrot3 | 0 | 0.000 | `4e61b752f709b361` | ✅ match | `fractadyne --render --out multibrot3.png --fractal "Multibrot 3" --center 0.0 0.0 --zoom 0.8 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| multibrot4 | 0 | 0.000 | `058cd4411403d843` | ✅ match | `fractadyne --render --out multibrot4.png --fractal "Multibrot 4" --center 0.0 0.0 --zoom 0.8 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| multibrot5 | 0 | 0.000 | `8078756fef47db55` | ✅ match | `fractadyne --render --out multibrot5.png --fractal "Multibrot 5" --center 0.0 0.0 --zoom 0.8 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| tricorn | 0 | 0.000 | `87e66d6f5961f26c` | ✅ match | `fractadyne --render --out tricorn.png --fractal "Tricorn" --center 0.0 0.0 --zoom 0.8 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| burning-ship | 0 | 0.000 | `911052f52fa7dff4` | ✅ match | `fractadyne --render --out burning-ship.png --fractal "Burning Ship" --center -0.5 -0.5 --zoom 0.7 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| celtic | 0 | 0.000 | `9eee5c58204b5078` | ✅ match | `fractadyne --render --out celtic.png --fractal "Celtic" --center -0.5 0.0 --zoom 0.8 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| buffalo | 0 | 0.000 | `e4b91781dd5667db` | ✅ match | `fractadyne --render --out buffalo.png --fractal "Buffalo" --center -0.5 -0.5 --zoom 0.7 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| phoenix | 0 | 0.000 | `e890f73ab587b00b` | ✅ match | `fractadyne --render --out phoenix.png --fractal "Phoenix" --center 0.0 0.0 --zoom 0.7 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
+| newton | 0 | 0.000 | `a5b587024b9119a2` | ✅ match | `fractadyne --render --out newton.png --fractal "Newton" --center 0.0 0.0 --zoom 0.7 --size 1920 --iter 400 --ss 1 --method smooth --palette 0 --no-watermark` |
+| mandelbrot-1e6 | 8 | 0.000 | `9e6fdaf83b12a5ca` | ✅ match | `fractadyne --render --out mandelbrot-1e6.png --fractal "Mandelbrot" --center -7.219621882920463979621343199249635039400777157391994056859e-1 2.406540627640154659873781066416545013133592385797331352286e-1 --zoom 1000000 --size 1920 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
+| multibrot3-1e6 | 0 | 0.000 | `012f398e42f659ac` | ✅ match | `fractadyne --render --out multibrot3-1e6.png --fractal "Multibrot 3" --center 2.19533102209775940218788168856401426185991366731348781648e-1 7.317770073659198278104833118192370226116695264984596408352e-1 --zoom 1000000 --size 1920 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
+| multibrot4-1e6 | 0 | 0.000 | `b0ad42d06142dbc1` | ✅ match | `fractadyne --render --out multibrot4-1e6.png --fractal "Multibrot 4" --center 2.28757960884408080137002307307431367850187620104115769219e-1 7.625265362813602953424916065993043372187655480595946595141e-1 --zoom 1000000 --size 1920 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
+| multibrot5-1e6 | 0 | 0.000 | `4231cce641e39f9c` | ✅ match | `fractadyne --render --out multibrot5-1e6.png --fractal "Multibrot 5" --center 2.320768669674853369085651557338865001525750889159483426277e-1 7.735895565582844849904484291320284693154748744446630197764e-1 --zoom 1000000 --size 1920 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
 
 **17/17 golden images within tolerance.**
 

@@ -591,6 +591,109 @@ impl FractadyneApp {
             }
         }
 
+        // ⭐⭐ONE COMPILED ENTRY POINT PER RENDER — the gate the corpus red at `06-seahorse-1e24`
+        // actually needed, and the one the case above cannot provide.
+        //
+        // The case above asserts chunked == unchunked bit-for-bit. That claim is TRUE in mode 2 and
+        // FALSE in mode 0 on this backend, and not because of a logic bug: `fs_iterate` and
+        // `fs_iterate_chunk` are separate entry points compiled independently, and NVIDIA's Windows
+        // backend folds them differently (the df32-EFT family again). Measured at corpus 06, ss=2:
+        // 279 pixels and 47 rebases of 30.8M apart — and 378/67 apart with the chunk path forced
+        // into ONE window carrying no state at all, so the boundary is innocent and the PROGRAM is
+        // the variable. Re-asserting bit-identity here would just be a knowingly-red case.
+        //
+        // What IS enforceable, and what the fix establishes, is that a single render never MIXES
+        // the two: the chunker is built up front from `chunk_scope` alone, so the entry point is a
+        // property of the REQUEST and not of the tile budget, the adaptive cap, or where the
+        // expensive region happened to sit. Under the old lazy build, location 06 rendered
+        // `chunks=0` on one tile and `chunks=2` on eight — one image, two programs — which is why
+        // its pixels moved when `TILE_WORK_BUDGET` moved.
+        //
+        // ⚠The case asserts `mode == 0`, `tiles_total > 1` and `tiles_chunked > 0` BEFORE the
+        // invariant, because every one of those has been a false control in this investigation: a
+        // single-tile render cannot mix, a render that never chunks cannot mix, and mode 2 is the
+        // combination that already worked.
+        //
+        // ⭐⭐THE PARAMETERS ARE CHOSEN SO THE OLD CODE FAILS DETERMINISTICALLY, not incidentally.
+        // `ChunkPricer::new().open(n) == min(400_000, n)` is a constant — no timing input — so the
+        // lazy trigger `pricer.open(max_iter) < max_iter` is FALSE on the first tile for any ask at
+        // or below 400k, and the old build therefore left tile 0 on `fs_iterate` no matter how fast
+        // the machine was. `max_iter` is pinned at exactly 400_000 and `ss` at 2 so the frame is
+        // several tiles: the old build then either mixes (a later hot tile teaches the pricer down,
+        // `tiles_chunked < tiles_total`) or never chunks at all (`tiles_chunked == 0`), and BOTH
+        // are red here. ⚠A 4M ask would NOT discriminate — the opening is 400k < 4M, so even the
+        // lazy build chunks from tile 0 and reports a clean 26/26. That configuration was tried
+        // first and passed on both builds; it is exactly the kind of check that looks like a gate
+        // and is not one.
+        //
+        // ⚠What this case does NOT do is reproduce the historical corpus red. That needed the
+        // 1280x720 ss=2 corpus geometry, where tile 0 landed at 415 ms against the pricer's 400 ms
+        // threshold — i.e. a TIMING-marginal reproduction, unfit for a gate. The corpus itself
+        // covers that; this case covers the structural property on every run.
+        if want("iter-chunk") {
+            let mag = 1.0e24;
+            const C6X: &str = "-0.7436438870371587047521915061147707";
+            const C6Y: &str = "0.131825904205311970493132056385139";
+            let mut vp = Viewport::new(N as f64, N as f64);
+            vp.center_x = fractadyne_core::parse_bf(C6X).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(C6Y).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+            vp.precision = fractadyne_core::precision_for_magnification(mag);
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            let saved_method = self.coloring.color_method;
+            // Exactly the pricer's opening bound: `open(400_000) == 400_000`, which is NOT
+            // `< max_iter`, so the lazy rule cannot fire on tile 0. See the note above.
+            self.render_cfg.max_iter = 400_000;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = N;
+            req.height = N;
+            req.ss = 2; // ss=1 here is a single tile, and a single tile cannot mix
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            self.coloring.color_method = saved_method;
+
+            use std::sync::atomic::{AtomicBool, AtomicU32};
+            let progress = AtomicU32::new(0);
+            let cancel = AtomicBool::new(false);
+            let r = if req.mode == 0 {
+                fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export mode 0): {e}"))
+                    .ok()
+            } else {
+                None
+            };
+            let (pass, result) = match (&r, req.mode) {
+                // Guard the VARIABLE UNDER TEST first: a mode drift would silently re-run the
+                // mode-2 coverage the case above already has.
+                (_, m) if m != 0 => (false, format!("ran in mode {m} not 0")),
+                (None, _) => (false, "render failed".into()),
+                (Some(r), _) => {
+                    let (t, c) = (r.tiles_total, r.tiles_chunked);
+                    if t <= 1 {
+                        (false, format!("{t} tile — a single-tile render cannot mix"))
+                    } else if c == 0 {
+                        // In chunk scope every tile must be chunked. 0 means the chunker was not
+                        // built up front — the lazy build, or a device outside chunk scope. Fail
+                        // loudly either way rather than report a vacuous pass.
+                        (false, format!("{t} tiles, 0 chunked — chunker not built up front"))
+                    } else {
+                        (c == t, format!("{c}/{t} tiles chunked"))
+                    }
+                }
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "IterChunk",
+                name: "mode-0 render uses ONE entry point".into(),
+                params: "corpus06 1e24x, 400k iter, ss2, multi-tile".into(),
+                result,
+                threshold: "all tiles chunked",
+                pass,
+            });
+        }
+
         // ---- numeric & render-path checks (local closures borrow self immutably) ----
         if want("numeric") {
             // (A) df32 perturbation vs an independent CPU f64 dwell @2e4× (f64 exact here).

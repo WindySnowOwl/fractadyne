@@ -132,6 +132,22 @@ pub struct ExportResult {
     /// bound; 0.0 = not measured on this path). The TDR-forensics figure: a render that stayed
     /// bounded shows a few hundred ms here no matter how long it ran in total.
     pub max_dispatch_ms: f64,
+    /// Tiles this render issued, and how many of them took the CHUNKED entry point.
+    ///
+    /// ⭐**The invariant is `tiles_chunked == 0 || tiles_chunked == tiles_total`.** `fs_iterate`
+    /// and `fs_iterate_chunk` are separately compiled entry points, and this backend does not fold
+    /// them into identical arithmetic (measured: 279 differing pixels at corpus 06, and 378 with
+    /// the chunk path forced into a single window — see the note on `chunker` in
+    /// `render_export_impl`). A frame that MIXES the two is therefore a frame whose pixels depend
+    /// on the tile budget and on where its expensive region happened to sit. `render_export`
+    /// decides once, up front, from `chunk_scope` alone; these counters are how the selftest
+    /// asserts it. `0/0` on the paths that do not tile.
+    ///
+    /// ⚠`render_iter_tiled` still builds its chunker LAZILY and so can still report a MIXED
+    /// render here — deliberately, pending a cheaper way to hoist the setup out of the
+    /// corrector's ~64 calls per render. The counters are what makes that visible.
+    pub tiles_total: u32,
+    pub tiles_chunked: u32,
 }
 
 /// Render `req` offscreen and read the colored image back to the CPU. Synchronous
@@ -533,15 +549,35 @@ fn render_export_impl(
         && req.formula <= 3
         && !method_needs_aux(req.color_method)
         && device.limits().max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
-    // ⚠Built LAZILY, on the first tile that would actually be SPLIT. Two render pipelines over a
-    // 121 KB shader plus the state textures is real setup cost, and the corrector calls into
-    // these loops once per reference pass — eagerly building it there cost ~7 s on a 60,000-
-    // iteration frame that then ran one window per tile anyway (measured: bench scene 04 went
-    // 14.3 s → 21.7 s). When the whole ask fits one priced window, chunking is a no-op by
-    // construction, so paying for it buys nothing.
-    let mut chunker: Option<TileChunker> = None;
+    // ⚠BUILT UP FRONT WHEN IN SCOPE, NOT LAZILY — and that is a CORRECTNESS requirement, not a
+    // preference. `fs_iterate` and `fs_iterate_chunk` are separate entry points compiled
+    // independently, and on this backend they do NOT produce identical arithmetic: measured on the
+    // corpus's 06-seahorse-1e24 at ss=2, chunked against unchunked differs on 279 pixels and 47
+    // rebases out of 30.8M, and it still differs (378 px, 67 rebases) when the chunked path is
+    // forced to run in ONE window with no state round-trip at all. So the divergence is the
+    // COMPILED PROGRAM, not the boundary — the same NVIDIA folding family as the df32 EFTs.
+    //
+    // Building lazily meant a single frame mixed both programs: `pricer.observe` runs on unchunked
+    // tiles too (deliberately — a hot tile must be able to teach the pricer), so the first hot tile
+    // flipped the rest of the render onto the other entry point. The rendered image therefore
+    // depended on the tile budget, the adaptive cap, and where in the frame the expensive region
+    // sat. Measured: budgets 10e9/20e9/40e9 gave 57- and 40-pixel disagreements against the
+    // reference. With one entry point for the whole render, the same three budgets give ZERO.
+    //
+    // The cost the old note worried about is still respected: a tile that does not need splitting
+    // runs ONE window, i.e. the same single dispatch it always did, plus one `fs_resolve` pass.
+    // What we now pay unconditionally within scope is the two pipelines and the ping-pong state
+    // textures. The corrector's loop (`render_iter_tiled`) keeps its lazy build for now — it calls
+    // in up to 64 times per render, where that setup was measured at ~7 s (bench scene 04,
+    // 14.3 s -> 21.7 s).
+    let chunker: Option<TileChunker> = if chunk_scope {
+        Some(TileChunker::new(device, &shader, &iter_bgl, fe, [tile * ss, tile * ss]))
+    } else {
+        None
+    };
     let mut pricer = ChunkPricer::new();
     let mut max_dispatch_ms = 0.0f64;
+    let (mut tiles_total, mut tiles_chunked) = (0u32, 0u32);
 
     let uniform = |label, size| {
         device.create_buffer(&wgpu::BufferDescriptor {
@@ -723,12 +759,6 @@ fn render_export_impl(
                 None
             };
 
-            // Chunk only once a window is actually SHORTER than the ask — i.e. once the priced
-            // opening would split this tile. Below that the chunked and unchunked paths issue the
-            // same single dispatch, so the setup would be pure cost (see the `chunker` note).
-            if chunk_scope && chunker.is_none() && pricer.open(req.max_iter) < req.max_iter {
-                chunker = Some(TileChunker::new(device, &shader, &iter_bgl, fe, [tile * ss, tile * ss]));
-            }
             // Chunked tiles iterate BEFORE the main encoder: each window is its own polled
             // submission (that is the whole point), and the first window clears the counters.
             let chunked = match chunker.as_ref() {
@@ -743,6 +773,8 @@ fn render_export_impl(
                 }
                 None => None,
             };
+            tiles_total += 1;
+            tiles_chunked += u32::from(chunked.is_some());
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("export.encoder"),
             });
@@ -946,6 +978,8 @@ cap={cap} chunks={chunk_passes}"
         color_ms: sum_color_ms,
         counters: ctr_sum,
         max_dispatch_ms,
+        tiles_total,
+        tiles_chunked,
     })
 }
 
@@ -1031,6 +1065,7 @@ pub fn render_iter_tiled(
     let mut chunker: Option<TileChunker> = None;
     let mut pricer = ChunkPricer::new();
     let mut max_dispatch_ms = 0.0f64;
+    let (mut tiles_total, mut tiles_chunked) = (0u32, 0u32);
     let mut chunk_wall_sink = 0.0f64; // iterate_ms stays 0.0 on this path (see the result)
     // ROI effectiveness, reported under the `tile` trace: skipping depends entirely on whether
     // the wanted pixels CLUSTER, and tile size falls out of the work budget, so "how much did
@@ -1180,6 +1215,8 @@ pub fn render_iter_tiled(
                 }
                 None => None,
             };
+            tiles_total += 1;
+            tiles_chunked += u32::from(chunked.is_some());
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("itertiled.enc"),
             });
@@ -1308,6 +1345,8 @@ chunks={chunk_passes}"
         color_ms: 0.0,
         counters: ctr_sum,
         max_dispatch_ms,
+        tiles_total,
+        tiles_chunked,
     })
 }
 
@@ -1996,7 +2035,7 @@ pub fn render_iter(
     let counters = read_counters(device, queue, &counters_buf, &counters_read);
     Ok(ExportResult {
         width: w, height: h, ss: 1, pixels, iterate_ms, color_ms: 0.0, counters,
-        max_dispatch_ms: 0.0,
+        max_dispatch_ms: 0.0, tiles_total: 0, tiles_chunked: 0,
     })
 }
 
@@ -2322,7 +2361,7 @@ pub fn render_iter_chunked_timed(
     let max_dispatch_ms = passes.iter().map(|p| p.wall_ms).fold(0.0_f64, f64::max);
     Ok(ExportResult {
         width: w, height: h, ss: 1, pixels, iterate_ms: 0.0, color_ms: 0.0, counters,
-        max_dispatch_ms,
+        max_dispatch_ms, tiles_total: 0, tiles_chunked: 0,
     })
 }
 
@@ -2517,6 +2556,8 @@ pub fn color_iter_buffer(
         color_ms: 0.0,
         counters: [0u64; crate::COUNTER_SLOTS],
         max_dispatch_ms: 0.0,
+        tiles_total: 0,
+        tiles_chunked: 0,
     })
 }
 
