@@ -58,6 +58,23 @@ cargo run -p fractadyne-app -- --selftest   # GPU vs CPU/bignum oracle + goldens
 > workaround for the original author's page-file-constrained machine, not a
 > requirement — build normally on a machine with adequate memory.
 
+## Before a PUBLIC RELEASE
+
+The automated gates prove the renderer computes the right numbers. They cannot tell you the
+window opened, the menus are reachable, a palette looks like a palette, or the app survives
+being resized — so there is a manual pass as well:
+
+```sh
+python scripts/release_checklist.py     # regenerates validation/release-checklist.xlsx
+```
+
+Walk `validation/release-checklist.xlsx` end to end **on the exact build you intend to
+publish** — 98 steps over launch, layout, window sizing, navigation, deep zoom, all ten
+formulas, Julia/dual view, colouring, quality, locations/bookmarks, export, tours, help,
+persistence and stability. Record Actual result and Pass/Fail, and fill in the Cover sheet
+(build, GPU, decision). The checklist names real controls; if a step can no longer be
+performed because something moved, fix the step — do not skip it.
+
 ## Before you open a PR
 
 - **`cargo fmt`** and **`cargo clippy`** should be clean.
