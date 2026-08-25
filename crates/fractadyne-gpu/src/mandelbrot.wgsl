@@ -2286,12 +2286,47 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     // Distance-estimate relief lighting: light the surface whose normal is the
     // averaged slope. `light_height` raises the ambient floor (smaller = sharper).
     if (cu.light == 1u) {
-        let n = nacc / count;
-        if (dot(n, n) > 1.0e-12) {
-            let ld = vec2<f32>(cos(cu.light_angle), sin(cu.light_angle));
-            let diff = dot(normalize(n), ld);
+        // ⭐⭐**THE RELIEF NORMAL IS LOW-PASSED ACROSS PIXELS, AND THE RADIUS IS THE MEASURED ONE.**
+        // Lighting used to shade from `nacc / count` — the slope averaged over this pixel's
+        // anti-aliasing taps alone. At depth that field has structure finer than the pixel grid,
+        // so the Lambert term flickered between lit and back-facing on neighbouring pixels and the
+        // exterior stippled black. Reported at 3.1e34x; measured dark-pixel fraction attributable
+        // to lighting was 28.84 pt at ss=1, 7.56 at ss=2, 2.03 at ss=4 — falling as 1/samples,
+        // which is undersampling, not a numerical fault.
+        //
+        // ⛔**Averaging the TAPS harder cannot fix it, and that was measured before this was
+        // written**: weighting the light by how much the taps agreed produced byte-identical
+        // output, because the taps INSIDE a pixel already agree. The variation lives BETWEEN
+        // adjacent pixels, so the filter has to span pixels — hence a 3x3 neighbourhood in OUTPUT
+        // pixel steps rather than a wider tap box.
+        //
+        // ⭐`|mean|` of unit normals is then a real confidence: 1 where the neighbourhood agrees on
+        // a surface, ~0 where it does not. Fading toward UNLIT there (`mix(1.0, lam, conf)`) means
+        // an undersampled region loses its relief instead of gaining a random dark speckle — and
+        // where the field IS well defined, `conf` is 1 and the result is unchanged.
+        let ld = vec2<f32>(cos(cu.light_angle), sin(cu.light_angle));
+        var nsm = vec2<f32>(0.0);
+        var nn = 0.0;
+        for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
+            for (var ox: i32 = -1; ox <= 1; ox = ox + 1) {
+                let q = clamp(
+                    (pix + vec2<i32>(ox, oy)) * i32(ss),
+                    vec2<i32>(0, 0),
+                    maxc,
+                );
+                let tq = textureLoad(iter_tex, q, 0);
+                nsm = nsm + vec2<f32>(tq.g, tq.b);
+                nn = nn + 1.0;
+            }
+        }
+        // Blend the neighbourhood mean with this pixel's own tap mean so a genuinely sharp edge
+        // keeps some of its own slope rather than being smeared entirely by its neighbours.
+        let n = mix(nacc / count, nsm / nn, 0.75);
+        let conf = length(n);
+        if (conf > 1.0e-6) {
+            let diff = dot(n / conf, ld);
             let lam = clamp((diff + cu.light_height) / (1.0 + cu.light_height), 0.0, 1.0);
-            col = col * lam;
+            col = col * mix(1.0, lam, clamp(conf, 0.0, 1.0));
         }
     }
     // Distance-estimate glow: bright contour bands at log-distance intervals from the

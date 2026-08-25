@@ -25,6 +25,16 @@ in the git history.
   budget at the worst speed measured, so it only ever shrinks, only in regions whose own
   measurements call for it, and never slows an ordinary render.
 
+- **3D relief lighting no longer speckles deep views black** (beta.145) — with relief lighting on,
+  deep zooms came out stippled with near-black pixels. The shading was computed from the surface
+  slope at each pixel on its own, and at that depth the slope varies faster than the pixel grid, so
+  neighbouring pixels disagreed about which way the surface faced and the light flickered between
+  lit and shadowed. Extra anti-aliasing only helped in proportion to the number of samples, because
+  each sample was still asked to decide on its own. The shading now reads the slope over a small
+  neighbourhood and, where that neighbourhood cannot agree on a direction, fades the lighting out
+  instead of picking one at random. Deep views keep their relief without the speckle, ordinary
+  views look as they did, and there is no measurable cost.
+
 - **"Normalize deep colors" now actually engages where the picture needs it** (beta.144) — deep
   views could come out as coloured static: a correct image, mapped through a palette that repeated
   many times between one pixel and the next. The setting meant to prevent exactly that decided
