@@ -3754,22 +3754,30 @@ zoom = \"1e94\"
         // zoom / coloring; the per-family overviews guard each formula's escape dispatch across the
         // CPU orbit and the direct-mode shader. (The deep-zoom views are all Mandelbrot, so without
         // these a non-Mandelbrot formula regression would render wrong yet pass — see fractal.rs.)
-        // (name, fractal, center_x, center_y, zoom, max_iter, color_method, palette_idx)
-        type GoldenSpec = (&'static str, FractalKind, &'static str, &'static str, f64, u32, u32, usize);
+        // (name, fractal, center_x, center_y, zoom, max_iter, color_method, palette_idx, relief)
+        type GoldenSpec =
+            (&'static str, FractalKind, &'static str, &'static str, f64, u32, u32, usize, bool);
         let specs: &[GoldenSpec] = &[
-            ("home", FractalKind::Mandelbrot, "-0.5", "0.0", 1.0, 800, 0, 0),
-            ("seahorse", FractalKind::Mandelbrot, SX, SY, 2.0e3, 1500, 0, 1),
-            ("seahorse-stripe-1e6", FractalKind::Mandelbrot, SX, SY, 1.0e6, 4000, 1, 1),
-            ("elephant", FractalKind::Mandelbrot, "0.2925755", "-0.0149977", 1.5e3, 1500, 0, 2),
-            ("multibrot3", FractalKind::Multibrot3, "0.0", "0.0", 0.8, 800, 0, 0),
-            ("multibrot4", FractalKind::Multibrot4, "0.0", "0.0", 0.8, 800, 0, 0),
-            ("multibrot5", FractalKind::Multibrot5, "0.0", "0.0", 0.8, 800, 0, 0),
-            ("tricorn", FractalKind::Tricorn, "0.0", "0.0", 0.8, 800, 0, 0),
-            ("burning-ship", FractalKind::BurningShip, "-0.5", "-0.5", 0.7, 800, 0, 0),
-            ("celtic", FractalKind::Celtic, "-0.5", "0.0", 0.8, 800, 0, 0),
-            ("buffalo", FractalKind::Buffalo, "-0.5", "-0.5", 0.7, 800, 0, 0),
-            ("phoenix", FractalKind::Phoenix, "0.0", "0.0", 0.7, 800, 0, 0),
-            ("newton", FractalKind::Newton, "0.0", "0.0", 0.7, 400, 0, 0),
+            ("home", FractalKind::Mandelbrot, "-0.5", "0.0", 1.0, 800, 0, 0, false),
+            ("seahorse", FractalKind::Mandelbrot, SX, SY, 2.0e3, 1500, 0, 1, false),
+            ("seahorse-stripe-1e6", FractalKind::Mandelbrot, SX, SY, 1.0e6, 4000, 1, 1, false),
+            // ⭐⭐RELIEF LIGHTING — the ONLY golden that turns it on, added 2026-08-25 because
+            // nothing covered it at all. A change to the shading math altered every relief-lit
+            // image in the app and this suite stayed 17/17, which is the definition of an
+            // uncovered feature. ⚠`light_anim` MUST be pinned off below: "Rotate light" advances
+            // the angle with wall-clock time, so an animated light makes the golden
+            // non-deterministic exactly the way `palette_anim` would.
+            ("seahorse-relief-1e6", FractalKind::Mandelbrot, SX, SY, 1.0e6, 4000, 0, 1, true),
+            ("elephant", FractalKind::Mandelbrot, "0.2925755", "-0.0149977", 1.5e3, 1500, 0, 2, false),
+            ("multibrot3", FractalKind::Multibrot3, "0.0", "0.0", 0.8, 800, 0, 0, false),
+            ("multibrot4", FractalKind::Multibrot4, "0.0", "0.0", 0.8, 800, 0, 0, false),
+            ("multibrot5", FractalKind::Multibrot5, "0.0", "0.0", 0.8, 800, 0, 0, false),
+            ("tricorn", FractalKind::Tricorn, "0.0", "0.0", 0.8, 800, 0, 0, false),
+            ("burning-ship", FractalKind::BurningShip, "-0.5", "-0.5", 0.7, 800, 0, 0, false),
+            ("celtic", FractalKind::Celtic, "-0.5", "0.0", 0.8, 800, 0, 0, false),
+            ("buffalo", FractalKind::Buffalo, "-0.5", "-0.5", 0.7, 800, 0, 0, false),
+            ("phoenix", FractalKind::Phoenix, "0.0", "0.0", 0.7, 800, 0, 0, false),
+            ("newton", FractalKind::Newton, "0.0", "0.0", 0.7, 400, 0, 0, false),
             // Deep mode-0 (df32 perturbation, 1e6×) views at a bisected boundary coordinate (see
             // core's dump_deep_boundary_coords). These exercise the bignum reference orbit (step_bf)
             // + series approximation + the df32-perturbation shader branch — the deep pipeline the
@@ -3777,10 +3785,10 @@ zoom = \"1e94\"
             // (Burning Ship / Celtic / Buffalo) show fold glitch-speckle at deep perturbation zoom
             // (awaiting multi-reference glitch correction), and Tricorn/Phoenix need better deep
             // coordinates — a clean deep tier for those (and a mode-2 / floatexp tier) is future work.
-            ("mandelbrot-1e6", FractalKind::Mandelbrot, "-7.219621882920463979621343199249635039400777157391994056859e-1", "2.406540627640154659873781066416545013133592385797331352286e-1", 1.0e6, 3000, 0, 0),
-            ("multibrot3-1e6", FractalKind::Multibrot3, "2.19533102209775940218788168856401426185991366731348781648e-1", "7.317770073659198278104833118192370226116695264984596408352e-1", 1.0e6, 3000, 0, 0),
-            ("multibrot4-1e6", FractalKind::Multibrot4, "2.28757960884408080137002307307431367850187620104115769219e-1", "7.625265362813602953424916065993043372187655480595946595141e-1", 1.0e6, 3000, 0, 0),
-            ("multibrot5-1e6", FractalKind::Multibrot5, "2.320768669674853369085651557338865001525750889159483426277e-1", "7.735895565582844849904484291320284693154748744446630197764e-1", 1.0e6, 3000, 0, 0),
+            ("mandelbrot-1e6", FractalKind::Mandelbrot, "-7.219621882920463979621343199249635039400777157391994056859e-1", "2.406540627640154659873781066416545013133592385797331352286e-1", 1.0e6, 3000, 0, 0, false),
+            ("multibrot3-1e6", FractalKind::Multibrot3, "2.19533102209775940218788168856401426185991366731348781648e-1", "7.317770073659198278104833118192370226116695264984596408352e-1", 1.0e6, 3000, 0, 0, false),
+            ("multibrot4-1e6", FractalKind::Multibrot4, "2.28757960884408080137002307307431367850187620104115769219e-1", "7.625265362813602953424916065993043372187655480595946595141e-1", 1.0e6, 3000, 0, 0, false),
+            ("multibrot5-1e6", FractalKind::Multibrot5, "2.320768669674853369085651557338865001525750889159483426277e-1", "7.735895565582844849904484291320284693154748744446630197764e-1", 1.0e6, 3000, 0, 0, false),
         ];
         // 1920x1080, raised from 320x240 (2026-08-22). 27x the pixels: a rendering
         // regression that survives 2M pixels is not one worth calling a golden, and the
@@ -3824,7 +3832,7 @@ zoom = \"1e94\"
                 }
             }
         }
-        for &(name, fractal, cx, cy, zoom, iter, method, palette) in specs {
+        for &(name, fractal, cx, cy, zoom, iter, method, palette, relief) in specs {
             // A filter matches goldens by group tag or by individual spec name
             // (`--selftest-filter multibrot3-1e6` re-renders one golden in seconds).
             if !(want("goldens") || filter.as_ref().is_some_and(|f| name.contains(f.as_str()))) {
@@ -3846,7 +3854,14 @@ zoom = \"1e94\"
             // non-deterministic (random colors) regardless of palette_idx.
             self.anim.palette_anim = crate::PaletteAnim::Off;
             self.julia_c = (0.0, 0.0); // unused (julia off) — pinned so nothing leaks from the session
-            self.effects.light = false;
+            // Relief lighting is OFF for every golden except the one that exists to cover it.
+            // Angle and strength are pinned rather than inherited: both are session state, and a
+            // golden that renders at whatever angle the last session left would drift on every
+            // bless. `light_anim` off for the same reason `palette_anim` is — it is a clock.
+            self.effects.light = relief;
+            self.effects.light_angle = 2.281;
+            self.effects.light_height = 1.2;
+            self.effects.light_anim = false;
             self.effects.de = false;
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = iter;

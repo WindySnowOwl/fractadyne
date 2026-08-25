@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.40-beta.144 (build 2023)
-- **Generated:** 2026-08-25 17:36:05 UTC (unix 1787679365)
+- **Version:** 0.2.40-beta.145 (build 2026)
+- **Generated:** 2026-08-25 17:58:45 UTC (unix 1787680725)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -178,6 +178,7 @@ Stored in `validation/golden`. Compared against; current renders written to `cur
 | home | 0 | 0.000 | `d1c0e55cb02196f3` | ✅ match | `fractadyne --render --out home.png --fractal "Mandelbrot" --center -0.5 0.0 --zoom 1 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
 | seahorse | 0 | 0.000 | `b986dbb04528c11d` | ✅ match | `fractadyne --render --out seahorse.png --fractal "Mandelbrot" --center -0.743643887037151 0.131825904205330 --zoom 2000 --size 1920 --iter 1500 --ss 1 --method smooth --palette 1 --no-watermark` |
 | seahorse-stripe-1e6 | 0 | 0.000 | `9b17f41f811ed71f` | ✅ match | `fractadyne --render --out seahorse-stripe-1e6.png --fractal "Mandelbrot" --center -0.743643887037151 0.131825904205330 --zoom 1000000 --size 1920 --iter 4000 --ss 1 --method stripe --palette 1 --no-watermark` |
+| seahorse-relief-1e6 | 0 | 0.000 | `3bc7350f302f84ac` | ✅ match | `fractadyne --render --out seahorse-relief-1e6.png --fractal "Mandelbrot" --center -0.743643887037151 0.131825904205330 --zoom 1000000 --size 1920 --iter 4000 --ss 1 --method smooth --palette 1 --no-watermark` |
 | elephant | 0 | 0.000 | `7bbe88a2d788f3a1` | ✅ match | `fractadyne --render --out elephant.png --fractal "Mandelbrot" --center 0.2925755 -0.0149977 --zoom 1500 --size 1920 --iter 1500 --ss 1 --method smooth --palette 2 --no-watermark` |
 | multibrot3 | 0 | 0.000 | `4e61b752f709b361` | ✅ match | `fractadyne --render --out multibrot3.png --fractal "Multibrot 3" --center 0.0 0.0 --zoom 0.8 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
 | multibrot4 | 0 | 0.000 | `058cd4411403d843` | ✅ match | `fractadyne --render --out multibrot4.png --fractal "Multibrot 4" --center 0.0 0.0 --zoom 0.8 --size 1920 --iter 800 --ss 1 --method smooth --palette 0 --no-watermark` |
@@ -193,7 +194,7 @@ Stored in `validation/golden`. Compared against; current renders written to `cur
 | multibrot4-1e6 | 0 | 0.000 | `b0ad42d06142dbc1` | ✅ match | `fractadyne --render --out multibrot4-1e6.png --fractal "Multibrot 4" --center 2.28757960884408080137002307307431367850187620104115769219e-1 7.625265362813602953424916065993043372187655480595946595141e-1 --zoom 1000000 --size 1920 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
 | multibrot5-1e6 | 0 | 0.000 | `4231cce641e39f9c` | ✅ match | `fractadyne --render --out multibrot5-1e6.png --fractal "Multibrot 5" --center 2.320768669674853369085651557338865001525750889159483426277e-1 7.735895565582844849904484291320284693154748744446630197764e-1 --zoom 1000000 --size 1920 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
 
-**17/17 golden images within tolerance.**
+**18/18 golden images within tolerance.**
 
 ## Summary
 
