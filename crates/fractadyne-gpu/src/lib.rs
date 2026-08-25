@@ -303,6 +303,7 @@ impl CounterRead {
         device: &wgpu::Device,
         out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         norm_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        grad_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         work_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
@@ -334,6 +335,14 @@ impl CounterRead {
                         if let Some(o) = norm_out {
                             let packed = ((slots[CTR_ESC_MIN] as u64) << 32)
                                 | slots[CTR_ESC_MAX] as u64;
+                            o.store(packed, SeqCst);
+                        }
+                        // Local escape gradient: (Σ×16) << 32 | sample count. `+1` on the count
+                        // biases so "published with no samples" is distinguishable from "never
+                        // published" — the same idiom as the work counters below.
+                        if let Some(o) = grad_out {
+                            let packed = ((slots[CTR_GRAD_SUM] as u64) << 32)
+                                | (slots[CTR_GRAD_N] as u64 + 1);
                             o.store(packed, SeqCst);
                         }
                         // ⭐Rebases and BLA skips, published live. All eight slots have always been
@@ -504,7 +513,7 @@ pub(crate) fn make_iter_bg(
 /// atomics per pixel — negligible next to the iteration loop. This is the "did the code
 /// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
 /// to exercise rebasing/extended samples/BLA must show nonzero counts.
-pub const COUNTER_SLOTS: usize = 8;
+pub const COUNTER_SLOTS: usize = 10;
 /// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
 pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
 pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
@@ -513,6 +522,8 @@ pub const CTR_BLA_SKIP: usize = 3; // BLA multi-step skips taken
 pub const CTR_MAXITER: usize = 4; // pixels that exhausted max_iter (interior/undecided)
 pub const CTR_ESC_MIN: usize = 5; // min escaped smooth-iter (f32 bits; seeded 0xFFFFFFFF per frame)
 pub const CTR_ESC_MAX: usize = 6; // max escaped smooth-iter (f32 bits)
+pub const CTR_GRAD_SUM: usize = 8; // Σ|Δ smooth-iter| between adjacent escaped pixels, ×16 clamped
+pub const CTR_GRAD_N: usize = 9; // samples in CTR_GRAD_SUM
 
 pub(crate) fn make_counters_buf(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
@@ -1134,6 +1145,9 @@ pub struct MandelbrotParams {
     /// bit patterns; `min_bits == 0xFFFFFFFF` = no escaped pixels). Drained with `swap(u64::MAX)`.
     /// Feeds the live palette auto-normalization. `None` disables capture.
     pub norm_range: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the local escape GRADIENT: `(Σ|Δ smooth-iter|×16) << 32 | (samples + 1)`. Feeds the
+    /// live auto-normalization predicate — see `CTR_GRAD_SUM`.
+    pub grad_range: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Live sink for `(rebase + 1) << 32 | (bla_skip + 1)` — see `CounterRead::pump`.
     pub work_counters: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Tiled settle: `Some([x, y, w, h])` in BASE pixels renders only that sub-rect of the iteration
@@ -1300,6 +1314,7 @@ impl CallbackTrait for MandelbrotParams {
             device,
             self.maxiter_count.as_ref(),
             self.norm_range.as_ref(),
+            self.grad_range.as_ref(),
             self.work_counters.as_ref(),
         );
 

@@ -945,12 +945,31 @@ impl FractadyneApp {
     /// runs never render live frames, so `norm_range` stays `None` there and CLI/corpus renders
     /// keep their explicit `--normalize`-only semantics.
     pub(crate) fn live_norm_cycle_offset(&self, vi: usize) -> Option<NormMap> {
-        const NORM_RANGE_MIN: f32 = 20_000.0;
-        match self.perf.norm_range[vi.min(1)] {
-            Some((mn, mx))
+        // ⭐⭐**THE PREDICATE IS AN ALIASING TEST, NOT A SPAN TEST.** It used to be
+        // `mx - mn > NORM_RANGE_MIN` with `NORM_RANGE_MIN = 20_000` — an ABSOLUTE escape span,
+        // which cannot decide this. Aliasing is LOCAL: what matters is how far the palette moves
+        // between NEIGHBOURING pixels, `mean|Δ smooth-iter| × cycle`. A shallow view spans a
+        // hundred palette sweeps and still looks perfect, because neighbours differ by ≪1
+        // iteration; a deep dense field turns to speckle on a far narrower span.
+        //
+        // ⛔The span test got a real user's 9.83e27 view wrong in exactly that way: measured span
+        // 18,661 — just under the constant — so "Normalize deep colors" silently did nothing while
+        // the exterior aliased into confetti. And the same constant, approached from the other
+        // side, is what makes a shallow high-iteration view go FLAT GRAY (filed below): there the
+        // span clears 20,000 on a handful of outlier pixels while the visible field needs no
+        // normalization at all.
+        //
+        // ⭐**0.5 is Nyquist.** A palette that advances more than half a period per pixel cannot be
+        // resolved on screen — past that the banding IS noise, which is precisely when remapping
+        // the range earns its keep.
+        const ALIAS_PHASE_LIMIT: f32 = 0.5;
+        match (self.perf.norm_range[vi.min(1)], self.perf.norm_grad[vi.min(1)]) {
+            (Some((mn, mx)), Some(grad))
                 if self.coloring.normalize_live
                     && self.coloring.color_method == crate::ColorMethod::Smooth
-                    && mx - mn > NORM_RANGE_MIN =>
+                    // A degenerate range would divide by ~0 below; the gradient decides the rest.
+                    && mx - mn > 1.0
+                    && grad * self.coloring.cycle > ALIAS_PHASE_LIMIT =>
             {
                 let sweeps = 0.5 + self.coloring.cycle * 6.0;
                 if self.coloring.log_palette {
@@ -3039,6 +3058,19 @@ impl FractadyneApp {
             // Drain the escape-range reading (live auto-normalization input) and EMA it — the
             // range moves smoothly with the view, and the EMA keeps the derived palette mapping
             // from flickering frame to frame.
+            // Local-gradient drain: `(Σ×16) << 32 | (n + 1)`; 0 = never published this frame.
+            let gr = self.perf.grad_sink[vb].swap(0, SeqCst);
+            if gr != 0 {
+                let (sum, n) = ((gr >> 32) as u32, (gr as u32).saturating_sub(1));
+                if n > 0 {
+                    let mean = (sum as f32) / 16.0 / (n as f32);
+                    // Same 0.3 EMA as the range: the mapping must not flicker frame to frame.
+                    self.perf.norm_grad[vb] = Some(match self.perf.norm_grad[vb] {
+                        Some(g) => g + 0.3 * (mean - g),
+                        None => mean,
+                    });
+                }
+            }
             let nr = self.perf.norm_sink[vb].swap(u64::MAX, SeqCst);
             if nr != u64::MAX {
                 let (min_b, max_b) = ((nr >> 32) as u32, nr as u32);
@@ -3076,9 +3108,12 @@ impl FractadyneApp {
                         crate::diag::trace(
                             "gpu",
                             format!(
-                                "norm range: frame [{mn:.0},{mx:.0}] governed={} ema {:?}",
+                                "norm range: frame [{mn:.0},{mx:.0}] governed={} ema {:?} grad {:?} phase/px {:.3} engaged={}",
                                 self.perf.chunk_governed[vb],
-                                self.perf.norm_range[vb]
+                                self.perf.norm_range[vb],
+                                self.perf.norm_grad[vb],
+                                self.perf.norm_grad[vb].unwrap_or(0.0) * self.coloring.cycle,
+                                self.live_norm_cycle_offset(vb).is_some()
                             ),
                         );
                     }
@@ -5244,6 +5279,7 @@ impl FractadyneApp {
         // fraction itself (count and pixel denominator always from the same frame).
         let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
         let norm_range = Some(self.perf.norm_sink[vs.min(1)].clone());
+        let grad_range = Some(self.perf.grad_sink[vs.min(1)].clone());
         let work_counters = Some(self.perf.work_sink[vs.min(1)].clone());
         // LIVE palette auto-normalization (see `live_norm_cycle_offset`): when the frame's escaped
         // smooth-iter range is huge, a fixed cycle wraps the palette thousands of times between
@@ -5287,6 +5323,7 @@ impl FractadyneApp {
             nominal_steps,
             maxiter_count,
             norm_range,
+            grad_range,
             work_counters,
             tile,
             chunk_range,

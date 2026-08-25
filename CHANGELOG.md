@@ -25,6 +25,16 @@ in the git history.
   budget at the worst speed measured, so it only ever shrinks, only in regions whose own
   measurements call for it, and never slows an ordinary render.
 
+- **"Normalize deep colors" now actually engages where the picture needs it** (beta.144) — deep
+  views could come out as coloured static: a correct image, mapped through a palette that repeated
+  many times between one pixel and the next. The setting meant to prevent exactly that decided
+  whether to act by looking at the total spread of escape values across the frame, which turns out
+  not to answer the question — a shallow view can span a hundred palette repeats and look perfect,
+  because neighbouring pixels barely differ. What matters is how far the palette moves from one
+  pixel to its neighbour. The renderer now measures that directly and normalizes when the palette
+  would advance more than half a cycle per pixel, which is the point past which the banding cannot
+  be seen as banding at all. Deep dense fields resolve; ordinary views keep their classic colouring.
+
 - **A stalling render now reacts without waiting to be asked** (beta.141) — the renderer judged how
   expensive a piece of work had been only once that work reported back, and it treated a frame
   arriving promptly as the signal that the GPU had caught up. On a machine sliding toward a driver

@@ -452,6 +452,14 @@ const CTR_BLA_SKIP: u32 = 3u;    // BLA multi-step skips taken
 const CTR_MAXITER: u32 = 4u;     // fragments that exhausted max_iter
 const CTR_ESC_MIN: u32 = 5u;     // min escaped smooth-iter (f32 bits; positive floats sort as u32)
 const CTR_ESC_MAX: u32 = 6u;     // max escaped smooth-iter (f32 bits)
+// LOCAL GRADIENT of the escape field: Σ|Δ smooth-iter| between horizontally adjacent escaped
+// pixels (×16, clamped), and the number of samples in that sum. Their ratio is the mean step the
+// palette takes from one pixel to the next, which is what decides whether a fixed cycle ALIASES.
+// ⭐The escape RANGE cannot decide that: a shallow view spans a hundred palette sweeps and still
+// looks perfect because neighbours differ by ≪1 iteration, while a deep dense field aliases on a
+// far narrower span. Range is a global statistic; aliasing is a local one.
+const CTR_GRAD_SUM: u32 = 8u;
+const CTR_GRAD_N: u32 = 9u;
 
 fn ctr_commit(n_rebase: u32, n_ext: u32, n_bla: u32) {
     if (n_rebase > 0u) { atomicAdd(&counters[CTR_REBASE], n_rebase); }
@@ -2071,6 +2079,22 @@ fn fs_resolve(in: VsOut) -> FragOut {
     // the sibling "flat gray at shallow zoom" defect is outliers stretching the range.
     if ((p.x & 3) == 0 && (p.y & 3) == 0) {
         esc_range_commit(sm.z);
+        // Local gradient against the RIGHT neighbour, same subsample. Bounds-checked rather than
+        // relying on out-of-range textureLoad returning zero: a zeroed meta decodes to a status
+        // that is not ST_ESCAPED today, but that is a coincidence to depend on.
+        let qx = p.x + 1;
+        if (f32(qx) < iu.res.x) {
+            let smq = textureLoad(st_meta, vec2<i32>(qx, p.y), 0);
+            if (info_status(smq) == ST_ESCAPED) {
+                // ×16 and clamped to 12 bits. The cap bounds the u32 sum (a 4K frame subsampled
+                // 4×4 is ~500k samples; 500k × 4095 stays under u32::MAX) and the coarse scale
+                // costs only precision at the SMALL end, where losing a fractional gradient to
+                // zero is the correct answer anyway — it means "no aliasing here".
+                let d = abs(smq.z - sm.z);
+                atomicAdd(&counters[CTR_GRAD_SUM], u32(clamp(d * 16.0, 0.0, 4095.0)));
+                atomicAdd(&counters[CTR_GRAD_N], 1u);
+            }
+        }
     }
     return FragOut(vec4<f32>(sm.z, nrm.x, nrm.y, de), AUX_NONE);
 }

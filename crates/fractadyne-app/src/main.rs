@@ -453,12 +453,18 @@ struct Perf {
     /// Escape-range sink per view (GPU → app: packed `(min_bits << 32) | max_bits` f32 bits of the
     /// frame's escaped smooth-iter range; drained with `swap(u64::MAX)`).
     norm_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// Live sink for the escape field's LOCAL GRADIENT — `(Σ|Δ|×16) << 32 | (samples + 1)`. The
+    /// auto-normalization predicate keys on this rather than on the escape RANGE: aliasing is a
+    /// local property (how far the palette moves between neighbouring pixels), not a global one.
+    grad_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// Live sink for `(rebase + 1) << 32 | (bla_skip + 1)` per view — how effective BLA actually
     /// is on the frames the user is looking at. Until beta.48 only the offline paths could see
     /// this, and a reference whose BLA skips nothing cost ~1 s a frame unnoticed.
     work_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
+    /// EMA-smoothed MEAN |Δ smooth-iter| between neighbouring escaped pixels, per view.
+    norm_grad: [Option<f32>; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
     /// `build_params`. The norm drain keys on THIS, not on the cursor: escape readings lag their
     /// dispatches by 2-3 frames, so a completed walk's LAST band lands with the cursor already at
@@ -650,11 +656,16 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
             ],
+            grad_sink: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            ],
             work_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             norm_range: [None, None],
+            norm_grad: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
         }
