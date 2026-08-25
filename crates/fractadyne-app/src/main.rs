@@ -459,10 +459,6 @@ struct Perf {
     work_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
-    /// Escape-range accumulator for a mid-flight chunked walk: per-pass band readings widen this
-    /// (min-min/max-max) and it feeds `norm_range`'s EMA once, whole, at the walk's COMPLETION
-    /// EVENT — see `render::norm_window_feed` (the noise-vs-flat field report, both rounds).
-    norm_acc: [Option<(f32, f32)>; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
     /// `build_params`. The norm drain keys on THIS, not on the cursor: escape readings lag their
     /// dispatches by 2-3 frames, so a completed walk's LAST band lands with the cursor already at
@@ -659,7 +655,6 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             norm_range: [None, None],
-            norm_acc: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
         }
@@ -4139,7 +4134,6 @@ impl FractadyneApp {
         self.perf.capped_frac = [None, None];
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
-        self.perf.norm_acc = [None, None];
     }
 
     /// Request the next animation frame. Frame pacing (the cap) is enforced at the end

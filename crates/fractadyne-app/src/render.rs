@@ -3056,34 +3056,28 @@ impl FractadyneApp {
                         // the feed fires at the completion EVENT in the chunk block, and
                         // stragglers fold into the next walk's accumulator, where same-view
                         // bands are harmless.
-                        if self.perf.chunk_governed[vb] {
-                            let (acc, _) = norm_window_feed(
-                                self.perf.norm_acc[vb],
-                                (mn, mx),
-                                true,
-                                self.perf.norm_range[vb],
-                            );
-                            self.perf.norm_acc[vb] = acc;
-                        } else {
-                            // Leaving chunk governance orphans any half-walk bands: drop them —
-                            // an un-chunked frame's reading IS the whole range.
-                            self.perf.norm_acc[vb] = None;
-                            let (_, ema) = norm_window_feed(
-                                None,
-                                (mn, mx),
-                                false,
-                                self.perf.norm_range[vb],
-                            );
-                            if let Some(e) = ema {
-                                self.perf.norm_range[vb] = Some(e);
-                            }
+                        // ⭐⭐EVERY READING IS NOW A WHOLE-FRAME RANGE, chunked or not, so it feeds
+                        // the EMA directly. `fs_resolve` commits the escape range over the whole
+                        // frame each chunked frame (see the note there); the old code had to
+                        // ACCUMULATE mid-walk and feed only at a walk-completion event, because a
+                        // chunked reading was bounded by that pass's ITERATION WINDOW rather than
+                        // by the frame.
+                        // ⛔That bookkeeping is what broke this feature in the field: on a user's
+                        // 9.83e27 view the completion event never fired, `norm_range` stayed None
+                        // for the whole session, "Normalize deep colors" silently did nothing and
+                        // the exterior aliased into speckle. Measured before the fix: consecutive
+                        // frames read [46422,54614] then [54614,63736] — adjacent windows, never a
+                        // frame range. After: [45075,63736] on the first reading.
+                        let (_, ema) =
+                            norm_window_feed(None, (mn, mx), false, self.perf.norm_range[vb]);
+                        if let Some(e) = ema {
+                            self.perf.norm_range[vb] = Some(e);
                         }
                         crate::diag::trace(
                             "gpu",
                             format!(
-                                "norm range: frame [{mn:.0},{mx:.0}] governed={} acc {:?} ema {:?}",
+                                "norm range: frame [{mn:.0},{mx:.0}] governed={} ema {:?}",
                                 self.perf.chunk_governed[vb],
-                                self.perf.norm_acc[vb],
                                 self.perf.norm_range[vb]
                             ),
                         );
@@ -4195,7 +4189,6 @@ impl FractadyneApp {
                 self.perf.chunk_last_range[vs] = None;
                 self.perf.chunk_inflight[vs] = None;
                 // A restarted walk's escape bands are a different progression's data.
-                self.perf.norm_acc[vs] = None;
             }
             let cur = self.perf.chunk_cursor[vs];
             // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
@@ -4265,24 +4258,9 @@ impl FractadyneApp {
                         // which at the same view is a head start, not pollution. A restarted
                         // walk that never completed feeds nothing (its accumulator is cleared
                         // with the reset above).
-                        if end == gpu_iter {
-                            if let Some(a) = self.perf.norm_acc[vs].take() {
-                                let (_, ema) =
-                                    norm_window_feed(None, a, false, self.perf.norm_range[vs]);
-                                if let Some(e) = ema {
-                                    self.perf.norm_range[vs] = Some(e);
-                                }
-                                if crate::diag::trace_on("gpu") {
-                                    crate::diag::trace(
-                                        "gpu",
-                                        format!(
-                                            "norm range: walk complete, fed [{:.0},{:.0}] ema {:?}",
-                                            a.0, a.1, self.perf.norm_range[vs]
-                                        ),
-                                    );
-                                }
-                            }
-                        }
+                        // (The walk-COMPLETION feed that used to live here is gone: readings are
+                        // whole-frame now, so they feed the EMA directly at the drain. The event
+                        // it waited for did not reliably fire — see the drain's note.)
                     }
                     self.perf.chunk_last_range[vs] = chunk_range;
                     if !interacting && !pin_frame {

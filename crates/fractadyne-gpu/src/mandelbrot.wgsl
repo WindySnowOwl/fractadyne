@@ -2051,6 +2051,27 @@ fn fs_resolve(in: VsOut) -> FragOut {
     let mag2 = dot(zf, zf);
     let nrm = slope_normal(zf, d);
     let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w);
+    // ⭐⭐WHOLE-FRAME ESCAPE RANGE FOR LIVE AUTO-NORMALIZATION. The iterate passes commit the range
+    // at each pixel's SETTLE TRANSITION, which on a chunked walk means only the pixels that
+    // happened to settle inside THIS pass's iteration window — so the reading a chunked frame
+    // produces is bounded by the window, not by the frame. Measured on a user's 9.83e27 view:
+    // consecutive frames reported [46422,54614] then [54614,63736], i.e. adjacent 8k windows,
+    // and `norm_range` was never fed at all (the walk-completion event that was supposed to
+    // reassemble the whole range never fired), so "Normalize deep colors" silently did nothing
+    // and the exterior aliased into speckle.
+    //
+    // `fs_resolve` sees the WHOLE FRAME every chunked frame, so committing here yields the range
+    // of everything escaped SO FAR — chunk-agnostic, monotonically widening as the walk proceeds,
+    // and needing no completion event.
+    //
+    // ⚠SUBSAMPLED, deliberately. Unlike the settle-transition commit (once per pixel per walk),
+    // this runs for every escaped pixel every frame; two atomics on two slots from ~1.6M threads
+    // is real contention. A 4×4 stride cuts that ~16× and still lands hundreds of thousands of
+    // samples on a full frame. ⭐It also biases min/max INWARD, which is the right direction here:
+    // the sibling "flat gray at shallow zoom" defect is outliers stretching the range.
+    if ((p.x & 3) == 0 && (p.y & 3) == 0) {
+        esc_range_commit(sm.z);
+    }
     return FragOut(vec4<f32>(sm.z, nrm.x, nrm.y, de), AUX_NONE);
 }
 
