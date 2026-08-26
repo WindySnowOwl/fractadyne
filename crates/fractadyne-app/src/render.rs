@@ -972,7 +972,28 @@ impl FractadyneApp {
                     && grad * self.coloring.cycle > ALIAS_PHASE_LIMIT =>
             {
                 let sweeps = 0.5 + self.coloring.cycle * 6.0;
-                if self.coloring.log_palette {
+                // ⭐⭐**A HEAVY-TAILED RANGE TAKES THE LOG MAPPING EVEN IF THE USER DID NOT ASK
+                // FOR IT.** Normalizing LINEARLY is right when the escaped values sit in a narrow
+                // high band — the deep field this feature was built for (measured at 9.8e27×:
+                // `[45075, 63736]`, a ratio of 1.4). It is badly wrong when the range is skewed:
+                // escape counts near the boundary are heavy-tailed, so a shallow view with a large
+                // iteration budget spans something like `[1, 7925]`. Two palette sweeps across THAT
+                // put the whole visible exterior — which escapes in 1..30 — inside the first 0.4%
+                // of the palette, i.e. one flat colour, with only the boundary filaments lit.
+                //
+                // ⛔Reported 2026-08-25 as "coloring that looks like cities at night" at 19.88×
+                // with 350,000 iterations, and it is the same defect as the older
+                // flat-gray-at-shallow-zoom report. ⚠I had closed that item the day before on the
+                // argument that the aliasing predicate would refuse to engage at shallow depth.
+                // That was WRONG: the predicate engages correctly here (`phase/px 1.325`) because
+                // the field genuinely aliases — the bug was never in WHETHER to normalize, it was
+                // in WHICH mapping to use once you do.
+                //
+                // The log form is already implemented for the `log_palette` checkbox; a skewed
+                // range simply routes to it. ⭐Ratio, not span: `[45075, 63736]` is wide in
+                // absolute terms and must stay LINEAR, while `[1, 7925]` is narrower in absolute
+                // terms and must not.
+                if norm_map_is_log(mn, mx, self.coloring.log_palette) {
                     // LOG mapping: the shader compresses to log(v − mn + 1), so the range spans
                     // log(mx − mn + 1) and the palette is spread over the values as the eye reads
                     // them. The shader subtracts `mn` itself, so the offset here is the user's
@@ -5878,6 +5899,42 @@ mod norm_window {
 /// from 0 to `max_iter` the ordinary way and produces the right image, just more slowly. Clamping
 /// the skip instead would be WRONG — the coefficients describe the orbit at `skip`, so a truncated
 /// skip would seed the wrong state.
+/// Does the auto-normalized palette map take the LOG form for this escape range?
+///
+/// The user's "Log color scale" forces it; a HEAVY-TAILED range takes it regardless. See the note
+/// at the call site: linear is right for a narrow high band (the deep field the feature exists
+/// for) and badly wrong for a skewed one, where it buries the whole visible exterior in a fraction
+/// of a percent of the palette.
+///
+/// ⭐**Ratio, not span.** `[45075, 63736]` is wide in absolute terms and must stay LINEAR;
+/// `[1, 7925]` is narrower in absolute terms and must not. Only the ratio separates them.
+pub(crate) fn norm_map_is_log(mn: f32, mx: f32, log_palette: bool) -> bool {
+    const LOG_AUTO_RATIO: f32 = 1000.0;
+    log_palette || mx > mn.max(1.0) * LOG_AUTO_RATIO
+}
+
+#[cfg(test)]
+mod norm_map_choice {
+    use super::norm_map_is_log;
+
+    #[test]
+    fn a_skewed_range_takes_the_log_map_and_a_narrow_high_band_does_not() {
+        // Every range here was MEASURED off a real view via FRACTADYNE_TRACE=gpu.
+        // 9.8e27x deep field — narrow, high: the case linear normalization was built for.
+        assert!(!norm_map_is_log(45075.0, 63736.0, false), "deep field must stay linear");
+        // 19.88x with a 350,000 iteration budget — the "cities at night" report.
+        assert!(norm_map_is_log(1.0, 7925.0, false), "heavy-tailed range must take the log map");
+        // Home with a 250,000 ceiling: skewed but well under the ratio, and it does not alias
+        // anyway (the caller's phase test refuses to engage there at all).
+        assert!(!norm_map_is_log(1.0, 232.0, false));
+        // The checkbox always wins.
+        assert!(norm_map_is_log(45075.0, 63736.0, true));
+        // A zero/tiny floor must not make every range look infinitely skewed.
+        assert!(!norm_map_is_log(0.0, 900.0, false));
+        assert!(norm_map_is_log(0.0, 1001.0, false));
+    }
+}
+
 pub(crate) fn usable_sa_skip(skip: u32, max_iter: u32) -> u32 {
     if skip >= max_iter { 0 } else { skip }
 }

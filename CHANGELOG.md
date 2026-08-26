@@ -25,6 +25,16 @@ in the git history.
   budget at the worst speed measured, so it only ever shrinks, only in regions whose own
   measurements call for it, and never slows an ordinary render.
 
+- **Auto-normalized colour no longer buries the picture at shallow zoom with a big iteration
+  budget** (beta.150) — "Normalize deep colors" spreads the palette across the range of escape
+  values in view. That works when those values sit in a narrow high band, which is what deep views
+  give you. At a shallow view with a large iteration budget the range is lopsided instead: nearly
+  everything escapes within a few dozen steps while a thin fringe along the boundary runs to tens
+  of thousands. Spreading the palette evenly across that put the whole visible exterior into a
+  fraction of a percent of the colours — a near-black field with only the filaments lit. A lopsided
+  range now uses the logarithmic mapping (the same one the "Log color scale" checkbox selects)
+  automatically, so the exterior gets its colours back. Deep views are unaffected.
+
 - **A deep view no longer restarts itself forever because the status bar changed width**
   (beta.149) — the iteration count and the zoom shown along the bottom were drawn at whatever width
   their digits happened to need. On a window where the bar only just fits, one extra digit wrapped
