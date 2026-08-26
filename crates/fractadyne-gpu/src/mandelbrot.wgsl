@@ -1503,7 +1503,6 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             esc_range_commit(smit_out);
         } else if (iter >= iu.max_iter) {
             status = ST_INTERIOR;
-            atomicAdd(&counters[CTR_MAXITER], 1u);
         }
         return ChunkOut(
             vec4<f32>(z.re.x, z.re.y, z.im.x, z.im.y),
@@ -1666,7 +1665,6 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         }
         if (iter >= iu.max_iter) {
             status = ST_INTERIOR;
-            atomicAdd(&counters[CTR_MAXITER], 1u);
         }
         return ChunkOut(
             vec4<f32>(dz.re.x, dz.re.y, dz.im.x, dz.im.y),
@@ -2019,7 +2017,6 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     }
     if (iter >= iu.max_iter) {
         status = ST_INTERIOR;
-        atomicAdd(&counters[CTR_MAXITER], 1u);
     }
     // Still running: δz mantissa + its exponent in info ch3, derivative mantissa + its exponent
     // in st_exp ch0. FE_ZERO_E (-1e9) round-trips exactly through f32 (1e9 = 1953125 * 2^9, and
@@ -2049,6 +2046,26 @@ fn fs_resolve(in: VsOut) -> FragOut {
         return FragOut(GLITCH_SENTINEL, AUX_NONE);
     }
     if (st != ST_ESCAPED) {
+        // ⭐⭐**THE CAPPED COUNT IS TAKEN HERE, NOT AT THE SETTLE TRANSITION.** The chunk entry
+        // points used to `atomicAdd(CTR_MAXITER)` at the moment a pixel gave up, which counts each
+        // pixel exactly once per WALK. That reads zero on a walk that has already finished — and a
+        // finished walk is exactly the state a starved view sits in: `chunk=[35733,35733)`, nothing
+        // transitioning, counters empty.
+        //
+        // ⛔The adaptive iteration budget reads this counter to decide whether to raise. Blind to a
+        // completed walk, it saw `frac = 0.0000` on a frame where half the pixels were capped, so
+        // it never raised, and a view needing ~600k iterations sat at the depth-scaled 35,733
+        // forever — a permanently BLACK pane that survived restarts (2026-08-25 field report,
+        // Mandelbrot side of a dual view at 4.6e39x).
+        //
+        // `fs_resolve` runs over the WHOLE frame on every chunked frame and sees the settled state,
+        // so counting here reports the true capped total whether the walk is mid-flight or done.
+        // ⚠NOT subsampled, unlike the escape-range commit beside it: this is a COUNT whose
+        // denominator is the full pixel total (`counter_read.px`), so sampling a sixteenth of the
+        // frame would under-report the fraction by 16x.
+        // ⚠The chunk entry points no longer commit it, so this does not double-count. Every path
+        // that runs `fs_iterate_chunk*` also runs `fs_resolve`.
+        atomicAdd(&counters[CTR_MAXITER], 1u);
         return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);
     }
     // Both modes store the FULL z (df32) in st_z at escape and the display derivative's mantissa

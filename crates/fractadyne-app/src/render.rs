@@ -5139,6 +5139,7 @@ impl FractadyneApp {
         // or real ones, and that is the open question in the field device-loss item. `bla_on=0` is
         // the other silent multiplier: the e100 crash was a pass running an empty tree at 0.04
         // Gsteps/s beside a 174 Gsteps/s pass in the SAME frame.
+        let sa_skip_eff = usable_sa_skip(sa.skip, shader_iter);
         if !will_reproject {
             // A chunked frame's real dispatch is its RANGE, not the full-frame nominal — the
             // same honesty rule the fe_steps stamp follows. The 985x735 "steps=1.810e11 vs
@@ -5159,17 +5160,23 @@ impl FractadyneApp {
             // Per-view, for the LETHAL-BAND line in `update`: that line is ALWAYS logged, so it
             // is what a field report carries when nobody had a trace enabled. Recorded on
             // dispatching frames only — a reprojected frame prices nothing.
-            self.perf.last_sa_skip_v[vs.min(1)] = sa.skip;
+            // ⚠Record and report the EFFECTIVE skip — the number actually sent to the shader —
+            // not `sa.skip`. The raw value is what the reference happens to carry; the shader may
+            // be refusing it (see `usable_sa_skip`). A manifest printing the raw one says
+            // `sa_skip=266796` on a frame whose shader was handed 0, which is exactly the question
+            // this line exists to answer. Effective first, raw in parentheses.
+            self.perf.last_sa_skip_v[vs.min(1)] = sa_skip_eff;
             self.perf.last_res_v[vs.min(1)] = [resolution[0], resolution[1]];
             let manifest = format!(
                 "LIVE view={vs} mode={} {}x{} ss={ss} iter={shader_iter} (gpu_iter={gpu_iter}, \
-                 eff={eff_iter}, boost={:.2}) steps={steps:.3e}{chunk_note} sa_skip={} \
+                 eff={eff_iter}, boost={:.2}) steps={steps:.3e}{chunk_note} sa_skip={} (raw {}) \
                  bla_on={bla_on} budget={tdr_steps:.3e} tile={} orbit_len={} partial={} \
                  settled={} since_mode_switch={}",
                 mode.to_u32(),
                 resolution[0],
                 resolution[1],
                 self.perf.iter_boost[vs.min(1)],
+                sa_skip_eff,
                 sa.skip,
                 tile.is_some(),
                 self.ref_cache[vi].orbit_len,
@@ -5336,7 +5343,7 @@ impl FractadyneApp {
             bla_on,
             ref_offset,
             delta_exp,
-            sa_skip: usable_sa_skip(sa.skip, shader_iter),
+            sa_skip: sa_skip_eff,
             sa_a: sa.a,
             sa_a_exp: sa.a_exp,
             sa_b: sa.b,
