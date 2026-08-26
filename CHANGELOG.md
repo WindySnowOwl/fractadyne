@@ -25,6 +25,14 @@ in the git history.
   budget at the worst speed measured, so it only ever shrinks, only in regions whose own
   measurements call for it, and never slows an ordinary render.
 
+- **A deep view no longer turns black when the iteration count drops** (beta.147) — at extreme
+  zoom the renderer skips ahead past the first few hundred thousand iterations using a shortcut
+  computed from the reference orbit. If something then lowered the iteration budget below where
+  that shortcut lands — toggling "Auto-scale iterations with zoom" is the easy way to do it — every
+  pixel started out already past its own limit, counted as inside the set, and the frame rendered
+  solid black. The shortcut is now declined whenever it would land at or past the budget, and the
+  view simply computes the ordinary way instead: correct picture, slightly slower.
+
 - **3D relief lighting no longer speckles deep views black** (beta.145) — with relief lighting on,
   deep zooms came out stippled with near-black pixels. The shading was computed from the surface
   slope at each pixel on its own, and at that depth the slope varies faster than the pixel grid, so

@@ -2194,7 +2194,7 @@ impl FractadyneApp {
             center,
             ref_offset,
             delta_exp,
-            sa_skip: sa.skip,
+            sa_skip: usable_sa_skip(sa.skip, req_max_iter),
             glitch_on: 0, // enabled per-pass by the multi-reference correction path
             vignette: Default::default(), // set per-frame by the tour renderer; off for normal exports
             sa_a: sa.a,
@@ -5336,7 +5336,7 @@ impl FractadyneApp {
             bla_on,
             ref_offset,
             delta_exp,
-            sa_skip: sa.skip,
+            sa_skip: usable_sa_skip(sa.skip, shader_iter),
             sa_a: sa.a,
             sa_a_exp: sa.a_exp,
             sa_b: sa.b,
@@ -5852,6 +5852,45 @@ mod norm_window {
 /// its predecessor's license — a cliff can only halve into new territory, never jump — and the
 /// very first band starts at the floor. (See `chunk_band_update` for how prices become licenses,
 /// and the CHUNK_BANDS tunable for why the ledger is regional at all.)
+/// The series-approximation skip this frame can actually USE, given its iteration budget.
+///
+/// ⭐⭐**SA IS ALL-OR-NOTHING.** It hands the shader the orbit state AT iteration `skip`, so the
+/// shader seeds `iter = sa_skip` and then runs `loop { if (iter >= max_iter) { break; } … }`.
+/// A skip at or past `max_iter` therefore breaks the loop on entry: every pixel exits with
+/// `iter >= max_iter`, is classified as max-iter-exhausted, and colours as INTERIOR. **The whole
+/// frame renders BLACK.**
+///
+/// ⛔That is a real field report (2026-08-25, dual view at 6.2e39×): toggling "Auto-scale
+/// iterations with zoom" dropped the budget to **224,000** while the cached reference still
+/// carried **`sa_skip = 266,796`**, and the Mandelbrot pane went solid black. The skip is computed
+/// against the REFERENCE's orbit length (`series_skip(.., orbit_iter, ..)`), not against this
+/// frame's budget, so any change that lowers the budget without rebuilding the reference can
+/// invert the two.
+///
+/// ⭐**Refusing the skip is CORRECT, not a degradation**: without it the frame simply iterates
+/// from 0 to `max_iter` the ordinary way and produces the right image, just more slowly. Clamping
+/// the skip instead would be WRONG — the coefficients describe the orbit at `skip`, so a truncated
+/// skip would seed the wrong state.
+pub(crate) fn usable_sa_skip(skip: u32, max_iter: u32) -> u32 {
+    if skip >= max_iter { 0 } else { skip }
+}
+
+#[cfg(test)]
+mod sa_skip_budget {
+    use super::usable_sa_skip;
+
+    #[test]
+    fn a_skip_at_or_past_the_budget_is_refused_not_clamped() {
+        // The 2026-08-25 field case: budget dropped under a cached reference's skip.
+        assert_eq!(usable_sa_skip(266_796, 224_000), 0, "the black-frame case");
+        assert_eq!(usable_sa_skip(224_000, 224_000), 0, "equal is already past: iter >= max_iter");
+        // Anything that genuinely leaves iterations to run is passed through untouched.
+        assert_eq!(usable_sa_skip(223_999, 224_000), 223_999);
+        assert_eq!(usable_sa_skip(0, 224_000), 0);
+        assert_eq!(usable_sa_skip(37_494, 205_343), 37_494, "an ordinary deep frame is unaffected");
+    }
+}
+
 pub(crate) fn chunk_band_license(
     bands: &[u32; crate::tunables::CHUNK_BANDS],
     band: usize,
