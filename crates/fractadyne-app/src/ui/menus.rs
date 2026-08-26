@@ -927,14 +927,35 @@ impl FractadyneApp {
                 };
                 ui.monospace(format!("cursor {cx_s:>21}, {cy_s:>21}"));
                 ui.separator();
+                // ⭐⭐**RESERVED WIDTH, for the same reason the cursor readout above is.** These
+                // two fields CHANGE WIDTH as the view changes — `fmt_zoom_log2` grows an exponent,
+                // and the iteration count below grows digits — and an unreserved bar that gets
+                // one glyph wider on a window where it just fits wraps to two lines. That resizes
+                // the central panel, which `central.rs`'s resize-detector treats as an
+                // INTERACTION: view generation bumped, settle grid torn down, re-render, counters
+                // move, width changes again. The beta.70/71 saga fixed exactly this loop for the
+                // limit LABEL and left these two numeric fields unreserved.
+                //
+                // ⛔It is a live field report (2026-08-25): a deep dual view sat black while
+                // `iter 1,395,703` wrapped the bar onto a second line. ⚠And beta.148 made it
+                // easier to hit, not harder — once the adaptive probe could see a starved frame,
+                // the iteration count started MOVING every settle, so the width changed
+                // constantly.
+                //
+                // Right-aligned into a fixed slot: monospace, so equal char counts are equal
+                // pixels by construction (`zoom_slot_width` is pinned by a test).
+                let zw = crate::zoom_slot_width();
                 if self.dual {
                     ui.monospace(format!(
-                        "zoom  M {}×   J {}×",
+                        "zoom  M {:>zw$}×   J {:>zw$}×",
                         fmt_zoom_log2(self.viewport.log2_magnification()),
                         fmt_zoom_log2(self.julia_viewport.log2_magnification()),
                     ));
                 } else {
-                    ui.monospace(format!("zoom {}×", fmt_zoom_log2(self.viewport.log2_magnification())));
+                    ui.monospace(format!(
+                        "zoom {:>zw$}×",
+                        fmt_zoom_log2(self.viewport.log2_magnification())
+                    ));
                 }
                 ui.separator();
                 // Show the count actually rendered last frame (coarse while moving, full when
@@ -949,7 +970,12 @@ impl FractadyneApp {
                     };
                     want_iter.min(zoom_iter_cap(self.viewport.log2_magnification()).max(256))
                 };
-                ui.monospace(format!("iter {}", commas(&eff_iter.to_string())));
+                // Widest is `MAX_ITER_LIMIT` grouped — see the reservation note on `zoom` above.
+                ui.monospace(format!(
+                    "iter {:>w$}",
+                    commas(&eff_iter.to_string()),
+                    w = crate::iter_slot_width()
+                ));
                 // Rendering-limit diagnostics: when a cap is genuinely binding, say so where the
                 // user is already looking, instead of leaving a black/flat view unexplained (the
                 // Misiurewicz-spar reports arrived as mystery screenshots precisely because the

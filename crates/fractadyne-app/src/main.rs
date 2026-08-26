@@ -1878,6 +1878,67 @@ pub(crate) fn fmt_speed(speed: f64) -> String {
     }
 }
 
+/// Character slot the status bar reserves for one `fmt_zoom_log2` value.
+///
+/// ⭐⭐**A STATUS-BAR FIELD THAT CHANGES WIDTH IS A REFLOW BUG WAITING FOR ITS WINDOW SIZE.** One
+/// glyph more on a window where the bar just fits wraps it to two lines; that resizes the central
+/// panel; `central.rs`'s resize-detector reads any panel resize as an INTERACTION, bumps the view
+/// generation, tears down the settle grid and re-renders — whose counters then change the width
+/// again. The beta.70/71 saga fixed that loop for the limit LABEL; the numeric fields were left
+/// unreserved and reproduced it in the field on 2026-08-25 (`iter 1,395,703` wrapping a deep dual
+/// view's bar while the pane sat black).
+///
+/// ⚠Pinned by `zoom_slot_fits_every_magnification`, which sweeps the whole supported range rather
+/// than trusting this number: the widest output is not obvious, since the formatter switches
+/// between a grouped decimal and a grouped scientific form at 1020 octaves.
+pub(crate) fn zoom_slot_width() -> usize {
+    21
+}
+
+/// Character slot for the status bar's grouped iteration count — `MAX_ITER_LIMIT` is the widest
+/// value it can ever show. Same reflow reasoning as [`zoom_slot_width`].
+pub(crate) fn iter_slot_width() -> usize {
+    commas(&MAX_ITER_LIMIT.to_string()).chars().count()
+}
+
+#[cfg(test)]
+mod status_bar_slots {
+    use super::{commas, fmt_zoom_log2, iter_slot_width, zoom_slot_width, MAX_ITER_LIMIT};
+
+    #[test]
+    fn zoom_slot_fits_every_magnification() {
+        // Sweep octaves across the whole supported range, densely around the 1020-octave switch
+        // between the decimal and scientific forms, and past e21000 (the deepest view this app
+        // has rendered). A slot that is one char short reintroduces the wrap loop.
+        let mut worst = (0usize, 0.0f64, String::new());
+        let mut l2 = 0.0f64;
+        while l2 <= 72_000.0 {
+            let w = fmt_zoom_log2(l2).chars().count();
+            if w > worst.0 {
+                worst = (w, l2, fmt_zoom_log2(l2));
+            }
+            l2 += if (1015.0..1025.0).contains(&l2) { 0.05 } else { 0.37 };
+        }
+        assert!(
+            worst.0 <= zoom_slot_width(),
+            "zoom slot {} too narrow: {} chars at log2mag {} ({:?})",
+            zoom_slot_width(), worst.0, worst.1, worst.2
+        );
+    }
+
+    #[test]
+    fn iter_slot_fits_the_iteration_ceiling() {
+        assert_eq!(iter_slot_width(), commas(&MAX_ITER_LIMIT.to_string()).chars().count());
+        // Every value the bar can show must fit the slot it reserves.
+        for v in [1u32, 999, 1_000, 35_733, 224_000, 1_395_703, MAX_ITER_LIMIT] {
+            assert!(
+                commas(&v.to_string()).chars().count() <= iter_slot_width(),
+                "{v} does not fit the reserved iteration slot"
+            );
+        }
+    }
+}
+
 pub(crate) fn fmt_zoom_log2(log2mag: f64) -> String {
     if log2mag <= 1020.0 {
         fmt_zoom(2f64.powf(log2mag.max(0.0)))

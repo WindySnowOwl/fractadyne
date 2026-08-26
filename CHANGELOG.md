@@ -25,6 +25,16 @@ in the git history.
   budget at the worst speed measured, so it only ever shrinks, only in regions whose own
   measurements call for it, and never slows an ordinary render.
 
+- **A deep view no longer restarts itself forever because the status bar changed width**
+  (beta.149) — the iteration count and the zoom shown along the bottom were drawn at whatever width
+  their digits happened to need. On a window where the bar only just fits, one extra digit wrapped
+  it onto a second line, which made the picture area shorter, which the renderer treated as though
+  you had resized the window — so it threw away the work in progress and started again, which
+  changed the numbers, which changed the width. A deep view could sit black indefinitely, never
+  finishing. Both fields now reserve a fixed amount of room, so the bar's height stops depending on
+  what the numbers happen to say. It is the same failure the status-bar labels were fixed for
+  earlier; these two numeric fields had been left out.
+
 - **A deep view no longer turns black when the iteration count drops** (beta.147) — at extreme
   zoom the renderer skips ahead past the first few hundred thousand iterations using a shortcut
   computed from the reference orbit. If something then lowered the iteration budget below where
