@@ -217,12 +217,95 @@ jobs:
             *.tar.gz
             *.tar.gz.sha256
 
-  # Undraft only after BOTH platforms have uploaded. Default `needs` semantics skip this job if
-  # either build failed, which leaves the draft in place with whatever assets made it — inspectable
-  # and deletable, and never visible to `--check-updates` as a release missing a platform.
+  # OPTIONAL accelerated Windows build: same program, deep-zoom reference orbits computed with
+  # MPFR/GMP instead of astro-float (2.5-6.4x faster at that step, byte-identical output).
+  #
+  # It is a separate artifact for two reasons that are not going away: MPFR does not build on the
+  # MSVC toolchain the standard binary uses, and rug/gmp-mpfr-sys/GMP/MPFR are LGPL-3.0+ against
+  # this project's MIT OR Apache-2.0. `scripts/build-accelerated.ps1` owns the whole thing —
+  # including linking the libraries DYNAMICALLY, which is what keeps the obligations to notices
+  # (LGPLv3 4(d)(1)) rather than to shipping the app in relinkable form with every release
+  # (4(d)(0)). Read that script's header before changing anything here.
+  windows-accelerated:
+    name: Windows x64 (accelerated, MPFR)
+    needs: create-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use the GNU Rust toolchain
+        # MPFR needs the GNU target; the standard Windows job uses MSVC and cannot build this.
+        run: rustup toolchain install stable-x86_64-pc-windows-gnu
+
+      - name: MSYS2 packages
+        shell: pwsh
+        run: |
+          # The runner image ships MSYS2 at C:\msys64. Fail loudly rather than silently skipping
+          # the artifact: a release whose Help link 404s is worse than a release that stopped.
+          if (-not (Test-Path "C:\msys64\usr\bin\pacman.exe")) {
+            Write-Host "::error::MSYS2 not found at C:\msys64 on this runner image."
+            exit 1
+          }
+          # gcc links the GNU-target binary; pkgconf lets gmp-mpfr-sys FIND the system libraries;
+          # gmp/mpfr are the libraries whose DLLs the package ships. m4/make are only needed if
+          # gmp-mpfr-sys ever falls back to building from source, and are cheap insurance.
+          C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm --needed --noprogressbar diffutils m4 make mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Build and package
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -eq "main" -or [string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.event.inputs.tag }}" }
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "dev" }
+          # The in-app "Faster deep zoom" link builds its URL from the RUNNING version:
+          #   fractadyne-v<cargo version>-windows-x64-accelerated.zip
+          # so if the git tag and the Cargo version ever diverge, that link 404s for every user of
+          # this release. The app side is pinned by a unit test; this is the other half.
+          $ver = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ($tag -like "v*" -and $tag -ne "v$ver") {
+            Write-Host "::error::tag '$tag' does not match Cargo version 'v$ver' - the in-app download link would 404."
+            exit 1
+          }
+          # The script builds, then VERIFIES the packaged binary on a PATH stripped of MSYS2 -
+          # i.e. under a user's conditions, not the build machine's. Do not pass -SkipVerify.
+          .\scripts\build-accelerated.ps1 -Tag $tag -OutDir dist
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $zip = Get-ChildItem dist -Filter "*-accelerated.zip" | Select-Object -First 1
+          if (-not $zip) { Write-Host "::error::no accelerated zip produced"; exit 1 }
+          $hash = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($zip.Name)" | Out-File -FilePath "$($zip.FullName).sha256" -Encoding ascii
+          "ASSET=$($zip.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+
+      - name: Upload to draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release upload $tag $env:ASSET "$env:ASSET.sha256" --clobber
+
+      - name: Upload artifact (manual/test runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: fractadyne-windows-x64-accelerated
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+
+  # Undraft only after EVERY build has uploaded. Default `needs` semantics skip this job if any of
+  # them failed, which leaves the draft in place with whatever assets made it — inspectable and
+  # deletable, and never visible to `--check-updates` as a release missing a platform.
+  #
+  # `windows-accelerated` is included deliberately, even though it is an OPTIONAL download: the
+  # in-app "Faster deep zoom" link points at the asset for the running version, so a published
+  # release without it is a dead link in a menu. Blocking the publish keeps that impossible; the
+  # cost is that a broken accelerated build holds the release as a draft until someone looks.
   publish:
     name: Publish release
-    needs: [create-release, windows, linux]
+    needs: [create-release, windows, linux, windows-accelerated]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
