@@ -309,7 +309,19 @@ STEPS = [
      "Help window opens, content is readable and scrolls, no broken layout or missing sections."),
     ("Help & settings",
      "Help > Diagnostics… ",
-     "Diagnostics window opens and shows real values (GPU/adapter, paths, log location)."),
+     "Diagnostics window opens and shows real values (GPU/adapter, paths, log location), "
+     "including a 'Deep-zoom arithmetic' line naming the backend in use."),
+    ("Help & settings",
+     "Help > About (the last Help section). Read the 'Deep-zoom arithmetic' line.",
+     "Names the arithmetic that has actually run and what the build contains. On the standard "
+     "build: astro-float. On the accelerated build: rug, with the MPFR/GMP versions. Before any "
+     "deep render it may say none has run yet - that is correct, not a missing value."),
+    ("Help & settings",
+     "Help > Faster deep zoom… ",
+     "On the STANDARD build: explains the optional accelerated download and offers two buttons. "
+     "'Download for this version' opens a URL containing THIS version's tag; 'All releases' opens "
+     "the releases page. On the ACCELERATED build: says you are already running it instead, and "
+     "offers no download."),
     ("Help & settings",
      "Help > Report an issue… ",
      "Opens the issue reporting path correctly (browser or dialog) with the app's details."),
@@ -319,6 +331,35 @@ STEPS = [
     ("Help & settings",
      "File > Settings - change a setting, close and reopen the menu.",
      "Setting persists and takes effect."),
+
+    # ------------------------------------------------------- accelerated build (optional artifact)
+    # Mark this whole block N-A if you are only reviewing the standard download.
+    ("Accelerated build",
+     "Extract fractadyne-<tag>-windows-x64-accelerated.zip to a NEW folder and run fractadyne.exe "
+     "from it. Do this on a machine (or account) with no MSYS2 and no MinGW on PATH.",
+     "Window opens normally. NO 'the code execution cannot proceed' or missing-DLL dialog - the "
+     "package must be self-contained apart from the .dll files beside the executable."),
+    ("Accelerated build",
+     "Help > About on that build.",
+     "'Deep-zoom arithmetic' names rug and reports the MPFR and GMP versions."),
+    ("Accelerated build",
+     "Check that your existing locations, bookmarks and last session are present.",
+     "All there. Settings live in the user profile, not beside the executable, so the two builds "
+     "share them and nothing needs importing."),
+    ("Accelerated build",
+     "Open the same deep location (1e50 or deeper) in BOTH builds and compare the images "
+     "side by side; export a PNG from each if unsure.",
+     "Visually identical. The two backends are byte-identical by construction and by test, so ANY "
+     "visible difference is a bug worth stopping the release for."),
+    ("Accelerated build",
+     "Dive into a deep view on both builds and watch the pause before the picture starts "
+     "resolving (the reference-orbit build).",
+     "Noticeably shorter on the accelerated build. This is the only user-visible difference there "
+     "should be. Note both timings."),
+    ("Accelerated build",
+     "Delete libmpfr-6.dll from the accelerated folder and try to launch it. Restore it after.",
+     "Fails to start with a missing-DLL error rather than silently falling back to the slow "
+     "arithmetic. Restoring the file makes it work again."),
 
     # ---------------------------------------------------------------- persistence
     ("Persistence",
@@ -371,6 +412,7 @@ def build(out_path):
 
     rows = [
         ("Version under test", ""),
+        ("Artifact under test (standard / accelerated)", ""),
         ("Build number", ""),
         ("Commit / tag", ""),
         ("Tester", ""),
@@ -399,7 +441,9 @@ def build(out_path):
              value="Automated gates that must ALSO be green for this release "
                    "(these are not manual steps):").font = lab
     for i, g in enumerate([
-        "fractadyne --selftest            -> checks 139/139, goldens 17/17",
+        "fractadyne --selftest            -> exit 0. At 0.2.40: 140/140 checks, 18/18 goldens.",
+        "   (The run prints its own totals. A DIFFERENT total is not automatically a failure,",
+        "    but it must be explained - a silently skipped check looks exactly like a pass.)",
         "python validation/corpus/generate_corpus.py --check  -> 38/38 MATCH",
         "fractadyne --livetest tours/grand-tour.toml --size 480x270  -> 24/24, 0 drifted",
         "fractadyne --motiontest          -> VERDICT PASS",
