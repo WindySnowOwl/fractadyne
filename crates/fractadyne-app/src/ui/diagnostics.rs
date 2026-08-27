@@ -397,6 +397,14 @@ impl FractadyneApp {
                     .weak()
                     .small(),
                 );
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Deep-zoom arithmetic: {}",
+                        fractadyne_core::backend_status_line()
+                    ))
+                    .weak()
+                    .small(),
+                );
                 ui.add_space(8.0);
 
                 for test in [DiagTest::SelfTest, DiagTest::UiTest] {

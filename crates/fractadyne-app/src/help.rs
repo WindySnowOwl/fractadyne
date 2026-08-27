@@ -769,6 +769,17 @@ pub(crate) fn help_about(ui: &mut egui::Ui) {
     help_h(ui, "About");
     help_p(ui, &format!("Fractadyne v{}", version_string()));
     help_p(ui, "A native fractal explorer built in Rust with wgpu.");
+    // Which arithmetic is doing the deep-zoom work. Sourced from what has actually RUN, so on a
+    // build that has both this cannot claim a backend that never iterated; before the first deep
+    // render it honestly reports that none has.
+    help_p(
+        ui,
+        &format!(
+            "Deep-zoom arithmetic: {} (this build contains: {}).",
+            fractadyne_core::backend_status_line(),
+            fractadyne_core::built_in_backends()
+        ),
+    );
 
     help_sub(ui, "Files & data");
     help_p(
