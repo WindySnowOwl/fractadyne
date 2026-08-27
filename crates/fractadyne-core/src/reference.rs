@@ -3,6 +3,7 @@
 //! correction. The heart of the deep-zoom engine; keyed on the `u32` formula ids in
 //! [`crate::formula`].
 
+use crate::backend::RefBackend;
 use crate::bignum::*;
 use crate::floatexp::*;
 use crate::formula;
@@ -85,13 +86,25 @@ pub(crate) fn step_bf(
     formula: u32,
     p: usize,
 ) -> (BigFloat, BigFloat) {
-    // Every perturbation-capable family now shares one `Field`-generic step (`crate::fractal`),
-    // which reproduces the former hand-written arms bit-for-bit (guarded by the exact SA
-    // cross-check tests + goldens). Phoenix / Newton never reach here (they use `phoenix_step_bf`
-    // / the direct path). An unknown id defensively falls back to the Mandelbrot step — the
-    // former `_` default.
-    crate::fractal::trait_step(formula, zx, zy, cx, cy, p)
-        .unwrap_or_else(|| crate::fractal::trait_step(formula::MANDELBROT, zx, zy, cx, cy, p).unwrap())
+    step_gen::<BigFloat>(zx, zy, cx, cy, formula, <BigFloat as RefBackend>::ctx_for(p))
+}
+
+/// [`step_bf`], generic over the arithmetic [`RefBackend`].
+///
+/// Every perturbation-capable family shares one `Field`-generic step (`crate::fractal`), which
+/// reproduces the former hand-written arms bit-for-bit (guarded by the exact SA cross-check tests
+/// + goldens). Phoenix / Newton never reach here (they use [`phoenix_step_gen`] / the direct
+/// path). An unknown id defensively falls back to the Mandelbrot step — the former `_` default.
+pub(crate) fn step_gen<B: RefBackend>(
+    zx: &B,
+    zy: &B,
+    cx: &B,
+    cy: &B,
+    formula: u32,
+    ctx: B::Ctx,
+) -> (B, B) {
+    crate::fractal::trait_step(formula, zx, zy, cx, cy, ctx)
+        .unwrap_or_else(|| crate::fractal::trait_step(formula::MANDELBROT, zx, zy, cx, cy, ctx).unwrap())
 }
 
 /// One arbitrary-precision Phoenix step: `z' = z² + c − 0.5·z_prev` (p = −0.5). Kept separate from
@@ -105,14 +118,31 @@ fn phoenix_step_bf(
     cy: &BigFloat,
     p: usize,
 ) -> (BigFloat, BigFloat) {
-    let x2 = zx.mul(zx, p, RM);
-    let y2 = zy.mul(zy, p, RM);
-    let sx = x2.sub(&y2, p, RM);
-    let sy = double_bf(&zx.mul(zy, p, RM));
-    let half = BigFloat::from_f64(0.5, p);
-    let hpx = zpx.mul(&half, p, RM);
-    let hpy = zpy.mul(&half, p, RM);
-    (sx.add(cx, p, RM).sub(&hpx, p, RM), sy.add(cy, p, RM).sub(&hpy, p, RM))
+    phoenix_step_gen::<BigFloat>(zx, zy, zpx, zpy, cx, cy, <BigFloat as RefBackend>::ctx_for(p))
+}
+
+/// [`phoenix_step_bf`], generic over the arithmetic [`RefBackend`]. The operation order is the
+/// former hand-written `BigFloat` body verbatim — `fdouble` is `double_bf` (an exponent bump), and
+/// `fmul`/`fadd`/`fsub` are the same rounded ops in the same sequence — so this is bit-identical,
+/// not merely equivalent.
+#[allow(clippy::too_many_arguments)]
+fn phoenix_step_gen<B: RefBackend>(
+    zx: &B,
+    zy: &B,
+    zpx: &B,
+    zpy: &B,
+    cx: &B,
+    cy: &B,
+    ctx: B::Ctx,
+) -> (B, B) {
+    let x2 = zx.fmul(zx, ctx);
+    let y2 = zy.fmul(zy, ctx);
+    let sx = x2.fsub(&y2, ctx);
+    let sy = zx.fmul(zy, ctx).fdouble();
+    let half = B::from_f64(0.5, ctx);
+    let hpx = zpx.fmul(&half, ctx);
+    let hpy = zpy.fmul(&half, ctx);
+    (sx.fadd(cx, ctx).fsub(&hpx, ctx), sy.fadd(cy, ctx).fsub(&hpy, ctx))
 }
 
 /// Compute the **orbit** of a point in `f64`, for the interactive orbit overlay.
@@ -214,23 +244,83 @@ pub struct OrbitTail {
 #[allow(clippy::too_many_arguments)]
 fn run_orbit(
     out: &mut Vec<[f32; 4]>,
-    mut zx: BigFloat,
-    mut zy: BigFloat,
-    mut zpx: BigFloat,
-    mut zpy: BigFloat,
+    zx: BigFloat,
+    zy: BigFloat,
+    zpx: BigFloat,
+    zpy: BigFloat,
     cx: &BigFloat,
     cy: &BigFloat,
     formula: u32,
-    mut n: u32,
+    n: u32,
     max_iter: u32,
     p: usize,
 ) -> OrbitTail {
+    run_orbit_carrier::<BigFloat>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p)
+}
+
+/// Convert the carrier state into backend `B`, run the loop, convert the tail back.
+///
+/// **This is the only place a backend swap touches.** Dispatch is once per orbit build, and the
+/// conversions are O(p) against `max_iter` bignum steps inside — free at any depth we render. For
+/// `B = BigFloat` every conversion is a `clone`, so the result is the former hand-written loop's
+/// output verbatim; [`OrbitTail`] therefore stays in the carrier type and an `extend` can resume
+/// from a tail regardless of which backend produced it.
+#[allow(clippy::too_many_arguments)]
+fn run_orbit_carrier<B: RefBackend>(
+    out: &mut Vec<[f32; 4]>,
+    zx: BigFloat,
+    zy: BigFloat,
+    zpx: BigFloat,
+    zpy: BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    n: u32,
+    max_iter: u32,
+    p: usize,
+) -> OrbitTail {
+    let ctx = B::ctx_for(p);
+    let (bzx, bzy) = (B::from_carrier(&zx, ctx), B::from_carrier(&zy, ctx));
+    let (bzpx, bzpy) = (B::from_carrier(&zpx, ctx), B::from_carrier(&zpy, ctx));
+    let (bcx, bcy) = (B::from_carrier(cx, ctx), B::from_carrier(cy, ctx));
+    let (zx, zy, zpx, zpy, escaped) =
+        run_orbit_gen::<B>(out, bzx, bzy, bzpx, bzpy, &bcx, &bcy, formula, n, max_iter, ctx);
+    OrbitTail {
+        zx: zx.to_carrier(ctx),
+        zy: zy.to_carrier(ctx),
+        zpx: zpx.to_carrier(ctx),
+        zpy: zpy.to_carrier(ctx),
+        escaped,
+    }
+}
+
+/// [`run_orbit`], generic over the arithmetic [`RefBackend`] — the loop that is `max_iter × step`
+/// in bignum and dominates a deep frame (the blessed bench-matrix baseline puts it at 66% of
+/// `deep-interior-1e148`). Returns the running state plus whether the orbit escaped.
+///
+/// The emitted samples come from [`RefBackend::to_f64_trunc`], **not** a library's own `to_f64`:
+/// `crate::to_f64` truncates, and a round-to-nearest conversion would shift samples by ~1 ulp even
+/// with a bit-identical bignum state. See `backend.rs` for the full contract.
+#[allow(clippy::too_many_arguments)]
+fn run_orbit_gen<B: RefBackend>(
+    out: &mut Vec<[f32; 4]>,
+    mut zx: B,
+    mut zy: B,
+    mut zpx: B,
+    mut zpy: B,
+    cx: &B,
+    cy: &B,
+    formula: u32,
+    mut n: u32,
+    max_iter: u32,
+    ctx: B::Ctx,
+) -> (B, B, B, B, bool) {
     let mut escaped = false;
     while n < max_iter {
         let (nzx, nzy) = if formula == formula::PHOENIX {
-            phoenix_step_bf(&zx, &zy, &zpx, &zpy, cx, cy, p)
+            phoenix_step_gen(&zx, &zy, &zpx, &zpy, cx, cy, ctx)
         } else {
-            step_bf(&zx, &zy, cx, cy, formula, p)
+            step_gen(&zx, &zy, cx, cy, formula, ctx)
         };
         if formula == formula::PHOENIX {
             // Shift z_prev ← z (before z ← z'); std::mem::replace avoids a bignum clone.
@@ -240,8 +330,8 @@ fn run_orbit(
             zx = nzx;
             zy = nzy;
         }
-        let xv = to_f64(&zx);
-        let yv = to_f64(&zy);
+        let xv = zx.to_f64_trunc();
+        let yv = zy.to_f64_trunc();
         out.push(pack_sample(xv, yv));
         n += 1;
         if xv * xv + yv * yv > 1.0e12 {
@@ -249,7 +339,7 @@ fn run_orbit(
             break;
         }
     }
-    OrbitTail { zx, zy, zpx, zpy, escaped }
+    (zx, zy, zpx, zpy, escaped)
 }
 
 /// As [`reference_orbit`], but also returns the full-precision [`OrbitTail`] so the orbit can be
