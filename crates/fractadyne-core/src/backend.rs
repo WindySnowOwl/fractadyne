@@ -99,6 +99,19 @@ pub fn parse_choice(s: &str) -> Result<BackendChoice, String> {
     }
 }
 
+/// Every backend this build can actually run, in registry order.
+///
+/// Derived from the same `cfg` as [`BackendChoice`] itself, so it cannot drift out of step with
+/// what is compiled in — a list maintained by hand would eventually advertise a backend the binary
+/// does not have, which is the failure this module exists to make impossible.
+pub fn available_backends() -> Vec<BackendChoice> {
+    vec![
+        BackendChoice::Astro,
+        #[cfg(feature = "rug")]
+        BackendChoice::Rug,
+    ]
+}
+
 /// The chosen backend, defaulting to astro-float.
 static SELECTED: std::sync::OnceLock<BackendChoice> = std::sync::OnceLock::new();
 

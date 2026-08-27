@@ -20,7 +20,8 @@ in the git history.
   carried by arbitrary-precision arithmetic on the CPU, and on the deepest views that work takes
   longer than everything the graphics card does for the same frame. Fractadyne can now be built
   against MPFR (the GNU multiple-precision float library) instead of its usual pure-Rust one, which
-  on this machine computes the same orbits roughly three to four and a half times faster. It is a
+  on this machine computes the same orbits about 1.4x faster at moderate depth and around 4x faster
+  at the extreme end — the deeper the view, the more it wins. It is a
   build-time option that is **off unless asked for**, for two reasons that are not going away: the
   library does not build with the Microsoft compiler Fractadyne normally uses on Windows, and it
   carries a copyleft licence that would place conditions on a released binary which Fractadyne's own

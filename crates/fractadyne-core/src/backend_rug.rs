@@ -3,9 +3,17 @@
 //! Exists to make the deep-frame hot loop faster: the reference-orbit build is `max_iter × step`
 //! in bignum and dominates a deep frame, and astro-float exposes no destination-reuse arithmetic
 //! at all — every `add`/`sub`/`mul` allocates, which at low precision costs more than the
-//! arithmetic does. Measured on this machine (validation probe, 2026-08-26), an MPFR orbit runs
-//! **3.2–4.7× faster** than astro-float from 2 to 129 limbs; the win is mostly *allocation* at 2
-//! limbs (2.74× of it) and almost entirely *multiply algorithm* at 129 limbs (4.13× of it).
+//! arithmetic does.
+//!
+//! **Measured through `reference_orbit_in` — the shipped path, both backends in one process:**
+//! `1.39× at 4 limbs rising to 4.06× at 129 limbs` (this machine, 2026-08-26). The gain grows with
+//! precision because that is where the multiply algorithm dominates; at shallow precision the
+//! per-iteration costs this backend does not touch (`pack_sample`, the `Vec` push, the sample
+//! conversion) set a floor on what any backend swap can win.
+//!
+//! ⚠A synthetic loop measuring only the arithmetic reports **3.2–4.7×** for the same code. That
+//! number is real but not what a frame gets, and quoting it would overstate the feature by up to
+//! 2.3× at the shallow end. Re-measure through the engine, never through a kernel benchmark.
 //!
 //! # This backend is bit-identical to astro-float, and that is not an accident
 //!
@@ -109,12 +117,33 @@ impl RefBackend for Float {
     fn to_f64_trunc(&self) -> f64 {
         // Condition 3. `to_f64()` alone rounds to nearest; truncating to f64's 53 significant bits
         // first reproduces `crate::to_f64`'s `ret |= m >> 12`.
-        if self.is_zero() || !self.is_finite() {
-            return self.to_f64();
+        // ⚠This runs TWICE PER ITERATION on the hot path, so it must not allocate. Both obvious
+        // spellings do: cloning at `self.prec()` then `set_prec_round(53)` builds a full-precision
+        // temporary, and `Float::with_val_round(53, …)` builds a small one. The real-engine A/B
+        // showed that cost swamping the backend difference at shallow precision — 1.21× at 64 bits
+        // against 1.71× for the same arithmetic measured without it. `mpfr_get_d` takes the
+        // rounding mode directly and allocates nothing; `rug::Float::to_f64` is the RNDN spelling
+        // of this same call.
+        //
+        // The two guards below are not defensive padding — they reproduce `crate::to_f64`'s exact
+        // behaviour at the edges, which is what precondition 3 actually requires:
+        //   * it returns `0.0` for a value carrying no mantissa, i.e. for BOTH infinity and NaN;
+        //   * it returns a POSITIVE literal `0.0` when a value underflows, dropping the sign — so
+        //     a `-0.0` escaping from here would reach `pack_sample`, which CAN see the difference
+        //     (`split_df64(-0.0)` and `split_df64(0.0)` have different bits).
+        if !self.is_finite() {
+            return 0.0;
         }
-        let mut g = Float::with_val(self.prec(), self);
-        g.set_prec_round(53, RZ);
-        g.to_f64()
+        // SAFETY: `as_raw` yields a pointer to this value's initialized `mpfr_t`, valid for the
+        // borrow, and `mpfr_get_d` only reads through it.
+        let v = unsafe {
+            gmp_mpfr_sys::mpfr::get_d(self.as_raw(), gmp_mpfr_sys::mpfr::rnd_t::RNDZ)
+        };
+        if v == 0.0 {
+            0.0 // collapses -0.0 as well, matching `crate::to_f64`
+        } else {
+            v
+        }
     }
 }
 
@@ -257,6 +286,32 @@ mod tests {
                     "{name}: f64 extraction differs at trial {trial}"
                 );
             }
+        }
+    }
+
+    /// Precondition 3 at the EDGES, where the hot-path conversion is easiest to get subtly wrong:
+    /// underflow must yield POSITIVE zero (astro-float drops the sign there), and a non-finite
+    /// value must yield `0.0` (astro-float's `to_f64` returns that for anything with no mantissa,
+    /// infinities included). Neither case arises in a healthy orbit, which is exactly why they
+    /// need a test rather than a comment.
+    #[test]
+    fn f64_extraction_matches_astro_float_at_the_edges() {
+        let ctx = <Float as RefBackend>::ctx_for(128);
+        // A negative value far below f64's range: astro truncates it to +0.0, and a raw MPFR
+        // RNDZ conversion would hand back -0.0.
+        let tiny = Float::with_val(ctx, -1.0) >> 5000i32;
+        assert!(!tiny.is_zero(), "the test value must be nonzero to exercise underflow");
+        assert_eq!(tiny.to_f64_trunc().to_bits(), 0.0f64.to_bits(), "underflow must give +0.0");
+
+        for nf in [Float::with_val(ctx, f64::INFINITY), Float::with_val(ctx, f64::NAN)] {
+            assert_eq!(nf.to_f64_trunc(), 0.0, "non-finite must match astro-float's 0.0");
+        }
+
+        // And ordinary values must still truncate rather than round to nearest.
+        for trial in 0..32u64 {
+            let v = sample(trial, 2, 0, trial % 2 == 0);
+            let r = <Float as RefBackend>::from_carrier(&v, ctx);
+            assert_eq!(crate::to_f64(&v).to_bits(), r.to_f64_trunc().to_bits(), "trial {trial}");
         }
     }
 

@@ -39,7 +39,7 @@ mod backend;
 #[cfg(feature = "rug")]
 mod backend_rug;
 pub use backend::{
-    built_in_backends, observed_backends, parse_choice as parse_backend_choice,
+    available_backends, built_in_backends, observed_backends, parse_choice as parse_backend_choice,
     select as select_backend, selected as selected_backend, status_line as backend_status_line,
     BackendChoice, BACKEND_NAMES,
 };
