@@ -34,7 +34,7 @@ const EXT_SAMPLE_THRESHOLD: f64 = 1.0e-36;
 /// scaled by 2^-exponent (the leading one normalized to [1,2)); the shader decodes via `orbit_fe`.
 /// NaN can never occur in a normal sample (the bignum pipeline yields finite values), so the marker
 /// is unambiguous.
-fn pack_sample(xv: f64, yv: f64) -> [f32; 4] {
+pub(crate) fn pack_sample(xv: f64, yv: f64) -> [f32; 4] {
     let mag = xv.abs().max(yv.abs());
     if mag != 0.0 && mag < EXT_SAMPLE_THRESHOLD {
         // Marker layout [0.0, k, m_re + 4.0, m_im]: PROVABLY unambiguous against a legit df32
@@ -307,7 +307,33 @@ fn dispatch_orbit(
     match bit {
         0 => Some(run_orbit_carrier::<BigFloat>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p)),
         #[cfg(feature = "rug")]
-        1 => Some(run_orbit_carrier::<rug::Float>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p)),
+        1 => {
+            // Prefer the backend's allocation-free loop where it has one; fall back to the generic
+            // path otherwise, which is still MPFR — just allocating per operation. The two are held
+            // byte-identical by the cross-backend matrix, which covers every formula id.
+            let fast = crate::backend_rug::try_run_orbit_inplace(
+                out, &zx, &zy, cx, cy, formula, n, max_iter, p,
+            );
+            match fast {
+                Some((tzx, tzy, escaped)) => {
+                    // The fast path bypasses `run_orbit_carrier`, which is where the observation
+                    // is normally recorded -- so record it here, after the work, or the backend
+                    // stamp silently under-reports whenever the fast path is the one that ran.
+                    crate::backend::note_observed::<rug::Float>();
+                    Some(OrbitTail {
+                    zx: tzx,
+                    zy: tzy,
+                    zpx,
+                    zpy,
+                    escaped,
+                    backend: <rug::Float as RefBackend>::BIT,
+                    })
+                }
+                None => Some(run_orbit_carrier::<rug::Float>(
+                    out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p,
+                )),
+            }
+        }
         _ => None,
     }
 }

@@ -289,6 +289,43 @@ mod tests {
         }
     }
 
+    /// The in-place loop's scratch buffers must stay at the working precision even though the
+    /// orbit ENTERS at the carrier's own, wider width.
+    ///
+    /// `parse_bf_prec("0", 64)` returns a TWO-word zero, so `zx` starts at 128 bits; swapping it
+    /// into a scratch buffer used to hand that width to every later destination, rounding to 128
+    /// bits where astro-float rounds to 64. The cross-backend matrix caught it (99 of 1800 cases,
+    /// every one at p=64); this pins it where the fix lives.
+    #[test]
+    fn the_inplace_loop_keeps_its_scratch_at_the_working_precision() {
+        let p = 64usize;
+        let z0 = crate::parse_bf_prec("0", p).unwrap();
+        assert!(
+            z0.mantissa_digits().map(|d| d.len()).unwrap_or(0) > p / 64,
+            "this test needs an entry value wider than the working precision to mean anything"
+        );
+        let cx = crate::parse_bf_prec("0.4", p).unwrap();
+        let cy = crate::parse_bf_prec("0.4", p).unwrap();
+
+        let (want, _, _) = crate::reference_orbit_t_in(
+            crate::BackendChoice::Astro, &z0, &z0, &cx, &cy, crate::formula::MANDELBROT, 12, p,
+        );
+        let mut got = vec![want[0]];
+        let tail = super::try_run_orbit_inplace(
+            &mut got, &z0, &z0, &cx, &cy, crate::formula::MANDELBROT, 0, 12, p,
+        )
+        .expect("Mandelbrot must take the in-place path");
+        assert_eq!(want.len(), got.len());
+        for (i, (a, b)) in want.iter().zip(&got).enumerate() {
+            assert_eq!(
+                a.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                b.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "sample Z_{i} differs"
+            );
+        }
+        assert!(!tail.2, "the test orbit must not escape");
+    }
+
     /// Precondition 3 at the EDGES, where the hot-path conversion is easiest to get subtly wrong:
     /// underflow must yield POSITIVE zero (astro-float drops the sign there), and a non-finite
     /// value must yield `0.0` (astro-float's `to_f64` returns that for anything with no mantissa,
@@ -368,3 +405,124 @@ mod tests {
         );
     }
 }
+
+/// In-place orbit loop for the **squaring families** — no allocation inside the loop at all.
+///
+/// astro-float has no destination-reuse arithmetic, so the generic loop allocates a fresh value per
+/// operation; MPFR does, and at shallow precision that allocation traffic is most of the cost.
+/// Measured in the kernel probe: 438 ns/iteration allocating against 160 ns reusing, at 2 limbs.
+///
+/// `None` for any formula this does not implement, and the caller falls back to the generic loop —
+/// which is still this backend, just allocating. Multibrot 3/4/5 need extra products, Phoenix needs
+/// the previous iterate, and Newton never reaches here.
+///
+/// ⚠**The operation order below is `crate::fractal`'s `csqr` plus each family's arm, verbatim.**
+/// This is a second copy of arithmetic that is authored once elsewhere, which is exactly the drift
+/// risk the `Field`-generic step exists to remove — so it is admissible only because
+/// `the_mpfr_backend_is_byte_identical_to_astro_float` compares this path against astro-float
+/// across every formula id, point and precision, and that test is known to be able to go red.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_run_orbit_inplace(
+    out: &mut Vec<[f32; 4]>,
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    mut n: u32,
+    max_iter: u32,
+    p: usize,
+) -> Option<(BigFloat, BigFloat, bool)> {
+    use crate::formula as fam;
+    use rug::ops::{AddAssignRound, AssignRound, SubAssignRound, SubFromRound};
+
+    if !matches!(
+        formula,
+        fam::MANDELBROT | fam::TRICORN | fam::BURNING_SHIP | fam::CELTIC | fam::BUFFALO
+    ) {
+        return None;
+    }
+
+    let ctx = <Float as RefBackend>::ctx_for(p);
+    let mut zx = <Float as RefBackend>::from_carrier(z0x, ctx);
+    let mut zy = <Float as RefBackend>::from_carrier(z0y, ctx);
+    let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
+    let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
+
+    // The whole point: allocated once, reused for every iteration.
+    let mut x2 = Float::with_val(ctx, 0);
+    let mut y2 = Float::with_val(ctx, 0);
+    let mut t = Float::with_val(ctx, 0);
+
+    let mut escaped = false;
+    while n < max_iter {
+        // z² — `csqr`'s order: each product rounded to `ctx`, then combined; the imaginary part
+        // doubled by an exponent bump rather than a second multiply.
+        x2.assign_round(&zx * &zx, RZ);
+        y2.assign_round(&zy * &zy, RZ);
+        t.assign_round(&zx * &zy, RZ);
+        t <<= 1; // exact
+        x2.sub_assign_round(&y2, RZ); // Re(z²)
+
+        match formula {
+            fam::MANDELBROT => {
+                x2.add_assign_round(&rcx, RZ);
+                t.add_assign_round(&rcy, RZ);
+            }
+            // `cy − Im(z²)`, not `−Im(z²) + cy`: the generic arm is written that way so BigFloat
+            // matches the pre-trait `cy.sub(&txy)` exactly, and this must match the generic arm.
+            fam::TRICORN => {
+                x2.add_assign_round(&rcx, RZ);
+                t.sub_from_round(&rcy, RZ);
+            }
+            fam::BURNING_SHIP => {
+                x2.add_assign_round(&rcx, RZ);
+                t.abs_mut(); // exact; abs BEFORE the add, as in the generic arm
+                t.add_assign_round(&rcy, RZ);
+            }
+            fam::CELTIC => {
+                x2.abs_mut();
+                x2.add_assign_round(&rcx, RZ);
+                t.add_assign_round(&rcy, RZ);
+            }
+            _ => {
+                // BUFFALO — abs on both parts.
+                x2.abs_mut();
+                x2.add_assign_round(&rcx, RZ);
+                t.abs_mut();
+                t.add_assign_round(&rcy, RZ);
+            }
+        }
+        core::mem::swap(&mut zx, &mut x2);
+        core::mem::swap(&mut zy, &mut t);
+        // ⚠The scratch buffers must stay at exactly `ctx`, and the swap can take that away.
+        //
+        // `zx`/`zy` enter at the CARRIER's own width, which is legitimately wider than `ctx` --
+        // `parse_bf_prec("0", 64)` returns a TWO-word zero, and a pasted deep coordinate is wider
+        // still. The generic loop is immune because every op allocates a fresh value at `ctx`, so
+        // an operand's width never reaches a destination. Swapping does exactly that: after the
+        // first iteration the scratch would carry the entry width, and every later `assign_round`
+        // would round to 128 bits where astro-float rounds to 64.
+        //
+        // The first iteration legitimately uses the wide entry values as OPERANDS (as the generic
+        // path does); only the destinations must be pinned. The guard costs one comparison per
+        // iteration and fires at most once, since everything is `ctx` from then on.
+        if x2.prec() != ctx {
+            x2.set_prec(ctx); // content is dead -- it is overwritten at the top of the next pass
+        }
+        if t.prec() != ctx {
+            t.set_prec(ctx);
+        }
+
+        let xv = zx.to_f64_trunc();
+        let yv = zy.to_f64_trunc();
+        out.push(crate::reference::pack_sample(xv, yv));
+        n += 1;
+        if xv * xv + yv * yv > 1.0e12 {
+            escaped = true;
+            break;
+        }
+    }
+    Some((zx.to_carrier(ctx), zy.to_carrier(ctx), escaped))
+}
+
