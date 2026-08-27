@@ -16,6 +16,19 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **An optional second arbitrary-precision engine, off by default** (beta.153) — deep zoom is
+  carried by arbitrary-precision arithmetic on the CPU, and on the deepest views that work takes
+  longer than everything the graphics card does for the same frame. Fractadyne can now be built
+  against MPFR (the GNU multiple-precision float library) instead of its usual pure-Rust one, which
+  on this machine computes the same orbits roughly three to four and a half times faster. It is a
+  build-time option that is **off unless asked for**, for two reasons that are not going away: the
+  library does not build with the Microsoft compiler Fractadyne normally uses on Windows, and it
+  carries a copyleft licence that would place conditions on a released binary which Fractadyne's own
+  licence does not. Nothing about a normal build changes. Where it is enabled, `--bignum` selects
+  the engine and asking for one that is not in the build is a clear error rather than a silent fall
+  back to the other. The two engines produce **byte-identical** results — verified across every
+  fractal formula at six precisions, so the existing reference images check both.
+
 - **Crash reports, the self-test and bug reports now name the arbitrary-precision backend that
   produced them** (beta.152) — deep zoom is carried by arbitrary-precision arithmetic, and every
   golden image, corpus render and blessed benchmark is the output of one particular arithmetic

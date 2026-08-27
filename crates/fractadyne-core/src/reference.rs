@@ -224,6 +224,22 @@ pub fn reference_orbit(
     (o, l)
 }
 
+/// As [`reference_orbit`], in an explicitly named backend. See [`reference_orbit_t_in`].
+#[allow(clippy::too_many_arguments)]
+pub fn reference_orbit_in(
+    backend: crate::BackendChoice,
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> (Vec<[f32; 4]>, u32) {
+    let (o, l, _) = reference_orbit_t_in(backend, z0x, z0y, cx, cy, formula, max_iter, p);
+    (o, l)
+}
+
 /// The full-precision running state at the end of a reference orbit, so a later call can **extend**
 /// it (via [`extend_reference_orbit`]) to a larger `max_iter` without recomputing the shared prefix
 /// — the deep-zoom win, since the orbit build (`max_iter × step` in bignum) dominates a deep frame.
@@ -236,6 +252,12 @@ pub struct OrbitTail {
     pub zpx: BigFloat,
     pub zpy: BigFloat,
     pub escaped: bool,
+    /// Which [`crate::BackendChoice`] built this tail (its `RefBackend::BIT`).
+    ///
+    /// `extend_reference_orbit` resumes in THIS backend rather than the currently selected one.
+    /// The extend contract is byte-identity with a fresh build, and the only way to keep that
+    /// promise across a mid-session backend switch is to finish the orbit the way it started.
+    pub backend: u32,
 }
 
 /// Append `Z_{n+1..max_iter}` (df64 samples) to `out`, which already holds `Z_0..Z_n`, iterating from
@@ -244,6 +266,7 @@ pub struct OrbitTail {
 #[allow(clippy::too_many_arguments)]
 fn run_orbit(
     out: &mut Vec<[f32; 4]>,
+    bit: u32,
     zx: BigFloat,
     zy: BigFloat,
     zpx: BigFloat,
@@ -255,7 +278,38 @@ fn run_orbit(
     max_iter: u32,
     p: usize,
 ) -> OrbitTail {
-    run_orbit_carrier::<BigFloat>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p)
+    dispatch_orbit(bit, out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p)
+        .expect("a BackendChoice variant only exists when its backend is compiled in")
+}
+
+/// Run the orbit in the backend identified by `bit`. The ONE place the backend is chosen.
+///
+/// An unrecognised `bit` cannot arise from a fresh build (it comes from the selection, which is a
+/// typed enum); it can only reach here from an [`OrbitTail`] tagged by a backend this binary does
+/// not have. That is not reachable today — a tail never leaves the process — and if it ever
+/// becomes reachable, falling back to a *different* backend would silently break the extend
+/// contract, so it refuses instead (see the caller).
+#[allow(clippy::too_many_arguments)]
+fn dispatch_orbit(
+    bit: u32,
+    out: &mut Vec<[f32; 4]>,
+    zx: BigFloat,
+    zy: BigFloat,
+    zpx: BigFloat,
+    zpy: BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    n: u32,
+    max_iter: u32,
+    p: usize,
+) -> Option<OrbitTail> {
+    match bit {
+        0 => Some(run_orbit_carrier::<BigFloat>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p)),
+        #[cfg(feature = "rug")]
+        1 => Some(run_orbit_carrier::<rug::Float>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p)),
+        _ => None,
+    }
 }
 
 /// Convert the carrier state into backend `B`, run the loop, convert the tail back.
@@ -294,6 +348,7 @@ fn run_orbit_carrier<B: RefBackend>(
         zpx: zpx.to_carrier(ctx),
         zpy: zpy.to_carrier(ctx),
         escaped,
+        backend: B::BIT,
     }
 }
 
@@ -356,6 +411,29 @@ pub fn reference_orbit_t(
     max_iter: u32,
     p: usize,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    reference_orbit_t_in(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p)
+}
+
+/// As [`reference_orbit_t`], but in an **explicitly named** backend rather than the session's
+/// selection.
+///
+/// The selection is a process-wide one-shot — right for an application, useless for the two things
+/// that most need to compare backends: a bit-identity test and a cost A/B, both of which must run
+/// both arithmetics in ONE process to be free of build and machine confounds. Those are exactly
+/// the measurements a second backend has to justify itself with, so the capability is part of the
+/// API rather than a test-only back door.
+#[allow(clippy::too_many_arguments)]
+pub fn reference_orbit_t_in(
+    backend: crate::BackendChoice,
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    let bit = backend.bit();
     let mut out = Vec::with_capacity(max_iter as usize + 1);
     let zx = z0x.clone();
     let zy = z0y.clone();
@@ -365,7 +443,7 @@ pub fn reference_orbit_t(
     let (xh, xl) = split_df64(to_f64(&zx));
     let (yh, yl) = split_df64(to_f64(&zy));
     out.push([xh, yh, xl, yl]); // Z_0
-    let tail = run_orbit(&mut out, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p);
+    let tail = run_orbit(&mut out, bit, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p);
     let len = out.len() as u32;
     (out, len, tail)
 }
@@ -391,7 +469,11 @@ pub fn extend_reference_orbit(
     }
     let mut out = Vec::with_capacity(max_iter as usize + 1);
     out.extend_from_slice(prefix);
-    let new_tail = run_orbit(
+    // ⚠`tail.backend`, NOT the current selection. This function promises a result byte-identical
+    // to a fresh build, and the only way to keep that across a mid-session backend switch is to
+    // finish the orbit in the arithmetic that started it.
+    let extended = dispatch_orbit(
+        tail.backend,
         &mut out,
         tail.zx.clone(),
         tail.zy.clone(),
@@ -404,6 +486,13 @@ pub fn extend_reference_orbit(
         max_iter,
         p,
     );
+    let Some(new_tail) = extended else {
+        // The prefix was built by a backend this binary does not have. Finishing it in a different
+        // arithmetic would break the byte-identity contract silently, so decline instead: the
+        // caller sees a short orbit, which is an outcome it already handles (escaped / long
+        // enough), and can rebuild from scratch.
+        return (prefix.to_vec(), prefix.len() as u32, tail.clone());
+    };
     let len = out.len() as u32;
     (out, len, new_tail)
 }

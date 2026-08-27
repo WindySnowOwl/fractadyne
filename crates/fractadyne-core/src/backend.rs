@@ -36,9 +36,104 @@ use crate::fractal::Field;
 use astro_float::BigFloat;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Every backend name, indexed by [`RefBackend::BIT`]. One entry today; a second backend adds its
-/// name here and takes the next bit.
+/// Every backend name, indexed by [`RefBackend::BIT`]. The list is feature-dependent: a name only
+/// appears when the backend is actually compiled in, so it can never advertise something the
+/// binary cannot run.
+#[cfg(not(feature = "rug"))]
 pub const BACKEND_NAMES: &[&str] = &["astro-float"];
+#[cfg(feature = "rug")]
+pub const BACKEND_NAMES: &[&str] = &["astro-float", "rug"];
+
+/// Which backend the reference orbit should be iterated in.
+///
+/// `Rug` exists only when the `rug` feature is compiled in — so "asked for a backend this build
+/// does not have" is a *parse* error at the CLI boundary rather than a value that has to be
+/// checked (and could be forgotten) at every use.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BackendChoice {
+    /// astro-float — pure Rust, always available, the carrier type's own arithmetic.
+    Astro,
+    /// MPFR via `rug`. LGPL-3.0+, and unavailable on `x86_64-pc-windows-msvc`.
+    #[cfg(feature = "rug")]
+    Rug,
+}
+
+impl BackendChoice {
+    /// The registry index this choice iterates under.
+    pub fn bit(self) -> u32 {
+        match self {
+            BackendChoice::Astro => 0,
+            #[cfg(feature = "rug")]
+            BackendChoice::Rug => 1,
+        }
+    }
+    pub fn name(self) -> &'static str {
+        BACKEND_NAMES[self.bit() as usize]
+    }
+}
+
+/// Parse `auto` | `astro` | `rug`.
+///
+/// ⚠**`rug` on a build without the feature is an ERROR, never a quiet fall back to astro-float.**
+/// A silent downgrade would let a benchmark or a gate report numbers for a backend it was never
+/// running — the silent-CLI-default class this project already enumerated and closed once.
+pub fn parse_choice(s: &str) -> Result<BackendChoice, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        // `auto` is astro-float TODAY, deliberately: the crossover precision at which MPFR wins
+        // has not been measured on this machine yet, and picking a threshold by eye would be a
+        // tuned constant nobody validated. It becomes a real decision once the benchmark says so.
+        "auto" => Ok(BackendChoice::Astro),
+        "astro" | "astro-float" => Ok(BackendChoice::Astro),
+        #[cfg(feature = "rug")]
+        "rug" | "mpfr" => Ok(BackendChoice::Rug),
+        #[cfg(not(feature = "rug"))]
+        "rug" | "mpfr" => Err(
+            "this build has no `rug` backend (it is an off-by-default cargo feature, and it does \
+             not build on x86_64-pc-windows-msvc). Rebuild fractadyne-core with `--features rug` \
+             using the GNU toolchain, or pass --bignum=astro."
+                .to_string(),
+        ),
+        other => Err(format!(
+            "unknown bignum backend {other:?} — expected one of: auto, astro, rug"
+        )),
+    }
+}
+
+/// The chosen backend, defaulting to astro-float.
+static SELECTED: std::sync::OnceLock<BackendChoice> = std::sync::OnceLock::new();
+
+/// Choose the backend. Call once, before anything renders; a second differing call is an error
+/// rather than a silent no-op, because half a session in each backend is not a configuration any
+/// gate describes.
+pub fn select(choice: BackendChoice) -> Result<(), String> {
+    match SELECTED.set(choice) {
+        Ok(()) => Ok(()),
+        Err(_) if SELECTED.get() == Some(&choice) => Ok(()),
+        Err(_) => Err(format!(
+            "the bignum backend is already set to {} and cannot be changed mid-session",
+            SELECTED.get().map(|c| c.name()).unwrap_or("?")
+        )),
+    }
+}
+
+/// The backend orbits will be built in.
+pub fn selected() -> BackendChoice {
+    *SELECTED.get().unwrap_or(&BackendChoice::Astro)
+}
+
+/// Every backend compiled into this build, with the versions that can be queried at runtime.
+/// For MPFR/GMP those are the C libraries linked into this binary — the versions that actually
+/// did the arithmetic, not ones named in a manifest.
+pub fn built_in_backends() -> String {
+    #[cfg(not(feature = "rug"))]
+    {
+        "astro-float".to_string()
+    }
+    #[cfg(feature = "rug")]
+    {
+        format!("astro-float, {}", crate::backend_rug::linked_versions())
+    }
+}
 
 /// Bits for backends that have **actually completed a reference-orbit build** in this process.
 ///

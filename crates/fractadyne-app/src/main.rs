@@ -1563,6 +1563,42 @@ fn main() -> eframe::Result<()> {
     // Crash/hang visibility (design/diagnostics.md D1): log file, panic hook, watchdog.
     // Before run_headless so even the pre-GUI CLI modes get crash reports.
     diag::init(&args);
+    // ⭐ARBITRARY-PRECISION BACKEND (`--bignum auto|astro|rug`, or FRACTADYNE_BIGNUM).
+    //
+    // Chosen here — after logging exists, before ANY mode runs — so a headless `--render`, a
+    // self-test and the GUI all iterate in the same arithmetic, and the choice lands in the log a
+    // bug report will carry.
+    //
+    // ⚠The ENV VAR is the one to use for a batch or gate run. Harnesses (`--torture` per rung, the
+    // corpus script per location) launch fractadyne as CHILD processes, so a flag on the parent
+    // never reaches them — the same reason `FRACTADYNE_NO_SOUND` exists. An explicit flag outranks
+    // the env var without unsetting it.
+    //
+    // ⚠A backend this build does not contain is FATAL, never a quiet fall back to astro-float: a
+    // silent downgrade would let a benchmark report numbers for arithmetic it never ran.
+    {
+        let flag = args
+            .iter()
+            .position(|a| a == "--bignum")
+            .and_then(|i| args.get(i + 1).map(String::as_str))
+            .or_else(|| args.iter().find_map(|a| a.strip_prefix("--bignum=")));
+        let env = std::env::var("FRACTADYNE_BIGNUM").ok();
+        if let Some(spec) = flag.map(str::to_string).or(env) {
+            match fractadyne_core::parse_backend_choice(&spec) {
+                Ok(choice) => {
+                    if let Err(e) = fractadyne_core::select_backend(choice) {
+                        eprintln!("fractadyne: {e}");
+                        crate::exit(2);
+                    }
+                    diag::log_line("start", &format!("bignum backend selected: {}", choice.name()));
+                }
+                Err(e) => {
+                    eprintln!("fractadyne: --bignum: {e}");
+                    crate::exit(2);
+                }
+            }
+        }
+    }
     // ⭐DEBUG TUNABLE OVERRIDES (`--set NAME=VALUE`, repeatable). Applied here — after logging
     // exists, before ANY mode runs — so a headless `--render`, a self-test and the GUI all get the
     // same values, and so the startup line lands in the log file that a bug report will carry.
@@ -6031,7 +6067,7 @@ impl FractadyneApp {
             // and which ones the build could have used. A deep-zoom report without them cannot be
             // reproduced once more than one backend ships.
             fractadyne_core::backend_status_line(),
-            fractadyne_core::BACKEND_NAMES.join(", "),
+            fractadyne_core::built_in_backends(),
         )
     }
 

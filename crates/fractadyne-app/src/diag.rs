@@ -195,7 +195,7 @@ pub(crate) fn init(args: &[String]) {
     // separate question, answered by `backend_status_line()` in the crash report and `--selftest`.
     log_line(
         "start",
-        &format!("bignum backends compiled in: {}", fractadyne_core::BACKEND_NAMES.join(", ")),
+        &format!("bignum backends compiled in: {}", fractadyne_core::built_in_backends()),
     );
 
     install_panic_hook();

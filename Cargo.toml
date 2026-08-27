@@ -5,7 +5,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.2.40-beta.152"
+version = "0.2.40-beta.153"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/WindySnowOwl/fractadyne"
@@ -42,6 +42,14 @@ toml = "0.8"
 directories = "5"
 twofloat = "0.7"
 astro-float = "0.9"
+# OPTIONAL second bignum backend (fractadyne-core feature "rug"), DEFAULT OFF. Two reasons it can
+# never be the default: it does NOT build on x86_64-pc-windows-msvc (GNU toolchain + MSYS2 only),
+# and it is LGPL-3.0+ (rug, gmp-mpfr-sys, and the GMP/MPFR/MPC it links) against this project's
+# MIT OR Apache-2.0 -- obligations that attach to CONVEYING a binary, not to building one.
+# `c-no-tests` skips building and RUNNING the GMP+MPFR C test suites, which otherwise dominate a
+# first build (~200 test binaries compiled, linked and executed).
+rug = { version = "1", default-features = false, features = ["float", "integer", "std"] }
+gmp-mpfr-sys = { version = "1", default-features = false, features = ["mpfr", "c-no-tests"] }
 rfd = "0.15"
 thiserror = "2"
 
