@@ -1207,7 +1207,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
         "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
-        "--chunk-sweep",
+        "--chunk-sweep", "--bench-bignum",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }
@@ -6015,7 +6015,7 @@ impl FractadyneApp {
         };
         let vram = if si.vram_mb > 0 { format!("{} MB", si.vram_mb) } else { "unknown".to_string() };
         format!(
-            "Fractadyne v{}\n{}\nOS:   {} / {}\nCPU:  {} ({} physical / {} logical, {})\nGPU:  {} ({})\nVRAM: {}\n",
+            "Fractadyne v{}\n{}\nOS:   {} / {}\nCPU:  {} ({} physical / {} logical, {})\nGPU:  {} ({})\nVRAM: {}\nBignum: {} (built with: {})\n",
             version_string(),
             now_utc_string(),
             std::env::consts::OS,
@@ -6027,6 +6027,11 @@ impl FractadyneApp {
             self.gpu_name,
             self.gpu_backend,
             vram,
+            // Both halves matter in a bug report: which backend this session actually iterated in,
+            // and which ones the build could have used. A deep-zoom report without them cannot be
+            // reproduced once more than one backend ships.
+            fractadyne_core::backend_status_line(),
+            fractadyne_core::BACKEND_NAMES.join(", "),
         )
     }
 

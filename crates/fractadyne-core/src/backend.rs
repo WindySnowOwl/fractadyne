@@ -34,6 +34,42 @@
 
 use crate::fractal::Field;
 use astro_float::BigFloat;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Every backend name, indexed by [`RefBackend::BIT`]. One entry today; a second backend adds its
+/// name here and takes the next bit.
+pub const BACKEND_NAMES: &[&str] = &["astro-float"];
+
+/// Bits for backends that have **actually completed a reference-orbit build** in this process.
+///
+/// ⭐Deliberately recorded at the point of execution rather than read back from configuration. A
+/// stamp sourced from "which backend was requested" can disagree with what ran — a feature guarded
+/// by an impossible condition, a silent fallback, a flag that never reached a child process — and
+/// then every gate quoted against it is quoting the wrong build. This one cannot: nothing sets a
+/// bit except an orbit that finished.
+static OBSERVED: AtomicU32 = AtomicU32::new(0);
+
+/// Names of the backends that have actually run a reference orbit, in registry order.
+pub fn observed_backends() -> Vec<&'static str> {
+    let m = OBSERVED.load(Ordering::Relaxed);
+    BACKEND_NAMES
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| m & (1 << i) != 0)
+        .map(|(_, n)| *n)
+        .collect()
+}
+
+/// One line for logs, crash reports and gate output. `none` is printed rather than omitted when no
+/// orbit has run — a report silent about the backend cannot be told apart from one written by a
+/// build that predates the mechanism (same reasoning as `tunables::status_line`).
+pub fn status_line() -> String {
+    match observed_backends()[..] {
+        [] => "none (no reference orbit built yet)".to_string(),
+        [one] => one.to_string(),
+        ref many => format!("MIXED — {}", many.join(" + ")),
+    }
+}
 
 /// A number type the reference orbit can be iterated in.
 ///
@@ -42,6 +78,9 @@ use astro_float::BigFloat;
 /// formula. This trait adds only what the orbit loop needs around that: conversion to and from the
 /// carrier type, a constant, and the sample extraction.
 pub(crate) trait RefBackend: Field {
+    /// This backend's index into [`BACKEND_NAMES`], and its bit in the observation mask.
+    const BIT: u32;
+
     /// Build the per-call arithmetic context from `p` mantissa bits (for `BigFloat`, `p` itself).
     fn ctx_for(p: usize) -> Self::Ctx;
 
@@ -61,7 +100,15 @@ pub(crate) trait RefBackend: Field {
     fn to_f64_trunc(&self) -> f64;
 }
 
+/// Record that `B` actually built a reference orbit. Called from the one place an orbit is built,
+/// so the stamp is evidence rather than intent.
+pub(crate) fn note_observed<B: RefBackend>() {
+    OBSERVED.fetch_or(1 << B::BIT, Ordering::Relaxed);
+}
+
 impl RefBackend for BigFloat {
+    const BIT: u32 = 0;
+
     #[inline]
     fn ctx_for(p: usize) -> usize {
         p
@@ -97,6 +144,16 @@ mod tests {
             let got = v.mantissa_digits().map(|d| d.len()).unwrap_or(0);
             assert_eq!(got, p.div_ceil(64), "astro-float allocated {got} words for p={p}");
         }
+    }
+
+    #[test]
+    fn the_name_registry_agrees_with_the_trait() {
+        // A backend whose BIT does not index its own name would mis-stamp every gate.
+        assert_eq!(
+            BACKEND_NAMES.get(<BigFloat as RefBackend>::BIT as usize),
+            Some(&"astro-float")
+        );
+        assert!(BACKEND_NAMES.len() <= 32, "the observation mask is a u32");
     }
 
     #[test]

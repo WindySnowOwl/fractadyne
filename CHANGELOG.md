@@ -16,6 +16,18 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **Crash reports, the self-test and bug reports now name the arbitrary-precision backend that
+  produced them** (beta.152) — deep zoom is carried by arbitrary-precision arithmetic, and every
+  golden image, corpus render and blessed benchmark is the output of one particular arithmetic
+  library. Until now nothing recorded which one, which was harmless while there was only ever a
+  single choice and becomes a real problem the moment there is more than one: a result you cannot
+  attribute is a result you cannot compare. Reports now carry it, the self-test asserts exactly one
+  backend produced the run, and the startup log records which backends the build contains. The
+  value is taken from the arithmetic that actually ran rather than from a setting, so it cannot
+  claim a backend the program did not use. There is also a new `--bench-bignum` for measuring what
+  that arithmetic costs at each precision; it needs no GPU, and it marks any measurement whose
+  test orbit escaped as invalid instead of reporting the meaninglessly fast number that produces.
+
 - **The smallest piece of work the renderer will issue now adapts to how slow the region is**
   (beta.142) — the renderer never split work below a fixed size of 256 steps, on the reasoning that
   256 steps is quick no matter what. Measurements from a recorded device loss show that reasoning

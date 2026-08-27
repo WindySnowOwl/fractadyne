@@ -36,6 +36,7 @@ pub use reference::*;
 mod fractal;
 
 mod backend;
+pub use backend::{observed_backends, status_line as backend_status_line, BACKEND_NAMES};
 
 /// Canonical numeric ids for the escape-time families — the `u32 formula` argument threaded through
 /// this crate's dispatch and uploaded to the shader. These are the single source of truth for the

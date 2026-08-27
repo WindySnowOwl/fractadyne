@@ -2562,6 +2562,23 @@ impl FractadyneApp {
                 pass: crate::tunables::is_stock(),
             });
 
+            // ---- and the suite must say WHICH arithmetic backend produced these numbers ----
+            // ⭐Every golden, every corpus render and every blessed baseline is the output of one
+            // bignum backend. A pass quoted without naming it becomes unattributable the moment a
+            // second backend exists. Sourced from `observed_backends`, which a *finished orbit*
+            // sets — not a flag, an env var or a config field, any of which can disagree with what
+            // actually ran. `MIXED` fails: one suite must not be half-credited to two backends.
+            let backends = fractadyne_core::observed_backends();
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Live budget",
+                name: "one bignum backend produced this run".into(),
+                params: "goldens and baselines are the output of a single arithmetic backend"
+                    .into(),
+                result: fractadyne_core::backend_status_line(),
+                threshold: "exactly one",
+                pass: backends.len() == 1,
+            });
+
             // ---- the tile ALLOWANCE must not bind the settled resolution either ----
             // ⭐The same invariant as above, at the count where it actually broke. The settled
             // resolution is `tdr_steps × settle_max_tiles ÷ iterations`, so the ALLOWANCE is a

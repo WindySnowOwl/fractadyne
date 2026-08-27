@@ -285,6 +285,9 @@ fn run_orbit_carrier<B: RefBackend>(
     let (bcx, bcy) = (B::from_carrier(cx, ctx), B::from_carrier(cy, ctx));
     let (zx, zy, zpx, zpy, escaped) =
         run_orbit_gen::<B>(out, bzx, bzy, bzpx, bzpy, &bcx, &bcy, formula, n, max_iter, ctx);
+    // Stamp AFTER the work, not before: `crate::backend::status_line` is quoted by the startup
+    // log, crash reports and every gate, and must report what ran rather than what was asked for.
+    crate::backend::note_observed::<B>();
     OrbitTail {
         zx: zx.to_carrier(ctx),
         zy: zy.to_carrier(ctx),

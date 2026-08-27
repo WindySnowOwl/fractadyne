@@ -190,6 +190,13 @@ pub(crate) fn init(args: &[String]) {
             args.iter().skip(1).cloned().collect::<Vec<_>>().join(" "),
         ),
     );
+    // What this BUILD contains, which is a compile-time fact and the only backend statement that
+    // can honestly be made before anything has iterated. Which backend actually *ran* is a
+    // separate question, answered by `backend_status_line()` in the crash report and `--selftest`.
+    log_line(
+        "start",
+        &format!("bignum backends compiled in: {}", fractadyne_core::BACKEND_NAMES.join(", ")),
+    );
 
     install_panic_hook();
     // The watchdog is NOT started here: the pre-GUI CLI modes (--crosscheck-f3,
@@ -444,6 +451,7 @@ fn write_crash_report_at(msg: &str, loc: &str) {
          activity: {}\n\
          manifest: {}\n\
          tunables: {}\n\
+         bignum  : {}\n\
          thread  : {}\n\n\
          backtrace (debug symbols are disabled in this build; addresses only):\n{}\n",
         crate::sysinfo::version_string(),
@@ -456,6 +464,10 @@ fn write_crash_report_at(msg: &str, loc: &str) {
         // told apart from one written by a build that predates the override mechanism — and a
         // report from an overridden run must never be read as stock behaviour.
         crate::tunables::status_line(),
+        // Same reasoning as the tunables line, and sourced the same way: from what actually ran.
+        // A deep-zoom crash report whose arithmetic backend is unknown cannot be compared with
+        // any other report, and `none` is itself informative (nothing had iterated yet).
+        fractadyne_core::backend_status_line(),
         std::thread::current().name().unwrap_or("<unnamed>"),
         std::backtrace::Backtrace::force_capture(),
     );

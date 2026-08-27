@@ -465,6 +465,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--compare A B", "Diff two renders/EXRs: max/mean delta + difference heatmap."),
         Flag("--import-kfr F.kfr", "Load a Kalles Fraktaler (.kfr) location."),
         Flag("--import-imagina FILE", "Load an Imagina TEXT location (Formula / Location Size, Re, Im, Iterations). A second independent implementation to cross-check the validation corpus against. Binary .im files are refused by their magic — re-save from Imagina as a text location. NB Imagina's Size is a HALF-HEIGHT, so magnification = 2/Size."),
+        Flag("--bench-bignum", "Reference-orbit cost per precision (CPU only, no GPU). Names the backend that actually ran and marks any row whose orbit escaped as INVALID. --iters N scales the counts."),
         Flag("--validate-deep", "Extreme-depth precision self-consistency battery (1e1000 … 1e1000000x)."),
         Flag("--profile [--reps N] [--regions F] [--out P]", "Dev: time render stages per benchmark region -> JSON log in logs/."),
         Flag("--bench-matrix [--bless] [--reps N]", "Dev: path-coverage perf + regression suite (zoom bands, fractals, coloring). Compares deterministic path signatures + timings against benchmarks/ baseline; --bless records it. Exit 2 on algorithmic drift."),
