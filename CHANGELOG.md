@@ -24,10 +24,12 @@ in the git history.
   build-time option that is **off unless asked for**, for two reasons that are not going away: the
   library does not build with the Microsoft compiler Fractadyne normally uses on Windows, and it
   carries a copyleft licence that would place conditions on a released binary which Fractadyne's own
-  licence does not. Nothing about a normal build changes. Where it is enabled, `--bignum` selects
-  the engine and asking for one that is not in the build is a clear error rather than a silent fall
-  back to the other. The two engines produce **byte-identical** results — verified across every
-  fractal formula at six precisions, so the existing reference images check both.
+  licence does not. Nothing about a normal build changes. Where it is enabled it is used by default
+  — a build option that then needs a second flag to do anything is a build option that does nothing
+  — and `--bignum` overrides that either way; asking for an engine that is not in the build is a
+  clear error rather than a silent fall back to the other. The two engines produce **byte-identical**
+  results, verified across every fractal formula at six precisions and again at the very large
+  arithmetic widths extreme zoom uses, so the existing reference images check both.
 
 - **Crash reports, the self-test and bug reports now name the arbitrary-precision backend that
   produced them** (beta.152) — deep zoom is carried by arbitrary-precision arithmetic, and every

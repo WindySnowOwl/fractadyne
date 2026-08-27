@@ -26,6 +26,43 @@ jobs:
       # test cleanly on Linux. Release build keeps the bignum tests fast.
       - run: cargo test -p fractadyne-core -p fractadyne-state --release
 
+  # The optional MPFR backend. It exists precisely BECAUSE it cannot be built on the Windows MSVC
+  # target the rest of the project uses, so if it is not exercised here it is not exercised at all
+  # — and the thing it must keep proving is that it stays BYTE-IDENTICAL to astro-float, which is
+  # what lets the F3 corpus goldens gate both backends instead of one set per backend.
+  #
+  # Linux needs no MSYS2 (that is a Windows-only requirement); it needs the C toolchain
+  # gmp-mpfr-sys builds GMP and MPFR with. `m4` is the one that is NOT already on the runner image.
+  rug-backend:
+    name: MPFR backend, byte-identity (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup default stable
+      - name: System dependencies
+        # make/gcc are on the image; m4 is not, and gmp-mpfr-sys' configure needs it. The rest are
+        # for the app crate, which the A/B step below builds: --bench-bignum needs no GPU, but the
+        # crate still LINKS eframe/winit/rfd, so their headers have to be present.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends m4 \
+            libgtk-3-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+      # ⚠`c-no-tests` is not an optimization — by default gmp-mpfr-sys BUILDS AND RUNS the full
+      # GMP and MPFR C test suites (~200 test binaries compiled, linked and executed), which is the
+      # bulk of a first build. It is set in the workspace manifest; this comment is here because a
+      # slow job is the symptom someone will come looking for.
+      - name: Test with the rug backend
+        run: cargo test -p fractadyne-core --release --features rug
+      # The cost table, and a second independent check of byte-identity: --bench-bignum runs every
+      # compiled-in backend over the same work in one process and exits non-zero if any row's
+      # orbits differ. Informational as a NUMBER (a shared CI runner is not a benchmark machine),
+      # load-bearing as a CHECK.
+      - name: Backend A/B (identity is gating; timings are informational)
+        run: cargo run -p fractadyne-app --release --features fractadyne-core/rug -- --bench-bignum --iters 0.15
+        env:
+          FRACTADYNE_NO_SOUND: "1"
+
   build:
     name: Build workspace (Windows)
     runs-on: windows-latest

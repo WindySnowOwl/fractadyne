@@ -79,9 +79,20 @@ impl BackendChoice {
 /// running — the silent-CLI-default class this project already enumerated and closed once.
 pub fn parse_choice(s: &str) -> Result<BackendChoice, String> {
     match s.trim().to_ascii_lowercase().as_str() {
-        // `auto` is astro-float TODAY, deliberately: the crossover precision at which MPFR wins
-        // has not been measured on this machine yet, and picking a threshold by eye would be a
-        // tuned constant nobody validated. It becomes a real decision once the benchmark says so.
+        // `auto` = the fastest backend this build actually has.
+        //
+        // ⭐There is NO crossover precision to tune, and that is a measured result rather than a
+        // convenient assumption: MPFR is faster at *every* precision tried, 2.47×–7.04× from 1 to
+        // 129 limbs through the real engine (`--bench-bignum` reproduces the table). A threshold
+        // here would be a constant nobody validated, guarding a comparison that never changes
+        // sign. If a future backend does trade places with astro-float somewhere, this is where
+        // that decision goes — and it must come with the measurement that found the crossing.
+        //
+        // Switching backend cannot change what is rendered: the two are byte-identical, which the
+        // cross-backend matrix and `--bench-bignum`'s own per-row check both enforce.
+        #[cfg(feature = "rug")]
+        "auto" => Ok(BackendChoice::Rug),
+        #[cfg(not(feature = "rug"))]
         "auto" => Ok(BackendChoice::Astro),
         "astro" | "astro-float" => Ok(BackendChoice::Astro),
         #[cfg(feature = "rug")]
@@ -129,9 +140,27 @@ pub fn select(choice: BackendChoice) -> Result<(), String> {
     }
 }
 
+/// What `selected()` answers when nothing has been chosen: the fastest backend this build has.
+///
+/// ⭐⭐**A compiled-in backend that nothing selects is a feature that never runs** — and this
+/// project has already shipped one of those (`reference pipelining`, guarded by a condition that
+/// was unsatisfiable by construction, silently doing nothing for weeks). If someone takes the
+/// trouble to build with `--features rug`, the default must be the thing they built. Safe because
+/// the backends are byte-identical: the default changes speed, never output.
+const fn default_choice() -> BackendChoice {
+    #[cfg(feature = "rug")]
+    {
+        BackendChoice::Rug
+    }
+    #[cfg(not(feature = "rug"))]
+    {
+        BackendChoice::Astro
+    }
+}
+
 /// The backend orbits will be built in.
 pub fn selected() -> BackendChoice {
-    *SELECTED.get().unwrap_or(&BackendChoice::Astro)
+    *SELECTED.get().unwrap_or(&default_choice())
 }
 
 /// Every backend compiled into this build, with the versions that can be queried at runtime.

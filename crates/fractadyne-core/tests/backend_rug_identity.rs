@@ -206,3 +206,52 @@ fn a_signed_zero_in_the_tail_does_not_change_the_continuation() {
         "no tail representation difference occurred, so this test never exercised the case it          exists for -- it would pass whether or not signed zero propagates"
     );
 }
+
+/// A backend that is compiled in but never selected is a feature that does nothing — the shape of
+/// the reference-pipelining defect that sat unnoticed for weeks behind an unsatisfiable guard.
+/// On a build with `rug`, the default and `auto` must both be the fast backend.
+#[test]
+fn a_build_with_rug_uses_it_by_default() {
+    assert_eq!(
+        fc::selected_backend(),
+        BackendChoice::Rug,
+        "the rug feature is compiled in but the default is not using it"
+    );
+    assert_eq!(fc::parse_backend_choice("auto").unwrap(), BackendChoice::Rug);
+    assert_eq!(fc::parse_backend_choice("astro").unwrap(), BackendChoice::Astro);
+    assert_eq!(fc::parse_backend_choice("rug").unwrap(), BackendChoice::Rug);
+    assert!(fc::parse_backend_choice("nonsense").is_err());
+}
+
+/// Identity must also hold where the two libraries' MULTIPLY ALGORITHMS diverge most.
+///
+/// The matrix above tops out at 2112 bits (33 limbs), which is schoolbook/Karatsuba territory for
+/// both libraries — so it says nothing about the regime where GMP switches to Toom and then FFT
+/// while astro-float takes its own thresholds. Truncation at a word boundary *ought* to be
+/// algorithm-independent, but "ought" is not a measurement, and the extreme-zoom path routinely
+/// runs at these widths (`precision_for_octaves(1e6 decimal digits)` is ~3.3M bits).
+///
+/// Deliberately cheap: a few dozen iterations each, since the point is the arithmetic width rather
+/// than orbit length.
+#[test]
+fn identity_holds_where_the_multiply_algorithms_diverge() {
+    for &(p, iters) in &[(8256usize, 200u32), (33_024, 60), (132_096, 20)] {
+        let cx = fc::parse_bf_prec("-0.743643887037158704752191506114774", p).unwrap();
+        let cy = fc::parse_bf_prec("0.131825904205311970493132056385139", p).unwrap();
+        let z0 = fc::BigFloat::from_f64(0.0, p);
+
+        let (a, al, at) =
+            fc::reference_orbit_t_in(BackendChoice::Astro, &z0, &z0, &cx, &cy, fc::formula::MANDELBROT, iters, p);
+        let (r, rl, rt) =
+            fc::reference_orbit_t_in(BackendChoice::Rug, &z0, &z0, &cx, &cy, fc::formula::MANDELBROT, iters, p);
+
+        assert_eq!(al, rl, "p={p}: orbit lengths differ");
+        assert_eq!(al, iters + 1, "p={p}: the orbit escaped, so this width was not exercised");
+        assert_eq!(bits(&a), bits(&r), "p={p}: samples differ");
+        assert!(tail_eq(&at.zx, &rt.zx) && tail_eq(&at.zy, &rt.zy), "p={p}: tails differ");
+        // The mantissa really is as wide as claimed — a silently narrowed value would make this
+        // test pass while exercising none of the algorithms it exists for.
+        let w = at.zx.mantissa_digits().map(|d| d.len()).unwrap_or(0);
+        assert_eq!(w, p.div_ceil(64), "p={p}: tail carries {w} limbs, not {}", p.div_ceil(64));
+    }
+}

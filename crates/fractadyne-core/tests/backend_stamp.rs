@@ -29,6 +29,9 @@ fn the_stamp_names_the_backend_only_after_an_orbit_actually_runs() {
     assert_eq!(len as usize, samples.len());
     assert!(len > 1, "the orbit must actually have run for this test to mean anything");
 
-    assert_eq!(fc::observed_backends(), vec!["astro-float"]);
-    assert_eq!(fc::backend_status_line(), "astro-float");
+    // Whichever backend this build defaults to -- naming a specific one here would make the test
+    // a statement about the feature set rather than about the stamp.
+    let expected = fc::selected_backend().name();
+    assert_eq!(fc::observed_backends(), vec![expected]);
+    assert_eq!(fc::backend_status_line(), expected);
 }
