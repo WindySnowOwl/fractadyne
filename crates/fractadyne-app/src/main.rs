@@ -1780,6 +1780,51 @@ pub(crate) fn exit(code: i32) -> ! {
     std::process::exit(code)
 }
 
+/// Direct download URL for the accelerated package matching `version`.
+///
+/// Version-MATCHED on purpose. The two builds share settings, saved session and locations, so a
+/// user can move between them freely -- which is exactly why handing them a "latest" link would be
+/// the one way to cause confusion here: they would be running two different feature sets against
+/// one shared session without being told.
+///
+/// `version` is `sysinfo::version_string()`, which carries a "(build N)" suffix that is not part
+/// of the tag. Pinned by test against the name `scripts/build-accelerated.ps1` actually produces:
+/// if either side is renamed, the link dies silently, and a dead download link in a menu is worse
+/// than no menu entry.
+fn accelerated_asset_url(version: &str) -> String {
+    let tag = format!("v{}", version.split_whitespace().next().unwrap_or(version));
+    format!("https://github.com/WindySnowOwl/fractadyne/releases/download/{tag}/fractadyne-{tag}-windows-x64-accelerated.zip")
+}
+
+#[cfg(test)]
+mod accelerated_link {
+    use super::accelerated_asset_url;
+
+    #[test]
+    fn the_download_url_is_well_formed_and_version_matched() {
+        let u = accelerated_asset_url("0.2.40-beta.156 (build 2076)");
+        assert_eq!(
+            u,
+            "https://github.com/WindySnowOwl/fractadyne/releases/download/\
+             v0.2.40-beta.156/fractadyne-v0.2.40-beta.156-windows-x64-accelerated.zip"
+                .replace(' ', "")
+        );
+        // A URL containing a space is a dead link, and a `\` continuation inside a Rust string
+        // literal is how one gets there. This is the assertion that catches it.
+        assert!(!u.contains(' '), "URL contains a space: {u}");
+        assert!(u.starts_with("https://"), "{u}");
+        // Must match the artifact name `scripts/build-accelerated.ps1` builds.
+        assert!(u.ends_with("-windows-x64-accelerated.zip"), "{u}");
+    }
+
+    #[test]
+    fn a_bare_version_without_a_build_suffix_also_works() {
+        let u = accelerated_asset_url("0.3.0");
+        assert!(u.contains("/v0.3.0/"), "{u}");
+        assert!(!u.contains(' '), "{u}");
+    }
+}
+
 /// Parse the value of an option that WAS SUPPLIED, or exit saying so.
 ///
 /// Replaces the `val("--x").and_then(|s| s.parse::<T>().ok())` idiom, which conflates two things
@@ -2838,6 +2883,8 @@ struct DialogState {
     /// Post-crash "send a report?" prompt. Opened at startup when the previous session ended
     /// unclean and the user has not opted out.
     crash_prompt_open: bool,
+    /// "Accelerated build" dialog open (Help menu).
+    accelerated_open: bool,
     /// Keyboard/help overlay window open.
     help_open: bool,
     /// Selected Help section index.
@@ -3598,6 +3645,7 @@ impl FractadyneApp {
                 crash_prompt_open: crate::diag::previous_session_unclean()
                     && !s.crash_prompt_disabled
                     && !launched_for_a_task,
+                accelerated_open: false,
                 help_open: false,
                 help_section: 0,
                 right_panel_open: s.right_panel_open,
@@ -5847,6 +5895,102 @@ impl FractadyneApp {
     }
 
     /// The Help window: a left-hand table of contents + a scrollable content pane.
+    /// The "Faster deep zoom" dialog: what the accelerated build is, and where to get it.
+    ///
+    /// Two states, because the honest thing to show depends on which binary is running, and that
+    /// is taken from `fractadyne_core::available_backends()` -- a compile-time fact of THIS binary
+    /// rather than a flag or a setting that could disagree with it.
+    fn accelerated_window(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.accelerated_open {
+            return;
+        }
+        let have_it = fractadyne_core::available_backends().len() > 1;
+        let ver = crate::sysinfo::version_string();
+        let asset = accelerated_asset_url(&ver);
+        let releases = "https://github.com/WindySnowOwl/fractadyne/releases";
+
+        let mut open = self.dialogs.accelerated_open;
+        egui::Window::new("Faster deep zoom")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(520.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                if have_it {
+                    ui.heading("You are running the accelerated build");
+                    ui.label(
+                        "Deep-zoom reference orbits are being computed with MPFR/GMP, which is \
+                         2.5-6.4x faster than the standard build at that step - the pause before \
+                         a deep view starts resolving.",
+                    );
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Arithmetic in use: {}",
+                            fractadyne_core::backend_status_line()
+                        ))
+                        .monospace()
+                        .small(),
+                    );
+                } else {
+                    ui.heading("An optional build is 2.5-6.4x faster at depth");
+                    ui.label(
+                        "Deep zoom spends much of its time computing reference orbits on the CPU \
+                         - the pause before a deep view starts resolving. An optional build does \
+                         that with the MPFR/GMP libraries instead, which is 2.5 to 6.4 times \
+                         faster, and more so the deeper you go. Everything else is the same.",
+                    );
+                    ui.separator();
+                    ui.label(
+                        "The images are BYTE-IDENTICAL - it is the same mathematics computed by a \
+                         faster library, checked across every fractal formula and the whole \
+                         deep-zoom comparison corpus.",
+                    );
+                    ui.label(
+                        "Your settings, saved session and locations are shared between the two, \
+                         so you can switch freely and nothing needs importing.",
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "It is a separate download because the libraries it uses cannot be \
+                             built with the compiler the standard Windows build uses, and they \
+                             carry a different licence (GNU LGPL v3) from Fractadyne's own.",
+                        )
+                        .small(),
+                    );
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Download for this version")
+                            .on_hover_text(&asset)
+                            .clicked()
+                        {
+                            ctx.open_url(egui::OpenUrl::new_tab(&asset));
+                        }
+                        if ui
+                            .button("All releases")
+                            .on_hover_text(
+                                "If the direct link 404s, this version has no accelerated build \
+                                 yet - pick the nearest one here.",
+                            )
+                            .clicked()
+                        {
+                            ctx.open_url(egui::OpenUrl::new_tab(releases));
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new(
+                            "Extract it and run fractadyne.exe from that folder, keeping the .dll \
+                             files beside it.",
+                        )
+                        .small(),
+                    );
+                }
+            });
+        self.dialogs.accelerated_open = open;
+    }
+
     fn help_window(&mut self, ctx: &egui::Context) {
         if !self.dialogs.help_open {
             return;

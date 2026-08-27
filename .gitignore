@@ -60,3 +60,4 @@ bench-kit/scenes/
 # FractalShark scratch, written into the CWD wherever it is launched from.
 bench-kit/HeapFile.bin
 bench-kit/*.iters
+dist/

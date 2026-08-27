@@ -983,6 +983,7 @@ impl FractadyneApp {
         self.palette_editor_window(ctx);
 
         // ---- keyboard / help overlay ----
+        self.accelerated_window(ctx);
         self.help_window(ctx);
         self.draw_welcome_dialog(ctx);
         self.draw_crash_prompt(ctx);

@@ -565,6 +565,19 @@ impl FractadyneApp {
                             self.report.open = true;
                             ui.close_menu();
                         }
+                        // Named for the BENEFIT, not the implementation: nobody is looking for
+                        // "MPFR". The dialog itself explains what it actually is.
+                        if ui
+                            .button("Faster deep zoom\u{2026}")
+                            .on_hover_text(
+                                "An optional build that computes deep-zoom reference orbits \
+                                 2.5-6.4x faster. Identical images; your settings carry over.",
+                            )
+                            .clicked()
+                        {
+                            self.dialogs.accelerated_open = true;
+                            ui.close_menu();
+                        }
                         if ui
                             .button("Check for updates")
                             .on_hover_text(format!(

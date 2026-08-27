@@ -16,6 +16,14 @@ The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-bet
 pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
 in the git history.
 
+- **The faster arithmetic is now a download you can actually get** (beta.157) - the optional
+  accelerated build described below is packaged as its own zip, and Help now has a "Faster deep
+  zoom" entry that explains it and links to the version matching the one you are running. Extract
+  it, run it, and your settings, saved session and locations carry over untouched - they live in
+  your user profile rather than beside the program, so you can move between the two builds freely.
+  If you are already running the accelerated one, the same dialog tells you so. The images the two
+  produce are identical; only the speed differs.
+
 - **An optional second arbitrary-precision engine, off by default** (beta.153) — deep zoom is
   carried by arbitrary-precision arithmetic on the CPU, and on the deepest views that work takes
   longer than everything the graphics card does for the same frame. Fractadyne can now be built
