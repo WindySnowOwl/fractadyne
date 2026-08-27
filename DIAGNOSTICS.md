@@ -23,6 +23,8 @@ dir, logs included.
 | `FRACTADYNE_LOG` | `0` | Disables the log file (stderr unchanged) |
 | `FRACTADYNE_PERF` | `1` | Appends per-render perf records to `logs/perf.jsonl` (regression tracking across builds) — plus, during script playback, one `kind:"live"` record per frame (tour time, depth, frame/cpu ms, pipeline lag) for live-judder analysis |
 | `FRACTADYNE_CONFIG_DIR` | path | Relocates config dir (and therefore `logs/`) |
+| `FRACTADYNE_BIGNUM` | `auto` / `astro` / `rug` | Which arbitrary-precision backend iterates the reference orbit (same as `--bignum`, which outranks it). **Use the variable, not the flag, for any batch or gate run**: harnesses launch fractadyne as CHILD processes, so a flag on the parent never reaches them. Asking for a backend this build does not contain is a FATAL error, never a quiet fall back — a silent downgrade would let a benchmark report numbers for arithmetic it never ran. `rug` exists only in the optional accelerated build |
+| `FRACTADYNE_NO_SOUND` | `1` | Silences the render-finish tone. Same child-process reasoning as above; an explicit `--sound` outranks it without unsetting it |
 | `FRACTADYNE_NO_TIMESTAMPS` | `1` | Decline `TIMESTAMP_QUERY` even where the adapter offers it — the only way to exercise the no-timestamp frame-budget path on a GPU that has it. That path had a reproducible bug (budget stuck at the bootstrap ⇒ ~1/3 resolution forever) that was invisible on the dev 3080 for exactly that reason; older Intel iGPUs, some Mesa/RADV/ANV combinations and the GL backend all land on it for real. Expect `capability: TIMESTAMP_QUERY=false` in the log, then `pricing frames by wall clock` |
 | `FRACTADYNE_DIVETEST_WINDOWS` | `"300,700"` | `--divetest`: override the default every-100-decades window sweep (targeted bands) |
 | `FRACTADYNE_DIVETEST_SESSION_RES` | `1` | `--divetest`: keep the session's `min_motion_res` instead of pinning the 0.30 default (user-repro runs) |
@@ -66,6 +68,15 @@ runs, the way the selftest "counters" group does — otherwise a genuinely SA-do
 and a dead code path both read near-zero. With SA/BLA off, zero on a path a deep render must
 exercise means dead code (exactly how the v0.2.6 NaN-marker regression would have shown).
 
+### The `bignum` line in a crash report
+
+Crash reports and `--selftest` name the arbitrary-precision backend that produced the run, and
+the value is taken from the arithmetic that ACTUALLY ran rather than from a flag or a setting
+that could disagree with it. `none (no reference orbit built yet)` is a real answer, not a
+missing field — it means the process died before any deep-zoom work happened.
+`--selftest` fails if a single run is attributable to more than one backend, because every
+golden and blessed baseline is the output of exactly one.
+
 ## Reading common symptoms
 
 - **App window "Not Responding" / closed by itself** → open `logs/fractadyne.log`. A crash
@@ -89,10 +100,11 @@ exercise means dead code (exactly how the v0.2.6 NaN-marker regression would hav
 
 | Flag | What |
 |------|------|
-| `--selftest [--out report.md] [--bless]` | 113 checks + 17 goldens, streamed live; hermetic (resets config at entry, echoes it); GPU errors are printed, never silently skipped; data files resolve relative to the repo even when run elsewhere. The last 20 checks are the `bench-matrix` group — deterministic path-signature tripwires (see `--bench-matrix`) |
+| `--selftest [--out report.md] [--bless]` | The full correctness suite (~140 checks + 18 goldens; it prints its own totals, so this text cannot go stale), streamed live; hermetic (resets config at entry, echoes it); GPU errors are printed, never silently skipped; data files resolve relative to the repo even when run elsewhere. The last 20 checks are the `bench-matrix` group — deterministic path-signature tripwires (see `--bench-matrix`) |
 | `--selftest-filter <substr>` | Run only matching check groups / goldens (fast iteration on one failure; not a release verdict — groups share state) |
 | `--selftest-list` | Print the group tags usable with `--selftest-filter` |
 | `--profile [--regions file.toml] [--reps N]` | Per-region reference/SA/BLA build ms + pure-GPU pass ms (TIMESTAMP_QUERY); includes a corpus-14-class `deep-interior-1e148` region (dip orbit, 800k iters — the export-throughput-gap regime) |
+| `--bench-bignum [--iters N]` | Reference-orbit cost per arbitrary-precision backend, at precisions from 64 to 8256 bits. **CPU only - no GPU**, so it runs on a CI box. On a build with more than one backend it times each over the SAME work in one process and **asserts the orbits are byte-identical** (exit 1 if not): a speed ratio between backends that computed different orbits is meaningless. Marks any row whose test orbit escaped as INVALID rather than reporting the meaninglessly fast number that produces. `--iters` scales the counts (fatal if unreadable, never a silent default) |
 | `--bench-matrix [--bless] [--reps N]` | Path-coverage perf + regression suite (zoom bands, fractals, coloring). Per-segment CPU-build vs GPU split + deterministic GPU event counters, compared against `benchmarks/bench-matrix-baseline.json`. Algorithmic drift → exit 2; timing regression → warn. `--bless` records the baseline. See [design/bench-matrix.md](design/bench-matrix.md) |
 | `--divetest tour.toml [--out log.json]` | Headless live-dive perf harness: plays real-time 18 s windows of a tour at every 100 decades of depth through the ACTUAL playback machinery (pacer, lookahead, reuse-hold, motion-res controller) with real GPU iterates, vsync-paced. Per band: fps, p50/p95/max frame ms, >33 ms hitches, real-refresh rate/cost (CPU vs pure-GPU), reference installs, pacer engagement, achieved oct/s. The dive-smoothness regression harness — diff the JSON across builds |
 | `--livetest tour.toml [--segment NAME] [--size WxH] [--out DIR] [--quick]` | Headless live-OUTPUT harness: plays a tour through the SAME live machinery `--divetest` drives, but keeps the pixels and, at every keyframe hold, renders that view through the offline path as an oracle. Enforces the contract *the live view should show what an offline render of the same view at the same iteration budget shows*: reports excess black % and sRGB difference per checkpoint with the context that attributes it (budget vs appetite, boost, orbit length + PARTIAL flag, motion resolution, staleness), dumps live/truth PNG pairs for failures, exits 1 if any checkpoint fails. This is the harness that caught the live view rendering 100% black at 1e61–1e82x where the offline render is 0% black (beta.35). `--quick` skips the oracle (metrics + context only). **Graded against a blessed baseline** (`benchmarks/livetest-<tour>-<W>x<H>.json`, written by `--bless`): a run passes when every checkpoint matches what was recorded, INCLUDING recorded FAILs — the tour's deep holds fail for a known reason (the `LIVE_REF_CAP` pixel clamp), and a gate that stays red on a known problem cannot report a new one. Without a baseline it falls back to grading raw FAILs |
@@ -167,7 +179,7 @@ Three properties worth preserving if you edit them:
 
 **Reading the results** — `summary.txt` leads with the step/exit/duration table and then explains
 which failures are expected off the reference card. The essentials: `live-res` must pass
-everywhere; the 113 non-golden checks should pass everywhere; the 17 goldens are compared
+everywhere; the non-golden checks should pass everywhere; the 18 goldens are compared
 *exactly* and were blessed on an RTX 3080, so cross-vendor deltas there are expected rather than
 bugs (judge by count and magnitude); `bench-matrix` timings are meaningless across machines but
 exit 2 means algorithmic drift; `livetest` compares live against offline *on that machine*, so its

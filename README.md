@@ -7,7 +7,8 @@ zoom** and performance.
 
 ## Highlights
 
-- **Extreme deep zoom** — arbitrary-precision center (`astro-float`), a bignum
+- **Extreme deep zoom** — arbitrary-precision center (`astro-float`, or MPFR in the
+  [optional accelerated build](#download)), a bignum
   reference orbit, and a GPU perturbation pipeline that switches by depth:
   direct df32 → df32 perturbation → **floatexp** perturbation (df32 mantissa + i32
   exponent), so the deviation never runs out of `f32` exponent range. Zhuoran rebasing;
@@ -86,6 +87,22 @@ against the accompanying `.sha256` if you like, unzip, and run `fractadyne.exe` 
 no toolchain needed). Releases are built automatically from a tagged commit by
 [`.github/workflows/release.yml`](.github/workflows/release.yml); tags with a `-` suffix
 (e.g. `v0.2.40-beta.1`) publish as **pre-releases** — the app's Beta update track.
+
+### Optional: the accelerated build
+
+Each release also carries `fractadyne-vX.Y.Z-windows-x64-accelerated.zip`. It is the **same
+program** computing deep-zoom reference orbits with MPFR/GMP instead of the pure-Rust library,
+which is **2.5–6.4× faster** at that step — the CPU pause before a deep view starts
+resolving. Extract it and run `fractadyne.exe` from that folder, keeping the `.dll` files beside
+it; settings, saved session and locations are shared with the standard build, so you can switch
+freely. In the app: **Help → Faster deep zoom**.
+
+The two produce **byte-identical images** — verified across every formula at arithmetic
+widths from 64 bits to 132,000 bits, plus the full 38-location deep-zoom corpus. It is a
+separate download because MPFR cannot be built with the MSVC toolchain the standard Windows
+binary uses, and because GMP/MPFR are **LGPL-3.0-or-later** while Fractadyne is MIT OR
+Apache-2.0; keeping them apart leaves the standard build free of those terms. The package ships
+both licence texts and links the libraries dynamically so you can replace them.
 
 ## Build & run
 
@@ -279,6 +296,11 @@ Rust crates and bundled fonts. Their license texts and attributions are reproduc
 viewable in-app under **Help → Licenses**. One dependency (`option-ext`) is MPL-2.0; its
 unmodified source is at <https://crates.io/crates/option-ext>. The algorithms and prior art
 Fractadyne builds on are credited under **Help → Acknowledgments**.
+
+The optional [accelerated build](#optional-the-accelerated-build) is the one exception: it
+additionally ships GMP and MPFR, which are **LGPL-3.0-or-later**. That package carries its own
+licence texts and links those libraries dynamically so they can be replaced. The standard
+download contains none of it.
 
 ### Contribution
 

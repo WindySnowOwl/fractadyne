@@ -96,6 +96,10 @@ These were chosen at kickoff and anchor the rest of the design:
 - **Bignum library:** a pure-Rust arbitrary-precision float (`astro-float` or
   `dashu`) to avoid GMP/MPFR build pain on Windows; `rug` (MPFR) kept as a
   performance fallback to benchmark against. See [§5.3](#53-numeric-strategy).
+  *(As built, v0.2.40: `astro-float` is the default and the carrier type; `rug`/MPFR shipped
+  as an off-by-default cargo feature and an optional accelerated download, 2.5—6.4x faster
+  on the reference orbit and byte-identical. The Windows build friction was real — it needs
+  the GNU toolchain — which is exactly why it is a separate artifact. See ARCHITECTURE.md.)*
 - **No f64 in shaders:** WGSL compute has no native `f64`. Deltas run in `f32`
   (with optional emulated double-single) on the GPU; high precision lives on the
   CPU. See [§5](#5-deep-zoom-rendering-engine-escape-time).
@@ -256,7 +260,8 @@ reference orbit. Escape test uses the full value `|Zₙ + δzₙ|`.
 
 - **Reference orbit:** arbitrary-precision float (CPU). Precision (bits) scales
   with zoom depth. Library: pure-Rust `astro-float`/`dashu` (assumption — easy
-  Windows builds), benchmarked against `rug`/MPFR.
+  Windows builds), benchmarked against `rug`/MPFR. *(As built: both, behind one
+  `RefBackend` seam; the benchmark is `--bench-bignum`.)*
 - **Stored reference:** `Zₙ` downcast to `f32` (or two `f32` = *double-single*
   for an extra ~7 digits) and uploaded to the GPU as a storage buffer.
 - **Per-pixel deltas:** `f32`, with **rescaling** (carry an exponent / scale
@@ -574,7 +579,7 @@ Fractadyne/
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Auto-perturbation for arbitrary custom formulas** (symbolic diff, stability) | Hand-written perturbation for built-ins; auto-derivation for custom with high-precision **fallback** so it always renders.                                                   |
 | **No `f64` in WGSL**                                                           | High precision stays on CPU (reference orbit); GPU uses `f32`/double-single deltas with rescaling.                                                                           |
-| **GMP/MPFR build friction on Windows**                                         | Default to pure-Rust bignum (`astro-float`/`dashu`); benchmark `rug` as optional.                                                                                            |
+| **GMP/MPFR build friction on Windows**                                         | Default to pure-Rust bignum (`astro-float`); ship `rug` as an optional, off-by-default backend and a separate download. *(Held: the friction is real — MPFR needs the GNU toolchain — so it never became a default.)*                                                                                            |
 | **GPU memory limits on huge exports**                                          | Tiled rendering + stream to RAM/disk; never hold the full image on the GPU.                                                                                                  |
 | **L-system string explosion at high depth**                                    | Cap expansion depth, stream geometry, warn the user; consider on-the-fly expansion.                                                                                          |
 | **Deep-zoom glitch correctness**                                               | Pauldelbrot criterion + iterative multi-reference correction; golden-image tests at known-hard coordinates.                                                                  |

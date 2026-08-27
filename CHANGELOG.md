@@ -10,11 +10,16 @@ new functional enhancement; a **minor** bump (e.g. 0.2.0) marks a milestone that
 run of patch releases. The `0.2.0` entry summarizes **0.1.29 – 0.1.68** by theme — per-version
 detail is in the git history.
 
-## 0.2.40-beta (in progress)
+## 0.2.40 (2026-08-27)
 
-The post-0.2.36 series (**0.2.37 – 0.2.40-beta.53**, published as `v0.2.40-beta.N`
-pre-releases on the Beta update track). Grouped by theme, newest first; per-version detail is
-in the git history.
+The first stable release since 0.2.36, rolling up the whole **0.2.37 – 0.2.40-beta.158**
+run that was published as `v0.2.40-beta.N` pre-releases on the Beta update track. Grouped by
+theme, newest first; per-version detail is in the git history.
+
+Headline: deep zoom is substantially faster and substantially more correct than 0.2.36 - a
+long sequence of deep-zoom correctness fixes, the chunked renderer, and an optional
+accelerated build that computes reference orbits 2.5-6.4x faster again (Help -> Faster deep
+zoom).
 
 - **The faster arithmetic is now a download you can actually get** (beta.157) - the optional
   accelerated build described below is packaged as its own zip, and Help now has a "Faster deep

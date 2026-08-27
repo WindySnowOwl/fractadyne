@@ -38,7 +38,7 @@ reserved stub whose intended responsibility currently lives in `fractadyne-app`.
 
 | Crate | Status | Responsibility |
 |-------|--------|----------------|
-| `fractadyne-core` | ✅ | Numerics: `Viewport` (BigFloat center, `FloatExp` scale), reference-orbit iteration (`step_bf`, `reference_orbit`), `best_reference`, series approximation (`series_skip`), BLA (`build_bla_mandel`), precision helpers, the CPU dwell oracle, minibrot/nucleus finder. No GPU/UI. **Decomposed into submodules** — `floatexp`, `bignum`, `viewport`, `reference` — behind a thin `lib.rs` facade that re-exports the public API. |
+| `fractadyne-core` | ✅ | Numerics: `Viewport` (BigFloat center, `FloatExp` scale), reference-orbit iteration (`step_bf`, `reference_orbit`), `best_reference`, series approximation (`series_skip`), BLA (`build_bla_mandel`), precision helpers, the CPU dwell oracle, minibrot/nucleus finder. No GPU/UI. **Decomposed into submodules** — `floatexp`, `bignum`, `viewport`, `reference`, `backend` — behind a thin `lib.rs` facade that re-exports the public API. The orbit loop is generic over a `RefBackend` (`backend.rs`), so the arbitrary-precision library under it can be swapped: `astro-float` always, and MPFR via `rug` behind the off-by-default `rug` feature (`backend_rug.rs`). Dispatch happens ONCE per orbit build, never per operation, and the two backends are byte-identical — which is what lets one set of goldens gate both. |
 | `fractadyne-gpu` | ✅ | `wgpu` device, render pipelines, WGSL shaders (`mandelbrot.wgsl` — iterate + color), `render_export` (tiled), per-view resources. |
 | `fractadyne-color` | ✅ | Preset gradient palettes + interpolation. |
 | `fractadyne-state` | ✅ | Session persistence (`session.toml`), versioned state, `config_dir()` + `FRACTADYNE_CONFIG_DIR`, reset. |
@@ -271,7 +271,7 @@ Layered, mostly external-data-free:
 
 - **Core exact-math tests** (`cargo test -p fractadyne-core`) — perturbation/SA/BLA reproduce the
   exact bignum recurrence; nuclei Newton-solve to known constants; coordinate round-trips.
-- **`--selftest`** (**113 checks + 17 goldens**) — GPU pipeline compared pixel-for-pixel against an
+- **`--selftest`** (**~140 checks + 18 goldens**; the run prints its own totals) — GPU pipeline compared pixel-for-pixel against an
   independent arbitrary-precision **CPU dwell oracle** (shares nothing with the GPU path), plus
   **golden images** (17: a direct-mode overview per family + a deep df32-perturbation, 1e6×, golden
   per polynomial family — so per-formula dispatch and the deep reference-orbit path are both

@@ -54,6 +54,30 @@ A running GPU is needed for the app and for the end-to-end render self-test:
 cargo run -p fractadyne-app -- --selftest   # GPU vs CPU/bignum oracle + goldens
 ```
 
+### The optional accelerated (MPFR) build
+
+Nothing above builds it, and nothing needs to: it is off by default and the standard build is
+unaffected. To produce it on Windows:
+
+```powershell
+.\scripts\build-accelerated.ps1 -Deps    # prints the exact prerequisites
+.\scripts\build-accelerated.ps1          # builds, verifies, and packages it
+```
+
+It needs the **GNU** Rust toolchain plus MSYS2, because MPFR does not build under MSVC —
+which is the whole reason it ships as a separate download rather than a feature flag on the
+normal binary. To just run the tests against it:
+
+```sh
+cargo +stable-x86_64-pc-windows-gnu test -p fractadyne-core --release --features rug
+```
+
+Two things about that script are load-bearing rather than incidental, and both are explained
+in its header: it links GMP/MPFR **dynamically** (LGPLv3 4(d)(1) — notices only, instead of
+4(d)(0)'s requirement to ship the app in relinkable form with every release), and it verifies
+the **packaged** binary on a PATH stripped of MSYS2. An earlier version verified it with MSYS2
+on PATH, passed, and blessed a package that failed on every machine without MSYS2.
+
 > Note: the repo's `[profile.dev] debug = false`, `-j1` and no-LTO settings are a
 > workaround for the original author's page-file-constrained machine, not a
 > requirement — build normally on a machine with adequate memory.
