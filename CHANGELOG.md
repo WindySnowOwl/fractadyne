@@ -21,6 +21,11 @@ long sequence of deep-zoom correctness fixes, the chunked renderer, and an optio
 accelerated build that computes reference orbits 2.5-6.4x faster again (Help -> Faster deep
 zoom).
 
+- **Orbit overlay normalization is reachable from the menu** — Tools ▸ Orbit overlay
+  now carries the "Normalize (fit to view)" option beside the toggle, rather than only in
+  the Controls panel. Without it the orbit flies off-screen at depth, so it is the setting
+  you reach for while looking at the picture.
+
 - **The Fractal menu tells you what each formula is** — it listed the same ten names as
   the toolbar's dropdown and nothing more, so the two were the same control twice. Each
   entry now has a hover description: the iteration it computes, what the family looks like,

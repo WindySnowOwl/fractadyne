@@ -265,9 +265,9 @@ impl FractadyneApp {
                                  live view and exported images. On by default.",
                             );
                         // Dual view moved to Fractal (it selects WHAT renders, like Julia mode);
-                        // the orbit overlay's toggle lives in Tools with its options in the
-                        // control panel's Overlays section (2026-08-13 UI review: View mixed four
-                        // unrelated concerns).
+                        // the orbit overlay's toggle lives in Tools, with Normalize beside it
+                        // and the animation controls in the control panel's Overlays section
+                        // (2026-08-13 UI review: View mixed four unrelated concerns).
                     });
                     // Coloring is where users spend the most time, and until 2026-08-13 the menu
                     // bar said nothing about it (UI review). This mirrors the control panel's
@@ -417,8 +417,27 @@ impl FractadyneApp {
                         ui.checkbox(&mut self.anim.show_orbits, "Orbit overlay")
                             .on_hover_text(
                                 "Draw the iteration path of the point under the cursor. \
-                                 Fit/animation options: Controls panel ▸ Overlays.",
+                                 Animation options: Controls panel ▸ Overlays.",
                             );
+                        // Normalize sits here, unlike the rest of the overlay options, because
+                        // it is a MODE rather than a continuous adjustment - without it the
+                        // orbit flies off-screen at depth, so it is the one setting you reach
+                        // for while looking at the picture. The animation toggle and its speed
+                        // slider stay in the panel; a slider in a dropdown is what the
+                        // 2026-08-13 review objected to.
+                        ui.add_enabled_ui(self.anim.show_orbits, |ui| {
+                            ui.indent("tools_orbit_opts", |ui| {
+                                ui.checkbox(
+                                    &mut self.anim.orbit_normalize,
+                                    "Normalize (fit to view)",
+                                )
+                                .on_hover_text(
+                                    "Fit the orbit to the whole view so it stays well-framed \
+                                     at any zoom (instead of mapped through the viewport, \
+                                     where it flies off-screen when deep).",
+                                );
+                            });
+                        });
                         ui.separator();
                         if ui
                             .button("Play tour…")
