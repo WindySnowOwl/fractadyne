@@ -21,6 +21,22 @@ long sequence of deep-zoom correctness fixes, the chunked renderer, and an optio
 accelerated build that computes reference orbits 2.5-6.4x faster again (Help -> Faster deep
 zoom).
 
+- **The benchmark can now measure every arithmetic regime, and says which it measured**
+  — a new "All regimes (1e48×)" depth beside Standard and Ultra. The existing depths
+  turned out never to reach the deep path at all: Standard renders 20 direct and 40 df32
+  frames, and Ultra ends exactly at the df32/floatexp boundary and renders 9 direct, 51
+  df32 and *zero* floatexp frames — so BLA, which only runs in floatexp, had never
+  executed in a benchmark whose settings block advertises "BLA on". The new depth dives
+  to 1e48× on a 116-digit centre and splits 5 / 30 / 25 across the three regimes.
+  Every report now also breaks the dive down per regime — frames, average ms and share
+  of time — so a single averaged FPS no longer hides which regime is slow, and names a
+  regime the dive never entered rather than omitting it.
+
+- **Benchmark reports say which arbitrary-precision engine produced them** — an
+  `arithmetic` line beside the version. The accelerated build is several times faster at
+  building reference orbits, which is exactly what the report's CPU figure measures, so
+  two results were not comparable without knowing which build made them.
+
 - **Orbit overlay normalization is reachable from the menu** — Tools ▸ Orbit overlay
   now carries the "Normalize (fit to view)" option beside the toggle, rather than only in
   the Controls panel. Without it the orbit flies off-screen at depth, so it is the setting

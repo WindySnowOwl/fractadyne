@@ -3341,7 +3341,7 @@ impl FractadyneApp {
         } else {
             1
         };
-        // Dive depth: --depth <standard|ultra> (or the shorthand --ultra). Also implies a
+        // Dive depth: --depth <standard|ultra|all> (or the shorthand --ultra). Also implies a
         // standardized run.
         let ultra_flag = args.iter().any(|a| a == "--ultra");
         let std_depth = val("--depth")

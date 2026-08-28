@@ -1181,7 +1181,11 @@ impl FractadyneApp {
                             }
                         })
                         .response
-                        .on_hover_text("Ultra dives past f64's limit (1e28×), stressing the perturbation / series-approx / BLA deep-zoom path much harder.");
+                        .on_hover_text(
+                            "Standard stays in the shallow modes. Ultra reaches f64's \
+                             limit (1e28×). All regimes dives to 1e48×, the only preset \
+                             that spends real time in floatexp and BLA - and the slowest.",
+                        );
                     ui.add_space(4.0);
                     ui.checkbox(&mut self.bench_cfg.burnin, "Burn-in (repeat)")
                         .on_hover_text("Run the benchmark repeatedly to reveal stability and thermal throttling.");

@@ -4235,6 +4235,20 @@ impl FractadyneApp {
     }
 
     /// Build a human-readable benchmark report.
+    /// The bignum engine that built the reference orbits, as a report line. Both benchmark
+    /// reports print it: they share an `avg CPU` figure that the accelerated build changes
+    /// by 2.5-6.4x, so a report that does not name the engine cannot be compared with
+    /// another one. Reports what actually RAN rather than what was selected, and names the
+    /// linked MPFR/GMP versions only on a build where there is a choice to disambiguate.
+    fn arithmetic_line() -> String {
+        let arith = fractadyne_core::backend_status_line();
+        if fractadyne_core::BACKEND_NAMES.len() > 1 {
+            format!("arithmetic {arith}   (build: {})", fractadyne_core::built_in_backends())
+        } else {
+            format!("arithmetic {arith}")
+        }
+    }
+
     pub(crate) fn format_bench(&self, pb: &Playback, b: &Bench) -> String {
         let f = b.frames.max(1) as f64;
         let avg_frame = b.sum_frame_ms / f;
@@ -4259,6 +4273,7 @@ impl FractadyneApp {
         format!(
             "Fractadyne benchmark — {tour}\n\
              version    v{ver}\n\
+             {arith}\n\
              date       {date}\n\
              cpu        {cpu}\n\
              cores      {phys} physical / {logi} logical\n\
@@ -4279,6 +4294,7 @@ impl FractadyneApp {
              score      {score:8.0}   (avg FPS × 100)",
             tour = pb.name,
             ver = version_string(),
+            arith = Self::arithmetic_line(),
             date = now_utc_string(),
             cpu = if si.cpu.is_empty() { "—" } else { &si.cpu },
             phys = si.physical,
@@ -4360,26 +4376,48 @@ pub(crate) const STD_ZOOM_LOG10: f64 = 12.0; // standard dive depth: 1 → 1e12�
 /// Kept ≤ the ~33-significant-digit `STD_CX`/`STD_CY` precision (sub-pixel to ~1e30×), so the
 /// dive lands on a fixed, reproducible high-detail location rather than precision noise.
 pub(crate) const STD_ZOOM_LOG10_ULTRA: f64 = 28.0;
+/// All-regimes dive: 1 -> 1e48x. Sized so ONE dive spends real time in every arithmetic
+/// regime. With 60 geometric frames the Direct->df32 boundary (1e4) lands at frame 5 and the
+/// df32->floatexp boundary ([`crate::PERT_FE_THRESHOLD`], 1e28) at frame 35: about 5 / 30 / 25
+/// frames. Neither shallower preset does this, and the measurement is worse than it looks:
+/// Standard (1e12) is 20/40/0, and Ultra ENDS at 1e28 - its final frame computes to a hair
+/// BELOW `PERT_FE_THRESHOLD` through `exp2`, so its split is 9/51/0. Neither preset renders
+/// a single floatexp frame, and since `bla_eligible` gates on floatexp, BLA has never run in
+/// a standardized benchmark whose fixed-settings block advertises "BLA on". A score is not
+/// evidence about a code path the dive never enters.
+pub(crate) const STD_ZOOM_LOG10_ALL: f64 = 48.0;
 /// Seahorse-Valley point with structure at every scale (same as the built-in tour).
 const STD_CX: &str = "-0.743643887037158704752191506114774";
 const STD_CY: &str = "0.131825904205311970493132056385139";
 
+/// Centre for the all-regimes dive: corpus location `35-vger-dive-1p47e77`, a field location
+/// from a real dive rather than a synthetic point. 116 digits against a 1e48 endpoint - about
+/// 29 decades of margin, so the deepest frames land on structure instead of precision noise.
+/// The seahorse point above carries only 33 digits (sub-pixel to ~1e30x) and could not be
+/// reused here. The shallow presets keep it: re-centring them would silently change what
+/// their already-published scores mean.
+const STD_DEEP_CX: &str = "3.5634774601304382214593134944855658665333542382319826904819524052878394297711653798870071071230880055625454711405583e-1";
+const STD_DEEP_CY: &str = "6.5517219785957047867473526044384060240158237433104919183695119307267363068091251654291035030800580107809850539974573e-1";
+
 /// Dive depth for the standardized benchmark. Deeper endpoints exercise the deep-zoom path
 /// (perturbation reference, series skip, BLA) far harder than the shallow default.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum BenchDepth {
     Standard,
     Ultra,
+    AllRegimes,
 }
 
 impl BenchDepth {
-    pub(crate) const ALL: [BenchDepth; 2] = [BenchDepth::Standard, BenchDepth::Ultra];
+    pub(crate) const ALL: [BenchDepth; 3] =
+        [BenchDepth::Standard, BenchDepth::Ultra, BenchDepth::AllRegimes];
 
     /// log10 of the final magnification the fixed 60-frame dive reaches.
     pub(crate) fn zoom_log10(self) -> f64 {
         match self {
             BenchDepth::Standard => STD_ZOOM_LOG10,
             BenchDepth::Ultra => STD_ZOOM_LOG10_ULTRA,
+            BenchDepth::AllRegimes => STD_ZOOM_LOG10_ALL,
         }
     }
 
@@ -4387,6 +4425,16 @@ impl BenchDepth {
         match self {
             BenchDepth::Standard => "Standard (1e12×)",
             BenchDepth::Ultra => "Ultra deep (1e28×)",
+            BenchDepth::AllRegimes => "All regimes (1e48×)",
+        }
+    }
+
+    /// The dive centre and the name of the place, both of which follow the depth: a centre
+    /// is only usable to the depth its digit count supports.
+    pub(crate) fn center(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            BenchDepth::AllRegimes => (STD_DEEP_CX, STD_DEEP_CY, "VGER field dive"),
+            _ => (STD_CX, STD_CY, "seahorse valley"),
         }
     }
 
@@ -4395,6 +4443,9 @@ impl BenchDepth {
         match s.trim().to_ascii_lowercase().as_str() {
             "standard" | "std" | "shallow" | "12" | "1e12" => Some(BenchDepth::Standard),
             "ultra" | "deep" | "ultradeep" | "ultra-deep" | "28" | "1e28" => Some(BenchDepth::Ultra),
+            "all" | "allregimes" | "all-regimes" | "regimes" | "48" | "1e48" => {
+                Some(BenchDepth::AllRegimes)
+            }
             _ => None,
         }
     }
@@ -4418,6 +4469,33 @@ pub(crate) struct BenchSnapshot {
     use_custom_palette: bool,
 }
 
+/// Totals for one arithmetic regime within a pass. The dive crosses every regime it is deep
+/// enough to reach, so a single averaged FPS is a blend of three very different workloads -
+/// which is precisely what a reader wants separated.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct RegimeAcc {
+    frames: u32,
+    frame_ms: f64,
+    cpu_ms: f64,
+}
+
+/// Report order: shallowest first, matching the direction the dive travels.
+const REGIME_NAMES: [&str; 3] = ["direct", "df32", "floatexp"];
+
+/// Index into the per-regime accumulators for the mode a frame at `mag` renders in. Uses
+/// [`crate::RenderMode::select`] itself rather than re-stating its thresholds, so the report
+/// cannot drift from what the renderer actually did.
+fn regime_index(mag: f64) -> usize {
+    let mode = crate::RenderMode::select(true, false, mag);
+    if mode.is_direct() {
+        0
+    } else if mode.is_floatexp() {
+        2
+    } else {
+        1
+    }
+}
+
 /// A running standardized benchmark (one or more passes; >1 = burn-in). Driven one dive-frame at
 /// a time from `update()` so the window stays responsive (spinner animates, cancellable) rather
 /// than blocking the whole event loop for a multi-second pass.
@@ -4437,8 +4515,14 @@ pub(crate) struct StdBench {
     frame_in_pass: i32,
     /// Accumulator for the in-progress pass (`None` between passes → next step starts a fresh one).
     cur: Option<Bench>,
-    /// log10 of the dive's final magnification (depth preset — 1e12× standard, 1e28× ultra).
+    /// log10 of the dive's final magnification (depth preset — 1e12× standard, 1e28× ultra,
+    /// 1e48× all-regimes).
     zoom_log10: f64,
+    /// Name of the dive centre, for the report (it follows the depth).
+    site: &'static str,
+    /// Per-regime totals: in progress, then the last completed pass.
+    cur_regimes: [RegimeAcc; 3],
+    last_regimes: [RegimeAcc; 3],
 }
 
 impl StdBench {
@@ -4492,9 +4576,12 @@ impl FractadyneApp {
         self.coloring.use_duotone = false;
         self.coloring.use_custom_palette = false;
         self.invalidate_refs();
-        let cx = fractadyne_core::parse_bf(STD_CX)
+        // A centre that failed to parse would silently dive somewhere else and still print a
+        // full report, so `centres_parse_to_full_precision` holds every preset to its digits.
+        let (cx_s, cy_s, site) = depth.center();
+        let cx = fractadyne_core::parse_bf(cx_s)
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(-0.5, 64));
-        let cy = fractadyne_core::parse_bf(STD_CY)
+        let cy = fractadyne_core::parse_bf(cy_s)
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, 64));
         StdBench {
             res,
@@ -4508,6 +4595,9 @@ impl FractadyneApp {
             frame_in_pass: -1,
             cur: None,
             zoom_log10: depth.zoom_log10(),
+            site,
+            cur_regimes: [RegimeAcc::default(); 3],
+            last_regimes: [RegimeAcc::default(); 3],
         }
     }
 
@@ -4586,6 +4676,7 @@ impl FractadyneApp {
             let mut b = Bench::new();
             b.warmup_left = 0; // explicit warm-up frame below instead
             run.cur = Some(b);
+            run.cur_regimes = [RegimeAcc::default(); 3];
             run.frame_in_pass = -1;
         }
 
@@ -4607,6 +4698,12 @@ impl FractadyneApp {
         {
             let b = run.cur.as_mut().unwrap();
             let frame_ms = build_ms + gpu_ms;
+            // `log2mag` is what the frame was actually rendered at, so the regime is derived
+            // from the same number the renderer used rather than from the frame index.
+            let r = &mut run.cur_regimes[regime_index(log2mag.exp2())];
+            r.frames += 1;
+            r.frame_ms += frame_ms;
+            r.cpu_ms += build_ms;
             b.frames += 1;
             b.sum_frame_ms += frame_ms;
             b.sum_cpu_ms += build_ms;
@@ -4629,6 +4726,7 @@ impl FractadyneApp {
         let avg_fps = if b.sum_frame_ms > 0.0 { 1000.0 / (b.sum_frame_ms / f) } else { 0.0 };
         run.pass_fps.push(avg_fps);
         run.last = Some(b);
+        run.last_regimes = run.cur_regimes;
         run.passes_done += 1;
         run.passes_done >= run.passes_total
     }
@@ -4670,6 +4768,8 @@ impl FractadyneApp {
         let mut s = String::new();
         s.push_str("Fractadyne standardized benchmark\n");
         s.push_str(&format!("version    v{}\n", version_string()));
+        // Which bignum engine built the reference orbits - see `arithmetic_line`.
+        s.push_str(&format!("{}\n", Self::arithmetic_line()));
         s.push_str(&format!("date       {}\n", now_utc_string()));
         s.push_str(&format!("cpu        {}\n", if si.cpu.is_empty() { "—" } else { &si.cpu }));
         s.push_str(&format!("cores      {} physical / {} logical\n", si.physical, si.logical));
@@ -4683,8 +4783,8 @@ impl FractadyneApp {
         s.push_str("max-iter   auto (depth-adaptive)\n");
         s.push_str("deep zoom  series-approx on · BLA on · glitch off\n");
         s.push_str(&format!(
-            "dive       {} frames, 1 → 1e{:.0}× (seahorse valley)\n",
-            STD_FRAMES, run.zoom_log10
+            "dive       {} frames, 1 → 1e{:.0}× ({})\n",
+            STD_FRAMES, run.zoom_log10, run.site
         ));
         s.push_str("----------------------------------------\n");
         if run.passes_total > 1 {
@@ -4719,9 +4819,123 @@ impl FractadyneApp {
         s.push_str(&format!("avg GPU    {agpu:8.2} ms   (render)\n"));
         s.push_str(&format!("avg RAM    {:8.1} MB\n", mb(aram)));
         s.push_str(&format!("peak RAM   {:8.1} MB\n", mb(pram)));
+        // Per-regime split. A dive deep enough to cross a boundary averages two or three
+        // unlike workloads into one FPS; without this the report cannot tell you whether a
+        // machine is slow at depth or slow everywhere, and cannot show that a preset never
+        // entered a regime at all.
+        let tot_ms: f64 = run.last_regimes.iter().map(|r| r.frame_ms).sum();
+        if run.last_regimes.iter().any(|r| r.frames > 0) {
+            s.push_str("----------------------------------------\n");
+            s.push_str("regime     frames    avg ms    share\n");
+            for (i, r) in run.last_regimes.iter().enumerate() {
+                if r.frames == 0 {
+                    // Naming the empty regime is the point: "floatexp 0" is the finding.
+                    s.push_str(&format!("{:<10} {:>6}         -        -\n", REGIME_NAMES[i], 0));
+                    continue;
+                }
+                let n = r.frames as f64;
+                let share = if tot_ms > 0.0 { 100.0 * r.frame_ms / tot_ms } else { 0.0 };
+                let bla = if i == 2 { "   (BLA)" } else { "" };
+                s.push_str(&format!(
+                    "{:<10} {:>6}  {:>8.2}  {:>6.1}%{}\n",
+                    REGIME_NAMES[i], r.frames, r.frame_ms / n, share, bla
+                ));
+            }
+            let cpu: f64 = run.last_regimes.iter().map(|r| r.cpu_ms).sum();
+            if cpu > 0.0 {
+                let deep = run.last_regimes[2].cpu_ms;
+                s.push_str(&format!(
+                    "reference build: {:.0}% of CPU time in floatexp frames\n",
+                    100.0 * deep / cpu
+                ));
+            }
+        }
         s.push_str("----------------------------------------\n");
         s.push_str(&format!("score      {:8.0}   (avg FPS × 100)", mean * 100.0));
         s
+    }
+}
+
+#[cfg(test)]
+mod bench_depth_tests {
+    use super::{BenchDepth, STD_FRAMES};
+
+    /// Frames per regime for a preset, computed exactly the way `step_standard_bench` computes
+    /// the magnification it renders at - via `regime_index`, which asks `RenderMode::select`
+    /// rather than restating any threshold.
+    fn regime_frames(depth: BenchDepth) -> [u32; 3] {
+        let z = depth.zoom_log10();
+        let frames = STD_FRAMES.max(2) as i32;
+        let mut c = [0u32; 3];
+        for i in 0..frames {
+            let frac = i as f64 / (frames - 1) as f64;
+            let log2mag = frac * z * std::f64::consts::LOG2_10;
+            c[super::regime_index(log2mag.exp2())] += 1;
+        }
+        c
+    }
+
+    /// The whole reason `AllRegimes` exists. The two shallower presets are pinned as the
+    /// MEASUREMENT that motivated it, not as an aspiration: Standard is 20/40/0 and Ultra is
+    /// 9/51/0 - Ultra's endpoint IS the threshold, and computing it through `exp2` lands just
+    /// below, so not one floatexp frame is rendered. BLA, which `bla_eligible` gates on
+    /// floatexp, therefore never ran while the report advertised "BLA on". The `<= 1` below
+    /// is deliberate slack: the exact count turns on a floating-point boundary case, and the
+    /// claim worth pinning is "effectively none", not a rounding outcome.
+    #[test]
+    fn only_the_all_regimes_dive_exercises_every_regime() {
+        let all = regime_frames(BenchDepth::AllRegimes);
+        assert!(
+            all.iter().all(|&n| n >= 5),
+            "all-regimes dive must spend real frames in each of direct/df32/floatexp, got {all:?}"
+        );
+        assert_eq!(regime_frames(BenchDepth::Standard)[2], 0, "standard should not reach floatexp");
+        assert!(regime_frames(BenchDepth::Ultra)[2] <= 1, "ultra ends AT the floatexp threshold");
+    }
+
+    /// A centre is only usable as deep as its digit count supports, and `begin_standard_bench`
+    /// falls back to (-0.5, 0) when a centre fails to parse - which would dive somewhere else
+    /// entirely and still print a complete, plausible report. Sub-pixel placement at 1eN needs
+    /// about N + log10(width in px) digits, so require N + 4.
+    #[test]
+    fn every_preset_centre_parses_and_is_precise_enough_for_its_depth() {
+        for depth in BenchDepth::ALL {
+            let (cx, cy, site) = depth.center();
+            assert!(!site.is_empty(), "{}: unnamed dive site", depth.label());
+            for coord in [cx, cy] {
+                assert!(
+                    fractadyne_core::parse_bf(coord).is_some(),
+                    "{site}: centre does not parse: {coord}"
+                );
+                let digits = coord.chars().filter(|c| c.is_ascii_digit()).count() as f64;
+                assert!(
+                    digits > depth.zoom_log10() + 4.0,
+                    "{site}: {digits} digits is too coarse for a 1e{} dive",
+                    depth.zoom_log10()
+                );
+            }
+        }
+    }
+
+    /// Every token the help text and the CLI advertise must actually select something, and the
+    /// labels must stay distinct - a picker with two identical entries is unusable.
+    #[test]
+    fn depth_tokens_round_trip_and_labels_are_distinct() {
+        for (tok, want) in [
+            ("standard", BenchDepth::Standard),
+            ("ultra", BenchDepth::Ultra),
+            ("all", BenchDepth::AllRegimes),
+            ("all-regimes", BenchDepth::AllRegimes),
+            ("1e48", BenchDepth::AllRegimes),
+        ] {
+            assert_eq!(BenchDepth::from_token(tok), Some(want), "token {tok:?}");
+        }
+        assert_eq!(BenchDepth::from_token("nonsense"), None);
+        let mut labels: Vec<&str> = BenchDepth::ALL.iter().map(|d| d.label()).collect();
+        labels.sort_unstable();
+        let n = labels.len();
+        labels.dedup();
+        assert_eq!(labels.len(), n, "two depth presets share a label");
     }
 }
 
