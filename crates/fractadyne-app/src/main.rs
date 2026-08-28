@@ -58,6 +58,8 @@ mod chunksweep;
 mod gputest;
 mod help;
 mod icons;
+#[cfg(test)]
+mod icons_coverage;
 mod livetest;
 mod motiontest;
 mod profile;
@@ -955,7 +957,7 @@ impl RandomPalette {
     }
 }
 
-// `lerp_color` / `dual_toggle_button` moved to `theme.rs` (re-exported below).
+// `lerp_color` moved to `theme.rs` (re-exported below).
 
 const EASE_TAU: f64 = 0.15; // ease-in/out time constant (seconds)
 

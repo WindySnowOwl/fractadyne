@@ -44,6 +44,8 @@ zoom).
   and a build-time check now refuses to compile if any glyph in the interface has no font that
   can draw it. Secondary text in menus and dialogs is a step larger too, which matters on a
   large high-resolution display.
+  The dual-view button was a hand-painted pair of rectangles - it is now one square with a
+  divider, drawn from the same set as everything beside it.
 
 - **The faster arithmetic is now a download you can actually get** (beta.157) - the optional
   accelerated build described below is packaged as its own zip, and Help now has a "Faster deep

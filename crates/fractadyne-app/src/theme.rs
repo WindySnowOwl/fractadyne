@@ -23,28 +23,6 @@ pub(crate) fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Co
     )
 }
 
-/// A compact toggle button drawn as two side-by-side rectangles (the dual-view
-/// icon). Painted directly so it renders identically regardless of font glyphs.
-pub(crate) fn dual_toggle_button(ui: &mut egui::Ui, selected: bool) -> egui::Response {
-    let size = egui::vec2(30.0, ui.spacing().interact_size.y);
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    let v = ui.style().interact_selectable(&resp, selected);
-    let p = ui.painter();
-    p.rect_filled(rect, egui::CornerRadius::same(2), v.bg_fill);
-    let inner = rect.shrink2(egui::vec2(8.0, 4.0));
-    let gap = 3.0;
-    let half_w = ((inner.width() - gap) * 0.5).max(1.0);
-    let left = egui::Rect::from_min_size(inner.min, egui::vec2(half_w, inner.height()));
-    let right = egui::Rect::from_min_size(
-        egui::pos2(inner.min.x + half_w + gap, inner.min.y),
-        egui::vec2(half_w, inner.height()),
-    );
-    let stroke = egui::Stroke::new(1.4_f32, v.fg_stroke.color);
-    p.rect_stroke(left, egui::CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
-    p.rect_stroke(right, egui::CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
-    resp
-}
-
 /// Light or dark UI theme (persisted; see [`apply_theme`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum ThemeMode {

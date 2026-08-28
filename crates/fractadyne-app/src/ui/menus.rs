@@ -689,7 +689,8 @@ impl FractadyneApp {
                 // Dual pairs a formula with its Julia set, so it's only meaningful where a Julia
                 // exists (Newton has no free parameter → no Julia → no dual).
                 ui.add_enabled_ui(self.fractal.supports_julia(), |ui| {
-                    if dual_toggle_button(ui, self.dual)
+                    if ui
+                        .selectable_label(self.dual, crate::icons::DUAL)
                         .on_hover_text("Dual linked view (Mandelbrot ↔ Julia)")
                         .clicked()
                     {
