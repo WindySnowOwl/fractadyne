@@ -57,6 +57,7 @@ mod fractal;
 mod chunksweep;
 mod gputest;
 mod help;
+mod icons;
 mod livetest;
 mod motiontest;
 mod profile;
@@ -5721,7 +5722,7 @@ impl FractadyneApp {
                             self.coloring.custom_palette[i][0] = pos.clamp(0.0, 1.0);
                             changed = true;
                         }
-                        if count > 2 && ui.button("✖").on_hover_text("Remove stop").clicked() {
+                        if count > 2 && ui.button(crate::icons::CLOSE).on_hover_text("Remove stop").clicked() {
                             remove = Some(i);
                         }
                     });
@@ -5734,7 +5735,7 @@ impl FractadyneApp {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     if self.coloring.custom_palette.len() < fractadyne_color::MAX_STOPS
-                        && ui.button("➕ Add stop").clicked()
+                        && ui.button(format!("{} Add stop", crate::icons::ADD)).clicked()
                     {
                         self.coloring.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
                         changed = true;

@@ -106,7 +106,7 @@ impl FractadyneApp {
                                 self.coloring.use_binary = false;
                             }
                         }
-                        if ui.selectable_label(self.coloring.use_custom_palette, "Custom ✏").clicked() {
+                        if ui.selectable_label(self.coloring.use_custom_palette, format!("Custom {}", crate::icons::EDIT)).clicked() {
                             if self.coloring.custom_palette.is_empty() {
                                 self.coloring.custom_palette = self.preset_as_stops(self.coloring.palette_idx);
                             }

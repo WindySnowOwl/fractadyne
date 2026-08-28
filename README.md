@@ -297,6 +297,9 @@ viewable in-app under **Help → Licenses**. One dependency (`option-ext`) is MP
 unmodified source is at <https://crates.io/crates/option-ext>. The algorithms and prior art
 Fractadyne builds on are credited under **Help → Acknowledgments**.
 
+Toolbar and menu icons are [Lucide](https://lucide.dev/) (ISC), bundled as a subset containing
+only the icons the UI uses — regenerate with `scripts/subset_lucide.py`.
+
 The optional [accelerated build](#optional-the-accelerated-build) is the one exception: it
 additionally ships GMP and MPFR, which are **LGPL-3.0-or-later**. That package carries its own
 licence texts and links those libraries dynamically so they can be replaced. The standard

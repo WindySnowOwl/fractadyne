@@ -1387,6 +1387,7 @@ dependencies = [
  "eframe",
  "egui",
  "env_logger",
+ "epaint_default_fonts",
  "fractadyne-color",
  "fractadyne-core",
  "fractadyne-export",
@@ -1399,6 +1400,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "toml",
+ "ttf-parser",
  "ureq",
  "wgpu",
 ]

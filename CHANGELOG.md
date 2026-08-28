@@ -21,6 +21,14 @@ long sequence of deep-zoom correctness fixes, the chunked renderer, and an optio
 accelerated build that computes reference orbits 2.5-6.4x faster again (Help -> Faster deep
 zoom).
 
+- **The toolbar and menu icons are a real icon set** — the icons were Unicode emoji, which
+  meant they came from whichever font happened to have each one and did not look like a
+  family; worse, the bundled fonts covered an arbitrary subset of them, so four drew as blank
+  squares. They are now Lucide glyphs, bundled as an 11 KB subset of just the icons in use,
+  and a build-time check now refuses to compile if any glyph in the interface has no font that
+  can draw it. Secondary text in menus and dialogs is a step larger too, which matters on a
+  large high-resolution display.
+
 - **The faster arithmetic is now a download you can actually get** (beta.157) - the optional
   accelerated build described below is packaged as its own zip, and Help now has a "Faster deep
   zoom" entry that explains it and links to the version matching the one you are running. Extract

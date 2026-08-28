@@ -17,6 +17,12 @@ accepted = [
     "CC0-1.0",
     "Unlicense",
     "MPL-2.0",
+    # webpki-roots ships Mozilla's CA root DATA under the Community Data License
+    # Agreement (permissive variant). It is a permissive, non-copyleft licence, and the
+    # crate is already linked into the shipped binary via `ureq` (the update check) - so
+    # refusing it here does not remove it, it only stops it being DOCUMENTED. Without this
+    # entry `cargo about generate` fails outright and the notices silently go stale.
+    "CDLA-Permissive-2.0",
     "Unicode-3.0",
     "OFL-1.1",
     "Ubuntu-font-1.0",

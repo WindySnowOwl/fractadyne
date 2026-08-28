@@ -174,7 +174,7 @@ impl FractadyneApp {
                 row(ui, "drag", "pan the view");
                 row(ui, "scroll", "zoom in / out toward the cursor");
                 row(ui, "hold Space", "smooth continuous zoom (Shift+Space out)");
-                row(ui, "🎯 then click", "dive into the clicked point (toolbar)");
+                row(ui, &format!("{} then click", crate::icons::CLICK_ZOOM), "dive into the clicked point (toolbar)");
                 row(ui, "M", "jump to the nearest minibrot at its own scale");
                 ui.add_space(6.0);
                 ui.label(egui::RichText::new("Jump to a landmark to start:").weak().small());
@@ -264,7 +264,7 @@ impl FractadyneApp {
                     // A pointer, not a button: Settings is a submenu, so a button here could not
                     // actually open it, and a control that cannot deliver is worse than none.
                     ui.label(
-                        egui::RichText::new("More in File → ⚙ Settings")
+                        egui::RichText::new(format!("More in File → {} Settings", crate::icons::SETTINGS))
                             .weak()
                             .small(),
                     );
@@ -1069,7 +1069,7 @@ impl FractadyneApp {
                             .hint_text("name (optional)")
                             .desired_width(240.0),
                     );
-                    if ui.button("★ Add current view").clicked() {
+                    if ui.button(format!("{} Add current view", crate::icons::BOOKMARK)).clicked() {
                         let name = self.bookmark_name.clone();
                         self.add_bookmark(&name);
                         self.bookmark_name.clear();
@@ -1111,7 +1111,7 @@ impl FractadyneApp {
                                     if ui.button("Go").clicked() {
                                         jump = Some(i);
                                     }
-                                    if ui.button("🗑").on_hover_text("Delete").clicked() {
+                                    if ui.button(crate::icons::DELETE).on_hover_text("Delete").clicked() {
                                         delete = Some(i);
                                     }
                                 });

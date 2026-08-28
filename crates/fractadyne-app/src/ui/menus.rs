@@ -5,6 +5,63 @@ use crate::*;
 impl FractadyneApp {
     /// Top menu bar + toolbar (File / Fractal / View / Tools / Bookmarks / Locations / Help)
     /// plus the icon toolbar. Takes the `gpu` handle for the quick-export toolbar action.
+    /// The bookmarks menu: add-current first, then Manage, then the recent bookmarks with
+    /// thumbnails.
+    ///
+    /// Shared by Navigate ▸ Bookmarks and the toolbar star button. One function rather
+    /// than two copies on purpose: they are the same menu, and a second copy is a second
+    /// thing to forget when bookmarks gain a field.
+    pub(crate) fn bookmarks_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if ui.button(format!("{}  Add current view", crate::icons::BOOKMARK)).clicked() {
+            self.add_bookmark("");
+            ui.close_menu();
+        }
+        if ui.button("Manage…").clicked() {
+            self.dialogs.bookmarks_open = true;
+            ui.close_menu();
+        }
+        if !self.bookmarks.is_empty() {
+            ui.separator();
+            // Recent bookmarks (most recent first), each with its thumbnail so you
+            // can pick by look without opening Manage. Preload the textures (mutable)
+            // into owned handles first, then draw (borrow-free in the loop).
+            let recent: Vec<usize> = (0..self.bookmarks.len()).rev().take(12).collect();
+            let thumbs: Vec<Option<egui::TextureHandle>> = recent
+                .iter()
+                .map(|&i| {
+                    let id = self.bookmarks[i].thumb.clone();
+                    self.bookmark_thumb_texture(&ctx, &id)
+                })
+                .collect();
+            let mut jump: Option<usize> = None;
+            for (slot, &i) in recent.iter().enumerate() {
+                let name = self.bookmarks[i].name.as_str();
+                let clicked = if let Some(tex) = &thumbs[slot] {
+                    let sz = tex.size_vec2();
+                    let w = 64.0_f32;
+                    ui.add(egui::Button::image_and_text(
+                        egui::Image::new(egui::load::SizedTexture::new(
+                            tex.id(),
+                            egui::vec2(w, w * sz.y / sz.x.max(1.0)),
+                        )),
+                        name,
+                    ))
+                    .clicked()
+                } else {
+                    ui.button(name).clicked() // older bookmark without a thumbnail
+                };
+                if clicked {
+                    jump = Some(i);
+                }
+            }
+            if let Some(i) = jump {
+                let meta = self.bookmarks[i].meta.clone();
+                self.load_view_metadata(&meta);
+                ui.close_menu();
+            }
+        }
+    }
+
     pub(crate) fn draw_menu_bar(
         &mut self,
         ctx: &egui::Context,
@@ -18,21 +75,21 @@ impl FractadyneApp {
                     brand_wordmark(ui);
                     ui.separator();
                     ui.menu_button("File", |ui| {
-                        if ui.button("📂  Open view or location…").clicked() {
+                        if ui.button(format!("{}  Open view or location…", crate::icons::OPEN)).clicked() {
                             self.open_view(ctx);
                             ui.close_menu();
                         }
-                        if ui.button("🖼  Gallery…").clicked() {
+                        if ui.button(format!("{}  Gallery…", crate::icons::GALLERY)).clicked() {
                             self.gallery.open = true;
                             self.scan_gallery();
                             ui.close_menu();
                         }
-                        if ui.button("💾  Export image…").clicked() {
+                        if ui.button(format!("{}  Export image…", crate::icons::SAVE)).clicked() {
                             self.export.open = true;
                             ui.close_menu();
                         }
                         if ui
-                            .button("📷  Snapshot  (Ctrl+S)")
+                            .button(format!("{}  Snapshot  (Ctrl+S)", crate::icons::SNAPSHOT))
                             .on_hover_text("Quick-export to the last-used folder, no dialog")
                             .clicked()
                         {
@@ -45,7 +102,7 @@ impl FractadyneApp {
                         // Settings live under File — the conventional home users reach for first
                         // (File → Preferences/Settings); they sat under View until 2026-08-13,
                         // where only display TOGGLES belong.
-                        ui.menu_button("⚙  Settings", |ui| {
+                        ui.menu_button(format!("{}  Settings", crate::icons::SETTINGS), |ui| {
                             ui.label("Frame-rate cap");
                             for (label, val) in [
                                 ("Uncapped", None),
@@ -101,7 +158,7 @@ impl FractadyneApp {
                         });
                         ui.separator();
                         if ui
-                            .button("♻  Reset application state…")
+                            .button(format!("{}  Reset application state…", crate::icons::RESET_APP))
                             .on_hover_text(
                                 "Delete all saved state (session, bookmarks, thumbnails) and \
                                  start fresh. Asks for confirmation first.",
@@ -111,7 +168,7 @@ impl FractadyneApp {
                             self.dialogs.reset_confirm_open = true;
                             ui.close_menu();
                         }
-                        if ui.button("✖  Quit").clicked() {
+                        if ui.button(format!("{}  Quit", crate::icons::QUIT)).clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
@@ -160,7 +217,7 @@ impl FractadyneApp {
                         // "Home view" vs "Reset view" were near-synonyms distinguishable only by
                         // tooltip (2026-08-13 UI review) — the labels now say what each does.
                         if ui
-                            .button("🏠  Zoom out to full view")
+                            .button(format!("{}  Zoom out to full view", crate::icons::HOME))
                             .on_hover_text("Zoom out to the full home view (animated)")
                             .clicked()
                         {
@@ -168,7 +225,7 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui
-                            .button("🔄  Reset to default view")
+                            .button(format!("{}  Reset to default view", crate::icons::RESET_VIEW))
                             .on_hover_text("Reset to the fractal's default view (instant)")
                             .clicked()
                         {
@@ -243,7 +300,7 @@ impl FractadyneApp {
                             }
                             ui.separator();
                             if ui
-                                .selectable_label(self.coloring.use_custom_palette, "Custom ✏")
+                                .selectable_label(self.coloring.use_custom_palette, format!("Custom {}", crate::icons::EDIT))
                                 .clicked()
                             {
                                 if self.coloring.custom_palette.is_empty() {
@@ -450,7 +507,7 @@ impl FractadyneApp {
                         }
                         ui.separator();
                         if ui
-                            .button("🎲  Random location")
+                            .button(format!("{}  Random location", crate::icons::RANDOM))
                             .on_hover_text("Jump to a random detail-rich boundary point")
                             .clicked()
                         {
@@ -468,7 +525,7 @@ impl FractadyneApp {
                         // Sharing a location is a PLACES concern (moved from File 2026-08-13):
                         // it shares where you are, like the .kfr import shares where someone was.
                         if ui
-                            .button("🔗  Share location…")
+                            .button(format!("{}  Share location…", crate::icons::SHARE))
                             .on_hover_text(
                                 "Copy / paste / save / load a self-contained location \
                                  (.fdn): fractal, full-precision center, zoom, coloring.",
@@ -479,55 +536,8 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         ui.separator();
-                        ui.menu_button("★  Bookmarks", |ui| {
-                        if ui.button("★  Add current view").clicked() {
-                            self.add_bookmark("");
-                            ui.close_menu();
-                        }
-                        if ui.button("Manage…").clicked() {
-                            self.dialogs.bookmarks_open = true;
-                            ui.close_menu();
-                        }
-                        if !self.bookmarks.is_empty() {
-                            ui.separator();
-                            // Recent bookmarks (most recent first), each with its thumbnail so you
-                            // can pick by look without opening Manage. Preload the textures (mutable)
-                            // into owned handles first, then draw (borrow-free in the loop).
-                            let recent: Vec<usize> = (0..self.bookmarks.len()).rev().take(12).collect();
-                            let thumbs: Vec<Option<egui::TextureHandle>> = recent
-                                .iter()
-                                .map(|&i| {
-                                    let id = self.bookmarks[i].thumb.clone();
-                                    self.bookmark_thumb_texture(&ctx, &id)
-                                })
-                                .collect();
-                            let mut jump: Option<usize> = None;
-                            for (slot, &i) in recent.iter().enumerate() {
-                                let name = self.bookmarks[i].name.as_str();
-                                let clicked = if let Some(tex) = &thumbs[slot] {
-                                    let sz = tex.size_vec2();
-                                    let w = 64.0_f32;
-                                    ui.add(egui::Button::image_and_text(
-                                        egui::Image::new(egui::load::SizedTexture::new(
-                                            tex.id(),
-                                            egui::vec2(w, w * sz.y / sz.x.max(1.0)),
-                                        )),
-                                        name,
-                                    ))
-                                    .clicked()
-                                } else {
-                                    ui.button(name).clicked() // older bookmark without a thumbnail
-                                };
-                                if clicked {
-                                    jump = Some(i);
-                                }
-                            }
-                            if let Some(i) = jump {
-                                let meta = self.bookmarks[i].meta.clone();
-                                self.load_view_metadata(&meta);
-                                ui.close_menu();
-                            }
-                        }
+                        ui.menu_button(format!("{}  Bookmarks", crate::icons::BOOKMARK), |ui| {
+                            self.bookmarks_menu(ui, &ctx);
                         });
                     });
                     ui.menu_button("Help", |ui| {
@@ -665,18 +675,18 @@ impl FractadyneApp {
                 });
                 ui.separator();
                 // ── File / I-O: open & browse, then save ──────────────────────────────
-                if ui.button("📂").on_hover_text("Open a view or location (PNG / EXR, .fdn, .kfr)").clicked() {
+                if ui.button(crate::icons::OPEN).on_hover_text("Open a view or location (PNG / EXR, .fdn, .kfr)").clicked() {
                     self.open_view(ctx);
                 }
-                if ui.button("🖼").on_hover_text("Gallery").clicked() {
+                if ui.button(crate::icons::GALLERY).on_hover_text("Gallery").clicked() {
                     self.gallery.open = true;
                     self.scan_gallery();
                 }
-                if ui.button("💾").on_hover_text("Export image…").clicked() {
+                if ui.button(crate::icons::SAVE).on_hover_text("Export image…").clicked() {
                     self.export.open = true;
                 }
                 if ui
-                    .button("📷")
+                    .button(crate::icons::SNAPSHOT)
                     .on_hover_text("Snapshot — quick export to the last folder (Ctrl+S)")
                     .clicked()
                 {
@@ -686,17 +696,17 @@ impl FractadyneApp {
                 }
                 ui.separator();
                 // ── Navigation / location: zoom, reset/home, bookmark ─────────────────
-                if ui.button("🔍+").on_hover_text("Zoom in").clicked() {
+                if ui.button(crate::icons::ZOOM_IN).on_hover_text("Zoom in").clicked() {
                     self.zoom_center(0.5);
                 }
-                if ui.button("🔍−").on_hover_text("Zoom out").clicked() {
+                if ui.button(crate::icons::ZOOM_OUT).on_hover_text("Zoom out").clicked() {
                     self.zoom_center(2.0);
                 }
                 // Click-to-zoom tool (single view): arm left-click = dive into the point,
                 // right-click = back out; drag still pans. Factor set in Settings ▸ Navigation.
                 ui.add_enabled_ui(!self.dual, |ui| {
                     if ui
-                        .selectable_label(self.click_zoom, "🎯")
+                        .selectable_label(self.click_zoom, crate::icons::CLICK_ZOOM)
                         .on_hover_text(format!(
                             "Click-to-zoom ({:.0}×): left-click dives into the point, \
                              right-click backs out (drag still pans). Factor in Settings ▸ Navigation.",
@@ -711,7 +721,7 @@ impl FractadyneApp {
                 ui.add_enabled_ui(!self.dual, |ui| {
                     let running = self.autopilot.active;
                     if ui
-                        .selectable_label(running, "🚀")
+                        .selectable_label(running, crate::icons::AUTOPILOT)
                         .on_hover_text(if running {
                             "Auto-zoom is running — click to stop"
                         } else {
@@ -722,28 +732,29 @@ impl FractadyneApp {
                         self.toggle_autopilot(ctx);
                     }
                 });
-                if ui.button("🔄").on_hover_text("Reset view (instant)").clicked() {
+                if ui.button(crate::icons::RESET_VIEW).on_hover_text("Reset view (instant)").clicked() {
                     self.reset_view();
                 }
                 if ui
-                    .button("🏠")
+                    .button(crate::icons::HOME)
                     .on_hover_text("Zoom out to the home view (animated)")
                     .clicked()
                 {
                     let now = ctx.input(|i| i.time);
                     self.zoom_home(now);
                 }
-                if ui
-                    .button("★")
-                    .on_hover_text("Bookmark this view")
-                    .clicked()
-                {
-                    self.add_bookmark("");
-                }
+                // A DROPDOWN, not a one-shot add: the button used to save silently on click,
+                // which gave no way to reach a saved view from the toolbar and no feedback that
+                // anything had happened. Same menu as Navigate > Bookmarks, via one helper.
+                ui.menu_button(crate::icons::BOOKMARK, |ui| {
+                    self.bookmarks_menu(ui, ctx);
+                })
+                .response
+                .on_hover_text("Bookmarks: save this view, or jump to a saved one");
                 ui.separator();
                 // ── Appearance / display ──────────────────────────────────────────────
                 if ui
-                    .button("🎨")
+                    .button(crate::icons::PALETTE)
                     .on_hover_text(format!(
                         "Next palette ({})",
                         fractadyne_color::PRESETS[self.coloring.palette_idx].name
@@ -753,7 +764,7 @@ impl FractadyneApp {
                     self.coloring.palette_idx = (self.coloring.palette_idx + 1) % fractadyne_color::PRESETS.len();
                 }
                 if ui
-                    .selectable_label(self.perf.enabled, "📊")
+                    .selectable_label(self.perf.enabled, crate::icons::PERF)
                     .on_hover_text("Performance panel")
                     .clicked()
                 {
@@ -772,7 +783,7 @@ impl FractadyneApp {
                     None => "Play a tour… (Tools ▸ Play tour)".to_string(),
                 };
                 if ui
-                    .add_enabled(!self.tour_playing(), egui::Button::new("▶"))
+                    .add_enabled(!self.tour_playing(), egui::Button::new(crate::icons::PLAY))
                     .on_hover_text(play_hover)
                     .clicked()
                 {
@@ -794,7 +805,7 @@ impl FractadyneApp {
                         .on_hover_text("Playback speed");
                 }
                 if ui
-                    .selectable_label(self.fullscreen, "🖥")
+                    .selectable_label(self.fullscreen, crate::icons::FULLSCREEN)
                     .on_hover_text("Toggle fullscreen")
                     .clicked()
                 {
@@ -1134,10 +1145,10 @@ impl FractadyneApp {
                             // paused. Everything on this row is sized this way for that reason.
                             const GLYPH: [f32; 2] = [18.0, 18.0];
                             if finished {
-                                ui.add_sized(GLYPH, egui::Label::new(egui::RichText::new("⏹").size(13.0)))
-                                    .on_hover_text("Finished — scrub back in, or ✖ to close");
+                                ui.add_sized(GLYPH, egui::Label::new(egui::RichText::new(crate::icons::STOP).size(13.0)))
+                                    .on_hover_text(format!("Finished — scrub back in, or {} to close", crate::icons::CLOSE));
                             } else if paused {
-                                ui.add_sized(GLYPH, egui::Label::new(egui::RichText::new("⏸").size(13.0)));
+                                ui.add_sized(GLYPH, egui::Label::new(egui::RichText::new(crate::icons::PAUSE).size(13.0)));
                             } else {
                                 ui.add_sized(GLYPH, egui::Spinner::new().size(12.0));
                             }
@@ -1181,23 +1192,23 @@ impl FractadyneApp {
                                 .on_hover_text(tip)
                                 .clicked()
                             };
-                            if btn(ui, "⏮", "Restart from the beginning") {
+                            if btn(ui, crate::icons::SKIP_BACK, "Restart from the beginning") {
                                 seek = Some(0.0);
                             }
-                            if btn(ui, "⏪", "Back 10 seconds") {
+                            if btn(ui, crate::icons::REWIND, "Back 10 seconds") {
                                 seek = Some((cur_t - 10.0).max(0.0));
                             }
-                            if btn(ui, if paused { "▶" } else { "⏸" },
+                            if btn(ui, if paused { crate::icons::PLAY } else { crate::icons::PAUSE },
                                    if finished { "Play again from the beginning" }
                                    else if paused { "Resume" } else { "Pause" }) {
                                 toggle_pause = true;
                             }
                             // Stop = rewind and park, as on any media player. It no longer tears
                             // the player down — that is ✖ — so the tour stays scrubable.
-                            if btn(ui, "⏹", "Stop and rewind to the start") {
+                            if btn(ui, crate::icons::STOP, "Stop and rewind to the start") {
                                 stop = true;
                             }
-                            if btn(ui, "⏩", "Forward 10 seconds") {
+                            if btn(ui, crate::icons::FORWARD, "Forward 10 seconds") {
                                 seek = Some((cur_t + 10.0).min(total));
                             }
                             // Speed cycles rather than opening a menu: one control, one glance,
@@ -1226,7 +1237,7 @@ impl FractadyneApp {
                                 if ui
                                     .add_sized(
                                         BTN,
-                                        egui::Button::new(egui::RichText::new("🎬").size(14.0))
+                                        egui::Button::new(egui::RichText::new(crate::icons::TOUR).size(14.0))
                                             .small(),
                                     )
                                     .on_hover_text(if has_source {
@@ -1241,7 +1252,7 @@ impl FractadyneApp {
                             });
                             // Change the script without leaving the player: same picker as
                             // Tools → Play script, starting in the current script's folder.
-                            if btn(ui, "📂", "Play a different script…") {
+                            if btn(ui, crate::icons::OPEN, "Play a different script…") {
                                 pick_script = true;
                             }
                             let loop_fill = if looping {
@@ -1252,7 +1263,7 @@ impl FractadyneApp {
                             if ui
                                 .add_sized(
                                     BTN,
-                                    egui::Button::new(egui::RichText::new("🔁").size(14.0))
+                                    egui::Button::new(egui::RichText::new(crate::icons::LOOP).size(14.0))
                                         .small()
                                         .fill(loop_fill),
                                 )
@@ -1266,7 +1277,7 @@ impl FractadyneApp {
                             // right-to-left layout claims the remaining available width, which
                             // inside an `Area` is unbounded — that pushed the button off-screen.
                             ui.separator();
-                            if btn(ui, "✖", "Close the player and restore your own view settings") {
+                            if btn(ui, crate::icons::CLOSE, "Close the player and restore your own view settings") {
                                 close = true;
                             }
                         });

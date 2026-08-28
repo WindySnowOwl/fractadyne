@@ -164,6 +164,15 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
             "../assets/fonts/SplineSansMono.ttf"
         ))),
     );
+    // Lucide, subset to the icons actually used (`scripts/subset_lucide.py`). Its glyphs live in
+    // the Private Use Area, so appending it can never shadow a real character — it only supplies
+    // codepoints nothing else defines. This replaced the emoji that used to serve as icons: the
+    // bundled fonts cover an arbitrary subset of those, four of which shipped as tofu squares,
+    // and the ones that did render came from different families.
+    fonts.font_data.insert(
+        "Lucide".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!("../assets/fonts/Lucide.ttf"))),
+    );
     // Proportional: Spline Sans first, then the egui defaults (Ubuntu / Hack / emoji) so any glyph
     // Spline Sans lacks (math arrows, sub/superscripts in the Help formulas) still resolves.
     if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
@@ -171,6 +180,8 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
         if !prop.iter().any(|f| f == "Hack") {
             prop.push("Hack".to_owned());
         }
+        // Last: it only ever resolves Private Use Area codepoints nothing ahead of it defines.
+        prop.push("Lucide".to_owned());
     }
     // Monospace (the numeric read-outs): Spline Sans Mono first, Hack behind it for fallbacks.
     if let Some(mono) = fonts.families.get_mut(&egui::FontFamily::Monospace) {

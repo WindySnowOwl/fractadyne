@@ -54,6 +54,17 @@ A running GPU is needed for the app and for the end-to-end render self-test:
 cargo run -p fractadyne-app -- --selftest   # GPU vs CPU/bignum oracle + goldens
 ```
 
+### Adding a UI icon
+
+Icons are [Lucide](https://lucide.dev/) glyphs, referenced by NAME from `src/icons.rs` — never
+as a raw `\u{e...}` escape, because Private Use Area codepoints are meaningless on sight. To
+add one, put it in the `ICONS` table in `scripts/subset_lucide.py` and re-run that script: it
+re-subsets the bundled font and regenerates `icons.rs` together, so the two cannot disagree.
+
+`cargo test -p fractadyne-app coverage` fails if any glyph the UI draws has no font that can
+draw it. That guard exists because four such glyphs shipped as blank squares and were caught
+by eye in a release review — the render gates compare fractal pixels and cannot see a menu.
+
 ### The optional accelerated (MPFR) build
 
 Nothing above builds it, and nothing needs to: it is off by default and the standard build is

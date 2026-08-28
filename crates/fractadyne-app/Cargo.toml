@@ -45,3 +45,10 @@ workspace = true
 # bindings.
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+# Font-coverage guard only (`icons::coverage`). Both are already in the tree as epaint's own
+# dependencies, so this pins no new third-party code into the binary - dev-dependencies are not
+# linked into a release build.
+ttf-parser = "0.25"
+epaint_default_fonts = "0.31"
