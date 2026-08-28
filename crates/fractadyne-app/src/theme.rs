@@ -177,6 +177,27 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
         mono.insert(0, "SplineSansMono".to_owned());
     }
     ctx.set_fonts(fonts);
+
+    // Secondary text, one step up from egui's default.
+    //
+    // egui ships `Small` at 9.0 against a 12.5 body — 72%. That is fine on a laptop panel and at
+    // the edge of legibility on a large high-resolution desktop monitor, where the OS scaling that
+    // would fix it is often turned *down* precisely because everything else is already big enough.
+    // `Small` carries real content here rather than decoration: the update-check result, the
+    // "Cycle, offset, animation…" hints under menu groups, licence and attribution lines, and the
+    // explanatory captions in dialogs. 11.0 keeps it clearly subordinate to body text (88%) while
+    // being comfortably readable.
+    //
+    // ⚠Only `Small` moves. Body/Button/Heading/Monospace stay at egui's defaults, so this changes
+    // the small print and nothing else — and the whole UI still scales independently via the UI
+    // scale setting (`ui_scale`, 0.6–2.5), which is the right knob for "everything is too small"
+    // as opposed to "the small print is too small".
+    ctx.all_styles_mut(|style| {
+        style.text_styles.insert(
+            egui::TextStyle::Small,
+            egui::FontId::new(11.0, egui::FontFamily::Proportional),
+        );
+    });
 }
 
 /// Apply the Fractadyne theme for `mode` (charcoal panels + amber on dark, warm off-white + deeper

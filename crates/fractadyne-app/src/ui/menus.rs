@@ -243,7 +243,7 @@ impl FractadyneApp {
                             }
                             ui.separator();
                             if ui
-                                .selectable_label(self.coloring.use_custom_palette, "Custom ✎")
+                                .selectable_label(self.coloring.use_custom_palette, "Custom ✏")
                                 .clicked()
                             {
                                 if self.coloring.custom_palette.is_empty() {
@@ -711,7 +711,7 @@ impl FractadyneApp {
                 ui.add_enabled_ui(!self.dual, |ui| {
                     let running = self.autopilot.active;
                     if ui
-                        .selectable_label(running, "🛸")
+                        .selectable_label(running, "🚀")
                         .on_hover_text(if running {
                             "Auto-zoom is running — click to stop"
                         } else {
@@ -916,8 +916,26 @@ impl FractadyneApp {
             // user needs to be told why the view is black. Wrapping costs a second line only when
             // it is actually needed.
             ui.horizontal_wrapped(|ui| {
+                // ⚠Every readout is ATOMIC. `TextWrapMode::Extend` stops egui breaking a label at
+                // the PADDING SPACES inside a reserved slot: `iter {:>w$}` is one string of
+                // `iter`, spaces, then the count, and the default word-wrap happily splits it, so
+                // `iter` sat on line 1 with `9,845` on line 2.
+                //
+                // That is the beta.149 reflow bug wearing a different hat, not a cosmetic one. The
+                // split point moves with the DIGIT COUNT of a value that grows as the view settles,
+                // so the bar's height changes while a deep view resolves - it shrinks the canvas, the
+                // renderer reads that as a resize and restarts, and the numbers change again. The
+                // width reservation exists to stop exactly that, and it is itself made of the spaces
+                // egui was wrapping at. With `Extend` a readout that does not fit moves WHOLE onto
+                // the next line, which is what `horizontal_wrapped` was chosen for.
+                let mono = |ui: &mut egui::Ui, t: String| {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(t).monospace())
+                            .wrap_mode(egui::TextWrapMode::Extend),
+                    )
+                };
                 let l2 = self.viewport.log2_magnification();
-                ui.monospace(format!(
+                mono(ui, format!(
                     "center {}, {}",
                     fmt_coord_deep(&self.viewport.center_x, l2),
                     fmt_coord_deep(&self.viewport.center_y, l2),
@@ -938,7 +956,7 @@ impl FractadyneApp {
                     Some((mx, my)) => (fmt_coord(mx), fmt_coord(my)),
                     None => ("—".to_string(), "—".to_string()),
                 };
-                ui.monospace(format!("cursor {cx_s:>21}, {cy_s:>21}"));
+                mono(ui, format!("cursor {cx_s:>21}, {cy_s:>21}"));
                 ui.separator();
                 // ⭐⭐**RESERVED WIDTH, for the same reason the cursor readout above is.** These
                 // two fields CHANGE WIDTH as the view changes — `fmt_zoom_log2` grows an exponent,
@@ -959,13 +977,13 @@ impl FractadyneApp {
                 // pixels by construction (`zoom_slot_width` is pinned by a test).
                 let zw = crate::zoom_slot_width();
                 if self.dual {
-                    ui.monospace(format!(
+                    mono(ui, format!(
                         "zoom  M {:>zw$}×   J {:>zw$}×",
                         fmt_zoom_log2(self.viewport.log2_magnification()),
                         fmt_zoom_log2(self.julia_viewport.log2_magnification()),
                     ));
                 } else {
-                    ui.monospace(format!(
+                    mono(ui, format!(
                         "zoom {:>zw$}×",
                         fmt_zoom_log2(self.viewport.log2_magnification())
                     ));
@@ -984,7 +1002,7 @@ impl FractadyneApp {
                     want_iter.min(zoom_iter_cap(self.viewport.log2_magnification()).max(256))
                 };
                 // Widest is `MAX_ITER_LIMIT` grouped — see the reservation note on `zoom` above.
-                ui.monospace(format!(
+                mono(ui, format!(
                     "iter {:>w$}",
                     commas(&eff_iter.to_string()),
                     w = crate::iter_slot_width()

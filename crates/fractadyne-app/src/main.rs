@@ -5057,7 +5057,7 @@ impl FractadyneApp {
                 format!(
                     "budget     {:.2e}{}",
                     p.fe_budget[0] as f64,
-                    if p.fe_budget_ok[0] { " ✓" } else { " (settling)" }
+                    if p.fe_budget_ok[0] { " ✔" } else { " (settling)" }
                 ),
             );
         }
@@ -5721,7 +5721,7 @@ impl FractadyneApp {
                             self.coloring.custom_palette[i][0] = pos.clamp(0.0, 1.0);
                             changed = true;
                         }
-                        if count > 2 && ui.button("✕").on_hover_text("Remove stop").clicked() {
+                        if count > 2 && ui.button("✖").on_hover_text("Remove stop").clicked() {
                             remove = Some(i);
                         }
                     });
