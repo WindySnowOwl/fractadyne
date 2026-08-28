@@ -21,6 +21,22 @@ long sequence of deep-zoom correctness fixes, the chunked renderer, and an optio
 accelerated build that computes reference orbits 2.5-6.4x faster again (Help -> Faster deep
 zoom).
 
+- **The Fractal menu tells you what each formula is** — it listed the same ten names as
+  the toolbar's dropdown and nothing more, so the two were the same control twice. Each
+  entry now has a hover description: the iteration it computes, what the family looks like,
+  and, for Newton, that it renders directly and has no deep zoom. The dropdown stays the
+  quick way to switch once you know what you want.
+
+- **Dual view behaves the same from the menu as from the toolbar** — the two toggles were
+  separate implementations, and the menu's copy did not discard the cached reference orbits
+  when it turned dual view on. It could leave the second pane rendering from a reference
+  built for the view you left. Both now run the same code, and Julia mode greys out while
+  dual view is on in the menu as it already did on the toolbar.
+
+- **The fractal dropdown no longer shows a scrollbar it does not need** — ten formulas came
+  to within a few pixels of the popup's default height cap, so every entry was visible and a
+  scrollbar appeared anyway. The popup is now sized from the list.
+
 - **The toolbar and menu icons are a real icon set** — the icons were Unicode emoji, which
   meant they came from whichever font happened to have each one and did not look like a
   family; worse, the bundled fonts covered an arbitrary subset of them, so four drew as blank

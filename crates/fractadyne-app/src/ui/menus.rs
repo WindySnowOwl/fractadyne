@@ -173,9 +173,14 @@ impl FractadyneApp {
                         }
                     });
                     ui.menu_button("Fractal", |ui| {
+                        // This list and the toolbar's dropdown are deliberately both here:
+                        // the dropdown is the fast way to switch once you know what you
+                        // want, and this is where you find that out. Hence the hints -
+                        // without them the two really would be the same control twice.
                         for kind in FractalKind::ALL {
                             if ui
                                 .selectable_label(self.fractal == kind, kind.name())
+                                .on_hover_text(kind.menu_hint())
                                 .clicked()
                             {
                                 self.set_fractal(kind);
@@ -184,7 +189,7 @@ impl FractadyneApp {
                         }
                         ui.separator();
                         let can_julia = self.fractal.supports_julia();
-                        ui.add_enabled_ui(can_julia, |ui| {
+                        ui.add_enabled_ui(can_julia && !self.dual, |ui| {
                             if ui
                                 .checkbox(&mut self.julia_mode, "Julia mode")
                                 .on_hover_text(
@@ -194,21 +199,22 @@ impl FractadyneApp {
                             {
                                 self.invalidate_refs();
                             }
-                            // Beside Julia mode, not in View: both select WHAT renders.
+                        });
+                        // Beside Julia mode, not in View: both select WHAT renders.
+                        // This and the toolbar's dual button call the SAME method: when they
+                        // were two copies of "what enabling dual means", this copy quietly
+                        // skipped the reference invalidation the other one did.
+                        ui.add_enabled_ui(can_julia, |ui| {
+                            let mut dual = self.dual;
                             if ui
-                                .checkbox(&mut self.dual, "Dual view (Mandelbrot ↔ Julia)")
+                                .checkbox(&mut dual, "Dual view (Mandelbrot ↔ Julia)")
                                 .on_hover_text(
                                     "Split the window: the parameter set on the left, the Julia \
                                      set of the cursor's c on the right.",
                                 )
-                                .clicked()
-                                && self.dual
+                                .changed()
                             {
-                                self.julia_viewport.reset();
-                                self.julia_viewport.center_x =
-                                    fractadyne_core::BigFloat::from_f64(0.0, 64);
-                                self.julia_viewport.center_y =
-                                    fractadyne_core::BigFloat::from_f64(0.0, 64);
+                                self.toggle_dual();
                             }
                         });
                     });
@@ -642,7 +648,24 @@ impl FractadyneApp {
                 // Fractal picker (the name, as a dropdown).
                 let prev = self.fractal;
                 let mut sel = self.fractal;
+                // egui caps a ComboBox popup at `spacing.combo_height` (200 px by default) and puts
+                // a ScrollArea inside it. Ten formulas overflow that by a few pixels, so the list
+                // showed a scrollbar while every entry was already visible.
+                //
+                // Derived from the row metrics rather than set to a constant: a hardcoded height
+                // would be wrong again the moment a formula is added, the UI scale moves, or a text
+                // size changes — and it would fail by silently reintroducing the scrollbar.
+                // Over-estimating is FREE — the popup's ScrollArea shrinks to fit its content, so a
+                // too-large bound simply means no scrollbar. Under-estimating is what puts one
+                // back, so the margin is deliberate rather than sloppy. (A row is a `SelectableLabel`:
+                // button text plus padding, ~17 px at the default 12.5 px button font, which is why
+                // ten of them land within a few pixels of the 200 px cap.)
+                let sp = ui.spacing();
+                let popup_h = (sp.interact_size.y + sp.item_spacing.y)
+                    * FractalKind::ALL.len() as f32
+                    + sp.item_spacing.y * 4.0;
                 egui::ComboBox::from_id_salt("fractal_dropdown")
+                    .height(popup_h)
                     .selected_text(self.fractal.name())
                     .show_ui(ui, |ui| {
                         for k in FractalKind::ALL {

@@ -261,6 +261,20 @@ impl FractalKind {
     pub(crate) fn info(self) -> FractalInfo {
         self.spec().info
     }
+
+    /// Hover text for a formula picker: the iteration, what the family looks like, and
+    /// - where it applies - that it cannot deep zoom. Derived from [`Self::info`] rather
+    /// than written out again, so a new family gets its tooltip from its `SPECS` row and
+    /// the two can never disagree.
+    pub(crate) fn menu_hint(self) -> String {
+        let info = self.info();
+        let mut s = format!("{}\n\n{}", info.formula, info.about);
+        if !self.supports_perturbation() {
+            // The one difference a picker cannot show but a user feels immediately.
+            s.push_str("\n\nDirect rendering only - this family has no deep zoom.");
+        }
+        s
+    }
 }
 
 #[cfg(test)]
@@ -285,6 +299,31 @@ mod tests {
                 spec.name
             );
         }
+    }
+
+    /// A blank `formula` or `about` would ship as an empty tooltip, which reads as a broken
+    /// menu rather than a missing sentence. Guard the whole table at once.
+    #[test]
+    fn every_family_has_a_hint_worth_showing() {
+        for kind in FractalKind::ALL {
+            let info = kind.info();
+            assert!(!info.formula.trim().is_empty(), "{}: no formula", kind.name());
+            assert!(!info.about.trim().is_empty(), "{}: no description", kind.name());
+            let hint = kind.menu_hint();
+            assert!(hint.contains(info.formula), "{}: hint drops the formula", kind.name());
+            assert!(hint.contains(info.about), "{}: hint drops the description", kind.name());
+        }
+    }
+
+    /// Newton is the one family with no perturbation path, and this hint is the only place
+    /// the interface says so. Pinned BY NAME on purpose: asserting the hint against
+    /// `supports_perturbation` looks stronger but is a tautology, since the hint is derived
+    /// from that same flag - flip the flag and both sides move together and the test still
+    /// passes. (Tried it; it did.)
+    #[test]
+    fn only_the_family_without_deep_zoom_says_so() {
+        assert!(FractalKind::Newton.menu_hint().contains("no deep zoom"));
+        assert!(!FractalKind::Mandelbrot.menu_hint().contains("no deep zoom"));
     }
 
     /// Names are used as stable tokens in view files; they must round-trip and be unique.
