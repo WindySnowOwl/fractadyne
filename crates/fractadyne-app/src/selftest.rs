@@ -323,6 +323,7 @@ impl FractadyneApp {
             "consistency", "counters", "iter-budget", "iter-chunk", "nr-zoom", "coords",
             "ref-pick", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
+            "checklist",
         ];
         if self.selftest_list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -4058,6 +4059,590 @@ zoom = \"1e94\"
                     pass: frame::coherent(&a) && frame::coherent(&b) && e2 < e1,
                 });
             }
+        }
+
+
+        // ---- manual-checklist rows the other groups do not reach ----
+        //
+        // The rows here are the ones whose whole content is "render this and look at it":
+        // the depth ladder (25, 27, 28), Julia (44), random locations (69), the two colour
+        // mappings that only exist on the normalized path (29, 30, 57, 58), the export rows
+        // (77, 78, 80) and the rapid-switching soak (105). See
+        // design/checklist-automation.md for which clause of each row this covers and which
+        // stays a human judgement.
+        if want("checklist") {
+            let (cw, ch) = (320u32, 180u32);
+            // Pin everything that is not the variable under test, and put the view back
+            // afterwards — later groups (and the goldens) share this app instance.
+            let saved_vp = self.viewport.clone();
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            let saved_fractal = self.fractal;
+            let saved_julia = self.julia_mode;
+            self.fractal = crate::FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.aa = 1;
+            self.export.ss = 1;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.palette_idx = 0;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_binary = false;
+            self.coloring.use_duotone = false;
+            self.coloring.log_palette = false;
+            self.coloring.normalize_live = false;
+            self.coloring.cycle = 0.27;
+            self.coloring.offset = 0.1;
+            self.anim.palette_anim = crate::PaletteAnim::Off;
+            self.effects.light = false;
+            self.effects.de = false;
+
+            // Render the CURRENT app view at (w,h) through the ordinary export path, which
+            // chunks its dispatches — a deep frame at a real iteration count is exactly the
+            // unbounded-submission shape that loses the device, and a self-test must never
+            // crash the GPU it is validating.
+            let shoot = |app: &Self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue,
+                         w: u32, h: u32| -> Option<(Vec<u8>, u32)> {
+                // ⚠`julia` here is the request's OWN flag, not a panel index: a single-view
+                // Julia render must ASK for one. Passing `false` renders the parameter plane
+                // with Julia mode on and reports a frame identical to the Mandelbrot — which
+                // is exactly what this check first measured (meanΔ 0.00).
+                let mut req = app.current_export_request_for(&app.viewport, app.julia_mode);
+                req.width = w;
+                req.height = h;
+                let orbit_len = req.orbit_len;
+                let progress = std::sync::atomic::AtomicU32::new(0);
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel)
+                    .ok()
+                    .map(|r| (fractadyne_export::to_srgb8_dithered(&r.pixels, r.width), orbit_len))
+            };
+            // Jump the app's view to a full-precision location at `mag_log10`.
+            let goto = |app: &mut Self, cx: &str, cy: &str, mag_log10: f64, iter: u32| {
+                let log2mag = mag_log10 * std::f64::consts::LOG2_10;
+                let prec = fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64);
+                // ⚠A silent fallback here would be indistinguishable from the bug these checks
+                // hunt: an unparseable centre lands on the whole set, which at 1e500× renders a
+                // flat frame and reads as "deep zoom is broken". Panic instead — this is a
+                // literal in this file, so a failure to parse is a typo, not an input.
+                let x = fractadyne_core::parse_bf_prec(cx, prec)
+                    .unwrap_or_else(|| panic!("selftest: centre {cx:?} does not parse"));
+                let y = fractadyne_core::parse_bf_prec(cy, prec)
+                    .unwrap_or_else(|| panic!("selftest: centre {cy:?} does not parse"));
+                app.viewport.set_size(cw as f64, ch as f64);
+                app.viewport.set_center_log2mag(x, y, log2mag);
+                app.viewport.precision = prec;
+                app.render_cfg.max_iter = iter;
+            };
+
+            // --- steps 25 and 27: the depth ladder ---
+            // Coordinates and iteration counts are the F3 comparison corpus's own, so a rung
+            // that goes black here is a location we have independently rendered correctly.
+            // (name, cx, cy, log10 magnification, iterations)
+            type Rung = (&'static str, &'static str, &'static str, f64, u32);
+            const SEA_X: &str = "-0.7436438870371587047521915061147707";
+            const SEA_Y: &str = "0.131825904205311970493132056385139";
+            const LADDER: &[Rung] = &[
+                ("1e0", "-0.75", "0.0", 0.125, 512),
+                ("1.3e4", SEA_X, SEA_Y, 4.125, 1_500),
+                ("1.3e6", SEA_X, SEA_Y, 6.125, 3_000),
+                ("3.9e12", "-0.743643908041274519886726", "0.131825923574324509717824", 12.591, 60_000),
+                ("1.1e18", "-0.71455191519512020059044918385", "0.35402073332318232065549730365", 18.036, 50_000),
+                ("1.3e24", SEA_X, SEA_Y, 24.125, 20_000),
+            ];
+            let mut ladder_ok = true;
+            let mut worst = (f32::INFINITY, "");
+            let mut prev = (0usize, 0u32); // (precision, orbit_len)
+            let mut first_prec = 0usize;
+            let mut grows = true;
+            let mut growth = String::new();
+            for (name, cx, cy, mag, iter) in LADDER {
+                goto(self, cx, cy, *mag, *iter);
+                let prec = self.viewport.precision;
+                match shoot(self, device, queue, cw, ch) {
+                    Some((px, orbit_len)) => {
+                        let (sd, _) = frame::coherence(&px);
+                        if !frame::coherent(&px) {
+                            ladder_ok = false;
+                        }
+                        if sd < worst.0 {
+                            worst = (sd, name);
+                        }
+                        // Depth must cost something: the working precision has to grow as the
+                        // ladder descends, or the deeper rungs are being rendered with the
+                        // shallow view's machinery.
+                        //
+                        // ⚠Reference ORBIT LENGTH is reported but NOT gated. It is bounded by
+                        // where the reference point escapes, which is a property of the
+                        // location and not of the depth: measured across these rungs it goes
+                        // 1501 → 3001 → 1558 → 619 → 20001, and it is perfectly healthy. The
+                        // checklist row's "orbit length grows" is a claim about diving at ONE
+                        // point, which a ladder of different points cannot test.
+                        if prec < prev.0 {
+                            grows = false;
+                        }
+                        if first_prec == 0 {
+                            first_prec = prec;
+                        }
+                        // What CAN be required of every perturbed rung: a reference exists.
+                        if *mag > 1.0 && orbit_len == 0 {
+                            ladder_ok = false;
+                        }
+                        growth.push_str(&format!("{name}:{prec}b/{orbit_len} "));
+                        prev = (prec, orbit_len);
+                    }
+                    None => {
+                        ladder_ok = false;
+                        growth.push_str(&format!("{name}:FAILED "));
+                    }
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "depth-ladder-coherent".into(),
+                params: format!("{} rungs, 1x -> 1.3e24x, {cw}x{ch}", LADDER.len()),
+                result: format!(
+                    "weakest rung {} at stddev {:.1}; precision {first_prec}b -> {}b; {growth}",
+                    worst.1, worst.0, prev.0
+                ),
+                threshold: "every rung coherent, perturbed rungs have a reference; precision more than doubles",
+                // ⚠Non-decreasing is NOT enough: a CONSTANT precision satisfies it while
+                // making depth cost nothing, and that mutant passed this check on its first
+                // draft (every rung pinned at 64 bits, green). It has to actually climb.
+                pass: ladder_ok && grows && prev.0 > first_prec * 2,
+            });
+
+            // --- step 28: past the f64 magnification range ---
+            // 6.1e500 is corpus location 09. It matters specifically because `magnification()`
+            // SATURATES to +inf past ~1e308x, and a guard written for NaN once demoted every
+            // such view to Direct mode and rendered an empty frame (beta.125).
+            // Corpus location 09 (6.1e500×, 150,000 iterations), verbatim — see the drift
+            // guard below. ⚠These were first typed from memory rather than copied, and the
+            // resulting frame was flat: a wrong deep centre is not a wrong picture, it is the
+            // WHOLE SET, which at this depth is a blank field and reads exactly like the
+            // saturation bug this row exists to catch.
+            const X500: &str = "-8.351966078548609175704283083728201809956421539984007929099437008685832333266\
+6026012321442424716476137516010235155803265588739473477613596416091464645795520269598424012720833\
+7641161382449650762068504929672877197722390865649996670577215903692518919284922807301340923025946\
+7459812564279863991009144218705795579205742155079434234517406000246525499747298743298423112048661\
+8202330117277556383076138282583978997392314887381834712013461059227773552093199422831818832614215\
+489147840039739096870634260502312035491160466210910542672e-2";
+            const Y500: &str = "6.563392665142135764243544562479428717973237578041407051280494868053203874959\
+4379415920265613034895936155571162042591359618401572538324489365585021937324229690811051813054355\
+3032971465057843804726868054110073433374070365768499180999961785644891370747637496781349088901691\
+9265370226945907099365482327646526518611942469695308223223586411313594133148334474017001142785407\
+3921885047231710113229147644154379696549177162208675566004999502643881966677072076493891512329846\
+424644392411879461499442500274655605273427804756526273386e-1";
+
+            self.render_cfg.max_iter = 150_000;
+            goto(self, X500, Y500, 500.91, 150_000);
+            let extreme = shoot(self, device, queue, cw, ch);
+            let (res, pass) = match &extreme {
+                Some((px, orbit_len)) => {
+                    let (sd, b) = frame::coherence(px);
+                    (
+                        format!("stddev {sd:.1}, {b} buckets, orbit_len {orbit_len}"),
+                        frame::coherent(px) && *orbit_len > 0,
+                    )
+                }
+                None => ("render_export failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "extreme-depth-coherent".into(),
+                params: format!("6.1e500x, 150,000 iterations, {cw}x{ch}"),
+                result: res,
+                threshold: "coherent frame from a real reference orbit (not blank, not flat)",
+                pass,
+            });
+
+            // --- steps 29, 30 and 57: the normalized colour mappings ---
+            // These reach the image ONLY through the normalized path. `render_export` does not
+            // normalize unless asked, so an A/B of the checkbox against it reports a
+            // byte-identical frame (measured, meanD 0.00) — a check built that way is green
+            // and vacuous. `render_export_normalized` is the mapping the checkbox selects.
+            let normed = |app: &Self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue|
+             -> Option<Vec<u8>> {
+                app.render_export_normalized(dev, q, &app.viewport, false, cw, ch, 1, None, None, u64::MAX)
+                    .map(|(r, _)| fractadyne_export::to_srgb8_dithered(&r.pixels, r.width))
+            };
+            // A deep, dense field: the regime where an un-normalized palette aliases into
+            // per-pixel confetti and normalizing is what makes the bands readable.
+            goto(self, SEA_X, SEA_Y, 24.125, 20_000);
+            let plain = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            let norm = normed(self, device, queue);
+            let (res, pass) = match (&plain, &norm) {
+                (Some(a), Some(b)) => {
+                    let (sa, sb) = (frame::neighbour_step(a, cw), frame::neighbour_step(b, cw));
+                    (
+                        format!("neighbour step {sa:.2} -> {sb:.2}, meanD {:.2}", frame::distance(a, b)),
+                        frame::coherent(a) && frame::coherent(b) && sb < sa,
+                    )
+                }
+                _ => ("render failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "normalize-reduces-speckle".into(),
+                params: format!("1.3e24x, 20,000 iterations, {cw}x{ch}, both frames must be coherent"),
+                result: res,
+                threshold: "normalized frame has the SMALLER neighbour step",
+                pass,
+            });
+
+            // Log colour scale, on the same view and the same path.
+            let lin = normed(self, device, queue);
+            self.coloring.log_palette = true;
+            let logd = normed(self, device, queue);
+            self.coloring.log_palette = false;
+            let (res, pass) = match (&lin, &logd) {
+                (Some(a), Some(b)) => {
+                    let d = frame::distance(a, b);
+                    (format!("meanD {d:.2}"), frame::coherent(a) && frame::coherent(b) && d >= 1.0)
+                }
+                _ => ("render failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "log-scale-changes-the-image".into(),
+                params: "normalized mapping, log off vs on".into(),
+                result: res,
+                threshold: "meanD >= 1.0, both coherent",
+                pass,
+            });
+
+            // --- step 58: a gradient edit reaches the image ---
+            // The dialog is a human check; what a machine can hold is that a changed STOP
+            // changes the picture, and that the custom gradient is what is being sampled
+            // rather than the preset silently continuing to win.
+            goto(self, SEA_X, SEA_Y, 6.125, 3_000);
+            let preset = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            self.coloring.custom_palette = vec![
+                [0.0, 0.0, 0.0, 0.0],
+                [0.35, 0.55, 0.02, 0.02],
+                [0.7, 1.0, 0.55, 0.05],
+                [1.0, 1.0, 1.0, 0.75],
+            ];
+            self.coloring.use_custom_palette = true;
+            let edited = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            // Move ONE stop; everything else about the gradient is unchanged.
+            self.coloring.custom_palette[1] = [0.35, 0.02, 0.10, 0.75];
+            let moved = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            self.coloring.use_custom_palette = false;
+            self.coloring.custom_palette.clear();
+            let (res, pass) = match (&preset, &edited, &moved) {
+                (Some(p), Some(e), Some(m)) => {
+                    let (d1, d2) = (frame::distance(p, e), frame::distance(e, m));
+                    (
+                        format!("preset->custom meanD {d1:.2}, one stop moved meanD {d2:.2}"),
+                        frame::coherent(e) && frame::coherent(m) && d1 >= 1.0 && d2 >= 1.0,
+                    )
+                }
+                _ => ("render failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "gradient-edit-changes-the-image".into(),
+                params: format!("{cw}x{ch}, custom gradient vs preset, then one stop moved"),
+                result: res,
+                threshold: "both meanD >= 1.0, both coherent",
+                pass,
+            });
+
+            // --- step 44: Julia mode ---
+            self.viewport.reset_to(0.0, 0.0);
+            self.viewport.set_size(cw as f64, ch as f64);
+            self.render_cfg.max_iter = 2_000;
+            self.julia_c = (-0.743_643_887_037_15, 0.131_825_904_205_31);
+            let mandel = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            self.julia_mode = true;
+            let julia = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            self.julia_mode = false;
+            let (res, pass) = match (&mandel, &julia) {
+                (Some(m), Some(j)) => {
+                    let (sd, b) = frame::coherence(j);
+                    let d = frame::distance(m, j);
+                    (
+                        format!("stddev {sd:.1}, {b} buckets; meanD {d:.2} vs the parameter plane"),
+                        frame::coherent(j) && d >= 1.0,
+                    )
+                }
+                _ => ("render failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "julia-coherent".into(),
+                params: "c = -0.743644 + 0.131826i, whole-plane framing".into(),
+                result: res,
+                threshold: "coherent, and not the same image as the Mandelbrot",
+                pass,
+            });
+
+            // --- step 69: random locations ---
+            // The picker bisects onto the boundary, so every jump should land in detail. A
+            // seed that lands on a blank field is a real defect and a reproducible one — the
+            // seed is in the report.
+            let mut bad: Vec<String> = Vec::new();
+            const SEEDS: [u64; 6] = [1, 7, 12345, 0x9E37_79B9, 0xDEAD_BEEF, u64::MAX / 3];
+            for seed in SEEDS {
+                let (cx, cy, mag) = crate::random_boundary_location(seed);
+                self.viewport.set_size(cw as f64, ch as f64);
+                self.viewport.set_center_mag(
+                    fractadyne_core::BigFloat::from_f64(cx, 64),
+                    fractadyne_core::BigFloat::from_f64(cy, 64),
+                    mag,
+                );
+                self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
+                self.render_cfg.max_iter = 20_000;
+                match shoot(self, device, queue, cw, ch).map(|(px, _)| px) {
+                    Some(px) if frame::coherent(&px) => {}
+                    Some(px) => {
+                        let (sd, _) = frame::coherence(&px);
+                        bad.push(format!("seed {seed} @{mag:.1e} flat (stddev {sd:.1})"));
+                    }
+                    None => bad.push(format!("seed {seed} failed to render")),
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "random-locations-coherent".into(),
+                params: format!("{} seeds, 1e2..1e6x, {cw}x{ch}", SEEDS.len()),
+                result: if bad.is_empty() { "all landed in structure".into() } else { bad.join("; ") },
+                threshold: "every random location renders a coherent (non-flat) frame",
+                pass: bad.is_empty(),
+            });
+
+            // --- step 77: the snapshot on disk IS the view ---
+            // "Not corrupt or truncated" and "matches what was on screen" are one question for
+            // a file: do the bytes decode back to exactly the pixels that were rendered, and
+            // does the metadata it carries name the same view?
+            goto(self, SEA_X, SEA_Y, 6.125, 3_000);
+            let snap = {
+                let mut req = self.current_export_request_for(&self.viewport, false);
+                req.width = cw;
+                req.height = ch;
+                let progress = std::sync::atomic::AtomicU32::new(0);
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()
+            };
+            let (res, pass) = match snap {
+                Some(r) => {
+                    let want = fractadyne_export::to_srgb8_dithered(&r.pixels, r.width);
+                    let meta = self.view_metadata();
+                    let path = std::env::temp_dir().join("fractadyne-selftest-snapshot.png");
+                    match fractadyne_export::write_png(&path, r.width, r.height, &r.pixels, Some(&meta))
+                        .and_then(|()| fractadyne_export::read_png_rgba8(&path))
+                    {
+                        Ok((w, h, got)) => {
+                            let same = w == r.width && h == r.height && got == want;
+                            let back = fractadyne_export::read_png_metadata(&path)
+                                .ok()
+                                .flatten()
+                                .unwrap_or_default();
+                            let framed = crate::meta_get(&back, "center_re")
+                                == crate::meta_get(&meta, "center_re")
+                                && crate::meta_get(&back, "upp_log2") == crate::meta_get(&meta, "upp_log2");
+                            let (max, mean) = img_diff(&want, &got);
+                            (
+                                format!("{w}x{h}, maxD {max}, meanD {mean:.3}, framing recovered: {framed}"),
+                                same && framed && frame::coherent(&want),
+                            )
+                        }
+                        Err(e) => (format!("write/read failed: {e}"), false),
+                    }
+                }
+                None => ("render_export failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "snapshot-matches-the-view".into(),
+                params: format!("{cw}x{ch} PNG written, decoded, compared byte for byte"),
+                result: res,
+                threshold: "decoded pixels identical; embedded centre + depth match the view",
+                pass,
+            });
+
+            // --- step 78: a 4K export with supersampling completes ---
+            // Larger than any window, and supersampled, so it goes down the tiled path. What
+            // fails here is not subtlety: a truncated buffer, a clamped size, or a band of
+            // untouched pixels where a tile never ran.
+            goto(self, SEA_X, SEA_Y, 6.125, 3_000);
+            let big = {
+                let mut req = self.current_export_request_for(&self.viewport, false);
+                req.width = 3840;
+                req.height = 2160;
+                req.ss = 2;
+                let progress = std::sync::atomic::AtomicU32::new(0);
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()
+            };
+            let (res, pass) = match big {
+                Some(r) => {
+                    let px = fractadyne_export::to_srgb8_dithered(&r.pixels, r.width);
+                    let full = px.len() == (r.width as usize) * (r.height as usize) * 4;
+                    // Every horizontal band must carry image, not just the frame as a whole:
+                    // a missing tile leaves a flat strip that a whole-frame stddev hides.
+                    let rows = r.height as usize / 8;
+                    let stride = r.width as usize * 4;
+                    let mut flat_band = None;
+                    for band in 0..8 {
+                        let a = band * rows * stride;
+                        let b = ((band + 1) * rows * stride).min(px.len());
+                        if a < b && !frame::coherent(&px[a..b]) {
+                            flat_band = Some(band);
+                        }
+                    }
+                    (
+                        format!(
+                            "{}x{} ss{} ({} px), flat band: {}",
+                            r.width, r.height, r.ss, px.len() / 4,
+                            flat_band.map_or("none".to_string(), |b| b.to_string())
+                        ),
+                        full && r.width == 3840 && r.height == 2160 && flat_band.is_none(),
+                    )
+                }
+                None => ("render_export failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "export-4k-complete".into(),
+                params: "3840x2160, ss 2x, 1.3e6x".into(),
+                result: res,
+                threshold: "full-size buffer, every eighth of the frame carries image",
+                pass,
+            });
+
+            // --- step 80: a deep export ---
+            // Corpus location 08 (6.6e43×, 60,000 iterations), verbatim.
+            const X43: &str = "-6.70209187903253724099340233845986400901890228472988919658169553187602139279518e-1";
+            const Y43: &str = "4.58060975296945872909213676106313996238241655922637652387687460587764642477807e-1";
+            goto(self, X43, Y43, 43.9477217539083, 60_000);
+            let deep = shoot(self, device, queue, 960, 540);
+            let (res, pass) = match &deep {
+                Some((px, orbit_len)) => {
+                    let (sd, b) = frame::coherence(px);
+                    let meta = self.view_metadata();
+                    // The framing the file would carry must be the view that was rendered.
+                    let l2 = crate::meta_get(&meta, "upp_log2").parse::<f64>().unwrap_or(0.0);
+                    let framed = (l2 - self.viewport.units_per_pixel.log2()).abs() < 1.0e-9;
+                    (
+                        format!("stddev {sd:.1}, {b} buckets, orbit_len {orbit_len}, framing recorded: {framed}"),
+                        frame::coherent(px) && *orbit_len > 0 && framed,
+                    )
+                }
+                None => ("render_export failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "deep-export-matches-the-view".into(),
+                params: "6.6e43x, 60,000 iterations, 960x540".into(),
+                result: res,
+                threshold: "coherent, real reference orbit, depth recorded exactly",
+                pass,
+            });
+
+            // --- step 105: rapid switching settles on the final choice ---
+            // The failure this guards is a STALE frame: switch formula, method and palette
+            // faster than the caches turn over and the picture can end up showing one of the
+            // earlier choices. The proof is an equality — the frame after the whole switching
+            // storm must equal the frame you get by setting only the final selection.
+            self.viewport.reset_to(-0.5, 0.0);
+            self.viewport.set_size(cw as f64, ch as f64);
+            self.render_cfg.max_iter = 2_000;
+            let order = [
+                crate::FractalKind::Mandelbrot, crate::FractalKind::Tricorn,
+                crate::FractalKind::BurningShip, crate::FractalKind::Multibrot3,
+                crate::FractalKind::Celtic, crate::FractalKind::Buffalo,
+            ];
+            let mut switched = None;
+            for round in 0..3 {
+                for (i, f) in order.iter().enumerate() {
+                    self.fractal = *f;
+                    self.coloring.color_method = crate::ColorMethod::from_u32(
+                        ((i + round) % crate::ColorMethod::ALL.len()) as u32,
+                    );
+                    self.coloring.palette_idx = (i + round) % fractadyne_color::PRESETS.len();
+                    self.invalidate_refs();
+                    // Render only the last one; the point is the state left behind, and
+                    // rendering all 18 would make this the slowest check in the suite.
+                    if round == 2 && i == order.len() - 1 {
+                        switched = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+                    }
+                }
+            }
+            let (ff, fm, fp) = (self.fractal, self.coloring.color_method, self.coloring.palette_idx);
+            // The control: the same final selection, arrived at without the storm.
+            self.fractal = crate::FractalKind::Mandelbrot;
+            self.coloring.color_method = crate::ColorMethod::from_u32(0);
+            self.coloring.palette_idx = 0;
+            self.invalidate_refs();
+            let control = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            self.fractal = ff;
+            self.coloring.color_method = fm;
+            self.coloring.palette_idx = fp;
+            self.invalidate_refs();
+            let clean = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            // Anti-vacuity: the control render above used a DIFFERENT selection, and its frame
+            // must differ from the final one. Without this, an equality check would pass just as
+            // happily if every selection rendered the same picture.
+            let (res, pass) = match (&switched, &clean, &control) {
+                (Some(a), Some(b), Some(c)) => {
+                    let (max, mean) = img_diff(a, b);
+                    let other = frame::distance(a, c);
+                    (
+                        format!(
+                            "{} / {} / palette {fp}: maxD {max}, meanD {mean:.3}; another selection differs by meanD {other:.2}",
+                            ff.name(), fm.label()
+                        ),
+                        frame::coherent(a) && a == b && other >= 1.0,
+                    )
+                }
+                _ => ("render failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "rapid-switching-settles-on-the-final-choice".into(),
+                params: format!("{} switches of formula x method x palette", order.len() * 3),
+                result: res,
+                threshold: "identical to a clean render of the final choice, and different from another",
+                pass,
+            });
+
+            // The embedded deep centres are copies of the comparison corpus's own locations, so
+            // that a rung failing here is a location we have independently rendered correctly
+            // against Fraktaler-3. A copy can drift from its source silently, so when the
+            // corpus is present (a repo checkout, not a release tarball) check that it has not.
+            let corpus = std::fs::read_to_string(anchored("validation/corpus/locations.toml")).ok();
+            if let Some(text) = corpus {
+                let missing: Vec<&str> = [("X500", X500), ("Y500", Y500), ("X43", X43), ("Y43", Y43)]
+                    .iter()
+                    .filter(|(_, v)| !text.contains(*v))
+                    .map(|(n, _)| *n)
+                    .collect();
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "checklist",
+                    name: "deep centres still match the comparison corpus".into(),
+                    params: "validation/corpus/locations.toml".into(),
+                    result: if missing.is_empty() {
+                        "all four embedded centres found verbatim".into()
+                    } else {
+                        format!("not in the corpus: {}", missing.join(", "))
+                    },
+                    threshold: "every embedded deep centre appears in the corpus verbatim",
+                    pass: missing.is_empty(),
+                });
+            }
+
+            // Put the app back the way this group found it.
+            self.viewport = saved_vp;
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            self.fractal = saved_fractal;
+            self.julia_mode = saved_julia;
+            self.coloring.palette_idx = 0;
+            self.coloring.color_method = crate::ColorMethod::from_u32(0);
+            self.invalidate_refs();
         }
 
         // ---- golden-image regression ----

@@ -2361,6 +2361,41 @@ pub(crate) fn scan_gallery_dir(dir: &std::path::Path) -> Vec<(std::path::PathBuf
     out
 }
 
+/// Pick a detail-rich location: bisect between an interior anchor and a random exterior
+/// direction to land ON the set boundary, then choose a magnification in 1e2..1e6. Returns
+/// `(center_x, center_y, magnification)`.
+///
+/// Boundary points are always detail-rich, which is the whole promise of the Random location
+/// menu item — so the failure mode is a seed that lands somewhere blank, and that is only
+/// findable by rendering several. Taking the seed as an argument (rather than reading the UI
+/// clock inside) is what lets the self-test do exactly that, and makes any bad seed it finds
+/// reproducible instead of a once-seen screenshot.
+pub(crate) fn random_boundary_location(seed: u64) -> (f64, f64, f64) {
+    let mut s = (seed ^ 0x9E37_79B9_7F4A_7C15) | 1;
+    let mut rnd = || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        (s >> 11) as f64 / ((1u64 << 53) as f64)
+    };
+    let theta = rnd() * std::f64::consts::TAU;
+    // Interior anchor (inside the main cardioid) → exterior point along θ.
+    let (mut ix, mut iy) = (-0.5_f64, 0.0_f64);
+    let (mut ox, mut oy) = (ix + 3.0 * theta.cos(), iy + 3.0 * theta.sin());
+    for _ in 0..64 {
+        let (mx, my) = ((ix + ox) * 0.5, (iy + oy) * 0.5);
+        if mandel_escapes(mx, my, 3000).is_some() {
+            ox = mx;
+            oy = my;
+        } else {
+            ix = mx;
+            iy = my;
+        }
+    }
+    let mag = 10f64.powf(2.0 + rnd() * 4.0); // 1e2 .. 1e6
+    ((ix + ox) * 0.5, (iy + oy) * 0.5, mag)
+}
+
 /// Per-view cached perturbation reference orbit (arbitrary precision).
 struct RefCache {
     ref_pt: Option<[fractadyne_core::BigFloat; 2]>,
@@ -6130,29 +6165,8 @@ impl FractadyneApp {
     /// bisecting between an interior anchor and a random exterior direction, then zoom in
     /// a random amount. Boundary points are always detail-rich.
     fn random_location(&mut self, ctx: &egui::Context) {
-        let mut s = (ctx.input(|i| i.time).to_bits() ^ 0x9E37_79B9_7F4A_7C15) | 1;
-        let mut rnd = || {
-            s ^= s << 13;
-            s ^= s >> 7;
-            s ^= s << 17;
-            (s >> 11) as f64 / ((1u64 << 53) as f64)
-        };
-        let theta = rnd() * std::f64::consts::TAU;
-        // Interior anchor (inside the main cardioid) → exterior point along θ.
-        let (mut ix, mut iy) = (-0.5_f64, 0.0_f64);
-        let (mut ox, mut oy) = (ix + 3.0 * theta.cos(), iy + 3.0 * theta.sin());
-        for _ in 0..64 {
-            let (mx, my) = ((ix + ox) * 0.5, (iy + oy) * 0.5);
-            if mandel_escapes(mx, my, 3000).is_some() {
-                ox = mx;
-                oy = my;
-            } else {
-                ix = mx;
-                iy = my;
-            }
-        }
-        let (cx, cy) = ((ix + ox) * 0.5, (iy + oy) * 0.5);
-        let mag = 10f64.powf(2.0 + rnd() * 4.0); // 1e2 .. 1e6
+        let seed = ctx.input(|i| i.time).to_bits();
+        let (cx, cy, mag) = random_boundary_location(seed);
         self.fractal = FractalKind::Mandelbrot;
         self.julia_mode = false;
         self.viewport.set_center_mag(

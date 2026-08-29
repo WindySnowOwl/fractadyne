@@ -128,11 +128,11 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 
 | # | class | enforcer |
 |---|---|---|
-| 25 | A | Depth ladder to 1e6: every frame coherent, no tile-boundary discontinuity (see 79). |
+| 25 | B | Depth ladder (six rungs, 1× → 1.3e24×, the comparison corpus's own coordinates): every frame coherent and every perturbed rung has a real reference orbit. Banding and left-behind tiles are properties of the LIVE progressive settle, which an offline export does not perform — those stay human. |
 | 26 | A | `RenderMode::select` partition is already unit-tested; add a rendered frame at each side of both boundaries, all coherent. |
-| 27 | A | Ladder to 1e100: coherent, and `precision` / `orbit_len` strictly grow with depth. |
-| 28 | A | 1e300 and past 1e308 coherent — the saturation class that once produced empty frames. Corpus locations already reach 4.6e1105. |
-| 29–30 | B | Differential: `speckle(normalize ON) < speckle(normalize OFF)`, both coherent. ⚠**Not reachable from `--selftest`**: `render_export` does not normalize unless asked, so toggling it offline gives a byte-identical frame (measured, meanΔ 0.00). Needs the live path or an explicit normalize field on the export request. |
+| 27 | A | Same ladder: precision must more than DOUBLE across it. ⚠Non-decreasing is not enough — a constant satisfies it, and that mutant (every rung pinned at 64 bits) passed the first draft green. ⚠Reference ORBIT LENGTH is reported but not gated: it is bounded by where the reference escapes, a property of the location, and across these rungs it legitimately goes 1501 → 3001 → 1558 → 619 → 20001. |
+| 28 | A | Corpus location 09 at 6.1e500× — past the f64 magnification range — must be coherent and carry a real reference orbit. Verified to go red under the beta.125 saturation mutant (`!mag.is_finite() → Direct`): orbit_len 0, a flat frame. |
+| 29–30 | B | Differential through `render_export_normalized` (the mapping the checkbox selects) against the plain export at 1.3e24×: neighbour step 76.27 → 21.87. ⚠The earlier note was right that toggling the field against `render_export` is vacuous — the fix was to call the normalized path, not the flag. Still partial: the LIVE auto-normalization gate (Nyquist on the local gradient) decides *when* to apply this, and that is not exercised. |
 | 31 | B | Deep pan then settle: final frame coherent and equal to a direct render of the same view. |
 | 32 | A | `--autodive N --autodive-timeout T --autodive-home 3` already exists and exits 2 when the regime was never reached. |
 
@@ -142,7 +142,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 |---|---|---|
 | 33–42 | A | One golden per formula at its default view (5 of 10 exist; add the missing 5) plus a coherence check. "Recognisable" is what a golden is for. |
 | 43 | A | Deep render for every `supports_perturbation` formula; coherent and matching a golden. |
-| 44 | A | Julia render for each formula that supports it: coherent. |
+| 44 | A | Julia render coherent AND different from the parameter plane at the same framing. ⚠The second half is the point: `julia` is a field of the export REQUEST, not a mode the builder reads off the app, so a Julia render that forgets to ask for one returns the Mandelbrot — meanΔ 0.00, which is exactly what the first draft measured. |
 | 45 | B | Dual view: assert the split produces two viewports, and that changing `julia_c` changes the right pane's params. Cursor tracking stays human. |
 | 46 | B | Julia viewport zooms independently — assert the Mandelbrot viewport is untouched. |
 | 47 | A | Turning both off restores the single-view state exactly (already partly covered by `toggle_dual`). |
@@ -154,8 +154,8 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 48–53 | A | All six methods rendered at one view: each coherent, and all 15 pairs differ. Would have caught a method silently falling back. |
 | 54 | A | Four palettes: each coherent, all 6 pairs differ. |
 | 55–56 | A | Cycle / offset at two values each: coherent and differing. |
-| 57 | B | Log scale on vs off: coherent and differing. ⚠Same constraint as 29–30 — log scale only reaches the image through the normalized mapping, so it is a no-op on the offline path. Attempted there first and it read meanΔ 0.00. |
-| 58 | B | Mutating a gradient stop changes the render. The dialog interaction stays human. |
+| 57 | A | Log on vs off **through `render_export_normalized`**: meanΔ 62.06, both coherent. ⚠**`log_palette` has no effect at all unless normalization is active** — live it is read inside the `normalize_live` branch, offline only the normalized path consults it. That is not a test artefact, it is what the checkbox does, and step 57's instruction has been corrected to say so. Greying the control when Normalize is off would be the real fix. |
+| 58 | B | Preset → custom gradient changes the render (meanΔ 21.13), then moving ONE stop changes it again (meanΔ 16.91). The dialog interaction stays human. |
 | 59 | B | Animation advances the palette phase over simulated time and holds still when off. Smoothness stays human. |
 | 60–62 | A | Binary, duotone, relief, glow: each on vs off coherent and differing; relief light angle changes the image; glow strength changes it. |
 
@@ -173,7 +173,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | # | class | enforcer |
 |---|---|---|
 | 68 | A | Goto parse round-trip at full precision, including the astro-float leniency trap (shape-validate, then compare digits). |
-| 69 | A | Generate N random locations; each renders coherent and is not all-interior. |
+| 69 | A | Six fixed SEEDS through `random_boundary_location`, each rendered and required coherent. Seeded rather than clock-driven so a bad location is reproducible and named in the report instead of being a once-seen screenshot. |
 | 70–71 | A | Bookmark round-trip through the TOML store (name, blob and thumbnail id survive; a pre-`thumb` file still loads) and delete via `take_bookmark`, which returns the thumbnail id to unlink and ignores a stale row index. ⚠**Step 71 asked for a RENAME the app does not have** — the Bookmarks dialog offers Add / Go / Delete only. The row has been corrected to what exists rather than left claiming a control a tester would hunt for. |
 | 72 | A | Share string round-trips to the same view. |
 | 73 | A | `.kfr` import fixtures land at the expected coordinates — **the outstanding validation item**. |
@@ -185,10 +185,10 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | # | class | enforcer |
 |---|---|---|
 | 76 | B | Snapshot writes a file and the UI thread is not blocked past a threshold. |
-| 77 | A | WYSIWYG: the snapshot equals a render of the live view parameters, decoded RGB. |
-| 78 | A | 4K export with supersampling completes and is fully populated. |
+| 77 | A | The PNG is written, decoded and compared byte for byte against the rendered buffer, and its embedded centre + depth must name the same view. Goes red on a one-row truncation. |
+| 78 | A | 3840×2160 at ss 2×: full-size buffer, and EVERY EIGHTH of the frame independently coherent — a missing tile leaves a flat strip that a whole-frame spread hides. |
 | 79 | A | **Tile-seam check**: the tiled export must equal a single-pass render of the same frame. This is the beta.136 chunker class, where pixels depended on the tile budget. Assert `tiles_chunked` is non-zero first, so the check cannot pass by never chunking. |
-| 80 | A | Deep export equals the on-screen view parameters. |
+| 80 | B | 6.6e43× (corpus location 08): coherent, a real reference orbit, and the depth recorded in the metadata equal to the viewport's to 1e-9. Whether the COLOURS match what was on screen stays human — the offline path has no screen. |
 
 ### Tools (81–86)
 
@@ -238,7 +238,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 |---|---|---|
 | 103 | A | Idle soak at depth with a **liveness assertion**, not just a crash grep: the frame counter must keep advancing. A soak that greps only for crashes passes a hung app. |
 | 104 | A | `--torture` / `--autodive` sustained session; no device loss, no watchdog restart. |
-| 105 | A | Rapid switching loop over formula × method × palette; no crash, and the final selection is what renders. |
+| 105 | B | 18 switches of formula × method × palette, then the frame must be IDENTICAL to a clean render of the final selection — and DIFFERENT from a render of another selection, so the equality cannot pass by everything looking alike (measured meanΔ 51.98 apart). ⚠Partial: this catches a stale app FIELD, not a stale GPU cache — the export path builds a fresh reference every time, so a `invalidate_refs`-is-a-no-op mutant passes. The live half stays human. |
 
 ### Sign-off (106)
 
