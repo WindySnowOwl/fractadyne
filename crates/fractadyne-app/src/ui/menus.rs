@@ -354,6 +354,7 @@ impl FractadyneApp {
                                  depth, so dense fields read as structure instead of speckle. \
                                  Smooth method only; ordinary views are unaffected.",
                             );
+                        self.log_scale_checkbox(ui);
                         ui.label(
                             egui::RichText::new(
                                 "Cycle, offset, animation and effects: Controls panel ▸ Coloring",

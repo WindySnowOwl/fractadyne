@@ -32,6 +32,39 @@ fn labelled<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -
 }
 
 impl FractadyneApp {
+    /// The "Log color scale" checkbox, drawn identically in the Color menu and the Controls
+    /// panel — one function so the two can never disagree about its state, its wording, or when
+    /// it is live.
+    ///
+    /// ⭐**Disabled unless some normalization is active, because otherwise it does nothing at
+    /// all.** `log_palette` is read only inside the normalized mapping: live, inside the
+    /// `normalize_live` branch of `live_norm_cycle_offset`; offline, only by
+    /// `render_export_normalized`. With both off it is a control that silently changes no pixel,
+    /// which is worse than an absent one — the user concludes the feature is broken.
+    ///
+    /// ⚠The gate is `normalize_live || normalize`, not just the live flag: `normalize` is the
+    /// EXPORT-side switch (`--normalize`), and someone who launched with it still needs this
+    /// checkbox to steer their exports even with the live view un-normalized.
+    pub(crate) fn log_scale_checkbox(&mut self, ui: &mut egui::Ui) {
+        let live = self.coloring.normalize_live || self.coloring.normalize;
+        ui.add_enabled_ui(live, |ui| {
+            ui.checkbox(&mut self.coloring.log_palette, "Log color scale")
+                .on_hover_text(if live {
+                    "Spread the palette by the LOGARITHM of the escape value rather than \
+                     linearly. Escape counts crowd towards the high end at depth, so a linear map \
+                     spends most of the palette on a thin shell near the boundary and flattens \
+                     everything else.\n\nApplies to the normalized mapping — which is what \
+                     'Normalize deep colors' (or --normalize on an export) turns on. A heavily \
+                     skewed range takes the log mapping anyway, whether or not this is ticked."
+                } else {
+                    "Requires normalization: this chooses HOW the palette is mapped to the \
+                     measured escape range, so with 'Normalize deep colors' off (and no \
+                     --normalize export) there is no mapping for it to change and it would not \
+                     alter a single pixel.\n\nTurn on 'Normalize deep colors' to use it."
+                });
+        });
+    }
+
     /// Right-side control panel (Coloring + Navigation sections) plus the reopen handle shown
     /// when it's hidden. No-op in fullscreen.
     pub(crate) fn draw_right_panel(&mut self, ctx: &egui::Context) {
@@ -192,13 +225,9 @@ impl FractadyneApp {
                 labelled(ui, "Offset", |ui| {
                     ui.add(egui::Slider::new(&mut self.coloring.offset, 0.0..=1.0))
                 });
-                ui.checkbox(&mut self.coloring.log_palette, "Log color scale")
-                    .on_hover_text(
-                        "Spread the palette by the logarithm of the escape value rather than \
-                         linearly. Escape counts crowd towards the high end at depth, so a linear \
-                         map spends most of the palette on a thin shell near the boundary and \
-                         flattens everything else. Applies wherever normalization is active.",
-                    );
+                // ⭐Normalization FIRST, then the mapping it selects. `log_palette` is read only
+                // inside the normalized path, so with normalization off it changed nothing — and
+                // it sat ABOVE the switch that gives it meaning.
                 ui.checkbox(&mut self.coloring.normalize_live, "Normalize deep colors")
                     .on_hover_text(
                         "At extreme depth, escape counts span hundreds of thousands and a fixed \
@@ -208,6 +237,7 @@ impl FractadyneApp {
                          it). Smooth method only; ordinary views are unaffected. Matches the \
                          --normalize export option.",
                     );
+                self.log_scale_checkbox(ui);
                 labelled(ui, "Animate", |ui| {
                     egui::ComboBox::from_id_salt("panel_animate")
                         .selected_text(self.anim.palette_anim.name())

@@ -4144,7 +4144,23 @@ impl FractadyneApp {
                 trap_type: TrapType::from_key(&s.trap_type),
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.normalize_live,
-                log_palette: s.log_palette || args.iter().any(|a| a == "--log-palette"),
+                log_palette: {
+                    let asked = args.iter().any(|a| a == "--log-palette");
+                    // ⚠`--log-palette` only chooses HOW the normalized mapping spreads the
+                    // palette; with no normalization there is no mapping and it changes nothing.
+                    // Say so rather than letting a supplied option be silently inert — the same
+                    // rule the silent-CLI-defaults audit applied to every other option.
+                    if asked
+                        && !args.iter().any(|a| a == "--normalize")
+                        && !s.normalize_live
+                    {
+                        eprintln!(
+                            "fractadyne: --log-palette has no effect without normalization — \
+                             add --normalize (or enable Color ▸ Normalize deep colors)."
+                        );
+                    }
+                    s.log_palette || asked
+                },
             },
             perf: Perf {
                 // Default on; `--no-perf` disables, `--perf` forces on.
