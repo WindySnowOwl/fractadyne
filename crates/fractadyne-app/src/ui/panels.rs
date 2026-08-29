@@ -47,21 +47,30 @@ impl FractadyneApp {
     /// checkbox to steer their exports even with the live view un-normalized.
     pub(crate) fn log_scale_checkbox(&mut self, ui: &mut egui::Ui) {
         let live = self.coloring.normalize_live || self.coloring.normalize;
+        // INDENTED, because it is a sub-option of the checkbox above it — the same idiom the
+        // "Click to zoom" / "Factor" pair already uses in this panel. The two marks say different
+        // things and both are wanted: greying says "you cannot use this right now", the indent
+        // says "this belongs to the line above" — which is the half that tells you WHY, and it
+        // says it before you go hunting for a tooltip.
         ui.add_enabled_ui(live, |ui| {
-            ui.checkbox(&mut self.coloring.log_palette, "Log color scale")
-                .on_hover_text(if live {
-                    "Spread the palette by the LOGARITHM of the escape value rather than \
-                     linearly. Escape counts crowd towards the high end at depth, so a linear map \
-                     spends most of the palette on a thin shell near the boundary and flattens \
-                     everything else.\n\nApplies to the normalized mapping — which is what \
-                     'Normalize deep colors' (or --normalize on an export) turns on. A heavily \
-                     skewed range takes the log mapping anyway, whether or not this is ticked."
-                } else {
-                    "Requires normalization: this chooses HOW the palette is mapped to the \
-                     measured escape range, so with 'Normalize deep colors' off (and no \
-                     --normalize export) there is no mapping for it to change and it would not \
-                     alter a single pixel.\n\nTurn on 'Normalize deep colors' to use it."
-                });
+            ui.horizontal(|ui| {
+                ui.add_space(ui.spacing().indent * 0.5);
+                ui.checkbox(&mut self.coloring.log_palette, "Log color scale")
+                    .on_hover_text(if live {
+                        "Spread the palette by the LOGARITHM of the escape value rather than \
+                         linearly. Escape counts crowd towards the high end at depth, so a linear \
+                         map spends most of the palette on a thin shell near the boundary and \
+                         flattens everything else.\n\nApplies to the normalized mapping — which is \
+                         what 'Normalize deep colors' (or --normalize on an export) turns on. A \
+                         heavily skewed range takes the log mapping anyway, whether or not this \
+                         is ticked."
+                    } else {
+                        "Requires normalization: this chooses HOW the palette is mapped to the \
+                         measured escape range, so with 'Normalize deep colors' off (and no \
+                         --normalize export) there is no mapping for it to change and it would \
+                         not alter a single pixel.\n\nTurn on 'Normalize deep colors' to use it."
+                    });
+            });
         });
     }
 
