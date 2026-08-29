@@ -1849,6 +1849,20 @@ fn arg_parse<T: std::str::FromStr>(name: &str, s: &str, expect: &str) -> T {
     }
 }
 
+/// `--flag TOKEN` for a type parsed from a fixed vocabulary, fatal when supplied and
+/// unreadable. Same reason as [`arg_parse`]: a benchmark handed an unrecognised preset
+/// silently ran a DIFFERENT workload and still printed a complete, plausible report, with
+/// the preset it actually used named in the output where nobody rereads it.
+fn arg_token<T>(name: &str, s: &str, parse: impl Fn(&str) -> Option<T>, expect: &str) -> T {
+    match parse(s) {
+        Some(v) => v,
+        None => {
+            eprintln!("fractadyne: {name}: cannot read \"{s}\" as {expect}.");
+            crate::exit(2)
+        }
+    }
+}
+
 /// `--size` as `WIDTH` or `WIDTHxHEIGHT`, fatal when supplied and unreadable. A silent fallback
 /// here renders at the WRONG RESOLUTION and says nothing — the exact shape of the benchmark-kit
 /// defect where one renderer was handed 1280x720 while every other lane ran 1920x1080.
@@ -3333,19 +3347,24 @@ impl FractadyneApp {
         let selftest_list = args.iter().any(|a| a == "--selftest-list");
         let selftest_bless = args.iter().any(|a| a == "--bless");
         // Standardized benchmark: --benchmark-std, or implied by --res / --burnin.
-        let std_res = val("--res").and_then(|s| BenchRes::from_token(s)).unwrap_or(BenchRes::P1080);
+        let std_res = val("--res")
+            .map(|s| arg_token("--res", s, BenchRes::from_token, "720p | 1080p | 4k | 5k"))
+            .unwrap_or(BenchRes::P1080);
         // --burnin may carry a pass count (`--burnin 20`) or stand alone (defaults to 10).
         let burnin_flag = args.iter().any(|a| a == "--burnin");
         let std_passes = if burnin_flag {
-            val("--burnin").and_then(|s| s.parse::<u32>().ok()).unwrap_or(10).clamp(1, 500)
+            val("--burnin")
+                .map(|s| arg_parse::<u32>("--burnin", s, "a pass count"))
+                .unwrap_or(10)
+                .clamp(1, 500)
         } else {
             1
         };
-        // Dive depth: --depth <standard|ultra|all> (or the shorthand --ultra). Also implies a
+        // Dive depth: --depth <standard|ultra> (or the shorthand --ultra). Also implies a
         // standardized run.
         let ultra_flag = args.iter().any(|a| a == "--ultra");
         let std_depth = val("--depth")
-            .and_then(|s| BenchDepth::from_token(s))
+            .map(|s| arg_token("--depth", s, BenchDepth::from_token, "standard | ultra"))
             .unwrap_or(if ultra_flag { BenchDepth::Ultra } else { BenchDepth::Standard });
         let auto_stdbench = args.iter().any(|a| a == "--benchmark-std")
             || burnin_flag

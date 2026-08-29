@@ -21,16 +21,25 @@ long sequence of deep-zoom correctness fixes, the chunked renderer, and an optio
 accelerated build that computes reference orbits 2.5-6.4x faster again (Help -> Faster deep
 zoom).
 
-- **The benchmark can now measure every arithmetic regime, and says which it measured**
-  — a new "All regimes (1e48×)" depth beside Standard and Ultra. The existing depths
-  turned out never to reach the deep path at all: Standard renders 20 direct and 40 df32
-  frames, and Ultra ends exactly at the df32/floatexp boundary and renders 9 direct, 51
-  df32 and *zero* floatexp frames — so BLA, which only runs in floatexp, had never
-  executed in a benchmark whose settings block advertises "BLA on". The new depth dives
-  to 1e48× on a 116-digit centre and splits 5 / 30 / 25 across the three regimes.
-  Every report now also breaks the dive down per regime — frames, average ms and share
-  of time — so a single averaged FPS no longer hides which regime is slow, and names a
-  regime the dive never entered rather than omitting it.
+- **The benchmark now measures the deep-zoom path it was supposed to be measuring, and
+  reports what it measured** — neither depth had ever reached it. Standard dived to 1e12×
+  and rendered 20 direct and 40 df32 frames; Ultra ended at exactly 1e28×, the boundary
+  where the deep floatexp path begins, and its last frame landed a hair below it — so it
+  rendered 9 direct, 51 df32 and *zero* deep frames. BLA, which only runs on the deep path,
+  had therefore never executed in a benchmark whose settings block reads "BLA on". Both
+  depths now cross well past that boundary: Standard dives to 1e32× (8 / 44 / 8 frames
+  across the three regimes) and Ultra to 1e48× (5 / 30 / 25), both on a 116-digit centre
+  taken from a real dive — the previous 33-digit location was not precise enough to render
+  a meaningful deep frame at all. **Scores are not comparable with earlier releases**, which
+  is why the report now names the dive site.
+
+  Every report also breaks the dive down per regime — frames, average ms and share of time
+  — so one averaged FPS no longer hides which regime is slow, and a regime the dive never
+  entered is named with zero frames rather than quietly omitted.
+
+- **`--res`, `--depth` and `--burnin` now fail on a value they cannot read** rather than
+  falling back to a default. A mistyped preset used to run a different workload and print a
+  full, plausible report.
 
 - **Benchmark reports say which arbitrary-precision engine produced them** — an
   `arithmetic` line beside the version. The accelerated build is several times faster at

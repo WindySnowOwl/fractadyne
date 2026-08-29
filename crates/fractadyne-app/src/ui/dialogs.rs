@@ -1182,9 +1182,9 @@ impl FractadyneApp {
                         })
                         .response
                         .on_hover_text(
-                            "Standard stays in the shallow modes. Ultra reaches f64's \
-                             limit (1e28×). All regimes dives to 1e48×, the only preset \
-                             that spends real time in floatexp and BLA - and the slowest.",
+                            "Both dives cross into the deep floatexp/BLA path; Ultra \
+                             (1e48×) spends far longer there than Standard (1e32×), and \
+                             takes correspondingly longer to run.",
                         );
                     ui.add_space(4.0);
                     ui.checkbox(&mut self.bench_cfg.burnin, "Burn-in (repeat)")

@@ -4370,34 +4370,29 @@ impl BenchRes {
 /// every machine). Recorded verbatim in the report.
 pub(crate) const STD_AA: u32 = 2; // 2×2 supersampling
 pub(crate) const STD_FRAMES: u32 = 60; // frames rendered along the fixed dive
-pub(crate) const STD_ZOOM_LOG10: f64 = 12.0; // standard dive depth: 1 → 1e12×
-/// Ultra-deep dive: 1 → 1e28×. Well past f64's ~1e15 magnification limit, so it hammers the
-/// perturbation / series-approx / BLA machinery (iteration counts climb steeply with depth).
-/// Kept ≤ the ~33-significant-digit `STD_CX`/`STD_CY` precision (sub-pixel to ~1e30×), so the
-/// dive lands on a fixed, reproducible high-detail location rather than precision noise.
-pub(crate) const STD_ZOOM_LOG10_ULTRA: f64 = 28.0;
-/// All-regimes dive: 1 -> 1e48x. Sized so ONE dive spends real time in every arithmetic
-/// regime. With 60 geometric frames the Direct->df32 boundary (1e4) lands at frame 5 and the
-/// df32->floatexp boundary ([`crate::PERT_FE_THRESHOLD`], 1e28) at frame 35: about 5 / 30 / 25
-/// frames. Neither shallower preset does this, and the measurement is worse than it looks:
-/// Standard (1e12) is 20/40/0, and Ultra ENDS at 1e28 - its final frame computes to a hair
-/// BELOW `PERT_FE_THRESHOLD` through `exp2`, so its split is 9/51/0. Neither preset renders
-/// a single floatexp frame, and since `bla_eligible` gates on floatexp, BLA has never run in
-/// a standardized benchmark whose fixed-settings block advertises "BLA on". A score is not
-/// evidence about a code path the dive never enters.
-pub(crate) const STD_ZOOM_LOG10_ALL: f64 = 48.0;
-/// Seahorse-Valley point with structure at every scale (same as the built-in tour).
-const STD_CX: &str = "-0.743643887037158704752191506114774";
-const STD_CY: &str = "0.131825904205311970493132056385139";
+/// Standard dive: 1 -> 1e32x. Every preset crosses [`crate::PERT_FE_THRESHOLD`] (1e28) on
+/// purpose, because for a long time none did. Standard was 1 -> 1e12x and Ultra 1 -> 1e28x,
+/// and measured at 720p their splits were 20/40/0 and 9/51/0 direct/df32/floatexp: Ultra's
+/// endpoint WAS the threshold and computing it through `exp2` landed a hair below, so not
+/// one floatexp frame was rendered by either. Since `bla_eligible` gates on floatexp, BLA
+/// had never executed in a benchmark whose fixed-settings block prints "BLA on". At 1e32x
+/// the split is 8 / 44 / 8 - the shallowest dive that still measures the deep path.
+pub(crate) const STD_ZOOM_LOG10: f64 = 32.0;
+/// Ultra-deep dive: 1 -> 1e48x, splitting 5 / 30 / 25. The endpoint is derived rather than
+/// chosen: for a 60-frame geometric dive the direct edge sits at 4/Z of the range and the
+/// floatexp edge at 28/Z, so Z = 48 buys real time in each regime rather than a token frame
+/// at the boundary.
+pub(crate) const STD_ZOOM_LOG10_ULTRA: f64 = 48.0;
 
-/// Centre for the all-regimes dive: corpus location `35-vger-dive-1p47e77`, a field location
-/// from a real dive rather than a synthetic point. 116 digits against a 1e48 endpoint - about
-/// 29 decades of margin, so the deepest frames land on structure instead of precision noise.
-/// The seahorse point above carries only 33 digits (sub-pixel to ~1e30x) and could not be
-/// reused here. The shallow presets keep it: re-centring them would silently change what
-/// their already-published scores mean.
-const STD_DEEP_CX: &str = "3.5634774601304382214593134944855658665333542382319826904819524052878394297711653798870071071230880055625454711405583e-1";
-const STD_DEEP_CY: &str = "6.5517219785957047867473526044384060240158237433104919183695119307267363068091251654291035030800580107809850539974573e-1";
+/// The dive centre for every preset: corpus location `35-vger-dive-1p47e77`, a field
+/// location from a real dive rather than a synthetic point. 116 digits against a 1e48
+/// endpoint - about 29 decades of margin, so the deepest frames land on structure instead
+/// of precision noise. This REPLACED the 33-digit Seahorse Valley point the shallow presets
+/// used: 33 digits is sub-pixel only to ~1e30x, so no dive centred there could render a
+/// meaningful floatexp frame at all. Scores from before that change are not comparable
+/// with scores after it, which is why the report names the dive site.
+const STD_CX: &str = "3.5634774601304382214593134944855658665333542382319826904819524052878394297711653798870071071230880055625454711405583e-1";
+const STD_CY: &str = "6.5517219785957047867473526044384060240158237433104919183695119307267363068091251654291035030800580107809850539974573e-1";
 
 /// Dive depth for the standardized benchmark. Deeper endpoints exercise the deep-zoom path
 /// (perturbation reference, series skip, BLA) far harder than the shallow default.
@@ -4405,47 +4400,45 @@ const STD_DEEP_CY: &str = "6.551721978595704786747352604438406024015823743310491
 pub(crate) enum BenchDepth {
     Standard,
     Ultra,
-    AllRegimes,
 }
 
 impl BenchDepth {
-    pub(crate) const ALL: [BenchDepth; 3] =
-        [BenchDepth::Standard, BenchDepth::Ultra, BenchDepth::AllRegimes];
+    pub(crate) const ALL: [BenchDepth; 2] = [BenchDepth::Standard, BenchDepth::Ultra];
 
     /// log10 of the final magnification the fixed 60-frame dive reaches.
     pub(crate) fn zoom_log10(self) -> f64 {
         match self {
             BenchDepth::Standard => STD_ZOOM_LOG10,
             BenchDepth::Ultra => STD_ZOOM_LOG10_ULTRA,
-            BenchDepth::AllRegimes => STD_ZOOM_LOG10_ALL,
         }
     }
 
     pub(crate) fn label(self) -> &'static str {
         match self {
-            BenchDepth::Standard => "Standard (1e12×)",
-            BenchDepth::Ultra => "Ultra deep (1e28×)",
-            BenchDepth::AllRegimes => "All regimes (1e48×)",
+            BenchDepth::Standard => "Standard (1e32×)",
+            BenchDepth::Ultra => "Ultra deep (1e48×)",
         }
     }
 
-    /// The dive centre and the name of the place, both of which follow the depth: a centre
-    /// is only usable to the depth its digit count supports.
+    /// The dive centre and the name of the place. One centre serves every preset now, but
+    /// this stays a per-depth lookup: a centre is only usable to the depth its digit count
+    /// supports, so a future deeper preset must be able to bring its own.
     pub(crate) fn center(self) -> (&'static str, &'static str, &'static str) {
         match self {
-            BenchDepth::AllRegimes => (STD_DEEP_CX, STD_DEEP_CY, "VGER field dive"),
-            _ => (STD_CX, STD_CY, "seahorse valley"),
+            BenchDepth::Standard | BenchDepth::Ultra => (STD_CX, STD_CY, "VGER field dive"),
         }
     }
 
     /// Parse a CLI token (`standard` / `ultra` / `deep` …, case-insensitive).
     pub(crate) fn from_token(s: &str) -> Option<BenchDepth> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "standard" | "std" | "shallow" | "12" | "1e12" => Some(BenchDepth::Standard),
-            "ultra" | "deep" | "ultradeep" | "ultra-deep" | "28" | "1e28" => Some(BenchDepth::Ultra),
-            "all" | "allregimes" | "all-regimes" | "regimes" | "48" | "1e48" => {
-                Some(BenchDepth::AllRegimes)
-            }
+            "standard" | "std" | "shallow" | "32" | "1e32" => Some(BenchDepth::Standard),
+            // `all` / `1e48` kept: they named the third preset that Ultra absorbed. The old
+            // `12` / `1e28` tokens are deliberately NOT aliased - no dive lands there any
+            // more, and silently redirecting them would let an old command line report a
+            // different workload under a familiar name.
+            "ultra" | "deep" | "ultradeep" | "ultra-deep" | "all" | "all-regimes"
+            | "allregimes" | "regimes" | "48" | "1e48" => Some(BenchDepth::Ultra),
             _ => None,
         }
     }
@@ -4515,8 +4508,7 @@ pub(crate) struct StdBench {
     frame_in_pass: i32,
     /// Accumulator for the in-progress pass (`None` between passes → next step starts a fresh one).
     cur: Option<Bench>,
-    /// log10 of the dive's final magnification (depth preset — 1e12× standard, 1e28× ultra,
-    /// 1e48× all-regimes).
+    /// log10 of the dive's final magnification (depth preset — 1e32× standard, 1e48× ultra).
     zoom_log10: f64,
     /// Name of the dive centre, for the report (it follows the depth).
     site: &'static str,
@@ -4842,7 +4834,9 @@ impl FractadyneApp {
                 ));
             }
             let cpu: f64 = run.last_regimes.iter().map(|r| r.cpu_ms).sum();
-            if cpu > 0.0 {
+            // Only where floatexp actually ran: "0% of CPU time in floatexp frames" with no
+            // floatexp frames reads as a measurement when it is arithmetic on an empty set.
+            if cpu > 0.0 && run.last_regimes[2].frames > 0 {
                 let deep = run.last_regimes[2].cpu_ms;
                 s.push_str(&format!(
                     "reference build: {:.0}% of CPU time in floatexp frames\n",
@@ -4875,22 +4869,27 @@ mod bench_depth_tests {
         c
     }
 
-    /// The whole reason `AllRegimes` exists. The two shallower presets are pinned as the
-    /// MEASUREMENT that motivated it, not as an aspiration: Standard is 20/40/0 and Ultra is
-    /// 9/51/0 - Ultra's endpoint IS the threshold, and computing it through `exp2` lands just
-    /// below, so not one floatexp frame is rendered. BLA, which `bla_eligible` gates on
-    /// floatexp, therefore never ran while the report advertised "BLA on". The `<= 1` below
-    /// is deliberate slack: the exact count turns on a floating-point boundary case, and the
-    /// claim worth pinning is "effectively none", not a rounding outcome.
+    /// No preset may report `floatexp 0`. Both did, for a long time: measured at 720p,
+    /// Standard (1 -> 1e12x) was 20/40/0 and Ultra (1 -> 1e28x) was 9/51/0 - Ultra's endpoint
+    /// WAS the threshold and computing it through `exp2` landed a hair below, so neither
+    /// rendered a single floatexp frame. BLA, which `bla_eligible` gates on floatexp, had
+    /// therefore never executed in a benchmark whose settings block prints "BLA on". This is
+    /// the guard against that returning, by a re-sized dive or by a moved threshold.
     #[test]
-    fn only_the_all_regimes_dive_exercises_every_regime() {
-        let all = regime_frames(BenchDepth::AllRegimes);
+    fn every_preset_crosses_into_floatexp() {
+        for depth in BenchDepth::ALL {
+            let c = regime_frames(depth);
+            assert!(
+                c.iter().all(|&n| n >= 5),
+                "{}: split {c:?} - every regime needs real frames, not a token one",
+                depth.label()
+            );
+        }
+        // A ladder, not two names for the same dive: deeper preset, more of the deep path.
         assert!(
-            all.iter().all(|&n| n >= 5),
-            "all-regimes dive must spend real frames in each of direct/df32/floatexp, got {all:?}"
+            regime_frames(BenchDepth::Ultra)[2] > regime_frames(BenchDepth::Standard)[2],
+            "ultra must spend more frames in floatexp than standard"
         );
-        assert_eq!(regime_frames(BenchDepth::Standard)[2], 0, "standard should not reach floatexp");
-        assert!(regime_frames(BenchDepth::Ultra)[2] <= 1, "ultra ends AT the floatexp threshold");
     }
 
     /// A centre is only usable as deep as its digit count supports, and `begin_standard_bench`
@@ -4923,14 +4922,20 @@ mod bench_depth_tests {
     fn depth_tokens_round_trip_and_labels_are_distinct() {
         for (tok, want) in [
             ("standard", BenchDepth::Standard),
+            ("1e32", BenchDepth::Standard),
             ("ultra", BenchDepth::Ultra),
-            ("all", BenchDepth::AllRegimes),
-            ("all-regimes", BenchDepth::AllRegimes),
-            ("1e48", BenchDepth::AllRegimes),
+            ("all", BenchDepth::Ultra),
+            ("all-regimes", BenchDepth::Ultra),
+            ("1e48", BenchDepth::Ultra),
         ] {
             assert_eq!(BenchDepth::from_token(tok), Some(want), "token {tok:?}");
         }
-        assert_eq!(BenchDepth::from_token("nonsense"), None);
+        // Tokens for endpoints no dive lands on any more must FAIL, not quietly resolve to
+        // the nearest preset: `--depth` is fatal on an unreadable value, so an old command
+        // line stops rather than reporting a different workload under a familiar name.
+        for gone in ["1e12", "12", "1e28", "28", "nonsense"] {
+            assert_eq!(BenchDepth::from_token(gone), None, "token {gone:?} should be refused");
+        }
         let mut labels: Vec<&str> = BenchDepth::ALL.iter().map(|d| d.label()).collect();
         labels.sort_unstable();
         let n = labels.len();

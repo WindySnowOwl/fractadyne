@@ -407,7 +407,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--render", "Render one image and exit."),
         Flag("--render-tour FILE", "Render a keyframe-tour TOML to a PNG frame sequence, then exit (see Tour options)."),
         Flag("--benchmark, --bench", "Run the benchmark with the current settings and exit (use --out to save the report)."),
-        Flag("--benchmark-std [--res R] [--depth D] [--burnin N]", "Standardized benchmark: pinned resolution + settings, comparable across machines. --res = 720p | 1080p | 4k | 5k (default 1080p). --depth = standard (1e12x) | ultra (1e28x) | all (1e48x); --ultra is shorthand for ultra. Only 'all' reaches the floatexp/BLA path - standard and ultra render zero floatexp frames - and the report breaks the dive down per arithmetic regime. --burnin N repeats it N times (default 10) to check stability / throttling."),
+        Flag("--benchmark-std [--res R] [--depth D] [--burnin N]", "Standardized benchmark: pinned resolution + settings, comparable across machines. --res = 720p | 1080p | 4k | 5k (default 1080p). --depth = standard (1e32x) | ultra (1e48x); --ultra is shorthand. BOTH cross into the floatexp/BLA path, and the report breaks the dive down per arithmetic regime (frames, avg ms, share). --burnin N repeats it N times (default 10) to check stability / throttling."),
         Flag("--refdiag --center X Y --zoom-log2 L", "Dev: sample reference orbit lengths across a view."),
         Flag("--find-minibrot", "Print the nearby minibrot's period + center and exit (--center X Y --zoom M)."),
         Flag("--version, -V", "Print the version and build number, then exit."),
