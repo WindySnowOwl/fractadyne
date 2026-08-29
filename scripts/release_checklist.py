@@ -529,6 +529,37 @@ for _i, ((_area, _enf), _step) in enumerate(zip(ENFORCERS, STEPS), start=1):
         % (_i, _area, _i, _step[0])
     )
 
+def enforcer_label(enf):
+    """Turn an enforcer string into something a TESTER can act on, plus a flag for colouring.
+
+    The raw form (`partial:test:click_zoom_applies_factor`) is developer notation. What the person
+    holding the workbook needs to know is only: is this already machine-checked, partly, or not at
+    all — and if partly, that the part left to them is the part a machine cannot judge.
+    """
+    if enf == "process":
+        return "—", "none"
+    if enf == "manual":
+        return "MANUAL — needs a person (see design/checklist-automation.md)", "manual"
+    partial = enf.startswith("partial:")
+    rest = enf[len("partial:"):] if partial else enf
+    kind, _, name = rest.partition(":")
+    where = {
+        "test": "cargo test",
+        "selftest": "--selftest",
+        "uitest": "--uitest",
+        "harness": "CLI",
+        "script": "script",
+    }.get(kind, kind)
+    if partial:
+        # Deliberately generic about WHAT is left over: it differs per row — the gesture, the
+        # appearance, or something the harness simply cannot see — and a per-row sentence here
+        # would drift from the plan document that actually explains each one.
+        return ("PARTLY AUTO — %s: %s\n"
+                "Still yours: whatever the machine cannot judge — see "
+                "design/checklist-automation.md." % (where, name)), "partial"
+    return "AUTO — %s: %s" % (where, name), "auto"
+
+
 def build(out_path):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -568,11 +599,18 @@ def build(out_path):
         ("Release decision (SHIP / HOLD)", ""),
         ("Decision rationale", ""),
     ]
+    # ⚠Record where each label lands. The count formulas below used to be written to hard-coded
+    # B13/B14/B15 while the labels sat at 14/15/16 — every blank separator in `rows` advances the
+    # row, and two of them come before the counts. The workbook opened perfectly and reported the
+    # PASS count on an unlabelled row, the FAIL count beside "Steps passed", and nothing at all
+    # beside "Steps blocked / N-A". Derive the rows instead.
+    label_row = {}
     r = 4
     for k, v in rows:
         if k:
             cov.cell(row=r, column=1, value=k).font = lab
             cov.cell(row=r, column=2, value=v)
+            label_row[k] = r
         r += 1
     cov.column_dimensions["A"].width = 32
     cov.column_dimensions["B"].width = 52
@@ -581,15 +619,38 @@ def build(out_path):
              value="Automated gates that must ALSO be green for this release "
                    "(these are not manual steps):").font = lab
     for i, g in enumerate([
-        "fractadyne --selftest            -> exit 0. At 0.2.40: 140/140 checks, 18/18 goldens.",
+        "fractadyne --selftest            -> exit 0. At 0.2.40: 168/168 checks, 18/18 goldens.",
         "   (The run prints its own totals. A DIFFERENT total is not automatically a failure,",
         "    but it must be explained - a silently skipped check looks exactly like a pass.)",
+        "fractadyne --uitest DIR          -> 29/29 steps, no-crash-files PASS, exit 0",
+        "fractadyne --soak 300            -> soak-liveness PASS (frames advance, memory holds)",
         "python validation/corpus/generate_corpus.py --check  -> 38/38 MATCH",
         "fractadyne --livetest tours/grand-tour.toml --size 480x270  -> 24/24, 0 drifted",
         "fractadyne --motiontest          -> VERDICT PASS",
+        "cargo test --workspace --release -> all green",
         "cargo build --release            -> warning-free",
+        "python scripts/checklist_coverage.py -> exit 0 (no row claims coverage it lacks)",
     ]):
         cov.cell(row=r + 2 + i, column=1, value=g)
+
+    # How much of this sheet a machine now checks, so the reviewer knows where to spend attention.
+    counts = {"auto": 0, "partial": 0, "manual": 0, "none": 0}
+    for _area, enf in ENFORCERS:
+        counts[enforcer_label(enf)[1]] += 1
+    note_r = r + 3 + i
+    cov.cell(row=note_r, column=1, value="How much of the Run sheet is machine-checked:").font = lab
+    for j, line in enumerate([
+        "%d of %d steps are FULLY automated - a machine check fails if the behaviour breaks."
+        % (counts["auto"], len(STEPS)),
+        "   Perform these as a SPOT CHECK: confirm the feature is there and looks right, and move on.",
+        "%d are PARTLY automated - the effect is checked; the gesture and the appearance are yours."
+        % counts["partial"],
+        "%d need a person outright, and %d is a process step." % (counts["manual"], counts["none"]),
+        "The 'Automated by' column on each row says which, and names the check.",
+        "A row still FAILS on your judgement even when it says AUTO - the machine checks that the",
+        "   image is not blank, never that it is beautiful.",
+    ]):
+        cov.cell(row=note_r + 1 + j, column=1, value=line)
 
     # ---------------------------------------------------------------- Run
     ws = wb.create_sheet("Run")
@@ -608,6 +669,9 @@ def build(out_path):
         cell.border = border
 
     area_fill = PatternFill("solid", fgColor="D9E2F3")
+    auto_fill = PatternFill("solid", fgColor="D6EAD6")     # green: fully machine-checked
+    partial_fill = PatternFill("solid", fgColor="FFF2CC")  # amber: effect checked, judgement yours
+    manual_fill = PatternFill("solid", fgColor="F2DCDB")   # pink: no machine check is possible
     top_wrap = Alignment(wrap_text=True, vertical="top")
 
     row = 2
@@ -627,7 +691,14 @@ def build(out_path):
         ws.cell(row=row, column=2, value=area).alignment = top_wrap
         ws.cell(row=row, column=3, value=action).alignment = top_wrap
         ws.cell(row=row, column=4, value=expected).alignment = top_wrap
-        ws.cell(row=row, column=5, value=enforcer).alignment = top_wrap
+        label, flag = enforcer_label(enforcer)
+        cell = ws.cell(row=row, column=5, value=label)
+        cell.alignment = top_wrap
+        # Colour is the FLAG the reviewer scans for: green = a machine check fails if this breaks,
+        # amber = partly, plain = it is entirely on you.
+        fill = {"auto": auto_fill, "partial": partial_fill, "manual": manual_fill}.get(flag)
+        if fill is not None:
+            cell.fill = fill
         ws.cell(row=row, column=6, value="").alignment = top_wrap
         ws.cell(row=row, column=7, value="").alignment = Alignment(horizontal="center", vertical="top")
         ws.cell(row=row, column=8, value="").alignment = top_wrap
@@ -637,7 +708,7 @@ def build(out_path):
         step += 1
 
     last_row = row - 1
-    widths = {"A": 6, "B": 16, "C": 58, "D": 58, "E": 34, "F": 30, "G": 11, "H": 24}
+    widths = {"A": 6, "B": 16, "C": 58, "D": 58, "E": 42, "F": 30, "G": 11, "H": 24}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
@@ -654,11 +725,14 @@ def build(out_path):
     ws.add_data_validation(dv)
     dv.add("{c}2:{c}{r}".format(c=verdict_col, r=last_row))
 
-    # Cover formulas that count the run once it is filled in.
-    cov["B13"] = '=COUNTIF(Run!{c}:{c},"PASS")'.format(c=verdict_col)
-    cov["B14"] = '=COUNTIF(Run!{c}:{c},"FAIL")'.format(c=verdict_col)
-    cov["B15"] = ('=COUNTIF(Run!{c}:{c},"BLOCKED")+COUNTIF(Run!{c}:{c},"N-A")'
-                  .format(c=verdict_col))
+    # Cover formulas that count the run once it is filled in — written BESIDE their own labels
+    # (see the note where `label_row` is built).
+    cov.cell(row=label_row["Steps passed"], column=2,
+             value='=COUNTIF(Run!{c}:{c},"PASS")'.format(c=verdict_col))
+    cov.cell(row=label_row["Steps failed"], column=2,
+             value='=COUNTIF(Run!{c}:{c},"FAIL")'.format(c=verdict_col))
+    cov.cell(row=label_row["Steps blocked / N-A"], column=2,
+             value='=COUNTIF(Run!{c}:{c},"BLOCKED")+COUNTIF(Run!{c}:{c},"N-A")'.format(c=verdict_col))
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     wb.save(out_path)
@@ -674,6 +748,11 @@ def main():
     except ImportError:
         sys.exit("openpyxl is required: python -m pip install openpyxl")
     print("wrote %s — %d steps, %d rows" % (a.out, n, rows))
+    counts = {"auto": 0, "partial": 0, "manual": 0, "none": 0}
+    for _area, enf in ENFORCERS:
+        counts[enforcer_label(enf)[1]] += 1
+    print("  %d fully automated, %d partly, %d manual, %d process"
+          % (counts["auto"], counts["partial"], counts["manual"], counts["none"]))
 
 
 if __name__ == "__main__":
