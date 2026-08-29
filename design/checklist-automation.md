@@ -88,8 +88,8 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | # | class | enforcer |
 |---|---|---|
 | 1 | A | Harness already launches with a wiped `FRACTADYNE_CONFIG_DIR`. Add: assert exit 0 **and** no `crash-*.txt` written **and** stderr carries no `error`/`panic`. |
-| 2 | A | Unit test: title string equals `Fractadyne v{version} (build {n})`. CI test: `CARGO_PKG_VERSION` matches the release tag. |
-| 3 | A | Session test: welcome shows on a clean profile, is suppressed after dismissal, and stays suppressed across a save/load cycle. |
+| 2 | A | `window_title()` must carry `CARGO_PKG_VERSION` and a numeric build counter — so a release built from a tree whose Cargo.toml was never bumped cannot present itself as the version on the tin. |
+| 3 | A | `welcome_should_open` over all four inputs, plus the persistence of `welcome_seen`. The harness clause is load-bearing: a modal in front of `--livetest` blocked its tour for a whole session once, and it read as a hang. |
 | 4 | A | New golden: the home view. Plus the existing non-blank check. |
 
 ### Layout & theme (5–10)
@@ -143,9 +143,9 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 33–42 | A | One golden per formula at its default view (5 of 10 exist; add the missing 5) plus a coherence check. "Recognisable" is what a golden is for. |
 | 43 | A | Deep render for every `supports_perturbation` formula; coherent and matching a golden. |
 | 44 | A | Julia render coherent AND different from the parameter plane at the same framing. ⚠The second half is the point: `julia` is a field of the export REQUEST, not a mode the builder reads off the app, so a Julia render that forgets to ask for one returns the Mandelbrot — meanΔ 0.00, which is exactly what the first draft measured. |
-| 45 | B | Dual view: assert the split produces two viewports, and that changing `julia_c` changes the right pane's params. Cursor tracking stays human. |
-| 46 | B | Julia viewport zooms independently — assert the Mandelbrot viewport is untouched. |
-| 47 | A | Turning both off restores the single-view state exactly (already partly covered by `toggle_dual`). |
+| 45 | B | `dual_panel_rects` over the whole clamp range: the panels never overlap, both stay inside the window, neither collapses, the separator stays grabbable, and an absurd split is clamped rather than honoured. Plus `dual_panel_widths` summing exactly to the frame at odd widths. Cursor tracking stays human. |
+| 46 | B | A pointer sweep across the full width through `dual_panel_at`: no x belongs to both panels, and the assignment changes at most twice (parameter → separator → Julia). That routing IS what makes the two sides independent — every gesture in the dual view is dispatched by it. |
+| 47 | A | Every formula agrees with itself about having a Julia — Newton has none, and a dual view of it would render an empty right panel — and `reset_to` restores the single view's framing from any depth. |
 
 ### Coloring (48–62)
 
@@ -156,7 +156,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 55–56 | A | Cycle / offset at two values each: coherent and differing. |
 | 57 | A | Log on vs off **through `render_export_normalized`**: meanΔ 62.06, both coherent. ⚠**`log_palette` has no effect at all unless normalization is active** — live it is read inside the `normalize_live` branch, offline only the normalized path consults it. That is not a test artefact, it is what the checkbox does, and step 57's instruction has been corrected to say so. Greying the control when Normalize is off would be the real fix. |
 | 58 | B | Preset → custom gradient changes the render (meanΔ 21.13), then moving ONE stop changes it again (meanΔ 16.91). The dialog interaction stays human. |
-| 59 | B | Animation advances the palette phase over simulated time and holds still when off. Smoothness stays human. |
+| 59 | B | `palette_anim_step` over 600 simulated frames per mode: the phase never leaves 0..1, forward and reverse both move, ping-pong reaches BOTH end stops, and Off holds still at a nonzero step. Smoothness stays human. |
 | 60–62 | A | Binary, duotone, relief, glow: each on vs off coherent and differing; relief light angle changes the image; glow strength changes it. |
 
 ### Quality (63–67)
@@ -184,7 +184,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 
 | # | class | enforcer |
 |---|---|---|
-| 76 | B | Snapshot writes a file and the UI thread is not blocked past a threshold. |
+| 76 | B | `export_file_name` for every formula: no spaces (two formula names have one), no illegal filename characters, the right extension, and stamps that sort chronologically. That the write happens and is reported stays human. |
 | 77 | A | The PNG is written, decoded and compared byte for byte against the rendered buffer, and its embedded centre + depth must name the same view. Goes red on a one-row truncation. |
 | 78 | A | 3840×2160 at ss 2×: full-size buffer, and EVERY EIGHTH of the frame independently coherent — a missing tile leaves a flat strip that a whole-frame spread hides. |
 | 79 | A | **Tile-seam check**: the tiled export must equal a single-pass render of the same frame. This is the beta.136 chunker class, where pixels depended on the tile budget. Assert `tiles_chunked` is non-zero first, so the check cannot pass by never chunking. |
@@ -197,7 +197,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 81 | A | Minibrot search returns a nucleus whose neighbourhood renders coherent structure. |
 | 82 | A | Solver runs to completion within a time bound and returns a root. |
 | 83 | A | `--livetest` already plays the grand tour with 24 checkpoints and drift detection. |
-| 84 | A | Stopping playback restores interactive state. |
+| 84 | A | COMPLETENESS, not a round trip: every `[[keyframe]]` field must be either restored by `PlaybackRestore` when the tour ends or on an explicit keep-list with a reason. Add a keyframe field without deciding, and a played tour silently edits the viewer's session — the test names the field. |
 | 85 | A | Tour-from-view writes a script that parses back to the same start view. |
 | 86 | A | `--benchmark-std` headless: exit 0 and a complete report. |
 
@@ -207,19 +207,19 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 |---|---|---|
 | 87 | B | Help sections are non-empty and every section id renders. Readability stays human. |
 | 88 | A | Diagnostics fields are populated and none is a placeholder; the arithmetic line names a real backend. |
-| 89 | A | About's arithmetic line matches `backend_status_line()` and the built-in list. |
+| 89 | A | `about_arithmetic_line()` carries both halves, and in a unit test (no orbit) the RUN half must honestly say none — a line naming a backend there would be reading configuration, the exact failure the observation mask exists to prevent. |
 | 90 | A | `accelerated_asset_url` tests already assert the URL carries this version's tag; extend to the accelerated build's alternate text. |
 | 91 | A | Issue URL is well-formed and carries build details; the mailto fallback is reachable. |
-| 92 | A | `--check-updates` with `FRACTADYNE_FAKE_VERSION` gives a definite verdict both ways. |
-| 93 | A | Change a setting, save, reload: value survives and is applied. |
+| 92 | A | The DECISION, not the network: `version_gt` in both directions including prereleases (a beta must never be offered over its stable), plus `FRACTADYNE_FAKE_VERSION` actually reaching the comparison. |
+| 93 | A | Nineteen non-view settings through the REAL `save`/`load` file path under a throwaway config dir, each differing from its default so a load that quietly returned defaults cannot pass. |
 
 ### Accelerated build (94–99)
 
 | # | class | enforcer |
 |---|---|---|
 | 94 | A | `scripts/build-accelerated.ps1` already verifies the packaged binary on a `System32`-only PATH. Promote it to a required release step. |
-| 95 | A | On the rug build, About names rug and reports MPFR/GMP versions. |
-| 96 | A | Config path resolves under the user profile, not beside the exe. |
+| 95 | A | Branches on the RUNTIME backend list, not a cargo feature: `rug` is a feature of the core crate, so a `cfg` in the app would read false and turn the accelerated case into no test at all. |
+| 96 | A | `config_dir()` equals the OS per-user location and is NOT under the executable's folder — an exe-relative config would give the standard and accelerated builds separate sessions, and the user's locations would appear to have vanished. |
 | 97 | A | `backend_rug_identity` covers the orbits; add a rendered-image equality check at a deep location across both backends. |
 | 98 | A | `--bench-bignum` reports both backends; assert rug is faster on the reference orbit. |
 | 99 | C | Deleting a DLL and launching. Scriptable in PowerShell but it must run on a machine without MinGW on PATH to mean anything. |

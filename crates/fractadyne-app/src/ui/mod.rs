@@ -5,7 +5,7 @@
 //! separate `fractadyne-ui` crate was rejected). Splitting one inherent `impl` across submodule
 //! files is a plain Rust capability; the moves are verbatim.
 
-mod central;
+pub(crate) mod central;
 mod dialogs;
 mod menus;
 mod panels;

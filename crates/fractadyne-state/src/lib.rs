@@ -752,10 +752,149 @@ mod tests {
         assert_eq!(status, StateLoad::Unreadable);
     }
 
+    /// `FRACTADYNE_CONFIG_DIR` is process-global and `cargo test` runs tests on parallel
+    /// threads, so every test that touches it takes this first. Without it, one test's
+    /// `remove_var` lands in the middle of another's `config_dir()` and the failure is a
+    /// once-in-a-while red that reruns green.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A throwaway config dir, removed when the guard drops.
+    struct TempConfig {
+        root: std::path::PathBuf,
+        cfg: std::path::PathBuf,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl TempConfig {
+        fn new(tag: &str) -> Self {
+            let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let root = std::env::temp_dir()
+                .join(format!("fractadyne_{tag}_{}", std::process::id()));
+            let cfg = root.join("cfg");
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&cfg).unwrap();
+            std::env::set_var("FRACTADYNE_CONFIG_DIR", &cfg);
+            Self { root, cfg, _guard: guard }
+        }
+    }
+
+    impl Drop for TempConfig {
+        fn drop(&mut self) {
+            std::env::remove_var("FRACTADYNE_CONFIG_DIR");
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// Checklist step 93, "change a setting, close and reopen: it persists and takes effect".
+    /// Run through the REAL file path (`save` then `load`), not a serde round trip in memory:
+    /// what fails in the field is the write or the read, and a value that serializes perfectly
+    /// into a string nobody ever wrote back is still a lost setting.
+    ///
+    /// The fields swept here are deliberately the non-view ones — the view has its own tests, and
+    /// preferences are the half a user notices only on the next launch.
+    #[test]
+    fn a_setting_survives_save_and_reload() {
+        let t = TempConfig::new("settings_test");
+        let want = SessionState {
+            // one of each shape: bool, float, int, string, enum-as-string, Option<String>
+            normalize_live: false,
+            log_palette: true,
+            zoom_rate: 2.75,
+            fps_cap: 0.0, // uncapped — the value that a naive Option round trip loses
+            aa: 4,
+            max_iter: 750_000,
+            auto_iter: false,
+            palette_idx: 3,
+            minimap: true,
+            right_panel_open: false,
+            finish_sound: false,
+            color_method: "stripe".to_string(),
+            palette_anim: "pingpong".to_string(),
+            palette_anim_speed: 0.42,
+            export_width: 3840,
+            export_ss: 2,
+            export_format: "exr".to_string(),
+            export_dir: Some("D:/renders".to_string()),
+            welcome_seen: true,
+            ..SessionState::default()
+        };
+        save(&want);
+        assert!(t.cfg.join("session.toml").is_file(), "save() wrote no session file");
+
+        let (got, status) = load_with_status();
+        assert_eq!(status, StateLoad::Ok, "the session we just wrote did not read back cleanly");
+        assert!(!got.normalize_live, "normalize_live");
+        assert!(got.log_palette, "log_palette");
+        assert_eq!(got.zoom_rate, 2.75, "zoom_rate");
+        assert_eq!(got.fps_cap, 0.0, "fps_cap (uncapped)");
+        assert_eq!(got.aa, 4, "aa");
+        assert_eq!(got.max_iter, 750_000, "max_iter");
+        assert!(!got.auto_iter, "auto_iter");
+        assert_eq!(got.palette_idx, 3, "palette_idx");
+        assert!(got.minimap, "minimap");
+        assert!(!got.right_panel_open, "right_panel_open");
+        assert!(!got.finish_sound, "finish_sound");
+        assert_eq!(got.color_method, "stripe", "color_method");
+        assert_eq!(got.palette_anim, "pingpong", "palette_anim");
+        assert_eq!(got.palette_anim_speed, 0.42, "palette_anim_speed");
+        assert_eq!(got.export_width, 3840, "export_width");
+        assert_eq!(got.export_ss, 2, "export_ss");
+        assert_eq!(got.export_format, "exr", "export_format");
+        assert_eq!(got.export_dir.as_deref(), Some("D:/renders"), "export_dir");
+        assert!(got.welcome_seen, "welcome_seen");
+
+        // Anti-vacuity: every value above differs from the default, so none of these assertions
+        // could be satisfied by a load that quietly returned `SessionState::default()`.
+        let d = SessionState::default();
+        assert_ne!(d.zoom_rate, want.zoom_rate);
+        assert_ne!(d.color_method, want.color_method);
+        assert_ne!(d.aa, want.aa);
+        assert_ne!(d.normalize_live, want.normalize_live);
+    }
+
+    /// Checklist step 96, "settings live in the user profile, not beside the executable, so two
+    /// builds share them and nothing needs importing".
+    ///
+    /// The failure this guards is portable-app-shaped: a config dir derived from the executable's
+    /// location means the standard and accelerated builds, unpacked side by side, each keep their
+    /// own session and bookmarks — and the user's locations appear to have vanished.
+    #[test]
+    fn config_lives_in_the_user_profile() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("FRACTADYNE_CONFIG_DIR");
+        let dir = config_dir().expect("no config dir on this platform");
+
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .expect("current_exe");
+        assert!(
+            !dir.starts_with(&exe_dir),
+            "config lives beside the executable ({}), so two builds would not share it",
+            dir.display()
+        );
+        // It IS under the OS's per-user config location.
+        let base = directories::ProjectDirs::from("com", "Fractadyne", "Fractadyne")
+            .expect("no OS project dirs");
+        assert_eq!(
+            dir.as_path(),
+            base.config_dir(),
+            "the config dir is not the OS per-user location"
+        );
+        // ...and that location is a per-user one, not a shared or relative path.
+        assert!(dir.is_absolute(), "config dir {} is not absolute", dir.display());
+        // The override still wins — it is what makes every harness run hermetic.
+        let over = std::env::temp_dir().join("fractadyne_cfg_override_probe");
+        std::env::set_var("FRACTADYNE_CONFIG_DIR", &over);
+        assert_eq!(config_dir().as_deref(), Some(over.as_path()), "the override was ignored");
+        std::env::remove_var("FRACTADYNE_CONFIG_DIR");
+    }
+
     // reset_all removes the whole config dir, and is a no-op when there's nothing to remove.
     // Uses the FRACTADYNE_CONFIG_DIR override so it operates on a throwaway dir, never real data.
     #[test]
     fn reset_all_removes_config_dir_via_override() {
+        let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = std::env::temp_dir().join(format!("fractadyne_reset_test_{}", std::process::id()));
         let cfg = root.join("cfg");
         std::fs::create_dir_all(cfg.join("bookmark_thumbs")).unwrap();

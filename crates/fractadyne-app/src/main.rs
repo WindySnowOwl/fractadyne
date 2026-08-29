@@ -1770,7 +1770,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([640.0, 400.0])
-            .with_title(format!("Fractadyne v{}", version_string()))
+            .with_title(window_title())
             .with_icon(brand_icon()),
         ..Default::default()
     };
@@ -2208,7 +2208,7 @@ enum DualExport {
 // Scripting/benchmark types + helpers moved to scripting.rs.
 
 /// Palette animation mode (continuously shifts the color offset).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PaletteAnim {
     Off,
     Forward,
@@ -2305,6 +2305,88 @@ fn meta_get(meta: &str, key: &str) -> String {
                 .map(|(_, v)| v.trim().to_string())
         })
         .unwrap_or_default()
+}
+
+/// The name a snapshot (Ctrl+S) or a default export is written under:
+/// `fractadyne_<Formula>_<YYYYMMDD_HHMMSS>.<ext>`.
+///
+/// The formula name has its spaces removed rather than kept or replaced: "Burning Ship" would
+/// otherwise put a space in every snapshot filename, which survives on Windows but makes the path
+/// awkward everywhere a name is pasted unquoted. The timestamp is deliberately sortable, so a
+/// folder of snapshots reads in the order they were taken.
+pub(crate) fn export_file_name(fractal: &str, secs: u64, ext: &str) -> String {
+    format!("fractadyne_{}_{}.{ext}", fractal.replace(' ', ""), FractadyneApp::file_stamp(secs))
+}
+
+/// The GitHub new-issue URL for a report with `subject`. The report body itself rides the
+/// clipboard, not the URL (length limits), so the body here is only a paste hint.
+pub(crate) fn issue_new_url(subject: &str) -> String {
+    format!(
+        "{ISSUES_URL}/new?title={}&body={}",
+        mailto_encode(subject),
+        mailto_encode(
+            "<!-- The full report is on your clipboard — paste it here (Ctrl+V). \
+             Screenshots can be dragged in. -->\n\n"
+        ),
+    )
+}
+
+/// The `mailto:` fallback for reporters without a GitHub account, addressed to [`REPORT_EMAIL`].
+pub(crate) fn issue_mailto_url(subject: &str) -> String {
+    format!(
+        "mailto:{REPORT_EMAIL}?subject={}&body={}",
+        mailto_encode(subject),
+        mailto_encode(
+            "The full report has been copied to your clipboard — paste it here (Ctrl+V). \
+             You can also attach a saved report file.\n\n"
+        ),
+    )
+}
+
+/// One frame of palette animation: the new `(offset, direction)` for `mode` after advancing by
+/// `step` cycles. Split out of the per-frame update so "animates smoothly and stops cleanly when
+/// disabled" (checklist step 59) can be checked over many simulated frames without a clock.
+///
+/// The offset stays inside `0..=1` in every mode — it is a palette PHASE, and a value that walked
+/// out of range would either wrap visibly or freeze the animation at an end stop.
+pub(crate) fn palette_anim_step(mode: PaletteAnim, offset: f32, dir: f32, step: f32) -> (f32, f32) {
+    match mode {
+        PaletteAnim::Forward => ((offset + step).fract(), dir),
+        PaletteAnim::Reverse => ((offset - step).rem_euclid(1.0), dir),
+        PaletteAnim::PingPong => {
+            let o = offset + dir * step;
+            if o >= 1.0 {
+                (1.0, -1.0)
+            } else if o <= 0.0 {
+                (0.0, 1.0)
+            } else {
+                (o, dir)
+            }
+        }
+        // Random walks its own state; Off holds still — the caller's business, not a phase step.
+        PaletteAnim::Random | PaletteAnim::Off => (offset, dir),
+    }
+}
+
+/// The two panel WIDTHS, in pixels, for an offline dual render at `width`.
+///
+/// The right panel is DERIVED from the left rather than rounded independently: an odd frame width
+/// rounded twice silently loses or gains a column against the size that was asked for, and the
+/// stitched frame then does not match the requested export size.
+pub(crate) fn dual_panel_widths(width: u32, split: f32) -> (u32, u32) {
+    let split = split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX);
+    let lw = ((width as f32 * split).round() as u32).clamp(1, width.saturating_sub(1).max(1));
+    (lw, width.saturating_sub(lw).max(1))
+}
+
+/// Whether the welcome / quick-start modal opens on this launch.
+///
+/// Two rules, and the second is load-bearing: it is shown once on a fresh profile and never again
+/// (dismissal persists as `welcome_seen`), and it is NEVER shown in front of a harness — a modal
+/// there blocks the run, which is how `--livetest` once sat behind this dialog rendering frames
+/// and never starting its tour.
+pub(crate) fn welcome_should_open(welcome_seen: bool, launched_for_a_task: bool) -> bool {
+    !welcome_seen && !launched_for_a_task
 }
 
 /// Whether untrusted text may be handed to `load_view_metadata` as a location, and why not when
@@ -3860,7 +3942,7 @@ impl FractadyneApp {
                 // automation mutually exclusive, so a torture rung with its own config dir would
                 // block on EVERY live rung. Suppressing it for harness modes is what lets the
                 // gates be reproducible.
-                welcome_open: !s.welcome_seen && !launched_for_a_task,
+                welcome_open: welcome_should_open(s.welcome_seen, launched_for_a_task),
                 // Never in front of a harness: a modal would block --uitest/--livetest exactly the
                 // way the welcome dialog once did.
                 crash_prompt_open: crate::diag::previous_session_unclean()
@@ -6775,20 +6857,12 @@ impl FractadyneApp {
         }
         let step = self.anim.palette_anim_speed * dt;
         match self.anim.palette_anim {
-            PaletteAnim::Forward => self.coloring.offset = (self.coloring.offset + step).fract(),
-            PaletteAnim::Reverse => self.coloring.offset = (self.coloring.offset - step).rem_euclid(1.0),
-            PaletteAnim::PingPong => {
-                self.coloring.offset += self.anim.anim_dir * step;
-                if self.coloring.offset >= 1.0 {
-                    self.coloring.offset = 1.0;
-                    self.anim.anim_dir = -1.0;
-                } else if self.coloring.offset <= 0.0 {
-                    self.coloring.offset = 0.0;
-                    self.anim.anim_dir = 1.0;
-                }
-            }
             PaletteAnim::Random => self.anim.random_palette.advance(dt, self.anim.palette_anim_speed),
-            PaletteAnim::Off => {}
+            mode => {
+                let (o, d) = palette_anim_step(mode, self.coloring.offset, self.anim.anim_dir, step);
+                self.coloring.offset = o;
+                self.anim.anim_dir = d;
+            }
         }
         self.schedule_repaint(ctx);
     }
@@ -8382,4 +8456,364 @@ max_iter=60000\nauto_iter=1\npalette=0\ncycle=0.27\noffset=0.1\naa=1\n";
         assert!(scan_gallery_dir(&dir.join("gone")).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // ---------------------------------------------------------------- launch (steps 2, 3)
+
+    /// Checklist step 2, "the title bar shows Fractadyne v<version> (build <n>) and the version
+    /// matches the release being tested". The second clause is the one a machine can hold: the
+    /// title must carry the CRATE's version, so a release built from a tree whose Cargo.toml was
+    /// never bumped cannot present itself as the version on the tin.
+    #[test]
+    fn title_string_matches_version() {
+        let t = window_title();
+        assert!(t.starts_with("Fractadyne v"), "title is {t:?}");
+        assert!(
+            t.contains(env!("CARGO_PKG_VERSION")),
+            "the title {t:?} does not carry the crate version {}",
+            env!("CARGO_PKG_VERSION")
+        );
+        // `(build N)` with a real number: the build counter is what distinguishes two binaries of
+        // the same version, and it is the first thing an issue report is read for.
+        let build = t
+            .rsplit_once("(build ")
+            .and_then(|(_, r)| r.strip_suffix(')'))
+            .expect("title has no (build N) suffix");
+        assert!(
+            !build.is_empty() && build.chars().all(|c| c.is_ascii_digit()),
+            "build counter is {build:?}"
+        );
+    }
+
+    /// Checklist step 3, "the welcome dialog appears on first run and closes without reappearing".
+    /// Also pins the harness rule: a modal in front of `--livetest` blocked its tour for a whole
+    /// session once, and it looked like a hang rather than a dialog.
+    #[test]
+    fn welcome_shows_once() {
+        assert!(welcome_should_open(false, false), "no welcome on a fresh profile");
+        assert!(!welcome_should_open(true, false), "the welcome came back after being dismissed");
+        assert!(!welcome_should_open(false, true), "a modal in front of a harness run");
+        assert!(!welcome_should_open(true, true));
+        // And the dismissal has to SURVIVE, or "once" means once per launch. The session field is
+        // written as the negation of the dialog being open (`welcome_seen = !welcome_open`).
+        let seen = fractadyne_state::SessionState { welcome_seen: true, ..Default::default() };
+        let text = toml::to_string_pretty(&seen).expect("serialize");
+        let back: fractadyne_state::SessionState = toml::from_str(&text).expect("parse");
+        assert!(back.welcome_seen, "welcome_seen did not survive a save/load");
+        assert!(!welcome_should_open(back.welcome_seen, false));
+    }
+
+    // ---------------------------------------------------------------- dual view (steps 45-47)
+
+    /// Checklist step 45, "the window splits; left is the parameter set, right is the Julia".
+    /// The split is a fraction the viewer drags, so the invariants are: the two panels never
+    /// overlap, both stay inside the window, neither collapses to nothing, and the divider stays
+    /// where the clamp allows even when a script or a corrupt session asks for something absurd.
+    #[test]
+    fn dual_view_splits_the_viewports() {
+        use crate::ui::central::{dual_panel_at, dual_panel_rects};
+        let full = egui::Rect::from_min_max(egui::pos2(20.0, 30.0), egui::pos2(1300.0, 830.0));
+        for split in [-5.0f32, 0.0, DUAL_SPLIT_MIN, 0.34, 0.5, 0.7, DUAL_SPLIT_MAX, 1.0, 99.0] {
+            let (l, r) = dual_panel_rects(full, split);
+            assert!(l.width() > 0.0 && r.width() > 0.0, "split {split}: a panel collapsed");
+            assert!(l.max.x <= r.min.x, "split {split}: the panels overlap");
+            assert!(l.min.x == full.min.x && r.max.x == full.max.x, "split {split}: outside the window");
+            assert!(l.min.y == full.min.y && l.max.y == full.max.y, "split {split}: wrong height");
+            // The gap between them is the drag handle, and it must stay grabbable.
+            let gap = r.min.x - l.max.x;
+            assert!(gap >= 4.0, "split {split}: the separator is {gap}px wide");
+            // A point in each panel belongs to that panel, and the separator belongs to neither.
+            assert_eq!(dual_panel_at(full, split, egui::pos2(l.center().x, l.center().y)), Some(false));
+            assert_eq!(dual_panel_at(full, split, egui::pos2(r.center().x, r.center().y)), Some(true));
+            assert_eq!(dual_panel_at(full, split, egui::pos2(l.max.x + gap * 0.5, l.center().y)), None);
+            assert_eq!(dual_panel_at(full, split, egui::pos2(full.max.x + 50.0, l.center().y)), None);
+        }
+        // An out-of-range split is CLAMPED, not honoured: the divider must stay somewhere the
+        // viewer can drag it back from.
+        let (wide_l, _) = dual_panel_rects(full, 99.0);
+        let (max_l, _) = dual_panel_rects(full, DUAL_SPLIT_MAX);
+        assert_eq!(wide_l.width(), max_l.width(), "an absurd split was not clamped");
+    }
+
+    /// Checklist step 46, "the Julia side zooms independently". Every gesture in the dual view is
+    /// routed by which panel the pointer is in, so what makes the two sides independent is that
+    /// no point is ever claimed by both — sweep the whole width and check exactly that.
+    #[test]
+    fn julia_viewport_zooms_independently() {
+        use crate::ui::central::dual_panel_at;
+        let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1280.0, 720.0));
+        let split = 0.5f32;
+        let (mut param, mut julia, mut neither) = (0, 0, 0);
+        let mut last = None;
+        for i in 0..=1280 {
+            let at = dual_panel_at(full, split, egui::pos2(i as f32, 360.0));
+            match at {
+                Some(false) => param += 1,
+                Some(true) => julia += 1,
+                None => neither += 1,
+            }
+            // The panels are contiguous: the answer changes at most twice across the sweep
+            // (parameter → separator → Julia), never flickering back and forth.
+            if let Some(prev) = last {
+                if prev != at {
+                    assert!(
+                        matches!((prev, at), (Some(false), None) | (None, Some(true))),
+                        "the panel assignment jumped {prev:?} -> {at:?} at x={i}"
+                    );
+                }
+            }
+            last = Some(at);
+        }
+        assert!(param > 500 && julia > 500, "panels are lopsided: {param} vs {julia}");
+        assert!((1..=8).contains(&neither), "the separator covers {neither}px");
+    }
+
+    /// Checklist step 47, "turn off dual view and Julia mode; returns cleanly to the single
+    /// Mandelbrot view". The part that can silently go wrong is the formula guard: dual pairs a
+    /// formula with its Julia, so a formula with no Julia must not be able to enter it — Newton
+    /// has no free parameter, and a dual view of it would render an empty right panel.
+    #[test]
+    fn leaving_dual_restores_the_single_view() {
+        // Every formula agrees with itself about whether it has a Julia.
+        for f in FractalKind::ALL {
+            assert_eq!(
+                f.supports_julia(),
+                f != FractalKind::Newton,
+                "{} disagrees about having a Julia",
+                f.name()
+            );
+        }
+        // Leaving dual restores the single view's own framing: `reset_to` puts the parameter
+        // panel back at the formula's default centre and 1x, whatever the Julia panel was doing.
+        let mut vp = fractadyne_core::Viewport::new(1280.0, 720.0);
+        vp.set_center_log2mag(
+            fractadyne_core::BigFloat::from_f64(-0.743, 64),
+            fractadyne_core::BigFloat::from_f64(0.131, 64),
+            60.0,
+        );
+        let (cx, cy) = FractalKind::Mandelbrot.default_center();
+        vp.reset_to(cx, cy);
+        assert!((vp.magnification() - 1.0).abs() < 1.0e-9);
+        let (x, y) = vp.center_f64();
+        assert!((x - cx).abs() < 1.0e-15 && (y - cy).abs() < 1.0e-15);
+    }
+
+    /// The offline dual render splits the same way the live divider does, and the two panel
+    /// widths must SUM to the requested frame width — rounding both independently loses or gains
+    /// a column, so a rendered tour would not be the size that was asked for.
+    #[test]
+    fn dual_panel_widths_sum_to_the_frame() {
+        for width in [2u32, 3, 16, 17, 640, 1281, 1920, 3841] {
+            for split in [-1.0f32, 0.0, 0.15, 0.34, 0.5, 0.85, 1.0, 7.0] {
+                let (l, r) = dual_panel_widths(width, split);
+                assert_eq!(l + r, width, "{width}px at split {split}: {l} + {r}");
+                assert!(l >= 1 && r >= 1, "{width}px at split {split}: a panel collapsed");
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- coloring (step 59)
+
+    /// Checklist step 59, "the palette animates smoothly at the set speed and stops cleanly when
+    /// disabled". Simulated over many frames rather than asserted on one step, because the
+    /// failures are cumulative: a phase that creeps out of 0..1, a ping-pong that sticks at an
+    /// end stop, or an "Off" that still moves.
+    #[test]
+    fn palette_animation_advances_and_stops() {
+        let step = 0.35_f32 * (1.0 / 60.0); // speed 0.35 at 60 fps
+
+        // Forward and reverse both wrap, and both keep the phase in range.
+        for mode in [PaletteAnim::Forward, PaletteAnim::Reverse] {
+            let (mut o, mut d) = (0.5_f32, 1.0_f32);
+            let start = o;
+            let mut moved = false;
+            for _ in 0..600 {
+                let (no, nd) = palette_anim_step(mode, o, d, step);
+                assert!((0.0..=1.0).contains(&no), "{mode:?}: phase left the palette at {no}");
+                moved |= (no - start).abs() > 1.0e-6;
+                o = no;
+                d = nd;
+            }
+            assert!(moved, "{mode:?}: the palette never moved");
+        }
+
+        // Ping-pong reverses at both ends and visits both of them.
+        let (mut o, mut d) = (0.5_f32, 1.0_f32);
+        let (mut hi, mut lo) = (false, false);
+        for _ in 0..600 {
+            let (no, nd) = palette_anim_step(PaletteAnim::PingPong, o, d, step);
+            assert!((0.0..=1.0).contains(&no), "ping-pong left the palette at {no}");
+            hi |= no >= 1.0;
+            lo |= no <= 0.0;
+            o = no;
+            d = nd;
+        }
+        assert!(hi && lo, "ping-pong did not reach both ends (hi {hi}, lo {lo})");
+
+        // Off holds still — including at a nonzero step, which is the case that matters: the
+        // caller keeps ticking, so "stops cleanly" has to be true of the step itself.
+        let (o, d) = palette_anim_step(PaletteAnim::Off, 0.42, 1.0, step);
+        assert_eq!((o, d), (0.42, 1.0), "the palette moved while animation was off");
+    }
+
+    // ---------------------------------------------------------------- export (step 76)
+
+    /// Checklist step 76, "press Ctrl+S and an image is written ... the app reports where it
+    /// went". The name is the part that goes wrong silently: two formulas have a space in their
+    /// name, and a snapshot called `fractadyne_Burning Ship_….png` is awkward everywhere a path
+    /// is pasted unquoted. Partial — that the write happens and is reported is a human check.
+    #[test]
+    fn snapshot_writes_a_file() {
+        for f in FractalKind::ALL {
+            let n = export_file_name(f.name(), 1_787_401_025, "png");
+            assert!(!n.contains(' '), "{}: {n:?} has a space in it", f.name());
+            assert!(n.starts_with("fractadyne_") && n.ends_with(".png"), "{n:?}");
+            assert!(
+                !n.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']),
+                "{n:?} is not a legal filename"
+            );
+        }
+        // The stamp sorts chronologically, so a folder of snapshots reads in the order taken.
+        let a = export_file_name("Mandelbrot", 1_787_401_025, "png");
+        let b = export_file_name("Mandelbrot", 1_787_401_026, "png");
+        let c = export_file_name("Mandelbrot", 1_787_500_000, "png");
+        assert!(a < b && b < c, "snapshot names do not sort by time: {a} {b} {c}");
+        // The extension follows the chosen format rather than being assumed.
+        assert!(export_file_name("Mandelbrot", 0, "exr").ends_with(".exr"));
+    }
+
+    // ---------------------------------------------------------------- help & settings (89-92)
+
+    /// Checklist steps 89 and 95, "the About panel's Deep-zoom arithmetic line names the
+    /// arithmetic that has actually run and what the build contains".
+    #[test]
+    fn about_names_the_running_backend() {
+        let line = crate::help::about_arithmetic_line();
+        assert!(line.starts_with("Deep-zoom arithmetic: "), "{line:?}");
+        assert!(line.contains("this build contains: "), "{line:?}");
+        // The carrier is in every build, accelerated or not.
+        assert!(line.contains("astro-float"), "{line:?}");
+        // ⚠The two halves are different questions. The build's CONTENTS are compile-time; what
+        // has RUN is stamped by orbits finishing, so in a unit test (no orbit) it must honestly
+        // say none — a line that named a backend here would be reading configuration, which is
+        // exactly the failure the observation mask exists to prevent.
+        assert!(
+            line.contains("none (no reference orbit built yet)") || line.contains("MIXED"),
+            "the About line claims a backend that never ran: {line:?}"
+        );
+        // Which build this is, asked of the RUNTIME rather than of a cargo feature: `rug` is a
+        // feature of the core crate, so a `cfg` here would be a guess about someone else's build
+        // — and one that silently reads false, turning the accelerated case into no test at all.
+        let contents = line.split("this build contains: ").nth(1).unwrap_or_default();
+        if contents.contains("rug") {
+            // The accelerated build must report the C libraries that did the arithmetic, not
+            // just the wrapper: MPFR and GMP versions are the whole point of the line there.
+            assert!(
+                line.contains("MPFR") && line.contains("GMP"),
+                "the accelerated build names rug but no library versions: {line:?}"
+            );
+        } else {
+            assert!(
+                contents.trim_end_matches(").").trim() == "astro-float",
+                "the standard build should contain astro-float alone: {contents:?}"
+            );
+        }
+    }
+
+    /// Checklist step 91, "Help > Report an issue opens the issue reporting path correctly with
+    /// the app's details". Both doors, because the mailto is the fallback for anyone without a
+    /// GitHub account, and a broken URL there is silent — the browser simply opens nothing useful.
+    #[test]
+    fn issue_url_is_well_formed() {
+        let subject = "Fractadyne issue: Rendering / image quality";
+        let gh = issue_new_url(subject);
+        assert!(gh.starts_with(&format!("{ISSUES_URL}/new?")), "{gh}");
+        assert!(gh.contains("title=") && gh.contains("&body="), "{gh}");
+        let mt = issue_mailto_url(subject);
+        assert!(mt.starts_with(&format!("mailto:{REPORT_EMAIL}?")), "{mt}");
+        assert!(mt.contains("subject=") && mt.contains("&body="), "{mt}");
+        // Nothing that would end the URL early or split a query parameter may survive unencoded.
+        for url in [&gh, &mt] {
+            let query = url.split_once('?').expect("no query").1;
+            for (i, part) in query.split('&').enumerate() {
+                let v = part.split_once('=').expect("no key=value").1;
+                assert!(
+                    !v.contains([' ', '#', '&', '?', '\n', '"']),
+                    "parameter {i} of {url} carries an unencoded reserved character: {v:?}"
+                );
+            }
+            // The subject must be recognisable once decoded, not empty or mangled away.
+            assert!(url.contains("Fractadyne%20issue%3A"), "the subject did not survive: {url}");
+        }
+    }
+
+    /// Checklist step 92, "Check for updates performs a check and reports a clear result. No
+    /// hang." The network half is not a unit test's business; the DECISION is, and it is where
+    /// a wrong answer is invisible: the check must say "up to date" only when the running version
+    /// really is at least the newest on the track, in both directions and across pre-releases.
+    #[test]
+    fn update_check_reaches_a_verdict() {
+        use crate::update::{running_version, version_gt};
+        // Newer / older / equal, including the prerelease ordering a beta track depends on.
+        assert!(version_gt("0.2.41", "0.2.40"), "a newer release was not offered");
+        assert!(version_gt("0.2.40", "0.2.40-beta.1"), "a stable was not offered over its beta");
+        assert!(version_gt("0.2.40-beta.2", "0.2.40-beta.1"));
+        assert!(!version_gt("0.2.40", "0.2.40"), "the running version was offered to itself");
+        assert!(!version_gt("0.2.39", "0.2.40"), "an OLDER release was offered as an update");
+        assert!(!version_gt("0.2.40-beta.1", "0.2.40"), "a beta was offered over the stable");
+        // The comparison basis is overridable, which is how the "update available" path is
+        // exercised on a machine already running the newest build.
+        assert_eq!(running_version(), env!("CARGO_PKG_VERSION"));
+        std::env::set_var("FRACTADYNE_FAKE_VERSION", "0.0.1");
+        let faked = running_version();
+        std::env::remove_var("FRACTADYNE_FAKE_VERSION");
+        assert_eq!(faked, "0.0.1", "FRACTADYNE_FAKE_VERSION did not reach the check");
+        assert!(version_gt(env!("CARGO_PKG_VERSION"), "0.0.1"), "the faked version verdict is wrong");
+    }
+
+    // ---------------------------------------------------------------- tools (step 84)
+
+    /// Checklist step 84, "close the tour player: playback stops and normal interactive control
+    /// returns". A tour may drive the viewer's own settings, and `PlaybackRestore` is what hands
+    /// them back — so the invariant worth pinning is COMPLETENESS: every keyframe field that
+    /// writes a session setting must have somewhere to be restored from. Add a keyframe field
+    /// without adding it here and a played tour silently edits the viewer's session.
+    #[test]
+    fn stopping_playback_restores_interaction() {
+        // Keyframe fields a script may set, split by what happens when the tour ends. The
+        // "kept" list is not laziness: where the tour LEFT you is the view you keep exploring
+        // from, and resetting it would throw away the thing the tour was showing you.
+        const RESTORED: &[&str] = &["max_iter", "palette", "dual_split", "orbits", "minimap"];
+        const KEPT: &[&str] = &[
+            "id", "t", "hold", "ease", "transition", "transition_secs", "fade_out_secs",
+            "location", "re", "im", "zoom", "fractal", "julia", "dual", "julia_re", "julia_im",
+            "orbit_re", "orbit_im",
+        ];
+        let fields = crate::scripting::keyframe_field_names();
+        for f in &fields {
+            assert!(
+                RESTORED.contains(f) || KEPT.contains(f),
+                "keyframe field {f:?} is neither restored when a tour ends nor listed as \
+                 deliberately kept — decide which, or a tour silently edits the session"
+            );
+        }
+        for f in RESTORED {
+            assert!(fields.contains(f), "{f:?} is restored but is no longer a keyframe field");
+        }
+        // And the record itself carries a slot for each restored field (plus the palette's three
+        // companions, since choosing a preset overrides a custom gradient / binary / duotone).
+        let r = crate::scripting::PlaybackRestore {
+            max_iter: 12_345,
+            auto_iter: false,
+            palette_idx: 3,
+            use_custom_palette: true,
+            use_binary: true,
+            use_duotone: true,
+            minimap: true,
+            show_orbits: true,
+            dual_split: 0.34,
+        };
+        assert_eq!(r.max_iter, 12_345);
+        assert!((r.dual_split - 0.34).abs() < 1.0e-6);
+    }
+
 }

@@ -520,12 +520,7 @@ impl FractadyneApp {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        format!(
-            "fractadyne_{}_{}.{}",
-            self.fractal.name().replace(' ', ""),
-            Self::file_stamp(stamp),
-            self.export_ext(),
-        )
+        crate::export_file_name(self.fractal.name(), stamp, self.export_ext())
     }
 
     /// Start a background export, prompting for a path (modal Save dialog).

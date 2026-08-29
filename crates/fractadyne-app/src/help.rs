@@ -766,21 +766,26 @@ pub(crate) fn help_licenses(ui: &mut egui::Ui) {
     });
 }
 
+/// About's "Deep-zoom arithmetic" line: what has actually RUN, and what this binary contains.
+///
+/// The two halves answer different questions, and both matter. The first cannot name a backend
+/// that never iterated - it is stamped by orbits finishing, not by configuration - so before the
+/// first deep render it honestly reports that none has. The second is the compile-time fact that
+/// tells an accelerated build apart from the standard one. Split out of the panel so checklist
+/// steps 89 and 95 can be checked without drawing it.
+pub(crate) fn about_arithmetic_line() -> String {
+    format!(
+        "Deep-zoom arithmetic: {} (this build contains: {}).",
+        fractadyne_core::backend_status_line(),
+        fractadyne_core::built_in_backends()
+    )
+}
+
 pub(crate) fn help_about(ui: &mut egui::Ui) {
     help_h(ui, "About");
     help_p(ui, &format!("Fractadyne v{}", version_string()));
     help_p(ui, "A native fractal explorer built in Rust with wgpu.");
-    // Which arithmetic is doing the deep-zoom work. Sourced from what has actually RUN, so on a
-    // build that has both this cannot claim a backend that never iterated; before the first deep
-    // render it honestly reports that none has.
-    help_p(
-        ui,
-        &format!(
-            "Deep-zoom arithmetic: {} (this build contains: {}).",
-            fractadyne_core::backend_status_line(),
-            fractadyne_core::built_in_backends()
-        ),
-    );
+    help_p(ui, &about_arithmetic_line());
 
     help_sub(ui, "Files & data");
     help_p(

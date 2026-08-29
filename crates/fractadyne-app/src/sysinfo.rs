@@ -13,6 +13,14 @@ pub(crate) fn version_string() -> String {
     format!("{APP_VERSION} (build {BUILD_SEQ})")
 }
 
+/// The window title, e.g. `Fractadyne v0.2.40 (build 1901)`. A function rather than an inline
+/// `format!` at the one call site because checklist step 2 is "read the title bar and check the
+/// version matches the release" — that is only checkable if the title is something a test can ask
+/// for without opening a window.
+pub(crate) fn window_title() -> String {
+    format!("Fractadyne v{}", version_string())
+}
+
 /// Unix seconds → "YYYY-MM-DD HH:MM:SS UTC" (civil-date algorithm; no chrono dependency).
 pub(crate) fn utc_string(secs: u64) -> String {
     let days = (secs / 86_400) as i64;

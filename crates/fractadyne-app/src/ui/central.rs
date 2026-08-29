@@ -3,6 +3,40 @@
 //! verbatim from `main.rs`.
 use crate::*;
 
+/// Width of the draggable separator between the dual view's two panels.
+const DUAL_HANDLE_W: f32 = 6.0;
+
+/// The dual view's two panel rectangles: the parameter plane on the left, its Julia on the right,
+/// with [`DUAL_HANDLE_W`] of separator between them.
+///
+/// Pure geometry, split out of `draw_dual` because it is what checklist steps 45 and 46 actually
+/// describe. The split is clamped here, once, so no caller can produce a divider the viewer
+/// cannot drag back.
+pub(crate) fn dual_panel_rects(full: egui::Rect, split: f32) -> (egui::Rect, egui::Rect) {
+    let mid = full.min.x + full.width() * split.clamp(crate::DUAL_SPLIT_MIN, crate::DUAL_SPLIT_MAX);
+    (
+        egui::Rect::from_min_max(full.min, egui::pos2(mid - DUAL_HANDLE_W * 0.5, full.max.y)),
+        egui::Rect::from_min_max(egui::pos2(mid + DUAL_HANDLE_W * 0.5, full.min.y), full.max),
+    )
+}
+
+/// Which panel a pointer is over: `Some(false)` = the parameter plane, `Some(true)` = the Julia
+/// panel, `None` = the separator or outside.
+///
+/// This is the whole mechanism behind "the Julia side zooms independently": every gesture in the
+/// dual view is routed by this answer, so a pointer that belonged to both panels — or to neither
+/// where it should belong to one — would zoom the wrong view or nothing at all.
+pub(crate) fn dual_panel_at(full: egui::Rect, split: f32, p: egui::Pos2) -> Option<bool> {
+    let (left, right) = dual_panel_rects(full, split);
+    if left.contains(p) {
+        Some(false)
+    } else if right.contains(p) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
 impl FractadyneApp {
     /// The zoom velocity to APPLY this frame: `pointer.zoom_vel` damped by the deep-zoom pipeline
     /// lag (the `PACE_LAG_LO..HI` window shared with the script-playback pacer). When the async
@@ -27,11 +61,7 @@ impl FractadyneApp {
         let full = ui.max_rect();
         // Split position from the persisted fraction; a small gap between the panels holds the
         // draggable separator (handled at the end of this fn, so it draws on top).
-        const HANDLE_W: f32 = 6.0;
-        let mid = full.min.x
-            + full.width() * self.dual_split.clamp(crate::DUAL_SPLIT_MIN, crate::DUAL_SPLIT_MAX);
-        let left = egui::Rect::from_min_max(full.min, egui::pos2(mid - HANDLE_W * 0.5, full.max.y));
-        let right = egui::Rect::from_min_max(egui::pos2(mid + HANDLE_W * 0.5, full.min.y), full.max);
+        let (left, right) = dual_panel_rects(full, self.dual_split);
         let scroll = ctx.input(|i| i.smooth_scroll_delta.y) as f64;
 
         // Continuous zoom (hold Space / Shift+Space) toward the cursor, on the panel
@@ -44,13 +74,9 @@ impl FractadyneApp {
         let space = space && !ctx.wants_keyboard_input();
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
         let panel = pointer.and_then(|p| {
-            if left.contains(p) {
-                Some((p, left, false))
-            } else if right.contains(p) {
-                Some((p, right, true))
-            } else {
-                None
-            }
+            dual_panel_at(full, self.dual_split, p).map(|is_julia| {
+                (p, if is_julia { right } else { left }, is_julia)
+            })
         });
         let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
         let target = if space && panel.is_some() {
@@ -182,10 +208,10 @@ impl FractadyneApp {
         let rp = ui.painter_at(right);
         self.draw_recompute_spinner(ctx, &rp, right, 1, now);
 
-        // Draggable panel separator (fills the reserved gap at `mid`; drawn on top).
+        // Draggable panel separator: exactly the gap the two panels leave (drawn on top).
         let handle = egui::Rect::from_min_max(
-            egui::pos2(mid - HANDLE_W * 0.5, full.min.y),
-            egui::pos2(mid + HANDLE_W * 0.5, full.max.y),
+            egui::pos2(left.max.x, full.min.y),
+            egui::pos2(right.min.x, full.max.y),
         );
         let sep = ui.interact(handle, ui.id().with("dual_split"), egui::Sense::drag());
         if sep.dragged() {
@@ -204,8 +230,8 @@ impl FractadyneApp {
         };
         ui.painter().rect_filled(
             egui::Rect::from_min_max(
-                egui::pos2(mid - 0.5, full.min.y),
-                egui::pos2(mid + 0.5, full.max.y),
+                egui::pos2(handle.center().x - 0.5, full.min.y),
+                egui::pos2(handle.center().x + 0.5, full.max.y),
             ),
             egui::CornerRadius::ZERO,
             sep_col,

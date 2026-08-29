@@ -1565,6 +1565,20 @@ pub(crate) struct PlaybackRestore {
     pub(crate) dual_split: f32,
 }
 
+/// The `[[keyframe]]` table's field names, from the schema `--script-schema` prints.
+///
+/// Exposed so a test can ask what a script is ABLE to set: a keyframe field that writes one of
+/// the viewer's own settings must also be handed back when the tour ends, and the only way to
+/// keep that true as fields are added is to check the two lists against each other.
+#[cfg(test)]
+pub(crate) fn keyframe_field_names() -> Vec<&'static str> {
+    TOUR_SCHEMA
+        .iter()
+        .find(|t| t.toml == "[[keyframe]]")
+        .map(|t| t.fields.iter().map(|f| f.name).collect())
+        .unwrap_or_default()
+}
+
 /// A resolved chapter: `[start, end)` in tour seconds.
 pub(crate) struct Segment {
     pub(crate) id: String,
@@ -3714,10 +3728,7 @@ impl FractadyneApp {
                 // match the playback it was rendering. The two panel widths must SUM to `width`
                 // (derive the right from the left, never round both) or an odd width silently
                 // loses or gains a column against the requested frame size.
-                let split = s.dual_split.unwrap_or(0.5)
-                    .clamp(crate::DUAL_SPLIT_MIN, crate::DUAL_SPLIT_MAX);
-                let lw = ((width as f32 * split).round() as u32).clamp(1, width.saturating_sub(1));
-                let rw_panel = width - lw;
+                let (lw, rw_panel) = crate::dual_panel_widths(width, s.dual_split.unwrap_or(0.5));
                 self.viewport = fractadyne_core::Viewport::new(lw as f64, height as f64);
                 self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
                 let mut jvp = fractadyne_core::Viewport::new(rw_panel as f64, height as f64);

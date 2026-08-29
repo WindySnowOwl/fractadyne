@@ -658,16 +658,7 @@ impl FractadyneApp {
             ctx.copy_text(self.build_report());
             // The report itself can't ride the URL (length limits) — it's on the clipboard; the
             // new-issue page opens with the title prefilled and a paste hint as the body.
-            let url = format!(
-                "{}/new?title={}&body={}",
-                crate::ISSUES_URL,
-                crate::mailto_encode(&self.report_subject()),
-                crate::mailto_encode(
-                    "<!-- The full report is on your clipboard — paste it here (Ctrl+V). \
-                     Screenshots can be dragged in. -->\n\n"
-                ),
-            );
-            ctx.open_url(egui::OpenUrl::new_tab(url));
+            ctx.open_url(egui::OpenUrl::new_tab(crate::issue_new_url(&self.report_subject())));
             self.report.msg =
                 Some("Opened GitHub — the report is on the clipboard; paste it into the issue.".into());
         }
@@ -691,16 +682,7 @@ impl FractadyneApp {
         }
         if email {
             ctx.copy_text(self.build_report());
-            let url = format!(
-                "mailto:{}?subject={}&body={}",
-                crate::REPORT_EMAIL,
-                crate::mailto_encode(&self.report_subject()),
-                crate::mailto_encode(
-                    "The full report has been copied to your clipboard — paste it here (Ctrl+V). \
-                     You can also attach a saved report file.\n\n"
-                ),
-            );
-            ctx.open_url(egui::OpenUrl::same_tab(url));
+            ctx.open_url(egui::OpenUrl::same_tab(crate::issue_mailto_url(&self.report_subject())));
             self.report.msg =
                 Some("Opened your email app — the report is on the clipboard; paste it in.".into());
         }

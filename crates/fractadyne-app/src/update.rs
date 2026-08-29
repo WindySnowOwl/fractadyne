@@ -222,7 +222,7 @@ fn cmp_prerelease(a: &str, b: &str) -> std::cmp::Ordering {
 /// True if `cand` is a strictly newer semver than `cur`. Prerelease ordering (semver §11): a
 /// release outranks its own pre-releases, and two pre-releases of the same core compare via
 /// `cmp_prerelease` (so `beta.105 > beta.78`, and `rc.1 > beta.9`).
-fn version_gt(cand: &str, cur: &str) -> bool {
+pub(crate) fn version_gt(cand: &str, cur: &str) -> bool {
     let (cc, cp) = parse_ver(cand);
     let (uc, up) = parse_ver(cur);
     if cc != uc {
