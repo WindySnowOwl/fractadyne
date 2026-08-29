@@ -56,6 +56,13 @@ zoom).
   neither — so the overview can be used to pick a new place to start, to shift where
   you are looking from, or to change depth from where you already are.
 
+- **The working spinner now appears whenever the view is still resolving** — it was
+  suppressed whenever "Auto-scale iterations with zoom" was on, on the assumption that
+  those settles finish too quickly to be worth marking. That holds at shallow zoom and not
+  at depth, where a refinement can run for many seconds with no indication that anything
+  is happening. Quick settles still go unmarked, but now because they are measured as
+  quick rather than assumed to be.
+
 - **Scrolling the control panel no longer disturbs the view** — the mouse wheel is a
   window-wide input, and while the view only zoomed when the pointer was actually over it,
   the check for "is the user interacting" did not look at the pointer at all. Scrolling the

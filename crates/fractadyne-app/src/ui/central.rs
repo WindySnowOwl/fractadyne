@@ -441,6 +441,23 @@ impl FractadyneApp {
     /// Kept quiet outside that window (see the gate below) and debounced by `SHOW_DELAY` so a build
     /// quick enough to feel instant never flashes it. Top-left is the one free corner (perf overlay
     /// = top-right, minimap = bottom-left, watermark = bottom-right).
+    /// Is there work in flight for this view worth marking? Every input is a bool, so this is
+    /// extracted and pinned rather than left inline: the spinner has now failed to appear in
+    /// three separate field reports, each time because an extra condition was riding along
+    /// here (a debounce threshold tuned for the wrong frame cadence, then again for settled
+    /// walks, then an `!auto_iter` gate that was standing in for "this will be quick").
+    /// Whether it is worth SHOWING is a separate question, answered by `SHOW_DELAY` at the
+    /// call site - which measures duration directly instead of guessing at it.
+    fn spinner_busy(
+        reference_building: bool,
+        tile_pending: bool,
+        chunk_pending: bool,
+        tour_playing: bool,
+    ) -> bool {
+        // Tour playback re-invalidates the reference every keyframe, so it would strobe.
+        (reference_building || tile_pending || chunk_pending) && !tour_playing
+    }
+
     pub(crate) fn draw_recompute_spinner(
         &mut self,
         ctx: &egui::Context,
@@ -455,13 +472,24 @@ impl FractadyneApp {
         // a deep pan/zoom refreshing its reference. The SHOW_DELAY below keeps quick (shallow) builds
         // unmarked so it never strobes, and consecutive frames of one build re-use the same start. Tour
         // playback re-invalidates the reference every keyframe, so suppress there rather than strobe.
-        // Also busy during a long EXPLICIT-count refinement: the capped settle grid / chunked
-        // iteration progression renders for minutes after the reference lands (~240 cap-sized
-        // tiles at a 4M ask), and without a cue the view looks stalled mid-composite. Auto-iter
-        // views keep the old behavior — their settles are sub-second and would strobe.
-        let refining = !self.render_cfg.auto_iter
-            && (self.perf.tile_pending[vi] || self.perf.chunk_pending[vi]);
-        let busy = (self.recompute_rx[vi].is_some() || refining) && !self.tour_playing();
+        // Also busy during a long refinement: the settle grid / chunked iteration progression
+        // renders for many frames after the reference lands (~240 cap-sized tiles at a 4M ask),
+        // and without a cue the view looks stalled mid-composite.
+        //
+        // ⚠This was gated on `!auto_iter`, on the stated theory that auto-iter settles are
+        // "sub-second and would strobe". FALSE AT DEPTH, and the third field report about this
+        // spinner failing to appear: a 1e31× view with auto-iter ON, refining at 75.7% with
+        // 154 ms frames — many seconds of visible work, no cue (2026-08-29). Auto-iter says
+        // nothing about how long a settle takes; DEPTH does, and neither is knowable here.
+        // `SHOW_DELAY` below measures the thing the gate was standing in for — how long this
+        // refinement has actually been running — so let it arbitrate rather than a proxy that
+        // is wrong in exactly the case the cue exists for.
+        let busy = Self::spinner_busy(
+            self.recompute_rx[vi].is_some(),
+            self.perf.tile_pending[vi],
+            self.perf.chunk_pending[vi],
+            self.tour_playing(),
+        );
         if busy {
             // A real gap since the last in-flight frame re-arms the delay, so each fresh build must
             // again outlast it (a quick one never shows); consecutive frames of one build do not. The
@@ -1088,6 +1116,30 @@ mod tests {
     /// moves down - which in complex coordinates means y DECREASES, since screen +y is complex
     /// -y. Getting this backwards produces a minimap that fights the user, and no screenshot or
     /// render gate can see it.
+    /// The regression this pins: a chunked or tiled refinement in flight is BUSY, on its own,
+    /// whatever the iteration setting. It was gated behind `!auto_iter` on the theory that
+    /// auto-iter settles are sub-second - false at depth, where they run for many seconds and are
+    /// exactly when the cue is wanted (1e31x, refining 75.7%, no spinner; 2026-08-29).
+    #[test]
+    fn a_refinement_in_flight_is_busy_by_itself() {
+        let busy = FractadyneApp::spinner_busy;
+        assert!(busy(false, false, true, false), "a chunked refinement alone must be busy");
+        assert!(busy(false, true, false, false), "a settle grid alone must be busy");
+        assert!(busy(true, false, false, false), "a reference build alone must be busy");
+        assert!(!busy(false, false, false, false), "nothing pending is not busy");
+    }
+
+    /// Tour playback re-invalidates the reference every keyframe, so the spinner would strobe
+    /// through a whole tour. Suppression there is deliberate, not an oversight to be tidied away.
+    #[test]
+    fn tour_playback_suppresses_the_spinner() {
+        let busy = FractadyneApp::spinner_busy;
+        for (r, t, c) in [(true, false, false), (false, true, false), (false, false, true)] {
+            assert!(busy(r, t, c, false), "control: {r} {t} {c} should be busy when not touring");
+            assert!(!busy(r, t, c, true), "touring must suppress {r} {t} {c}");
+        }
+    }
+
     #[test]
     fn minimap_drag_signs() {
         let size = egui::vec2(196.0, 147.0);
