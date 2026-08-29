@@ -718,6 +718,14 @@ impl FractadyneApp {
         // Window-sizing steps: report the status-bar height, whether it wrapped, and — the point
         // of the user's report — whether it WAVERED (height changed across a fixed-width settle).
         if let StepKind::Window(win) = &step.kind {
+            // ⚠NO ASPECT CHECK HERE, deliberately. One was written and removed the same
+            // hour: `complex_span` is `(units_per_pixel * width_px, units_per_pixel *
+            // height_px)` — ONE scalar for both axes — so comparing the complex aspect
+            // against the pixel aspect is identically 1 by construction and can never
+            // fail. It ran green on all three window sizes and proved nothing. A real
+            // check for checklist steps 11-12 has to measure the RENDERED IMAGE, because
+            // a stretch could only enter in the shader or the present path, neither of
+            // which the viewport can see.
             let one_line = if ut.sb_min.is_finite() { ut.sb_min } else { self.perf.status_bar_h };
             let waver = ut.sb_max - if ut.sb_min.is_finite() { ut.sb_min } else { ut.sb_max };
             if waver <= 1.5 {

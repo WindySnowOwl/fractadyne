@@ -107,7 +107,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 
 | # | class | enforcer |
 |---|---|---|
-| 11–12 | A | uitest already resizes; add extreme letterbox/portrait sizes and the aspect-ratio invariant. |
+| 11–12 | C | uitest already resizes and checks the status bar. ⚠**The obvious aspect check is a tautology**: `complex_span` is `units_per_pixel` times each axis, so complex-aspect ÷ pixel-aspect is identically 1 and cannot fail. Written, run green on three window sizes, and removed. A real check must measure the rendered image — a stretch can only enter in the shader or the present path. |
 | 13 | A | `ViewportCommand::Maximized` round-trip; assert a complete frame both ways. |
 | 14 | A | Rapid-resize loop (~50 size changes); assert no crash, final frame coherent, aspect correct. |
 | 15 | C | Second physical display at another DPI. Proxy: run the layout invariants at forced `pixels_per_point` of 1.0 / 1.5 / 2.0. |
