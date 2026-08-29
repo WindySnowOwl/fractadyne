@@ -609,8 +609,20 @@ impl FractadyneApp {
                                 zoom = Some((-0.0015 * sy).exp());
                             }
                         }
+                        // HIDE the pointer for the duration of the drag rather than showing a
+                        // grabbing hand. The map is ~196 px wide and the view box inside it can
+                        // be a few pixels across, so a cursor covers the very thing being
+                        // dragged - and an accessibility cursor set to a large size covers it
+                        // completely (user report, 2026-08-29). Nothing is lost: the box
+                        // tracking the hand IS the feedback a cursor would give, and it
+                        // reappears the moment the button is released.
+                        //
+                        // Set on the CONTEXT, not via `on_hover_cursor`: a drag that wanders
+                        // off the small map still owns the gesture, but the widget is no longer
+                        // hovered, and the cursor would blink back mid-drag.
                         let resp = if resp.dragged() {
-                            resp.on_hover_cursor(egui::CursorIcon::Grabbing)
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+                            resp
                         } else {
                             resp.on_hover_cursor(egui::CursorIcon::Grab)
                         };

@@ -48,7 +48,10 @@ zoom).
 
 - **Drag the minimap to move around** — the overview's "you are here" box can now be
   dragged, panning the view at its current zoom, and the wheel over the overview zooms in
-  and out without moving. Clicking still jumps to a region at home zoom. The three
+  and out without moving. The mouse pointer is hidden while you drag, so it cannot cover
+  the very box you are moving — the box following your hand is the feedback the pointer
+  would have given, and it matters most with the large pointers an accessibility setting
+  produces. Clicking still jumps to a region at home zoom. The three
   gestures keep different things on purpose — where you are, how close you are, or
   neither — so the overview can be used to pick a new place to start, to shift where
   you are looking from, or to change depth from where you already are.
