@@ -379,21 +379,34 @@ impl FractadyneApp {
                                 ui.label("Preperiod k");
                                 ui.add(
                                     egui::TextEdit::singleline(&mut self.goto.feat_k)
+                                        .hint_text("auto")
                                         .desired_width(48.0),
                                 );
                                 ui.add_space(8.0);
                                 ui.label("Period p");
                                 ui.add(
                                     egui::TextEdit::singleline(&mut self.goto.feat_p)
+                                        .hint_text("auto")
                                         .desired_width(48.0),
                                 );
-                            });
+                            })
+                            .response
+                            .on_hover_text(
+                                "Leave both blank to detect them from the orbit at the view \
+                                 centre; the values found are filled in here. Nobody looking at a \
+                                 spiral knows its preperiod, and having to supply one is what made \
+                                 this solver unusable in practice.",
+                            );
                         }
                         find_feat = ui
                             .button("Find near view")
                             .on_hover_text(
                                 "Newton-solve from the current center onto the exact feature \
-                                 (arbitrary precision). Navigate near the feature first.",
+                                 (arbitrary precision). Navigate near the feature first.\n\n\
+                                 Set the Zoom field above to the depth you WANT before solving: \
+                                 the point is computed to the precision that depth needs, and the \
+                                 view jumps straight there. That is one solve instead of a long \
+                                 sequence of manual zoom steps.",
                             )
                             .clicked();
                     });

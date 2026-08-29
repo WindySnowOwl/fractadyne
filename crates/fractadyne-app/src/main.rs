@@ -75,6 +75,7 @@ mod torture;
 mod tone;
 mod tunables;
 mod ui;
+mod shot;
 mod uitest;
 
 // ⭐The tunables live in ONE module now (a user requirement — see `tunables.rs`), and are
@@ -1210,7 +1211,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
         "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
-        "--chunk-sweep", "--bench-bignum",
+        "--chunk-sweep", "--bench-bignum", "--shot",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }
@@ -1234,6 +1235,7 @@ mod task_invocation {
         for flag in [
             "--selftest", "--livetest", "--uitest", "--juliadive", "--torture", "--render",
             "--render-tour", "--bench-matrix", "--gputest", "--resizetest", "--motiontest",
+            "--shot",
         ] {
             assert!(is_task_invocation(&[flag]), "{flag} must count as a task invocation");
             // ...including when it is not the first argument.
@@ -3044,6 +3046,8 @@ struct FractadyneApp {
     /// CLI `--uitest [DIR]`: scripted walk through every UI screen + the live-render bands,
     /// screenshotting each and writing a review bundle (see `mod uitest`), then exit.
     uitest: Option<uitest::UiTest>,
+    /// `--shot`: regenerate the published screenshot from a saved location, then exit.
+    shot: Option<shot::Shot>,
     /// CLI `--juliadive [DIR]`: dev harness — dual view, continuous in-app Julia zoom to ~1400×
     /// with periodic screenshots (see `uitest::JuliaDive`). Reproduces the dual-view Julia motion
     /// path deterministically (synthetic OS input proved unreliable for wheel/focus).
@@ -3438,6 +3442,35 @@ impl FractadyneApp {
         let livetest = val("--livetest").map(std::path::PathBuf::from);
         // --uitest [DIR]: presence enables the UI walk; a following non-flag token is the output
         // base directory (else the share/logs default). Built lazily so a normal launch pays nothing.
+        // --shot LOCATION [--out PATH] [--size WxH]: the published-screenshot regenerator.
+        // Fatal on a missing location rather than defaulting to one: this writes a file
+        // someone is about to publish.
+        let shot = if args.iter().any(|a| a == "--shot") {
+            let loc = match val("--shot").filter(|s| !s.starts_with('-')) {
+                Some(s) => std::path::PathBuf::from(s),
+                None => {
+                    eprintln!("fractadyne: --shot needs a location file (.fdn or an exported view).");
+                    crate::exit(2)
+                }
+            };
+            let out = val("--out")
+                .or_else(|| val("-o"))
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("shot.png"));
+            let (w, h) = match val("--size") {
+                Some(s) => {
+                    let (w, h) = arg_size("--size", s);
+                    (w.unwrap_or(1920) as f32, h.unwrap_or(1200) as f32)
+                }
+                None => (1920.0, 1200.0),
+            };
+            let budget = val("--shot-timeout")
+                .map(|s| arg_parse::<u64>("--shot-timeout", s, "seconds"))
+                .unwrap_or(180);
+            Some(shot::Shot::new(loc, out, (w, h), budget))
+        } else {
+            None
+        };
         let uitest = if args.iter().any(|a| a == "--uitest") {
             let out = val("--uitest").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
             Some(uitest::UiTest::new(out))
@@ -3500,6 +3533,7 @@ impl FractadyneApp {
         // wait for a clean state is the hang this predicate exists to prevent. The question to ask
         // of a new flag is "did the user ask for a specific outcome?", not "is it headless?".
         let launched_for_a_task = livetest.is_some()
+            || shot.is_some()
             || divetest.is_some()
             || uitest.is_some()
             || juliadive.is_some()
@@ -3715,6 +3749,7 @@ impl FractadyneApp {
             resizetest,
             divetest,
             livetest,
+            shot,
             uitest,
             juliadive,
             chunk_sweep,
@@ -5619,11 +5654,53 @@ impl FractadyneApp {
             FeatureKind::Misiurewicz => {
                 let k = self.goto.feat_k.trim().parse::<u32>().ok().filter(|&v| v > 0);
                 let p = self.goto.feat_p.trim().parse::<u32>().ok().filter(|&v| v > 0);
-                let (Some(k), Some(p)) = (k, p) else {
-                    self.goto.msg = Some("Enter a preperiod and period (positive integers).".into());
-                    return;
+                // Blank fields mean FIND THEM. Requiring the pair up front is why this solver went
+                // unused: nobody looking at a spiral knows its preperiod, so the only way to reach
+                // one was to click-zoom towards it by hand, a step at a time.
+                let (k, p) = match (k, p) {
+                    (Some(k), Some(p)) => (k, p),
+                    _ => {
+                        let iters = self
+                            .viewport
+                            .recommended_max_iter(self.render_cfg.max_iter)
+                            .clamp(256, 20_000);
+                        match fractadyne_core::detect_misiurewicz(
+                            &center[0],
+                            &center[1],
+                            0,
+                            iters,
+                            1_024,
+                            self.viewport.precision,
+                        ) {
+                            Some((dk, dp)) => {
+                                // Show what was found: the numbers are the interesting part, and a
+                                // silent auto-detect leaves no way to tell a good fit from a guess.
+                                self.goto.feat_k = dk.to_string();
+                                self.goto.feat_p = dp.to_string();
+                                (dk, dp)
+                            }
+                            None => {
+                                self.goto.msg = Some(
+                                    "No Misiurewicz point found near this view — try centring \
+                                     closer to a spiral or branch point."
+                                        .into(),
+                                );
+                                return;
+                            }
+                        }
+                    }
                 };
-                match fractadyne_core::find_misiurewicz(&center, k, p, mag, 0) {
+                // Solve at the depth being ASKED FOR, not the depth being viewed. The point is
+                // only as precise as the solve, and a centre carrying 45 digits cannot be dived
+                // to 1e500x — which is the whole reason for computing it rather than diving.
+                let target_l2 = parse_zoom_to_log2(&self.goto.zoom)
+                    .filter(|t| t.is_finite() && *t > cur_l2);
+                let solve_mag = match target_l2 {
+                    Some(t) => 2.0f64.powf(t.min(1_020.0)),
+                    None => mag,
+                };
+                zoom_to = target_l2;
+                match fractadyne_core::find_misiurewicz(&center, k, p, solve_mag, 0) {
                     Some(m) => {
                         // The multiplier λ of the cycle the point lands on: |λ| is the ZOOM
                         // PERIOD (the view repeats every log₂|λ| octaves) and arg λ the twist
@@ -7022,6 +7099,11 @@ impl eframe::App for FractadyneApp {
         // --uitest: advance the scripted UI/live walk. Runs each frame and does NOT exit early —
         // the flags it sets (which dialog is open, which view) must be drawn by the rest of this
         // update(); it screenshots and exits itself once the walk is done. Gated on GPU being up.
+        // --shot: load, settle, capture, exit. Before --uitest so the two can never both
+        // drive a frame.
+        if self.shot.is_some() && gpu.is_some() {
+            self.shot_frame(ctx);
+        }
         if self.uitest.is_some() && gpu.is_some() {
             self.uitest_frame(ctx, gpu_name.as_deref());
         }

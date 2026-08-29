@@ -1745,6 +1745,113 @@ pub fn misiurewicz_multiplier(
 /// `F'(c) = D_{k+p} − D_k` (`D = dZ/dc`). Seeded from where you're looking, so it snaps onto the
 /// branch/spiral center you're near. `None` if it doesn't converge to a nearby point that is
 /// genuinely pre-periodic (a `(k,p)` mismatch or runaway).
+/// Detect a Misiurewicz point's `(preperiod, period)` from the critical orbit at `(cx, cy)`.
+///
+/// A Misiurewicz point is strictly PRE-periodic: the critical orbit runs for `k` steps and then
+/// lands exactly on a repelling `p`-cycle. So the pair to find is the `(m, n-m)` minimising
+/// `|z_n - z_m|` — at the true point that separation is zero, and at a view centred near one it is
+/// about the width of the view.
+///
+/// This is the pre-periodic counterpart of [`detect_period`], and it is what lets the Misiurewicz
+/// solver work the way the minibrot one already does: without it a caller has to KNOW the two
+/// numbers, which in practice means nobody uses it and dives to a spiral centre by hand.
+///
+/// ⚠**The scan cannot be done in `f64`.** The orbit values are order 1, so an `f64` copy resolves
+/// differences no finer than ~1e-16, while the separation that identifies the pair is the width of
+/// the view — 6.6e-39 at the 1.6e39x location this was written for. Every candidate would read as
+/// exactly zero. `f64` is therefore used only as a cheap PRE-FILTER (a true near-return collapses
+/// to zero there, so it always survives), and the ranking is done in full precision on the handful
+/// that pass.
+///
+/// Returns `None` if the orbit escapes (not pre-periodic) or nothing repeats within the bounds.
+pub fn detect_misiurewicz(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    max_period: u32,
+    p: usize,
+) -> Option<(u32, u32)> {
+    formula_power(formula)?;
+    let max_iter = max_iter.clamp(8, 20_000) as usize;
+    let max_period = max_period.clamp(1, 4_096) as usize;
+
+    // The orbit, kept in full precision, with an f64 shadow for the pre-filter.
+    let mut zs: Vec<(BigFloat, BigFloat)> = Vec::with_capacity(max_iter);
+    let mut sh: Vec<(f64, f64)> = Vec::with_capacity(max_iter);
+    let mut zx = bf(0.0, p);
+    let mut zy = bf(0.0, p);
+    for _ in 0..max_iter {
+        let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
+        zx = nx;
+        zy = ny;
+        if mag2_bf(&zx, &zy) > 16.0 {
+            break; // escaped: the orbit is not pre-periodic
+        }
+        sh.push((crate::to_f64(&zx), crate::to_f64(&zy)));
+        zs.push((zx.clone(), zy.clone()));
+    }
+    if zs.len() < 4 {
+        return None;
+    }
+
+    // Pre-filter in f64. A genuine near-return is far below f64 resolution and lands on exactly
+    // zero here, so this only ever discards pairs that are obviously far apart.
+    const COARSE: f64 = 1.0e-6;
+    let mut cand: Vec<(usize, usize)> = Vec::new();
+    for n in 1..sh.len() {
+        let lo = n.saturating_sub(max_period);
+        for m in lo..n {
+            let (dx, dy) = (sh[n].0 - sh[m].0, sh[n].1 - sh[m].1);
+            if dx * dx + dy * dy < COARSE * COARSE {
+                cand.push((m, n));
+            }
+        }
+    }
+    if cand.is_empty() {
+        return None;
+    }
+
+    // Rank the survivors in full precision.
+    let mut best: Option<(BigFloat, usize, usize)> = None;
+    for (m, n) in cand {
+        let dx = zs[n].0.sub(&zs[m].0, p, RM);
+        let dy = zs[n].1.sub(&zs[m].1, p, RM);
+        let d = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
+        // astro-float's `cmp` yields a SIGN, not an Ordering.
+        let better = best.as_ref().is_none_or(|(bd, _, _)| d.cmp(bd).is_some_and(|o| o < 0));
+        if better {
+            best = Some((d, m, n));
+        }
+    }
+    let (bd, bm, bn) = best?;
+
+    // Harmonics: if (k, p) fits, so does (k, 2p), (k, 3p)… and they can score almost as well.
+    // Prefer the SMALLEST period whose separation is within a factor of the winner, so the answer
+    // is the fundamental cycle rather than a multiple of it.
+    let period = bn - bm;
+    let slack = bd.mul(&bf(64.0, p), p, RM);
+    let mut fundamental = period;
+    for q in 1..period {
+        if period % q != 0 {
+            continue;
+        }
+        let n2 = bm + q;
+        if n2 >= zs.len() {
+            continue;
+        }
+        let dx = zs[n2].0.sub(&zs[bm].0, p, RM);
+        let dy = zs[n2].1.sub(&zs[bm].1, p, RM);
+        let d = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
+        if d.cmp(&slack).is_some_and(|o| o < 0) {
+            fundamental = q;
+            break;
+        }
+    }
+    // `bm` indexes the orbit AFTER one step, so the preperiod is one-based.
+    Some((bm as u32 + 1, fundamental as u32))
+}
+
 pub fn find_misiurewicz(
     center: &[BigFloat; 2],
     preperiod: u32,
@@ -2063,6 +2170,55 @@ pub fn render_multiref_mandel(
 // (vs exact per-iteration accumulation), so we know BEFORE any GPU work whether the aux coloring
 // stats can safely ride BLA/SA iteration-skipping. Trap is the canary: a min over ~the same values,
 // so its error must be tiny; a large trap error means the ORACLE is buggy, not the method.
+#[cfg(test)]
+mod misiurewicz_detection {
+    use super::*;
+
+    fn detect(re: &str, im: &str, prec: usize, max_iter: u32, max_period: u32) -> Option<(u32, u32)> {
+        let cx = crate::parse_bf_prec(re, prec).expect("centre parses");
+        let cy = crate::parse_bf_prec(im, prec).expect("centre parses");
+        detect_misiurewicz(&cx, &cy, 0, max_iter, max_period, prec)
+    }
+
+    /// Two Misiurewicz points whose orbits can be checked by hand, so a wrong answer here is not a
+    /// matter of interpretation.
+    ///
+    /// c = -2:  0 -> -2 -> 2 -> 2 -> ...      lands on the fixed point 2 after 2 steps => (2, 1)
+    /// c =  i:  0 ->  i -> -1+i -> -i -> -1+i lands on a 2-cycle after 2 steps        => (2, 2)
+    #[test]
+    fn the_two_textbook_points_are_identified() {
+        assert_eq!(detect("-2.0", "0.0", 128, 64, 32), Some((2, 1)), "antenna tip");
+        assert_eq!(detect("0.0", "1.0", 128, 64, 32), Some((2, 2)), "c = i");
+    }
+
+    /// The spiral this was written for: the centre of a 1.6e39x view whose structure is organised
+    /// around a Misiurewicz point. Independently identified as (49, 3) with mpmath, then Newton
+    /// refined to 522 digits and RENDERED at 1e500x, where it shows the same spiral rather than
+    /// noise — which is the check that the pair is right, not merely plausible.
+    ///
+    /// The separation at this centre is 6.6e-39, so this doubles as the regression pin for the
+    /// f64 pre-filter: an implementation that ranked candidates in f64 would see every one of them
+    /// as exactly zero and could return any pair at all.
+    #[test]
+    fn a_deep_spiral_centre_resolves_to_its_misiurewicz_pair() {
+        let got = detect(
+            "-0.088792613303098660153845052309701500569653558627720875436411309366560178250182",
+            "0.654809144755247929391298652387765097829565958367438788263142461373782142678715",
+            256,
+            600,
+            64,
+        );
+        assert_eq!(got, Some((49, 3)), "expected the (49,3) pair the render confirmed");
+    }
+
+    /// An escaping orbit is not pre-periodic, and a point well inside the main cardioid has no
+    /// near-return to find. Both must decline rather than invent a pair.
+    #[test]
+    fn points_without_a_misiurewicz_pair_are_declined() {
+        assert_eq!(detect("2.0", "2.0", 128, 64, 32), None, "escapes immediately");
+    }
+}
+
 #[cfg(test)]
 mod aux_bla_oracle {
     use super::*;

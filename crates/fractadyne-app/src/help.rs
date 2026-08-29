@@ -409,6 +409,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--benchmark, --bench", "Run the benchmark with the current settings and exit (use --out to save the report)."),
         Flag("--benchmark-std [--res R] [--depth D] [--burnin N]", "Standardized benchmark: pinned resolution + settings, comparable across machines. --res = 720p | 1080p | 4k | 5k (default 1080p). --depth = standard (1e32x) | ultra (1e48x); --ultra is shorthand. BOTH cross into the floatexp/BLA path, and the report breaks the dive down per arithmetic regime (frames, avg ms, share). --burnin N repeats it N times (default 10) to check stability / throttling."),
         Flag("--refdiag --center X Y --zoom-log2 L", "Dev: sample reference orbit lengths across a view."),
+        Flag("--shot LOC [--out P] [--size WxH] [--shot-timeout S]", "Regenerate the published screenshot: load a location (.fdn or an exported view), turn on dual view, the minimap and the control panel, wait for the reference orbit to finish building, capture the window to a PNG and exit. Deterministic - palette and light animation are pinned off. Default 1920x1200, 180s budget."),
         Flag("--find-minibrot", "Print the nearby minibrot's period + center and exit (--center X Y --zoom M)."),
         Flag("--version, -V", "Print the version and build number, then exit."),
         Flag("--check-updates [stable|beta]", "Check GitHub for a newer release on the given track (default stable), print the result, and exit (needs network)."),
