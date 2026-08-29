@@ -4931,6 +4931,43 @@ impl FractadyneApp {
 
     /// Performance diagnostics, rendered into a docked panel section (FPS, CPU/GPU
     /// split, reference-recompute cost, and current render state).
+    /// One readout row: a fixed-width monospace label column, the value, and a tooltip on
+    /// both halves. Returns the row so a caller can chain.
+    ///
+    /// A fixed column rather than an [`egui::Grid`] because the panel is split into
+    /// separator-delimited groups, and a Grid sizes its columns per instance: every group
+    /// would align internally and disagree with its neighbours - which is precisely what the
+    /// hand-counted padding this replaces already did (`ref recompute` sat three characters
+    /// past the column the groups above it used, and values alternated between left- and
+    /// right-aligned depending on whether the format string carried a width).
+    ///
+    /// The width is measured from the monospace font rather than hard-coded, so it follows
+    /// the UI scale instead of drifting away from it.
+    fn metric_row(
+        ui: &mut egui::Ui,
+        label: &str,
+        value: impl Into<egui::RichText>,
+        tip: impl Into<egui::WidgetText>,
+    ) -> egui::Response {
+        /// Longest label is `ref recompute` / `recompute tot` at 13; one space of gap.
+        const LABEL_CHARS: f32 = 15.0;
+        let inner = ui
+            .horizontal(|ui| {
+                let font = egui::TextStyle::Monospace.resolve(ui.style());
+                let col = ui.fonts(|f| f.glyph_width(&font, ' ')) * LABEL_CHARS;
+                let l = ui.monospace(label);
+                if l.rect.width() < col {
+                    ui.add_space(col - l.rect.width());
+                }
+                let v = ui.add(egui::Label::new(value.into().monospace()));
+                l.union(v)
+            })
+            .inner;
+        // On the union of both cells: hovering the LABEL is the natural thing to do when the
+        // label is the part you did not understand.
+        inner.on_hover_text(tip)
+    }
+
     fn perf_section(&self, ui: &mut egui::Ui) {
         let p = &self.perf;
         let fps = if p.frame_ms > 0.0 { 1000.0 / p.frame_ms } else { 0.0 };
@@ -4962,22 +4999,22 @@ impl FractadyneApp {
                     let total = gres[0].div_ceil(side).max(1) * gres[1].div_ceil(side).max(1);
                     let done = g.next.min(total);
                     let eta = (total.saturating_sub(done)) as f64 * p.frame_ms / 1000.0;
-                    format!("FPS        refining {done}/{total} (~{})", mmss(eta))
+                    format!("refining {done}/{total} (~{})", mmss(eta))
                 }
-                None => "FPS        refining (arming)".to_string(),
+                None => "refining (arming)".to_string(),
             }
         } else if p.chunk_pending[0] {
             let ask = p.chunk_sig[0].1.max(1);
             let pct = 100.0 * p.chunk_cursor[0].min(ask) as f64 / ask as f64;
-            format!("FPS        refining {pct:4.1}%")
+            format!("refining {pct:.1}%")
         } else if self.recompute_rx[0].is_some() {
-            "FPS        building reference".to_string()
+            "building reference".to_string()
         } else if !animating && p.frame_idx.saturating_sub(p.fe_dispatch_frame[0]) > 8 {
             // Nothing dispatched for a while and nothing animating: the repaint cadence is just
             // the idle heartbeat — don't dress it up as a framerate.
-            "FPS        idle".to_string()
+            "idle".to_string()
         } else {
-            format!("FPS        {fps:6.1}")
+            format!("{fps:.1}")
         };
         // Annunciated row: default color and no marker when healthy; amber " !" at a warning
         // and red " !!" in a danger band. The marker is trailing ASCII so a level change never
@@ -4985,23 +5022,28 @@ impl FractadyneApp {
         // ⚠Thresholds are read from the live tunables / device limits at draw time — never
         // mirrored constants (the profile.rs SETTLE_DELAY 0.35-vs-0.18 drift is the recorded
         // warning about restating a number the code already owns).
-        let level_row = |ui: &mut egui::Ui, level: u8, text: String| -> egui::Response {
+        let level_value = |level: u8, text: String| -> egui::RichText {
             match level {
-                2 => ui.monospace(
-                    egui::RichText::new(format!("{text} !!"))
-                        .color(egui::Color32::from_rgb(235, 90, 70)),
-                ),
-                1 => ui.monospace(
-                    egui::RichText::new(format!("{text} !"))
-                        .color(egui::Color32::from_rgb(235, 170, 50)),
-                ),
-                _ => ui.monospace(text),
+                2 => egui::RichText::new(format!("{text} !!"))
+                    .color(egui::Color32::from_rgb(235, 90, 70)),
+                1 => egui::RichText::new(format!("{text} !"))
+                    .color(egui::Color32::from_rgb(235, 170, 50)),
+                _ => egui::RichText::new(text),
             }
         };
-        ui.monospace(line);
-        ui.monospace(format!("frame      {:6.2} ms", p.frame_ms));
-        ui.monospace(format!("cpu        {:6.2} ms", p.cpu_ms));
-        ui.monospace(format!("gpu/idle   {gpu_idle:6.2} ms"));
+        Self::metric_row(ui, "FPS", line, "Frames presented per second, from the smoothed interval between \
+             frames. While a view is settling this reports refinement progress instead - a \
+             settling view is not running at the rate a number here would imply.");
+        Self::metric_row(ui, "frame", format!("{:.2} ms", p.frame_ms), "Smoothed wall-clock time between \
+             frames - not a sum of the rows below it. It includes waiting to present, so on a \
+             settled idle view it reflects the repaint cadence rather than any work.");
+        Self::metric_row(ui, "cpu", format!("{:.2} ms", p.cpu_ms), "Main-thread time inside one update: \
+             parameter setup and reference-cache management. This is the row that spikes when \
+             a reference rebuilds, and a spike here is the stutter you feel.");
+        Self::metric_row(ui, "gpu/idle", format!("{gpu_idle:.2} ms"), "Frame time minus main-thread CPU \
+             time. That is GPU work while the view is rendering, but on a settled view it is \
+             mostly idle waiting - the name says both because the panel cannot tell them \
+             apart from this subtraction alone.");
         // The cost controller's measurement source. Wall-clock FALLBACK is the danger state:
         // the budget is pricing frames without GPU timings, which is exactly how both fatal
         // 2026-08-19 sessions ran ~1 s frames with the budget still growing.
@@ -5012,13 +5054,19 @@ impl FractadyneApp {
         } else {
             (1, "wall clock (no TIMESTAMP_QUERY)")
         };
-        level_row(ui, timing_lvl, format!("timing     {timing_txt}")).on_hover_text(
+        Self::metric_row(ui, "timing", level_value(timing_lvl, timing_txt.to_string()),
             "How frame cost is measured. GPU timestamps are the precise source; the wall-clock              fallback engages when timings stop arriving, and a budget priced by wall clock has              repeatedly mis-sized deep frames — treat red here as 'the safety margins are              estimates right now'.",
         );
         ui.separator();
-        ui.monospace(format!("mode       {mode}"));
-        ui.monospace(format!("eff iter   {:>7}", p.last_eff_iter));
-        ui.monospace(format!("precision  {:>5} bit", p.last_precision));
+        Self::metric_row(ui, "mode", mode, "Arithmetic path the last frame rendered with: direct (no \
+             reference orbit), df32 perturbation, or floatexp - the extended-range path used \
+             past about 1e28x, and the only one on which BLA runs.");
+        Self::metric_row(ui, "eff iter", format!("{}", p.last_eff_iter), "Iterations the last frame \
+             actually used, after depth scaling and any cap applied while moving - not the \
+             base setting in Quality, which is only the starting point.");
+        Self::metric_row(ui, "precision", format!("{} bit", p.last_precision), "Mantissa bits the reference \
+             orbit is computed at. It grows with depth; 64 bits is the shallow floor, not a \
+             limit you are hitting.");
         {
             // The device's orbit ceiling (storage-binding limit): past it the live view cannot
             // resolve deeper — the documented ~1e95 depth wall. Announce the approach.
@@ -5030,7 +5078,7 @@ impl FractadyneApp {
             } else {
                 0
             };
-            level_row(ui, lvl, format!("orbit len  {:>7}", p.last_orbit_len)).on_hover_text(
+            Self::metric_row(ui, "orbit len", level_value(lvl, format!("{}", p.last_orbit_len)),
                 format!(
                     "Reference orbit samples. This GPU holds at most {} — approaching it is the                      practical depth wall: past it the live view cannot resolve deeper locations                      that need a longer orbit.",
                     if cap == u32::MAX { "(uncapped)".to_string() } else { cap.to_string() }
@@ -5038,11 +5086,17 @@ impl FractadyneApp {
             );
         }
         if p.last_sa_skip > 0 {
-            ui.monospace(format!("SA skip    {:>7}", p.last_sa_skip));
+            Self::metric_row(ui, "SA skip", format!("{}", p.last_sa_skip), "Iterations the series \
+                 approximation skipped before per-pixel work began. Higher is faster and \
+                 changes nothing about the image; the row is absent when it skipped none.");
         }
-        ui.monospace(format!("aa         {}x", self.render_cfg.aa));
-        ui.monospace(format!("dual       {}", self.dual));
-        ui.monospace(format!("zoom       {}×", fmt_zoom_log2(self.viewport.log2_magnification())));
+        Self::metric_row(ui, "aa", format!("{}x", self.render_cfg.aa), "Supersampling: each pixel is \
+             rendered from this many samples per axis, so 2x costs four times the work.");
+        Self::metric_row(ui, "dual", format!("{}", self.dual), "Whether the split Mandelbrot/Julia view is \
+             running. When true, every cost on this panel covers BOTH panes.");
+        Self::metric_row(ui, "zoom", format!("{}×", fmt_zoom_log2(self.viewport.log2_magnification())),
+            "Magnification relative to the full view. The arithmetic mode above changes at \
+             about 1e4x and again at about 1e28x.");
         // Deep-zoom budget telemetry (D3.5): the measured live iterate + the adaptive step
         // budget it feeds. Only meaningful in floatexp mode (mode 2), where the budget runs.
         if p.last_mode == 2 && p.last_iterate_ms[0] > 0.0 {
@@ -5064,23 +5118,31 @@ impl FractadyneApp {
             } else {
                 0
             };
-            level_row(ui, it_lvl, format!("iterate    {:6.1} ms (GPU)", p.last_iterate_ms[0]))
-                .on_hover_text(format!(
+            Self::metric_row(ui, "iterate", level_value(it_lvl, format!("{:.1} ms (GPU)", p.last_iterate_ms[0])),
+                format!(
                     "Measured GPU time of the last iterate dispatch. The controller aims at                      {target:.0} ms; sustained readings near {:.0} ms are the band where this                      hardware class has lost the device.",
                     c.tdr_lethal_ms
                 ));
-            ui.monospace(format!("steps/s    {gsps:6.2} G"));
+            Self::metric_row(ui, "steps/s", format!("{gsps:.2} G"), "Iteration steps per second on the GPU, \
+                 in billions. Interior-heavy views run slower per step than the count alone \
+                 suggests, so this is a throughput reading rather than a score.");
             // Amber while the budget is still CLIMBING: an unconverged budget is priced from
             // sparse readings, and every mis-sized settled dispatch this cycle happened in
             // exactly this state.
-            level_row(
+            Self::metric_row(
                 ui,
-                if p.fe_budget_ok[0] { 0 } else { 1 },
-                format!(
-                    "budget     {:.2e}{}",
-                    p.fe_budget[0] as f64,
-                    if p.fe_budget_ok[0] { " ✔" } else { " (settling)" }
+                "budget",
+                level_value(
+                    if p.fe_budget_ok[0] { 0 } else { 1 },
+                    format!(
+                        "{:.2e}{}",
+                        p.fe_budget[0] as f64,
+                        if p.fe_budget_ok[0] { " ✔" } else { " (settling)" }
+                    ),
                 ),
+                "Adaptive per-dispatch step budget, the controller's guard against a frame \
+                 long enough for the driver to reset the GPU. \"settling\" means it is still \
+                 converging from sparse readings and is not yet a trustworthy ceiling.",
             );
         }
 
@@ -5091,10 +5153,13 @@ impl FractadyneApp {
             Some(total) if total > 0 && self.perf.mem_rss.saturating_mul(4) > total.saturating_mul(3) => 1u8,
             _ => 0,
         };
-        level_row(
+        Self::metric_row(
             ui,
-            rss_lvl,
-            format!("rss        {:>5} MB (peak {})", p.mem_rss >> 20, p.mem_peak >> 20),
+            "rss",
+            level_value(rss_lvl, format!("{} MB (peak {})", p.mem_rss >> 20, p.mem_peak >> 20)),
+            "Resident memory of the process, and the highest it has reached this session. \
+             Deep reference builds have peaked past 2 GB in the field with nothing else on \
+             screen saying so; amber past three quarters of system RAM.",
         );
         // Estimated GPU-resident bytes, assembled from the allocation sizes the app knows:
         // reference orbits + BLA trees (both views), the iteration G-buffer pair, the
@@ -5120,7 +5185,7 @@ impl FractadyneApp {
             }
             b
         };
-        ui.monospace(format!("gpu est.   {:>5} MB", gpu_est >> 20)).on_hover_text(
+        Self::metric_row(ui, "gpu est.", format!("{} MB", gpu_est >> 20),
             "Estimated GPU-resident memory: reference orbits, BLA trees, iteration textures,              the chunk-state ping-pong while a refinement runs, and the present-gate snapshot.              Assembled from known allocation sizes; the driver's true figure is not portably              readable.",
         );
 
@@ -5131,14 +5196,16 @@ impl FractadyneApp {
         if self.dual || self.julia_mode {
             ui.separator();
             let (jr, ji) = self.julia_c;
-            ui.monospace(format!("julia c.re {jr:+.15}"));
-            ui.monospace(format!("julia c.im {ji:+.15}"));
+            Self::metric_row(ui, "julia c.re", format!("{jr:+.15}"), "Real part of the parameter c the \
+                 Julia pane is rendering - the point the cursor is over, unless pinned.");
+            Self::metric_row(ui, "julia c.im", format!("{ji:+.15}"), "Imaginary part of the parameter c \
+                 the Julia pane is rendering.");
             if self.julia_pin.is_some() {
-                ui.monospace("julia c    pinned");
+                Self::metric_row(ui, "julia c", "pinned", "The parameter is held at a fixed point, so \
+                     moving the cursor no longer changes the Julia pane.");
             }
             let c_per_panel = self.viewport.width_px * self.viewport.units_per_pixel.to_f64();
-            ui.monospace(format!("c/panel    {c_per_panel:.3e}"))
-                .on_hover_text(
+            Self::metric_row(ui, "c/panel", format!("{c_per_panel:.3e}"),
                     "Width of c-space spanned by the whole Mandelbrot panel. When this \
                      is far below one Julia pixel, hovering changes c but the Julia \
                      looks unchanged — expected at deep zoom, not a freeze.",
@@ -5146,10 +5213,21 @@ impl FractadyneApp {
         }
 
         ui.separator();
-        ui.monospace(format!("ref recompute {:6.2} ms", p.recompute_ms));
-        ui.monospace(format!("recompute/s   {:>4.0}", p.recompute_per_s));
-        ui.monospace(format!("ref builds/s  {:>4.0}", p.builds_per_s));
-        ui.monospace(format!("recompute tot {:>5}", p.recompute_total));
+        Self::metric_row(ui, "ref recompute", format!("{:.2} ms", p.recompute_ms), "Duration of the most \
+             recent reference-orbit recompute. This is the pause before a deep view starts \
+             resolving, and the step the optional accelerated build speeds up.");
+        Self::metric_row(ui, "recompute/s", format!("{:.0}", p.recompute_per_s), "Reference orbits \
+             INSTALLED per second - ones whose result was actually used. Compare it with the \
+             row below: they differ by the work that was thrown away.");
+        Self::metric_row(ui, "ref builds/s", format!("{:.0}", p.builds_per_s), "Reference builds SPAWNED \
+             per second, including ones whose result is discarded - a lookahead slot the dive \
+             never reaches, or a refused extension. Those cost full CPU and appear nowhere \
+             else: a prefetch spin once ran about 400 builds a second for six minutes while \
+             recompute/s read 2. Single digits is normal; a large gap between these two rows \
+             means work is being thrown away.");
+        Self::metric_row(ui, "recompute tot", format!("{}", p.recompute_total), "Reference recomputes since \
+             launch. Useful as a rate over a known interval; a number climbing while nothing \
+             moves is the signal worth chasing.");
     }
 
     /// Snapshot the current location for navigation history.

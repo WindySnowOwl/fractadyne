@@ -56,6 +56,15 @@ zoom).
   neither — so the overview can be used to pick a new place to start, to shift where
   you are looking from, or to change depth from where you already are.
 
+- **Every performance metric now explains itself, and the columns line up** — the readout's
+  labels and values were hand-padded strings, so the value column moved between groups and
+  values alternated between left- and right-aligned. They now share one measured column.
+  Each row also has a hover explanation, since several are easy to read the wrong way:
+  `frame` is the interval between frames and includes waiting to present, `gpu/idle` is
+  simply what is left after main-thread time, and `recompute/s` counts reference orbits
+  that were used while `ref builds/s` counts every one started — a large gap between those
+  two means work is being thrown away.
+
 - **Control panel labels read left to right** — sliders and dropdowns had their label
   after the control, which is egui's default and reads as a caption rather than a label.
   The label now comes first, in a fixed column, so the controls line up with each other
