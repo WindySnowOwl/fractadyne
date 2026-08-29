@@ -389,11 +389,147 @@ STEPS = [
 ]
 
 
+
+# ---------------------------------------------------------------------------------------------
+# Which machine check enforces each step, in STEP ORDER. See design/checklist-automation.md.
+#
+# Paired POSITIONALLY rather than carried inside the tuples because STEPS is partly generated
+# (one row per fractal, one per colour method), so not every step is a literal to edit. The area
+# is repeated here so a reordered or inserted step misaligns loudly instead of silently crediting
+# one step with another's coverage - `scripts/checklist_coverage.py` checks both.
+#
+#   planned:<rest>   declared but NOT yet implemented; counts as outstanding, never as covered
+#   test:<name>      a cargo test name substring, must resolve against `cargo test -- --list`
+#   selftest:<name>  a --selftest check name, must appear in selftest.rs
+#   uitest:<name>    a --uitest check name, must appear in uitest.rs
+#   harness:<flag>   a CLI flag that must exist in the argument parser
+#   script:<path>    a repo file that must exist
+#   partial:<e>      the effect is enforced; a gesture or an aesthetic judgement is not
+#   manual/process   no machine enforcer is possible - the reason is in the plan document
+ENFORCERS = [
+    ("Launch", "planned:uitest:clean-launch-no-crash"),
+    ("Launch", "planned:test:title_string_matches_version"),
+    ("Launch", "planned:test:welcome_shows_once"),
+    ("Launch", "planned:selftest:golden-home"),
+    ("Layout & theme", "planned:uitest:layout-regions"),
+    ("Layout & theme", "partial:test:every_ui_glyph_has_a_font_that_can_draw_it"),
+    ("Layout & theme", "planned:partial:test:theme_contrast_meets_minimum"),
+    ("Layout & theme", "planned:uitest:status-bar-populated"),
+    ("Layout & theme", "planned:partial:uitest:panel-sections"),
+    ("Layout & theme", "planned:test:panel_toggle_reflows"),
+    ("Window sizing", "planned:uitest:aspect-ratio"),
+    ("Window sizing", "planned:uitest:aspect-ratio"),
+    ("Window sizing", "planned:uitest:maximize-restore"),
+    ("Window sizing", "planned:uitest:rapid-resize"),
+    ("Window sizing", "manual"),
+    ("Navigation", "planned:partial:test:click_zoom_applies_factor"),
+    ("Navigation", "planned:partial:test:click_zoom_applies_factor"),
+    ("Navigation", "planned:partial:test:toolbar_zoom_actions"),
+    ("Navigation", "planned:partial:test:pan_pixels_is_one_to_one"),
+    ("Navigation", "planned:partial:test:zoom_at_keeps_the_cursor_point_fixed"),
+    ("Navigation", "planned:test:undo_redo_round_trip"),
+    ("Navigation", "planned:test:home_view_is_the_default"),
+    ("Navigation", "planned:test:reset_view_is_the_default"),
+    ("Navigation", "partial:test:minimap_drag_signs"),
+    ("Deep zoom", "planned:selftest:depth-ladder-coherent"),
+    ("Deep zoom", "planned:selftest:mode-boundaries-coherent"),
+    ("Deep zoom", "planned:selftest:depth-ladder-coherent"),
+    ("Deep zoom", "planned:selftest:extreme-depth-coherent"),
+    ("Deep zoom", "planned:selftest:normalize-reduces-speckle"),
+    ("Deep zoom", "planned:selftest:normalize-reduces-speckle"),
+    ("Deep zoom", "planned:partial:selftest:pan-settle-matches-direct"),
+    ("Deep zoom", "harness:--autodive-home"),
+    ("Fractal types", "planned:selftest:golden-mandelbrot"),
+    ("Fractal types", "planned:selftest:golden-multibrot3"),
+    ("Fractal types", "planned:selftest:golden-multibrot4"),
+    ("Fractal types", "planned:selftest:golden-multibrot5"),
+    ("Fractal types", "planned:selftest:golden-tricorn"),
+    ("Fractal types", "planned:selftest:golden-burningship"),
+    ("Fractal types", "planned:selftest:golden-celtic"),
+    ("Fractal types", "planned:selftest:golden-buffalo"),
+    ("Fractal types", "planned:selftest:golden-phoenix"),
+    ("Fractal types", "planned:selftest:golden-newton"),
+    ("Fractal types", "planned:selftest:deep-per-formula"),
+    ("Fractal types", "planned:selftest:julia-coherent"),
+    ("Fractal types", "planned:partial:test:dual_view_splits_the_viewports"),
+    ("Fractal types", "planned:partial:test:julia_viewport_zooms_independently"),
+    ("Fractal types", "planned:test:leaving_dual_restores_the_single_view"),
+    ("Coloring", "planned:selftest:color-methods-distinct"),
+    ("Coloring", "planned:selftest:color-methods-distinct"),
+    ("Coloring", "planned:selftest:color-methods-distinct"),
+    ("Coloring", "planned:selftest:color-methods-distinct"),
+    ("Coloring", "planned:selftest:color-methods-distinct"),
+    ("Coloring", "planned:selftest:color-methods-distinct"),
+    ("Coloring", "planned:selftest:palettes-distinct"),
+    ("Coloring", "planned:selftest:cycle-changes-the-image"),
+    ("Coloring", "planned:selftest:offset-changes-the-image"),
+    ("Coloring", "planned:selftest:log-scale-changes-the-image"),
+    ("Coloring", "planned:partial:selftest:gradient-edit-changes-the-image"),
+    ("Coloring", "planned:partial:test:palette_animation_advances_and_stops"),
+    ("Coloring", "planned:selftest:effects-change-the-image"),
+    ("Coloring", "planned:selftest:effects-change-the-image"),
+    ("Coloring", "planned:selftest:effects-change-the-image"),
+    ("Quality", "planned:selftest:iterations-change-detail"),
+    ("Quality", "planned:selftest:iterations-change-detail"),
+    ("Quality", "planned:test:recommended_max_iter_grows_with_depth"),
+    ("Quality", "planned:selftest:aa-reduces-edge-energy"),
+    ("Quality", "planned:partial:uitest:perf-fields-populated"),
+    ("Locations", "planned:test:goto_round_trips_at_full_precision"),
+    ("Locations", "planned:selftest:random-locations-coherent"),
+    ("Locations", "planned:test:bookmark_round_trip"),
+    ("Locations", "planned:test:bookmark_rename_and_delete"),
+    ("Locations", "planned:test:share_string_round_trip"),
+    ("Locations", "planned:test:kfr_import_lands_where_expected"),
+    ("Locations", "planned:test:exported_view_reopens_identically"),
+    ("Locations", "planned:partial:test:gallery_scan_and_load"),
+    ("Export & capture", "planned:partial:test:snapshot_writes_a_file"),
+    ("Export & capture", "planned:selftest:snapshot-matches-the-view"),
+    ("Export & capture", "planned:selftest:export-4k-complete"),
+    ("Export & capture", "planned:selftest:tiled-equals-single-pass"),
+    ("Export & capture", "planned:selftest:deep-export-matches-the-view"),
+    ("Tools", "planned:test:minibrot_search_lands_on_structure"),
+    ("Tools", "planned:test:solver_returns_a_root"),
+    ("Tools", "harness:--livetest"),
+    ("Tools", "planned:test:stopping_playback_restores_interaction"),
+    ("Tools", "planned:test:tour_from_view_round_trip"),
+    ("Tools", "harness:--benchmark-std"),
+    ("Help & settings", "planned:partial:uitest:help-sections-nonempty"),
+    ("Help & settings", "planned:uitest:diagnostics-populated"),
+    ("Help & settings", "planned:test:about_names_the_running_backend"),
+    ("Help & settings", "test:accelerated_asset_url"),
+    ("Help & settings", "planned:test:issue_url_is_well_formed"),
+    ("Help & settings", "planned:test:update_check_reaches_a_verdict"),
+    ("Help & settings", "planned:test:a_setting_survives_save_and_reload"),
+    ("Accelerated build", "script:scripts/build-accelerated.ps1"),
+    ("Accelerated build", "planned:test:about_names_the_running_backend"),
+    ("Accelerated build", "planned:test:config_lives_in_the_user_profile"),
+    ("Accelerated build", "partial:test:identity_holds_where_the_multiply_algorithms_diverge"),
+    ("Accelerated build", "harness:--bench-bignum"),
+    ("Accelerated build", "manual"),
+    ("Persistence", "planned:test:clean_exit_leaves_no_process"),
+    ("Persistence", "planned:test:session_round_trip"),
+    ("Persistence", "planned:uitest:no-crash-files"),
+    ("Stability", "planned:harness:soak-liveness"),
+    ("Stability", "harness:--torture"),
+    ("Stability", "planned:selftest:rapid-switching-settles-on-the-final-choice"),
+    ("Sign-off", "process"),
+]
+
+assert len(ENFORCERS) == len(STEPS), (
+    "ENFORCERS has %d rows but STEPS has %d - every step needs one, even if it is 'manual'"
+    % (len(ENFORCERS), len(STEPS))
+)
+for _i, ((_area, _enf), _step) in enumerate(zip(ENFORCERS, STEPS), start=1):
+    assert _area == _step[0], (
+        "enforcer row %d says area %r but step %d is in %r - the tables have drifted apart"
+        % (_i, _area, _i, _step[0])
+    )
+
 def build(out_path):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    from openpyxl.worksheet.datavalidation import DataValidation
     from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.datavalidation import DataValidation
 
     wb = Workbook()
 
@@ -453,7 +589,8 @@ def build(out_path):
 
     # ---------------------------------------------------------------- Run
     ws = wb.create_sheet("Run")
-    headers = ["Step", "Area", "Action to take", "Expected result", "Actual result", "Pass/Fail", "Notes"]
+    headers = ["Step", "Area", "Action to take", "Expected result", "Automated by",
+               "Actual result", "Pass/Fail", "Notes"]
     hdr_fill = PatternFill("solid", fgColor="1F3864")
     hdr_font = Font(bold=True, color="FFFFFF")
     thin = Side(style="thin", color="BFBFBF")
@@ -472,7 +609,7 @@ def build(out_path):
     row = 2
     step = 1
     last_area = None
-    for area, action, expected in STEPS:
+    for (area, action, expected), (_, enforcer) in zip(STEPS, ENFORCERS):
         if area != last_area:
             ws.cell(row=row, column=1, value=area).font = Font(bold=True)
             ws.cell(row=row, column=1).fill = area_fill
@@ -486,30 +623,38 @@ def build(out_path):
         ws.cell(row=row, column=2, value=area).alignment = top_wrap
         ws.cell(row=row, column=3, value=action).alignment = top_wrap
         ws.cell(row=row, column=4, value=expected).alignment = top_wrap
-        ws.cell(row=row, column=5, value="").alignment = top_wrap
-        ws.cell(row=row, column=6, value="").alignment = Alignment(horizontal="center", vertical="top")
-        ws.cell(row=row, column=7, value="").alignment = top_wrap
+        ws.cell(row=row, column=5, value=enforcer).alignment = top_wrap
+        ws.cell(row=row, column=6, value="").alignment = top_wrap
+        ws.cell(row=row, column=7, value="").alignment = Alignment(horizontal="center", vertical="top")
+        ws.cell(row=row, column=8, value="").alignment = top_wrap
         for c in range(1, len(headers) + 1):
             ws.cell(row=row, column=c).border = border
         row += 1
         step += 1
 
     last_row = row - 1
-    widths = {"A": 6, "B": 16, "C": 62, "D": 62, "E": 34, "F": 11, "G": 26}
+    widths = {"A": 6, "B": 16, "C": 58, "D": 58, "E": 34, "F": 30, "G": 11, "H": 24}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = "A1:G%d" % last_row
+    ws.auto_filter.ref = "A1:%s%d" % (get_column_letter(len(headers)), last_row)
+
+    # DERIVE the verdict column from the header order. It was hard-coded as F, and adding the
+    # "Automated by" column moved Pass/Fail to G - which would have left the dropdown on the
+    # wrong column and the Cover sheet counting an empty one, with the workbook still opening
+    # perfectly and the sign-off totals silently reading zero.
+    verdict_col = get_column_letter(headers.index("Pass/Fail") + 1)
 
     dv = DataValidation(type="list", formula1='"PASS,FAIL,BLOCKED,N-A"', allow_blank=True, showDropDown=False)
     dv.error = "Choose PASS, FAIL, BLOCKED or N-A."
     ws.add_data_validation(dv)
-    dv.add("F2:F%d" % last_row)
+    dv.add("{c}2:{c}{r}".format(c=verdict_col, r=last_row))
 
     # Cover formulas that count the run once it is filled in.
-    cov["B13"] = '=COUNTIF(Run!F:F,"PASS")'
-    cov["B14"] = '=COUNTIF(Run!F:F,"FAIL")'
-    cov["B15"] = '=COUNTIF(Run!F:F,"BLOCKED")+COUNTIF(Run!F:F,"N-A")'
+    cov["B13"] = '=COUNTIF(Run!{c}:{c},"PASS")'.format(c=verdict_col)
+    cov["B14"] = '=COUNTIF(Run!{c}:{c},"FAIL")'.format(c=verdict_col)
+    cov["B15"] = ('=COUNTIF(Run!{c}:{c},"BLOCKED")+COUNTIF(Run!{c}:{c},"N-A")'
+                  .format(c=verdict_col))
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     wb.save(out_path)
