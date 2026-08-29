@@ -1,9 +1,11 @@
 # Fractadyne
 
-A native Windows fractal explorer in Rust (wgpu + egui/eframe), built for **ultra-deep
-zoom** and performance.
+A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
+**ultra-deep zoom** and performance.
 
-![Fractadyne dual-view deep zoom](assets/hero.png)
+![Fractadyne showing a Misiurewicz spiral at 9.85e499x in dual Mandelbrot/Julia view](assets/hero.jpg)
+
+<sub>A Misiurewicz (49,3) point at ~1e500x. Regenerate with `fractadyne --shot <location.fdn> --out hero.png --size 1920x1280`.</sub>
 
 ## Highlights
 

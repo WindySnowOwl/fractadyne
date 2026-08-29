@@ -891,8 +891,9 @@ Mockups: [design/mockups/](design/mockups/).
   the two renderers (ours is visibly more zoomed), so presenting it as visual proof of agreement
   would invite "those are not the same view". The correctness argument rests on the runnable gate.
   ⭐Reconciling that framing convention would make the picture usable, and it is worth doing.
-  ⚠`assets/hero.png` is a UI screenshot from **v1.10 build 11** and is several UI generations
-  stale — it should be replaced or deleted.
+  ✅`assets/hero.png` (a v0.1.0 build-11 screenshot, several UI generations stale, 8.5 MB)
+  is REPLACED by `assets/hero.jpg` — 0.2.40's interface at 9.85e499x, dual view with the
+  minimap, 302 KB. Regenerable via `--shot`, so it need not go stale again.
 
   **Left for the author** (marked in both files): the §3a AI-disclosure proportions, the title
   choice, a UI screenshot with the Controls panel open, and whether to publish benchmark numbers
