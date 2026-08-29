@@ -765,7 +765,22 @@ impl FractadyneApp {
                 }
 
                 // Cursor-centered wheel zoom (scroll up = zoom in).
-                let scroll_y = ctx.input(|i| i.smooth_scroll_delta.y) as f64;
+                //
+                // Read as ZERO unless the pointer is over this view. The wheel is a GLOBAL
+                // input: scrolling the control panel, a dialog or the minimap delivers the
+                // same delta here. The zoom below was already gated on hover, but `active`
+                // further down was not - so scrolling the control panel reset the settle
+                // timer, tore down the refinement grid and dropped the view back to its
+                // coarse moving preview, re-rendering a view nobody had touched (user
+                // report, 2026-08-29). The dual path has always guarded this with
+                // `&& hovering`; this was the single-view outlier. Zeroing the READING
+                // rather than adding a second guard keeps the zoom and the activity flag
+                // reading one value, so they cannot disagree again.
+                let scroll_y = if response.hover_pos().is_some() {
+                    ctx.input(|i| i.smooth_scroll_delta.y) as f64
+                } else {
+                    0.0
+                };
                 if scroll_y != 0.0 {
                     if let Some(pos) = response.hover_pos() {
                         let local = pos - rect.min;

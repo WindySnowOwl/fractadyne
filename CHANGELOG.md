@@ -56,6 +56,12 @@ zoom).
   neither — so the overview can be used to pick a new place to start, to shift where
   you are looking from, or to change depth from where you already are.
 
+- **Scrolling the control panel no longer disturbs the view** — the mouse wheel is a
+  window-wide input, and while the view only zoomed when the pointer was actually over it,
+  the check for "is the user interacting" did not look at the pointer at all. Scrolling the
+  panel therefore reset the settle timer, threw away the refinement in progress and
+  restarted the render from its coarse preview, on a view nobody had touched.
+
 - **Every performance metric now explains itself, and the columns line up** — the readout's
   labels and values were hand-padded strings, so the value column moved between groups and
   values alternated between left- and right-aligned. They now share one measured column.
