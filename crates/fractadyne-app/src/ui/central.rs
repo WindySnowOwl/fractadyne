@@ -402,9 +402,10 @@ impl FractadyneApp {
     /// Draw the minimap overlay (thumbnail + "you are here" marker + zoom depth), and
     /// handle drag-to-pan and click-to-jump. Anchored bottom-left, above the status bar.
     ///
-    /// The two gestures deliberately differ in what they preserve: a CLICK teleports to
-    /// that region at home zoom (you are choosing a place to start), while a DRAG moves
-    /// the view at its current magnification (you are choosing where to look from here).
+    /// The three gestures deliberately differ in what they preserve: a CLICK teleports to
+    /// that region at home zoom (you are choosing a place to start), a DRAG moves the view
+    /// at its current magnification (you are choosing where to look from here), and the
+    /// WHEEL changes depth without moving (you are choosing how close).
     /// Draw the discreet "Fd" brand mark in the lower-right of the fractal area (live view). Uses
     /// the header font — F in the light brand text color, d in the amber accent — over a soft dark
     /// halo so it stays legible on any background. Exports rasterize the same mark (`render.rs`).
@@ -518,6 +519,7 @@ impl FractadyneApp {
         let disp_h = disp_w * MINIMAP_TH as f32 / MINIMAP_TW as f32;
         let mut jump: Option<(f64, f64)> = None;
         let mut pan: Option<(f64, f64)> = None;
+        let mut zoom: Option<f64> = None;
         let mut grabbed = false;
         egui::Area::new(egui::Id::new("fractadyne.minimap"))
             .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(10.0, -34.0))
@@ -595,14 +597,27 @@ impl FractadyneApp {
                                 pan = Some(Self::minimap_drag_to_complex(d, rect.size()));
                             }
                         }
+                        // Wheel = depth, about the view CENTRE. Zooming toward the cursor
+                        // (as the main view does) would fold a move into the zoom, and at
+                        // depth one map pixel is an enormous distance - far too coarse to
+                        // aim with. Centre-fixed keeps the gesture meaning exactly
+                        // "deeper / shallower from here". Same response curve as the main
+                        // view so the wheel feels the same in both places.
+                        if resp.hovered() {
+                            let sy = ui.input(|i| i.smooth_scroll_delta.y) as f64;
+                            if sy != 0.0 {
+                                zoom = Some((-0.0015 * sy).exp());
+                            }
+                        }
                         let resp = if resp.dragged() {
                             resp.on_hover_cursor(egui::CursorIcon::Grabbing)
                         } else {
                             resp.on_hover_cursor(egui::CursorIcon::Grab)
                         };
                         resp.on_hover_text(
-                            "Overview / you-are-here. Drag to pan the view at the current \
-                             zoom; click to jump to that region (home zoom).",
+                            "Overview / you-are-here. Drag to pan at the current zoom, \
+                             scroll to zoom in and out, click to jump to that region \
+                             (home zoom).",
                         );
                     });
             });
@@ -612,6 +627,10 @@ impl FractadyneApp {
         }
         if let Some((dx, dy)) = pan {
             self.viewport.pan_complex(dx, dy);
+            self.pointer.zoom_vel = 0.0;
+        }
+        if let Some(f) = zoom {
+            self.viewport.zoom_by(f);
             self.pointer.zoom_vel = 0.0;
         }
         if let Some((tx, ty)) = jump {

@@ -154,6 +154,15 @@ impl Viewport {
         self.center_y = cy.add(&oy, p, RM);
     }
 
+    /// Zoom about the view CENTRE, which stays put. Delegates to [`zoom_at`](Self::zoom_at)
+    /// at the middle pixel rather than just scaling `units_per_pixel`: the offsets it adds
+    /// there are zero, so the result is identical, but it also re-precisions the centre to
+    /// the new depth. A centre left at its old width would stop being able to address the
+    /// pixels of the view it sits in.
+    pub fn zoom_by(&mut self, factor: f64) {
+        self.zoom_at(self.width_px * 0.5, self.height_px * 0.5, factor);
+    }
+
     /// Zoom so the pixel rectangle fits the view; its center becomes the view center.
     pub fn zoom_to_rect(&mut self, px0: f64, py0: f64, px1: f64, py1: f64) {
         let (cx, cy) = self.pixel_to_complex((px0 + px1) * 0.5, (py0 + py1) * 0.5);
@@ -321,6 +330,30 @@ mod pan_complex_tests {
         let via_f64 = BigFloat::from_f64(crate::to_f64(&cx), p);
         let lost = crate::to_f64(&via_f64.sub(&cx, p, RM)).abs();
         assert!(lost > 1.0e-25, "an f64 round trip lost only {lost:e} - threshold is not probative");
+    }
+
+    /// `zoom_by` must leave the centre exactly where it was, at any depth - it is the
+    /// gesture for "deeper from here", so any drift is the bug.
+    #[test]
+    fn zoom_by_holds_the_centre_and_scales_the_span() {
+        let digits = "0.35634774601304382214593134944855658665333542382319826904819524052878";
+        let cx = crate::parse_bf_prec(digits, 512).expect("parses");
+        let cy = crate::parse_bf_prec(digits, 512).expect("parses");
+        let mut vp = Viewport::new(1920.0, 1080.0);
+        vp.set_center_log2mag(cx.clone(), cy.clone(), 300.0);
+        let before = vp.log2_magnification();
+
+        vp.zoom_by(0.5); // factor < 1 zooms IN
+        assert!(
+            (vp.log2_magnification() - (before + 1.0)).abs() < 1.0e-9,
+            "halving units-per-pixel should add one octave: {} -> {}",
+            before,
+            vp.log2_magnification()
+        );
+        let p = vp.precision;
+        let dx = crate::to_f64(&vp.center_x.sub(&cx, p, RM)).abs();
+        let dy = crate::to_f64(&vp.center_y.sub(&cy, p, RM)).abs();
+        assert!(dx < 1.0e-40 && dy < 1.0e-40, "centre drifted: {dx:e}, {dy:e}");
     }
 
     /// Direction and magnitude: the delta lands on the centre as given, in complex units.

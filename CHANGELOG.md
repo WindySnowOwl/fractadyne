@@ -47,9 +47,11 @@ zoom).
   two results were not comparable without knowing which build made them.
 
 - **Drag the minimap to move around** — the overview's "you are here" box can now be
-  dragged, panning the view at its current zoom. Clicking still jumps to a region at home
-  zoom; the two gestures differ in what they keep, so you can use the overview either to
-  pick a new place to start or to shift where you are looking from.
+  dragged, panning the view at its current zoom, and the wheel over the overview zooms in
+  and out without moving. Clicking still jumps to a region at home zoom. The three
+  gestures keep different things on purpose — where you are, how close you are, or
+  neither — so the overview can be used to pick a new place to start, to shift where
+  you are looking from, or to change depth from where you already are.
 
 - **Control panel labels read left to right** — sliders and dropdowns had their label
   after the control, which is egui's default and reads as a caption rather than a label.
