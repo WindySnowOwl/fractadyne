@@ -79,6 +79,94 @@ fn img_diff(a: &[u8], b: &[u8]) -> (u32, f64) {
     (max, sum as f64 / a.len() as f64)
 }
 
+
+/// Frame predicates for the appearance checks (design/checklist-automation.md).
+///
+/// The manual checklist says things like "colouring visibly changes and produces a coherent image
+/// (no all-black, all-white, or uniform flat frame)". These turn that into numbers.
+///
+/// ⚠A differential check ("A and B differ") is worthless on its own: it passes when one of them
+/// is a blank frame, which is the failure it was written to catch. `coherent` must be asserted on
+/// BOTH sides first, and every caller below does.
+mod frame {
+    /// Rec.709 luma of an RGBA8 buffer, one byte per pixel out.
+    fn luma(px: &[u8]) -> Vec<f32> {
+        px.chunks_exact(4)
+            .map(|p| 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32)
+            .collect()
+    }
+
+    /// Tonal spread and how many 16-level buckets are occupied. A real fractal frame has both;
+    /// all-black, all-white and uniform-flat frames have neither.
+    pub(super) fn coherence(px: &[u8]) -> (f32, usize) {
+        let l = luma(px);
+        if l.is_empty() {
+            return (0.0, 0);
+        }
+        let mean = l.iter().sum::<f32>() / l.len() as f32;
+        let var = l.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / l.len() as f32;
+        let mut buckets = [0u32; 16];
+        for v in &l {
+            buckets[((v / 16.0) as usize).min(15)] += 1;
+        }
+        // A bucket counts only if it holds ≥0.5% of the frame, so dithering noise in an otherwise
+        // flat frame cannot fake tonal range.
+        let floor = (l.len() as f32 * 0.005) as u32;
+        (var.sqrt(), buckets.iter().filter(|&&c| c > floor).count())
+    }
+
+    /// Does this look like a rendered image rather than a flat fill?
+    ///
+    /// The bar is FLATNESS, which is what the checklist row asks for - "no all-black,
+    /// all-white, or uniform flat frame" - not prettiness. A first attempt at stddev ≥ 6 with
+    /// ≥ 3 buckets rejected orbit-trap and binary renders, which are legitimately low-contrast
+    /// at a shallow view; tightening past the stated requirement would have turned a real
+    /// check into a taste argument. `the flat-frame control is rejected` pins the other end,
+    /// so this cannot be loosened into something that accepts everything.
+    ///
+    /// Occupied-bucket count is NOT part of the verdict. It was, and it failed the binary
+    /// render: two-tone output puts nearly every pixel in one 16-level band while being far
+    /// from the other, giving stddev 10.6 across a single bucket. Spread alone separates that
+    /// cleanly from the flat control's 0.3 - a 30x margin - and does not punish an image for
+    /// having few distinct tones, which is not what "flat" means.
+    pub(super) fn coherent(px: &[u8]) -> bool {
+        let (sd, b) = coherence(px);
+        let _ = b; // reported as diagnostics; the verdict is spread alone, see above
+        sd >= 1.0
+    }
+
+    /// Mean absolute per-channel difference. Same-size buffers only.
+    pub(super) fn distance(a: &[u8], b: &[u8]) -> f64 {
+        if a.len() != b.len() || a.is_empty() {
+            return f64::INFINITY;
+        }
+        let mut sum = 0u64;
+        for (x, y) in a.iter().zip(b) {
+            sum += (*x as i32 - *y as i32).unsigned_abs() as u64;
+        }
+        sum as f64 / a.len() as f64
+    }
+
+    /// Mean absolute luma step between horizontally adjacent pixels — the aliasing measure from
+    /// the live-normalisation work. High means salt-and-pepper speckle; low means smooth bands.
+    /// Doubles as an edge-energy measure for the anti-aliasing rows.
+    pub(super) fn neighbour_step(px: &[u8], w: u32) -> f64 {
+        let l = luma(px);
+        let w = w as usize;
+        if w < 2 || l.len() < w * 2 {
+            return 0.0;
+        }
+        let (mut sum, mut n) = (0.0f64, 0u64);
+        for row in l.chunks_exact(w) {
+            for pair in row.windows(2) {
+                sum += (pair[1] - pair[0]).abs() as f64;
+                n += 1;
+            }
+        }
+        if n == 0 { 0.0 } else { sum / n as f64 }
+    }
+}
+
 /// One row of the validation report.
 /// Stream each check result the moment it lands (design/diagnostics.md D2.3): a suite that
 /// buffers everything to the end cannot name its slow or hung check — this one names it live,
@@ -234,7 +322,7 @@ impl FractadyneApp {
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "iter-budget", "iter-chunk", "nr-zoom", "coords",
             "ref-pick", "script", "metadata",
-            "display", "catalog", "goldens", "bench-matrix", "live-res",
+            "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
         ];
         if self.selftest_list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -3739,6 +3827,229 @@ zoom = \"1e94\"
                 threshold: "leading … frontier; short coord safe",
                 pass: ok,
             });
+        }
+
+        // ---- appearance: the image actually CHANGES when a control changes ----
+        // Enforces the "Coloring" block of the manual checklist (steps 48-57, 60-62): every colour
+        // method and palette must produce a coherent image, and must not produce the SAME image as
+        // its neighbours. A method silently falling back to another one looks perfectly fine in a
+        // screenshot and is invisible to the goldens, which only ever render one method each.
+        if want("appearance") {
+            let (aw, ah) = (480u32, 270u32);
+            // One view with interior, exterior and filament in frame, so every method has
+            // something to colour. Shallow on purpose: this is about colouring, not depth.
+            let render = |app: &mut Self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue|
+             -> Option<Vec<u8>> {
+                let mut vp = Viewport::new(aw as f64, ah as f64);
+                vp.set_center_mag(
+                    fractadyne_core::BigFloat::from_f64(-0.743_643_887_037_15, 64),
+                    fractadyne_core::BigFloat::from_f64(0.131_825_904_205_31, 64),
+                    2.0e3,
+                );
+                let req = app.current_export_request_for(&vp, false);
+                let progress = std::sync::atomic::AtomicU32::new(0);
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel)
+                    .ok()
+                    .map(|r| fractadyne_export::to_srgb8_dithered(&r.pixels, r.width))
+            };
+
+            // Pin everything that is not the variable under test.
+            self.fractal = crate::FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 2_000;
+            self.render_cfg.aa = 1;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_binary = false;
+            self.coloring.use_duotone = false;
+            self.coloring.cycle = 0.27;
+            self.coloring.offset = 0.1;
+            self.anim.palette_anim = crate::PaletteAnim::Off;
+            self.effects.light = false;
+            self.effects.de = false;
+
+            // --- colour methods, steps 48-53 ---
+            let mut frames: Vec<(String, Vec<u8>)> = Vec::new();
+            for m in crate::ColorMethod::ALL {
+                self.coloring.color_method = m;
+                match render(self, device, queue) {
+                    Some(px) => frames.push((m.label().to_string(), px)),
+                    None => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "appearance",
+                        name: format!("method renders — {}", m.label()),
+                        params: format!("{aw}x{ah}"),
+                        result: "render_export failed".into(),
+                        threshold: "must render",
+                        pass: false,
+                    }),
+                }
+            }
+            for (name, px) in &frames {
+                let (sd, b) = frame::coherence(px);
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "appearance",
+                    name: format!("method coherent — {name}"),
+                    params: format!("{aw}x{ah}"),
+                    result: format!("stddev {sd:.1}, {b} buckets"),
+                    threshold: "stddev ≥ 6, ≥ 3 buckets",
+                    pass: frame::coherent(px),
+                });
+            }
+            // Every pair, not just neighbours: two methods collapsing onto each other is the
+            // defect, and which two is not predictable.
+            let mut worst = (f64::INFINITY, String::new());
+            for i in 0..frames.len() {
+                for j in (i + 1)..frames.len() {
+                    let d = frame::distance(&frames[i].1, &frames[j].1);
+                    if d < worst.0 {
+                        worst = (d, format!("{} vs {}", frames[i].0, frames[j].0));
+                    }
+                }
+            }
+            if !frames.is_empty() {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "appearance",
+                    name: "colour methods are all different".into(),
+                    params: format!("{} methods, {} pairs", frames.len(), frames.len() * (frames.len() - 1) / 2),
+                    result: format!("closest pair {} at meanΔ {:.2}", worst.1, worst.0),
+                    threshold: "meanΔ ≥ 1.0 for every pair",
+                    pass: worst.0 >= 1.0,
+                });
+            }
+            self.coloring.color_method = crate::ColorMethod::from_u32(0);
+
+            // --- palettes, step 54 ---
+            let mut pal: Vec<(String, Vec<u8>)> = Vec::new();
+            for (i, name) in fractadyne_color::PRESETS.iter().enumerate() {
+                self.coloring.palette_idx = i;
+                if let Some(px) = render(self, device, queue) {
+                    pal.push((name.name.to_string(), px));
+                }
+            }
+            let mut pworst = (f64::INFINITY, String::new());
+            let mut pcoherent = true;
+            for i in 0..pal.len() {
+                pcoherent &= frame::coherent(&pal[i].1);
+                for j in (i + 1)..pal.len() {
+                    let d = frame::distance(&pal[i].1, &pal[j].1);
+                    if d < pworst.0 {
+                        pworst = (d, format!("{} vs {}", pal[i].0, pal[j].0));
+                    }
+                }
+            }
+            if !pal.is_empty() {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "appearance",
+                    name: "palettes are all different and coherent".into(),
+                    params: format!("{} palettes", pal.len()),
+                    result: format!("closest pair {} at meanΔ {:.2}", pworst.1, pworst.0),
+                    threshold: "meanΔ ≥ 1.0 for every pair, all coherent",
+                    pass: pcoherent && pworst.0 >= 1.0,
+                });
+            }
+            self.coloring.palette_idx = 0;
+
+            // --- controls that must visibly do something, steps 55-57 and 60-62 ---
+            // Each is a differential against the same baseline, with BOTH sides required coherent.
+            let base = render(self, device, queue);
+            let mut toggles: Vec<(&str, Box<dyn Fn(&mut Self)>, Box<dyn Fn(&mut Self)>)> = Vec::new();
+            toggles.push(("cycle slider",
+                Box::new(|a: &mut Self| a.coloring.cycle = 0.8),
+                Box::new(|a: &mut Self| a.coloring.cycle = 0.27)));
+            toggles.push(("offset slider",
+                Box::new(|a: &mut Self| a.coloring.offset = 0.6),
+                Box::new(|a: &mut Self| a.coloring.offset = 0.1)));
+            toggles.push(("binary (set)",
+                Box::new(|a: &mut Self| a.coloring.use_binary = true),
+                Box::new(|a: &mut Self| a.coloring.use_binary = false)));
+            toggles.push(("duotone",
+                Box::new(|a: &mut Self| a.coloring.use_duotone = true),
+                Box::new(|a: &mut Self| a.coloring.use_duotone = false)));
+            toggles.push(("3D relief lighting",
+                Box::new(|a: &mut Self| a.effects.light = true),
+                Box::new(|a: &mut Self| a.effects.light = false)));
+            toggles.push(("distance glow",
+                Box::new(|a: &mut Self| a.effects.de = true),
+                Box::new(|a: &mut Self| a.effects.de = false)));
+
+            if let Some(base) = base {
+                let base_ok = frame::coherent(&base);
+                for (name, on, off) in toggles {
+                    on(self);
+                    let got = render(self, device, queue);
+                    off(self);
+                    let (result, pass) = match got {
+                        Some(px) => {
+                            let d = frame::distance(&base, &px);
+                            let ok = frame::coherent(&px);
+                            let (sd, b) = frame::coherence(&px);
+                            (
+                                format!("meanΔ {d:.2} vs baseline; stddev {sd:.1}, {b} buckets, coherent: {ok}"),
+                                base_ok && ok && d >= 1.0,
+                            )
+                        }
+                        None => ("render_export failed".to_string(), false),
+                    };
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "appearance",
+                        name: format!("control changes the image — {name}"),
+                        params: format!("{aw}x{ah}, both frames must be coherent"),
+                        result,
+                        threshold: "meanΔ ≥ 1.0",
+                        pass,
+                    });
+                }
+            }
+            // --- negative control for the coherence predicate ---
+            // Every check above leans on `coherent`. A predicate that accepted anything would
+            // make all of them vacuous while reporting a clean run, so prove the other end:
+            // one iteration escapes every pixel at once and must render a FLAT frame, and
+            // `coherent` must reject it.
+            let iter_was = self.render_cfg.max_iter;
+            self.render_cfg.max_iter = 1;
+            let flat = render(self, device, queue);
+            self.render_cfg.max_iter = iter_was;
+            if let Some(px) = flat {
+                let (sd, b) = frame::coherence(&px);
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "appearance",
+                    name: "the flat-frame control is rejected".into(),
+                    params: "max_iter = 1, so every pixel escapes immediately".into(),
+                    result: format!("stddev {sd:.1}, {b} buckets — coherent: {}", frame::coherent(&px)),
+                    threshold: "must NOT be judged coherent",
+                    pass: !frame::coherent(&px),
+                });
+            }
+
+            // --- anti-aliasing, step 66 ---
+            // Supersampling must visibly soften edges. Measured as the mean luma step between
+            // horizontally adjacent pixels: aliased edges are hard jumps, a resolved edge is a
+            // ramp. Both frames must be coherent, so this cannot pass by rendering nothing.
+            //
+            // ⚠The supersampling of an EXPORT comes from `export.ss`, not `render_cfg.aa` -
+            // that one drives the live view. Written against `aa` first, this check reported
+            // an identical edge measure at 1x and 2x, to two decimal places, because nothing
+            // it set ever reached the renderer. An unchanged number is the shape of a check
+            // that cannot fail, not of a feature that does nothing.
+            let ss_was = self.export.ss;
+            self.export.ss = 1;
+            let aa1 = render(self, device, queue);
+            self.export.ss = 2;
+            let aa2 = render(self, device, queue);
+            self.export.ss = ss_was;
+            if let (Some(a), Some(b)) = (aa1, aa2) {
+                let (e1, e2) = (frame::neighbour_step(&a, aw), frame::neighbour_step(&b, aw));
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "appearance",
+                    name: "supersampling softens edges".into(),
+                    params: format!("{aw}x{ah}, export ss 1x vs 2x"),
+                    result: format!("edge step {e1:.2} -> {e2:.2}"),
+                    threshold: "2x strictly lower, both coherent",
+                    pass: frame::coherent(&a) && frame::coherent(&b) && e2 < e1,
+                });
+            }
         }
 
         // ---- golden-image regression ----

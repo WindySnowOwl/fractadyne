@@ -97,10 +97,13 @@ def main():
             else:
                 hit = re.search(r"\bfn\s+%s\s*\(" % re.escape(name), rs) is not None
             return hit, "test", name
+        # Anchor on the OPENING quote only: a check name is often the start of a format!
+        # literal ("control changes the image \u2014 {name}"), so requiring the closing quote
+        # would reject names that are genuinely there.
         if kind == "selftest":
-            return ('"%s"' % name) in selftest, "selftest", name
+            return ('"' + name) in selftest, "selftest", name
         if kind == "uitest":
-            return ('"%s"' % name) in uitest, "uitest", name
+            return ('"' + name) in uitest, "uitest", name
         if kind == "harness":
             return ('"%s"' % name) in argparse_src, "harness", name
         if kind == "script":
