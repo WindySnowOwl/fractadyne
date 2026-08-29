@@ -46,6 +46,11 @@ zoom).
   building reference orbits, which is exactly what the report's CPU figure measures, so
   two results were not comparable without knowing which build made them.
 
+- **Drag the minimap to move around** — the overview's "you are here" box can now be
+  dragged, panning the view at its current zoom. Clicking still jumps to a region at home
+  zoom; the two gestures differ in what they keep, so you can use the overview either to
+  pick a new place to start or to shift where you are looking from.
+
 - **Control panel labels read left to right** — sliders and dropdowns had their label
   after the control, which is egui's default and reads as a caption rather than a label.
   The label now comes first, in a fixed column, so the controls line up with each other

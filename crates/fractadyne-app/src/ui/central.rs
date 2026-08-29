@@ -386,8 +386,25 @@ impl FractadyneApp {
         }
     }
 
+    /// Complex-space delta for a minimap drag of `d` screen pixels over a map `size` pixels
+    /// across. The map spans a fixed region ([`MINIMAP_HX`] / [`MINIMAP_HY`] half-extents),
+    /// so the scale is independent of the current zoom - which is the point: the gesture is
+    /// an overview move, not a fraction of the current view.
+    ///
+    /// Screen +y is complex -y. That sign is invisible in a screenshot and wrong in exactly
+    /// one direction, hence [`minimap_drag_signs`](tests::minimap_drag_signs).
+    fn minimap_drag_to_complex(d: egui::Vec2, size: egui::Vec2) -> (f64, f64) {
+        let sx = 2.0 * MINIMAP_HX / size.x as f64;
+        let sy = 2.0 * MINIMAP_HY / size.y as f64;
+        (d.x as f64 * sx, -(d.y as f64) * sy)
+    }
+
     /// Draw the minimap overlay (thumbnail + "you are here" marker + zoom depth), and
-    /// handle click-to-jump. Anchored bottom-left, above the status bar.
+    /// handle drag-to-pan and click-to-jump. Anchored bottom-left, above the status bar.
+    ///
+    /// The two gestures deliberately differ in what they preserve: a CLICK teleports to
+    /// that region at home zoom (you are choosing a place to start), while a DRAG moves
+    /// the view at its current magnification (you are choosing where to look from here).
     /// Draw the discreet "Fd" brand mark in the lower-right of the fractal area (live view). Uses
     /// the header font — F in the light brand text color, d in the amber accent — over a soft dark
     /// halo so it stays legible on any background. Exports rasterize the same mark (`render.rs`).
@@ -500,6 +517,8 @@ impl FractadyneApp {
         let disp_w = 196.0_f32;
         let disp_h = disp_w * MINIMAP_TH as f32 / MINIMAP_TW as f32;
         let mut jump: Option<(f64, f64)> = None;
+        let mut pan: Option<(f64, f64)> = None;
+        let mut grabbed = false;
         egui::Area::new(egui::Id::new("fractadyne.minimap"))
             .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(10.0, -34.0))
             .show(ctx, |ui| {
@@ -508,7 +527,7 @@ impl FractadyneApp {
                     .show(ui, |ui| {
                         let (rect, resp) = ui.allocate_exact_size(
                             egui::vec2(disp_w, disp_h),
-                            egui::Sense::click(),
+                            egui::Sense::click_and_drag(),
                         );
                         let p = ui.painter_at(rect);
                         p.image(
@@ -565,11 +584,36 @@ impl FractadyneApp {
                                 jump = Some((tx, ty));
                             }
                         }
+                        // Pan by the drag DELTA rather than by centring on the pointer:
+                        // the marker then tracks the hand from wherever it was grabbed,
+                        // instead of snapping its centre under the cursor on the first
+                        // pixel of movement.
+                        grabbed = resp.drag_started();
+                        if resp.dragged() {
+                            let d = resp.drag_delta();
+                            if d != egui::Vec2::ZERO {
+                                pan = Some(Self::minimap_drag_to_complex(d, rect.size()));
+                            }
+                        }
+                        let resp = if resp.dragged() {
+                            resp.on_hover_cursor(egui::CursorIcon::Grabbing)
+                        } else {
+                            resp.on_hover_cursor(egui::CursorIcon::Grab)
+                        };
                         resp.on_hover_text(
-                            "Overview / you-are-here. Click to jump to that region (home zoom).",
+                            "Overview / you-are-here. Drag to pan the view at the current \
+                             zoom; click to jump to that region (home zoom).",
                         );
                     });
             });
+        if grabbed {
+            // Once per gesture, so a drag is a single undo step rather than one per frame.
+            self.record_nav();
+        }
+        if let Some((dx, dy)) = pan {
+            self.viewport.pan_complex(dx, dy);
+            self.pointer.zoom_vel = 0.0;
+        }
         if let Some((tx, ty)) = jump {
             self.viewport.set_center_mag(
                 fractadyne_core::BigFloat::from_f64(tx, 64),
@@ -987,5 +1031,35 @@ impl FractadyneApp {
         self.help_window(ctx);
         self.draw_welcome_dialog(ctx);
         self.draw_crash_prompt(ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The marker must follow the hand. Drag right and the view moves right; drag down and it
+    /// moves down - which in complex coordinates means y DECREASES, since screen +y is complex
+    /// -y. Getting this backwards produces a minimap that fights the user, and no screenshot or
+    /// render gate can see it.
+    #[test]
+    fn minimap_drag_signs() {
+        let size = egui::vec2(196.0, 147.0);
+
+        let (dx, dy) = FractadyneApp::minimap_drag_to_complex(egui::vec2(10.0, 0.0), size);
+        assert!(dx > 0.0, "dragging right must increase x, got {dx}");
+        assert_eq!(dy, 0.0);
+
+        let (dx, dy) = FractadyneApp::minimap_drag_to_complex(egui::vec2(0.0, 10.0), size);
+        assert_eq!(dx, 0.0);
+        assert!(dy < 0.0, "dragging down must decrease y, got {dy}");
+
+        // Scale: a drag across the whole map is the map's whole width in complex units.
+        let (full, _) = FractadyneApp::minimap_drag_to_complex(egui::vec2(size.x, 0.0), size);
+        assert!(
+            (full - 2.0 * MINIMAP_HX).abs() < 1.0e-12,
+            "a full-width drag should span the map: {full} vs {}",
+            2.0 * MINIMAP_HX
+        );
     }
 }

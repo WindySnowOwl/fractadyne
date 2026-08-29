@@ -127,6 +127,21 @@ impl Viewport {
         self.center_y = self.center_y.add(&oy, p, RM);
     }
 
+    /// Pan by a delta in COMPLEX units rather than view pixels, for the overview map,
+    /// whose steps are a fraction of the whole set rather than of the current view.
+    ///
+    /// [`pan_pixels`](Self::pan_pixels) cannot serve that: converting an overview step
+    /// into view pixels divides by `units_per_pixel`, which is astronomically small at
+    /// depth, so the pixel count overflows `f64` long before the complex delta does.
+    /// Adding the delta to the existing centre also PRESERVES its precision - assigning
+    /// a centre built from `f64` would silently truncate a deep view's coordinate to 53
+    /// bits while `refresh_precision` still claimed hundreds.
+    pub fn pan_complex(&mut self, dx: f64, dy: f64) {
+        let p = self.precision;
+        self.center_x = self.center_x.add(&BigFloat::from_f64(dx, p), p, RM);
+        self.center_y = self.center_y.add(&BigFloat::from_f64(dy, p), p, RM);
+    }
+
     /// Zoom by `factor` (< 1 zooms in) keeping the complex point under `(px,py)` fixed.
     pub fn zoom_at(&mut self, px: f64, py: f64, factor: f64) {
         let (cx, cy) = self.pixel_to_complex(px, py);
@@ -267,5 +282,55 @@ impl Viewport {
             cx + (px - self.width_px * 0.5) * upp,
             cy - (py - self.height_px * 0.5) * upp,
         )
+    }
+}
+
+#[cfg(test)]
+mod pan_complex_tests {
+    use super::*;
+
+    /// A deep centre carries far more information than an `f64` can hold. `pan_complex` exists
+    /// so the overview map can move such a view WITHOUT going through one: it adds the delta to
+    /// the existing coordinate at full precision. The obvious alternative - convert the map
+    /// position to `f64` and assign it as the new centre - looks equivalent and silently
+    /// truncates the centre to about 17 digits, which at depth is the whole coordinate.
+    ///
+    /// Pinned as a round trip: pan out and back, and the original bits must return.
+    #[test]
+    fn a_round_trip_pan_returns_the_original_deep_centre() {
+        let digits_x = "0.35634774601304382214593134944855658665333542382319826904819524052878";
+        let digits_y = "0.65517219785957047867473526044384060240158237433104919183695119307267";
+        let cx = crate::parse_bf_prec(digits_x, 512).expect("cx parses");
+        let cy = crate::parse_bf_prec(digits_y, 512).expect("cy parses");
+
+        let mut vp = Viewport::new(1920.0, 1080.0);
+        vp.set_center_log2mag(cx.clone(), cy.clone(), 300.0); // ~1e90x
+
+        vp.pan_complex(0.25, -0.125);
+        vp.pan_complex(-0.25, 0.125);
+
+        let p = vp.precision;
+        let dx = crate::to_f64(&vp.center_x.sub(&cx, p, RM)).abs();
+        let dy = crate::to_f64(&vp.center_y.sub(&cy, p, RM)).abs();
+        assert!(dx < 1.0e-40, "x drifted by {dx:e} over a round-trip pan");
+        assert!(dy < 1.0e-40, "y drifted by {dy:e} over a round-trip pan");
+
+        // And the reason the threshold is meaningful: an f64 round trip of the same coordinate
+        // loses everything below ~1e-17, so this test would fail by twenty-odd orders against
+        // the assign-from-f64 approach rather than passing by luck.
+        let via_f64 = BigFloat::from_f64(crate::to_f64(&cx), p);
+        let lost = crate::to_f64(&via_f64.sub(&cx, p, RM)).abs();
+        assert!(lost > 1.0e-25, "an f64 round trip lost only {lost:e} - threshold is not probative");
+    }
+
+    /// Direction and magnitude: the delta lands on the centre as given, in complex units.
+    #[test]
+    fn pan_complex_moves_the_centre_by_exactly_the_delta() {
+        let mut vp = Viewport::new(1920.0, 1080.0);
+        vp.set_center_mag(BigFloat::from_f64(-0.5, 64), BigFloat::from_f64(0.25, 64), 1.0);
+        vp.pan_complex(0.125, -0.0625);
+        let (x, y) = vp.center_f64();
+        assert!((x - -0.375).abs() < 1.0e-12, "x = {x}");
+        assert!((y - 0.1875).abs() < 1.0e-12, "y = {y}");
     }
 }
