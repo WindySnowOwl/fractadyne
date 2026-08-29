@@ -522,7 +522,96 @@ pub fn parse_imagina_text(text: &str) -> Option<KfrView> {
 pub const IMAGINA_BINARY_MAGIC: [u8; 8] = [0xFF, 0x49, 0x4D, 0x50, 0x56, 0x0D, 0x0A, 0x00];
 
 #[cfg(test)]
-mod imagina_tests {
+mod location_format_tests {
+    // Parsers for location files written by OTHER programs (Imagina .imag, Kalles
+    // Fraktaler / Fraktaler-3 .kfr), plus the go-to round trip that shares their
+    // precision requirement. All untrusted input: a shared location is the artifact
+    // people pass around on a forum.
+    // ---- .kfr import (manual checklist step 73) and go-to round-trip (step 68) ----------------
+
+    /// A 62-digit centre from a Kalles Fraktaler / Fraktaler-3 location file. The whole point of
+    /// importing one is to land on a DEEP coordinate, so the property that matters is that the
+    /// digits survive: a parser that quietly went through f64 would keep about 17 of them and
+    /// still produce a plausible-looking view a long way from the one that was shared.
+    const KFR_DEEP: &str = "\
+Re: -1.7686249050856172346353441645074953226348553577059118970313449\n\
+Im: 0.0041965917670430586733584119946276337571344847602401093387185\n\
+Zoom: 1E30\n\
+Iterations: 250000\n\
+Colors: 16\n";
+
+    #[test]
+    fn kfr_import_keeps_every_digit_of_a_deep_centre() {
+        let v = super::parse_kfr(KFR_DEEP).expect(".kfr with Re/Im/Zoom must parse");
+        assert!((v.zoom - 1.0e30).abs() / 1.0e30 < 1e-12, "zoom {} != 1e30", v.zoom);
+        assert_eq!(v.iterations, Some(250_000));
+
+        // Round-trip the centre back to decimal and compare digit strings. Comparing f64s here
+        // would be exactly the bug this guards: two centres that differ in the 30th digit are
+        // the same f64 and utterly different views at 1e30x.
+        for (got, want) in [
+            (&v.cx, "-1.7686249050856172346353441645074953226348553577059118970313449"),
+            (&v.cy, "0.0041965917670430586733584119946276337571344847602401093387185"),
+        ] {
+            let s = super::to_decimal_string(got);
+            let (a, b) = (digits(&s), digits(want));
+            let keep = b.len().min(a.len());
+            assert!(
+                keep >= 55 && a[..keep] == b[..keep],
+                "centre lost precision:\n  got  {s}\n  want {want}"
+            );
+        }
+    }
+
+    /// Significant digits, sign and point removed, leading zeros dropped — so two spellings of
+    /// the same number compare equal.
+    fn digits(s: &str) -> String {
+        let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+        d.trim_start_matches('0').to_string()
+    }
+
+    /// The parser must REFUSE a file that is not a location, rather than inventing a view from
+    /// whatever it found. Absent is not the same as zero.
+    #[test]
+    fn kfr_import_refuses_a_file_that_is_not_a_location() {
+        for bad in [
+            "",
+            "hello world",
+            "Iterations: 500\nColors: 16\n",              // no Re/Im/Zoom
+            "Re: -1.5\nZoom: 1E6\n",                       // no Im
+            "Re: -1.5\nIm: 0.0\n",                         // no Zoom
+            "Re: not-a-number\nIm: 0.0\nZoom: 1E6\n",     // unparseable coordinate
+        ] {
+            assert!(super::parse_kfr(bad).is_none(), "should have been refused: {bad:?}");
+        }
+    }
+
+    /// Step 68: the go-to dialog is pre-filled with `to_decimal_string` and read back with
+    /// `parse_bf`, so that pair must be lossless at the precision a deep view needs. astro-float's
+    /// FromStr takes its precision from the DIGIT COUNT, which is why this is worth pinning
+    /// rather than assuming.
+    #[test]
+    fn go_to_round_trips_a_deep_coordinate() {
+        let want = "-1.7686249050856172346353441645074953226348553577059118970313449";
+        let parsed = super::parse_bf(want).expect("a 62-digit coordinate must parse");
+        let back = super::to_decimal_string(&parsed);
+        let (a, b) = (digits(&back), digits(want));
+        let keep = b.len().min(a.len());
+        assert!(
+            keep >= 55 && a[..keep] == b[..keep],
+            "go-to round trip lost precision:\n  got  {back}\n  want {want}"
+        );
+
+        // And re-parsing what we printed must land on the same value, not merely something that
+        // prints the same.
+        let again = super::parse_bf(&back).expect("our own output must parse");
+        assert_eq!(
+            super::to_decimal_string(&again),
+            back,
+            "printing, parsing and printing again must be stable"
+        );
+    }
+
     use super::{parse_imagina_text, to_f64, IMAGINA_BINARY_MAGIC};
 
     #[test]
