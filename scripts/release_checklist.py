@@ -507,7 +507,7 @@ ENFORCERS = [
     ("Accelerated build", "harness:--bench-bignum"),
     ("Accelerated build", "manual"),
     ("Persistence", "planned:test:clean_exit_leaves_no_process"),
-    ("Persistence", "planned:test:session_round_trip"),
+    ("Persistence", "test:a_deep_view_and_its_colouring_survive_a_restart"),
     ("Persistence", "planned:uitest:no-crash-files"),
     ("Stability", "planned:harness:soak-liveness"),
     ("Stability", "harness:--torture"),

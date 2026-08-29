@@ -630,6 +630,66 @@ mod tests {
         assert_eq!(r.click_zoom_factor, 50.0);
     }
 
+    /// Checklist step 101: "it reopens on the SAME view you left, with the same fractal, palette
+    /// and settings." `view_and_preference_fields_roundtrip` covers the fractal and the
+    /// preferences but NOT the view itself or the colouring, which is the half a user would
+    /// actually notice — reopening somewhere else is the whole failure.
+    ///
+    /// The centre is checked as a STRING at 60 digits. `center_x`/`center_y` are f64 and exist
+    /// only as a fallback for old saves; a deep session that round-tripped through them would
+    /// come back looking fine and be somewhere else entirely, which is the same defect the .kfr
+    /// import carries a test for.
+    #[test]
+    fn a_deep_view_and_its_colouring_survive_a_restart() {
+        const CX: &str = "-1.768624905085617234635344164507495322634855357705911897031344";
+        const CY: &str = "0.004196591767043058673358411994627633757134484760240109338718";
+        let s = SessionState {
+            center_x_str: CX.to_string(),
+            center_y_str: CY.to_string(),
+            // Depth past f64's range: mantissa plus a base-2 exponent. 2^-1669 is about 1e502x,
+            // and an implementation that dropped the exponent would land at 1x while every other
+            // field still looked correct.
+            units_per_pixel: 1.0,
+            units_per_pixel_e: -1669,
+            max_iter: 200_000,
+            auto_iter: false,
+            palette_idx: 2,
+            cycle: 0.51,
+            offset: 0.10,
+            ..SessionState::default()
+        };
+        let r = roundtrip(&s);
+
+        assert_eq!(r.center_x_str, CX, "deep centre lost digits across a save/load");
+        assert_eq!(r.center_y_str, CY, "deep centre lost digits across a save/load");
+        assert_eq!(r.units_per_pixel, 1.0);
+        assert_eq!(r.units_per_pixel_e, -1669, "the depth exponent was dropped");
+        assert_eq!(r.max_iter, 200_000);
+        assert!(!r.auto_iter);
+        assert_eq!(r.palette_idx, 2);
+        assert_eq!(r.cycle, 0.51);
+        assert_eq!(r.offset, 0.10);
+    }
+
+    /// A custom gradient is a user's own work, and it is the one setting they cannot recreate
+    /// from memory if a restart drops it.
+    #[test]
+    fn a_custom_palette_survives_a_restart() {
+        let stops = vec![
+            [0.0, 0.0, 0.0, 1.0],
+            [0.25, 0.9, 0.1, 0.2],
+            [1.0, 0.13, 0.42, 0.87],
+        ];
+        let s = SessionState {
+            custom_palette: stops.clone(),
+            use_custom_palette: true,
+            ..SessionState::default()
+        };
+        let r = roundtrip(&s);
+        assert!(r.use_custom_palette);
+        assert_eq!(r.custom_palette, stops, "the custom gradient did not round-trip");
+    }
+
     // A legacy file (only the original required fields) must still load, filling new fields
     // from their defaults.
     #[test]
