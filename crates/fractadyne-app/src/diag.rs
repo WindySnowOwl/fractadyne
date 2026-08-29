@@ -348,6 +348,23 @@ pub(crate) fn recent_log(max_bytes: usize) -> Option<String> {
     })
 }
 
+/// Every `crash-*.txt` report currently on disk, by filename.
+///
+/// A harness takes this before and after its run: a report that appeared DURING the walk is the
+/// one that matters, and the difference is the only way to tell it from one a previous session
+/// left behind. (Checklist steps 1 and 102 are exactly this question.)
+pub(crate) fn crash_report_names() -> Vec<String> {
+    let Some(dir) = logs_dir() else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let mut out: Vec<String> = rd
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("crash-") && n.ends_with(".txt"))
+        .collect();
+    out.sort();
+    out
+}
+
 /// The newest `crash-*.txt` report (filename, contents), if any exists.
 pub(crate) fn latest_crash() -> Option<(String, String)> {
     let dir = logs_dir()?;

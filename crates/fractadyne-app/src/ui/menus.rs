@@ -67,7 +67,7 @@ impl FractadyneApp {
         ctx: &egui::Context,
         gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
     ) {
-        egui::TopBottomPanel::top("topbar").show(ctx, |ui| {
+        let top = egui::TopBottomPanel::top("topbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                     // The id egui keys this row's `menu_button` open-state (`BarState`) under —
                     // recorded so `close_menu_bar` can dismiss a hanging menu on view navigation.
@@ -857,6 +857,7 @@ impl FractadyneApp {
                 }
             });
         });
+        self.perf.layout.top_bar = Some(top.response.rect);
     }
 
     /// Bottom status bar — center coordinate, cursor, zoom, effective iteration count, and the
@@ -982,7 +983,11 @@ impl FractadyneApp {
                 // width reservation exists to stop exactly that, and it is itself made of the spaces
                 // egui was wrapping at. With `Extend` a readout that does not fit moves WHOLE onto
                 // the next line, which is what `horizontal_wrapped` was chosen for.
-                let mono = |ui: &mut egui::Ui, t: String| {
+                // Every readout goes through here, so this is also where they are recorded for
+                // `--uitest` — what was drawn, not what a check thinks would have been.
+                let mut drawn: Vec<String> = Vec::new();
+                let mut mono = |ui: &mut egui::Ui, t: String| {
+                    drawn.push(t.clone());
                     ui.add(
                         egui::Label::new(egui::RichText::new(t).monospace())
                             .wrap_mode(egui::TextWrapMode::Extend),
@@ -1107,6 +1112,9 @@ impl FractadyneApp {
                 // Extend, not wrap: a Label in a wrapped layout otherwise breaks its own text at
                 // the panel edge — the ⚠ stranded at the end of one line, "iter capped" on the
                 // next. Extend makes the label move (or overflow) as ONE unit, in both states.
+                // The diagnostic slot is recorded too, so `--uitest` sees the same reserved
+                // width the reflow fix depends on rather than only the readouts above it.
+                drawn.push(text.clone());
                 let r = ui.add(
                     egui::Label::new(egui::RichText::new(text).monospace().color(color))
                         .wrap_mode(egui::TextWrapMode::Extend),
@@ -1114,11 +1122,17 @@ impl FractadyneApp {
                 if let Some(detail) = detail {
                     r.on_hover_text(detail);
                 }
-            });
+                drawn
+            })
+            .inner
         });
         // Expose the panel's height so the UI-test harness can detect the status bar wrapping to a
-        // second line (or wavering between one and two at a fixed width — a repaint-storm smell).
+        // second line (or wavering between one and two at a fixed width — a repaint-storm smell),
+        // its rect for the layout invariants, and the readouts themselves.
         self.perf.status_bar_h = resp.response.rect.height();
+        self.perf.layout.status_bar = Some(resp.response.rect);
+        self.perf.layout.window = Some(ctx.screen_rect());
+        self.perf.status_bar_texts = resp.inner;
     }
 
     /// Floating playback transport — scrubber, restart / back / pause / stop / forward, speed,

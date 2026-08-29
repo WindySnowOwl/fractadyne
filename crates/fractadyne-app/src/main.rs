@@ -76,6 +76,7 @@ mod tone;
 mod tunables;
 mod ui;
 mod shot;
+mod soak;
 mod uitest;
 
 // ⭐The tunables live in ONE module now (a user requirement — see `tunables.rs`), and are
@@ -88,13 +89,44 @@ pub(crate) use fractal::FractalKind;
 pub(crate) use scripting::{BenchDepth, BenchRes, Playback, StdBench};
 pub(crate) use sysinfo::*;
 pub(crate) use theme::*;
-use help::*;
 use std::time::Instant;
 
 /// An allocation failure aborts without running the panic hook, so the app's crash reporting is
 /// blind to it — this wrapper reports the null return first. See `alloc.rs`.
 #[global_allocator]
 static GLOBAL: alloc::ReportingAlloc = alloc::ReportingAlloc;
+
+/// The window's regions as laid out on the last frame. `None` = the region did not draw (the
+/// control panel when hidden, or anything on a frame that never reached it).
+///
+/// ⚠FOUR, not the five the checklist names: the menu bar and the toolbar share ONE wrapped
+/// `TopBottomPanel`, so on screen they are two rows a person can see and to the layout they are
+/// one rect. The human row still says five; the machine can only vouch for four.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct LayoutRects {
+    /// The whole window, in the same point space as the regions — so "inside the window" is a
+    /// comparison between two recorded rects rather than a conversion between points and pixels.
+    pub(crate) window: Option<egui::Rect>,
+    pub(crate) top_bar: Option<egui::Rect>,
+    pub(crate) central: Option<egui::Rect>,
+    pub(crate) right_panel: Option<egui::Rect>,
+    pub(crate) status_bar: Option<egui::Rect>,
+}
+
+impl LayoutRects {
+    /// `(name, rect)` for every region that drew this frame.
+    pub(crate) fn present(&self) -> Vec<(&'static str, egui::Rect)> {
+        [
+            ("top bar", self.top_bar),
+            ("central", self.central),
+            ("control panel", self.right_panel),
+            ("status bar", self.status_bar),
+        ]
+        .into_iter()
+        .filter_map(|(n, r)| r.map(|r| (n, r)))
+        .collect()
+    }
+}
 
 /// Lightweight per-frame performance/diagnostic tracking, shown in an overlay.
 /// On by default for now; toggle via the View menu or the `--no-perf` CLI flag.
@@ -103,6 +135,15 @@ struct Perf {
     /// Height (px) of the bottom status bar as of the last frame — instrumentation for `--uitest`,
     /// which watches it wrap to a second line (or waver between one and two) across window widths.
     status_bar_h: f32,
+    /// Where the window's regions actually landed on the last frame, for `--uitest`'s layout
+    /// invariants (checklist step 5).
+    layout: LayoutRects,
+    /// Every status-bar readout as it was DRAWN on the last frame, in order.
+    ///
+    /// ⭐Recorded at the point of drawing rather than re-derived by the check. A test that
+    /// rebuilds the strings it is validating agrees with itself by construction — the same trap
+    /// as `FRACTADYNE_TRACE=tile` reporting what was RENDERED while the screen showed a mosaic.
+    status_bar_texts: Vec<String>,
     last_frame: Option<Instant>,
     /// Smoothed wall-clock interval between frames (ms) → FPS.
     frame_ms: f64,
@@ -563,6 +604,8 @@ impl Default for Perf {
         Self {
             enabled: true,
             status_bar_h: 0.0,
+            layout: LayoutRects::default(),
+            status_bar_texts: Vec::new(),
             last_frame: None,
             frame_ms: 0.0,
             cpu_ms: 0.0,
@@ -1211,7 +1254,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
         "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
-        "--chunk-sweep", "--bench-bignum", "--shot",
+        "--chunk-sweep", "--bench-bignum", "--shot", "--soak",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }
@@ -1235,7 +1278,7 @@ mod task_invocation {
         for flag in [
             "--selftest", "--livetest", "--uitest", "--juliadive", "--torture", "--render",
             "--render-tour", "--bench-matrix", "--gputest", "--resizetest", "--motiontest",
-            "--shot",
+            "--shot", "--soak",
         ] {
             assert!(is_task_invocation(&[flag]), "{flag} must count as a task invocation");
             // ...including when it is not the first argument.
@@ -3293,6 +3336,7 @@ struct FractadyneApp {
     /// CLI `--uitest [DIR]`: scripted walk through every UI screen + the live-render bands,
     /// screenshotting each and writing a review bundle (see `mod uitest`), then exit.
     uitest: Option<uitest::UiTest>,
+    soak: Option<soak::Soak>,
     /// `--shot`: regenerate the published screenshot from a saved location, then exit.
     shot: Option<shot::Shot>,
     /// CLI `--juliadive [DIR]`: dev harness — dual view, continuous in-app Julia zoom to ~1400×
@@ -3349,6 +3393,11 @@ struct FractadyneApp {
     /// The central fractal panel's rect in PHYSICAL pixels ([x, y, w, h]), stored each frame by
     /// the central draw — what the bookmark thumbnail crops out of the window screenshot.
     central_rect_px: [u32; 4],
+    /// `--uitest` scratch for the control-panel toggle step: the canvas and panel widths measured
+    /// while the panel was still open, so the reflow after hiding it can be compared against what
+    /// the layout actually did rather than against the panel's nominal width.
+    uitest_central_w: Option<f32>,
+    uitest_panel_w: Option<f32>,
     /// Decoded bookmark-thumbnail textures, keyed by thumb id (lazy-loaded for the dialog).
     thumb_cache: std::collections::HashMap<String, egui::TextureHandle>,
     /// Navigation history (location undo/redo) + settle-edge tracking.
@@ -3724,6 +3773,17 @@ impl FractadyneApp {
         } else {
             None
         };
+        let soak = if args.iter().any(|a| a == "--soak") {
+            let secs = val("--soak")
+                .map(|s| arg_parse::<f64>("--soak", &s, "seconds"))
+                .unwrap_or(300.0);
+            let decades = val("--soak-depth")
+                .map(|s| arg_parse::<f64>("--soak-depth", &s, "decades of magnification"))
+                .unwrap_or(30.0);
+            Some(soak::Soak::new(secs, decades))
+        } else {
+            None
+        };
         let autodive = if args.iter().any(|a| a == "--autodive") {
             let target = val("--autodive")
                 .and_then(|v| v.parse::<f64>().ok())
@@ -3998,6 +4058,7 @@ impl FractadyneApp {
             livetest,
             shot,
             uitest,
+            soak,
             juliadive,
             chunk_sweep,
             autodive,
@@ -4045,6 +4106,8 @@ impl FractadyneApp {
             pending_thumb: None,
             thumb_shot: None,
             central_rect_px: [0, 0, 0, 0],
+            uitest_central_w: None,
+            uitest_panel_w: None,
             thumb_cache: std::collections::HashMap::new(),
             bookmark_name: String::new(),
             nav: NavHistory::default(),
@@ -6364,19 +6427,7 @@ impl FractadyneApp {
         if !self.dialogs.help_open {
             return;
         }
-        const SECTIONS: [&str; 11] = [
-            "Overview",
-            "Navigation",
-            "Coloring & options",
-            "Fractals",
-            "How it works",
-            "Command line",
-            "Shortcuts",
-            "Recommended hardware",
-            "Acknowledgments",
-            "Licenses",
-            "About",
-        ];
+        const SECTIONS: [&str; help::SECTION_NAMES.len()] = help::SECTION_NAMES;
         let mut open = self.dialogs.help_open;
         // Cap the size to the screen so the content ScrollArea scrolls (rather than the window
         // growing to fit) and the window can't be resized past the screen edge (which pushed
@@ -6432,19 +6483,12 @@ impl FractadyneApp {
                                 .show(ui, |ui| {
                                     ui.set_max_width(content_w - 18.0); // leave room for the bar
                                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                                    match self.dialogs.help_section {
-                                        0 => help_overview(ui),
-                                        1 => help_navigation(ui),
-                                        2 => help_options(ui),
-                                        3 => help_fractals(ui),
-                                        4 => help_methodology(ui),
-                                        5 => help_command_line(ui),
-                                        6 => help_shortcuts(ui),
-                                        7 => help_hardware(ui),
-                                        8 => help_acknowledgments(ui),
-                                        9 => help_licenses(ui),
-                                        _ => help_about(ui),
-                                    }
+                                    // Indexed, not matched: the old `_ => help_about(ui)` arm
+                                    // meant a section added to the list without a body silently
+                                    // rendered About under its own name. The name and the body
+                                    // are now one table entry, checked by a test.
+                                    let i = self.dialogs.help_section.min(SECTIONS.len() - 1);
+                                    help::SECTION_BODIES[i](ui);
                                 });
                         },
                     );
@@ -7277,6 +7321,10 @@ impl eframe::App for FractadyneApp {
         }
         if self.uitest.is_some() && gpu.is_some() {
             self.uitest_frame(ctx, gpu_name.as_deref());
+        }
+        // --soak: sit at a deep view and assert the app keeps producing frames.
+        if self.soak.is_some() && gpu.is_some() {
+            self.soak_frame(ctx);
         }
         // --juliadive: dev harness for the dual-view Julia motion path (same in-loop pattern).
         if self.juliadive.is_some() && gpu.is_some() {

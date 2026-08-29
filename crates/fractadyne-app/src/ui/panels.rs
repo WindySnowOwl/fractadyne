@@ -36,7 +36,7 @@ impl FractadyneApp {
     /// when it's hidden. No-op in fullscreen.
     pub(crate) fn draw_right_panel(&mut self, ctx: &egui::Context) {
         if !self.fullscreen && self.dialogs.right_panel_open {
-        egui::SidePanel::right("coloring_panel")
+        let panel = egui::SidePanel::right("coloring_panel")
             .default_width(280.0)
             .show(ctx, |ui| {
                 ui.add_space(4.0);
@@ -508,6 +508,9 @@ impl FractadyneApp {
                 }
                 });
             });
+            self.perf.layout.right_panel = Some(panel.response.rect);
+        } else {
+            self.perf.layout.right_panel = None;
         }
 
         // Reopen handle when the control panel is hidden (and not fullscreen).

@@ -58,6 +58,25 @@ struct WindowSize {
     /// Whether the status bar is expected to fit on ONE line at this width. Narrow windows are
     /// allowed to wrap to two (by design); a fixed reasonable width should not.
     expect_single_line: bool,
+    /// What else this step does before it settles.
+    action: WindowAction,
+}
+
+/// What a window step does beyond setting a size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowAction {
+    /// Just the resize.
+    Resize,
+    /// Maximize, then restore — checklist step 13. The frame after each must still be complete,
+    /// which is what the per-step blank/layout checks already assert; what this adds is that the
+    /// round trip happens at all and the layout survives it.
+    MaximizeRestore,
+    /// ~50 size changes in quick succession — checklist step 14. The failure it hunts is a crash
+    /// or a wedged frame under resize churn, not a wrong pixel.
+    RapidResize,
+    /// Hide the control panel and show it again — checklist step 10. The canvas must reflow to
+    /// use the space and the settings must be unchanged.
+    TogglePanel,
 }
 
 #[derive(Clone, Debug)]
@@ -157,6 +176,29 @@ pub(crate) struct UiTest {
     // regardless of how fast the machine builds it.
     ref_len_seen: u32,
     ref_changed_at: Instant,
+    /// Crash reports already on disk when the walk started. Anything not in this list at the end
+    /// appeared DURING the run — which is the only version of "no crash reports" that means
+    /// anything on a config dir that is not wiped.
+    crashes_at_start: Vec<String>,
+    /// Control-panel width measured during the toggle step's OPEN phase (`None` until then).
+    panel_w: Option<f32>,
+    /// Whether the session BEFORE this one left its unclean-exit marker armed — i.e. it did not
+    /// shut down through `crate::exit`. Read at construction, because reporting clears the marker.
+    prev_unclean: bool,
+    /// What the PREVIOUS walk in this profile left behind: `Some(true)` = it finished and wrote
+    /// its own completion marker, `Some(false)` = it started and never finished, `None` = there
+    /// was no previous walk.
+    ///
+    /// ⚠The app's general unclean-exit marker cannot answer this on its own: its absence means
+    /// either "exited cleanly" or "never ran", and `--uitest` suppresses the session autosave, so
+    /// there is no session file to tell the two apart either. A marker owned by the harness is
+    /// unambiguous — and it is the only way a harness can testify about its OWN exit.
+    prev_walk_clean: Option<bool>,
+}
+
+/// Where a walk records that it started, and then that it finished.
+fn walk_marker_path() -> Option<std::path::PathBuf> {
+    crate::diag::logs_dir().map(|d| d.join("uitest-last-walk.txt"))
 }
 
 // The canonical Seahorse-Valley deep-zoom point, to ~33 digits — self-similar structure from the
@@ -194,6 +236,22 @@ impl UiTest {
             sb_max: 0.0,
             ref_len_seen: 0,
             ref_changed_at: Instant::now(),
+            crashes_at_start: crate::diag::crash_report_names(),
+            panel_w: None,
+            prev_unclean: crate::diag::previous_session_unclean(),
+            prev_walk_clean: {
+                // Read the previous walk's verdict, then claim the marker for this one.
+                let prev = walk_marker_path()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .map(|t| t.trim() == "finished");
+                if let Some(p) = walk_marker_path() {
+                    if let Some(parent) = p.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&p, "started");
+                }
+                prev
+            },
         }
     }
 }
@@ -380,17 +438,41 @@ fn build_steps() -> Vec<Step> {
         //     stay stable at a fixed width (a waver between one and two lines = a repaint storm) ---
         Step {
             name: "window-wide".into(),
-            kind: StepKind::Window(WindowSize { w: 1500.0, h: 850.0, expect_single_line: true }),
+            kind: StepKind::Window(WindowSize {
+                w: 1500.0, h: 850.0, expect_single_line: true, action: WindowAction::Resize,
+            }),
         },
         Step {
             name: "window-medium".into(),
             // Not asserted single-line: the wrap threshold is content- and DPI-dependent, so this
             // width just reports its line count. The load-bearing check is height STABILITY.
-            kind: StepKind::Window(WindowSize { w: 1100.0, h: 800.0, expect_single_line: false }),
+            kind: StepKind::Window(WindowSize {
+                w: 1100.0, h: 800.0, expect_single_line: false, action: WindowAction::Resize,
+            }),
         },
         Step {
             name: "window-narrow".into(),
-            kind: StepKind::Window(WindowSize { w: 680.0, h: 780.0, expect_single_line: false }),
+            kind: StepKind::Window(WindowSize {
+                w: 680.0, h: 780.0, expect_single_line: false, action: WindowAction::Resize,
+            }),
+        },
+        Step {
+            name: "window-maximize-restore".into(),
+            kind: StepKind::Window(WindowSize {
+                w: 1280.0, h: 800.0, expect_single_line: false, action: WindowAction::MaximizeRestore,
+            }),
+        },
+        Step {
+            name: "window-rapid-resize".into(),
+            kind: StepKind::Window(WindowSize {
+                w: 1280.0, h: 800.0, expect_single_line: false, action: WindowAction::RapidResize,
+            }),
+        },
+        Step {
+            name: "panel-toggle".into(),
+            kind: StepKind::Window(WindowSize {
+                w: 1280.0, h: 800.0, expect_single_line: false, action: WindowAction::TogglePanel,
+            }),
         },
     ]
 }
@@ -433,6 +515,7 @@ impl FractadyneApp {
                 ut.sb_max = 0.0;
                 ut.ref_len_seen = 0;
                 ut.ref_changed_at = ut.step_start;
+                ut.panel_w = None;
                 ut.phase = Phase::Settle;
             }
             Phase::Settle => {
@@ -475,6 +558,23 @@ impl FractadyneApp {
                 // So also require that NO reference build is in flight for this view — the worker
                 // channel is the authoritative "still working" signal, the same lesson as the
                 // beta.88 pacer fix (an in-flight build is progress the quiet-period can't see).
+                // The control-panel toggle: once the OPEN layout has been drawn, record the two
+                // widths and hide the panel. The rest of the settle then measures the reflow.
+                if let StepKind::Window(w) = &ut.steps[ut.idx].kind {
+                    if w.action == WindowAction::TogglePanel && ut.panel_w.is_none() {
+                        if let (Some(p), Some(c)) =
+                            (self.perf.layout.right_panel, self.perf.layout.central)
+                        {
+                            ut.panel_w = Some(p.width());
+                            self.uitest_panel_w = Some(p.width());
+                            self.uitest_central_w = Some(c.width());
+                            self.dialogs.right_panel_open = false;
+                            // Give the hidden layout its own settle rather than screenshotting
+                            // the frame the toggle happened on.
+                            ut.settle_until = now + std::time::Duration::from_millis(800);
+                        }
+                    }
+                }
                 let ref_building = self.recompute_rx[0].is_some();
                 let ref_settled = ol > 0
                     && !ref_building
@@ -529,6 +629,38 @@ impl FractadyneApp {
                 // applies the new inner size over the next frame or two — hence the longer settle.
                 self.uitest_open_screen(Screen::Home);
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(win.w, win.h)));
+                match win.action {
+                    WindowAction::Resize => {}
+                    WindowAction::MaximizeRestore => {
+                        // Maximize and come back. The settle that follows re-lays out the window,
+                        // and every per-step check (layout, status bar, not-blank) then applies to
+                        // the RESTORED frame — which is what checklist step 13 asks about.
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(win.w, win.h)));
+                    }
+                    WindowAction::RapidResize => {
+                        // ~50 size changes with no settle between them. The failure this hunts is
+                        // a crash or a wedged frame under churn, so the sizes only have to be
+                        // varied and legal; the frame that gets checked is the one after it all.
+                        for i in 0..50u32 {
+                            let w = win.w - (i % 17) as f32 * 20.0;
+                            let h = win.h - (i % 11) as f32 * 15.0;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+                        }
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(win.w, win.h)));
+                    }
+                    WindowAction::TogglePanel => {
+                        // OPEN it here; the settle loop measures the layout it produces and only
+                        // then hides it. Measuring at this instant would read the PREVIOUS step's
+                        // layout — and every window step opens the home screen, which closes the
+                        // panel, so the widths were simply absent (measured: "no before/after
+                        // canvas width recorded").
+                        self.uitest_panel_w = None;
+                        self.uitest_central_w = None;
+                        self.dialogs.right_panel_open = true;
+                    }
+                }
             }
         }
     }
@@ -609,7 +741,7 @@ impl FractadyneApp {
 
     /// Jump the live view to a magnification band on the canonical deep point and let the on-screen
     /// live path render it. Precision is sized for the depth; the mode is auto-picked downstream.
-    fn uitest_set_live(&mut self, decades: f64) {
+    pub(crate) fn uitest_set_live(&mut self, decades: f64) {
         use std::f64::consts::LOG2_10;
         let log2mag = decades * LOG2_10;
         let prec = fractadyne_core::precision_for_octaves(log2mag.ceil() as u64) as usize;
@@ -715,6 +847,190 @@ impl FractadyneApp {
             }
         }
 
+        // ---- layout invariants (checklist step 5) ----
+        // The regions must exist, occupy real area, sit inside the window, and not overlap. These
+        // hold on EVERY step, including the ones that open a dialog over the view, so a dialog
+        // that pushed a panel off the window would be caught wherever it happened.
+        let win = self.perf.layout;
+        let regions = win.present();
+        let screen = win.window;
+        let mut layout_problems: Vec<String> = Vec::new();
+        for (n, r) in &regions {
+            if r.width() <= 1.0 || r.height() <= 1.0 {
+                layout_problems.push(format!("{n} has no area ({:.0}x{:.0})", r.width(), r.height()));
+            }
+            if let Some(sc) = screen {
+                // A half-pixel of slack: panel rects are laid out in points and rounded.
+                if r.min.x < sc.min.x - 0.5
+                    || r.min.y < sc.min.y - 0.5
+                    || r.max.x > sc.max.x + 0.5
+                    || r.max.y > sc.max.y + 0.5
+                {
+                    layout_problems.push(format!("{n} spills outside the window"));
+                }
+            }
+        }
+        for i in 0..regions.len() {
+            for j in (i + 1)..regions.len() {
+                let (a, b) = (regions[i].1, regions[j].1);
+                let overlap = a.intersect(b);
+                if overlap.width() > 0.5 && overlap.height() > 0.5 {
+                    layout_problems.push(format!("{} overlaps {}", regions[i].0, regions[j].0));
+                }
+            }
+        }
+        // The two that must ALWAYS be there. The control panel is toggleable and the top bar can
+        // be suppressed in fullscreen, so their absence is not automatically a fault — but a
+        // window with no canvas or no status bar is.
+        for must in ["central", "status bar"] {
+            if !regions.iter().any(|(n, _)| *n == must) {
+                layout_problems.push(format!("{must} did not draw"));
+            }
+        }
+        if layout_problems.is_empty() {
+            checks.push(pass(
+                "layout-regions",
+                format!(
+                    "{} regions, none overlapping: {}",
+                    regions.len(),
+                    regions
+                        .iter()
+                        .map(|(n, r)| format!("{n} {:.0}x{:.0}", r.width(), r.height()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ));
+        } else {
+            checks.push(Check {
+                name: "layout-regions".into(),
+                verdict: Verdict::Fail,
+                detail: layout_problems.join("; "),
+            });
+        }
+
+        // ---- status-bar readouts (checklist step 8) ----
+        // Read from what the bar actually DREW this frame, not rebuilt here: a check that
+        // re-derives the strings it is validating agrees with itself whatever the bar shows.
+        let texts = &self.perf.status_bar_texts;
+        let find = |prefix: &str| texts.iter().find(|t| t.trim_start().starts_with(prefix));
+        let mut sb_problems: Vec<String> = Vec::new();
+        for want in ["center ", "cursor ", "zoom", "iter "] {
+            if find(want).is_none() {
+                sb_problems.push(format!("no {want:?} readout"));
+            }
+        }
+        // The centre is two coordinates. It is never absent — unlike the cursor, which reads `—`
+        // when the pointer is off the canvas, and legitimately does here (the harness has no
+        // pointer): what matters for that one is that its RESERVED FIELD is still drawn, since
+        // the field appearing and disappearing is what wrapped the bar in the field report.
+        if let Some(c) = find("center ") {
+            if !c.contains(',') || c.trim_end().ends_with(',') {
+                sb_problems.push(format!("centre readout is incomplete: {c:?}"));
+            }
+        }
+        if let Some(c) = find("cursor ") {
+            if c.len() < 40 {
+                sb_problems.push(format!("cursor field is not reserved at its full width: {c:?}"));
+            }
+        }
+        // Zoom and iteration must be numbers, and the iteration count must be a real budget.
+        let num = |t: &str| -> Option<f64> {
+            let digits: String = t
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',' || *c == ' ')
+                .filter(|c| *c != ',' && *c != ' ')
+                .collect();
+            digits.parse().ok()
+        };
+        match find("zoom").and_then(|t| num(t)) {
+            Some(z) if z > 0.0 => {}
+            other => sb_problems.push(format!("zoom does not read as a number: {other:?}")),
+        }
+        match find("iter ").and_then(|t| num(t)) {
+            Some(i) if i >= 1.0 => {}
+            other => sb_problems.push(format!("iteration count does not read as a number: {other:?}")),
+        }
+        if sb_problems.is_empty() {
+            checks.push(pass("status-bar-populated", format!("{} readouts, all parse", texts.len())));
+        } else {
+            checks.push(Check {
+                name: "status-bar-populated".into(),
+                verdict: Verdict::Fail,
+                detail: sb_problems.join("; "),
+            });
+        }
+
+        // ---- the Performance readout (checklist step 67) ----
+        // Only on a live step: these are measurements of a render, and on a dialog screen an
+        // empty value is the truth rather than a fault.
+        if is_live {
+            let p = &self.perf;
+            let mut perf_problems: Vec<String> = Vec::new();
+            if !(p.frame_ms.is_finite() && p.frame_ms > 0.0) {
+                perf_problems.push(format!("frame time {:.3}ms", p.frame_ms));
+            }
+            if !(p.cpu_ms.is_finite() && p.cpu_ms >= 0.0) {
+                perf_problems.push(format!("cpu time {:.3}ms", p.cpu_ms));
+            }
+            if p.last_eff_iter == 0 {
+                perf_problems.push("effective iterations 0".into());
+            }
+            if p.last_precision < 64 {
+                perf_problems.push(format!("precision {} bits", p.last_precision));
+            }
+            if RenderMode::from_u32(p.last_mode) != RenderMode::Direct && p.last_orbit_len == 0 {
+                perf_problems.push("orbit length 0 in a perturbation mode".into());
+            }
+            if perf_problems.is_empty() {
+                checks.push(pass(
+                    "perf-fields-populated",
+                    format!(
+                        "frame {:.1}ms, cpu {:.1}ms, eff_iter {}, precision {}b, orbit {}",
+                        p.frame_ms, p.cpu_ms, p.last_eff_iter, p.last_precision, p.last_orbit_len
+                    ),
+                ));
+            } else {
+                checks.push(Check {
+                    name: "perf-fields-populated".into(),
+                    verdict: Verdict::Fail,
+                    detail: perf_problems.join("; "),
+                });
+            }
+        }
+
+        // ---- the Diagnostics dialog's system facts (checklist step 88) ----
+        if matches!(step.kind, StepKind::Screen(Screen::Diagnostics)) {
+            let si = &self.sysinfo;
+            let mut d: Vec<String> = Vec::new();
+            if si.cpu.trim().is_empty() {
+                d.push("CPU brand is blank".into());
+            }
+            if si.physical == 0 || si.logical == 0 {
+                d.push(format!("core count {}/{}", si.physical, si.logical));
+            }
+            // The arithmetic line must name a real backend list, never a placeholder.
+            let arith = fractadyne_core::built_in_backends();
+            if !arith.contains("astro-float") {
+                d.push(format!("arithmetic line names no known backend: {arith:?}"));
+            }
+            if d.is_empty() {
+                checks.push(pass(
+                    "diagnostics-populated",
+                    format!(
+                        "CPU {:?}, {}/{} cores, arithmetic {arith}",
+                        si.cpu, si.physical, si.logical
+                    ),
+                ));
+            } else {
+                checks.push(Check {
+                    name: "diagnostics-populated".into(),
+                    verdict: Verdict::Fail,
+                    detail: d.join("; "),
+                });
+            }
+        }
+
         // Window-sizing steps: report the status-bar height, whether it wrapped, and — the point
         // of the user's report — whether it WAVERED (height changed across a fixed-width settle).
         if let StepKind::Window(win) = &step.kind {
@@ -740,6 +1056,48 @@ impl FractadyneApp {
                     ),
                 });
             }
+            // Checklist step 10: hiding the control panel must hand its width to the canvas.
+            // Measured against the rects the two layouts actually produced, so a panel that
+            // "hid" by drawing itself transparently (or a canvas that did not reflow) fails.
+            if win.action == WindowAction::TogglePanel {
+                let now_w = self.perf.layout.central.map(|r| r.width());
+                match (self.uitest_central_w, self.uitest_panel_w, now_w) {
+                    (Some(before), Some(panel), Some(after)) => {
+                        let gained = after - before;
+                        // Within a couple of points of the panel's width: the divider and the
+                        // panel's own frame are part of the space that comes back.
+                        let ok = (gained - panel).abs() <= 4.0;
+                        checks.push(if ok {
+                            pass(
+                                "panel-toggle-reflows",
+                                format!("canvas {before:.0} -> {after:.0}px, panel was {panel:.0}px"),
+                            )
+                        } else {
+                            Check {
+                                name: "panel-toggle-reflows".into(),
+                                verdict: Verdict::Fail,
+                                detail: format!(
+                                    "canvas gained {gained:.0}px when a {panel:.0}px panel was hidden"
+                                ),
+                            }
+                        });
+                        // ...and the panel must be genuinely gone, not merely narrow.
+                        if self.perf.layout.right_panel.is_some() {
+                            checks.push(Check {
+                                name: "panel-toggle-reflows".into(),
+                                verdict: Verdict::Fail,
+                                detail: "the control panel still laid out after being hidden".into(),
+                            });
+                        }
+                    }
+                    _ => checks.push(Check {
+                        name: "panel-toggle-reflows".into(),
+                        verdict: Verdict::Warn,
+                        detail: "no before/after canvas width recorded".into(),
+                    }),
+                }
+            }
+
             // A "single line" is ~one text row + panel padding (~28px here). Two lines roughly
             // doubles it; use 40px as the split. Narrow windows are allowed to wrap.
             let two_lines = one_line > 40.0;
@@ -791,6 +1149,31 @@ impl FractadyneApp {
                 Verdict::Fail => fail_n += 1,
             }
         }
+        // Checklist steps 1 and 102: no crash report may APPEAR during the walk. Taken as a
+        // DIFFERENCE against the census at start, so a report an earlier session left in a
+        // non-wiped config dir is not blamed on this run — and one written by this run cannot
+        // hide behind it either.
+        let new_crashes: Vec<String> = crate::diag::crash_report_names()
+            .into_iter()
+            .filter(|n| !ut.crashes_at_start.contains(n))
+            .collect();
+        // Checklist step 100, "the app exits cleanly — no hang, no crash dialog, no lingering
+        // process". A harness cannot watch its own exit, but the NEXT launch can: every
+        // deliberate shutdown goes through `crate::exit`, which disarms the unclean-exit marker,
+        // so a marker still armed at startup means the previous session died. ⚠It only binds on a
+        // profile that HAS a previous session — a wiped one has nothing to say, which is why this
+        // reports three states rather than two.
+        // This walk is about to exit deliberately, so record that before saying anything about
+        // the previous one.
+        if let Some(p) = walk_marker_path() {
+            let _ = std::fs::write(p, "finished");
+        }
+        let exit_line = match (ut.prev_unclean, ut.prev_walk_clean) {
+            (true, _) => "clean-exit-marker: FAIL — the previous session did not shut down cleanly",
+            (_, Some(false)) => "clean-exit-marker: FAIL — the previous walk never reached its exit",
+            (_, Some(true)) => "clean-exit-marker: PASS (the previous walk in this profile exited cleanly)",
+            (_, None) => "clean-exit-marker: (no previous walk in this profile — nothing to check)",
+        };
         let plat = format!("{} / {}", std::env::consts::OS, std::env::consts::ARCH);
         let gpu = ut.gpu_name.clone().unwrap_or_else(|| "(unknown)".into());
         let version = env!("CARGO_PKG_VERSION");
@@ -799,8 +1182,14 @@ impl FractadyneApp {
         let mut log = String::new();
         log.push_str(&format!(
             "Fractadyne UI validation — v{version}\nplatform: {plat}\nGPU: {gpu}\n\
-             steps: {} ({pass_n} pass / {warn_n} warn / {fail_n} fail)\n\n",
-            ut.results.len()
+             steps: {} ({pass_n} pass / {warn_n} warn / {fail_n} fail)\n\
+             no-crash-files: {}\n{exit_line}\n\n",
+            ut.results.len(),
+            if new_crashes.is_empty() {
+                "PASS".to_string()
+            } else {
+                format!("FAIL — {}", new_crashes.join(", "))
+            },
         ));
         for r in &ut.results {
             log.push_str(&format!("[{}] {} ({})  {}\n", r.worst().tag(), r.name, r.kind, r.file));
@@ -831,8 +1220,21 @@ impl FractadyneApp {
             "\n=== --uitest complete: {} steps, {pass_n} pass / {warn_n} warn / {fail_n} fail ===",
             ut.results.len()
         );
+        eprintln!("{exit_line}");
+        if new_crashes.is_empty() {
+            eprintln!("no-crash-files: PASS (no crash report appeared during the walk)");
+        } else {
+            eprintln!("no-crash-files: FAIL — {}", new_crashes.join(", "));
+        }
         eprintln!("bundle: {}", ut.out_dir.display());
-        if fail_n > 0 { 1 } else { 0 }
+        // A crash report that appeared during the walk fails the RUN, not just a step: the
+        // harness's own exit code is what a gate script reads, and steps can all pass while the
+        // app panicked on a worker thread.
+        if fail_n > 0 || !new_crashes.is_empty() || ut.prev_unclean || ut.prev_walk_clean == Some(false) {
+            1
+        } else {
+            0
+        }
     }
 }
 

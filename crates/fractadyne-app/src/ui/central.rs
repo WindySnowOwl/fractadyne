@@ -1110,6 +1110,7 @@ impl FractadyneApp {
         // ---- brand watermark (lower-right of the fractal area) ----
         if self.watermark {
             if self.show_watermark {
+                self.perf.layout.central = Some(central.response.rect);
                 self.draw_watermark(ctx, central.response.rect);
             }
         }

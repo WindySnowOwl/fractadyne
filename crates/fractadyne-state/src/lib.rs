@@ -483,6 +483,14 @@ fn state_path() -> Option<PathBuf> {
     config_dir().map(|d| d.join("session.toml"))
 }
 
+/// Whether this profile already holds a saved session — i.e. the app has run here before.
+///
+/// A harness needs it to tell "the previous session exited cleanly" from "there was no previous
+/// session", which are different facts and only one of them is evidence.
+pub fn has_saved_session() -> bool {
+    state_path().is_some_and(|p| p.is_file())
+}
+
 /// Human-readable path where application state is stored (for Help / warnings). Returns a
 /// placeholder if the OS config directory can't be determined.
 pub fn state_location_display() -> String {

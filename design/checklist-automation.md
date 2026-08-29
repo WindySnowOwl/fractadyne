@@ -87,7 +87,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 
 | # | class | enforcer |
 |---|---|---|
-| 1 | A | Harness already launches with a wiped `FRACTADYNE_CONFIG_DIR`. Add: assert exit 0 **and** no `crash-*.txt` written **and** stderr carries no `error`/`panic`. |
+| 1 | B | `--uitest` takes a CENSUS of `crash-*.txt` at startup and fails the run on any that appeared during the walk — a difference, so a report an earlier session left behind is neither blamed on this run nor able to hide one. Verified by planting a report mid-run: exit 1. "No console errors" stays human. |
 | 2 | A | `window_title()` must carry `CARGO_PKG_VERSION` and a numeric build counter — so a release built from a tree whose Cargo.toml was never bumped cannot present itself as the version on the tin. |
 | 3 | A | `welcome_should_open` over all four inputs, plus the persistence of `welcome_seen`. The harness clause is load-bearing: a modal in front of `--livetest` blocked its tour for a whole session once, and it read as a hang. |
 | 4 | A | New golden: the home view. Plus the existing non-blank check. |
@@ -96,20 +96,20 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 
 | # | class | enforcer |
 |---|---|---|
-| 5 | A | uitest region invariants (present, inside window, non-overlapping). |
+| 5 | A | On EVERY uitest step: each region has area, sits inside the window, and no two overlap; the canvas and status bar must exist. ⚠FOUR regions, not five — the menu bar and toolbar share one wrapped `TopBottomPanel`, so what a person sees as two rows is one rect. |
 | 6 | B | The glyph-coverage test already enforces "no placeholder boxes" — this row's exact failure mode, which shipped four times. Crispness stays human. |
 | 7 | B | Contrast-ratio test over the theme's fg/bg pairs against a minimum. Aesthetic consistency stays human. |
-| 8 | A | uitest: every status-bar readout non-empty and parseable. |
-| 9 | B | uitest: each panel section opens, allocates height, closes. "Aligned" is now true by construction (`labelled` / `metric_row` share one measured column) and gets a test that the column constant exceeds the longest label. |
-| 10 | A | Toggle `right_panel_open`; assert the central rect grows by the panel width and settings are unchanged. |
+| 8 | A | The readouts as DRAWN (recorded inside the bar's own `mono` helper, not rebuilt by the check): centre, cursor, zoom and iteration all present, zoom and iteration parse as numbers, and the cursor field keeps its reserved width even with no pointer — the field appearing and disappearing is what wrapped the bar in the beta.149 report. |
+| 9 | C | Driving individual `CollapsingHeader`s is not something the harness does, and writing a second layout engine to check the first is not worth it. The panel's presence, area and non-overlap ARE covered by `layout-regions`; the row now says what is and is not automated. |
+| 10 | A | A uitest step opens the panel, measures the OPEN layout, hides it, and requires the canvas to gain the panel's width (985 → 1280 px for a 295 px panel) and the panel to stop laying out entirely. ⚠It measures the panel width during the step's own open phase — reading it at step setup got `None`, because every window step opens the home screen, which closes the panel. |
 
 ### Window sizing (11–15)
 
 | # | class | enforcer |
 |---|---|---|
-| 11–12 | C | uitest already resizes and checks the status bar. ⚠**The obvious aspect check is a tautology**: `complex_span` is `units_per_pixel` times each axis, so complex-aspect ÷ pixel-aspect is identically 1 and cannot fail. Written, run green on three window sizes, and removed. A real check must measure the rendered image — a stretch can only enter in the shader or the present path. |
-| 13 | A | `ViewportCommand::Maximized` round-trip; assert a complete frame both ways. |
-| 14 | A | Rapid-resize loop (~50 size changes); assert no crash, final frame coherent, aspect correct. |
+| 11–12 | B | The rows make TWO claims and only one is a tautology. "Layout still holds, no controls unreachable" is now enforced at five window shapes by `layout-regions` plus the status-bar checks. "Without stretching or distortion" is not: ⚠**the obvious aspect check is a tautology** — `complex_span` is `units_per_pixel` times each axis, so complex-aspect ÷ pixel-aspect is identically 1 and cannot fail. Written, run green on three window sizes, and removed. A real one must measure the rendered IMAGE, since a stretch can only enter in the shader or the present path. |
+| 13 | A | A uitest step maximizes and restores, then the ordinary per-step checks (layout, not-blank, status bar) apply to the restored frame. |
+| 14 | A | 50 size changes with no settle between them, then the per-step checks on the frame that follows. The failure hunted is a crash or a wedged frame under churn, not a wrong pixel. |
 | 15 | C | Second physical display at another DPI. Proxy: run the layout invariants at forced `pixels_per_point` of 1.0 / 1.5 / 2.0. |
 
 ### Navigation (16–24)
@@ -166,7 +166,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 63–64 | A | Low vs high iteration count at one deep view: differing, and the low one has strictly more interior (flat) pixels. |
 | 65 | A | `recommended_max_iter` grows monotonically with depth. |
 | 66 | A | AA 1× vs 2×: `edge_energy` lower at 2×, and the sample count is 4×. |
-| 67 | B | After a render, every performance field is populated and within a plausible range. "Looks plausible" stays human. |
+| 67 | B | On live uitest steps only: frame time, CPU time, effective iterations, precision and — in a perturbation mode — orbit length must all be populated and plausible. On a dialog screen an empty value is the truth, not a fault. "Looks plausible" to a person stays human. |
 
 ### Locations (68–75)
 
@@ -205,8 +205,8 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 
 | # | class | enforcer |
 |---|---|---|
-| 87 | B | Help sections are non-empty and every section id renders. Readability stays human. |
-| 88 | A | Diagnostics fields are populated and none is a placeholder; the arithmetic line names a real backend. |
+| 87 | B | The contents list and the bodies are now ONE table, and the test holds them to equal length, unique names and no shared body. ⚠It replaced a `match` with a `_ => help_about(ui)` arm: a section added to the list and not the match rendered the About text under its own heading. Readability stays human. |
+| 88 | A | On the Diagnostics step: CPU brand non-blank, core counts non-zero, and the arithmetic line names a real backend. |
 | 89 | A | `about_arithmetic_line()` carries both halves, and in a unit test (no orbit) the RUN half must honestly say none — a line naming a backend there would be reading configuration, the exact failure the observation mask exists to prevent. |
 | 90 | A | `accelerated_asset_url` tests already assert the URL carries this version's tag; extend to the accelerated build's alternate text. |
 | 91 | A | Issue URL is well-formed and carries build details; the mailto fallback is reachable. |
@@ -228,15 +228,15 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 
 | # | class | enforcer |
 |---|---|---|
-| 100 | A | Clean exit: process ends, exit 0, no lingering child. |
+| 100 | B | A harness cannot watch its own exit, so each walk writes `started` to its own marker and `finished` on the way out; the NEXT walk reads it. Three states, because "no marker" means "never ran here", not "exited cleanly". ⚠The app's general unclean-exit marker cannot answer this alone — `--uitest` suppresses the session autosave, so there is no session file to tell "clean" from "never ran" either. |
 | 101 | A | Session save/load round-trip restores view, fractal, palette and settings. |
-| 102 | A | Assert no `crash-*.txt` appeared during the run — a check every harness should already make. |
+| 102 | A | The same census as row 1, and it fails the RUN rather than a step: every step can pass while the app panicked on a worker thread. |
 
 ### Stability (103–105)
 
 | # | class | enforcer |
 |---|---|---|
-| 103 | A | Idle soak at depth with a **liveness assertion**, not just a crash grep: the frame counter must keep advancing. A soak that greps only for crashes passes a hung app. |
+| 103 | A | `--soak SECONDS [--soak-depth DECADES]`: frames must advance in every 20 s window, resident set may not grow past 256 MB, no crash report may appear. ⚠⚠**The liveness judge runs on its own THREAD.** The first version counted frames inside the per-frame hook and failed a window that saw none — which cannot happen, because a window with no frames is one where the hook never ran. It would have reported nothing on the exact failure it was written for. Verified by wedging the UI thread: FAIL at +40 s, exit 1. |
 | 104 | A | `--torture` / `--autodive` sustained session; no device loss, no watchdog restart. |
 | 105 | B | 18 switches of formula × method × palette, then the frame must be IDENTICAL to a clean render of the final selection — and DIFFERENT from a render of another selection, so the equality cannot pass by everything looking alike (measured meanΔ 51.98 apart). ⚠Partial: this catches a stale app FIELD, not a stale GPU cache — the export path builds a fresh reference every time, so a `invalidate_refs`-is-a-no-op mutant passes. The live half stays human. |
 
@@ -264,3 +264,25 @@ Phased so each phase is independently useful and independently verifiable.
 
 Each phase ends by deliberately breaking the behaviour it guards and confirming the new check
 goes red.
+
+## State (2026-08-29)
+
+**All seven phases are implemented. 0 rows outstanding**: 70 fully enforced, 32 partly, 4 that
+cannot be (steps 9, 15, 99, 106). Run `python scripts/checklist_coverage.py` for the live count —
+it exits 1 on a row that claims coverage it no longer has.
+
+Where the checks live: `--selftest` gained a `checklist` group (12 checks, 156 → 168), `--uitest`
+gained four per-step invariants plus three window steps and two run-level censuses (26 → 29 steps),
+`--soak` is new, and the unit suites went 157 → 178 (app) and 11 → 13 (state).
+
+⭐**Every check was mutation-verified against the PRODUCT**, not against itself — break the thing
+it guards and that check, and only that one, goes red. Four first drafts passed under mutation and
+had to be rewritten; each is recorded at its row above, because the failure was always the same
+shape: a check that agreed with itself. The soak's liveness judge is the sharpest example — it ran
+on the thread whose wedging it was meant to detect.
+
+**Four rows were corrected rather than enforced**, because the row described something the app does
+not do: bookmark RENAME (step 71) does not exist; "Log color scale" (step 57) has no effect unless
+normalization is on; the panel sections (step 9) are not machine-drivable; and steps 11–12 make one
+enforceable claim and one tautological one. A row that claims coverage it cannot have is worse than
+one that claims none — the same rule the coverage script applies to enforcers.

@@ -485,6 +485,8 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--juliadive [DIR]", "Dev: dual-view Julia motion harness — boots dual view with a pinned spiral c (explicit 2000 iterations, prefer-detail on) and zooms the Julia panel in-app to ~2000x, screenshotting every octave in motion plus stopped/settled frames -> DIR (default logs/). Reproduces the dual-view Julia zoom rendering path deterministically."),
         Flag("--gputest", "Dev: verify the shader's df32/floatexp arithmetic primitives (error-free transforms, double-float ops, floatexp ops, iteration-form accumulation) against CPU oracles, on EVERY graphics backend this machine offers (DX12 / Vulkan / OpenGL), and print a per-op verdict table for each. Runs headless — no window, works over SSH. Catches a shader compiler that folds the error-free transforms (which silently degrades every extended-precision path to plain f32), fast-math fma contraction, flushed denormals, or wrong rounding — include the report in bug reports about wrong deep rendering. Exit 1 if any backend fails."),
         Flag("--uitest [DIR]", "Dev: scripted walk through every UI screen + the live-render bands (Direct/df32/floatexp), screenshotting each and writing a review bundle (screenshots + report.md/json + log.txt) to DIR (default: the mounted share, else logs/). Runs under the real eframe loop — on a headless box wrap it with xvfb-run. Exit 1 if any step FAILs."),
+        Flag("--soak SECONDS", "Dev: sit at a deep view for SECONDS and assert the app is still ALIVE — the frame counter must advance in EVERY 20 s window, the resident set may not grow past 256 MB, and no crash report may appear. A soak that only greps for crashes passes a hung app, which is exactly the failure this looks for. Depth with --soak-depth DECADES (default 30). Exit 1 on a stall, a leak, or a crash report."),
+        Flag("--soak-depth DECADES", "log10 magnification for --soak (default 30 — deep enough to be on the perturbation path with a real reference orbit)."),
         Flag("--play FILE", "Start with a tour already playing in the live view (Tools -> Play tour, from the command line). Useful for reproducing live-playback behaviour that headless harnesses cannot reach."),
         Flag("--oomtest", "Dev: request an unsatisfiable allocation to prove the out-of-memory path writes a crash report. Exits 0xC0000409 (abort) by design — an OOM skips the panic hook, so this is the only way to exercise that reporting."),
         Flag("--dump-tour-schema", "Print the tour-script (.toml) schema reference as Markdown and exit (generates TOURS.md)."),
@@ -766,6 +768,41 @@ pub(crate) fn help_licenses(ui: &mut egui::Ui) {
     });
 }
 
+/// The Help window's contents list and the body that draws each entry — ONE table, so a section
+/// cannot exist in the list without something to render.
+///
+/// It replaced a `match` whose `_` arm fell through to About: a section added to the list and not
+/// to the match rendered the About text under its own heading, which is invisible unless someone
+/// clicks that exact entry. Paired here, and pinned by `help_sections_all_render`.
+pub(crate) const SECTION_NAMES: [&str; 11] = [
+    "Overview",
+    "Navigation",
+    "Coloring & options",
+    "Fractals",
+    "How it works",
+    "Command line",
+    "Shortcuts",
+    "Recommended hardware",
+    "Acknowledgments",
+    "Licenses",
+    "About",
+];
+
+/// The body for each entry of [`SECTION_NAMES`], in the same order.
+pub(crate) const SECTION_BODIES: [fn(&mut egui::Ui); SECTION_NAMES.len()] = [
+    help_overview,
+    help_navigation,
+    help_options,
+    help_fractals,
+    help_methodology,
+    help_command_line,
+    help_shortcuts,
+    help_hardware,
+    help_acknowledgments,
+    help_licenses,
+    help_about,
+];
+
 /// About's "Deep-zoom arithmetic" line: what has actually RUN, and what this binary contains.
 ///
 /// The two halves answer different questions, and both matter. The first cannot name a backend
@@ -815,4 +852,47 @@ pub(crate) fn help_about(ui: &mut egui::Ui) {
     help_p(ui, "MIT OR Apache-2.0 — use under either license, at your option.");
     help_p(ui, "© 2026 Rithea Hong.");
     ui.hyperlink_to("Source on GitHub \u{2197}", "https://github.com/WindySnowOwl/fractadyne");
+}
+
+#[cfg(test)]
+mod help_tests {
+    use super::*;
+
+    /// Checklist step 87, "every Help section renders and is non-empty". The failure it guards is
+    /// specific and silent: the section list and the bodies used to be a list plus a `match` with
+    /// a catch-all arm, so a section added to the list and not to the match rendered the ABOUT
+    /// text under its own heading — wrong content, no error, and only visible to someone who
+    /// clicked that exact entry and knew what should have been there.
+    ///
+    /// Readability of the prose stays human; that every entry has its own body does not.
+    #[test]
+    fn help_sections_all_render() {
+        assert_eq!(
+            SECTION_NAMES.len(),
+            SECTION_BODIES.len(),
+            "a Help section has no body, or a body has no entry in the contents list"
+        );
+        for (i, n) in SECTION_NAMES.iter().enumerate() {
+            assert!(!n.trim().is_empty(), "section {i} has no name");
+        }
+        // Names are unique — two entries with the same label are indistinguishable in the list.
+        let mut sorted: Vec<&str> = SECTION_NAMES.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), SECTION_NAMES.len(), "two Help sections share a name");
+        // And no two entries share a BODY, which is the shape the old catch-all produced.
+        for i in 0..SECTION_BODIES.len() {
+            for j in (i + 1)..SECTION_BODIES.len() {
+                assert!(
+                    !std::ptr::fn_addr_eq(SECTION_BODIES[i], SECTION_BODIES[j]),
+                    "{:?} and {:?} render the same body",
+                    SECTION_NAMES[i],
+                    SECTION_NAMES[j]
+                );
+            }
+        }
+        // About is the last entry, which the window relies on when it clamps an out-of-range
+        // index — a stale `help_section` from an older session must land somewhere sensible.
+        assert_eq!(*SECTION_NAMES.last().unwrap(), "About");
+    }
 }
