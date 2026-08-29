@@ -46,6 +46,11 @@ zoom).
   building reference orbits, which is exactly what the report's CPU figure measures, so
   two results were not comparable without knowing which build made them.
 
+- **Control panel labels read left to right** — sliders and dropdowns had their label
+  after the control, which is egui's default and reads as a caption rather than a label.
+  The label now comes first, in a fixed column, so the controls line up with each other
+  as well. Checkboxes are unchanged: a trailing label is the convention for a checkbox.
+
 - **Orbit overlay normalization is reachable from the menu** — Tools ▸ Orbit overlay
   now carries the "Normalize (fit to view)" option beside the toggle, rather than only in
   the Controls panel. Without it the orbit flies off-screen at depth, so it is the setting

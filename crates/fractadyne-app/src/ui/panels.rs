@@ -2,6 +2,35 @@
 //! `impl FractadyneApp` block moved verbatim from `main.rs`.
 use crate::*;
 
+/// Width of the control panel's label column. One value for every row, so the controls share a
+/// left edge instead of starting wherever the preceding label happened to end.
+const PANEL_LABEL_W: f32 = 104.0;
+
+/// One labelled control row: label on the LEFT, control to its right.
+///
+/// egui's own idiom appends the label - `Slider::text` and `ComboBox::from_label` both put it
+/// AFTER the widget - which reads as a caption and leaves a column of ragged text down the right
+/// of the panel. Label-first is the desktop convention for a settings panel, and a fixed-width
+/// label column aligns the controls with each other as a side effect.
+///
+/// Checkboxes deliberately do NOT use this: a trailing label is the convention for a checkbox,
+/// and the panel's seventeen already read correctly.
+fn labelled<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.horizontal(|ui| {
+        // PAD to the column rather than laying the label out inside a fixed-size child: a
+        // child `Ui` shrinks to its content, so the controls still began wherever each label
+        // happened to end - label-first but just as ragged, which was half the point.
+        // A label wider than the column simply pushes its control right; that is preferable
+        // to truncating a name the user needs to read.
+        let used = ui.label(label).rect.width();
+        if used < PANEL_LABEL_W {
+            ui.add_space(PANEL_LABEL_W - used);
+        }
+        add(ui)
+    })
+    .inner
+}
+
 impl FractadyneApp {
     /// Right-side control panel (Coloring + Navigation sections) plus the reopen handle shown
     /// when it's hidden. No-op in fullscreen.
@@ -23,12 +52,13 @@ impl FractadyneApp {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
 
                 egui::CollapsingHeader::new("Navigate").default_open(true).show(ui, |ui| {
-                ui.add(
-                    egui::Slider::new(&mut self.render_cfg.zoom_rate, 0.25..=4.0)
-                        .text("Zoom speed")
-                        .suffix("×")
-                        .logarithmic(true),
-                )
+                labelled(ui, "Zoom speed", |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut self.render_cfg.zoom_rate, 0.25..=4.0)
+                            .suffix("×")
+                            .logarithmic(true),
+                    )
+                })
                 .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
 
                 // Click-to-zoom tool: arm a click to dive into the point by a fixed factor. Off by
@@ -56,34 +86,39 @@ impl FractadyneApp {
 
                 });
                 egui::CollapsingHeader::new("Coloring").default_open(true).show(ui, |ui| {
-                egui::ComboBox::from_label("Method")
-                    .selected_text(self.coloring.color_method.label())
-                    .show_ui(ui, |ui| {
-                        for m in ColorMethod::ALL {
-                            ui.selectable_value(&mut self.coloring.color_method, m, m.label());
-                        }
-                    })
-                    .response
-                    .on_hover_text(
-                        "How escape data maps to color. Stripe / triangle-inequality / \
-                         orbit-trap / decomposition reveal orbit structure; distance \
-                         shades by proximity to the boundary.",
-                    );
+                labelled(ui, "Method", |ui| {
+                    egui::ComboBox::from_id_salt("panel_method")
+                        .selected_text(self.coloring.color_method.label())
+                        .show_ui(ui, |ui| {
+                            for m in ColorMethod::ALL {
+                                ui.selectable_value(&mut self.coloring.color_method, m, m.label());
+                            }
+                        })
+                        .response
+                        .on_hover_text(
+                            "How escape data maps to color. Stripe / triangle-inequality / \
+                             orbit-trap / decomposition reveal orbit structure; distance \
+                             shades by proximity to the boundary.",
+                        );
+                });
                 if self.coloring.color_method == ColorMethod::Stripe {
-                    ui.add(
-                        egui::Slider::new(&mut self.coloring.stripe_freq, 1.0..=24.0)
-                            .text("Stripe density")
-                            .logarithmic(true),
-                    );
+                    labelled(ui, "Stripe density", |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut self.coloring.stripe_freq, 1.0..=24.0)
+                                .logarithmic(true),
+                        )
+                    });
                 }
                 if self.coloring.color_method == ColorMethod::OrbitTrap {
-                    egui::ComboBox::from_label("Trap shape")
-                        .selected_text(self.coloring.trap_type.label())
-                        .show_ui(ui, |ui| {
-                            for t in TrapType::ALL {
-                                ui.selectable_value(&mut self.coloring.trap_type, t, t.label());
-                            }
-                        });
+                    labelled(ui, "Trap shape", |ui| {
+                        egui::ComboBox::from_id_salt("panel_trap_shape")
+                            .selected_text(self.coloring.trap_type.label())
+                            .show_ui(ui, |ui| {
+                                for t in TrapType::ALL {
+                                    ui.selectable_value(&mut self.coloring.trap_type, t, t.label());
+                                }
+                            });
+                    });
                 }
                 let pal_name = if self.coloring.use_binary {
                     "Binary (set)"
@@ -94,41 +129,43 @@ impl FractadyneApp {
                 } else {
                     fractadyne_color::PRESETS[self.coloring.palette_idx].name
                 };
-                egui::ComboBox::from_label("Palette")
-                    .selected_text(pal_name)
-                    .show_ui(ui, |ui| {
-                        let is_preset = !self.coloring.use_custom_palette && !self.coloring.use_duotone && !self.coloring.use_binary;
-                        for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
-                            if ui.selectable_label(is_preset && self.coloring.palette_idx == i, p.name).clicked() {
-                                self.coloring.palette_idx = i;
-                                self.coloring.use_custom_palette = false;
+                labelled(ui, "Palette", |ui| {
+                    egui::ComboBox::from_id_salt("panel_palette")
+                        .selected_text(pal_name)
+                        .show_ui(ui, |ui| {
+                            let is_preset = !self.coloring.use_custom_palette && !self.coloring.use_duotone && !self.coloring.use_binary;
+                            for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
+                                if ui.selectable_label(is_preset && self.coloring.palette_idx == i, p.name).clicked() {
+                                    self.coloring.palette_idx = i;
+                                    self.coloring.use_custom_palette = false;
+                                    self.coloring.use_duotone = false;
+                                    self.coloring.use_binary = false;
+                                }
+                            }
+                            if ui.selectable_label(self.coloring.use_custom_palette, format!("Custom {}", crate::icons::EDIT)).clicked() {
+                                if self.coloring.custom_palette.is_empty() {
+                                    self.coloring.custom_palette = self.preset_as_stops(self.coloring.palette_idx);
+                                }
+                                self.coloring.use_custom_palette = true;
                                 self.coloring.use_duotone = false;
                                 self.coloring.use_binary = false;
                             }
-                        }
-                        if ui.selectable_label(self.coloring.use_custom_palette, format!("Custom {}", crate::icons::EDIT)).clicked() {
-                            if self.coloring.custom_palette.is_empty() {
-                                self.coloring.custom_palette = self.preset_as_stops(self.coloring.palette_idx);
+                            if ui.selectable_label(self.coloring.use_duotone, "Duotone").clicked() {
+                                self.coloring.use_duotone = true;
+                                self.coloring.use_custom_palette = false;
+                                self.coloring.use_binary = false;
                             }
-                            self.coloring.use_custom_palette = true;
-                            self.coloring.use_duotone = false;
-                            self.coloring.use_binary = false;
-                        }
-                        if ui.selectable_label(self.coloring.use_duotone, "Duotone").clicked() {
-                            self.coloring.use_duotone = true;
-                            self.coloring.use_custom_palette = false;
-                            self.coloring.use_binary = false;
-                        }
-                        if ui
-                            .selectable_label(self.coloring.use_binary, "Binary (set)")
-                            .on_hover_text("Flat two-color: in-set vs out-of-set, no gradient.")
-                            .clicked()
-                        {
-                            self.coloring.use_binary = true;
-                            self.coloring.use_custom_palette = false;
-                            self.coloring.use_duotone = false;
-                        }
-                    });
+                            if ui
+                                .selectable_label(self.coloring.use_binary, "Binary (set)")
+                                .on_hover_text("Flat two-color: in-set vs out-of-set, no gradient.")
+                                .clicked()
+                            {
+                                self.coloring.use_binary = true;
+                                self.coloring.use_custom_palette = false;
+                                self.coloring.use_duotone = false;
+                            }
+                        });
+                });
                 if self.coloring.use_duotone || self.coloring.use_binary {
                     // Two shared colors. (Binary: interior/exterior; duotone: shadow/highlight.)
                     let (lo_lbl, hi_lbl) = if self.coloring.use_binary {
@@ -149,8 +186,12 @@ impl FractadyneApp {
                     self.coloring.use_custom_palette = true;
                     self.coloring.palette_editor_open = true;
                 }
-                ui.add(egui::Slider::new(&mut self.coloring.cycle, 0.0..=1.0).text("Cycle"));
-                ui.add(egui::Slider::new(&mut self.coloring.offset, 0.0..=1.0).text("Offset"));
+                labelled(ui, "Cycle", |ui| {
+                    ui.add(egui::Slider::new(&mut self.coloring.cycle, 0.0..=1.0))
+                });
+                labelled(ui, "Offset", |ui| {
+                    ui.add(egui::Slider::new(&mut self.coloring.offset, 0.0..=1.0))
+                });
                 ui.checkbox(&mut self.coloring.log_palette, "Log color scale")
                     .on_hover_text(
                         "Spread the palette by the logarithm of the escape value rather than \
@@ -167,20 +208,23 @@ impl FractadyneApp {
                          it). Smooth method only; ordinary views are unaffected. Matches the \
                          --normalize export option.",
                     );
-                egui::ComboBox::from_label("Animate")
-                    .selected_text(self.anim.palette_anim.name())
-                    .show_ui(ui, |ui| {
-                        for m in PaletteAnim::ALL {
-                            ui.selectable_value(&mut self.anim.palette_anim, m, m.name());
-                        }
-                    });
-                ui.add_enabled(
-                    self.anim.palette_anim != PaletteAnim::Off,
-                    egui::Slider::new(&mut self.anim.palette_anim_speed, 0.01..=2.0)
-                        .text("Speed")
-                        .suffix("/s")
-                        .logarithmic(true),
-                )
+                labelled(ui, "Animate", |ui| {
+                    egui::ComboBox::from_id_salt("panel_animate")
+                        .selected_text(self.anim.palette_anim.name())
+                        .show_ui(ui, |ui| {
+                            for m in PaletteAnim::ALL {
+                                ui.selectable_value(&mut self.anim.palette_anim, m, m.name());
+                            }
+                        });
+                });
+                labelled(ui, "Speed", |ui| {
+                    ui.add_enabled(
+                        self.anim.palette_anim != PaletteAnim::Off,
+                        egui::Slider::new(&mut self.anim.palette_anim_speed, 0.01..=2.0)
+                            .suffix("/s")
+                            .logarithmic(true),
+                    )
+                })
                 .on_hover_text(
                     "Cycle speed: color-offset cycles/sec, or (Random) gradient \
                      changes/sec.",
@@ -193,11 +237,15 @@ impl FractadyneApp {
                 egui::CollapsingHeader::new("Quality").default_open(true).show(ui, |ui| {
                 ui.checkbox(&mut self.render_cfg.auto_iter, "Auto-scale iterations with zoom");
                 let label = if self.render_cfg.auto_iter { "Iterations (base)" } else { "Iterations" };
-                ui.add(
-                    egui::Slider::new(&mut self.render_cfg.max_iter, 64..=crate::MAX_ITER_LIMIT)
-                        .logarithmic(true)
-                        .text(label),
-                )
+                labelled(ui, label, |ui| {
+                    ui.add(
+                        egui::Slider::new(
+                            &mut self.render_cfg.max_iter,
+                            64..=crate::MAX_ITER_LIMIT,
+                        )
+                        .logarithmic(true),
+                    )
+                })
                 .on_hover_text(
                     "Base iteration count. With Auto-scale on, the effective count climbs \
                      with zoom depth. While you're moving, the preview caps iterations low \
@@ -235,26 +283,28 @@ impl FractadyneApp {
                     );
                 }
                 ui.separator();
-                egui::ComboBox::from_label("Anti-alias")
-                    .selected_text(match self.render_cfg.aa {
-                        1 => "Off",
-                        2 => "2×",
-                        3 => "3×",
-                        4 => "4×",
-                        _ => "8×",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.render_cfg.aa, 1, "Off");
-                        ui.selectable_value(&mut self.render_cfg.aa, 2, "2×");
-                        ui.selectable_value(&mut self.render_cfg.aa, 3, "3×");
-                        ui.selectable_value(&mut self.render_cfg.aa, 4, "4×");
-                        ui.selectable_value(&mut self.render_cfg.aa, 8, "8×");
-                    })
-                    .response
-                    .on_hover_text(
-                        "Supersampling for still images (applied when the view settles). \
-                         Higher tames the fine exterior 'dust' at the cost of render time.",
-                    );
+                labelled(ui, "Anti-alias", |ui| {
+                    egui::ComboBox::from_id_salt("panel_anti_alias")
+                        .selected_text(match self.render_cfg.aa {
+                            1 => "Off",
+                            2 => "2×",
+                            3 => "3×",
+                            4 => "4×",
+                            _ => "8×",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.render_cfg.aa, 1, "Off");
+                            ui.selectable_value(&mut self.render_cfg.aa, 2, "2×");
+                            ui.selectable_value(&mut self.render_cfg.aa, 3, "3×");
+                            ui.selectable_value(&mut self.render_cfg.aa, 4, "4×");
+                            ui.selectable_value(&mut self.render_cfg.aa, 8, "8×");
+                        })
+                        .response
+                        .on_hover_text(
+                            "Supersampling for still images (applied when the view settles). \
+                             Higher tames the fine exterior 'dust' at the cost of render time.",
+                        );
+                });
 
                 });
                 egui::CollapsingHeader::new("Effects").default_open(false).show(ui, |ui| {
@@ -265,16 +315,18 @@ impl FractadyneApp {
                          Multibrot.)",
                     );
                 ui.add_enabled_ui(self.effects.light, |ui| {
-                    ui.add(
-                        egui::Slider::new(&mut self.effects.light_angle, 0.0..=std::f32::consts::TAU)
-                            .text("Light angle")
-                            .suffix(" rad"),
-                    );
-                    ui.add(
-                        egui::Slider::new(&mut self.effects.light_height, 0.2..=4.0)
-                            .text("Relief")
-                            .logarithmic(true),
-                    )
+                    labelled(ui, "Light angle", |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut self.effects.light_angle, 0.0..=std::f32::consts::TAU)
+                                .suffix(" rad"),
+                        )
+                    });
+                    labelled(ui, "Relief", |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut self.effects.light_height, 0.2..=4.0)
+                                .logarithmic(true),
+                        )
+                    })
                     .on_hover_text("Lower = sharper relief; higher = softer/flatter.");
                     ui.checkbox(&mut self.effects.light_anim, "Rotate light")
                         .on_hover_text("Spin the light direction over time (uses the Speed slider).");
@@ -285,12 +337,15 @@ impl FractadyneApp {
                          filaments near the boundary. (Holomorphic families.)",
                     );
                 ui.add_enabled_ui(self.effects.de, |ui| {
-                    ui.add(egui::Slider::new(&mut self.effects.de_strength, 0.0..=1.0).text("Glow"));
-                    ui.add(
-                        egui::Slider::new(&mut self.effects.de_width, 0.15..=4.0)
-                            .text("Band width")
-                            .logarithmic(true),
-                    )
+                    labelled(ui, "Glow", |ui| {
+                        ui.add(egui::Slider::new(&mut self.effects.de_strength, 0.0..=1.0))
+                    });
+                    labelled(ui, "Band width", |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut self.effects.de_width, 0.15..=4.0)
+                                .logarithmic(true),
+                        )
+                    })
                     .on_hover_text("Spacing of the distance contours (octaves per band).");
                     ui.checkbox(&mut self.effects.de_anim, "Animate glow")
                         .on_hover_text("Flow the glow bands over time (uses the Speed slider).");
@@ -311,12 +366,13 @@ impl FractadyneApp {
                         );
                     ui.checkbox(&mut self.anim.orbit_anim, "Animate (racing dot)")
                         .on_hover_text("Send a color-cycling dot racing out along the orbit.");
-                    ui.add_enabled(
-                        self.anim.orbit_anim,
-                        egui::Slider::new(&mut self.anim.orbit_anim_speed, 1.0..=40.0)
-                            .text("Orbit speed")
-                            .suffix("/s"),
-                    );
+                    labelled(ui, "Orbit speed", |ui| {
+                        ui.add_enabled(
+                            self.anim.orbit_anim,
+                            egui::Slider::new(&mut self.anim.orbit_anim_speed, 1.0..=40.0)
+                                .suffix("/s"),
+                        )
+                    });
                 });
                 ui.checkbox(&mut self.dialogs.minimap, "Minimap overview").on_hover_text(
                     "A small home-view overview with a \"you are here\" marker and the zoom \
@@ -355,13 +411,13 @@ impl FractadyneApp {
                 ui.label(egui::RichText::new("Performance tuning").weak().small());
                 // Auto-zoom (autopilot) dive limit, edited in decimal orders (1eN×) but stored as log2.
                 let mut dive_log10 = self.autopilot.dive_log2 / std::f64::consts::LOG2_10;
-                if ui
-                    .add(
+                if labelled(ui, "Auto-zoom dive limit", |ui| {
+                    ui.add(
                         egui::Slider::new(&mut dive_log10, 30.0..=5000.0)
-                            .text("Auto-zoom dive limit")
                             .logarithmic(true)
                             .custom_formatter(|n, _| format!("1e{n:.0}×")),
                     )
+                })
                     .on_hover_text(
                         "Depth where auto-zoom (A key) stops. Up to ~1e271× it glides smoothly; \
                          deeper, it switches to a choppy stepped dive to reach extreme depth quickly.",
@@ -372,12 +428,13 @@ impl FractadyneApp {
                 }
 
                 // Live-render work budget: detail-vs-speed for the deep-zoom preview.
-                ui.add(
-                    egui::Slider::new(&mut self.render_cfg.work_budget_scale, 0.25..=8.0)
-                        .text("Live render budget")
-                        .suffix("×")
-                        .logarithmic(true),
-                )
+                labelled(ui, "Live render budget", |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut self.render_cfg.work_budget_scale, 0.25..=8.0)
+                            .suffix("×")
+                            .logarithmic(true),
+                    )
+                })
                 .on_hover_text(
                     "Detail vs. speed for the live view at deep zoom. Higher renders at fuller \
                      resolution (crisper — less of the \"soft\" upscaled look) but lowers frame-rate, \
@@ -386,16 +443,17 @@ impl FractadyneApp {
                 );
 
                 // Motion sharpness floor: cap how pixelated a continuous deep zoom is allowed to get.
-                ui.add(
-                    egui::Slider::new(&mut self.render_cfg.min_motion_res, 0.30..=1.0)
-                        .text("Min motion resolution")
-                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
-                        .custom_parser(|s| {
-                            s.trim().trim_end_matches('%').parse::<f64>().ok().map(|v| {
-                                if v > 1.0 { v / 100.0 } else { v }
-                            })
-                        }),
-                )
+                labelled(ui, "Min motion resolution", |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut self.render_cfg.min_motion_res, 0.30..=1.0)
+                            .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+                            .custom_parser(|s| {
+                                s.trim().trim_end_matches('%').parse::<f64>().ok().map(|v| {
+                                    if v > 1.0 { v / 100.0 } else { v }
+                                })
+                            }),
+                    )
+                })
                 .on_hover_text(
                     "The lowest resolution the live view may drop to while continuously zooming or \
                      panning at deep zoom. Higher stops a fast dive from getting blocky/pixelated \
