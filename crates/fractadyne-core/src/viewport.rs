@@ -332,6 +332,102 @@ mod pan_complex_tests {
         assert!(lost > 1.0e-25, "an f64 round trip lost only {lost:e} - threshold is not probative");
     }
 
+    /// Checklist step 19, "the image follows the cursor 1:1 while dragging". The claim is exact:
+    /// a drag of N pixels must move the centre by N * units_per_pixel, at any depth. Checked
+    /// across 15 orders of magnitude because a scale factor that is subtly wrong is invisible at
+    /// one depth and obvious at another.
+    #[test]
+    fn pan_pixels_moves_exactly_one_pixel_per_pixel() {
+        for log2mag in [0.0f64, 20.0, 60.0, 200.0] {
+            let mut vp = Viewport::new(1920.0, 1080.0);
+            vp.set_center_log2mag(
+                crate::BigFloat::from_f64(-0.5, 64),
+                crate::BigFloat::from_f64(0.0, 64),
+                log2mag,
+            );
+            // Independent of pan_pixels' own arithmetic: take the point under a pixel, drag,
+            // and ask where that point now sits. 1:1 means it moved by exactly the drag.
+            // Comparing against `pixel_offset` instead would only test pan_pixels against its
+            // own helper, and a wrong scale would agree with itself.
+            let (px, py) = (700.0f64, 400.0);
+            let (cx, cy) = vp.pixel_to_complex(px, py);
+
+            vp.pan_pixels(120.0, -80.0);
+
+            let (bx, by) = vp.complex_to_pixel(&cx, &cy);
+            assert!(
+                (bx - (px + 120.0)).abs() < 0.01 && (by - (py - 80.0)).abs() < 0.01,
+                "at 2^{log2mag}: the point moved to ({bx:.3}, {by:.3}), wanted ({}, {})",
+                px + 120.0,
+                py - 80.0
+            );
+        }
+    }
+
+    /// Checklist step 20, "wheel zooms about the cursor". The invariant is that the complex point
+    /// under the cursor does not move: zoom about a pixel, and that pixel must still show the same
+    /// point. Uses the pixel round-trip rather than comparing coordinates, so it holds at depths
+    /// where the coordinate itself is far past f64.
+    #[test]
+    fn zoom_at_keeps_the_point_under_the_cursor_fixed() {
+        for factor in [0.25f64, 0.5, 2.0, 4.0] {
+            let mut vp = Viewport::new(1920.0, 1080.0);
+            vp.set_center_log2mag(
+                crate::BigFloat::from_f64(-0.5, 64),
+                crate::BigFloat::from_f64(0.0, 64),
+                40.0,
+            );
+            // Deliberately NOT the centre: zooming about the centre keeps everything fixed, so a
+            // centred cursor would pass even if the anchoring were ignored entirely.
+            let (px, py) = (1500.0f64, 300.0);
+            let (cx, cy) = vp.pixel_to_complex(px, py);
+
+            vp.zoom_at(px, py, factor);
+
+            let (bx, by) = vp.complex_to_pixel(&cx, &cy);
+            assert!(
+                (bx - px).abs() < 0.01 && (by - py).abs() < 0.01,
+                "factor {factor}: the anchored point moved to ({bx:.3}, {by:.3}), wanted ({px}, {py})"
+            );
+        }
+    }
+
+    /// Checklist step 65, "iteration count starts tracking zoom depth again". Depth-adaptive means
+    /// monotonic: deeper must never ask for FEWER iterations than shallower.
+    #[test]
+    fn recommended_max_iter_never_decreases_with_depth() {
+        let mut prev = 0u32;
+        for log2mag in [0.0f64, 10.0, 30.0, 60.0, 120.0, 300.0] {
+            let mut vp = Viewport::new(1920.0, 1080.0);
+            vp.set_center_log2mag(
+                crate::BigFloat::from_f64(-0.5, 64),
+                crate::BigFloat::from_f64(0.0, 64),
+                log2mag,
+            );
+            let n = vp.recommended_max_iter(1000);
+            assert!(n >= prev, "2^{log2mag} asked for {n} after {prev} at the shallower depth");
+            prev = n;
+        }
+        // And it must actually CLIMB, not merely fail to fall - a constant would satisfy
+        // monotonicity while making "auto-scale" do nothing.
+        let mut deep = Viewport::new(1920.0, 1080.0);
+        deep.set_center_log2mag(
+            crate::BigFloat::from_f64(-0.5, 64),
+            crate::BigFloat::from_f64(0.0, 64),
+            300.0,
+        );
+        let mut shallow = Viewport::new(1920.0, 1080.0);
+        shallow.set_center_log2mag(
+            crate::BigFloat::from_f64(-0.5, 64),
+            crate::BigFloat::from_f64(0.0, 64),
+            0.0,
+        );
+        assert!(
+            deep.recommended_max_iter(1000) > shallow.recommended_max_iter(1000) * 2,
+            "auto-scale should ask for far more at 2^300 than at 1x"
+        );
+    }
+
     /// `zoom_by` must leave the centre exactly where it was, at any depth - it is the
     /// gesture for "deeper from here", so any drift is the bug.
     #[test]
