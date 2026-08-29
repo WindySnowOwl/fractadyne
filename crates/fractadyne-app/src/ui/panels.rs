@@ -73,7 +73,7 @@ impl FractadyneApp {
                 ui.add_enabled_ui(self.click_zoom, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("    Factor");
-                        for f in [2.0_f32, 4.0, 10.0, 50.0, 100.0] {
+                        for f in crate::CLICK_ZOOM_FACTORS {
                             ui.selectable_value(
                                 &mut self.render_cfg.click_zoom_factor,
                                 f,

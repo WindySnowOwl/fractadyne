@@ -116,8 +116,8 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 
 | # | class | enforcer |
 |---|---|---|
-| 16–17 | B | Action test: click-zoom at a point with each factor 2/4/10/50/100 multiplies magnification by exactly that factor and leaves the clicked complex point fixed. |
-| 18 | B | Action test for the toolbar zoom actions, in and out, centre preserved. |
+| 16–17 | B | Action test over `CLICK_ZOOM_FACTORS` (the list the tool draws, now named rather than inline): each factor multiplies magnification by exactly itself, in and out, and the clicked point becomes the view centre — checked in PIXELS, so it holds at 2^200. |
+| 18 | B | Action test on `TOOLBAR_ZOOM_{IN,OUT}_FACTOR`: in-then-out returns to the exact starting magnification (they are reciprocals) and the centre does not drift. |
 | 19 | B | `pan_pixels` moves the centre exactly `pixels × units_per_pixel` — the "1:1" claim, at several depths. |
 | 20 | B | `zoom_at` keeps the complex point under the cursor fixed. Sharp invariant, already the right shape. |
 | 21 | A | Undo/redo unit test: walk N views, undo N, redo N, assert exact coordinates at every stop. |
@@ -174,7 +174,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 |---|---|---|
 | 68 | A | Goto parse round-trip at full precision, including the astro-float leniency trap (shape-validate, then compare digits). |
 | 69 | A | Generate N random locations; each renders coherent and is not all-interior. |
-| 70–71 | A | Bookmark add / restore / rename / delete round-trip on the store. |
+| 70–71 | A | Bookmark round-trip through the TOML store (name, blob and thumbnail id survive; a pre-`thumb` file still loads) and delete via `take_bookmark`, which returns the thumbnail id to unlink and ignores a stale row index. ⚠**Step 71 asked for a RENAME the app does not have** — the Bookmarks dialog offers Add / Go / Delete only. The row has been corrected to what exists rather than left claiming a control a tester would hunt for. |
 | 72 | A | Share string round-trips to the same view. |
 | 73 | A | `.kfr` import fixtures land at the expected coordinates — **the outstanding validation item**. |
 | 74 | A | Export a PNG / `.fdn`, reopen it, assert the recovered view matches. |

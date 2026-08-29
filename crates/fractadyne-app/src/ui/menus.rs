@@ -740,10 +740,10 @@ impl FractadyneApp {
                 ui.separator();
                 // ── Navigation / location: zoom, reset/home, bookmark ─────────────────
                 if ui.button(crate::icons::ZOOM_IN).on_hover_text("Zoom in").clicked() {
-                    self.zoom_center(0.5);
+                    self.zoom_center(crate::TOOLBAR_ZOOM_IN_FACTOR);
                 }
                 if ui.button(crate::icons::ZOOM_OUT).on_hover_text("Zoom out").clicked() {
-                    self.zoom_center(2.0);
+                    self.zoom_center(crate::TOOLBAR_ZOOM_OUT_FACTOR);
                 }
                 // Click-to-zoom tool (single view): arm left-click = dive into the point,
                 // right-click = back out; drag still pans. Factor set in Settings ▸ Navigation.

@@ -1535,6 +1535,18 @@ const MINIMAP_HY: f64 = 1.2;
 const MINIMAP_TW: u32 = 240;
 const MINIMAP_TH: u32 = 180;
 
+/// The zoom factors the click-to-zoom tool offers (Settings ▸ Navigation). Named rather than
+/// written inline at the one control that draws them, because checklist step 17 asks a tester to
+/// try each one by name: the row, the buttons and the test that pins their arithmetic all have to
+/// be talking about the same list.
+const CLICK_ZOOM_FACTORS: [f32; 5] = [2.0, 4.0, 10.0, 50.0, 100.0];
+
+/// The toolbar magnifier buttons' step, as a `zoom_at` factor (< 1 zooms IN). Exact reciprocals,
+/// so in-then-out returns to the magnification you started at rather than drifting a little
+/// deeper on every pair of clicks.
+const TOOLBAR_ZOOM_IN_FACTOR: f64 = 0.5;
+const TOOLBAR_ZOOM_OUT_FACTOR: f64 = 2.0;
+
 /// "Zoom home" animation pacing: seconds per octave-ish of zoom-out, clamped so a
 /// shallow view still glides and an extreme one doesn't take forever.
 const HOME_SECONDS_PER_LOGMAG: f64 = 0.45;
@@ -2295,6 +2307,60 @@ fn meta_get(meta: &str, key: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Whether untrusted text may be handed to `load_view_metadata` as a location, and why not when
+/// it may not. One gate for all three doors — the Share dialog's Apply, File ▸ Open on a `.fdn`,
+/// and a dropped file — so a location the app itself wrote can never be accepted by one and
+/// refused by another.
+///
+/// The content test is deliberately loose: our own tag OR a centre field, because a location
+/// hand-edited down to just the coordinates is still a location. What it excludes is arbitrary
+/// text, which `load_view_metadata` would silently accept as "no recognised keys" and apply as a
+/// no-op jump, leaving the user staring at an unchanged view with no error.
+pub(crate) fn location_text_verdict(t: &str) -> Result<(), &'static str> {
+    let t = t.trim();
+    if t.is_empty() || t.len() > SHARE_MAX {
+        return Err("Nothing to load (or text too large).");
+    }
+    if meta_get(t, "app") != "Fractadyne" && meta_get(t, "center_re").is_empty() {
+        return Err("Not a Fractadyne location.");
+    }
+    Ok(())
+}
+
+/// Scan a folder for exported images carrying Fractadyne view metadata: `(path, metadata blob)`,
+/// newest first. Everything else in the folder — other apps' images, plain files, an export whose
+/// metadata failed to write — is skipped rather than listed as an entry that cannot be opened.
+///
+/// Split out of `scan_gallery` so the filtering and the ordering can be tested against real files
+/// on disk; what remains there is turning a blob into display strings.
+pub(crate) fn scan_gallery_dir(dir: &std::path::Path) -> Vec<(std::path::PathBuf, String)> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(std::path::PathBuf, String)> = Vec::new();
+    for path in rd.flatten().map(|e| e.path()) {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        let meta = match ext.as_str() {
+            "png" => fractadyne_export::read_png_metadata(&path).ok().flatten(),
+            "exr" => fractadyne_export::read_exr_metadata(&path).ok().flatten(),
+            _ => None,
+        };
+        let Some(m) = meta else { continue };
+        if meta_get(&m, "app") != "Fractadyne" {
+            continue;
+        }
+        out.push((path, m));
+    }
+    // Newest first. A missing/unparseable `saved_unix` sorts as 0 (oldest) rather than dropping
+    // the entry — the file is still openable, it just cannot claim a place in the ordering.
+    out.sort_by_key(|(_, m)| std::cmp::Reverse(meta_get(m, "saved_unix").parse::<u64>().unwrap_or(0)));
+    out
+}
+
 /// Per-view cached perturbation reference orbit (arbitrary precision).
 struct RefCache {
     ref_pt: Option<[fractadyne_core::BigFloat; 2]>,
@@ -2396,6 +2462,22 @@ struct Bookmark {
     thumb: String,
 }
 
+/// Remove bookmark `i`, returning the thumbnail id whose file must now be deleted (`None` when
+/// the index is stale or the bookmark had no thumbnail yet).
+///
+/// Split out of the dialog because the index comes from a DRAWN ROW, and a row index outliving
+/// its list is the ordinary way this goes wrong: the old code indexed `self.bookmarks[i]`
+/// directly, so a stale index would have panicked rather than been ignored. Returning the
+/// thumbnail id rather than deleting the file here keeps the list surgery pure and testable
+/// while leaving exactly one caller responsible for the file system.
+pub(crate) fn take_bookmark(list: &mut Vec<Bookmark>, i: usize) -> Option<String> {
+    if i >= list.len() {
+        return None;
+    }
+    let b = list.remove(i);
+    (!b.thumb.is_empty()).then_some(b.thumb)
+}
+
 /// TOML wrapper for the bookmarks file (`[[bookmark]]` array).
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 struct BookmarkFile {
@@ -2421,7 +2503,6 @@ struct GalleryEntry {
     saved: String,
     notes: String,
     app_version: String,
-    saved_unix: u64,
     thumb: Option<egui::TextureHandle>,
     thumb_tried: bool,
 }
@@ -2514,11 +2595,60 @@ struct GalleryState {
 }
 
 /// Navigation history for undo/redo of view changes (transient).
+///
+/// The stack arithmetic lives here rather than on the app, so checklist step 21 ("undo steps back
+/// through the previous views; redo returns forward") can be pinned without a window or a GPU.
+/// The app keeps what needs a viewport: taking a snapshot and applying one.
 #[derive(Default)]
 struct NavHistory {
     undo: Vec<ViewSnapshot>,
     redo: Vec<ViewSnapshot>,
     was_interacting: bool,
+}
+
+impl NavHistory {
+    /// Deepest history. Snapshots hold a full-precision centre, so an unbounded stack at extreme
+    /// depth is a slow memory leak; 256 locations is far more than anyone backs out through.
+    const LIMIT: usize = 256;
+
+    /// Record a location, deduped against the top of the stack, and drop the redo branch.
+    ///
+    /// Deduping matters because this is called on every settle: without it, sitting still would
+    /// fill the stack with copies of one view and Backspace would appear to do nothing. Returns
+    /// whether the location was actually new.
+    fn record(&mut self, snap: ViewSnapshot) -> bool {
+        let dup = self
+            .undo
+            .last()
+            .is_some_and(|t| t.upp == snap.upp && t.cx == snap.cx && t.cy == snap.cy);
+        if dup {
+            return false;
+        }
+        self.undo.push(snap);
+        if self.undo.len() > Self::LIMIT {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+        true
+    }
+
+    /// Step back one location. The CURRENT view is the top of the undo stack, so stepping back
+    /// needs two entries and returns the one beneath — with one entry there is nowhere to go.
+    fn undo(&mut self) -> Option<ViewSnapshot> {
+        if self.undo.len() < 2 {
+            return None;
+        }
+        let cur = self.undo.pop()?;
+        self.redo.push(cur);
+        self.undo.last().cloned()
+    }
+
+    /// Step forward into the branch `undo` set aside.
+    fn redo(&mut self) -> Option<ViewSnapshot> {
+        let s = self.redo.pop()?;
+        self.undo.push(s.clone());
+        Some(s)
+    }
 }
 
 /// Export-dialog state: the dialog's options, the in-flight background export, and the persisted
@@ -4641,24 +4771,7 @@ impl FractadyneApp {
     /// newest first. Thumbnails load lazily afterward.
     fn scan_gallery(&mut self) {
         self.gallery.entries.clear();
-        let Ok(rd) = std::fs::read_dir(&self.gallery.dir) else {
-            return;
-        };
-        for path in rd.flatten().map(|e| e.path()) {
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_ascii_lowercase())
-                .unwrap_or_default();
-            let meta = match ext.as_str() {
-                "png" => fractadyne_export::read_png_metadata(&path).ok().flatten(),
-                "exr" => fractadyne_export::read_exr_metadata(&path).ok().flatten(),
-                _ => None,
-            };
-            let Some(m) = meta else { continue };
-            if meta_get(&m, "app") != "Fractadyne" {
-                continue;
-            }
+        for (path, m) in scan_gallery_dir(&self.gallery.dir) {
             let zoom = meta_get(&m, "zoom")
                 .parse::<f64>()
                 .map(|z| format!("{}×", fmt_zoom(z)))
@@ -4669,15 +4782,12 @@ impl FractadyneApp {
                 saved: meta_get(&m, "saved"),
                 notes: meta_get(&m, "notes"),
                 app_version: format!("Fractadyne {}", meta_get(&m, "version")),
-                saved_unix: meta_get(&m, "saved_unix").parse().unwrap_or(0),
                 path,
                 meta: m,
                 thumb: None,
                 thumb_tried: false,
             });
         }
-        self.gallery.entries
-            .sort_by_key(|e| std::cmp::Reverse(e.saved_unix));
     }
 
     // export_ext / start_export / quick_export / render_to_file(_iter) / start_export_to moved to export.rs.
@@ -5289,33 +5399,19 @@ impl FractadyneApp {
     /// clear the redo stack. Called when the view settles and after discrete jumps.
     fn record_nav(&mut self) {
         let snap = self.snapshot_view();
-        let dup = self.nav.undo.last().is_some_and(|t| {
-            t.upp == snap.upp && t.cx == snap.cx && t.cy == snap.cy
-        });
-        if !dup {
-            self.nav.undo.push(snap);
-            if self.nav.undo.len() > 256 {
-                self.nav.undo.remove(0);
-            }
-            self.nav.redo.clear();
-        }
+        self.nav.record(snap);
     }
 
     /// Step back / forward through visited locations.
     fn undo_view(&mut self) {
-        if self.nav.undo.len() < 2 {
-            return;
+        if let Some(prev) = self.nav.undo() {
+            self.apply_snapshot(&prev);
+            self.nav.was_interacting = false;
         }
-        let cur = self.nav.undo.pop().unwrap();
-        self.nav.redo.push(cur);
-        let prev = self.nav.undo.last().unwrap().clone();
-        self.apply_snapshot(&prev);
-        self.nav.was_interacting = false;
     }
     fn redo_view(&mut self) {
-        if let Some(s) = self.nav.redo.pop() {
+        if let Some(s) = self.nav.redo() {
             self.apply_snapshot(&s);
-            self.nav.undo.push(s);
             self.nav.was_interacting = false;
         }
     }
@@ -6338,13 +6434,8 @@ impl FractadyneApp {
     /// `load_view_metadata`, every field validated/clamped — no paths or code).
     fn apply_share_text(&mut self, ctx: &egui::Context) {
         let t = self.share.text.trim();
-        if t.is_empty() || t.len() > SHARE_MAX {
-            self.share.msg = Some("Nothing to load (or text too large).".into());
-            return;
-        }
-        // Must look like a Fractadyne location (has our app tag or a center field).
-        if meta_get(t, "app") != "Fractadyne" && meta_get(t, "center_re").is_empty() {
-            self.share.msg = Some("Not a Fractadyne location.".into());
+        if let Err(why) = location_text_verdict(t) {
+            self.share.msg = Some(why.into());
             return;
         }
         let t = t.to_string();
@@ -6508,14 +6599,10 @@ impl FractadyneApp {
 
     /// Reset the current view to the fractal's default (both panels in dual view).
     fn reset_view(&mut self) {
-        self.viewport.reset();
         let (cx, cy) = self.fractal.default_center();
-        self.viewport.center_x = fractadyne_core::BigFloat::from_f64(cx, 64);
-        self.viewport.center_y = fractadyne_core::BigFloat::from_f64(cy, 64);
+        self.viewport.reset_to(cx, cy);
         if self.dual {
-            self.julia_viewport.reset();
-            self.julia_viewport.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
-            self.julia_viewport.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
+            self.julia_viewport.reset_to(0.0, 0.0);
         }
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
@@ -6719,9 +6806,7 @@ impl FractadyneApp {
     fn click_zoom_at(&mut self, px: f64, py: f64, out: bool, now: f64) {
         let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
         let factor = if out { f } else { 1.0 / f }; // zoom_at: factor < 1 ⇒ zoom in
-        let (w, h) = (self.viewport.width_px, self.viewport.height_px);
-        self.viewport.pan_pixels(w * 0.5 - px, h * 0.5 - py);
-        self.viewport.zoom_at(w * 0.5, h * 0.5, factor);
+        self.viewport.recenter_and_zoom(px, py, factor);
         self.pointer.zoom_vel = 0.0; // cancel any continuous-zoom glide so the jump lands clean
         self.pointer.settle_t[0] = now;
         self.record_nav();
@@ -6735,9 +6820,7 @@ impl FractadyneApp {
         }
         self.dual = !self.dual;
         if self.dual {
-            self.julia_viewport.reset();
-            self.julia_viewport.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
-            self.julia_viewport.center_y = fractadyne_core::BigFloat::from_f64(0.0, 64);
+            self.julia_viewport.reset_to(0.0, 0.0);
         }
         self.invalidate_refs();
     }
@@ -7950,5 +8033,339 @@ mod tests {
             let _ = fractadyne_core::parse_bf(&meta_get(m, "center_re"));
             let _ = meta_get(m, "zoom").parse::<f64>();
         }
+    }
+
+    // ---------------------------------------------------------------- navigation (steps 18, 21)
+
+    /// Checklist step 18, "the toolbar magnifier buttons zoom in and out, centred on the view".
+    /// Two claims worth pinning: the centre does not move, and the two buttons are exact
+    /// inverses - if they were not, a user alternating them would creep deeper (or shallower)
+    /// with every pair of clicks and could never get back to where they started.
+    #[test]
+    fn toolbar_zoom_actions() {
+        let digits = "0.35634774601304382214593134944855658665333542382319826904819524052878";
+        for log2mag in [0.0f64, 40.0, 300.0] {
+            let mut vp = fractadyne_core::Viewport::new(1600.0, 900.0);
+            vp.set_center_log2mag(
+                fractadyne_core::parse_bf_prec(digits, 512).expect("parses"),
+                fractadyne_core::parse_bf_prec(digits, 512).expect("parses"),
+                log2mag,
+            );
+            let (cx0, cy0) = (vp.center_x.clone(), vp.center_y.clone());
+            let start = vp.log2_magnification();
+
+            // `zoom_center` is `zoom_at` at the middle pixel; the constants are the ones the
+            // two toolbar buttons pass, so a rewired button changes what this measures.
+            vp.zoom_at(800.0, 450.0, TOOLBAR_ZOOM_IN_FACTOR);
+            assert!(
+                vp.log2_magnification() > start,
+                "2^{log2mag}: the zoom-IN button did not zoom in"
+            );
+            vp.zoom_at(800.0, 450.0, TOOLBAR_ZOOM_OUT_FACTOR);
+
+            assert!(
+                (vp.log2_magnification() - start).abs() < 1.0e-9,
+                "2^{log2mag}: in-then-out landed at 2^{}, not 2^{start}",
+                vp.log2_magnification()
+            );
+            // Drift measured in PIXELS, not complex units: at 2^300 the whole view is ~1e-93
+            // wide, so an absolute coordinate threshold would be satisfied by a centre that had
+            // slid clean off the screen.
+            let (bx, by) = vp.complex_to_pixel(&cx0, &cy0);
+            assert!(
+                (bx - 800.0).abs() < 0.01 && (by - 450.0).abs() < 0.01,
+                "2^{log2mag}: the centre drifted to ({bx:.3}, {by:.3})"
+            );
+        }
+    }
+
+    /// A history snapshot of a view at `log2mag` on a distinguishable centre.
+    fn snap_at(x: f64, log2mag: f64) -> ViewSnapshot {
+        let mut vp = fractadyne_core::Viewport::new(1600.0, 900.0);
+        vp.set_center_log2mag(
+            fractadyne_core::BigFloat::from_f64(x, 64),
+            fractadyne_core::BigFloat::from_f64(0.0, 64),
+            log2mag,
+        );
+        ViewSnapshot { cx: vp.center_x, cy: vp.center_y, upp: vp.units_per_pixel, prec: vp.precision }
+    }
+
+    /// Checklist step 21, "undo steps back through the previous views; redo returns forward, and
+    /// the coordinates match what you visited". Pins the stack arithmetic: the round trip, the
+    /// dedupe that keeps a settling view from filling the stack, and the redo branch being
+    /// dropped the moment you navigate somewhere new.
+    #[test]
+    fn undo_redo_round_trip() {
+        let mut nav = NavHistory::default();
+        let visited: Vec<ViewSnapshot> =
+            (0..4).map(|i| snap_at(-0.5 + i as f64 * 0.01, 10.0 * i as f64)).collect();
+        for s in &visited {
+            assert!(nav.record(s.clone()), "a new location was refused");
+        }
+
+        // Back to the start, one step at a time. The CURRENT view is the top of the stack, so
+        // three steps back from four visited locations.
+        for want in visited.iter().rev().skip(1) {
+            let got = nav.undo().expect("undo ran out early");
+            assert_eq!(got.cx, want.cx, "undo returned the wrong location");
+            assert_eq!(got.upp.e, want.upp.e, "undo returned the wrong depth");
+        }
+        assert!(nav.undo().is_none(), "undo stepped past the first location visited");
+
+        // Forward again, in order, ending where we started.
+        for want in visited.iter().skip(1) {
+            let got = nav.redo().expect("redo ran out early");
+            assert_eq!(got.cx, want.cx, "redo returned the wrong location");
+            assert_eq!(got.upp.e, want.upp.e, "redo returned the wrong depth");
+        }
+        assert!(nav.redo().is_none(), "redo invented a location past the newest");
+
+        // Dedupe: recording the view you are already on must not push a second copy, or
+        // Backspace would appear dead after a view sat still through several settles.
+        let top = visited.last().unwrap().clone();
+        assert!(!nav.record(top.clone()), "an identical location was recorded twice");
+        assert!(!nav.record(top), "an identical location was recorded twice");
+
+        // Navigating somewhere new abandons the redo branch (the standard history rule).
+        nav.undo().expect("undo");
+        assert!(!nav.redo.is_empty(), "nothing to abandon - the rest of this check is vacuous");
+        nav.record(snap_at(0.25, 55.0));
+        assert!(nav.redo.is_empty(), "a new location left the old redo branch in place");
+
+        // The stack is bounded: snapshots carry full-precision centres, so an unbounded one is
+        // a slow leak at depth. Oldest entries fall off; the newest is always reachable.
+        let mut deep = NavHistory::default();
+        for i in 0..(NavHistory::LIMIT + 50) {
+            deep.record(snap_at(-0.5 + i as f64 * 1.0e-6, 1.0));
+        }
+        assert_eq!(deep.undo.len(), NavHistory::LIMIT, "history grew past its bound");
+    }
+
+    // ---------------------------------------------------------------- locations (steps 70-72, 75)
+
+    /// A representative location blob, in exactly the shape `view_metadata` writes.
+    ///
+    /// WARNING: a literal here could drift away from what the app actually writes, so it is
+    /// checked against `KNOWN_VIEW_KEYS` below - add or rename a field and the test says so.
+    const SAMPLE_LOCATION: &str = "app=Fractadyne\nversion=0.2.40\nformat_version=1\n\
+saved_unix=1787401025\nsaved=2026-08-22 10:57:05 UTC\nnotes=hero\nfractal=Mandelbrot\n\
+julia=0\njulia_c_re=0.00000000000000000e0\njulia_c_im=0.00000000000000000e0\n\
+center_re=-1.7688142728350613080035161139012583033818929344327473679816125832\n\
+center_im=0.0000505988919638538088127175518550855307415194377517168044839680\n\
+upp=1.00000000000000000e-45\nupp_log2=-1.49500000000000000e2\nzoom=6.60e43\n\
+max_iter=60000\nauto_iter=1\npalette=0\ncycle=0.27\noffset=0.1\naa=1\n";
+
+    /// The sample above must stay in step with the reader's own key list: every key the reader
+    /// knows appears in it, and it carries no key the reader would report as unknown.
+    #[test]
+    fn the_sample_location_covers_every_view_key() {
+        for k in crate::export::KNOWN_VIEW_KEYS {
+            // `julia=0` is the one legitimately-empty-looking value (a flag, not a string).
+            assert!(
+                !meta_get(SAMPLE_LOCATION, k).is_empty() || *k == "julia",
+                "the sample location is missing {k:?} - view_metadata's fields have moved"
+            );
+        }
+        for line in SAMPLE_LOCATION.lines().filter(|l| !l.is_empty()) {
+            let k = line.split_once('=').expect("key=value").0;
+            assert!(
+                crate::export::KNOWN_VIEW_KEYS.contains(&k),
+                "the sample location carries {k:?}, which the reader does not know"
+            );
+        }
+    }
+
+    /// Checklist step 72, "Share location produces a shareable string for the current view".
+    /// The failure that matters is asymmetry - the app writing a location its own Apply button
+    /// then refuses - so this runs our own output back through the gate every paste goes
+    /// through, and confirms the gate still refuses what it exists to refuse.
+    #[test]
+    fn share_string_round_trip() {
+        assert_eq!(location_text_verdict(SAMPLE_LOCATION), Ok(()), "our own location was refused");
+        // Whitespace a clipboard round trip adds must not change the verdict.
+        let padded = format!("\r\n  {SAMPLE_LOCATION}  \n\n");
+        assert_eq!(location_text_verdict(&padded), Ok(()), "refused after a clipboard round trip");
+        // A hand-trimmed location - coordinates only, no app tag - is still a location.
+        assert_eq!(
+            location_text_verdict("center_re=-0.75\ncenter_im=0.1\nupp_log2=-40\n"),
+            Ok(())
+        );
+        // And the refusals, each for its own reason.
+        assert!(location_text_verdict("").is_err(), "empty text accepted");
+        assert!(location_text_verdict("   \n\t ").is_err(), "whitespace accepted");
+        assert!(
+            location_text_verdict("the quick brown fox\njumped=over\n").is_err(),
+            "arbitrary text accepted as a location"
+        );
+        // Oversized. It must be refused for its SIZE, so the text is a perfectly good location
+        // repeated past the bound - `x=1` padding would be refused as "not a location" whether
+        // the size bound existed or not, and would prove nothing about it.
+        let huge = SAMPLE_LOCATION.repeat(SHARE_MAX / SAMPLE_LOCATION.len() + 2);
+        assert!(huge.len() > SHARE_MAX, "the oversize case is not actually oversized");
+        assert_eq!(
+            location_text_verdict(&huge),
+            Err("Nothing to load (or text too large)."),
+            "oversized text accepted"
+        );
+        // ...and the two refusals stay distinguishable, so a caller can say which happened.
+        assert_eq!(location_text_verdict("hello"), Err("Not a Fractadyne location."));
+        // The centre survives the trip at full precision - a share string that rounded the
+        // coordinate to f64 would still parse, look right, and land somewhere else entirely.
+        let digits = meta_get(SAMPLE_LOCATION, "center_re");
+        let back = fractadyne_core::parse_bf(&digits).expect("centre parses");
+        let round = fractadyne_core::to_decimal_string(&back);
+        assert!(
+            round.starts_with(&digits[..40]),
+            "the shared centre lost digits: {digits} -> {round}"
+        );
+    }
+
+    /// Checklist step 70, "a bookmark is saved with a usable name and restores the exact view".
+    /// A bookmark is a name plus a location blob, persisted as TOML, so what can silently break
+    /// is the file round trip - and the coordinate is exactly the part a lossy round trip would
+    /// damage invisibly, since a truncated deep centre still renders a picture.
+    #[test]
+    fn bookmark_round_trip() {
+        let saved = BookmarkFile {
+            bookmark: vec![
+                Bookmark {
+                    name: "Hero 6.6e43x".into(),
+                    meta: SAMPLE_LOCATION.to_string(),
+                    thumb: "1787401025-0".into(),
+                },
+                // An auto-named bookmark with no thumbnail yet: the shape `add_bookmark`
+                // creates before the preview screenshot is harvested.
+                Bookmark {
+                    name: "Mandelbrot 1.00x".into(),
+                    meta: SAMPLE_LOCATION.to_string(),
+                    thumb: String::new(),
+                },
+            ],
+        };
+        let text = toml::to_string_pretty(&saved).expect("bookmarks serialize");
+        let read: BookmarkFile = toml::from_str(&text).expect("bookmarks parse back");
+
+        assert_eq!(read.bookmark.len(), 2, "a bookmark was lost in the file round trip");
+        for (a, b) in saved.bookmark.iter().zip(&read.bookmark) {
+            assert_eq!(a.name, b.name, "the name changed");
+            assert_eq!(a.meta, b.meta, "the location blob changed");
+            assert_eq!(a.thumb, b.thumb, "the thumbnail id changed");
+        }
+        // The restored blob is still an acceptable location, and still carries every digit.
+        let restored = &read.bookmark[0].meta;
+        assert_eq!(location_text_verdict(restored), Ok(()));
+        assert_eq!(
+            meta_get(restored, "center_re"),
+            meta_get(SAMPLE_LOCATION, "center_re"),
+            "the bookmarked centre did not survive the file"
+        );
+        // A file written by an older build (no `thumb` field) must still load.
+        let old = "[[bookmark]]\nname = \"Old\"\nmeta = \"center_re=-0.5\\n\"\n";
+        let read: BookmarkFile = toml::from_str(old).expect("a pre-thumbnail bookmarks file");
+        assert_eq!(read.bookmark.len(), 1);
+        assert!(read.bookmark[0].thumb.is_empty());
+    }
+
+    /// Checklist step 71, "delete a bookmark; the list stays consistent". Deletion is by INDEX
+    /// from a drawn row, which is the part that goes wrong: delete the wrong one, or leave the
+    /// thumbnail id of a deleted entry behind, and the list and the thumbnail folder disagree.
+    ///
+    /// WARNING: the row also asked for a RENAME. There is no rename control - the Bookmarks
+    /// dialog offers Add, Go and Delete only - so that half was not enforceable and the row has
+    /// been corrected to what the app can actually do.
+    #[test]
+    fn bookmark_delete_keeps_the_list_consistent() {
+        let make = || -> Vec<Bookmark> {
+            (0..4)
+                .map(|i| Bookmark {
+                    name: format!("view {i}"),
+                    meta: SAMPLE_LOCATION.to_string(),
+                    thumb: if i == 2 { String::new() } else { format!("thumb-{i}") },
+                })
+                .collect()
+        };
+
+        // Deleting the middle entry removes that one, keeps the rest in order, and hands back
+        // the thumbnail whose file the caller must now unlink.
+        let mut list = make();
+        assert_eq!(take_bookmark(&mut list, 1).as_deref(), Some("thumb-1"), "wrong thumbnail id");
+        let names: Vec<&str> = list.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, ["view 0", "view 2", "view 3"], "the list is not consistent after a delete");
+        assert!(!list.iter().any(|b| b.thumb == "thumb-1"), "the deleted thumbnail id lingers");
+
+        // The last entry - the index a drawn list is most likely to get wrong.
+        let mut list = make();
+        let last = list.len() - 1;
+        assert_eq!(take_bookmark(&mut list, last).as_deref(), Some("thumb-3"));
+        assert_eq!(list.last().unwrap().name, "view 2");
+
+        // A bookmark with no thumbnail yet (added, screenshot not yet harvested) deletes
+        // cleanly and asks for no file to be removed.
+        let mut list = make();
+        assert_eq!(take_bookmark(&mut list, 2), None, "asked to delete a file that never existed");
+        assert_eq!(list.len(), 3);
+        assert!(!list.iter().any(|b| b.name == "view 2"));
+
+        // A stale row index is ignored rather than panicking or deleting the wrong entry.
+        let mut list = make();
+        assert_eq!(take_bookmark(&mut list, 4), None, "a stale index removed something");
+        assert_eq!(take_bookmark(&mut list, usize::MAX), None);
+        assert_eq!(list.len(), 4, "a stale index changed the list");
+
+        // Emptying it is not a special case: the file round trip of an empty list must work,
+        // or clearing the last bookmark would leave the old one on disk.
+        let mut list = make();
+        for _ in 0..4 {
+            take_bookmark(&mut list, 0);
+        }
+        let text = toml::to_string_pretty(&BookmarkFile { bookmark: list }).expect("serialize");
+        let read: BookmarkFile = toml::from_str(&text).expect("parse");
+        assert!(read.bookmark.is_empty(), "an emptied list did not persist as empty");
+    }
+
+    /// Checklist step 75, "the Gallery browses exported images and lists them". Exercised
+    /// against real files: what the scan must do is skip everything that is not one of our
+    /// exports and order the rest newest-first, and both halves are silent when wrong - a
+    /// gallery listing another app's PNG only fails when someone clicks it.
+    ///
+    /// Partial: this covers the scan, not the click that loads the entry into the view.
+    #[test]
+    fn gallery_scan_and_load() {
+        let dir = std::env::temp_dir().join(format!("fractadyne-gallery-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let px = vec![0u8; 4 * 4 * 4];
+        let write = |name: &str, meta: Option<&str>| {
+            fractadyne_export::write_png_rgba8(&dir.join(name), 4, 4, &px, meta).expect("write png");
+        };
+        // Two of ours, saved a day apart, deliberately written oldest-name-first so a scan
+        // that just returned directory order would fail.
+        let older = SAMPLE_LOCATION.replace("saved_unix=1787401025", "saved_unix=1787300000");
+        write("a-older.png", Some(&older));
+        write("b-newer.png", Some(SAMPLE_LOCATION));
+        // Another app's export, an export whose metadata never wrote, and a plain file.
+        write("c-other-app.png", Some("app=SomethingElse\ncenter_re=-0.5\n"));
+        write("d-no-metadata.png", None);
+        std::fs::write(dir.join("e-notes.txt"), b"not an image").expect("write txt");
+
+        let found = scan_gallery_dir(&dir);
+        let names: Vec<String> = found
+            .iter()
+            .map(|(p, _)| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            ["b-newer.png", "a-older.png"],
+            "the gallery listed the wrong files, or in the wrong order"
+        );
+        // The blob comes back whole, so opening the entry gets the same location that was saved.
+        assert_eq!(found[0].1.trim_end(), SAMPLE_LOCATION.trim_end());
+        assert_eq!(location_text_verdict(&found[0].1), Ok(()));
+
+        // A folder that does not exist is empty, not a panic (the gallery folder is a
+        // remembered path and may have been deleted between runs).
+        assert!(scan_gallery_dir(&dir.join("gone")).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

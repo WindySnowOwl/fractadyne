@@ -236,7 +236,7 @@ impl ViewLoad {
 }
 
 /// Keys the view-metadata reader understands; anything else in a file is reported as unknown.
-const KNOWN_VIEW_KEYS: &[&str] = &[
+pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "app", "version", "format_version", "saved_unix", "saved", "notes", "fractal", "julia",
     "julia_c_re", "julia_c_im", "center_re", "center_im", "upp", "upp_log2", "zoom", "max_iter",
     "auto_iter", "palette", "cycle", "offset", "aa",
@@ -452,10 +452,7 @@ impl FractadyneApp {
             // Shared location: a plain-text view-metadata blob (same format embedded in exports).
             "fdn" => match std::fs::read(&path) {
                 Ok(bytes) if bytes.len() <= crate::SHARE_MAX => match String::from_utf8(bytes) {
-                    Ok(t)
-                        if crate::meta_get(&t, "app") == "Fractadyne"
-                            || !crate::meta_get(&t, "center_re").is_empty() =>
-                    {
+                    Ok(t) if crate::location_text_verdict(&t).is_ok() => {
                         let report = self.load_view_metadata(&t); // jump + record history
                         let zoom = crate::fmt_zoom_log2(self.viewport.log2_magnification());
                         self.set_toast(

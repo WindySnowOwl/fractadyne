@@ -90,6 +90,25 @@ impl Viewport {
         self.units_per_pixel = FloatExp::from_f64(Self::REFERENCE_HEIGHT / self.height_px);
     }
 
+    /// Restore the default framing about an explicit centre — "reset to THIS fractal's home",
+    /// where each formula has its own default centre. Every caller of [`reset`](Self::reset)
+    /// that then overwrites the centre is really doing this; keeping it in one place means the
+    /// depth, the precision and the centre can never be reset by halves.
+    pub fn reset_to(&mut self, cx: f64, cy: f64) {
+        self.reset();
+        self.center_x = bf(cx, self.precision);
+        self.center_y = bf(cy, self.precision);
+    }
+
+    /// Recentre on a pixel, then zoom about the new centre — the click-to-zoom gesture's
+    /// geometry. Separated from the app's bookkeeping (history, glide cancel, settle timing)
+    /// so the part that must be numerically exact can be tested without a GPU.
+    pub fn recenter_and_zoom(&mut self, px: f64, py: f64, factor: f64) {
+        let (w, h) = (self.width_px, self.height_px);
+        self.pan_pixels(w * 0.5 - px, h * 0.5 - py);
+        self.zoom_at(w * 0.5, h * 0.5, factor);
+    }
+
     fn refresh_precision(&mut self) {
         self.precision = precision_for_octaves(self.log2_magnification().max(0.0).ceil() as u64);
     }
@@ -450,6 +469,131 @@ mod pan_complex_tests {
         let dx = crate::to_f64(&vp.center_x.sub(&cx, p, RM)).abs();
         let dy = crate::to_f64(&vp.center_y.sub(&cy, p, RM)).abs();
         assert!(dx < 1.0e-40 && dy < 1.0e-40, "centre drifted: {dx:e}, {dy:e}");
+    }
+
+    /// Checklist step 22, "the Home button ends at the standard home view". The animation is
+    /// `home_lerp` driven from the starting magnification down to 0, so what this pins is the
+    /// LANDING: at `new_logmag == 0` the view must be exactly home — 1x, on the requested centre —
+    /// from any starting depth, with nothing left of the deep coordinate it flew out of.
+    ///
+    /// Checked from several depths because the centre glide is a fraction of the remaining
+    /// magnification (`1 - e^-logmag`), so an error in it shrinks with depth and would be
+    /// invisible if only one shallow start were tried.
+    #[test]
+    fn home_view_is_the_default() {
+        for (log2mag, home) in [(20.0f64, (-0.5f64, 0.0f64)), (120.0, (-0.5, 0.0)), (400.0, (0.0, 0.0))] {
+            let mut vp = Viewport::new(1920.0, 1080.0);
+            let digits = "0.35634774601304382214593134944855658665333542382319826904819524052878";
+            let cx = crate::parse_bf_prec(digits, 512).expect("parses");
+            let cy = crate::parse_bf_prec(digits, 512).expect("parses");
+            vp.set_center_log2mag(cx, cy, log2mag);
+            let start = (vp.center_x.clone(), vp.center_y.clone());
+
+            // Mid-flight it must be somewhere else entirely - otherwise "lands at home" would
+            // also be satisfied by an animation that never moved.
+            vp.home_lerp(home, &start, log2mag * 0.5 * std::f64::consts::LN_2);
+            assert!(
+                vp.log2_magnification() > 1.0,
+                "2^{log2mag}: mid-flight is already home"
+            );
+
+            vp.home_lerp(home, &start, 0.0);
+            let (x, y) = vp.center_f64();
+            assert!(
+                (x - home.0).abs() < 1.0e-12 && (y - home.1).abs() < 1.0e-12,
+                "2^{log2mag}: landed at ({x}, {y}), wanted {home:?}"
+            );
+            assert!(
+                (vp.magnification() - 1.0).abs() < 1.0e-9,
+                "2^{log2mag}: landed at {}x, wanted 1x",
+                vp.magnification()
+            );
+        }
+    }
+
+    /// Checklist step 23, "Reset to default view returns to the default view for the current
+    /// fractal". `reset_to` is what the menu item applies to each panel; from any depth it must
+    /// restore the whole framing - magnification, centre AND precision. A reset that left the
+    /// precision at its deep value would look right and carry hundreds of bits of working
+    /// precision through every subsequent frame.
+    #[test]
+    fn reset_view_is_the_default() {
+        for (w, h) in [(1920.0f64, 1080.0f64), (640.0, 480.0), (300.0, 1000.0)] {
+            let fresh = Viewport::new(w, h);
+            let mut vp = Viewport::new(w, h);
+            let digits = "0.35634774601304382214593134944855658665333542382319826904819524052878";
+            vp.set_center_log2mag(
+                crate::parse_bf_prec(digits, 512).expect("parses"),
+                crate::parse_bf_prec(digits, 512).expect("parses"),
+                300.0,
+            );
+            assert!(vp.precision > 64, "the deep view under test is not actually deep");
+
+            // Each formula has its own default centre; the Mandelbrot's is the fresh viewport's.
+            vp.reset_to(-0.5, 0.0);
+            let (x, y) = vp.center_f64();
+            assert!((x - -0.5).abs() < 1.0e-15 && y.abs() < 1.0e-15, "centre ({x}, {y})");
+            assert_eq!(vp.precision, fresh.precision, "{w}x{h}: precision not reset");
+            assert!(
+                (vp.magnification() - 1.0).abs() < 1.0e-9,
+                "{w}x{h}: {}x after reset",
+                vp.magnification()
+            );
+            assert_eq!(
+                vp.units_per_pixel.to_f64(),
+                fresh.units_per_pixel.to_f64(),
+                "{w}x{h}: framing differs from a fresh viewport of the same size"
+            );
+
+            // A non-default centre is honoured (Burning Ship and friends do not sit at -0.5).
+            vp.reset_to(-1.75, 0.03);
+            let (x, y) = vp.center_f64();
+            assert!((x - -1.75).abs() < 1.0e-15 && (y - 0.03).abs() < 1.0e-15, "centre ({x}, {y})");
+        }
+    }
+
+    /// Checklist steps 16-17, "a click zooms in on the clicked point by the selected Factor".
+    /// Two claims, both exact: the magnification multiplies by the factor, and the clicked point
+    /// becomes the view centre. Run at depth as well as at home because the recentre is a bignum
+    /// pan and the zoom is a `FloatExp` scale - a factor applied to the wrong one of the two
+    /// would still look plausible shallow.
+    ///
+    /// ⚠This is the ACTION, not the gesture: that a left-click reaches it is a human check.
+    #[test]
+    fn click_zoom_applies_factor() {
+        // The list the tool offers (`CLICK_ZOOM_FACTORS`), plus the right-click zoom-OUT of each.
+        for f in [2.0f64, 4.0, 10.0, 50.0, 100.0] {
+            for (label, factor, gain) in [("in", 1.0 / f, f), ("out", f, 1.0 / f)] {
+                for log2mag in [0.0f64, 40.0, 200.0] {
+                    let mut vp = Viewport::new(1600.0, 900.0);
+                    vp.set_center_log2mag(
+                        crate::BigFloat::from_f64(-0.5, 64),
+                        crate::BigFloat::from_f64(0.0, 64),
+                        log2mag,
+                    );
+                    // Deliberately off-centre: clicking the centre would pass even if the
+                    // recentre were skipped entirely.
+                    let (px, py) = (1180.0f64, 260.0);
+                    let (tx, ty) = vp.pixel_to_complex(px, py);
+                    let before = vp.log2_magnification();
+
+                    vp.recenter_and_zoom(px, py, factor);
+
+                    assert!(
+                        (vp.log2_magnification() - (before + gain.log2())).abs() < 1.0e-9,
+                        "{f}x {label} at 2^{log2mag}: magnification went 2^{before} -> 2^{}",
+                        vp.log2_magnification()
+                    );
+                    // The clicked point is now the centre - checked in PIXELS, so it holds at
+                    // depths where the coordinate itself is far past f64.
+                    let (bx, by) = vp.complex_to_pixel(&tx, &ty);
+                    assert!(
+                        (bx - 800.0).abs() < 0.01 && (by - 450.0).abs() < 0.01,
+                        "{f}x {label} at 2^{log2mag}: clicked point sits at ({bx:.3}, {by:.3}),                          wanted the centre (800, 450)"
+                    );
+                }
+            }
+        }
     }
 
     /// Direction and magnitude: the delta lands on the centre as given, in complex units.

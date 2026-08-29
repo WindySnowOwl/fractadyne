@@ -1139,15 +1139,13 @@ impl FractadyneApp {
             self.load_view_metadata(&meta);
         }
         if let Some(i) = delete {
-            // Remove the thumbnail file + cached texture, then the bookmark.
-            let id = self.bookmarks[i].thumb.clone();
-            if !id.is_empty() {
+            // Remove the bookmark, then the thumbnail file + cached texture it named.
+            if let Some(id) = crate::take_bookmark(&mut self.bookmarks, i) {
                 if let Some(p) = Self::bookmark_thumb_path(&id) {
                     let _ = std::fs::remove_file(p);
                 }
                 self.thumb_cache.remove(&id);
             }
-            self.bookmarks.remove(i);
             changed = true;
         }
         if changed {
