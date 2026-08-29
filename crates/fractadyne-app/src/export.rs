@@ -347,6 +347,13 @@ impl FractadyneApp {
             } else {
                 report.clamped.push("zoom depth");
             }
+        } else if get("zoom").is_some() {
+            // A file carrying ONLY `zoom` gets no depth at all: the view stays wherever it was,
+            // which for a fresh load is the whole set. `zoom` is written for humans to read and
+            // is an f64 — it cannot even represent the depths this app reaches, so it is not a
+            // fallback. A hand-written location at 1e500x silently rendered the full Mandelbrot
+            // until this said so (2026-08-29); the depth belongs in `upp_log2`.
+            report.clamped.push("zoom (ignored — depth is read from upp_log2, not zoom)");
         }
         if let Some(mi) = get("max_iter").and_then(|s| s.parse::<u32>().ok()) {
             let c = mi.clamp(1, MAX_LOAD_ITER);
