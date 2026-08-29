@@ -10,7 +10,7 @@ new functional enhancement; a **minor** bump (e.g. 0.2.0) marks a milestone that
 run of patch releases. The `0.2.0` entry summarizes **0.1.29 – 0.1.68** by theme — per-version
 detail is in the git history.
 
-## 0.2.40 (2026-08-27)
+## 0.2.40 (2026-08-29)
 
 The first stable release since 0.2.36, rolling up the whole **0.2.37 – 0.2.40-beta.158**
 run that was published as `v0.2.40-beta.N` pre-releases on the Beta update track. Grouped by
