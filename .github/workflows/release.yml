@@ -34,8 +34,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      # No checkout: notes are generated server-side and nothing here reads the tree. `gh` would
-      # normally infer the repo from the git remote, so GH_REPO supplies it instead.
+      # Checked out only for `.github/release-notes-preamble.md` — the "which download?" guide the
+      # next step prepends to the generated notes. Nothing else here reads the tree, and `gh` would
+      # normally infer the repo from the git remote, so GH_REPO still supplies it.
+      - uses: actions/checkout@v7
+
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -58,6 +61,33 @@ jobs:
             *-*) set -- "$@" --prerelease ;;
           esac
           gh release create "$@"
+
+      # The assets are three zips and a tarball with near-identical names, and which one a visitor
+      # wants — especially whether they want `-accelerated.zip` — is not readable from the file
+      # list. Prepend a short guide to the generated notes so the answer is on the page they land
+      # on, not only in a README inside the download.
+      #
+      # A SEPARATE step, and idempotent, deliberately: it edits a release that already exists, so
+      # if this fails the release is still there with its generated notes (degraded, not blocked),
+      # and a re-run repairs it. The marker is what makes the re-run safe — without it, every run
+      # would stack another copy of the guide on top.
+      - name: Prepend the download guide to the notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="${{ github.ref_name }}"
+          marker="## Which download?"
+          body=$(gh release view "$tag" --json body -q .body)
+          case "$body" in
+            *"$marker"*)
+              echo "download guide already present — leaving the notes alone"
+              exit 0
+              ;;
+          esac
+          { cat .github/release-notes-preamble.md; printf '\n'; printf '%s\n' "$body"; } > notes.md
+          gh release edit "$tag" --notes-file notes.md
+          echo "prepended $(wc -l < .github/release-notes-preamble.md) lines of download guide"
 
   windows:
     name: Windows x64 binary
