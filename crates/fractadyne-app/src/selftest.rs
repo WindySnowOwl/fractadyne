@@ -3953,6 +3953,14 @@ zoom = \"1e94\"
 
             // --- controls that must visibly do something, steps 55-57 and 60-62 ---
             // Each is a differential against the same baseline, with BOTH sides required coherent.
+            // ⚠NOT exercised here: "Log color scale" and "Normalize deep colors" reach the
+            // image only through the LIVE normalized mapping. `render_export` does not
+            // normalize unless asked, so toggling either against this path reports a
+            // byte-identical frame - measured, meanΔ 0.00 - and a check built on it would
+            // be green and vacuous. Checklist steps 29, 30 and 57 need the live path; see
+            // design/checklist-automation.md.
+            self.coloring.log_palette = false;
+            self.coloring.normalize_live = false;
             let base = render(self, device, queue);
             let mut toggles: Vec<(&str, Box<dyn Fn(&mut Self)>, Box<dyn Fn(&mut Self)>)> = Vec::new();
             toggles.push(("cycle slider",

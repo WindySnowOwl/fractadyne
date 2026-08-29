@@ -132,7 +132,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 26 | A | `RenderMode::select` partition is already unit-tested; add a rendered frame at each side of both boundaries, all coherent. |
 | 27 | A | Ladder to 1e100: coherent, and `precision` / `orbit_len` strictly grow with depth. |
 | 28 | A | 1e300 and past 1e308 coherent — the saturation class that once produced empty frames. Corpus locations already reach 4.6e1105. |
-| 29–30 | A | Differential: at a deep view, `speckle(normalize ON) < speckle(normalize OFF)`, both coherent. Cannot pass vacuously. |
+| 29–30 | B | Differential: `speckle(normalize ON) < speckle(normalize OFF)`, both coherent. ⚠**Not reachable from `--selftest`**: `render_export` does not normalize unless asked, so toggling it offline gives a byte-identical frame (measured, meanΔ 0.00). Needs the live path or an explicit normalize field on the export request. |
 | 31 | B | Deep pan then settle: final frame coherent and equal to a direct render of the same view. |
 | 32 | A | `--autodive N --autodive-timeout T --autodive-home 3` already exists and exits 2 when the regime was never reached. |
 
@@ -154,7 +154,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 48–53 | A | All six methods rendered at one view: each coherent, and all 15 pairs differ. Would have caught a method silently falling back. |
 | 54 | A | Four palettes: each coherent, all 6 pairs differ. |
 | 55–56 | A | Cycle / offset at two values each: coherent and differing. |
-| 57 | A | Log scale on vs off: coherent and differing. |
+| 57 | B | Log scale on vs off: coherent and differing. ⚠Same constraint as 29–30 — log scale only reaches the image through the normalized mapping, so it is a no-op on the offline path. Attempted there first and it read meanΔ 0.00. |
 | 58 | B | Mutating a gradient stop changes the render. The dialog interaction stays human. |
 | 59 | B | Animation advances the palette phase over simulated time and holds still when off. Smoothness stays human. |
 | 60–62 | A | Binary, duotone, relief, glow: each on vs off coherent and differing; relief light angle changes the image; glow strength changes it. |
