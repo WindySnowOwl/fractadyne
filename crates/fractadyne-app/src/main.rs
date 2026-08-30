@@ -2250,6 +2250,48 @@ enum DualExport {
 
 // Scripting/benchmark types + helpers moved to scripting.rs.
 
+/// Which picture the selected formula is drawn as — the "Show" axis of the fractal picker.
+///
+/// A Julia set is not a different fractal; it is one POINT of the parameter plane, drawn as its
+/// own picture. A new user has no way to know that, and the app's own best explanation of it —
+/// the linked dual view — was buried as a checkbox called "Dual view". Modelling the three states
+/// as one choice is what lets the picker say so.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ShowMode {
+    /// The parameter plane: the Mandelbrot-type set for this formula.
+    Set,
+    /// The Julia set for the current `c`, filling the window.
+    Julia,
+    /// Both, linked: the parameter plane on the left, the Julia of the cursor's point on the right.
+    Both,
+}
+
+/// Which picture a `(dual, julia_mode)` pair actually puts on screen.
+///
+/// `dual` wins: the dual path draws both panes regardless of `julia_mode`, so a stale `true`
+/// underneath it must still READ as `Both` or the picker would show a state the renderer is not
+/// in. (`set_show_mode` normalises the flag away, but sessions written by older builds carry it.)
+pub(crate) fn show_mode_of(dual: bool, julia_mode: bool) -> ShowMode {
+    if dual {
+        ShowMode::Both
+    } else if julia_mode {
+        ShowMode::Julia
+    } else {
+        ShowMode::Set
+    }
+}
+
+/// The `(dual, julia_mode)` a mode means — the inverse of [`show_mode_of`] over the three legal
+/// states. Kept as a pair of functions rather than open-coded at the call sites so the mapping
+/// cannot be written one way in the picker and another way in a script or a session load.
+pub(crate) fn show_mode_flags(m: ShowMode) -> (bool, bool) {
+    match m {
+        ShowMode::Set => (false, false),
+        ShowMode::Julia => (false, true),
+        ShowMode::Both => (true, false),
+    }
+}
+
 /// Palette animation mode (continuously shifts the color offset).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PaletteAnim {
@@ -6960,6 +7002,41 @@ impl FractadyneApp {
         self.record_nav();
     }
 
+    /// Which of the three pictures the current formula is being shown as.
+    ///
+    /// `julia_mode` and `dual` are two booleans, but only THREE of their four combinations are
+    /// legal, and the UI already spent effort suppressing the fourth (the Julia checkbox was
+    /// disabled while dual was on). Naming the three states directly is what lets the picker
+    /// present them as one choice — and one choice is what can be worded to explain that a Julia
+    /// set is a point of the parameter plane rather than a separate fractal.
+    fn show_mode(&self) -> ShowMode {
+        show_mode_of(self.dual, self.julia_mode)
+    }
+
+    /// Move to one of the three states, whatever the current one is.
+    ///
+    /// Goes through `toggle_dual` rather than assigning `dual`, because that is where the Julia
+    /// panel's framing and the reference invalidation live — two copies of "what entering dual
+    /// means" is exactly how the old toolbar/menu pair drifted apart. `julia_mode` is also
+    /// NORMALISED here (cleared when entering dual), so the flag a session saves always matches
+    /// the picture on screen; it used to keep a stale `true` underneath a dual view.
+    fn set_show_mode(&mut self, m: ShowMode) {
+        if self.show_mode() == m {
+            return;
+        }
+        if m != ShowMode::Set && !self.fractal.supports_julia() {
+            return; // no free parameter → no Julia, and no dual either
+        }
+        let (want_dual, want_julia) = show_mode_flags(m);
+        if want_dual != self.dual {
+            self.toggle_dual();
+        }
+        if want_julia != self.julia_mode {
+            self.julia_mode = want_julia;
+            self.invalidate_refs();
+        }
+    }
+
     /// Toggle the dual linked view, framing the Julia panel when turning it on.
     fn toggle_dual(&mut self) {
         if !self.fractal.supports_julia() {
@@ -8629,6 +8706,34 @@ max_iter=60000\nauto_iter=1\npalette=0\ncycle=0.27\noffset=0.1\naa=1\n";
         }
         assert!(param > 500 && julia > 500, "panels are lopsided: {param} vs {julia}");
         assert!((1..=8).contains(&neither), "the separator covers {neither}px");
+    }
+
+    /// The picker's "Show" axis is three states over two booleans, and only three of the four
+    /// combinations are legal. The illegal fourth used to be prevented only by GREY — a disabled
+    /// checkbox — which is a promise the state machine now has to keep on its own, because
+    /// scripts, session loads and the toolbar all reach the same two flags.
+    ///
+    /// Both directions, over the real functions the picker uses.
+    #[test]
+    fn show_mode_round_trips_the_three_states() {
+        for m in [ShowMode::Set, ShowMode::Julia, ShowMode::Both] {
+            let (dual, julia) = show_mode_flags(m);
+            assert_eq!(show_mode_of(dual, julia), m, "{m:?} did not survive flags -> mode");
+        }
+        // Each mode maps to a DIFFERENT pair — without this, a mapping that returned the same
+        // flags for everything would satisfy the round trip above.
+        let flags: Vec<(bool, bool)> =
+            [ShowMode::Set, ShowMode::Julia, ShowMode::Both].iter().map(|m| show_mode_flags(*m)).collect();
+        assert_eq!(flags, [(false, false), (false, true), (true, false)]);
+
+        // Entering the dual view must CLEAR `julia_mode`, not leave it set underneath: that flag
+        // is what a session and an exported view record, so a stale `true` would reload a dual
+        // view as a full-window Julia.
+        assert_eq!(show_mode_flags(ShowMode::Both).1, false, "dual must not carry julia_mode");
+
+        // ...but a pair written by an older build, or by hand, still has to read as what the
+        // renderer actually draws — the dual path paints both panes whatever `julia_mode` says.
+        assert_eq!(show_mode_of(true, true), ShowMode::Both);
     }
 
     /// Checklist step 47, "turn off dual view and Julia mode; returns cleanly to the single

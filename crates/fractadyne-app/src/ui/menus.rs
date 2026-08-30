@@ -62,6 +62,77 @@ impl FractadyneApp {
         }
     }
 
+    /// The "Show" group: which of the three pictures the selected formula is drawn as.
+    ///
+    /// Drawn identically in the Fractal menu and inside the formula dropdown, so the two cannot
+    /// disagree — and so that someone who opens the picker LOOKING for Julia finds it there,
+    /// beside the formula it belongs to, rather than as a checkbox somewhere else.
+    ///
+    /// ⭐The first option carries the FORMULA'S OWN NAME ("Mandelbrot set", "Burning Ship set").
+    /// That is the whole teaching device: a new user sees the thing they came for, named, and
+    /// sees the Julia set offered as its sibling rather than as a mode — and the third option
+    /// shows them the relation instead of describing it.
+    pub(crate) fn show_mode_group(&mut self, ui: &mut egui::Ui) {
+        let can_julia = self.fractal.supports_julia();
+        let name = self.fractal.name();
+        let cur = self.show_mode();
+        let mut pick: Option<crate::ShowMode> = None;
+
+        ui.label(egui::RichText::new("Show").weak().small());
+        if ui
+            .radio(cur == crate::ShowMode::Set, format!("{name} set"))
+            .on_hover_text(format!(
+                "The parameter plane — the {name} set itself.\n\nEvery point of it is a \
+                 different Julia set; this is the map of all of them."
+            ))
+            .clicked()
+        {
+            pick = Some(crate::ShowMode::Set);
+        }
+        // Newton has no free parameter, so it has no Julia and no dual view. The options stay
+        // VISIBLE and disabled rather than vanishing: a picker whose contents change shape as you
+        // move through it is harder to learn than one where something is greyed with a reason.
+        ui.add_enabled_ui(can_julia, |ui| {
+            if ui
+                .radio(cur == crate::ShowMode::Julia, "Julia set")
+                .on_hover_text(if can_julia {
+                    format!(
+                        "One point of the {name} set, drawn as its own picture — the shape you \
+                         get by holding that point fixed.\n\nPick the point by hovering the map \
+                         in \"Both, linked\", or with Fractal ▸ Julia c."
+                    )
+                } else {
+                    format!("{name} has no free parameter, so it has no Julia set.")
+                })
+                .clicked()
+            {
+                pick = Some(crate::ShowMode::Julia);
+            }
+            if ui
+                .radio(cur == crate::ShowMode::Both, "Both, linked")
+                .on_hover_text(if can_julia {
+                    format!(
+                        "The {name} set on the left, and on the right the Julia set of whatever \
+                         point your cursor is over.\n\nMove the cursor across the map and watch \
+                         the Julia change — this is the quickest way to see how the two relate."
+                    )
+                } else {
+                    format!("{name} has no Julia set to pair with.")
+                })
+                .clicked()
+            {
+                pick = Some(crate::ShowMode::Both);
+            }
+        });
+
+        if let Some(m) = pick {
+            self.set_show_mode(m);
+            // A radio is a decision, unlike the checkboxes this replaced: close the menu (or the
+            // dropdown) on it, the way picking a formula from the list above already does.
+            ui.close_menu();
+        }
+    }
+
     pub(crate) fn draw_menu_bar(
         &mut self,
         ctx: &egui::Context,
@@ -188,35 +259,11 @@ impl FractadyneApp {
                             }
                         }
                         ui.separator();
-                        let can_julia = self.fractal.supports_julia();
-                        ui.add_enabled_ui(can_julia && !self.dual, |ui| {
-                            if ui
-                                .checkbox(&mut self.julia_mode, "Julia mode")
-                                .on_hover_text(
-                                    "Show the Julia set of this formula for the current c.",
-                                )
-                                .changed()
-                            {
-                                self.invalidate_refs();
-                            }
-                        });
-                        // Beside Julia mode, not in View: both select WHAT renders.
-                        // This and the toolbar's dual button call the SAME method: when they
-                        // were two copies of "what enabling dual means", this copy quietly
-                        // skipped the reference invalidation the other one did.
-                        ui.add_enabled_ui(can_julia, |ui| {
-                            let mut dual = self.dual;
-                            if ui
-                                .checkbox(&mut dual, "Dual view (Mandelbrot ↔ Julia)")
-                                .on_hover_text(
-                                    "Split the window: the parameter set on the left, the Julia \
-                                     set of the cursor's c on the right.",
-                                )
-                                .changed()
-                            {
-                                self.toggle_dual();
-                            }
-                        });
+                        // Was two checkboxes ("Julia mode", "Dual view") of which only three
+                        // combinations were legal — the fourth was suppressed by grey. One
+                        // three-way choice says the same thing in one row less, and can be worded
+                        // to explain what a Julia set IS. Same widget as the dropdown's.
+                        self.show_mode_group(ui);
                     });
                     ui.menu_button("View", |ui| {
                         let now = ui.ctx().input(|i| i.time);
@@ -680,9 +727,15 @@ impl FractadyneApp {
                 // back, so the margin is deliberate rather than sloppy. (A row is a `SelectableLabel`:
                 // button text plus padding, ~17 px at the default 12.5 px button font, which is why
                 // ten of them land within a few pixels of the 200 px cap.)
+                //
+                // ⚠The popup now also carries the "Show" group, so the row count is the formulas
+                // PLUS that group — a separator, its heading and three radios. Counting only the
+                // formulas is what would silently put the scrollbar back, which is the exact
+                // failure this computation exists to prevent.
+                const SHOW_GROUP_ROWS: f32 = 5.0; // separator + "Show" + three options
                 let sp = ui.spacing();
                 let popup_h = (sp.interact_size.y + sp.item_spacing.y)
-                    * FractalKind::ALL.len() as f32
+                    * (FractalKind::ALL.len() as f32 + SHOW_GROUP_ROWS)
                     + sp.item_spacing.y * 4.0;
                 egui::ComboBox::from_id_salt("fractal_dropdown")
                     .height(popup_h)
@@ -691,19 +744,29 @@ impl FractadyneApp {
                         for k in FractalKind::ALL {
                             ui.selectable_value(&mut sel, k, k.name());
                         }
+                        // The picker is where someone goes looking for "Julia", so this is where
+                        // it has to be — next to the formula it belongs to, not in a menu they
+                        // have not thought to open.
+                        ui.separator();
+                        self.show_mode_group(ui);
                     });
                 if sel != prev {
                     self.set_fractal(sel);
                 }
                 ui.separator();
-                ui.add_enabled_ui(self.fractal.supports_julia() && !self.dual, |ui| {
+                // The two toolbar toggles are the FAST path for someone who already knows what a
+                // Julia set is; the picker's "Show" group is where someone finds that out. Both
+                // go through `set_show_mode`, so the three surfaces cannot disagree about what
+                // state a click lands in — clicking Julia while dual is on now leaves dual
+                // rather than being greyed out, which is what the button appears to promise.
+                ui.add_enabled_ui(self.fractal.supports_julia(), |ui| {
                     if ui
                         .selectable_label(self.julia_mode, "Julia")
-                        .on_hover_text("Show the Julia set of this formula")
+                        .on_hover_text("Show the Julia set of this formula, filling the window")
                         .clicked()
                     {
-                        self.julia_mode = !self.julia_mode;
-                        self.invalidate_refs();
+                        let m = if self.julia_mode { crate::ShowMode::Set } else { crate::ShowMode::Julia };
+                        self.set_show_mode(m);
                     }
                 });
                 // Dual pairs a formula with its Julia set, so it's only meaningful where a Julia
@@ -711,10 +774,11 @@ impl FractadyneApp {
                 ui.add_enabled_ui(self.fractal.supports_julia(), |ui| {
                     if ui
                         .selectable_label(self.dual, crate::icons::DUAL)
-                        .on_hover_text("Dual linked view (Mandelbrot ↔ Julia)")
+                        .on_hover_text("Both, linked: the set on the left, the Julia of the cursor's point on the right")
                         .clicked()
                     {
-                        self.toggle_dual();
+                        let m = if self.dual { crate::ShowMode::Set } else { crate::ShowMode::Both };
+                        self.set_show_mode(m);
                     }
                 });
                 ui.separator();
