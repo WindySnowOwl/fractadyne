@@ -304,6 +304,7 @@ impl FractadyneApp {
         let mut copy = false;
         let mut poi: Option<usize> = None;
         let mut find_feat = false;
+        let mut cancel_feat = false;
         egui::Window::new("Go to location")
             .open(&mut open)
             .resizable(false)
@@ -445,6 +446,25 @@ impl FractadyneApp {
                                     ))
                                     .weak(),
                                 );
+                                // ⭐A VISIBLE way out. Closing the dialog already abandons the
+                                // search (see `poll_feature_solve`), but nothing said so, and now
+                                // that the solve reaches the depth asked for, the wait is real:
+                                // measured on a 902-step orbit, 2,000 octaves is 0.07 s, 50,000 is
+                                // 16 s, and the 192,672 behind a 1e58000× request is 159 s — and a
+                                // longer (k, p) scales that again. Abandoning is enough: the
+                                // worker owns no shared state, so dropping its channel lets it
+                                // finish into nothing.
+                                if ui
+                                    .button("Cancel")
+                                    .on_hover_text(
+                                        "Stop waiting. The solve itself runs to completion in the \
+                                         background and its answer is discarded — nothing is left \
+                                         in a half-finished state.",
+                                    )
+                                    .clicked()
+                                {
+                                    cancel_feat = true;
+                                }
                             });
                         } else {
                             find_feat = ui
@@ -468,6 +488,11 @@ impl FractadyneApp {
         }
         if find_feat {
             self.goto_feature(ctx);
+        }
+        if cancel_feat {
+            // Drop the receiver: the worker's `send` then fails and its result is discarded.
+            self.feature_solve = None;
+            self.goto.msg = Some("Solve cancelled.".into());
         }
         if copy {
             ctx.copy_text(format!(

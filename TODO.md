@@ -997,31 +997,51 @@ Mockups: [design/mockups/](design/mockups/).
   from "detected (k,p) but the solve did not converge" — they need different responses from the
   user, and only the second is a bug in us.~~
 
-- [ ] 🟠**THE FEATURE SOLVER CANNOT GO PAST ~1e307×, BECAUSE ITS MAGNIFICATION IS AN `f64` (user,
-  2026-08-31).** Asking the Misiurewicz finder for 1e58000× returned a centre good to ~307 digits
-  and the view then rendered a single flat colour — the centre is wrong by tens of thousands of
-  digits at that scale.
+- [x] ~~🟠**THE FEATURE SOLVER CANNOT GO PAST ~1e307×, BECAUSE ITS MAGNIFICATION IS AN `f64` (user,
+  2026-08-30).** Asking the Misiurewicz finder for 1e58000× returned a centre good to ~307 digits
+  and the view then rendered a single flat colour — the centre wrong by tens of thousands of digits.
 
-  ⭐**Mitigated, not fixed (2026-08-31)**: the request is now capped at `2^1020`, the view lands at
-  the depth the answer is actually accurate for, and the toast says so — *"the solver reaches
-  1e307×, so it stopped there rather than 1e58899×, where this centre would not be accurate."* A
-  short landing you are told about beats a wrong centre you are not.
+  ✅**FIXED 2026-08-30 — `find_misiurewicz` solves in LOG magnification.** The depth asked for is
+  now the depth solved at. `SolveScale { log2_target, log2_seed }`, `precision_for_octaves`, and a
+  tolerance/distance pair carried as `log2` throughout. Pinned by
+  `a_solve_reaches_a_depth_f64_cannot_express`, which asserts the ANSWER IS ACCURATE AT THE TARGET
+  (fed back as its own seed at 2^2000 it is inside the view) while the shallow answer is 2^1000+
+  view-widths outside it. Three mutants — the old 1e307 precision ceiling, judging distance against
+  the target view, and dropping the zero handling — each turn it red.
 
-  **The real fix is a log-space solve**, and it is more than a signature change:
-  • `find_misiurewicz` / `find_nucleus` take `mag: f64`. That alone caps them at ~1e308.
-  • ⚠**The convergence test is the harder half.** `span = 3.0 / mag` and `tol = span·1e-9` are
-    `f64`, and the Newton step is measured with `to_f64(&stepx)` — at 1e-58000 every one of those
-    UNDERFLOWS TO ZERO, so `stepm < tol` becomes `0.0 < 0.0` = false and the loop would run its 80
-    iterations and report `NotConverged` on a perfectly good solve. Changing the parameter without
-    changing this trades a wrong answer for a confident "not found".
-  • The distance/runaway check has the same shape (`sub_f64` then a linear compare).
-  ⇒ Carry the tolerance and the distance as `log2` (or `FloatExp`), the way the viewport already
-  carries `units_per_pixel`, and compare exponents rather than values.
+  ⭐⭐**Two lessons worth keeping:**
+  • ⚠**`exponent()` returns `Some(0)` for ZERO, and `None` only for NaN/Inf** (measured, not
+    assumed). Reading `None` as "zero" made an exactly-zero distance report as 2^0 = one unit —
+    2^295 view-widths at a 2.77e89× view — so a *perfect* solve came back `TooFar`.
+  • ⭐⭐**A solve has TWO magnifications and they are not the same number.** The depth to solve FOR
+    sets precision; the depth the SEED came from decides whether the answer is the feature on
+    screen. Judging distance against the target made the headline case — "I am on this point, now
+    take me to 1e58000×" — fail as `TooFar`, because at a 2^192000 view the seed's own 400 bits put
+    it thousands of view-widths out. Correct, useless, and hidden until measured.
 
-  ⚠**A test must assert the depth was REACHED**, not merely that a solve returned: the failure
-  mode here is a plausible-looking centre that is silently short of the requested precision. Pin it
-  by re-deriving the point's own orbit at the target precision and checking the residual, or by
-  rendering the result and requiring non-flat output.
+  ⚠**`find_nucleus` still takes `mag: f64`** — same shape, same ceiling, plus `reduce_period`'s
+  linear `tol2`. The Minibrot half of the Go-to dialog is still capped. Filed below.~~
+
+- [ ] 🟠**`find_nucleus` HAS THE SAME `f64` CEILING THE MISIUREWICZ SOLVER JUST LOST (2026-08-30).**
+  The Go-to dialog's *nearest minibrot* is still `find_nucleus(&center, mag: f64, …)`, so it stops
+  at 2^1020 ≈ 1e307 exactly as the Misiurewicz half did, and the app still passes it a linear
+  `self.viewport.magnification()` — which **saturates to `+∞` past 1e308×** (the same saturation
+  that blanked every extreme view in beta.125). Half the dialog now reaches e60000 and half does
+  not.
+
+  ⭐**The conversion is done and can be copied**: `SolveScale`, `log2_abs_bf`/`log2_abs_c`,
+  `precision_for_octaves`, tolerance and distance as `log2`. See `find_misiurewicz` and
+  `crates/fractadyne-core/tests/misiurewicz_outcomes.rs`.
+
+  ⚠**One extra piece here that the Misiurewicz solver did not have**: `reduce_period` compares
+  against a linear `tol2`, which underflows to `0.0` at these depths — so period reduction would
+  silently stop reducing rather than fail loudly. Convert it in the same pass, and pin it with a
+  test that asserts the REDUCED period, not merely that a nucleus came back.
+
+  ⚠**And assert the depth was reached, not that a solve returned** — a centre short of the
+  requested precision looks exactly like a good one. The pattern that works: feed the answer back
+  as its own seed at the target depth and require it to land inside that view, while the shallow
+  answer does not.
 
 - [ ] 🟠**THE NORMALIZED PALETTE MAPPING MOVES WHILE THE IMAGE IS STILL RESOLVING, AND AGAIN
   BETWEEN FRAMES OF A SEQUENCE (user, 2026-08-29).** It should be decided once and HELD: stable

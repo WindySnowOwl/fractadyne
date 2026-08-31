@@ -1578,6 +1578,12 @@ const MINIMAP_HY: f64 = 1.2;
 const MINIMAP_TW: u32 = 240;
 const MINIMAP_TH: u32 = 180;
 
+/// How deep a feature solve will go, in octaves. Not an arithmetic limit any more — the solver
+/// works in log magnification — but a sanity bound: its working precision grows with the ask, so
+/// a mistyped 1e1000000× would grind for hours producing a point no renderer could use. 200,000
+/// octaves is ~1e60000×, past anything this app has rendered.
+const MAX_SOLVE_OCTAVES: f64 = 200_000.0;
+
 /// The zoom factors the click-to-zoom tool offers (Settings ▸ Navigation). Named rather than
 /// written inline at the one control that draws them, because checklist step 17 asks a tester to
 /// try each one by name: the row, the buttons and the test that pins their arithmetic all have to
@@ -6055,22 +6061,21 @@ impl FractadyneApp {
                 // the linear span underflows f64 to zero past ~1e308×.
                 let span_log2 =
                     self.viewport.units_per_pixel.log2() + self.viewport.width_px.log2();
-                // ⚠**THE SOLVER'S REACH IS AN f64 MAGNITUDE**, so it stops at 2^1020 ≈ 1e307. Past
-                // that the returned centre carries ~307 digits against a view that needs tens of
-                // thousands, and navigating there renders a single flat colour — the field report
-                // at 1e58000×. Say so and land at the depth the answer is actually good for
-                // instead of silently producing a wrong centre. (The real fix is a log-space
-                // solver; see TODO.)
-                const SOLVE_L2_CAP: f64 = 1_020.0;
-                let solve_mag = match target_l2 {
+                // ⭐The solve now works in LOG magnification, so the depth asked for is the depth
+                // solved at — the old `f64` magnification stopped at 2^1020 ≈ 1e307 and returned a
+                // centre good to ~307 digits for a view needing tens of thousands, which rendered
+                // as a single flat colour. What remains is a sanity bound, not an arithmetic one:
+                // precision grows with the ask, and an accidental 1e1000000× would spend hours in
+                // bignum for a view nothing can render.
+                let solve_l2 = match target_l2 {
                     Some(t) => {
-                        if t > SOLVE_L2_CAP {
+                        if t > MAX_SOLVE_OCTAVES {
                             depth_capped = Some(t);
-                            zoom_to = Some(SOLVE_L2_CAP);
+                            zoom_to = Some(MAX_SOLVE_OCTAVES);
                         }
-                        2.0f64.powf(t.min(SOLVE_L2_CAP))
+                        t.min(MAX_SOLVE_OCTAVES)
                     }
-                    None => mag,
+                    None => cur_l2,
                 };
                 std::thread::spawn(move || {
                     let found = match pair {
@@ -6090,7 +6095,19 @@ impl FractadyneApp {
                             k,
                             p,
                             detected: pair.is_none(),
-                            outcome: fractadyne_core::find_misiurewicz(&center, k, p, solve_mag, 0),
+                            outcome: fractadyne_core::find_misiurewicz(
+                                &center,
+                                k,
+                                p,
+                                // Solve for the depth ASKED FOR, but judge "is this the feature
+                                // on screen?" against the view the seed came from. They are the
+                                // same number only when you are not asking to go deeper.
+                                fractadyne_core::SolveScale {
+                                    log2_seed: cur_l2,
+                                    log2_target: solve_l2,
+                                },
+                                0,
+                            ),
                         },
                         None => FeatureOutcome::NoPairDetected,
                     };
@@ -6195,9 +6212,10 @@ impl FractadyneApp {
                         // Landing short of what was asked, and saying so: the alternative is a
                         // centre that is wrong by tens of thousands of digits and a flat frame.
                         (Some(asked), _) => format!(
-                            "Zoomed to the {label} — {}×. The solver reaches 1e307×, so it stopped \
-                             there rather than {}×, where this centre would not be accurate.",
+                            "Zoomed to the {label} — {}×. Solving is capped at {} octaves, so it \
+                             stopped there rather than {}×.",
                             fmt_zoom_field(l2),
+                            MAX_SOLVE_OCTAVES as u64,
                             fmt_zoom_field(asked)
                         ),
                         (None, Some(t)) => {
@@ -6216,13 +6234,18 @@ impl FractadyneApp {
                     FeatureKind::Misiurewicz => match misi_miss {
                         // The one worth spelling out: a REAL point was found, just not here. The
                         // distance is the actionable part — it says how far out to zoom.
-                        Some(fractadyne_core::MisiurewiczMiss::TooFar { view_widths }) => format!(
-                            "Found a {label} point, but it is {} view-widths away — that feature is \
-                             far COARSER than this view. Zoom OUT by about {:.0} octaves to reach \
-                             it, or try a larger preperiod for a feature at this scale.",
-                            fmt_zoom(view_widths),
-                            view_widths.max(1.0).log2()
-                        ),
+                        Some(fractadyne_core::MisiurewiczMiss::TooFar { log2_view_widths }) => {
+                            format!(
+                                "Found a {label} point, but it is {} view-widths away — that \
+                                 feature is far COARSER than this view. Zoom OUT by about {:.0} \
+                                 octaves to reach it, or try a larger preperiod for a feature at \
+                                 this scale.",
+                                // A LOG, because the ratio itself overflows f64 routinely here —
+                                // the hand-typed (5,332) at a 2.77e89× dendrite was 2^187 out.
+                                fmt_zoom_field(log2_view_widths),
+                                log2_view_widths.max(0.0)
+                            )
+                        }
                         Some(fractadyne_core::MisiurewiczMiss::NotPreperiodic { residual }) => format!(
                             "{label} does not fit the orbit here (residual {residual:.1e}) — \
                              clear both boxes to detect the pair from the view."

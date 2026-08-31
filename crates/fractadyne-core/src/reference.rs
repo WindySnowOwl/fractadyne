@@ -1913,6 +1913,56 @@ pub fn detect_misiurewicz_at_scale(
     Some((bm as u32 + 1, fundamental as u32))
 }
 
+/// `log2|v|`, read off the exponent — to within one octave, and immune to the `f64` underflow
+/// that makes every linear tolerance meaningless past ~1e308×.
+///
+/// ⭐This is the whole trick behind solving deeper than `f64` can express. A Newton step of 1e-58000
+/// is a perfectly ordinary number in bignum and is exactly `0.0` once it touches `f64` — so a
+/// tolerance test written as `to_f64(&step) < tol` reads `0.0 < 0.0`, is false, and reports a
+/// converged solve as "not converged". Comparing exponents has no such floor.
+fn log2_abs_bf(v: &BigFloat) -> f64 {
+    // ⚠**ZERO IS `Some(0)`, NOT `None`** — measured, not assumed: astro-float stores a value as
+    // `0.m × 2^e`, and `exponent()` returns `None` only for NaN/Inf. Reading `None` as "zero" made
+    // an exactly-zero distance report as 2^0 = one unit, which at a 2.77e89× view is 2^295
+    // view-widths — a perfect solve rejected as TooFar.
+    if v.is_zero() {
+        return f64::NEG_INFINITY;
+    }
+    match v.exponent() {
+        // `0.m × 2^e` with the mantissa in [0.5, 1), so log2|v| lands in (e-1, e].
+        Some(e) => e as f64,
+        // NaN or Inf. Infinity, so a convergence test fails and a distance test rejects: either
+        // is preferable to a NaN quietly making every comparison false.
+        None => f64::INFINITY,
+    }
+}
+
+/// `log2` of a complex bignum's magnitude, to within an octave (the larger component dominates).
+fn log2_abs_c(x: &BigFloat, y: &BigFloat) -> f64 {
+    log2_abs_bf(x).max(log2_abs_bf(y))
+}
+
+/// The two magnifications a feature solve needs. ⭐**They are not the same number** as soon as
+/// the user asks to be taken deeper than they currently are, and conflating them makes the
+/// headline case — *"I am on this point, now take me to 1e58000×"* — fail as `TooFar`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SolveScale {
+    /// log2 of the magnification the ANSWER must be accurate for. Sets the working precision and
+    /// the convergence tolerance: ask for more depth and you get more digits.
+    pub log2_target: f64,
+    /// log2 of the magnification of the view the SEED came from. Sets only how far a converged
+    /// point may be from the seed before it is reported as [`MisiurewiczMiss::TooFar`] — a
+    /// judgement about the view the user is LOOKING AT, which is why it cannot use the target.
+    pub log2_seed: f64,
+}
+
+impl SolveScale {
+    /// Solve at the depth you are already at: seed and target are the same view.
+    pub fn here(log2_mag: f64) -> Self {
+        Self { log2_target: log2_mag, log2_seed: log2_mag }
+    }
+}
+
 /// Why a Misiurewicz solve did not produce a usable point.
 ///
 /// ⭐These are NOT interchangeable, and collapsing them into `None` cost a user an afternoon: a
@@ -1925,10 +1975,13 @@ pub enum MisiurewiczMiss {
     BadRequest,
     /// Newton stalled — the derivative vanished, or 80 iterations did not reach tolerance.
     NotConverged,
-    /// Newton found a point, but it is `view_widths` view-widths from the seed. A large value
-    /// means the requested (k, p) describes a feature far COARSER than the current view, and the
-    /// way to reach it is to zoom OUT, not in.
-    TooFar { view_widths: f64 },
+    /// Newton found a point, but it is `log2_view_widths` octaves' worth of view-widths from the
+    /// seed. A large value means the requested (k, p) describes a feature far COARSER than the
+    /// current view, and the way to reach it is to zoom OUT, not in.
+    ///
+    /// ⚠A LOG, because the linear ratio overflows `f64` in the other direction just as readily as
+    /// the tolerances underflow: a point 1e400 view-widths out is not an unusual answer here.
+    TooFar { log2_view_widths: f64 },
     /// A root was found but its orbit is not actually pre-periodic with this (k, p) — the pair
     /// does not fit. `residual` is |Z_{k+p} − Z_k|.
     NotPreperiodic { residual: f64 },
@@ -1936,25 +1989,42 @@ pub enum MisiurewiczMiss {
 
 /// Newton-solve for the Misiurewicz point of pre-period `k` and period `p` nearest `center`.
 ///
+/// [`SolveScale`] carries the depth to solve FOR and the depth the seed came FROM, both as
+/// **log2 — not the magnification itself**, so the solve reaches the depths this app renders at.
+/// An `f64` magnification capped it at 2^1020 ≈ 1e307: a request for 1e58000× came back with a
+/// centre good to ~307 digits, and navigating there rendered a single flat colour, because the
+/// coordinate was wrong by tens of thousands of digits (field report 2026-08-30).
+///
 /// Returns why it failed rather than a bare `None`; see [`MisiurewiczMiss`].
 pub fn find_misiurewicz(
     center: &[BigFloat; 2],
     preperiod: u32,
     period: u32,
-    mag: f64,
+    scale: SolveScale,
     formula: u32,
 ) -> Result<Misiurewicz, MisiurewiczMiss> {
     if preperiod == 0 || period == 0 {
         return Err(MisiurewiczMiss::BadRequest);
     }
-    let p = precision_for_magnification(mag);
+    if !scale.log2_target.is_finite() || !scale.log2_seed.is_finite() {
+        return Err(MisiurewiczMiss::BadRequest);
+    }
+    let log2_mag = scale.log2_target;
+    let p = precision_for_octaves(log2_mag.max(0.0).ceil() as u64);
     let Some(k) = formula_power(formula) else {
         return Err(MisiurewiczMiss::BadRequest);
     };
     let one = bf(1.0, p);
     let kf = bf(k as f64, p);
-    let span = 3.0 / mag.max(1.0);
-    let tol = span * 1.0e-9;
+    // The view width, and the convergence tolerance, as log2. (3/mag, and a billionth of it.)
+    const LOG2_3: f64 = 1.584_962_500_721_156_2;
+    const LOG2_1E9: f64 = 29.897_352_853_986_263;
+    let span_l2 = LOG2_3 - log2_mag.max(0.0);
+    let tol_l2 = span_l2 - LOG2_1E9;
+    // The view the SEED came from, which is the one the "is this the feature you are looking at?"
+    // test has to be about. Solving for a deeper target legitimately leaves the answer thousands
+    // of (tiny) target view-widths from the seed — that is what asking to be taken deeper means.
+    let seed_span_l2 = LOG2_3 - scale.log2_seed.max(0.0);
     let total = preperiod + period;
 
     let mut cx = center[0].clone();
@@ -1991,7 +2061,10 @@ pub fn find_misiurewicz(
         let dfx = dx.sub(&dkx, p, RM);
         let dfy = dy.sub(&dky, p, RM);
         let denom = dfx.mul(&dfx, p, RM).add(&dfy.mul(&dfy, p, RM), p, RM);
-        if to_f64(&denom) == 0.0 {
+        // EXACTLY zero. `to_f64(&denom) == 0.0` also fired for a denom that is merely tiny —
+        // routine at these depths, where |F'| is far below f64's floor — and turned a converged
+        // solve into "not converged".
+        if denom.is_zero() {
             return Err(MisiurewiczMiss::NotConverged);
         }
         let (numx, numy) = cmul_bf(&fx, &fy, &dfx, &neg_bf(&dfy, p), p);
@@ -1999,8 +2072,7 @@ pub fn find_misiurewicz(
         let stepy = numy.div(&denom, p, RM);
         cx = cx.sub(&stepx, p, RM);
         cy = cy.sub(&stepy, p, RM);
-        let stepm = (to_f64(&stepx).powi(2) + to_f64(&stepy).powi(2)).sqrt();
-        if stepm < tol {
+        if log2_abs_c(&stepx, &stepy) < tol_l2 {
             converged = true;
             break;
         }
@@ -2037,11 +2109,11 @@ pub fn find_misiurewicz(
     // direction. (Measured at a 2.77e89× dendrite: Newton converged in two steps onto a genuine
     // (437,3) point 4.04e-77 away — 4.7e11 view-widths — and the old `None` told the user to
     // navigate CLOSER, the exact opposite of what would have found it.)
-    let ddx = sub_f64(&cx, &center[0], p);
-    let ddy = sub_f64(&cy, &center[1], p);
-    let dist = (ddx * ddx + ddy * ddy).sqrt();
-    if dist > span * 8.0 {
-        return Err(MisiurewiczMiss::TooFar { view_widths: dist / span.max(f64::MIN_POSITIVE) });
+    let ddx = cx.sub(&center[0], p, RM);
+    let ddy = cy.sub(&center[1], p, RM);
+    let dist_l2 = log2_abs_c(&ddx, &ddy);
+    if dist_l2 > seed_span_l2 + 3.0 {
+        return Err(MisiurewiczMiss::TooFar { log2_view_widths: dist_l2 - seed_span_l2 });
     }
     Ok(Misiurewicz { preperiod, period, cx, cy })
 }
@@ -2677,7 +2749,7 @@ mod aux_bla_oracle {
     fn misiurewicz_solver_snaps_to_known_points() {
         // c = -2 is Misiurewicz (2,1): Z_1=-2, Z_2=2, Z_3=2 ⇒ Z_3=Z_2.
         let seed = [crate::parse_bf("-1.98").unwrap(), crate::parse_bf("0.01").unwrap()];
-        let m = find_misiurewicz(&seed, 2, 1, 1.0, 0).expect("M(2,1) near c=-2");
+        let m = find_misiurewicz(&seed, 2, 1, SolveScale::here(0.0), 0).expect("M(2,1) near c=-2");
         assert!(
             (to_f64(&m.cx) + 2.0).abs() < 1e-12 && to_f64(&m.cy).abs() < 1e-12,
             "M(2,1) should be c=-2, got ({}, {})",
@@ -2687,7 +2759,7 @@ mod aux_bla_oracle {
 
         // The verified three-spar Misiurewicz (4,1) (see validation/misiurewicz-4-1.fdn).
         let seed = [crate::parse_bf("-0.10110").unwrap(), crate::parse_bf("0.95629").unwrap()];
-        let m = find_misiurewicz(&seed, 4, 1, 1.0e3, 0).expect("M(4,1) three-spar");
+        let m = find_misiurewicz(&seed, 4, 1, SolveScale::here(1.0e3f64.log2()), 0).expect("M(4,1) three-spar");
         assert!(
             (to_f64(&m.cx) - (-0.10109636384562216)).abs() < 1e-12
                 && (to_f64(&m.cy) - 0.9562865108091415).abs() < 1e-12,

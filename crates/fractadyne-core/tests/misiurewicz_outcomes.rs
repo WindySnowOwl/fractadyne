@@ -1,5 +1,10 @@
 //! `find_misiurewicz` must say WHY it failed, not just that it did.
 //!
+//! ⭐Magnifications reach the solver as **log2**, hence `LOG2_2E89` below rather than the
+//! magnification itself. That is the whole point of the parameter: an `f64` magnification caps the
+//! solve at 2^1020 — 1e307 — which is shallower than this app renders.
+
+//!
 //! The distinction is not academic. A user at a 2.77e89× dendrite was told "no point converged
 //! near the view — navigate closer" when the solver had in fact converged in two Newton steps
 //! onto a genuine Misiurewicz point 4.0e-77 away: a real feature, twelve decades COARSER than the
@@ -7,7 +12,10 @@
 //!
 //! The location below is that user's, kept verbatim so the case stays reproducible.
 
-use fractadyne_core::MisiurewiczMiss;
+use fractadyne_core::{MisiurewiczMiss, SolveScale};
+
+/// log2 of 2.7685285297383285e89×, the magnification of the deep view these tests use.
+const LOG2_2E89: f64 = 297.12071983391957;
 
 const CX: &str = "2.336541879936817878966215410838761608133707885474547567506859621515201675599324293839217233261500414218604921872973e-2";
 const CY: &str = "8.2741173753632652070456275296875144057156928752279993918651650950463440957323066581594346138419917471379151772617142e-1";
@@ -42,12 +50,12 @@ fn a_distant_point_is_reported_as_far_not_as_absent() {
         .expect("detect");
 
     // At the view's own magnification the point is far outside it.
-    match fractadyne_core::find_misiurewicz(&c, k, per, 2.7685285297383285e89, 0) {
-        Err(MisiurewiczMiss::TooFar { view_widths }) => {
+    match fractadyne_core::find_misiurewicz(&c, k, per, SolveScale::here(LOG2_2E89), 0) {
+        Err(MisiurewiczMiss::TooFar { log2_view_widths }) => {
             assert!(
-                view_widths > 1_000.0,
-                "reported TooFar but only {view_widths} view-widths — that is not the case this \
-                 test is about"
+                log2_view_widths > 10.0,
+                "reported TooFar but only 2^{log2_view_widths} view-widths — that is not the \
+                 case this test is about"
             );
         }
         other => panic!("expected TooFar at 2.77e89, got {other:?}"),
@@ -55,7 +63,7 @@ fn a_distant_point_is_reported_as_far_not_as_absent() {
 
     // ...and it is a REAL point: widen the view and the same (k,p) solves. Without this the
     // assertion above would also pass for a solver that had wandered off to nowhere.
-    let ok = fractadyne_core::find_misiurewicz(&c, k, per, 1.0e60, 0)
+    let ok = fractadyne_core::find_misiurewicz(&c, k, per, SolveScale::here(1.0e60f64.log2()), 0)
         .expect("the same point must solve when the view is wide enough to hold it");
     assert_eq!((ok.preperiod, ok.period), (k, per));
 }
@@ -71,9 +79,8 @@ fn a_distant_point_is_reported_as_far_not_as_absent() {
 fn the_reported_distance_is_specific_to_the_pair() {
     let p = 362;
     let c = center(p);
-    let mag = 2.7685285297383285e89;
-    let far = |k, per| match fractadyne_core::find_misiurewicz(&c, k, per, mag, 0) {
-        Err(MisiurewiczMiss::TooFar { view_widths }) => view_widths,
+    let far = |k, per| match fractadyne_core::find_misiurewicz(&c, k, per, SolveScale::here(LOG2_2E89), 0) {
+        Err(MisiurewiczMiss::TooFar { log2_view_widths }) => log2_view_widths,
         other => panic!("expected TooFar for ({k},{per}), got {other:?}"),
     };
     let detected = far(437, 3);
@@ -81,9 +88,12 @@ fn the_reported_distance_is_specific_to_the_pair() {
     assert!(detected > 1.0 && typed > 1.0, "{detected} / {typed}");
     // Different pairs, different answers — a report that always said the same thing would carry
     // no information and would still satisfy the two assertions above.
+    // Octaves apart, not a ratio: these are logs now, and 1.9e56 vs 3.7e12 view-widths is ~145
+    // octaves of daylight.
     assert!(
-        (detected / typed - 1.0).abs() > 0.5,
-        "both pairs reported the same distance ({detected} vs {typed}) — the number is not          telling us anything about the pair"
+        (detected - typed).abs() > 1.0,
+        "both pairs reported the same distance (2^{detected} vs 2^{typed} view-widths) — the \
+         number is not telling us anything about the pair"
     );
 }
 
@@ -92,11 +102,11 @@ fn the_reported_distance_is_specific_to_the_pair() {
 fn a_zero_pair_is_a_bad_request() {
     let c = center(64);
     assert_eq!(
-        fractadyne_core::find_misiurewicz(&c, 0, 3, 1.0e6, 0),
+        fractadyne_core::find_misiurewicz(&c, 0, 3, SolveScale::here(1.0e6f64.log2()), 0),
         Err(MisiurewiczMiss::BadRequest)
     );
     assert_eq!(
-        fractadyne_core::find_misiurewicz(&c, 3, 0, 1.0e6, 0),
+        fractadyne_core::find_misiurewicz(&c, 3, 0, SolveScale::here(1.0e6f64.log2()), 0),
         Err(MisiurewiczMiss::BadRequest)
     );
 }
@@ -111,15 +121,14 @@ fn a_zero_pair_is_a_bad_request() {
 fn detecting_at_the_view_scale_finds_a_pair_that_solves_here() {
     let p = 362;
     let c = center(p);
-    let mag = 2.7685285297383285e89_f64;
-    let span_log2 = (3.0f64 / mag).log2();
+    let span_log2 = 3.0f64.log2() - LOG2_2E89;
 
     // The old ranking: a real point, but nowhere near this view.
     let (k0, p0) = fractadyne_core::detect_misiurewicz(&c[0], &c[1], 0, 20_000, 1_024, p)
         .expect("closest-separation detect");
     assert!(
         matches!(
-            fractadyne_core::find_misiurewicz(&c, k0, p0, mag, 0),
+            fractadyne_core::find_misiurewicz(&c, k0, p0, SolveScale::here(LOG2_2E89), 0),
             Err(MisiurewiczMiss::TooFar { .. })
         ),
         "the closest-separation pair ({k0},{p0}) was expected to land outside the view"
@@ -129,7 +138,7 @@ fn detecting_at_the_view_scale_finds_a_pair_that_solves_here() {
     let (k1, p1) =
         fractadyne_core::detect_misiurewicz_at_scale(&c[0], &c[1], 0, 20_000, 1_024, p, Some(span_log2))
             .expect("scale-aware detect");
-    let found = fractadyne_core::find_misiurewicz(&c, k1, p1, mag, 0)
+    let found = fractadyne_core::find_misiurewicz(&c, k1, p1, SolveScale::here(LOG2_2E89), 0)
         .expect("the scale-aware pair must solve within the view");
     assert_eq!((found.preperiod, found.period), (k1, p1));
     // ...and it is a DIFFERENT answer from the old one, or the scale test is doing nothing.
@@ -148,5 +157,62 @@ fn a_missing_or_broken_scale_falls_back_cleanly() {
         let got =
             fractadyne_core::detect_misiurewicz_at_scale(&c[0], &c[1], 0, 20_000, 1_024, p, bad);
         assert_eq!(got, plain, "scale {bad:?} should fall back to the plain ranking");
+    }
+}
+
+/// ⭐⭐**The point of the log-space solve: reaching a depth `f64` cannot express.**
+///
+/// A magnification carried as `f64` stops at 2^1020 ≈ 1e307. Below that ceiling the solver still
+/// returned an answer — it just quietly stopped adding digits — so the failure reached the user as
+/// a view that rendered a SINGLE FLAT COLOUR at 1e58000×, not as an error.
+///
+/// ⚠**Asserting that a deep solve merely RETURNS proves nothing**: a centre short of the requested
+/// precision looks exactly like a good one. What is checked here is that the answer is accurate AT
+/// THE TARGET SCALE — it sits inside its own 2^2000 view — while the shallow answer, the best the
+/// old ceiling could produce, is thousands of those view-widths outside it.
+#[test]
+fn a_solve_reaches_a_depth_f64_cannot_express() {
+    let p = 362;
+    let c = center(p);
+    let span_log2 = 3.0f64.log2() - LOG2_2E89;
+    let (k, per) =
+        fractadyne_core::detect_misiurewicz_at_scale(&c[0], &c[1], 0, 20_000, 1_024, p, Some(span_log2))
+            .expect("scale-aware detect");
+    let shallow = fractadyne_core::find_misiurewicz(&c, k, per, SolveScale::here(LOG2_2E89), 0)
+        .expect("the shallow solve is the starting point");
+    let seed = [shallow.cx.clone(), shallow.cy.clone()];
+
+    // ~1e602×, past f64's 1e308 ceiling: the old signature could not even take this number.
+    const TARGET: f64 = 2_000.0;
+    let deep = fractadyne_core::find_misiurewicz(
+        &seed,
+        k,
+        per,
+        SolveScale { log2_seed: LOG2_2E89, log2_target: TARGET },
+        0,
+    )
+    .expect("solving deeper from a point you are already on must work");
+    assert_eq!((deep.preperiod, deep.period), (k, per));
+
+    // Accurate AT the target: fed back as its own seed at 2^2000, it is inside the view.
+    fractadyne_core::find_misiurewicz(
+        &[deep.cx.clone(), deep.cy.clone()],
+        k,
+        per,
+        SolveScale::here(TARGET),
+        0,
+    )
+    .expect("the deep answer must sit inside the view it was solved for");
+
+    // ...and the shallow answer is NOT — which is exactly what "the old solver stopped at 1e307"
+    // costs you at 2^2000. Without this half the test above would also pass for a solve that had
+    // added no digits at all.
+    match fractadyne_core::find_misiurewicz(&seed, k, per, SolveScale::here(TARGET), 0) {
+        Err(MisiurewiczMiss::TooFar { log2_view_widths }) => assert!(
+            log2_view_widths > 1_000.0,
+            "the shallow answer was only 2^{log2_view_widths} view-widths out at 2^2000 — it is \
+             more accurate than this test assumes, so the comparison proves nothing"
+        ),
+        other => panic!("expected the shallow answer to be TooFar at 2^2000, got {other:?}"),
     }
 }
