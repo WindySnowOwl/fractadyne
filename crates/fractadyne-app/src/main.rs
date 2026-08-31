@@ -4693,6 +4693,12 @@ impl FractadyneApp {
         self.invalidate_refs(); // dynamics changed → drop the cached reference orbits
     }
 
+    /// Whether view `v` currently holds a tiled settle grid — the precondition a check about
+    /// stale tiles has to assert rather than assume.
+    pub(crate) fn tile_state_present(&self, v: usize) -> bool {
+        self.perf.tile_state.get(v).is_some_and(|g| g.is_some())
+    }
+
     /// Drop both per-view reference caches (call when the formula/mode/center changes
     /// such that the cached references no longer apply).
     fn invalidate_refs(&mut self) {

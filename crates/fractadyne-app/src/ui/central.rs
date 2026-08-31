@@ -564,6 +564,36 @@ impl FractadyneApp {
         }
     }
 
+    /// Pan the main view from the OVERVIEW MAP, by a delta in complex units.
+    ///
+    /// ⭐⭐**Marking the view interacting is the load-bearing half.** Moving the view from the
+    /// minimap used to change nothing the settle key can see: that key is
+    /// `(orbit_id, gpu_iter, view_gen, resolution, settings_hash)`, the centre and span appear in
+    /// NONE of them, and `view_gen` — the one field that stands for them — only bumps while
+    /// `interacting`. The canvas drag sets that in `nav_and_draw`; the minimap bypassed it. So a
+    /// COMPLETED tile grid stayed "valid" across the pan and kept holding tiles drawn for the old
+    /// centre — rectangular blocks of stale image in a settled frame (field report 2026-08-30,
+    /// reproduced by the `minimap-pan-redraws` check at meanΔ 19.6).
+    ///
+    /// It is also what the gesture deserves on its own terms: coarse while the drag is live, full
+    /// quality when it stops, exactly as dragging the canvas behaves.
+    ///
+    /// A function rather than three lines inline so the harness drives the SAME path the mouse
+    /// does — a check that re-implements the gesture cannot notice the gesture losing a step.
+    pub(crate) fn minimap_pan(&mut self, dx: f64, dy: f64, now: f64) {
+        self.viewport.pan_complex(dx, dy);
+        self.pointer.zoom_vel = 0.0;
+        self.pointer.settle_t[0] = now;
+    }
+
+    /// Zoom the main view from the overview map. Marks the view interacting for the same reason
+    /// [`minimap_pan`](Self::minimap_pan) does.
+    pub(crate) fn minimap_zoom(&mut self, factor: f64, now: f64) {
+        self.viewport.zoom_by(factor);
+        self.pointer.zoom_vel = 0.0;
+        self.pointer.settle_t[0] = now;
+    }
+
     pub(crate) fn draw_minimap(&mut self, ctx: &egui::Context) {
         if !self.dialogs.minimap || (self.julia_mode && !self.dual) {
             return;
@@ -691,13 +721,24 @@ impl FractadyneApp {
             // Once per gesture, so a drag is a single undo step rather than one per frame.
             self.record_nav();
         }
+        // ⭐⭐**A MINIMAP GESTURE IS AN INTERACTION, AND MUST SAY SO.** Moving the view from here
+        // used to change nothing the settle key can see: the key is
+        // `(orbit_id, gpu_iter, view_gen, resolution, settings_hash)`, the centre and span appear
+        // in NONE of them, and `view_gen` — the one field that stands for them — only bumps while
+        // `interacting`. The canvas drag sets that in `nav_and_draw`; the minimap bypassed it. So
+        // a COMPLETED tile grid stayed "valid" across the pan and kept holding tiles drawn for
+        // the old centre: rectangular blocks of stale image in a settled frame (field report
+        // 2026-08-30, reproduced by `minimap-pan-redraws` at meanΔ 19.6).
+        //
+        // Marking it interacting is also what the gesture deserves on its own terms — it renders
+        // coarse while the drag is live and settles to full quality when it stops, exactly as
+        // dragging the canvas does.
+        let now = ctx.input(|i| i.time);
         if let Some((dx, dy)) = pan {
-            self.viewport.pan_complex(dx, dy);
-            self.pointer.zoom_vel = 0.0;
+            self.minimap_pan(dx, dy, now);
         }
         if let Some(f) = zoom {
-            self.viewport.zoom_by(f);
-            self.pointer.zoom_vel = 0.0;
+            self.minimap_zoom(f, now);
         }
         if let Some((tx, ty)) = jump {
             self.viewport.set_center_mag(

@@ -45,6 +45,16 @@ enum Screen {
     /// the previous formula. The pair is the check; neither screen means anything alone.
     DualFormulaA,
     DualFormulaB,
+    /// Field report 2026-08-30: panning FROM THE MINIMAP leaves rectangular blocks of stale
+    /// image. The minimap moves the viewport with `pan_complex` and never marks the view as
+    /// interacting, so `view_gen` — the only part of the settle key that stands for the centre —
+    /// does not move, and a completed tile grid keeps holding tiles drawn for the old view.
+    ///
+    /// Three steps, because the assertion is a comparison: settle a view, pan it the way the
+    /// minimap does, then force an honest re-render of the SAME view. The last two must agree.
+    MinimapBase,
+    MinimapPan,
+    MinimapPanVerify,
 }
 
 /// A live-render step: jump to a view and let the on-screen live path render it, then screenshot.
@@ -142,6 +152,12 @@ struct StepResult {
     /// one before it. Whole-frame statistics are too coarse for that: two different fractals can
     /// share a mean and a spread, and the panel chrome dominates either way.
     left_fp: Vec<u8>,
+    /// Whether view 0 held a tiled settle grid when this step was captured.
+    ///
+    /// ⭐Recorded so a check whose PRECONDITION is "a grid completed" can assert it rather than
+    /// assume it. Written because the minimap-pan check first passed at meanD 0.0 on a view that
+    /// never tiled at all — a clean, confident, meaningless zero.
+    tiled: bool,
 }
 
 /// A 16x16 luma thumbnail of the left ~45% of the frame, vertically inset past the toolbar and
@@ -523,6 +539,9 @@ fn build_steps() -> Vec<Step> {
         },
         screen("dual-formula-a", Screen::DualFormulaA),
         screen("dual-formula-b", Screen::DualFormulaB),
+        screen("minimap-base", Screen::MinimapBase),
+        screen("minimap-pan", Screen::MinimapPan),
+        screen("minimap-pan-verify", Screen::MinimapPanVerify),
     ]
 }
 
@@ -671,12 +690,12 @@ impl FractadyneApp {
     fn uitest_apply(&mut self, ctx: &egui::Context, step: &Step) {
         self.uitest_close_all();
         match &step.kind {
-            StepKind::Screen(s) => self.uitest_open_screen(*s),
-            StepKind::Live(v) => self.uitest_set_live(v.decades),
+            StepKind::Screen(s) => self.uitest_open_screen(ctx, *s),
+            StepKind::Live(v) => self.uitest_set_live(ctx, v.decades),
             StepKind::Window(win) => {
                 // Home view (so the status bar shows a normal centre readout), then resize. winit
                 // applies the new inner size over the next frame or two — hence the longer settle.
-                self.uitest_open_screen(Screen::Home);
+                self.uitest_open_screen(ctx, Screen::Home);
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(win.w, win.h)));
                 match win.action {
                     WindowAction::Resize => {}
@@ -734,7 +753,7 @@ impl FractadyneApp {
         self.coloring.palette_editor_open = false;
     }
 
-    fn uitest_open_screen(&mut self, s: Screen) {
+    fn uitest_open_screen(&mut self, ctx: &egui::Context, s: Screen) {
         match s {
             Screen::Home => {
                 // Reset to the full set — a fresh, recognizable home. Without this, a step after a
@@ -798,6 +817,45 @@ impl FractadyneApp {
             // ...and now switch the formula WITHOUT touching the canvas. Nothing else changes:
             // still dual, still settled. This is the reported gesture exactly.
             Screen::DualFormulaB => self.set_fractal(crate::FractalKind::Celtic),
+            // A detailed single view, reached the ordinary way, and left to settle completely —
+            // a COMPLETED tile grid is the precondition for the bug.
+            Screen::MinimapBase => {
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Buffalo);
+                // ⚠⚠A TILED SETTLE IS THE PRECONDITION, and forcing it took two attempts.
+                // The default budget rendered the frame in one cheap dispatch — `tiling=false,
+                // geo=None` under FRACTADYNE_TRACE=tile — so no grid existed to go stale and the
+                // check passed at meanD 0.0 while proving nothing. Raising the budget under
+                // AUTO-iter did not help either: the live cap held the dispatch at gpu_iter=3173,
+                // and an auto-budgeted view only arms a grid once its budget has CONVERGED.
+                // An EXPLICIT count arms whenever the view is settled, which is the state the
+                // report was in. `tiled` below asserts it actually happened.
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 400_000;
+                self.render_cfg.aa = 2;
+                self.viewport.set_center_mag(
+                    fractadyne_core::BigFloat::from_f64(-0.139_634_789_365_238, 64),
+                    fractadyne_core::BigFloat::from_f64(0.450_279_899_250_188, 64),
+                    24.0,
+                );
+                self.pointer.settle_t = [-1.0e9, -1.0e9]; // settled, not interacting
+            }
+            // EXACTLY what the minimap's drag does, and nothing else: move the centre, cancel the
+            // glide. No settle_t, no invalidate — that omission IS the bug under test.
+            Screen::MinimapPan => {
+                // THE REAL ACTION, not a copy of it: `minimap_pan` is what a drag on the overview
+                // map calls. Re-implementing the gesture here would have tested the harness.
+                let (cw, _) = self.viewport.complex_span();
+                // ⚠The SAME clock `settle_t` is compared against — `ctx.input().time`, seconds
+                // since start. A frame counter would read as an interaction that never ends.
+                let now = ctx.input(|i| i.time);
+                self.minimap_pan(cw * 0.35, 0.0, now);
+            }
+            // Same viewport, but now say the view was touched, which forces an honest full
+            // re-render. Whatever this draws is what the step before it SHOULD have drawn.
+            Screen::MinimapPanVerify => {
+                self.perf.view_gen = [self.perf.frame_idx + 1, self.perf.frame_idx + 1];
+            }
             Screen::PaletteEditor => {
                 self.coloring.palette_editor_open = true;
                 // Expand the paste-import section and seed it, so the walk covers that UI too
@@ -810,7 +868,7 @@ impl FractadyneApp {
 
     /// Jump the live view to a magnification band on the canonical deep point and let the on-screen
     /// live path render it. Precision is sized for the depth; the mode is auto-picked downstream.
-    pub(crate) fn uitest_set_live(&mut self, decades: f64) {
+    pub(crate) fn uitest_set_live(&mut self, ctx: &egui::Context, decades: f64) {
         use std::f64::consts::LOG2_10;
         let log2mag = decades * LOG2_10;
         let prec = fractadyne_core::precision_for_octaves(log2mag.ceil() as u64) as usize;
@@ -824,7 +882,7 @@ impl FractadyneApp {
         // crash the GPU it is validating.) The settle loop instead waits for the adaptive budget to
         // climb until the view actually shows escaped structure (low capped fraction), bounded by a
         // hard cap, so the screenshot lands on detail rather than a mid-ramp black frame.
-        self.uitest_open_screen(Screen::Home);
+        self.uitest_open_screen(ctx, Screen::Home);
         self.playback = None;
         self.render_cfg.auto_iter = true;
         self.viewport.set_center_log2mag(cx, cy, log2mag);
@@ -857,6 +915,7 @@ impl FractadyneApp {
         // Content-region stats: the central 60%, so menu/status chrome doesn't mask a blank view.
         let (mean_luma, luma_stddev, buckets) = centre_stats(&image.pixels, w as usize, h as usize);
         let left_fp = left_pane_fingerprint(&image.pixels, w as usize, h as usize);
+        let tiled = self.tile_state_present(0);
 
         let is_live = matches!(step.kind, StepKind::Live(_));
         // "Not blank": a rendered UI or fractal has tonal spread. A flat frame is suspicious.
@@ -1109,6 +1168,52 @@ impl FractadyneApp {
             }
         }
 
+        // ---- panning from the minimap must actually redraw (field report 2026-08-30) ----
+        if matches!(step.kind, StepKind::Screen(Screen::MinimapPanVerify)) {
+            let panned = ut.results.last().filter(|r| r.name == "minimap-pan");
+            match panned {
+                Some(a) => {
+                    let d = fp_distance(&a.left_fp, &left_fp);
+                    // ⭐ANTI-VACUITY FIRST. The bug needs a tiled settle to have been in force;
+                    // without one there is no grid to hold a stale tile, and "the frames match"
+                    // is true for a reason that has nothing to do with the defect.
+                    if !a.tiled {
+                        checks.push(Check {
+                            name: "minimap-pan-redraws".into(),
+                            verdict: Verdict::Warn,
+                            detail: format!(
+                                "no settle grid was in force at the pan (meanD {d:.1}) — this run \
+                                 did not exercise the defect, so its pass means nothing"
+                            ),
+                        });
+                    // Threshold from the two MEASURED states, not a guess: the defect read
+                    // meanD 19.6, the fix reads 2.8 (residual settle/AA jitter between two
+                    // independent re-renders of the same view). 8.0 sits between them with
+                    // roughly equal margin on each side.
+                    } else if d <= 8.0 && luma_stddev >= 3.0 {
+                        checks.push(pass(
+                            "minimap-pan-redraws",
+                            format!("panned frame matches an honest re-render (meanD {d:.1}, tiled)"),
+                        ));
+                    } else {
+                        checks.push(Check {
+                            name: "minimap-pan-redraws".into(),
+                            verdict: Verdict::Fail,
+                            detail: format!(
+                                "panning from the minimap left a stale frame: meanD {d:.1} against \
+                                 an honest re-render of the SAME view (stddev {luma_stddev:.1})"
+                            ),
+                        });
+                    }
+                }
+                None => checks.push(Check {
+                    name: "minimap-pan-redraws".into(),
+                    verdict: Verdict::Warn,
+                    detail: "no preceding minimap-pan step to compare against".into(),
+                }),
+            }
+        }
+
         // ---- the Diagnostics dialog's system facts (checklist step 88) ----
         if matches!(step.kind, StepKind::Screen(Screen::Diagnostics)) {
             let si = &self.sysinfo;
@@ -1246,6 +1351,7 @@ impl FractadyneApp {
             luma_stddev,
             buckets,
             left_fp,
+            tiled,
         }
     }
 
@@ -1386,6 +1492,7 @@ fn timeout_result(step: &Step) -> StepResult {
         luma_stddev: 0.0,
         buckets: 0,
         left_fp: Vec::new(),
+        tiled: false,
     }
 }
 

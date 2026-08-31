@@ -111,7 +111,7 @@ impl crate::FractadyneApp {
         if n == 0 {
             // The view under soak: deep enough to be on the perturbation path with a real
             // reference orbit, which is the regime the checklist row is about.
-            self.uitest_set_live(s.decades);
+            self.uitest_set_live(ctx, s.decades);
             eprintln!(
                 "[soak] {:.0}s at 1e{:.0}x — liveness window {}s (watchdog thread), \
                  growth limit {GROWTH_LIMIT_MB} MB",
