@@ -310,11 +310,16 @@ impl FractadyneApp {
             .default_width(420.0)
             .show(ctx, |ui| {
                 ui.label(egui::RichText::new("Center — real (Re)").weak().small());
-                ui.add(egui::TextEdit::singleline(&mut self.goto.x).desired_width(f32::INFINITY));
+                let rx = ui.add(egui::TextEdit::singleline(&mut self.goto.x).desired_width(f32::INFINITY));
                 ui.label(egui::RichText::new("Center — imaginary (Im)").weak().small());
-                ui.add(egui::TextEdit::singleline(&mut self.goto.y).desired_width(f32::INFINITY));
+                let ry = ui.add(egui::TextEdit::singleline(&mut self.goto.y).desired_width(f32::INFINITY));
                 ui.label(egui::RichText::new("Zoom (magnification)").weak().small());
-                ui.add(egui::TextEdit::singleline(&mut self.goto.zoom).desired_width(220.0));
+                let rz = ui.add(egui::TextEdit::singleline(&mut self.goto.zoom).desired_width(220.0));
+                // Same rule as the k/p boxes below: a message describes the inputs that produced
+                // it, so editing any of them retires it rather than leaving a stale verdict.
+                if rx.changed() || ry.changed() || rz.changed() {
+                    self.goto.msg = None;
+                }
                 if let Some(m) = &self.goto.msg {
                     ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), m);
                 }
@@ -377,18 +382,26 @@ impl FractadyneApp {
                         if self.goto.feat_kind == crate::FeatureKind::Misiurewicz {
                             ui.horizontal(|ui| {
                                 ui.label("Preperiod k");
-                                ui.add(
+                                let rk = ui.add(
                                     egui::TextEdit::singleline(&mut self.goto.feat_k)
                                         .hint_text("auto")
                                         .desired_width(48.0),
                                 );
                                 ui.add_space(8.0);
                                 ui.label("Period p");
-                                ui.add(
+                                let rp = ui.add(
                                     egui::TextEdit::singleline(&mut self.goto.feat_p)
                                         .hint_text("auto")
                                         .desired_width(48.0),
                                 );
+                                // ⚠A message names the (k,p) it was about. Editing either field
+                                // makes it describe inputs that are no longer there — and because
+                                // a failed solve LEAVES its numbers in these boxes, clearing them
+                                // back to "auto" left a red line still quoting the pair you had
+                                // just deleted, reading as though blank fields had produced it.
+                                if rk.changed() || rp.changed() {
+                                    self.goto.msg = None;
+                                }
                             })
                             .response
                             .on_hover_text(
