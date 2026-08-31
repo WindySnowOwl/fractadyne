@@ -1047,7 +1047,11 @@ Mockups: [design/mockups/](design/mockups/).
   | corpus 06, 1.3e24× | 20,000 | **79.98** | 105.95 | preview works |
   | corpus 08, 8.9e43× | 60,000 | **95.89** | 95.89 | preview works, already complete |
   | hero, 9.85e499× | 200,000 | **5.95** | 111.47 | **black** |
-  | user's, 2.37e4000× | 2,008,192 | **5.95** | *(control running)* | **black** |
+  | user's, 2.37e4000× | 2,008,192 | **5.95** | 114.52 | **black** |
+
+  ✅**The control matters**: at its full 2,008,192 the same view renders the spiral properly (luma
+  114.52, 13m50s for a 400×250 CLI render). The location is fine; only the truncated preview is
+  black. Without that row "16,384 is black" would be indistinguishable from "e4000 is black".
 
   ⛔**A RATIO THRESHOLD IS MEASURED-FALSE — do not "fix" it by scaling `COARSE_ITER` to a fraction
   of the ask.** At corpus 08 the cap is **27%** of the ask and the preview is perfect; at the hero
