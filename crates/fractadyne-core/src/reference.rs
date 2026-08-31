@@ -1773,6 +1773,39 @@ pub fn detect_misiurewicz(
     max_period: u32,
     p: usize,
 ) -> Option<(u32, u32)> {
+    detect_misiurewicz_at_scale(cx, cy, formula, max_iter, max_period, p, None)
+}
+
+/// [`detect_misiurewicz`], but preferring the pair whose feature is the size of the VIEW.
+///
+/// ⭐⭐**The closest near-return is not the most useful one.** Ranking purely by separation picks
+/// whichever pair the orbit happens to match best, and at depth that is routinely a feature far
+/// COARSER than what is on screen: measured at a 2.77e89× dendrite, the winner was (437,3), whose
+/// point sits 4.0e-77 away — 3.7e12 view-widths, twelve decades out. The solve then finds it
+/// perfectly and the caller has to reject it for being nowhere near the view.
+///
+/// `target_span_log2` (log2 of the view's complex width) selects instead by SCALE. The
+/// neighbourhood of a pre-period-`k` point is about `1/|D_k|` across, where `D = dz/dc` is carried
+/// alongside the orbit, so the pair that governs the visible structure is the one with
+/// `|D_k| ≈ 1/span`.
+///
+/// ⚠**A LOG, not the width itself.** The linear span underflows `f64` to zero past ~1e308×, which
+/// is well inside this app's range — passing it directly would silently disable the scale test at
+/// exactly the depths that need it most.
+///
+/// ⚠`|D|` is tracked as `log2` in `f64`, accumulated as `Σ log2|2·z_i|` — the product that
+/// dominates `D_{n+1} = 2·z_n·D_n + 1`. The `+1` is dropped, which is wrong while `|D|` is O(1)
+/// and irrelevant once it is astronomically large, and only the ORDER OF MAGNITUDE is used here.
+/// Tracking `D` itself would overflow `f64` before 1e309× and cost a bignum multiply per step.
+pub fn detect_misiurewicz_at_scale(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    max_period: u32,
+    p: usize,
+    target_span_log2: Option<f64>,
+) -> Option<(u32, u32)> {
     formula_power(formula)?;
     let max_iter = max_iter.clamp(8, 20_000) as usize;
     let max_period = max_period.clamp(1, 4_096) as usize;
@@ -1780,9 +1813,17 @@ pub fn detect_misiurewicz(
     // The orbit, kept in full precision, with an f64 shadow for the pre-filter.
     let mut zs: Vec<(BigFloat, BigFloat)> = Vec::with_capacity(max_iter);
     let mut sh: Vec<(f64, f64)> = Vec::with_capacity(max_iter);
+    // log2|dz/dc| alongside, for the scale test. See the doc comment for why it is a log sum.
+    let mut l2d: Vec<f64> = Vec::with_capacity(max_iter);
+    let mut acc = 0.0f64;
     let mut zx = bf(0.0, p);
     let mut zy = bf(0.0, p);
     for _ in 0..max_iter {
+        // The growth factor uses the PRE-step z, matching D_{n+1} = k·z_n^{k-1}·D_n + 1.
+        let za = (crate::to_f64(&zx).powi(2) + crate::to_f64(&zy).powi(2)).sqrt();
+        if za > 0.0 {
+            acc += (2.0 * za).log2();
+        }
         let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
         zx = nx;
         zy = ny;
@@ -1791,6 +1832,7 @@ pub fn detect_misiurewicz(
         }
         sh.push((crate::to_f64(&zx), crate::to_f64(&zy)));
         zs.push((zx.clone(), zy.clone()));
+        l2d.push(acc.max(0.0));
     }
     if zs.len() < 4 {
         return None;
@@ -1813,15 +1855,33 @@ pub fn detect_misiurewicz(
         return None;
     }
 
-    // Rank the survivors in full precision.
+    // Rank the survivors. With a target span, by how closely the pair's own feature scale matches
+    // the view; otherwise by separation, which is the historical behaviour.
+    let want_l2d = target_span_log2.filter(|s| s.is_finite()).map(|s| -s);
     let mut best: Option<(BigFloat, usize, usize)> = None;
+    let mut best_scale = f64::INFINITY;
     for (m, n) in cand {
         let dx = zs[n].0.sub(&zs[m].0, p, RM);
         let dy = zs[n].1.sub(&zs[m].1, p, RM);
         let d = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
-        // astro-float's `cmp` yields a SIGN, not an Ordering.
-        let better = best.as_ref().is_none_or(|(bd, _, _)| d.cmp(bd).is_some_and(|o| o < 0));
+        let better = match want_l2d {
+            Some(want) => {
+                // Octaves between this pair's feature size and the view's. Ties (and they are
+                // common, since a period's harmonics share a preperiod) fall back to separation.
+                let err = (l2d.get(m).copied().unwrap_or(0.0) - want).abs();
+                if (err - best_scale).abs() < 0.5 {
+                    best.as_ref().is_none_or(|(bd, _, _)| d.cmp(bd).is_some_and(|o| o < 0))
+                } else {
+                    err < best_scale
+                }
+            }
+            // astro-float's `cmp` yields a SIGN, not an Ordering.
+            None => best.as_ref().is_none_or(|(bd, _, _)| d.cmp(bd).is_some_and(|o| o < 0)),
+        };
         if better {
+            if let Some(want) = want_l2d {
+                best_scale = (l2d.get(m).copied().unwrap_or(0.0) - want).abs();
+            }
             best = Some((d, m, n));
         }
     }

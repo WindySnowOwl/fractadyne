@@ -6005,13 +6005,26 @@ impl FractadyneApp {
                             .viewport
                             .recommended_max_iter(self.render_cfg.max_iter)
                             .clamp(256, 20_000);
-                        match fractadyne_core::detect_misiurewicz(
+                        // ⭐Detect at the VIEW'S SCALE, not by closest orbit near-return. The
+                        // plain ranking picks whichever pair the orbit matches best, which at
+                        // depth is routinely a feature decades coarser than what is on screen —
+                        // measured here at 2.77e89×, it chose (437,3), whose point lies 3.7e12
+                        // view-widths away, while the pair that governs the visible structure is
+                        // (901,1) and solves inside the view.
+                        //
+                        // log2 of the view width, formed from the exponent rather than the value:
+                        // the linear span underflows to zero past ~1e308×, i.e. exactly where the
+                        // scale test matters most.
+                        let span_log2 =
+                            self.viewport.units_per_pixel.log2() + self.viewport.width_px.log2();
+                        match fractadyne_core::detect_misiurewicz_at_scale(
                             &center[0],
                             &center[1],
                             0,
                             iters,
                             1_024,
                             self.viewport.precision,
+                            Some(span_log2),
                         ) {
                             Some((dk, dp)) => {
                                 // Show what was found: the numbers are the interesting part, and a

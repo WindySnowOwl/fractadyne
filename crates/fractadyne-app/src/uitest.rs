@@ -846,8 +846,13 @@ impl FractadyneApp {
                 // and an auto-budgeted view only arms a grid once its budget has CONVERGED.
                 // An EXPLICIT count arms whenever the view is settled, which is the state the
                 // report was in. `tiled` below asserts it actually happened.
+                // ⚠What arms the grid is the EXPLICIT count, not a large one: `!auto_iter` arms
+                // whenever the view is settled. The reporter's 400,000 made the settle so long it
+                // could not finish inside the step's cap, so the capture raced it and the check
+                // read 2.8, 3.1, 6.6 and 14.6 across runs of one build. 50,000 still tiles (the
+                // `tiled` assertion proves it) and settles with room to spare.
                 self.render_cfg.auto_iter = false;
-                self.render_cfg.max_iter = 400_000;
+                self.render_cfg.max_iter = 50_000;
                 self.render_cfg.aa = 2;
                 self.viewport.set_center_mag(
                     fractadyne_core::BigFloat::from_f64(-0.139_634_789_365_238, 64),
@@ -1202,14 +1207,15 @@ impl FractadyneApp {
                                  did not exercise the defect, so its pass means nothing"
                             ),
                         });
-                    // ⚠A DIFFERENTIAL WITH REAL NOISE, so the threshold is calibrated on samples
-                    // rather than picked. Two independent re-renders of the same view never agree
-                    // exactly (AA and where each settle happened to end), and the spread is wide:
-                    //   broken: 12.9, 17.8, 19.6      fixed: 0.0, 2.8, 3.1, 4.2, 6.6
-                    // 9.5 sits between the two populations. Read it as "large means stale", never
-                    // as a precise measure — and if the fixed side ever creeps up, the answer is
-                    // to quiet the noise (the settle gate above did most of that), not to raise
-                    // this number until the check cannot fail.
+                    // Threshold calibrated on samples, after the noise was removed at its source
+                    // rather than absorbed by widening the gate:
+                    //   fixed:  0.0, 1.0, 1.0, 2.2        broken: 40.1, 43.0
+                    // A 20x separation, so 9.5 is nowhere near either population. ⚠Getting there
+                    // took two goes — at the reporter's 400,000 iterations the settle could not
+                    // finish inside the step's cap, the capture raced it, and the same build read
+                    // 2.8, 3.1, 6.6 and 14.6. The lesson is the one the gate itself embodies: when
+                    // a differential is noisy, quiet the measurement; never raise the threshold
+                    // until the check can no longer fail.
                     } else if d <= 9.5 && luma_stddev >= 3.0 {
                         checks.push(pass(
                             "minimap-pan-redraws",

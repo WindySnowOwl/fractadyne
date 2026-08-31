@@ -100,3 +100,53 @@ fn a_zero_pair_is_a_bad_request() {
         Err(MisiurewiczMiss::BadRequest)
     );
 }
+
+/// ⭐⭐The end of the reported story: detecting at the VIEW'S SCALE finds a pair that actually
+/// solves inside the view, where ranking by closest near-return does not.
+///
+/// This is the difference between the finder being unusable at depth and working:
+///   closest separation → (437,3) → TooFar by 3.7e12 view-widths
+///   scale-aware        → (901,1) → a point inside the view
+#[test]
+fn detecting_at_the_view_scale_finds_a_pair_that_solves_here() {
+    let p = 362;
+    let c = center(p);
+    let mag = 2.7685285297383285e89_f64;
+    let span_log2 = (3.0f64 / mag).log2();
+
+    // The old ranking: a real point, but nowhere near this view.
+    let (k0, p0) = fractadyne_core::detect_misiurewicz(&c[0], &c[1], 0, 20_000, 1_024, p)
+        .expect("closest-separation detect");
+    assert!(
+        matches!(
+            fractadyne_core::find_misiurewicz(&c, k0, p0, mag, 0),
+            Err(MisiurewiczMiss::TooFar { .. })
+        ),
+        "the closest-separation pair ({k0},{p0}) was expected to land outside the view"
+    );
+
+    // Scale-aware: a pair whose feature is the size of the view, and it solves HERE.
+    let (k1, p1) =
+        fractadyne_core::detect_misiurewicz_at_scale(&c[0], &c[1], 0, 20_000, 1_024, p, Some(span_log2))
+            .expect("scale-aware detect");
+    let found = fractadyne_core::find_misiurewicz(&c, k1, p1, mag, 0)
+        .expect("the scale-aware pair must solve within the view");
+    assert_eq!((found.preperiod, found.period), (k1, p1));
+    // ...and it is a DIFFERENT answer from the old one, or the scale test is doing nothing.
+    assert_ne!((k0, p0), (k1, p1), "scale-aware selection returned the same pair");
+}
+
+/// The scale parameter must be a LOG. A linear width underflows to zero past ~1e308x, which would
+/// silently switch the scale test off at exactly the depths it exists for — so `None` and a
+/// non-finite value both fall back to the historical ranking rather than half-working.
+#[test]
+fn a_missing_or_broken_scale_falls_back_cleanly() {
+    let p = 362;
+    let c = center(p);
+    let plain = fractadyne_core::detect_misiurewicz(&c[0], &c[1], 0, 20_000, 1_024, p);
+    for bad in [None, Some(f64::NAN), Some(f64::NEG_INFINITY)] {
+        let got =
+            fractadyne_core::detect_misiurewicz_at_scale(&c[0], &c[1], 0, 20_000, 1_024, p, bad);
+        assert_eq!(got, plain, "scale {bad:?} should fall back to the plain ranking");
+    }
+}
