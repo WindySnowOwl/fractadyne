@@ -1838,35 +1838,40 @@ pub fn detect_misiurewicz_at_scale(
         return None;
     }
 
-    // Pre-filter in f64, to keep the bignum ranking below off pairs that are obviously far apart.
+    // Pre-filter in f64, to keep the bignum ranking below off pairs whose point cannot be near the
+    // view. ⭐⭐**The test is on the distance to the ROOT, not on the separation** — Newton's first
+    // step, |z_n - z_m| / |F'|, with |D_n| for |F'| (the larger of the two derivatives dominates).
     //
-    // ⚠⚠**THE THRESHOLD IS RELATIVE TO THE VIEW, and the absolute one it replaces was a
-    // shallow-view blind spot.** The old reasoning — "a genuine near-return is far below f64
-    // resolution and lands on exactly zero here" — is true at 1e89× and FALSE at 1e5×: how closely
-    // the orbit near-returns at the seed scales with how far the seed is from the true point, and
-    // that is bounded by the VIEW SPAN. Measured at the 283,353× spiral a user reported as
-    // "no Misiurewicz point found": the real point sits 0.05 view-widths from the centre, its
-    // orbit's closest near-return is 2.9e-5 — and the fixed 1e-6 cut discarded it along with
-    // everything else, so the detector returned `None` in 10 ms without ever ranking a candidate.
+    // ⚠⚠**A CUT ON THE RAW SEPARATION CANNOT WORK AT BOTH ENDS, and both ends were measured
+    // failing.** The old fixed 1e-6 discarded everything at a 283,353x spiral, where the real
+    // point's near-return is 2.9e-5 (fixed by scaling it to the view). It then failed the OTHER
+    // WAY at 2.37e40x: the pair identifying the point at the view centre, (3999,4000), separates
+    // by 2.6e-4 — 264x ABOVE the cut — so it was thrown out and the detector answered a pair whose
+    // point is 15-23 view-widths away (user, 2026-08-31).
     //
-    // Floored at the historical value so deep views behave exactly as before, and capped so a
-    // near-1× view cannot hand the bignum ranking the entire orbit.
+    // ⭐The reason the two ends disagree: a deep point's signature is NOT a small separation. It is
+    // one small *relative to the derivative*, and at 1e40x |D_n| is around 1e37, so a genuinely
+    // near root sits behind a perfectly ordinary-looking separation. Dividing by |D_n| is what
+    // makes one threshold serve every depth.
+    //
+    // ⚠Conservative by construction: a genuinely tiny separation underflows the f64 shadow to noise
+    // or to zero, which only makes the estimate SMALLER, so this never discards a real candidate.
+    /// How many view-widths from the seed a root may be and still be worth ranking.
+    const NEAR_SPANS_LOG2: f64 = 3.0;
+    /// Fallback when there is no view to measure against: the historical absolute cut.
     const COARSE_FLOOR: f64 = 1.0e-6;
-    const COARSE_CEIL: f64 = 1.0e-2;
-    /// View-widths of separation that still count as "near". The measured pair needed 2.7; the
-    /// margin is for the same feature seen from a less central seed.
-    const COARSE_SPANS: f64 = 16.0;
-    let coarse = match target_span_log2.filter(|s| s.is_finite()) {
-        Some(s) => (2.0f64.powf(s) * COARSE_SPANS).clamp(COARSE_FLOOR, COARSE_CEIL),
-        // No span to scale against — the historical behaviour, unchanged.
-        None => COARSE_FLOOR,
-    };
+    let near_l2 = target_span_log2.filter(|s| s.is_finite()).map(|s| s + NEAR_SPANS_LOG2);
     let mut cand: Vec<(usize, usize)> = Vec::new();
     for n in 1..sh.len() {
         let lo = n.saturating_sub(max_period);
         for m in lo..n {
             let (dx, dy) = (sh[n].0 - sh[m].0, sh[n].1 - sh[m].1);
-            if dx * dx + dy * dy < coarse * coarse {
+            let keep = match near_l2 {
+                // log2(sep) - log2|D_n| < log2(span) + 3, all in logs so nothing underflows.
+                Some(t) => 0.5 * (dx * dx + dy * dy).max(f64::MIN_POSITIVE).log2() - l2d[n] < t,
+                None => dx * dx + dy * dy < COARSE_FLOOR * COARSE_FLOOR,
+            };
+            if keep {
                 cand.push((m, n));
             }
         }

@@ -1022,6 +1022,28 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**`find_nucleus` still takes `mag: f64`** — same shape, same ceiling, plus `reduce_period`'s
   linear `tol2`. The Minibrot half of the Go-to dialog is still capped. Filed below.~~
 
+- [ ] 🟡**`minimap-pan-redraws` PRODUCED A FALSE RED UNDER MACHINE LOAD (2026-08-31).** One run read
+  **meanΔ 9.9** against a 9.5 gate and failed; two immediate re-runs of the SAME binary passed
+  (34/34). The machine was busy — a release build and the user's own app running — and the change
+  under test was in the Misiurewicz detector, which that check does not touch.
+
+  The calibration sample was `fixed: 0.0, 1.0, 1.0, 2.2` vs `broken: 40.1, 43.0`. The fixed
+  population is therefore WIDER than it was measured to be: 9.9 belongs to it.
+
+  ⛔**Do not raise the gate to 20.** The check's own comment states the rule it was built on, and it
+  is the right one: *"when a differential is noisy, quiet the measurement; never raise the threshold
+  until the check can no longer fail."* A gate at 20 would still discriminate against 40+, but it
+  would be absorbing noise instead of removing it, and the noise is a real settle race that could
+  one day exceed 20 as well.
+
+  ⭐**The remedy is a firmer settle wait before the capture**, not a wider gate. The step already
+  gates on settle completion; the residual is the capture racing the last tiles under load. Worth
+  checking whether the wait can block on the tile grid being fully resolved rather than on a
+  frame-count or time cap.
+
+  ⚠A gate that cries wolf is worse than no gate — it trains the reader to re-run until green, which
+  is exactly what I did here. Verified it was flake (two clean re-runs) rather than assumed it.
+
 - [ ] 🟡**MISIUREWICZ POINT EXPLORER (user, 2026-08-31)** — browse what different Misiurewicz
   points LOOK like, and zoom to any chosen one at an arbitrary depth.
 
@@ -1044,39 +1066,49 @@ Mockups: [design/mockups/](design/mockups/).
   a SEED (or the solved coordinate itself), because the seed is what selects the root. Store the
   points, not the pairs.
 
-  ⛔**Blocked on the detector defect above**: a browser built on today's ranking would show the
-  wrong point for the view at depth. Fix the pre-filter/ranking first, or the gallery inherits it.
+  ✅**Unblocked 2026-08-31**: the pre-filter fix above means the detector now returns the point the
+  view is centred on at e40, 283k× and e89 alike, so a gallery built on it inherits a working
+  finder rather than a broken one.
 
   ⭐Related: `MISIUREWICZ_POI` already holds a hand-curated list behind Go-to ▸ "Jump to a point of
   interest…" — the explorer is the generated, navigable version of that.
 
-- [ ] 🟠**THE DETECTOR'S PRE-FILTER DISCARDS THE PAIR THAT DESCRIBES THE VIEW CENTRE (user,
+- [x] ~~🟠**THE DETECTOR'S PRE-FILTER DISCARDED THE PAIR THAT DESCRIBES THE VIEW CENTRE (user,
   2026-08-31).** At a 2.37e40× spiral hub the finder answered `(3411,1)`, whose point is ~15–23
   view-widths away, and the guard rejected it. There IS a point essentially dead-centre —
-  **0.047 view-widths** — but it needs preperiod ≈ **4000**.
+  **0.047 view-widths**.
 
-  ⚠**Measured cause**: the identifying pair for that point, `(m,n) = (3999,4000)`, has a near-return
-  separation of **2.6e-4** in f64. The pre-filter cut is **1e-6**. It is thrown out 264× before the
-  ranking sees it. The comment's premise — "a genuine near-return is far below f64 resolution" — is
-  wrong in BOTH directions: too tight at 283,353× (fixed, `7557b66`) and too tight again here, but
-  for the opposite reason. A deep point's signature is not a tiny separation; it is a separation
-  small **relative to |D_n|**, and at e40 the derivative is ~1e40 so the raw separation is large.
+  ✅**FIXED 2026-08-31.** The pre-filter now tests **Newton's first step**, `|z_n − z_m| / |D_n|` —
+  the distance to the ROOT — instead of the raw separation. One threshold then serves every depth:
 
-  ⭐**The quantity that matters is Newton's first step**, `|z_n − z_m| / |D_n|` — a direct estimate
-  of how far the root is from the seed, computable from the orbit the detector already walks. Both
-  the filter and the ranking should use it.
+  | view | before | after |
+  |------|--------|-------|
+  | 2.37e40× | (3411,1), 15–23 view-widths, **refused** | **(4282,1), 0.047 view-widths, accepted** |
+  | 283,353× | (95,1), 0.05 view-widths | (406,1), 0.105 view-widths |
+  | 2.77e89× | (901,1), inside | (961,1), 0.124 view-widths |
 
-  ⛔⛔**But do NOT ship the obvious form of it, which I measured and it is DEGENERATE.** Ranking by
-  `log2(sep) − l2d[n]` picks the LAST INDEX OF THE ORBIT every time, because `l2d` grows
-  monotonically — it is not a criterion, it is "take the end of the orbit". It has to be normalised
-  (per-`n`, or against the pair's own scale) before it means anything.
+  ⭐**The ranking was innocent all along** — it scored the right pair at 8.65 against the surviving
+  best of 24.89, and never saw it. Only the filter needed changing.
 
-  ⚠⚠**AND IT LOOKED LIKE A CLEAN WIN**: the degenerate version solved to 0.0002 / 0.0167 / 0.1034
-  view-widths at e40 / 283k× / e89 respectively — better than the current ranking on all three
-  locations at once. ⭐**"The solve lands near the centre" does NOT validate a (k,p)**: at depth
-  Newton's basin converges to a nearby point for almost any pair — measured, k = 16 … 3900 all
-  converge to the SAME root at e40. A ranking experiment has to be judged on whether the PAIR is
-  right, not on where the solve ends up.
+  ⛔**Do not go back to a cut on the raw separation.** It cannot work at both ends, and both ends
+  are now pinned: `a_shallow_view_finds_its_point_too` (separation 2.9e-5, BELOW the old cut) and
+  `a_deep_view_finds_the_point_it_is_centred_on` (2.6e-4, 264× ABOVE it). Restoring the fixed cut
+  turns both red and nothing else.~~
+
+  ⚠⚠**THE LESSON WORTH KEEPING — the fix I nearly shipped instead.** Newton's first step is the
+  right quantity for the FILTER, but I first tried it as the RANKING, scored `log2(sep) − l2d[n]`,
+  and it is **degenerate**: `l2d` grows monotonically along the orbit, so the minimum is always the
+  orbit's LAST INDEX. It is not a criterion, it is "take the end of the orbit".
+
+  ⭐⭐**And it looked like a clean sweep**: 0.0002 / 0.0167 / 0.1034 view-widths at e40 / 283k× /
+  e89 — beating the shipped ranking at all three locations at once. The reason it flattered itself
+  is the trap: **"the solve lands near the centre" does NOT validate a (k,p)**. At depth Newton's
+  basin converges to a nearby point for almost any pair — measured, k = 16 … 3900 all reach the
+  SAME root at e40. Judge a ranking on whether the PAIR is right, never on where the solve ends up.
+
+  ⚠Detection at e40 now costs **~1.5 s** (46 ms at e89 and 283k×): the looser, correct filter admits
+  more candidates for the bignum ranking to sift. Off-thread with a spinner and a Cancel, so it is
+  paid for — but a scale window in the pre-filter would cut it if it ever bites.
 
 - [ ] 🟡**THE DETECTED PRE-PERIOD IS INFLATED, AND THE NUMBER SHOWN TO THE USER IS WRONG
   (2026-08-31).** At the reported 283,353× spiral the detector reports **(95,1)** for a point whose

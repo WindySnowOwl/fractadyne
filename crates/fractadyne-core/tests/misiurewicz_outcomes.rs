@@ -289,3 +289,54 @@ fn a_shallow_view_finds_its_point_too() {
         "({k},{p}) solved to a point {widths:.2} view-widths away — not the spiral on screen"
     );
 }
+
+/// ⭐⭐**A DEEP view has to find the point it is CENTRED ON** — reported at a 2.37e40× spiral hub,
+/// where the finder answered a pair whose point is 15–23 view-widths away and the guard then
+/// refused it: *"Found a Misiurewicz (3411,1) point, but it is … view-widths away"* (user,
+/// 2026-08-31). There is a point essentially dead centre, 0.047 view-widths out.
+///
+/// ⚠**The pre-filter was the whole defect, and it failed in the direction opposite to
+/// [`a_shallow_view_finds_its_point_too`].** That pair's separation is **2.6e-4** — 264× ABOVE the
+/// 1e-6 cut, not below it. A deep point's signature is not a small separation: it is one small
+/// *relative to the derivative*, and here |D_n| ≈ 1e37. The ranking was innocent — it scored the
+/// right pair at 8.65 against the surviving best of 24.89, and never saw it.
+#[test]
+fn a_deep_view_finds_the_point_it_is_centred_on() {
+    let prec = 400;
+    let cx = fractadyne_core::parse_bf_prec(
+        "3.685899907817665613220882922468586606311897788745740742230569886570895964408339999999999999999999e-1",
+        prec,
+    )
+    .expect("cx");
+    let cy = fractadyne_core::parse_bf_prec(
+        "1.19231471377642567775078859062356954073584571277013891429493231725232322296647e-1",
+        prec,
+    )
+    .expect("cy");
+    let mag = 2.3667597142856834e40_f64;
+    let span = 3.0 / mag;
+
+    let (k, p) = fractadyne_core::detect_misiurewicz_at_scale(
+        &cx, &cy, 0, 20_000, 1_024, prec, Some(span.log2()),
+    )
+    .expect("a pair must be detected at this view");
+
+    // The app's own call — same depth for target and seed — so this is exactly the outcome the
+    // user gets. Before the fix it was `TooFar`.
+    let m = fractadyne_core::find_misiurewicz(
+        &[cx.clone(), cy.clone()],
+        k,
+        p,
+        SolveScale::here(mag.log2()),
+        0,
+    )
+    .unwrap_or_else(|e| panic!("({k},{p}) must solve within the view, got {e:?}"));
+
+    let dx = fractadyne_core::to_f64(&m.cx.sub(&cx, prec, astro_float::RoundingMode::None));
+    let dy = fractadyne_core::to_f64(&m.cy.sub(&cy, prec, astro_float::RoundingMode::None));
+    let widths = (dx * dx + dy * dy).sqrt() / span;
+    assert!(
+        widths < 1.0,
+        "({k},{p}) solved {widths:.3} view-widths away — the point on screen is nearer than that"
+    );
+}
