@@ -1022,6 +1022,62 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**`find_nucleus` still takes `mag: f64`** — same shape, same ceiling, plus `reduce_period`'s
   linear `tol2`. The Minibrot half of the Go-to dialog is still capped. Filed below.~~
 
+- [ ] 🟠**THE COARSE-FIRST PREVIEW IS A BLACK FRAME AT DEEP MISIUREWICZ VIEWS, AND IT HOLDS FOR
+  MINUTES (user, 2026-08-31).** Reported at 2.37e4000×: *"about 100 seconds to build the reference,
+  then it rendered an image for a moment, then went black and started working again."*
+
+  **From the user's own log**, the two stages and the gap between them:
+
+  ```
+  +149.9s  reference built [live]: len=16385   iter=16384    prec=13481   <- coarse preview
+  +432.8s  reference built [live]: len=443129  iter=2008192  prec=13481   <- the real one
+  ```
+
+  283 seconds between them, and the screen is black for all of it. `recompute_worker_staged` caps
+  the preview stage at a FIXED `COARSE_ITER = 16384` — 0.8% of the 2,008,192 that view needs. A
+  truncated reference comes back `partial`, and per `live_orbit_cap`'s own comment that **clamps
+  pixels to the short orbit** (rebasing past a partial reference is unsound), so the preview renders
+  with an effective budget of 16,384.
+
+  ⭐**MEASURED — and the obvious reading is wrong.** Rendering each location at the preview's budget
+  versus its real one (400×250, mean luma; ~6 is black):
+
+  | view | ask | at 16,384 | at full ask | verdict |
+  |------|-----|-----------|-------------|---------|
+  | corpus 06, 1.3e24× | 20,000 | **79.98** | 105.95 | preview works |
+  | corpus 08, 8.9e43× | 60,000 | **95.89** | 95.89 | preview works, already complete |
+  | hero, 9.85e499× | 200,000 | **5.95** | 111.47 | **black** |
+  | user's, 2.37e4000× | 2,008,192 | **5.95** | *(control running)* | **black** |
+
+  ⛔**A RATIO THRESHOLD IS MEASURED-FALSE — do not "fix" it by scaling `COARSE_ITER` to a fraction
+  of the ask.** At corpus 08 the cap is **27%** of the ask and the preview is perfect; at the hero
+  **65%** (131,072) is still pure black — mean luma identical to 8%, 16% and 33%, i.e. not a
+  gradient but a cliff at the full budget. Escape times at a deep Misiurewicz view are all clustered
+  just below the ask, so no fraction of it shows anything.
+
+  ⭐⭐**The discriminator is whether the pixels are CAPPED, not how deep the view is nor what
+  fraction the cap is.** Corpus 08 at 16,384 escapes everything (`capped_frac` ≈ 0) and looks
+  finished; the hero at 131,072 escapes nothing (`capped_frac` ≈ 1) and is black. That counter
+  already exists — it is what drives the adaptive iteration budget.
+
+  ⇒ **Proposed fix**: install the coarse stage's result only when it is not ~entirely capped;
+  otherwise keep holding the reprojected previous frame and wait for the full build. ✅**The premise
+  is verified in code**: `will_reproject` is true exactly when `ref_pt.is_none()`, so declining to
+  install the coarse reference leaves the previous frame reprojected on screen — installing it is
+  what replaces that with black.
+
+  ⭐**The discriminator to compare against is the MEASURED iteration need, not the nominal ask.** At
+  corpus 08 the ask is 60,000 but everything escapes by 16,384 (the two renders are luma-identical),
+  so the need is ~16k and the preview is right to run. At the hero the ask is 200,000 and the need
+  really is ~200,000. All four rows above are explained by that one rule; none is explained by depth
+  or by the cap/ask ratio. ⚠Needs a live reproduction to land — this is the live reference pipeline,
+  the longest bug history in the repo, and the frame-ordering cannot be checked from the CLI.
+  `FRACTADYNE_TRACE=ref,tile` at the reported location is the experiment.
+
+  ⚠**Separately: 283 s of "building reference" with no progress.** Whatever the frame shows, a
+  five-minute wait needs an ETA or a progress fraction; the reference build knows its own
+  iteration count and could report one.
+
 - [ ] 🟡**`minimap-pan-redraws` PRODUCED A FALSE RED UNDER MACHINE LOAD (2026-08-31).** One run read
   **meanΔ 9.9** against a 9.5 gate and failed; two immediate re-runs of the SAME binary passed
   (34/34). The machine was busy — a release build and the user's own app running — and the change
