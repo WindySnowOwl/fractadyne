@@ -5975,6 +5975,7 @@ impl FractadyneApp {
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
         // A Newton-Raphson zoom target, when one is derivable (quadratic families only).
         let mut zoom_to: Option<f64> = None;
+        let mut misi_miss: Option<fractadyne_core::MisiurewiczMiss> = None;
         let (found, label) = match self.goto.feat_kind {
             FeatureKind::Minibrot => {
                 let max_period = self
@@ -6041,7 +6042,7 @@ impl FractadyneApp {
                 };
                 zoom_to = target_l2;
                 match fractadyne_core::find_misiurewicz(&center, k, p, solve_mag, 0) {
-                    Some(m) => {
+                    Ok(m) => {
                         // The multiplier λ of the cycle the point lands on: |λ| is the ZOOM
                         // PERIOD (the view repeats every log₂|λ| octaves) and arg λ the twist
                         // per repeat. The numbers that say what diving here will look like.
@@ -6065,7 +6066,14 @@ impl FractadyneApp {
                         };
                         (Some((m.cx, m.cy)), label)
                     }
-                    None => (None, format!("Misiurewicz ({k},{p})")),
+                    Err(why) => {
+                        // Say which of the four things happened. They call for different actions,
+                        // and the old blanket "navigate closer" was the WRONG action for the
+                        // commonest one: a point found far outside the view is coarser than the
+                        // view, so the way to it is out, not in.
+                        misi_miss = Some(why);
+                        (None, format!("Misiurewicz ({k},{p})"))
+                    }
                 }
             }
         };
@@ -6088,9 +6096,28 @@ impl FractadyneApp {
                     FeatureKind::Minibrot => {
                         "No minibrot center found near the view — zoom closer to one.".to_string()
                     }
-                    FeatureKind::Misiurewicz => {
-                        format!("No {label} point converged near the view — navigate closer, or try different k/p.")
-                    }
+                    FeatureKind::Misiurewicz => match misi_miss {
+                        // The one worth spelling out: a REAL point was found, just not here. The
+                        // distance is the actionable part — it says how far out to zoom.
+                        Some(fractadyne_core::MisiurewiczMiss::TooFar { view_widths }) => format!(
+                            "Found a {label} point, but it is {} view-widths away — that feature is \
+                             far COARSER than this view. Zoom OUT by about {:.0} octaves to reach \
+                             it, or try a larger preperiod for a feature at this scale.",
+                            fmt_zoom(view_widths),
+                            view_widths.max(1.0).log2()
+                        ),
+                        Some(fractadyne_core::MisiurewiczMiss::NotPreperiodic { residual }) => format!(
+                            "{label} does not fit the orbit here (residual {residual:.1e}) — \
+                             clear both boxes to detect the pair from the view."
+                        ),
+                        Some(fractadyne_core::MisiurewiczMiss::NotConverged) | None => format!(
+                            "No {label} point converged near the view — navigate closer, or try \
+                             different k/p."
+                        ),
+                        Some(fractadyne_core::MisiurewiczMiss::BadRequest) => {
+                            "Preperiod and period must both be positive.".to_string()
+                        }
+                    },
                 });
             }
         }

@@ -1673,6 +1673,7 @@ pub fn nucleus_residual_log2(
 }
 
 /// The exact center of a Misiurewicz (pre-periodic) point found near a view center.
+#[derive(Debug, PartialEq)]
 pub struct Misiurewicz {
     pub preperiod: u32,
     pub period: u32,
@@ -1852,18 +1853,44 @@ pub fn detect_misiurewicz(
     Some((bm as u32 + 1, fundamental as u32))
 }
 
+/// Why a Misiurewicz solve did not produce a usable point.
+///
+/// ⭐These are NOT interchangeable, and collapsing them into `None` cost a user an afternoon: a
+/// solve that converges onto a real point far outside the view was reported as "no point
+/// converged near the view — navigate closer", when the honest advice was the opposite. The
+/// caller needs to tell "there is nothing here" from "there is something, and it is over there".
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MisiurewiczMiss {
+    /// `preperiod` or `period` was zero, or the formula has no Misiurewicz points.
+    BadRequest,
+    /// Newton stalled — the derivative vanished, or 80 iterations did not reach tolerance.
+    NotConverged,
+    /// Newton found a point, but it is `view_widths` view-widths from the seed. A large value
+    /// means the requested (k, p) describes a feature far COARSER than the current view, and the
+    /// way to reach it is to zoom OUT, not in.
+    TooFar { view_widths: f64 },
+    /// A root was found but its orbit is not actually pre-periodic with this (k, p) — the pair
+    /// does not fit. `residual` is |Z_{k+p} − Z_k|.
+    NotPreperiodic { residual: f64 },
+}
+
+/// Newton-solve for the Misiurewicz point of pre-period `k` and period `p` nearest `center`.
+///
+/// Returns why it failed rather than a bare `None`; see [`MisiurewiczMiss`].
 pub fn find_misiurewicz(
     center: &[BigFloat; 2],
     preperiod: u32,
     period: u32,
     mag: f64,
     formula: u32,
-) -> Option<Misiurewicz> {
+) -> Result<Misiurewicz, MisiurewiczMiss> {
     if preperiod == 0 || period == 0 {
-        return None;
+        return Err(MisiurewiczMiss::BadRequest);
     }
     let p = precision_for_magnification(mag);
-    let k = formula_power(formula)?;
+    let Some(k) = formula_power(formula) else {
+        return Err(MisiurewiczMiss::BadRequest);
+    };
     let one = bf(1.0, p);
     let kf = bf(k as f64, p);
     let span = 3.0 / mag.max(1.0);
@@ -1905,7 +1932,7 @@ pub fn find_misiurewicz(
         let dfy = dy.sub(&dky, p, RM);
         let denom = dfx.mul(&dfx, p, RM).add(&dfy.mul(&dfy, p, RM), p, RM);
         if to_f64(&denom) == 0.0 {
-            return None;
+            return Err(MisiurewiczMiss::NotConverged);
         }
         let (numx, numy) = cmul_bf(&fx, &fy, &dfx, &neg_bf(&dfy, p), p);
         let stepx = numx.div(&denom, p, RM);
@@ -1919,14 +1946,13 @@ pub fn find_misiurewicz(
         }
     }
     if !converged {
-        return None;
+        return Err(MisiurewiczMiss::NotConverged);
     }
-    // Reject runaway: the point should sit within a few view-widths of the seed.
-    let ddx = sub_f64(&cx, &center[0], p);
-    let ddy = sub_f64(&cy, &center[1], p);
-    if (ddx * ddx + ddy * ddy).sqrt() > span * 8.0 {
-        return None;
-    }
+    // ⭐VERIFIED BEFORE THE DISTANCE CHECK, and the order is load-bearing. Newton will happily
+    // converge onto SOMETHING for a (k, p) that does not fit the orbit — a hand-typed (5,332) at
+    // a 2.77e89x dendrite lands 1.9e56 view-widths out — and reporting that as "a point, far
+    // away" would send the user zooming out after something that is not there. Rejecting the
+    // mis-fit first is what lets `TooFar` mean "a REAL point, elsewhere".
     // Verify genuine pre-periodicity: recompute the residual |Z_{k+p} − Z_k| (bounded orbit ⇒ O(1)
     // values, so an absolute floor cleanly separates a real solution (≈0) from a (k,p) mismatch).
     let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
@@ -1943,9 +1969,21 @@ pub fn find_misiurewicz(
     let res =
         (to_f64(&zx.sub(&zkx, p, RM)).powi(2) + to_f64(&zy.sub(&zky, p, RM)).powi(2)).sqrt();
     if res > 1.0e-6 {
-        return None;
+        return Err(MisiurewiczMiss::NotPreperiodic { residual: res });
     }
-    Some(Misiurewicz { preperiod, period, cx, cy })
+    // The point should sit within a few view-widths of the seed, or it is not the feature the
+    // user is looking at. ⭐Reported with its DISTANCE rather than swallowed: a converged solve
+    // this far out is a real point at a coarser scale, and saying how far turns a dead end into a
+    // direction. (Measured at a 2.77e89× dendrite: Newton converged in two steps onto a genuine
+    // (437,3) point 4.04e-77 away — 4.7e11 view-widths — and the old `None` told the user to
+    // navigate CLOSER, the exact opposite of what would have found it.)
+    let ddx = sub_f64(&cx, &center[0], p);
+    let ddy = sub_f64(&cy, &center[1], p);
+    let dist = (ddx * ddx + ddy * ddy).sqrt();
+    if dist > span * 8.0 {
+        return Err(MisiurewiczMiss::TooFar { view_widths: dist / span.max(f64::MIN_POSITIVE) });
+    }
+    Ok(Misiurewicz { preperiod, period, cx, cy })
 }
 
 // ============================================================================

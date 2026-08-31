@@ -570,6 +570,11 @@ impl FractadyneApp {
                 // window resize needs a few frames for winit to apply the new size and egui to
                 // re-lay-out. Hard caps keep a wedged build from ever hanging the harness.
                 let (settle_ms, hard_ms) = match step.kind {
+                    // The minimap trio renders an expensive view on purpose; give its grid time
+                    // to finish, or the capture races the settle (see the `settling` gate below).
+                    StepKind::Screen(
+                        Screen::MinimapBase | Screen::MinimapPan | Screen::MinimapPanVerify,
+                    ) => (500u64, 30_000u64),
                     StepKind::Screen(_) => (250u64, 3_000u64),
                     // Live: a generous hard cap so even a slow box's progressive reference build can
                     // finish (ref-settled gate) before the cap forces a capture.
@@ -647,10 +652,21 @@ impl FractadyneApp {
                 let ref_settled = ol > 0
                     && !ref_building
                     && now.duration_since(ut.ref_changed_at) >= std::time::Duration::from_millis(700);
+                // ⚠A SCREEN STEP MUST NOT SCREENSHOT MID-SETTLE. The minimap-pan pair renders a
+                // deliberately expensive view (an explicit 400,000 iterations at 2x AA), whose
+                // tiled settle takes far longer than the 250 ms minimum — so the capture landed
+                // on whatever fraction of the grid had completed, and a check comparing two such
+                // frames read 2.8, 3.1 and 17.8 on successive runs of the SAME build. A flaky
+                // gate is worse than no gate. Wait for the grid to drain (bounded, as ever, by
+                // the hard cap, so a wedge still cannot hang the harness).
+                let settling = self.perf.tile_pending[0]
+                    || self.perf.chunk_pending[0]
+                    || self.perf.tile_pending[1]
+                    || self.perf.chunk_pending[1];
                 let ready = now >= ut.settle_until
                     && match &ut.steps[ut.idx].kind {
                         StepKind::Live(v) => v.expect == RenderMode::Direct || ref_settled,
-                        _ => true,
+                        _ => !settling,
                     };
                 if ready || now >= ut.hard_until {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
@@ -1186,11 +1202,15 @@ impl FractadyneApp {
                                  did not exercise the defect, so its pass means nothing"
                             ),
                         });
-                    // Threshold from the two MEASURED states, not a guess: the defect read
-                    // meanD 19.6, the fix reads 2.8 (residual settle/AA jitter between two
-                    // independent re-renders of the same view). 8.0 sits between them with
-                    // roughly equal margin on each side.
-                    } else if d <= 8.0 && luma_stddev >= 3.0 {
+                    // ⚠A DIFFERENTIAL WITH REAL NOISE, so the threshold is calibrated on samples
+                    // rather than picked. Two independent re-renders of the same view never agree
+                    // exactly (AA and where each settle happened to end), and the spread is wide:
+                    //   broken: 12.9, 17.8, 19.6      fixed: 0.0, 2.8, 3.1, 4.2, 6.6
+                    // 9.5 sits between the two populations. Read it as "large means stale", never
+                    // as a precise measure — and if the fixed side ever creeps up, the answer is
+                    // to quiet the noise (the settle gate above did most of that), not to raise
+                    // this number until the check cannot fail.
+                    } else if d <= 9.5 && luma_stddev >= 3.0 {
                         checks.push(pass(
                             "minimap-pan-redraws",
                             format!("panned frame matches an honest re-render (meanD {d:.1}, tiled)"),

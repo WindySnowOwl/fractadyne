@@ -402,6 +402,26 @@ impl FractadyneApp {
                                 if rk.changed() || rp.changed() {
                                     self.goto.msg = None;
                                 }
+                                // ⭐A way BACK to auto. A successful detect writes its numbers
+                                // into these boxes so you can see what was found — which quietly
+                                // makes "auto" a one-shot: every later press re-uses the pair
+                                // from last time, and the only way back was to clear two boxes by
+                                // hand and know that blank meant auto. Shown only when there is
+                                // something to clear, so it is never a button that does nothing.
+                                if !self.goto.feat_k.is_empty() || !self.goto.feat_p.is_empty() {
+                                    ui.add_space(6.0);
+                                    if ui
+                                        .small_button("Auto")
+                                        .on_hover_text(
+                                            "Clear both boxes so the next search detects the                                              preperiod and period from the orbit at the view                                              centre.",
+                                        )
+                                        .clicked()
+                                    {
+                                        self.goto.feat_k.clear();
+                                        self.goto.feat_p.clear();
+                                        self.goto.msg = None;
+                                    }
+                                }
                             })
                             .response
                             .on_hover_text(
