@@ -1838,15 +1838,35 @@ pub fn detect_misiurewicz_at_scale(
         return None;
     }
 
-    // Pre-filter in f64. A genuine near-return is far below f64 resolution and lands on exactly
-    // zero here, so this only ever discards pairs that are obviously far apart.
-    const COARSE: f64 = 1.0e-6;
+    // Pre-filter in f64, to keep the bignum ranking below off pairs that are obviously far apart.
+    //
+    // ⚠⚠**THE THRESHOLD IS RELATIVE TO THE VIEW, and the absolute one it replaces was a
+    // shallow-view blind spot.** The old reasoning — "a genuine near-return is far below f64
+    // resolution and lands on exactly zero here" — is true at 1e89× and FALSE at 1e5×: how closely
+    // the orbit near-returns at the seed scales with how far the seed is from the true point, and
+    // that is bounded by the VIEW SPAN. Measured at the 283,353× spiral a user reported as
+    // "no Misiurewicz point found": the real point sits 0.05 view-widths from the centre, its
+    // orbit's closest near-return is 2.9e-5 — and the fixed 1e-6 cut discarded it along with
+    // everything else, so the detector returned `None` in 10 ms without ever ranking a candidate.
+    //
+    // Floored at the historical value so deep views behave exactly as before, and capped so a
+    // near-1× view cannot hand the bignum ranking the entire orbit.
+    const COARSE_FLOOR: f64 = 1.0e-6;
+    const COARSE_CEIL: f64 = 1.0e-2;
+    /// View-widths of separation that still count as "near". The measured pair needed 2.7; the
+    /// margin is for the same feature seen from a less central seed.
+    const COARSE_SPANS: f64 = 16.0;
+    let coarse = match target_span_log2.filter(|s| s.is_finite()) {
+        Some(s) => (2.0f64.powf(s) * COARSE_SPANS).clamp(COARSE_FLOOR, COARSE_CEIL),
+        // No span to scale against — the historical behaviour, unchanged.
+        None => COARSE_FLOOR,
+    };
     let mut cand: Vec<(usize, usize)> = Vec::new();
     for n in 1..sh.len() {
         let lo = n.saturating_sub(max_period);
         for m in lo..n {
             let (dx, dy) = (sh[n].0 - sh[m].0, sh[n].1 - sh[m].1);
-            if dx * dx + dy * dy < COARSE * COARSE {
+            if dx * dx + dy * dy < coarse * coarse {
                 cand.push((m, n));
             }
         }

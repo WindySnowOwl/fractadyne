@@ -216,3 +216,76 @@ fn a_solve_reaches_a_depth_f64_cannot_express() {
         other => panic!("expected the shallow answer to be TooFar at 2^2000, got {other:?}"),
     }
 }
+
+/// ⭐⭐**A SHALLOW view has to find its point too** — reported at 283,353×, where the finder said
+/// "No Misiurewicz point found near this view" while the point sat 0.05 view-widths from the
+/// centre (user, 2026-08-31).
+///
+/// The detector's f64 pre-filter was a fixed 1e-6, on the reasoning that a genuine near-return is
+/// far below f64 resolution. ⚠That is true at 1e89× and FALSE here: the orbit's closest
+/// near-return at this seed is **2.9e-5**, because how closely the orbit near-returns scales with
+/// how far the seed sits from the true point — which is bounded by the VIEW SPAN, 1.06e-5 here.
+/// So the cut discarded every candidate and the detector returned `None` in 10 ms without ranking
+/// anything. A threshold in absolute units cannot serve a range of 300 decades.
+#[test]
+fn a_shallow_view_finds_its_point_too() {
+    // The user's view, verbatim.
+    let cx = fractadyne_core::parse_bf_prec(
+        "3.68589417100980999859639504693110782785e-1", 128).expect("cx");
+    let cy = fractadyne_core::parse_bf_prec(
+        "1.19231481848958092759539685007272487305e-1", 128).expect("cy");
+    let mag = 2.833525309259118e5_f64;
+    let span = 3.0 / mag;
+    let span_log2 = span.log2();
+
+    // The premise, asserted rather than assumed: the nearest near-return in this orbit is ABOVE
+    // the old absolute floor. If this ever fails the test is no longer about the reported bug.
+    let (c_re, c_im) = (fractadyne_core::to_f64(&cx), fractadyne_core::to_f64(&cy));
+    let (mut zx, mut zy) = (0.0f64, 0.0f64);
+    let mut orbit = Vec::new();
+    for _ in 0..20_000 {
+        let (nx, ny) = (zx * zx - zy * zy + c_re, 2.0 * zx * zy + c_im);
+        zx = nx;
+        zy = ny;
+        if zx * zx + zy * zy > 16.0 {
+            break;
+        }
+        orbit.push((zx, zy));
+    }
+    let mut closest = f64::INFINITY;
+    for n in 1..orbit.len() {
+        for m in n.saturating_sub(1_024)..n {
+            let (dx, dy) = (orbit[n].0 - orbit[m].0, orbit[n].1 - orbit[m].1);
+            closest = closest.min((dx * dx + dy * dy).sqrt());
+        }
+    }
+    assert!(
+        closest > 1.0e-6,
+        "the closest near-return here is {closest:.3e}, already under the old 1e-6 floor — this \
+         location no longer demonstrates the shallow-view blind spot"
+    );
+
+    let (k, p) = fractadyne_core::detect_misiurewicz_at_scale(
+        &cx, &cy, 0, 20_000, 1_024, 128, Some(span_log2),
+    )
+    .expect("a shallow view must still yield a pair — this is the reported failure");
+
+    let m = fractadyne_core::find_misiurewicz(
+        &[cx.clone(), cy.clone()],
+        k,
+        p,
+        SolveScale::here(mag.log2()),
+        0,
+    )
+    .expect("and the pair must solve");
+
+    // ...to a point actually ON SCREEN. Detection alone is not the deliverable: a pair that solves
+    // somewhere else would leave the user exactly where they started.
+    let dx = fractadyne_core::to_f64(&m.cx) - c_re;
+    let dy = fractadyne_core::to_f64(&m.cy) - c_im;
+    let widths = (dx * dx + dy * dy).sqrt() / span;
+    assert!(
+        widths < 1.0,
+        "({k},{p}) solved to a point {widths:.2} view-widths away — not the spiral on screen"
+    );
+}
