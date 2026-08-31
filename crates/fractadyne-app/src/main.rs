@@ -2029,6 +2029,44 @@ fn fmt_zoom(mag: f64) -> String {
 
 /// Format magnification from `log2(magnification)` — stays correct past `f64`'s 1e308×
 /// (where `magnification()` saturates to `∞`), formatting `2^log2mag` via base-10.
+/// A count carried as `log2`, written the way a person would say it: `23`, `1,400`, `3.7e12`.
+///
+/// ⚠**Not [`fmt_zoom_field`]**, which is for magnifications and renders 23 as `2.3184272282471518e1`
+/// — technically right and unreadable. Reported for the "view-widths away" message (user,
+/// 2026-08-31), where the number is usually small.
+pub(crate) fn fmt_log2_count(log2n: f64) -> String {
+    if log2n > 40.0 {
+        // Past ~1e12 a plain integer is unreadable, and past 2^1024 it is not representable.
+        let log10 = log2n * std::f64::consts::LOG10_2;
+        let e = log10.floor();
+        format!("{:.1}e{}", 10f64.powf(log10 - e), e as i64)
+    } else {
+        let n = 2f64.powf(log2n.max(0.0));
+        if n >= 1000.0 { commas(&format!("{n:.0}")) } else { format!("{n:.0}") }
+    }
+}
+
+#[cfg(test)]
+mod log2_count_tests {
+    use super::fmt_log2_count;
+
+    /// ⭐The reported case: the "view-widths away" message rendered 23 as `2.3184272282471518e1`,
+    /// because it reused the MAGNIFICATION formatter. A count is not a magnification — small values
+    /// are the common case here and they have to read like numbers.
+    #[test]
+    fn a_count_reads_like_a_number() {
+        assert_eq!(fmt_log2_count(23.184272282471518f64.log2()), "23");
+        assert_eq!(fmt_log2_count(0.0), "1");
+        assert_eq!(fmt_log2_count(3.0), "8");
+        assert_eq!(fmt_log2_count(10.0), "1,024");
+        // ...and stays readable where the count is astronomical, which is the other real case:
+        // the hand-typed (5,332) at a 2.77e89x dendrite was 2^187 view-widths out.
+        assert_eq!(fmt_log2_count(187.0), "2.0e56");
+        // Past 2^1024 a linear count is not even representable, so this must not go through f64.
+        assert_eq!(fmt_log2_count(3_000.0), "1.2e903");
+    }
+}
+
 /// Playback-speed label for the transport button: `0.5`, `1`, `2`, `4` — no trailing `.0`, since
 /// the button is a readout as much as a control and "1.0x" reads like a measurement.
 pub(crate) fn fmt_speed(speed: f64) -> String {
@@ -6235,16 +6273,29 @@ impl FractadyneApp {
                         // The one worth spelling out: a REAL point was found, just not here. The
                         // distance is the actionable part — it says how far out to zoom.
                         Some(fractadyne_core::MisiurewiczMiss::TooFar { log2_view_widths }) => {
-                            format!(
-                                "Found a {label} point, but it is {} view-widths away — that \
-                                 feature is far COARSER than this view. Zoom OUT by about {:.0} \
-                                 octaves to reach it, or try a larger preperiod for a feature at \
-                                 this scale.",
-                                // A LOG, because the ratio itself overflows f64 routinely here —
-                                // the hand-typed (5,332) at a 2.77e89× dendrite was 2^187 out.
-                                fmt_zoom_field(log2_view_widths),
-                                log2_view_widths.max(0.0)
-                            )
+                            // ⚠**The distance decides which story is true**, and saying the wrong
+                            // one is worse than saying nothing. A point 2^187 view-widths out is a
+                            // different, far coarser feature and the answer is to zoom out. A
+                            // point 23 view-widths out is the SAME neighbourhood, just off-screen,
+                            // and telling that user their feature is "far COARSER" sent them
+                            // hunting in the wrong direction (user, 2026-08-31).
+                            let widths = fmt_log2_count(log2_view_widths);
+                            let octaves = log2_view_widths.max(0.0).ceil();
+                            if log2_view_widths < 12.0 {
+                                format!(
+                                    "Found a {label} point just outside this view — {widths} \
+                                     view-widths away. Zoom out about {octaves:.0} octaves to \
+                                     bring it on screen, or set a larger preperiod for a feature \
+                                     at this scale."
+                                )
+                            } else {
+                                format!(
+                                    "Found a {label} point, but it is {widths} view-widths away — \
+                                     that feature is far COARSER than this view. Zoom OUT by about \
+                                     {octaves:.0} octaves to reach it, or try a larger preperiod \
+                                     for a feature at this scale."
+                                )
+                            }
                         }
                         Some(fractadyne_core::MisiurewiczMiss::NotPreperiodic { residual }) => format!(
                             "{label} does not fit the orbit here (residual {residual:.1e}) — \

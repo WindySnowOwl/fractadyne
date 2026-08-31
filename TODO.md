@@ -1022,6 +1022,62 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**`find_nucleus` still takes `mag: f64`** — same shape, same ceiling, plus `reduce_period`'s
   linear `tol2`. The Minibrot half of the Go-to dialog is still capped. Filed below.~~
 
+- [ ] 🟡**MISIUREWICZ POINT EXPLORER (user, 2026-08-31)** — browse what different Misiurewicz
+  points LOOK like, and zoom to any chosen one at an arbitrary depth.
+
+  The pieces already exist and are now deep-capable: `detect_misiurewicz_at_scale` finds a (k,p)
+  from a view, `find_misiurewicz` solves it in log magnification to any depth the ask names
+  (`SolveScale`), and `misiurewicz_multiplier` gives λ — whose |λ| is the ZOOM PERIOD (the view
+  repeats every log₂|λ| octaves) and whose arg is the twist per repeat. That last one is what makes
+  a browser worth building: it can say, before you go, *what diving here will look like*.
+
+  ⭐**The shape it probably wants**: a gallery of thumbnails, one per (k,p), rendered at each
+  point's own feature scale — since a Misiurewicz point only looks like anything at the depth where
+  its feature fills the view. Pick one, name a depth, and the app solves at that depth and flies
+  there. Add the multiplier readout (repeat period + twist) beside each thumbnail.
+
+  ⚠**The counting matters for the UI, and it is brutal**: (k,p) names an EQUATION, not a point.
+  `z_{k+p} − z_k` has degree 2^(k+p−1), and the number of parameters of exactly type (k,p) is
+  ~2^(k+p−2) — verified exactly (integer polynomial arithmetic) as `2^(k−1) − 1` for p = 1, checked
+  k = 2…8. So (2,1) is genuinely unique (c = −2), (16,1) has 32,767 of them, and (95,1) has ~2e28.
+  ⇒ **A picker keyed on (k,p) alone is meaningless above tiny k.** Each gallery entry has to carry
+  a SEED (or the solved coordinate itself), because the seed is what selects the root. Store the
+  points, not the pairs.
+
+  ⛔**Blocked on the detector defect above**: a browser built on today's ranking would show the
+  wrong point for the view at depth. Fix the pre-filter/ranking first, or the gallery inherits it.
+
+  ⭐Related: `MISIUREWICZ_POI` already holds a hand-curated list behind Go-to ▸ "Jump to a point of
+  interest…" — the explorer is the generated, navigable version of that.
+
+- [ ] 🟠**THE DETECTOR'S PRE-FILTER DISCARDS THE PAIR THAT DESCRIBES THE VIEW CENTRE (user,
+  2026-08-31).** At a 2.37e40× spiral hub the finder answered `(3411,1)`, whose point is ~15–23
+  view-widths away, and the guard rejected it. There IS a point essentially dead-centre —
+  **0.047 view-widths** — but it needs preperiod ≈ **4000**.
+
+  ⚠**Measured cause**: the identifying pair for that point, `(m,n) = (3999,4000)`, has a near-return
+  separation of **2.6e-4** in f64. The pre-filter cut is **1e-6**. It is thrown out 264× before the
+  ranking sees it. The comment's premise — "a genuine near-return is far below f64 resolution" — is
+  wrong in BOTH directions: too tight at 283,353× (fixed, `7557b66`) and too tight again here, but
+  for the opposite reason. A deep point's signature is not a tiny separation; it is a separation
+  small **relative to |D_n|**, and at e40 the derivative is ~1e40 so the raw separation is large.
+
+  ⭐**The quantity that matters is Newton's first step**, `|z_n − z_m| / |D_n|` — a direct estimate
+  of how far the root is from the seed, computable from the orbit the detector already walks. Both
+  the filter and the ranking should use it.
+
+  ⛔⛔**But do NOT ship the obvious form of it, which I measured and it is DEGENERATE.** Ranking by
+  `log2(sep) − l2d[n]` picks the LAST INDEX OF THE ORBIT every time, because `l2d` grows
+  monotonically — it is not a criterion, it is "take the end of the orbit". It has to be normalised
+  (per-`n`, or against the pair's own scale) before it means anything.
+
+  ⚠⚠**AND IT LOOKED LIKE A CLEAN WIN**: the degenerate version solved to 0.0002 / 0.0167 / 0.1034
+  view-widths at e40 / 283k× / e89 respectively — better than the current ranking on all three
+  locations at once. ⭐**"The solve lands near the centre" does NOT validate a (k,p)**: at depth
+  Newton's basin converges to a nearby point for almost any pair — measured, k = 16 … 3900 all
+  converge to the SAME root at e40. A ranking experiment has to be judged on whether the PAIR is
+  right, not on where the solve ends up.
+
 - [ ] 🟡**THE DETECTED PRE-PERIOD IS INFLATED, AND THE NUMBER SHOWN TO THE USER IS WRONG
   (2026-08-31).** At the reported 283,353× spiral the detector reports **(95,1)** for a point whose
   canonical pre-period is **16** — `detect_misiurewicz` (separation ranking) says (16,1), and every
