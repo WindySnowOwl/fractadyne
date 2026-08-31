@@ -37,6 +37,31 @@ pub(crate) fn dual_panel_at(full: egui::Rect, split: f32, p: egui::Pos2) -> Opti
     }
 }
 
+/// The painter for **decoration drawn onto the fractal** — the brand mark, tour captions, tour
+/// callouts. Anything belonging to the picture rather than to the interface.
+///
+/// ⚠**Never `Order::Middle`.** That is where a `Window` lives, and a `Middle` layer whose shapes
+/// are added later in the frame paints over it — so decoration drawn there covers every dialog it
+/// happens to sit under. Reported twice: a tour caption over the "Render tour" dialog, and the
+/// "Fd" mark over "Go to location" (user, 2026-08-31). The first was patched by lifting that one
+/// dialog to `Order::Foreground`, which fixes one pair and leaves the class open. Ordering the
+/// decoration below every window closes it.
+///
+/// It shares `LayerId::background()` with the panels, so "above the fractal" needs no reasoning
+/// about layer sequencing at all: shapes within one layer paint in the order they are added, and
+/// this runs after the panels have drawn. (A private `Order::Background` layer also works —
+/// measured, and `Context::run` registers the background area before any other, so it is drawn
+/// first within that order. One layer is simply one fewer thing whose ordering has to hold.)
+pub(crate) fn decor_painter(ctx: &egui::Context) -> egui::Painter {
+    ctx.layer_painter(decor_layer())
+}
+
+/// The layer [`decor_painter`] paints into. Named so the invariant can be asserted — see
+/// `decoration_paints_below_dialogs`.
+pub(crate) fn decor_layer() -> egui::LayerId {
+    egui::LayerId::background()
+}
+
 impl FractadyneApp {
     /// The zoom velocity to APPLY this frame: `pointer.zoom_vel` damped by the deep-zoom pipeline
     /// lag (the `PACE_LAG_LO..HI` window shared with the script-playback pacer). When the async
@@ -446,8 +471,7 @@ impl FractadyneApp {
         });
         let sz = mark.size();
         let pos = egui::pos2(rect.right() - sz.x - 12.0, rect.bottom() - sz.y - 10.0);
-        let painter =
-            ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("fd_watermark")));
+        let painter = decor_painter(ctx);
         // Soft glow: the dark mark stamped at a ring of small offsets, then the colored mark on top.
         for off in [
             egui::vec2(1.2, 0.0), egui::vec2(-1.2, 0.0), egui::vec2(0.0, 1.2), egui::vec2(0.0, -1.2),
@@ -1227,5 +1251,92 @@ mod tests {
             "a full-width drag should span the map: {full} vs {}",
             2.0 * MINIMAP_HX
         );
+    }
+}
+
+#[cfg(test)]
+mod decor_layer_tests {
+    use super::{decor_layer, decor_painter, egui};
+
+    /// Distinctive fills, so each shape can be picked out of the frame's flat shape list.
+    const FRACTAL: egui::Color32 = egui::Color32::from_rgb(1, 2, 3);
+    const DECOR: egui::Color32 = egui::Color32::from_rgb(4, 5, 6);
+    const DIALOG: egui::Color32 = egui::Color32::from_rgb(7, 8, 9);
+
+    /// Paint one frame containing all three, and return where each landed in paint order.
+    /// Earlier index = painted first = underneath.
+    fn paint_order() -> (usize, usize, usize) {
+        let ctx = egui::Context::default();
+        // ⚠A window FADES IN, and egui multiplies everything in it — including a marker painted
+        // inside — by the fade alpha, so colour matching finds nothing while it is animating.
+        ctx.style_mut(|s| s.animation_time = 0.0);
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        let run = |ctx: &egui::Context| {
+            ctx.clone().run(input(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.painter().rect_filled(ui.max_rect(), 0.0, FRACTAL);
+                });
+                egui::Window::new("dialog").show(ctx, |ui| {
+                    // Marked from INSIDE the window, so the shape is unambiguously in its layer —
+                    // the frame's own fill comes from the style and is not ours to recognise.
+                    let (_, r) = ui.allocate_space(egui::vec2(20.0, 20.0));
+                    ui.painter().rect_filled(r, 0.0, DIALOG);
+                });
+                // The decoration, drawn after the panel exactly as the app draws it.
+                decor_painter(ctx).rect_filled(
+                    egui::Rect::from_min_size(egui::pos2(700.0, 500.0), egui::vec2(40.0, 40.0)),
+                    0.0,
+                    DECOR,
+                );
+            })
+        };
+        run(&ctx); // first frame: the window has no remembered size yet
+        let out = run(&ctx);
+        let find = |want: egui::Color32| {
+            out.shapes
+                .iter()
+                .position(|cs| match &cs.shape {
+                    egui::Shape::Rect(r) => r.fill == want,
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("no shape filled {want:?} in the frame"))
+        };
+        (find(FRACTAL), find(DECOR), find(DIALOG))
+    }
+
+    /// ⭐⭐**The reported bug, as an assertion about paint order.** Decoration drawn onto the
+    /// fractal — the brand mark, tour captions, callouts — must paint ABOVE the fractal and BELOW
+    /// every dialog. Both halves have failed in the field: the "Fd" mark over "Go to location" and
+    /// a tour caption over "Render tour" (`Order::Middle`, which is where `Window` lives).
+    ///
+    /// ⚠This runs a real `egui` frame rather than asserting that some constant is `Background`,
+    /// because the interesting failure is not the order enum — it is where the shapes actually land
+    /// once panels, areas and `GraphicLayers::drain` have had their say. Restoring `Order::Middle`
+    /// turns it red, which is the bug that was reported.
+    #[test]
+    fn decoration_paints_above_the_fractal_and_below_dialogs() {
+        let (fractal, decor, dialog) = paint_order();
+        assert!(
+            fractal < decor,
+            "decoration painted at {decor}, before the fractal at {fractal} — it is invisible"
+        );
+        assert!(
+            decor < dialog,
+            "decoration painted at {decor}, after the dialog at {dialog} — it covers any dialog it \
+             sits under"
+        );
+    }
+
+    /// The mechanism the test above rests on, stated once: decoration shares the panels' layer, so
+    /// its position is fixed by when its shapes are added rather than by how layers are sequenced.
+    #[test]
+    fn decoration_shares_the_panel_layer() {
+        assert_eq!(decor_layer(), egui::LayerId::background());
     }
 }

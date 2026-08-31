@@ -1022,6 +1022,29 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**`find_nucleus` still takes `mag: f64`** — same shape, same ceiling, plus `reduce_period`'s
   linear `tol2`. The Minibrot half of the Go-to dialog is still capped. Filed below.~~
 
+- [ ] 🟡**THE DETECTED PRE-PERIOD IS INFLATED, AND THE NUMBER SHOWN TO THE USER IS WRONG
+  (2026-08-31).** At the reported 283,353× spiral the detector reports **(95,1)** for a point whose
+  canonical pre-period is **16** — `detect_misiurewicz` (separation ranking) says (16,1), and every
+  one of (16,1), (33,1), (95,1), (159,1), (179,1) Newton-solves to the *same* coordinates. The
+  scale-aware ranking simply has no reason to prefer the smallest.
+
+  ⭐**Why it happens**: once an orbit is pre-periodic at k, it is pre-periodic at every k′ > k, so
+  `z_{k′+p} = z_{k′}` holds for all of them and each is a valid equation for the same root. The
+  ranking already reduces the PERIOD to its fundamental (harmonics: if (k,p) fits so does (k,2p)) —
+  the symmetric reduction for the PRE-PERIOD was never written. Which pair wins currently depends
+  on how many candidates the pre-filter admits: I measured the reported k rising 33 → 95 → 159 as
+  the threshold was loosened 4× → 16× → 64× the view span.
+
+  **Harm is cosmetic but real**: after an auto-detect the dialog fills k and p in with what it
+  found, so the user is told the feature is (95,1). Navigation is unaffected — same point.
+
+  ⚠**Do NOT just take the smallest k from the candidate list.** The scale-aware ranking exists
+  because the closest-separation pair at depth is routinely a *different, coarser* point — (437,3)
+  at the e89 dendrite, 3.7e12 view-widths out. The reduction has to hold p FIXED and walk k down
+  only while the near-return stays within the winner's own slack, exactly as the period reduction
+  does. `detecting_at_the_view_scale_finds_a_pair_that_solves_here` is the gate to watch: if the
+  reduction ever changes which POINT is found, it has gone wrong.
+
 - [ ] 🟠**THE SOLVER NOW REACHES DEPTHS THE RENDERER DOES NOT (2026-08-30).** Measured, after the
   log-space solve landed: the Go-to field accepts 1e58000×, the point solves correctly in **6.1 s**
   — and the frame will not arrive. Two costs compound past e2000:

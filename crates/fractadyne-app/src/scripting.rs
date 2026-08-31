@@ -3186,7 +3186,7 @@ impl FractadyneApp {
             return Vec::new();
         }
         let painter =
-            ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("tour_captions")));
+            crate::ui::central::decor_painter(ctx);
         let mut rects = Vec::new();
         for cap in &pb.captions {
             let a = cap.alpha_at(pb.cur_t);
@@ -3224,7 +3224,7 @@ impl FractadyneApp {
         }
         let ppp = ctx.pixels_per_point() as f64;
         let painter =
-            ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("tour_callouts")));
+            crate::ui::central::decor_painter(ctx);
         let with_a = |c: egui::Color32, a: f32| {
             egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a * 255.0) as u8)
         };
