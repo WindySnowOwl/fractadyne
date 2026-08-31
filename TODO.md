@@ -1022,6 +1022,37 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**`find_nucleus` still takes `mag: f64`** — same shape, same ceiling, plus `reduce_period`'s
   linear `tol2`. The Minibrot half of the Go-to dialog is still capped. Filed below.~~
 
+- [ ] 🟠**THE SOLVER NOW REACHES DEPTHS THE RENDERER DOES NOT (2026-08-30).** Measured, after the
+  log-space solve landed: the Go-to field accepts 1e58000×, the point solves correctly in **6.1 s**
+  — and the frame will not arrive. Two costs compound past e2000:
+
+  | depth | iterations for a non-flat frame | render (480×270) |
+  |-------|--------------------------------|------------------|
+  | e500  | 200,000                        | 15 s |
+  | e2000 | 200,000 → **BLACK**; 1,000,000 → the spiral | 5 min |
+  | e58000 | ≫ 1,000,000 | reference orbit alone did **not finish in 35 min** (200k iter @ 192,736 bits) |
+
+  ⚠**The iteration budget is the first wall, not precision.** At e2000 the 200,000 that renders the
+  hero at e500 gives a completely black frame — every pixel still unescaped. That is the SAME
+  SYMPTOM the user reported at e58000 ("renders a single color"), now from a different cause, so a
+  user who types a very deep target can still be handed a flat frame after a long wait.
+
+  ⭐**Options, cheapest first:**
+  • Warn in the Go-to dialog when the requested depth is far past what the current iteration budget
+    can resolve — the number is derivable (iterations needed grow roughly with the digit count).
+  • Let the feature jump RAISE `max_iter` to match the depth it is jumping to, the way auto-iter
+    would have if the user had zoomed there by hand.
+  • Decide what `MAX_SOLVE_OCTAVES` (200,000, ~1e60000×) should be. It is a solve bound; nothing
+    stops it being far beyond the renderable range, but the dialog should not imply otherwise.
+
+  ⚠**Do not "fix" this by capping the solve at a renderable depth** — the point of the log-space
+  work is that the coordinate is now right regardless, and a correct deep point is worth having for
+  location files, tours and the site heroes even when a live frame is out of reach.
+
+  ✅Verified while measuring the above: the 58,034-digit centre the solve returns for the hero's
+  (49,3) reproduces `local/hero.fdn` **pixel-identically** at e500, and shows the same self-similar
+  spiral at e2000. The coordinate is not in question here; the cost of using it is.
+
 - [ ] 🟠**`find_nucleus` HAS THE SAME `f64` CEILING THE MISIUREWICZ SOLVER JUST LOST (2026-08-30).**
   The Go-to dialog's *nearest minibrot* is still `find_nucleus(&center, mag: f64, …)`, so it stops
   at 2^1020 ≈ 1e307 exactly as the Misiurewicz half did, and the app still passes it a linear
