@@ -2250,6 +2250,41 @@ enum DualExport {
 
 // Scripting/benchmark types + helpers moved to scripting.rs.
 
+/// A feature solve (Go-to ▸ nearest minibrot / Misiurewicz) running OFF the UI thread.
+///
+/// ⭐These are arbitrary-precision Newton solves whose cost grows with depth, and at depth they
+/// are not "slow", they are *seconds to minutes*: a field report at 2.63e58899× (precision 195,724
+/// bits) froze the window hard enough for Windows to paint "(Not Responding)" on the title bar. A
+/// modal that stops repainting cannot even show progress, so the work has to leave the UI thread.
+///
+/// The worker runs only the pure `fractadyne-core` calls; everything that needs `&self` — the
+/// Newton-Raphson zoom target, the label, the navigation — happens on the main thread when the
+/// result arrives.
+struct FeatureSolve {
+    rx: std::sync::mpsc::Receiver<FeatureOutcome>,
+    started: Instant,
+    /// The zoom the user asked to land at, carried across so the reply does not have to re-parse.
+    zoom_to: Option<f64>,
+    /// Set when the requested depth is past what the solver can express, so the reply can say so
+    /// instead of navigating to a depth the answer is not accurate for.
+    depth_capped: Option<f64>,
+}
+
+/// What a [`FeatureSolve`] worker computed.
+enum FeatureOutcome {
+    Nucleus(Option<fractadyne_core::Nucleus>),
+    Misiurewicz {
+        /// The pair used: detected from the orbit when the user left the boxes blank.
+        k: u32,
+        p: u32,
+        /// Whether that pair was auto-detected (so the UI can fill the boxes in).
+        detected: bool,
+        outcome: Result<fractadyne_core::Misiurewicz, fractadyne_core::MisiurewiczMiss>,
+    },
+    /// Auto-detection found no pair at all, so there was nothing to solve for.
+    NoPairDetected,
+}
+
 /// Which picture the selected formula is drawn as — the "Show" axis of the fractal picker.
 ///
 /// A Julia set is not a different fractal; it is one POINT of the parameter plane, drawn as its
@@ -3379,6 +3414,8 @@ struct FractadyneApp {
     /// screenshotting each and writing a review bundle (see `mod uitest`), then exit.
     uitest: Option<uitest::UiTest>,
     soak: Option<soak::Soak>,
+    /// An in-flight feature solve; `Some` means the Go-to dialog is showing its spinner.
+    feature_solve: Option<FeatureSolve>,
     /// `--shot`: regenerate the published screenshot from a saved location, then exit.
     shot: Option<shot::Shot>,
     /// CLI `--juliadive [DIR]`: dev harness — dual view, continuous in-app Julia zoom to ~1400×
@@ -4101,6 +4138,7 @@ impl FractadyneApp {
             shot,
             uitest,
             soak,
+            feature_solve: None,
             juliadive,
             chunk_sweep,
             autodive,
@@ -5965,96 +6003,155 @@ impl FractadyneApp {
     /// center (arbitrary precision): a Misiurewicz `(k,p)` branch/spiral center, or the nearest
     /// minibrot nucleus. Seeded from where you're looking, so it finds the feature you're near.
     /// Mandelbrot only. Driven by the Go-to dialog's feature finder.
+    /// Start a feature solve, OFF THE UI THREAD, and show a spinner until it lands.
+    ///
+    /// ⭐These solves are arbitrary-precision Newton iterations whose cost grows with depth. At
+    /// 2.63e58899× (195,724 bits) the in-line version froze the window long enough for Windows to
+    /// paint "(Not Responding)" on the title bar — and a frozen window cannot even show that it is
+    /// working. The worker runs the pure core calls; everything needing `&self` waits for
+    /// [`poll_feature_solve`](Self::poll_feature_solve).
     fn goto_feature(&mut self, ctx: &egui::Context) {
         if self.fractal.formula_id() != 0 {
             self.goto.msg = Some("Feature finding is Mandelbrot-only.".into());
             return;
         }
+        if self.feature_solve.is_some() {
+            return; // one at a time; the button is disabled while it runs
+        }
         let mag = self.viewport.magnification();
         let cur_l2 = self.viewport.log2_magnification();
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
-        // A Newton-Raphson zoom target, when one is derivable (quadratic families only).
-        let mut zoom_to: Option<f64> = None;
-        let mut misi_miss: Option<fractadyne_core::MisiurewiczMiss> = None;
-        let (found, label) = match self.goto.feat_kind {
+        let target_l2 = parse_zoom_to_log2(&self.goto.zoom).filter(|t| t.is_finite() && *t > cur_l2);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut depth_capped = None;
+        let mut zoom_to = target_l2;
+
+        match self.goto.feat_kind {
             FeatureKind::Minibrot => {
                 let max_period = self
                     .viewport
                     .recommended_max_iter(self.render_cfg.max_iter)
                     .clamp(1_000, 100_000);
-                match fractadyne_core::find_nucleus(&center, mag, 0, max_period) {
-                    Some(n) => {
-                        let period = n.period;
-                        let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, 0);
-                        zoom_to = t.filter(|t| *t > cur_l2);
-                        (Some((cx, cy)), format!("period-{period} minibrot"))
-                    }
-                    None => (None, String::new()),
-                }
+                std::thread::spawn(move || {
+                    let _ = tx.send(FeatureOutcome::Nucleus(fractadyne_core::find_nucleus(
+                        &center, mag, 0, max_period,
+                    )));
+                });
             }
             FeatureKind::Misiurewicz => {
                 let k = self.goto.feat_k.trim().parse::<u32>().ok().filter(|&v| v > 0);
                 let p = self.goto.feat_p.trim().parse::<u32>().ok().filter(|&v| v > 0);
-                // Blank fields mean FIND THEM. Requiring the pair up front is why this solver went
-                // unused: nobody looking at a spiral knows its preperiod, so the only way to reach
-                // one was to click-zoom towards it by hand, a step at a time.
-                let (k, p) = match (k, p) {
-                    (Some(k), Some(p)) => (k, p),
-                    _ => {
-                        let iters = self
-                            .viewport
-                            .recommended_max_iter(self.render_cfg.max_iter)
-                            .clamp(256, 20_000);
-                        // ⭐Detect at the VIEW'S SCALE, not by closest orbit near-return. The
-                        // plain ranking picks whichever pair the orbit matches best, which at
-                        // depth is routinely a feature decades coarser than what is on screen —
-                        // measured here at 2.77e89×, it chose (437,3), whose point lies 3.7e12
-                        // view-widths away, while the pair that governs the visible structure is
-                        // (901,1) and solves inside the view.
-                        //
-                        // log2 of the view width, formed from the exponent rather than the value:
-                        // the linear span underflows to zero past ~1e308×, i.e. exactly where the
-                        // scale test matters most.
-                        let span_log2 =
-                            self.viewport.units_per_pixel.log2() + self.viewport.width_px.log2();
-                        match fractadyne_core::detect_misiurewicz_at_scale(
+                let pair = match (k, p) {
+                    (Some(k), Some(p)) => Some((k, p)),
+                    _ => None, // blank fields mean DETECT them, on the worker
+                };
+                let iters = self
+                    .viewport
+                    .recommended_max_iter(self.render_cfg.max_iter)
+                    .clamp(256, 20_000);
+                let precision = self.viewport.precision;
+                // Detect at the VIEW'S scale — see `detect_misiurewicz_at_scale`. A log, because
+                // the linear span underflows f64 to zero past ~1e308×.
+                let span_log2 =
+                    self.viewport.units_per_pixel.log2() + self.viewport.width_px.log2();
+                // ⚠**THE SOLVER'S REACH IS AN f64 MAGNITUDE**, so it stops at 2^1020 ≈ 1e307. Past
+                // that the returned centre carries ~307 digits against a view that needs tens of
+                // thousands, and navigating there renders a single flat colour — the field report
+                // at 1e58000×. Say so and land at the depth the answer is actually good for
+                // instead of silently producing a wrong centre. (The real fix is a log-space
+                // solver; see TODO.)
+                const SOLVE_L2_CAP: f64 = 1_020.0;
+                let solve_mag = match target_l2 {
+                    Some(t) => {
+                        if t > SOLVE_L2_CAP {
+                            depth_capped = Some(t);
+                            zoom_to = Some(SOLVE_L2_CAP);
+                        }
+                        2.0f64.powf(t.min(SOLVE_L2_CAP))
+                    }
+                    None => mag,
+                };
+                std::thread::spawn(move || {
+                    let found = match pair {
+                        Some(kp) => Some(kp),
+                        None => fractadyne_core::detect_misiurewicz_at_scale(
                             &center[0],
                             &center[1],
                             0,
                             iters,
                             1_024,
-                            self.viewport.precision,
+                            precision,
                             Some(span_log2),
-                        ) {
-                            Some((dk, dp)) => {
-                                // Show what was found: the numbers are the interesting part, and a
-                                // silent auto-detect leaves no way to tell a good fit from a guess.
-                                self.goto.feat_k = dk.to_string();
-                                self.goto.feat_p = dp.to_string();
-                                (dk, dp)
-                            }
-                            None => {
-                                self.goto.msg = Some(
-                                    "No Misiurewicz point found near this view — try centring \
-                                     closer to a spiral or branch point."
-                                        .into(),
-                                );
-                                return;
-                            }
-                        }
-                    }
-                };
-                // Solve at the depth being ASKED FOR, not the depth being viewed. The point is
-                // only as precise as the solve, and a centre carrying 45 digits cannot be dived
-                // to 1e500x — which is the whole reason for computing it rather than diving.
-                let target_l2 = parse_zoom_to_log2(&self.goto.zoom)
-                    .filter(|t| t.is_finite() && *t > cur_l2);
-                let solve_mag = match target_l2 {
-                    Some(t) => 2.0f64.powf(t.min(1_020.0)),
-                    None => mag,
-                };
-                zoom_to = target_l2;
-                match fractadyne_core::find_misiurewicz(&center, k, p, solve_mag, 0) {
+                        ),
+                    };
+                    let msg = match found {
+                        Some((k, p)) => FeatureOutcome::Misiurewicz {
+                            k,
+                            p,
+                            detected: pair.is_none(),
+                            outcome: fractadyne_core::find_misiurewicz(&center, k, p, solve_mag, 0),
+                        },
+                        None => FeatureOutcome::NoPairDetected,
+                    };
+                    let _ = tx.send(msg);
+                });
+            }
+        }
+        self.feature_solve = Some(FeatureSolve {
+            rx,
+            started: Instant::now(),
+            zoom_to,
+            depth_capped,
+        });
+        self.goto.msg = None;
+        self.schedule_repaint(ctx);
+    }
+
+    /// Collect a finished feature solve and act on it. Called once per frame from `update`.
+    fn poll_feature_solve(&mut self, ctx: &egui::Context) {
+        let Some(solve) = &self.feature_solve else { return };
+        // Closing the dialog ABANDONS the search. Without this, a solve started and then dismissed
+        // would land minutes later and jump the view out from under whatever the user had moved on
+        // to — the dialog only closes itself AFTER a result is applied, so an open dialog is the
+        // signal that someone is still waiting for one.
+        if !self.goto.open {
+            self.feature_solve = None;
+            return;
+        }
+        // Keep repainting while it runs, or the spinner would freeze on an idle window — the very
+        // impression this change exists to remove.
+        self.schedule_repaint(ctx);
+        let Ok(outcome) = solve.rx.try_recv() else { return };
+        let solve = self.feature_solve.take().expect("checked above");
+        let cur_l2 = self.viewport.log2_magnification();
+        let mut zoom_to = solve.zoom_to;
+        let mut misi_miss = None;
+
+        let (found, label) = match outcome {
+            FeatureOutcome::Nucleus(Some(n)) => {
+                let period = n.period;
+                let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, 0);
+                zoom_to = t.filter(|t| *t > cur_l2);
+                (Some((cx, cy)), format!("period-{period} minibrot"))
+            }
+            FeatureOutcome::Nucleus(None) => (None, String::new()),
+            FeatureOutcome::NoPairDetected => {
+                self.goto.msg = Some(
+                    "No Misiurewicz point found near this view — try centring closer to a spiral \
+                     or branch point."
+                        .into(),
+                );
+                return;
+            }
+            FeatureOutcome::Misiurewicz { k, p, detected, outcome } => {
+                if detected {
+                    // Show what was found: a silent auto-detect leaves no way to tell a good fit
+                    // from a guess. (The "Auto" button beside the boxes clears them again.)
+                    self.goto.feat_k = k.to_string();
+                    self.goto.feat_p = p.to_string();
+                }
+                match outcome {
                     Ok(m) => {
                         // The multiplier λ of the cycle the point lands on: |λ| is the ZOOM
                         // PERIOD (the view repeats every log₂|λ| octaves) and arg λ the twist
@@ -6080,10 +6177,6 @@ impl FractadyneApp {
                         (Some((m.cx, m.cy)), label)
                     }
                     Err(why) => {
-                        // Say which of the four things happened. They call for different actions,
-                        // and the old blanket "navigate closer" was the WRONG action for the
-                        // commonest one: a point found far outside the view is coarser than the
-                        // view, so the way to it is out, not in.
                         misi_miss = Some(why);
                         (None, format!("Misiurewicz ({k},{p})"))
                     }
@@ -6096,10 +6189,21 @@ impl FractadyneApp {
                 self.viewport.set_center_log2mag(cx, cy, l2);
                 self.finish_nav_jump();
                 self.goto.open = false;
+                let took = solve.started.elapsed().as_secs_f64();
                 self.set_toast(
-                    match zoom_to {
-                        Some(t) => format!("Zoomed to the {label} — {}×", fmt_zoom_field(t)),
-                        None => format!("Snapped to {label} center"),
+                    match (solve.depth_capped, zoom_to) {
+                        // Landing short of what was asked, and saying so: the alternative is a
+                        // centre that is wrong by tens of thousands of digits and a flat frame.
+                        (Some(asked), _) => format!(
+                            "Zoomed to the {label} — {}×. The solver reaches 1e307×, so it stopped \
+                             there rather than {}×, where this centre would not be accurate.",
+                            fmt_zoom_field(l2),
+                            fmt_zoom_field(asked)
+                        ),
+                        (None, Some(t)) => {
+                            format!("Zoomed to the {label} — {}× ({took:.1}s)", fmt_zoom_field(t))
+                        }
+                        (None, None) => format!("Snapped to {label} center ({took:.1}s)"),
                     },
                     ctx,
                 );
@@ -7449,6 +7553,8 @@ impl eframe::App for FractadyneApp {
             }
         }
         self.update_minimap(ctx, &gpu);
+        // Collect a finished off-thread feature solve (Go-to ▸ nearest minibrot / Misiurewicz).
+        self.poll_feature_solve(ctx);
 
         // --uitest: advance the scripted UI/live walk. Runs each frame and does NOT exit early —
         // the flags it sets (which dialog is open, which view) must be drawn by the rest of this

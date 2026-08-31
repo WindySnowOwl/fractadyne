@@ -431,17 +431,34 @@ impl FractadyneApp {
                                  this solver unusable in practice.",
                             );
                         }
-                        find_feat = ui
-                            .button("Find near view")
-                            .on_hover_text(
-                                "Newton-solve from the current center onto the exact feature \
-                                 (arbitrary precision). Navigate near the feature first.\n\n\
-                                 Set the Zoom field above to the depth you WANT before solving: \
-                                 the point is computed to the precision that depth needs, and the \
-                                 view jumps straight there. That is one solve instead of a long \
-                                 sequence of manual zoom steps.",
-                            )
-                            .clicked();
+                        // While a solve runs: a spinner, its elapsed time, and no second button
+                        // press. The work is off-thread now (see `goto_feature`), so the window
+                        // keeps painting — which is the only reason a spinner here means anything.
+                        if let Some(elapsed) = self.feature_solve.as_ref().map(|f| f.started.elapsed()) {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Spinner::new().size(16.0));
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Solving… {:.1}s  (arbitrary precision; deep views take \
+                                         longer)",
+                                        elapsed.as_secs_f64()
+                                    ))
+                                    .weak(),
+                                );
+                            });
+                        } else {
+                            find_feat = ui
+                                .button("Find near view")
+                                .on_hover_text(
+                                    "Newton-solve from the current center onto the exact feature \
+                                     (arbitrary precision). Navigate near the feature first.\n\n\
+                                     Set the Zoom field above to the depth you WANT before solving: \
+                                     the point is computed to the precision that depth needs, and \
+                                     the view jumps straight there. That is one solve instead of a \
+                                     long sequence of manual zoom steps.",
+                                )
+                                .clicked();
+                        }
                     });
             });
         if let Some(i) = poi {
