@@ -3731,6 +3731,16 @@ impl FractadyneApp {
         let settings_hash = {
             use std::hash::{Hash, Hasher};
             let mut h = std::hash::DefaultHasher::new();
+            // ⚠FORMULA AND JULIA WERE MISSING, and both are `IterKey` fields that change the
+            // iterate's output — exactly what the paragraph above says must be reflected here. A
+            // formula switch is not an "interaction", so it does not bump `view_gen` either, and
+            // on a shallow view there is no reference so `orbit_id` does not move: nothing in the
+            // key changed, and a completed grid could keep holding a texture computed for the
+            // PREVIOUS formula. (Found while investigating a field report of exactly that shape;
+            // it did NOT reproduce in the harness, so this is the rule being restored, not a
+            // confirmed fix for that report.)
+            fractal.formula_id().hash(&mut h);
+            julia.hash(&mut h);
             self.coloring.color_method.to_u32().hash(&mut h);
             self.coloring.stripe_freq.to_bits().hash(&mut h);
             self.coloring.trap_type.to_u32().hash(&mut h);

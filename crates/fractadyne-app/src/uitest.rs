@@ -40,6 +40,11 @@ enum Screen {
     ResetConfirm,
     Notice,
     PaletteEditor,
+    /// Dual view on one formula, then the SAME dual view on another — checklist steps 45-46, and
+    /// the field report behind them: switching formula while dual left the parameter pane showing
+    /// the previous formula. The pair is the check; neither screen means anything alone.
+    DualFormulaA,
+    DualFormulaB,
 }
 
 /// A live-render step: jump to a view and let the on-screen live path render it, then screenshot.
@@ -133,6 +138,43 @@ struct StepResult {
     mean_luma: f64,
     luma_stddev: f64,
     buckets: usize,
+    /// A 16x16 luma thumbnail of the LEFT pane's area, so one step can be compared against the
+    /// one before it. Whole-frame statistics are too coarse for that: two different fractals can
+    /// share a mean and a spread, and the panel chrome dominates either way.
+    left_fp: Vec<u8>,
+}
+
+/// A 16x16 luma thumbnail of the left ~45% of the frame, vertically inset past the toolbar and
+/// status bar. That region is the dual view's PARAMETER pane — the half the field report was
+/// about — and cropping to it keeps the Julia pane and the chrome out of the comparison.
+fn left_pane_fingerprint(px: &[egui::Color32], w: usize, h: usize) -> Vec<u8> {
+    let (x0, x1) = (w / 40, (w * 45) / 100);
+    let (y0, y1) = (h / 8, (h * 7) / 8);
+    if x1 <= x0 + 16 || y1 <= y0 + 16 {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(256);
+    for ty in 0..16 {
+        for tx in 0..16 {
+            let sx = x0 + (x1 - x0) * tx / 16;
+            let sy = y0 + (y1 - y0) * ty / 16;
+            let c = px[sy * w + sx];
+            out.push(
+                ((0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32) as u32)
+                    .min(255) as u8,
+            );
+        }
+    }
+    out
+}
+
+/// Mean absolute difference between two fingerprints (255 when either is missing).
+fn fp_distance(a: &[u8], b: &[u8]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 255.0;
+    }
+    a.iter().zip(b).map(|(x, y)| (*x as i32 - *y as i32).unsigned_abs() as u64).sum::<u64>() as f64
+        / a.len() as f64
 }
 
 impl StepResult {
@@ -468,12 +510,19 @@ fn build_steps() -> Vec<Step> {
                 w: 1280.0, h: 800.0, expect_single_line: false, action: WindowAction::RapidResize,
             }),
         },
+        // LAST, and deliberately so: this pair adopts the REPORTER'S settings (an explicit
+        // iteration count, 2x AA) rather than the harness defaults, and those leaked forward the
+        // first time it was written — the deep live step became heavy enough to miss its
+        // screenshot timeout. Nothing follows them now, so nothing can inherit them.
+        // Adjacent and in this order: the second step's check compares against the first's image.
         Step {
             name: "panel-toggle".into(),
             kind: StepKind::Window(WindowSize {
                 w: 1280.0, h: 800.0, expect_single_line: false, action: WindowAction::TogglePanel,
             }),
         },
+        screen("dual-formula-a", Screen::DualFormulaA),
+        screen("dual-formula-b", Screen::DualFormulaB),
     ]
 }
 
@@ -729,6 +778,26 @@ impl FractadyneApp {
                     "This is the generic titled-message dialog, shown by the UI walk.".to_string(),
                 ));
             }
+            // Dual view, first formula. `set_fractal` resets the view to that formula's own
+            // default centre, which is the state a user is in after picking from the dropdown.
+            Screen::DualFormulaA => {
+                // The REPORTER'S SETTINGS, not the defaults. This matters: the settle grid arms
+                // far more eagerly under an EXPLICIT iteration count ("an explicit count arms
+                // whenever the view is settled, converged or not"), and a completed grid is the
+                // precondition for a pane that holds instead of redrawing. Auto-iter — the
+                // harness default — waits for budget convergence and so may never be sitting in
+                // the state the report describes.
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 30_000;
+                self.render_cfg.aa = 2;
+                self.coloring.normalize_live = true;
+                self.coloring.log_palette = true;
+                self.set_fractal(crate::FractalKind::BurningShip);
+                self.set_show_mode(crate::ShowMode::Both);
+            }
+            // ...and now switch the formula WITHOUT touching the canvas. Nothing else changes:
+            // still dual, still settled. This is the reported gesture exactly.
+            Screen::DualFormulaB => self.set_fractal(crate::FractalKind::Celtic),
             Screen::PaletteEditor => {
                 self.coloring.palette_editor_open = true;
                 // Expand the paste-import section and seed it, so the walk covers that UI too
@@ -787,6 +856,7 @@ impl FractadyneApp {
 
         // Content-region stats: the central 60%, so menu/status chrome doesn't mask a blank view.
         let (mean_luma, luma_stddev, buckets) = centre_stats(&image.pixels, w as usize, h as usize);
+        let left_fp = left_pane_fingerprint(&image.pixels, w as usize, h as usize);
 
         let is_live = matches!(step.kind, StepKind::Live(_));
         // "Not blank": a rendered UI or fractal has tonal spread. A flat frame is suspicious.
@@ -999,6 +1069,46 @@ impl FractadyneApp {
             }
         }
 
+        // ---- switching formula in the dual view actually redraws the pane (steps 45-46) ----
+        //
+        // FIELD REPORT (2026-08-30): in dual view, picking a different formula left the LEFT pane
+        // drawing the previous one — the dropdown, the panel heading and the minimap all updated,
+        // the pane did not. A differential is the whole check: the two formulas are rendered at
+        // their own default centres, so a working app cannot produce the same picture twice.
+        if matches!(step.kind, StepKind::Screen(Screen::DualFormulaB)) {
+            let before = ut.results.last().filter(|r| r.name == "dual-formula-a");
+            match before {
+                Some(a) => {
+                    let d = fp_distance(&a.left_fp, &left_fp);
+                    // Both frames must be non-flat as well, or "they differ" would be satisfied by
+                    // one of them being blank — which is a different bug wearing this one's hat.
+                    let both_real = luma_stddev >= 3.0 && a.luma_stddev >= 3.0;
+                    if d >= 8.0 && both_real {
+                        checks.push(pass(
+                            "dual-formula-switch-redraws",
+                            format!("left pane changed: meanD {d:.1} between the two formulas"),
+                        ));
+                    } else {
+                        checks.push(Check {
+                            name: "dual-formula-switch-redraws".into(),
+                            verdict: Verdict::Fail,
+                            detail: format!(
+                                "left pane meanD {d:.1} after switching formula in dual view \
+                                 (stddev {:.1} then {luma_stddev:.1}) — the pane is showing the \
+                                 previous formula",
+                                a.luma_stddev
+                            ),
+                        });
+                    }
+                }
+                None => checks.push(Check {
+                    name: "dual-formula-switch-redraws".into(),
+                    verdict: Verdict::Warn,
+                    detail: "no preceding dual-formula-a step to compare against".into(),
+                }),
+            }
+        }
+
         // ---- the Diagnostics dialog's system facts (checklist step 88) ----
         if matches!(step.kind, StepKind::Screen(Screen::Diagnostics)) {
             let si = &self.sysinfo;
@@ -1135,6 +1245,7 @@ impl FractadyneApp {
             mean_luma,
             luma_stddev,
             buckets,
+            left_fp,
         }
     }
 
@@ -1274,6 +1385,7 @@ fn timeout_result(step: &Step) -> StepResult {
         mean_luma: 0.0,
         luma_stddev: 0.0,
         buckets: 0,
+        left_fp: Vec::new(),
     }
 }
 
