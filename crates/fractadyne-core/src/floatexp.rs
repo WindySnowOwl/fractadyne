@@ -171,7 +171,9 @@ impl FloatExp {
 
 /// Complex value with `FloatExp` parts — BLA coefficients span far beyond f64's exponent
 /// range (a merged `A` is a long product of `2Zₙ`).
-#[derive(Clone, Copy)]
+/// `PartialEq` is component-bitwise-exact in effect (no NaNs are constructed here) — the
+/// cross-backend identity tests compare recorded orbit samples with it.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CFloatExp {
     pub re: FloatExp,
     pub im: FloatExp,

@@ -145,6 +145,32 @@ impl RefBackend for Float {
             v
         }
     }
+
+    fn to_floatexp(&self) -> crate::floatexp::FloatExp {
+        use crate::floatexp::FloatExp;
+        if self.is_zero() {
+            return FloatExp::ZERO;
+        }
+        // The top 64 significand bits by truncation + the binary exponent, matching
+        // `bf_to_floatexp` exactly: MPFR keeps the significand normalized (top bit of the top
+        // limb set, value = 0.b₁b₂… × 2^exp, the same convention astro-float uses), limbs are
+        // 64-bit on this target, and the limb count is prec/64 exactly because `ctx_for`
+        // word-rounds the precision — so the top limb IS astro-float's normalized MSW for the
+        // identical value, and the shared `u64 as f64` rounding finishes the shared recipe.
+        // Pinned bitwise by `the_pick_scoring_walk_is_backend_identical`.
+        //
+        // SAFETY: `as_raw` yields a pointer to this value's initialized `mpfr_t`, valid for the
+        // borrow; a non-zero MPFR value always has its full complement of limbs allocated.
+        let (msw, exp) = unsafe {
+            let raw = self.as_raw();
+            let limb_bits = 8 * std::mem::size_of::<gmp_mpfr_sys::gmp::limb_t>();
+            let limbs = ((*raw).prec as usize).div_ceil(limb_bits);
+            (*(*raw).d.as_ptr().add(limbs - 1) as u64, (*raw).exp)
+        };
+        let m = (msw as f64) / 18446744073709551616.0; // ÷2^64 — m ∈ [0.5, 1)
+        let m = if self.is_sign_negative() { -m } else { m };
+        FloatExp::new(m, exp as i32)
+    }
 }
 
 /// Exact `BigFloat` → `Float`. The mantissa rides across as an integer, so no digit is lost.
@@ -525,4 +551,81 @@ pub(crate) fn try_run_orbit_inplace(
     }
     Some((zx.to_carrier(ctx), zy.to_carrier(ctx), escaped))
 }
+
+/// Length-only / sample-recording twin of [`try_run_orbit_inplace`] for the PICK's scoring
+/// walks (`orbit_length_bf` and its recording variant): the same preallocated-temp MPFR loop,
+/// the same truncating rounds, the same swap + scratch-precision pin, the same `to_f64_trunc`
+/// escape view — but the count carries `orbit_length_bf`'s semantics (the escaping step is
+/// included, `max_iter` is the cap), no `[f32; 4]` build samples are produced, and the optional
+/// sink records the extended-range `CFloatExp` samples the perturbation scorer consumes.
+/// Mandelbrot only — the family deep zoom actually walks here; every other formula takes the
+/// generic (allocating, still-MPFR) path, which the identity matrix holds byte-identical.
+pub(crate) fn try_orbit_length_inplace(
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    mut samples: Option<&mut Vec<crate::floatexp::CFloatExp>>,
+) -> Option<u32> {
+    use crate::floatexp::CFloatExp;
+    use rug::ops::{AddAssignRound, AssignRound, SubAssignRound};
+
+    if formula != crate::formula::MANDELBROT {
+        return None;
+    }
+    let ctx = <Float as RefBackend>::ctx_for(p);
+    let mut zx = <Float as RefBackend>::from_carrier(z0x, ctx);
+    let mut zy = <Float as RefBackend>::from_carrier(z0y, ctx);
+    let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
+    let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
+
+    let mut x2 = Float::with_val(ctx, 0);
+    let mut y2 = Float::with_val(ctx, 0);
+    let mut t = Float::with_val(ctx, 0);
+
+    if let Some(s) = samples.as_deref_mut() {
+        s.push(CFloatExp {
+            re: RefBackend::to_floatexp(&zx),
+            im: RefBackend::to_floatexp(&zy),
+        });
+    }
+    let mut n = 0u32;
+    while n < max_iter {
+        // z² + c, in `csqr`'s exact op order (see try_run_orbit_inplace).
+        x2.assign_round(&zx * &zx, RZ);
+        y2.assign_round(&zy * &zy, RZ);
+        t.assign_round(&zx * &zy, RZ);
+        t <<= 1; // exact
+        x2.sub_assign_round(&y2, RZ); // Re(z²)
+        x2.add_assign_round(&rcx, RZ);
+        t.add_assign_round(&rcy, RZ);
+        core::mem::swap(&mut zx, &mut x2);
+        core::mem::swap(&mut zy, &mut t);
+        // Scratch must stay at exactly `ctx` — the swap can hand it the (wider) entry width.
+        // Same guard, same reasoning as try_run_orbit_inplace.
+        if x2.prec() != ctx {
+            x2.set_prec(ctx);
+        }
+        if t.prec() != ctx {
+            t.set_prec(ctx);
+        }
+        n += 1;
+        if let Some(s) = samples.as_deref_mut() {
+            s.push(CFloatExp {
+                re: RefBackend::to_floatexp(&zx),
+                im: RefBackend::to_floatexp(&zy),
+            });
+        }
+        let xv = zx.to_f64_trunc();
+        let yv = zy.to_f64_trunc();
+        if xv * xv + yv * yv > 1.0e12 {
+            break;
+        }
+    }
+    Some(n)
+}
+
 

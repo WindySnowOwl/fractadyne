@@ -150,11 +150,42 @@ error growth).
 | e1008 | scored=15 rb=50 **fb=7** | 2.69 s | 2.82 s | trust valve fired in the wild; winner still identical; net wash by design |
 | e4000 | scored=15 rb=122 fb=0 | **115.2 s** | **68.6 s** | **1.68×** |
 
-**Where the remaining e4000 cost lives**: the perturb pick is now ~96% the ONE sequential
-first-survivor walk (~66 s at 13,352 bits; the δ-scoring is ~2 s). The spec's "one walk
-(~33 s)" under-split the old 113.7 s — the sequential first walk was always ~66 s of it. Two
-levers remain, both untouched here: (1) `orbit_length_bf` is ~2× the cost of the build's own
-orbit walk at the same length — a leaner scoring walk would halve the floor; (2) the winner is
-usually the first survivor, whose orbit the BUILD then re-walks at `p + 128` — reuse across
-that precision boundary was out of scope. Reference build at e4000: ~333 s → ~287 s measured
-end of this change; F3's 60.3 s still stands as the target.
+**Where the remaining e4000 cost lives — CORRECTED 2026-09-01 (beta.2 follow-up)**: the two
+"levers" this section first named were mis-diagnosed, and a direct measurement replaced them.
+A release probe on the e4000 centre at 13,352 bits put `orbit_length_bf` at **68.6 µs/step
+against the astro build walk's 73.3** — the scoring walk was never "~2× the build's walk";
+recording adds ~1 µs/step. The number that misled the first draft was a wrong decomposition:
+the missing ~31 s in the perturb engine is the **centre-rescue** — at e4000 the winner escapes
+before the ask, so `best_reference_diag` re-walks the centre at `p + 128` (~443k steps ≈ 31 s)
+just to *decline* the rescue. Both engines pay it identically; it is load-bearing cliff
+protection (the 2:58 device-loss fix) and stays. True e4000 astro decomposition:
+walk engine 115.2 ≈ phase 1 (2) + first walk (31) + parallel batch (~50) + centre-rescue (31);
+perturb engine 68.6 ≈ phase 1 (2) + recorded first walk (32) + parallel δ-scoring (~3) +
+centre-rescue (31).
+
+**The real lever, shipped in 0.2.41-beta.2**: the pick's bignum walks were hardcoded
+astro-float — `--bignum` never reached them, which is exactly why the accelerated build
+measured only 1.07× end-to-end (this file's own trap note). All scoring walks (phase 1, deep
+walks, the recorded walk, trust fallbacks, both rescue passes) now dispatch through the
+session's selected backend like the orbit build does: the astro default is the historical
+loop verbatim (bit-identical, corpus-pinned), and the accelerated build gets the MPFR
+in-place kernel for Mandelbrot (`try_orbit_length_inplace`, a twin of the build kernel with
+`orbit_length_bf` count semantics and an extended-range sample sink) and the generic MPFR arm
+elsewhere. Cross-backend pick identity is pinned by
+`the_pick_scoring_walk_is_backend_identical` (720-case matrix: lengths + recorded `CFloatExp`
+samples bitwise, which also pins `RefBackend::to_floatexp`'s truncate-64-then-round-53
+recipe — walk lengths and samples are the only backend-touching inputs to selection, so
+identity there is pick identity by composition).
+
+**Winner-orbit reuse across `p + 128`: investigated and FORECLOSED, both directions.**
+(a) Feeding the pick's p-bit first-survivor walk to the build would hand the GPU samples from
+a different arithmetic than the blessed `orbit_prec = p + 128` build — byte-contract broken
+at whatever depth/ask first strays near the precision cliff. (b) Scoring at `p + 128` instead
+(walk once, reuse for the build when the winner is the first survivor) changes `dl0` and the
+deep scores at exactly the cliff-sensitive inputs the rescue machinery exists for — a
+different selection, corpus red. And at e4000 the winner is NOT the first survivor (443,199
+vs 443,144), so the reusable case is not even the common deep case. The rescue walk itself is
+irreducible for the same reason: its verdict must come from `p + 128` bignum truth, and the
+walk already stops at its natural escape. Reference build at e4000: ~333 s → ~287 s (astro)
+after beta.1; the accelerated build additionally takes ~2.5× off every pick walk (first walk,
+batch, rescue). F3's 60.3 s still stands as the target.

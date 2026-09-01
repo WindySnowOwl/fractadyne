@@ -107,21 +107,9 @@ pub(crate) fn step_gen<B: RefBackend>(
         .unwrap_or_else(|| crate::fractal::trait_step(formula::MANDELBROT, zx, zy, cx, cy, ctx).unwrap())
 }
 
-/// One arbitrary-precision Phoenix step: `z' = z² + c − 0.5·z_prev` (p = −0.5). Kept separate from
-/// [`step_bf`] because it needs the previous iterate `z_prev`, which the reference loop threads.
-fn phoenix_step_bf(
-    zx: &BigFloat,
-    zy: &BigFloat,
-    zpx: &BigFloat,
-    zpy: &BigFloat,
-    cx: &BigFloat,
-    cy: &BigFloat,
-    p: usize,
-) -> (BigFloat, BigFloat) {
-    phoenix_step_gen::<BigFloat>(zx, zy, zpx, zpy, cx, cy, <BigFloat as RefBackend>::ctx_for(p))
-}
-
-/// [`phoenix_step_bf`], generic over the arithmetic [`RefBackend`]. The operation order is the
+/// One arbitrary-precision Phoenix step (`z' = z² + c − 0.5·z_prev`), generic over the
+/// arithmetic [`RefBackend`] — it needs the previous iterate `z_prev`, which the loops thread.
+/// The operation order is the
 /// former hand-written `BigFloat` body verbatim — `fdouble` is `double_bf` (an exponent bump), and
 /// `fmul`/`fadd`/`fsub` are the same rounded ops in the same sequence — so this is bit-identical,
 /// not merely equivalent.
@@ -951,6 +939,13 @@ pub fn bla_iterate(
 /// Iterations before escape (or `max_iter`) in **arbitrary precision** — ranks
 /// candidate references at deep zoom, where `orbit_length`'s `f64` coordinates would
 /// all collapse to the same value and make the ranking meaningless.
+///
+/// Runs in the session's selected bignum backend (`--bignum`, like the reference-orbit build
+/// itself): the backends are byte-identical by contract, so the choice changes wall-clock,
+/// never a score — pinned by `the_pick_scoring_walk_is_backend_identical` in the cross-backend
+/// identity suite. (Historically this was hardcoded astro-float, which is why the accelerated
+/// build's end-to-end win once measured 1.07×: the pick's walks diluted the orbit build's
+/// 2.5–6.4×.)
 #[allow(clippy::too_many_arguments)]
 fn orbit_length_bf(
     z0x: &BigFloat,
@@ -961,15 +956,87 @@ fn orbit_length_bf(
     max_iter: u32,
     p: usize,
 ) -> u32 {
-    let (mut zx, mut zy) = (z0x.clone(), z0y.clone());
-    let mut zpx = BigFloat::from_f64(0.0, p); // previous iterate (Phoenix)
-    let mut zpy = BigFloat::from_f64(0.0, p);
+    orbit_length_in(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p, None)
+}
+
+/// [`orbit_length_bf`] in an **explicitly named** backend, with an optional extended-range
+/// sample sink (the recording the perturbation scorer consumes). Public for the same reason
+/// [`reference_orbit_t_in`] is: a bit-identity test must run both arithmetics in ONE process to
+/// be free of build and machine confounds. Not part of the app-facing API.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn orbit_length_in(
+    backend: crate::BackendChoice,
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    samples: Option<&mut Vec<CFloatExp>>,
+) -> u32 {
+    match backend {
+        crate::BackendChoice::Astro => {
+            orbit_length_gen::<BigFloat>(z0x, z0y, cx, cy, formula, max_iter, p, samples)
+        }
+        #[cfg(feature = "rug")]
+        crate::BackendChoice::Rug => {
+            let mut samples = samples;
+            match crate::backend_rug::try_orbit_length_inplace(
+                z0x,
+                z0y,
+                cx,
+                cy,
+                formula,
+                max_iter,
+                p,
+                samples.as_deref_mut(),
+            ) {
+                Some(n) => n,
+                // Non-Mandelbrot: the generic loop — allocating per op, but still MPFR.
+                None => {
+                    orbit_length_gen::<rug::Float>(z0x, z0y, cx, cy, formula, max_iter, p, samples)
+                }
+            }
+        }
+    }
+}
+
+/// The one scoring-walk loop, generic over the arithmetic backend. The body is the historical
+/// `BigFloat` scorer verbatim — the same step (`step_gen` / `phoenix_step_gen`), the same
+/// truncating `f64` escape view (`to_f64_trunc` ≡ [`to_f64`] for `BigFloat`), the same count
+/// (the escaping step is included) — so the astro instantiation is bit-identical to what every
+/// blessed pick was made with, and any other backend is held to it by the identity suite.
+/// `samples`, when present, records `R[0..=len]` as extended-range values (an `f64` sample
+/// would flush the near-nucleus dips the perturbation scorer's rebase test needs).
+#[allow(clippy::too_many_arguments)]
+fn orbit_length_gen<B: RefBackend>(
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    mut samples: Option<&mut Vec<CFloatExp>>,
+) -> u32 {
+    let ctx = B::ctx_for(p);
+    let mut zx = B::from_carrier(z0x, ctx);
+    let mut zy = B::from_carrier(z0y, ctx);
+    let mut zpx = B::from_f64(0.0, ctx); // previous iterate (Phoenix)
+    let mut zpy = B::from_f64(0.0, ctx);
+    let cx = B::from_carrier(cx, ctx);
+    let cy = B::from_carrier(cy, ctx);
+    if let Some(s) = samples.as_deref_mut() {
+        s.push(CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() });
+    }
     let mut n = 0u32;
     while n < max_iter {
         let (nzx, nzy) = if formula == formula::PHOENIX {
-            phoenix_step_bf(&zx, &zy, &zpx, &zpy, cx, cy, p)
+            phoenix_step_gen(&zx, &zy, &zpx, &zpy, &cx, &cy, ctx)
         } else {
-            step_bf(&zx, &zy, cx, cy, formula, p)
+            step_gen(&zx, &zy, &cx, &cy, formula, ctx)
         };
         if formula == formula::PHOENIX {
             zpx = std::mem::replace(&mut zx, nzx);
@@ -979,7 +1046,10 @@ fn orbit_length_bf(
             zy = nzy;
         }
         n += 1;
-        let (xv, yv) = (to_f64(&zx), to_f64(&zy));
+        if let Some(s) = samples.as_deref_mut() {
+            s.push(CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() });
+        }
+        let (xv, yv) = (zx.to_f64_trunc(), zy.to_f64_trunc());
         if xv * xv + yv * yv > 1.0e12 {
             break;
         }
@@ -989,8 +1059,8 @@ fn orbit_length_bf(
 
 /// [`orbit_length_bf`] that also RECORDS the orbit as extended-range `CFloatExp` samples
 /// (`R[0] = z₀`, one sample per step, `R[n]` = the iterate the escape test saw at step `n`).
-/// The walk itself is the same loop — same step, same `f64` escape test, same count — so the
-/// returned length is byte-identical to `orbit_length_bf`'s; only the recording is added.
+/// The walk is the same dispatched loop — same step, same `f64` escape view, same count — so
+/// the returned length is byte-identical to `orbit_length_bf`'s; only the recording is added.
 /// Samples are extended-range on purpose: a deep-minibrot reference passes through near-nucleus
 /// dips (|Z| ~ 1e-71 in corpus 11–15, arbitrarily small deeper), and an `f64` sample would flush
 /// exactly the values the perturbation scorer's rebase test needs. Polynomial families only
@@ -1005,25 +1075,18 @@ fn orbit_length_bf_recorded(
     p: usize,
 ) -> (u32, Vec<CFloatExp>) {
     debug_assert!(formula_power(formula).is_some(), "recording walk is polynomial-family only");
-    let sample = |zx: &BigFloat, zy: &BigFloat| CFloatExp {
-        re: bf_to_floatexp(zx),
-        im: bf_to_floatexp(zy),
-    };
     let mut samples = Vec::new();
-    let (mut zx, mut zy) = (z0x.clone(), z0y.clone());
-    samples.push(sample(&zx, &zy));
-    let mut n = 0u32;
-    while n < max_iter {
-        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
-        zx = nzx;
-        zy = nzy;
-        n += 1;
-        samples.push(sample(&zx, &zy));
-        let (xv, yv) = (to_f64(&zx), to_f64(&zy));
-        if xv * xv + yv * yv > 1.0e12 {
-            break;
-        }
-    }
+    let n = orbit_length_in(
+        crate::backend::selected(),
+        z0x,
+        z0y,
+        cx,
+        cy,
+        formula,
+        max_iter,
+        p,
+        Some(&mut samples),
+    );
     (n, samples)
 }
 

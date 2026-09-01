@@ -235,6 +235,14 @@ pub(crate) trait RefBackend: Field {
     /// The `f64` value **by truncation**, matching [`crate::to_f64`] bit for bit. See condition 3
     /// in the module docs — this is not interchangeable with a round-to-nearest conversion.
     fn to_f64_trunc(&self) -> f64;
+
+    /// The value as an extended-range [`crate::FloatExp`]: the top 64 mantissa bits **by
+    /// truncation**, rounded once 64→53 by the `u64 → f64` conversion, with the full binary
+    /// exponent. Every backend must match the `BigFloat` recipe bit for bit — the pick's
+    /// perturbation scorer consumes orbits recorded through this, so a divergent conversion
+    /// would make the reference pick backend-dependent. Never under/overflows: a 1e-71
+    /// near-nucleus orbit dip keeps its true magnitude.
+    fn to_floatexp(&self) -> crate::floatexp::FloatExp;
 }
 
 /// Record that `B` actually built a reference orbit. Called from the one place an orbit is built,
@@ -265,6 +273,11 @@ impl RefBackend for BigFloat {
     #[inline]
     fn to_f64_trunc(&self) -> f64 {
         crate::bignum::to_f64(self)
+    }
+
+    #[inline]
+    fn to_floatexp(&self) -> crate::floatexp::FloatExp {
+        crate::bignum::bf_to_floatexp(self)
     }
 }
 

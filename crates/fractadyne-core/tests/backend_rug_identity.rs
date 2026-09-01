@@ -255,3 +255,58 @@ fn identity_holds_where_the_multiply_algorithms_diverge() {
         assert_eq!(w, p.div_ceil(64), "p={p}: tail carries {w} limbs, not {}", p.div_ceil(64));
     }
 }
+
+/// The PICK's scoring walk — `orbit_length_bf` and the recorded variant the perturbation
+/// scorer consumes — must be backend-identical too: the walk lengths and the extended-range
+/// samples are the only backend-touching inputs to reference selection (δc offsets are carrier
+/// bignum subs, δ-scoring is a pure function of the samples), so identity here means the PICK
+/// is backend-independent by composition. This is the pin behind routing the scoring walks
+/// through the selected backend (0.2.41-beta.2) — before that they were hardcoded astro-float,
+/// which is why the accelerated build once measured only 1.07× end-to-end.
+///
+/// Coverage on purpose: Mandelbrot exercises the in-place MPFR kernel
+/// (`try_orbit_length_inplace`), every other formula the generic allocating arm; the sample
+/// comparison additionally pins `RefBackend::to_floatexp`'s truncate-64-then-round-53 recipe
+/// (a round-to-nearest-53 shortcut would drift ~1 sample in 2^11 and fail here).
+#[test]
+fn the_pick_scoring_walk_is_backend_identical() {
+    let precisions = [64usize, 256, 1088, 2112];
+    let iters = [17u32, 500, 5000];
+    let (mut cases, mut samples) = (0usize, 0usize);
+    let mut bad: Vec<String> = Vec::new();
+
+    for formula in 0..10u32 {
+        for (label, sx, sy, zx, zy) in POINTS {
+            for &p in &precisions {
+                let cx = fc::parse_bf_prec(sx, p).unwrap();
+                let cy = fc::parse_bf_prec(sy, p).unwrap();
+                let z0x = fc::parse_bf_prec(zx, p).unwrap();
+                let z0y = fc::parse_bf_prec(zy, p).unwrap();
+                for &mi in &iters {
+                    let mut sa = Vec::new();
+                    let la = fc::orbit_length_in(
+                        BackendChoice::Astro, &z0x, &z0y, &cx, &cy, formula, mi, p, Some(&mut sa),
+                    );
+                    let mut sr = Vec::new();
+                    let lr = fc::orbit_length_in(
+                        BackendChoice::Rug, &z0x, &z0y, &cx, &cy, formula, mi, p, Some(&mut sr),
+                    );
+                    cases += 1;
+                    samples += sa.len();
+                    if la != lr {
+                        bad.push(format!("len f={formula} {label} p={p} it={mi}: {la} vs {lr}"));
+                        continue;
+                    }
+                    if sa != sr {
+                        let k = sa.iter().zip(sr.iter()).position(|(x, y)| x != y);
+                        bad.push(format!(
+                            "samples f={formula} {label} p={p} it={mi}: first diff at {k:?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{} of {cases} cases diverged:\n{}", bad.len(), bad.join("\n"));
+    assert!(samples > 100_000, "matrix shrank — {samples} samples is not the coverage this pins");
+}

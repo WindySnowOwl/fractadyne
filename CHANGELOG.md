@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The accelerated build's speed now reaches the reference pick** (beta.2) — the pick's
+  bignum walks (candidate ranking, the deep walks, the recorded scoring orbit, trust
+  fallbacks, the cliff-rescue passes) were hardcoded astro-float, so `--bignum rug` never
+  reached the pick and the accelerated build's end-to-end win measured as little as 1.07×
+  where the pick dominated. Every scoring walk now runs in the session's selected backend,
+  exactly like the reference-orbit build: the standard build is the historical loop verbatim
+  (bit-identical, corpus-pinned), the accelerated build gets an in-place MPFR kernel for
+  Mandelbrot and the generic MPFR arm for the rest. A 720-case cross-backend matrix pins the
+  walk lengths AND the recorded extended-range samples bitwise, which makes the elected
+  reference backend-independent by composition. Also corrects the beta.1 outcome notes: the
+  scoring walk was never "~2× the build's walk" (measured 68.6 vs 73.3 µs/step); the missing
+  time was the centre-rescue's own ~443k-step verification walk at e4000, which is
+  load-bearing cliff protection and stays — and winner-orbit reuse across the `p + 128`
+  boundary is documented as foreclosed in design/pick-redesign.md.
+
 - **Reference-candidate scoring no longer walks sixteen full-precision orbits** — at extreme
   depth every candidate sits within half a view-span of the centre (|Δc| ~ 1e-4000), so the
   deep-ranking phase's sixteen bignum walks to escape lengths differing by ±0.01% were near-pure
