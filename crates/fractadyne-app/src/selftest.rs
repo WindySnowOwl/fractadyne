@@ -1347,7 +1347,7 @@ impl FractadyneApp {
                     let d2d_method = self.coloring.color_method;
                     self.coloring.color_method = crate::ColorMethod::Smooth;
                     if let (Some(cor), Some(plain)) = (
-                        self.render_export_corrected(device, queue, &vp, false, N, N, None),
+                        self.render_export_corrected(device, queue, &vp, false, N, N, None, None),
                         render(&make(self, SX, SY, mag)),
                     ) {
                         let n = (N * N) as usize;

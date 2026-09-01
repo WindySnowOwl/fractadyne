@@ -82,3 +82,31 @@ coordinate precision you supply, not the scale representation.
 Independent per-pixel cross-checks (`--selftest` vs the bignum oracle to 1e30×;
 `--crosscheck-f3` vs Fraktaler-3) cover the renderable depth range; `--validate-deep` covers
 the arithmetic far beyond it.
+
+## A rendered image at 2.37e4000×, cross-checked against Fraktaler-3 (2026-08-31)
+
+A user's Misiurewicz spiral, found with the log-space feature solver and rendered by both apps from
+the same 4,031-digit centre. This is the deepest *structural* render the project has produced — past
+the deepest F3-matched corpus pair (4.6e1105×) — and the deepest point at which we have an
+independent second opinion.
+
+| | file | notes |
+|---|---|---|
+| location | `e4000-misiurewicz.fdn` | 4,031-digit centre, `upp_log2 = -13294.9`, 2,008,192 iterations. ⚠Depth lives in `upp_log2`; `zoom` is `f64` and cannot hold 1e4000. |
+| ours | `e4000-fractadyne.png` | 400×250, `--iter 2008192`, ss=2 |
+| Fraktaler-3 3.1 | `e4000-fraktaler3.png` | 400×250, `subframes = 1`, same iteration/reference/perturb caps |
+
+**They agree structurally** — same spiral, same arm count, same arrangement. F3's own colouring
+makes a pixel diff meaningless (see `corpus/README.md`), so this is a visual cross-check, which at
+this depth is the only kind available.
+
+⛔**F3 is much faster here, and the gap is ours to own.** F3: **60.3 s**. Us: **831 s**, of which
+**830 s was reference building** — the GPU render itself was **0.58 s**. Half of that was a
+duplicate build (fixed 2026-08-31, `render_export_corrected` now reuses the caller's request), and
+what remains is the `best_reference` **candidate scoring** cost that `DIAGNOSTICS.md` already names
+as the throughput lever — `--profile` attributes only ~410 ms of it to `ref ms`.
+
+⚠**Supersampling was not matched** (ours ss=2 = 4 samples/px vs F3's 1), but it cannot explain the
+gap: all the pixel work together was 0.58 s of 831 s. The comparison is a reference-build
+comparison, not a renderer comparison.
+

@@ -2500,6 +2500,12 @@ impl FractadyneApp {
     /// the iteration buffer, then colors it. Returns `None` (caller falls back to a normal export)
     /// when the size exceeds the GPU's single-texture limit — tiling is future work — or the
     /// coloring method needs per-orbit aux statistics the merged buffer can't carry.
+    /// `req` is the caller's already-built request, reused for the COLOR pass. ⭐⭐**Passing it
+    /// saves a whole second reference build** — the colour pass reads the merged iteration buffer
+    /// and never touches the orbit, so building one here was pure waste. Measured at 2.37e4000×:
+    /// two identical bignum builds of 430 s and 400 s for a render whose GPU work was **0.58 s**,
+    /// and the second existed only to fill in a struct the colourer ignores. `None` (the selftest,
+    /// which has no request) falls back to building one exactly as before.
     pub(crate) fn render_export_corrected(
         &self,
         device: &eframe::wgpu::Device,
@@ -2508,6 +2514,7 @@ impl FractadyneApp {
         julia: bool,
         width: u32,
         height: u32,
+        req: Option<&fractadyne_gpu::ExportRequest>,
         deadline: Option<Instant>,
     ) -> Option<fractadyne_gpu::ExportResult> {
         // The multi-reference ITERATION is now tiled + deadline-bounded (see render_corrected_iter),
@@ -2525,10 +2532,21 @@ impl FractadyneApp {
             return None;
         }
         let ci = self.render_corrected_iter(device, queue, vp, julia, width, height, 64, deadline)?;
-        let mut req = self.current_export_request_for(vp, julia);
-        req.width = width;
-        req.height = height;
-        let mut res = fractadyne_gpu::color_iter_buffer(device, queue, &req, &ci.pixels).ok()?;
+        // ⚠The size guard is load-bearing: a request built for a different frame size would colour
+        // the merged buffer against the wrong dimensions. Both real callers pass their own
+        // `req.width`/`req.height` as `width`/`height`, so it holds; anything else rebuilds.
+        let built;
+        let req = match req {
+            Some(r) if r.width == width && r.height == height => r,
+            _ => {
+                let mut q = self.current_export_request_for(vp, julia);
+                q.width = width;
+                q.height = height;
+                built = q;
+                &built
+            }
+        };
+        let mut res = fractadyne_gpu::color_iter_buffer(device, queue, req, &ci.pixels).ok()?;
         // color_iter_buffer only colors; carry the correction's accumulated counters/time so
         // the perf line and counters reflect what the multi-reference render actually did.
         res.counters = ci.counters;

@@ -601,7 +601,7 @@ impl FractadyneApp {
         }
         if self.render_cfg.glitch_correct {
             let deadline = Some(std::time::Instant::now() + GLITCH_CORRECT_BUDGET);
-            if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height, deadline) {
+            if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height, Some(req), deadline) {
                 return Ok(res);
             }
         }
@@ -811,7 +811,7 @@ impl FractadyneApp {
         let meta = self.view_metadata();
         let correct = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
             let deadline = Some(std::time::Instant::now() + GLITCH_CORRECT_BUDGET);
-            self.render_export_corrected(device, queue, vp, julia, req.width, req.height, deadline)
+            self.render_export_corrected(device, queue, vp, julia, req.width, req.height, Some(req), deadline)
         };
         let write = |p: &std::path::Path,
                      w: u32,
