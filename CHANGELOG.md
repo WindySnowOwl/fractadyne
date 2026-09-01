@@ -10,6 +10,27 @@ new functional enhancement; a **minor** bump (e.g. 0.2.0) marks a milestone that
 run of patch releases. The `0.2.0` entry summarizes **0.1.29 – 0.1.68** by theme — per-version
 detail is in the git history.
 
+## 0.2.41 (unreleased)
+
+- **Reference-candidate scoring no longer walks sixteen full-precision orbits** — at extreme
+  depth every candidate sits within half a view-span of the centre (|Δc| ~ 1e-4000), so the
+  deep-ranking phase's sixteen bignum walks to escape lengths differing by ±0.01% were near-pure
+  duplication, and after the series-approximation budget they had become the LARGEST slice of a
+  deep reference build (113.7 s of 333 s at 2.37e4000×). Phase 2 now walks ONE orbit — the first
+  survivor's, recorded in extended range — and scores every other survivor by floatexp CPU
+  perturbation against it (~ns per step instead of ~µs–ms at 13k bits), with the GPU shader's
+  rebase policy. A perturbed score is only TRUSTED while it stays out of the drift-prone
+  regime (a rebase makes the walk effectively 53-bit iteration, and the scorer's own oracle
+  probes caught a survivor mis-scored at 0.6× its length that way): a candidate running more
+  than a step-budgeted window past its first rebase falls back to a full bignum walk, so the
+  drift-prone class gets the old engine's arithmetic by construction. The selection itself is
+  unchanged: same candidate order, same tie-break, same early-break, and the original walk
+  engine remains compiled — it still scores Julia views, non-polynomial formulas, and shallow
+  views, and a new `--pickcheck` acceptance harness dual-runs both engines across a committed
+  depth ladder (e17 → e4000) asserting they elect the SAME reference point. The `pick [live/export]:` trace line grows a
+  `deep=perturb(scored=N rb=M)` tail when the new engine ran; corpus, goldens, and bench-matrix
+  byte-comparisons transitively pin the pick as before.
+
 ## 0.2.40 (2026-08-29)
 
 The first stable release since 0.2.36, rolling up the whole **0.2.37 – 0.2.40-beta.158**

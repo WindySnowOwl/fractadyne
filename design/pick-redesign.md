@@ -112,3 +112,49 @@ not approximated: phase 2 takes the FIRST survivor reaching the best length in c
 - The corpus check needs the exe at `target/release/fractadyne.exe` (generate_corpus.py default)
   and an unlocked exe; the user's running app holds the lock — build to a scratch
   `CARGO_TARGET_DIR` and copy, or ask.
+
+---
+
+## Outcome (2026-09-01, shipped 0.2.41-beta.1)
+
+Implemented as specified: phase 2 walks the FIRST survivor once in bignum
+(`orbit_length_bf_recorded`, extended-range `CFloatExp` samples — an f64 sample would flush
+the near-nucleus dips the rebase test needs), and scores the other ≤15 survivors by floatexp
+δ-iteration against it, in parallel across cores. Same candidate order, same
+strict-improvement tie-break, same early break; auto-gate `!julia && formula_power().is_some()
+&& both spans < 2^-44`; the walk engine stays compiled as the fallback and the harness
+comparator. `--pickcheck` is the acceptance harness (committed ladder e17 → e4000, plus any
+`.fdn` by path); `RefPickDiag` and the `pick [..]:` trace grew
+`deep=perturb(scored=N rb=M fb=K)`.
+
+**One thing the spec's sketch missed, caught by the scorer-vs-oracle unit probes**: every
+rebase to index 0 sets `δz ← z − Z₀ = z`, so from the FIRST rebase the walk is effectively
+~53-bit iteration, and chaotic amplification can move the escape length — one probe mis-scored
+a true `max_iter` SURVIVOR as escaping at 0.6× its length, WITHIN the reference's span (so an
+overshoot-past-the-reference window cannot catch it). Shipped rule: a perturbed score is
+trusted only if the candidate escapes (or survives the ask) within
+`PERTURB_POST_REBASE_TRUST = 256` steps of its first rebase; otherwise that candidate is
+re-walked in bignum (batched parallel) — the drift-prone class gets the old arithmetic by
+construction. Rebase-free scores are trusted at any length (linear-in-δ regime, polynomial
+error growth).
+
+**Ladder (release, 1280×720, both engines, all MATCH, exit 0):**
+
+| rung | regime | walk | perturb | note |
+|---|---|---|---|---|
+| e17 / e43 / e89 | no phase-1 survivor → rescue/fallback-escaper | ~0.02 s | ~0.02 s | scorer never runs (do-no-harm) |
+| e24 / e148 | centre survives capped ask → early return | 0.04–0.17 s | ≈ same | do-no-harm |
+| e500 (corpus 09) | scored=15 rb=67 fb=0 | 1.29 s | 0.91 s | **1.41×** |
+| e500 (hero) | scored=15 rb=68 fb=0 | 1.60 s | 1.23 s | 1.30×; winner IDENTICAL, its score ±2 (the spec's "point identity, not score equality") |
+| e726 | scored=15 rb=77 fb=0 | 1.32 s | 0.90 s | 1.47× |
+| e1008 | scored=15 rb=50 **fb=7** | 2.69 s | 2.82 s | trust valve fired in the wild; winner still identical; net wash by design |
+| e4000 | scored=15 rb=122 fb=0 | **115.2 s** | **68.6 s** | **1.68×** |
+
+**Where the remaining e4000 cost lives**: the perturb pick is now ~96% the ONE sequential
+first-survivor walk (~66 s at 13,352 bits; the δ-scoring is ~2 s). The spec's "one walk
+(~33 s)" under-split the old 113.7 s — the sequential first walk was always ~66 s of it. Two
+levers remain, both untouched here: (1) `orbit_length_bf` is ~2× the cost of the build's own
+orbit walk at the same length — a leaner scoring walk would halve the floor; (2) the winner is
+usually the first survivor, whose orbit the BUILD then re-walks at `p + 128` — reuse across
+that precision boundary was out of scope. Reference build at e4000: ~333 s → ~287 s measured
+end of this change; F3's 60.3 s still stands as the target.

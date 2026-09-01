@@ -192,8 +192,21 @@ impl std::ops::Add for CFloatExp {
         CFloatExp { re: self.re + o.re, im: self.im + o.im }
     }
 }
+impl std::ops::Sub for CFloatExp {
+    type Output = CFloatExp;
+    fn sub(self, o: CFloatExp) -> CFloatExp {
+        CFloatExp { re: self.re - o.re, im: self.im - o.im }
+    }
+}
 
 impl CFloatExp {
+    pub const ZERO: CFloatExp = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
+
+    /// Scale both parts by a plain `f64` (binomial coefficients, small constants).
+    pub fn mul_f64(self, k: f64) -> CFloatExp {
+        CFloatExp { re: self.re.mul_f64(k), im: self.im.mul_f64(k) }
+    }
+
     /// Magnitude `|a| = hypot(re, im)` in extended range.
     pub fn abs(self) -> FloatExp {
         (self.re * self.re + self.im * self.im).sqrt()

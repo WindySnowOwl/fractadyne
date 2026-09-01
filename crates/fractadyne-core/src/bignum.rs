@@ -56,6 +56,30 @@ pub fn to_f64(bf: &BigFloat) -> f64 {
     }
 }
 
+/// `BigFloat` → extended-range [`FloatExp`] (top 53 bits of the mantissa, full exponent).
+/// Unlike [`to_f64`] this never under/overflows: a 1e-4000 candidate offset or a 1e-71
+/// near-nucleus orbit dip keeps its true magnitude. Reads the normalized top mantissa word
+/// directly (value = `0.MSW… × 2^exp`), so it costs the same as `to_f64` — no bignum clone.
+pub(crate) fn bf_to_floatexp(b: &BigFloat) -> crate::floatexp::FloatExp {
+    use crate::floatexp::FloatExp;
+    let digits = match b.mantissa_digits() {
+        Some(d) if !d.is_empty() => d,
+        _ => return FloatExp::ZERO,
+    };
+    // ⚠`exponent()` is `Some(0)` for ZERO — zero is detected by the mantissa, never the exponent.
+    let exp = match b.exponent() {
+        Some(e) => e,
+        None => return FloatExp::ZERO,
+    };
+    let msw = *digits.last().unwrap();
+    if msw == 0 {
+        return FloatExp::ZERO;
+    }
+    let m = (msw as f64) / 18446744073709551616.0; // ÷2^64 — m ∈ [0.5, 1)
+    let m = if matches!(b.sign(), Some(Sign::Neg)) { -m } else { m };
+    FloatExp::new(m, exp)
+}
+
 /// Full-precision decimal string of a `BigFloat` (for export metadata).
 pub fn to_decimal_string(bf: &BigFloat) -> String {
     bf.to_string()

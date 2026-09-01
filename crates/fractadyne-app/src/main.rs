@@ -1254,7 +1254,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
         "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
-        "--chunk-sweep", "--bench-bignum", "--shot", "--soak",
+        "--chunk-sweep", "--bench-bignum", "--shot", "--soak", "--pickcheck",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }

@@ -987,6 +987,191 @@ fn orbit_length_bf(
     n
 }
 
+/// [`orbit_length_bf`] that also RECORDS the orbit as extended-range `CFloatExp` samples
+/// (`R[0] = z₀`, one sample per step, `R[n]` = the iterate the escape test saw at step `n`).
+/// The walk itself is the same loop — same step, same `f64` escape test, same count — so the
+/// returned length is byte-identical to `orbit_length_bf`'s; only the recording is added.
+/// Samples are extended-range on purpose: a deep-minibrot reference passes through near-nucleus
+/// dips (|Z| ~ 1e-71 in corpus 11–15, arbitrarily small deeper), and an `f64` sample would flush
+/// exactly the values the perturbation scorer's rebase test needs. Polynomial families only
+/// (no Phoenix two-term state — the callers gate on [`formula_power`]).
+fn orbit_length_bf_recorded(
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> (u32, Vec<CFloatExp>) {
+    debug_assert!(formula_power(formula).is_some(), "recording walk is polynomial-family only");
+    let sample = |zx: &BigFloat, zy: &BigFloat| CFloatExp {
+        re: bf_to_floatexp(zx),
+        im: bf_to_floatexp(zy),
+    };
+    let mut samples = Vec::new();
+    let (mut zx, mut zy) = (z0x.clone(), z0y.clone());
+    samples.push(sample(&zx, &zy));
+    let mut n = 0u32;
+    while n < max_iter {
+        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
+        zx = nzx;
+        zy = nzy;
+        n += 1;
+        samples.push(sample(&zx, &zy));
+        let (xv, yv) = (to_f64(&zx), to_f64(&zy));
+        if xv * xv + yv * yv > 1.0e12 {
+            break;
+        }
+    }
+    (n, samples)
+}
+
+/// Binomial rows for the `z^k + c` δ-step, `k = 2..=5` (`BINOM[k][j]` = C(k, j)).
+const BINOM: [[f64; 6]; 6] = [
+    [0., 0., 0., 0., 0., 0.],
+    [0., 0., 0., 0., 0., 0.],
+    [1., 2., 1., 0., 0., 0.],
+    [1., 3., 3., 1., 0., 0.],
+    [1., 4., 6., 4., 1., 0.],
+    [1., 5., 10., 10., 5., 1.],
+];
+
+/// How many steps past its FIRST REBASE a perturbation-scored candidate may keep walking
+/// before its score is DISTRUSTED and the candidate falls back to a full bignum walk. In
+/// steps, never wall-clock (determinism).
+///
+/// ⭐Why the first rebase is the trust variable (measured 2026-09-01, the scorer-vs-oracle
+/// unit probes): a rebase to index 0 sets `δz ← z − Z₀ = z`, so from that moment the walk is
+/// effectively plain ~53-bit-mantissa iteration of the full value, and chaotic amplification
+/// of that rounding can move the escape length off the bignum walk's — the probes caught a
+/// multibrot-3 `max_iter` SURVIVOR mis-scored as escaping at 0.6× its length with ~16k
+/// post-rebase steps, WITHIN the reference's own span (so "overshot the reference" is not the
+/// right trigger), while power-2 runs matched exactly over ~15k post-rebase steps only by the
+/// grace of a gentle orbit. Before any rebase the recurrence is linear-dominated in δ and the
+/// error grows polynomially, not chaotically — rebase-free scores are trusted to any length.
+///
+/// In the regime the redesign targets the window never binds: at 2.37e4000× all 101
+/// candidates escape within ±55 iterations of each other, and δ reaches O(1) — the first
+/// rebase — only near the escape itself, so the post-rebase stretch is tiny. 256 covers that
+/// with ~5× margin while sitting far below every observed failure's post-rebase run length;
+/// a candidate that outlives it gets the walk engine's own arithmetic instead, so a fallback
+/// score is byte-identical to the old selection's by construction.
+const PERTURB_POST_REBASE_TRUST: u32 = 256;
+
+/// Escape length of ONE candidate scored by floatexp CPU perturbation against a recorded
+/// reference orbit — the cheap replacement for a full bignum deep walk in phase 2 of the pick
+/// (design/pick-redesign.md). At depth every candidate sits within 0.5 view-spans of the first
+/// survivor, so their orbits are the reference's orbit plus a δ that floatexp carries exactly
+/// where `f64` would underflow (|δc| ~ 1e-4000): a δ-step costs ~ns against ~µs–ms for a bignum
+/// step at 13k bits.
+///
+/// Semantics matched to [`orbit_length_bf`]: the count includes the escaping step, the escape
+/// test is `x²+y² > 1e12` on the `f64` view of the full value `Zₘ + δz`, and the cap is
+/// `max_iter`. Rebasing is the GPU shader's policy (`fs_iterate`'s full-step path): after each
+/// step, rebase to index 0 when `|Zₘ+δz| < |δz|` (Zhuoran) or when the next step would run past
+/// the reference's escape. Unlike the shader's f32 squares, these magnitudes are extended-range,
+/// so the near-zero flush degeneracy (`0 < 0`) cannot occur here.
+///
+/// Returns `Some(len)` — an escape (or the full `max_iter` survival) reached with no rebase,
+/// or within [`PERTURB_POST_REBASE_TRUST`] steps of the first rebase: exactly what the walk
+/// engine would report. Returns `None` as soon as the walk runs more than that past its first
+/// rebase without escaping: the score would be drift-prone, and the caller must walk the
+/// candidate in bignum instead.
+///
+/// `dc` must be the EXACT bignum difference `c_cand − c_ref` rounded once to floatexp: the
+/// candidates agree in all leading bits, so `sub` at working precision is exact and the only
+/// loss is the single 53-bit rounding. Deterministic: a pure sequential loop, budgeted in steps.
+fn perturb_orbit_length(
+    orbit: &[CFloatExp],
+    dc: CFloatExp,
+    power: u32,
+    max_iter: u32,
+    rebases: &mut u32,
+) -> Option<u32> {
+    let k = power as usize;
+    debug_assert!((2..=5).contains(&k), "δ-step table covers z^2..z^5");
+    let last = orbit.len() - 1; // index of the reference's final (escaping or capped) sample
+    debug_assert!(last >= 1, "a phase-1 survivor's orbit has at least one step");
+    let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+    let mut dz = CFloatExp::ZERO;
+    let mut m: usize = 0;
+    let mut n: u32 = 0;
+    let mut first_rebase: Option<u32> = None;
+    while n < max_iter {
+        if let Some(r) = first_rebase {
+            if n - r > PERTURB_POST_REBASE_TRUST {
+                return None; // 53-bit regime outlived its trust — walk this one in bignum
+            }
+        }
+        // δ-step at Zₘ: (Z+δ)^k − Z^k + δc = Σ_{j=1..k} C(k,j)·Z^{k−j}·δ^j + δc.
+        let z = orbit[m];
+        let mut zp = [one; 5]; // Z^0 .. Z^{k−1}
+        for j in 1..k {
+            zp[j] = zp[j - 1] * z;
+        }
+        let mut acc = CFloatExp::ZERO;
+        let mut dpow = dz; // δ^j
+        for j in 1..=k {
+            acc = acc + (zp[k - j] * dpow).mul_f64(BINOM[k][j]);
+            if j < k {
+                dpow = dpow * dz;
+            }
+        }
+        dz = acc + dc;
+        m += 1;
+        n += 1;
+        let zf = orbit[m] + dz;
+        let (xf, yf) = (zf.re.to_f64(), zf.im.to_f64());
+        if xf * xf + yf * yf > 1.0e12 {
+            return Some(n);
+        }
+        let z2 = zf.re * zf.re + zf.im * zf.im;
+        let d2 = dz.re * dz.re + dz.im * dz.im;
+        if z2.lt(d2) || m + 1 > last {
+            dz = zf - orbit[0];
+            m = 0;
+            *rebases += 1;
+            first_rebase.get_or_insert(n);
+        }
+    }
+    // A full `max_iter` survival that never left the trusted regime (the abort above would
+    // have fired otherwise) — the walk engine's own answer for a survivor.
+    Some(n)
+}
+
+/// Whether the perturbation deep-scoring engine can express this request at all: the δ-step
+/// table covers the polynomial `z^k + c` families, and candidates must vary `c` with `z₀`
+/// fixed at the critical point (a Julia view varies `z₀` instead — unvalidated there, so it
+/// keeps the walk). Everything else scores exactly as before.
+fn perturb_scoring_supported(formula: u32, julia: bool) -> bool {
+    !julia && formula_power(formula).is_some()
+}
+
+/// Auto-engage floor for [`RefDeepScore::Perturb`]: both view spans must be below `2^-44`
+/// (≈5.7e-14) — past f64 pixel resolution, where every candidate is a small δ off the centre
+/// and the perturbation regime is unambiguous. Shallower views keep the bignum walk: it is
+/// cheap there (low precision), and shallow candidates diverge fast enough that the two
+/// arithmetics' rounding could plausibly order near-ties differently. A deterministic input
+/// gate (the span), never a cost or wall-clock gate.
+const REF_PICK_PERTURB_SPAN_LOG2: f64 = -44.0;
+
+/// Which engine scores phase 2 (deep-ranking the phase-1 survivors) of the reference pick.
+///
+/// `Walk` is the original engine: every scanned survivor is a full bignum orbit to `max_iter`.
+/// `Perturb` is the 2026-09 redesign (design/pick-redesign.md): ONE bignum walk — the first
+/// survivor's, recorded — and every other survivor scored by floatexp perturbation against it.
+/// The selection semantics (candidate order, strict-improvement tie-break, early break) are
+/// shared code; only the score source differs. Production resolves the engine from the inputs
+/// (see [`perturb_scoring_supported`] / [`REF_PICK_PERTURB_SPAN_LOG2`]); forcing one exists for
+/// the `--pickcheck` dual-run acceptance harness, which asserts both engines elect the same
+/// point across the depth ladder.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RefDeepScore {
+    Walk,
+    Perturb,
+}
+
 /// Quick iteration cap for the FIRST-pass reference-candidate ranking (a point surviving this long
 /// is a candidate worth a deeper look; keeps the 5×5 bignum grid scan cheap). The survivors are then
 /// deep-ranked to the full render length — see [`best_reference`].
@@ -1046,6 +1231,19 @@ pub struct RefPickDiag {
     pub rescued: Option<&'static str>,
     /// The winning pass had no survivor either: the pick is the longest ESCAPER (deep exterior).
     pub fallback_escaper: bool,
+    /// Phase 2 of the winning pass scored the non-first survivors by floatexp perturbation
+    /// against the first survivor's recorded orbit ([`RefDeepScore::Perturb`]) rather than by
+    /// full bignum walks. `false` when the walk engine ran — or when nothing beyond the first
+    /// survivor needed scoring at all (`deep_scored == 0`).
+    pub deep_perturb: bool,
+    /// Survivors deep-scored beyond the first, by either engine. `0` when the first survivor
+    /// took the early win (it survives the whole render) or phase 2 never ran.
+    pub deep_scored: u32,
+    /// Total perturbation rebases across the scored candidates (`0` on the walk engine).
+    pub perturb_rebases: u32,
+    /// Candidates whose perturbed score was DISTRUSTED (ran past the first rebase's
+    /// [`PERTURB_POST_REBASE_TRUST`]) and were re-walked in bignum (`0` on the walk engine).
+    pub perturb_fallbacks: u32,
 }
 
 /// One selection pass at a fixed precision: phase 1 (cheap rank to `quick`) + phase 2 (deep-rank
@@ -1053,7 +1251,17 @@ pub struct RefPickDiag {
 /// precision; the selection semantics inside are byte-identical to the original.
 enum PickPass {
     /// A phase-1 survivor won; `deep_len` is its phase-2 score (early-break semantics preserved).
-    Winner { point: [BigFloat; 2], deep_len: u32, survivors: usize },
+    /// `deep_perturb`/`deep_scored`/`rebases` describe how the non-first survivors were scored —
+    /// see the same-named [`RefPickDiag`] fields.
+    Winner {
+        point: [BigFloat; 2],
+        deep_len: u32,
+        survivors: usize,
+        deep_perturb: bool,
+        deep_scored: u32,
+        rebases: u32,
+        fallbacks: u32,
+    },
     /// Every candidate escaped within `quick` — the longest escaper and its length.
     NoSurvivor { point: [BigFloat; 2], esc_len: u32 },
 }
@@ -1099,8 +1307,29 @@ pub fn best_reference_diag(
     max_iter: u32,
     p: usize,
 ) -> ([BigFloat; 2], RefPickDiag) {
-    match pick_pass(center, span, formula, julia, julia_c, max_iter, p) {
-        PickPass::Winner { point, deep_len, survivors } if deep_len >= max_iter => (
+    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None)
+}
+
+/// [`best_reference_diag`] with the phase-2 engine FORCED (`None` = resolve from the inputs —
+/// the production path). The force threads through the rescue rescans too, so a forced run is
+/// one engine end-to-end; it can override the span auto-gate but never engine eligibility
+/// ([`perturb_scoring_supported`] — forcing `Perturb` on a Julia/Phoenix request still walks).
+/// Exists for [`best_reference_dual`], the acceptance harness's entry point.
+#[allow(clippy::too_many_arguments)]
+fn best_reference_diag_forced(
+    center: &[BigFloat; 2],
+    span: [FloatExp; 2],
+    formula: u32,
+    julia: bool,
+    julia_c: [f64; 2],
+    max_iter: u32,
+    p: usize,
+    force: Option<RefDeepScore>,
+) -> ([BigFloat; 2], RefPickDiag) {
+    match pick_pass(center, span, formula, julia, julia_c, max_iter, p, force) {
+        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks }
+            if deep_len >= max_iter =>
+        (
             point,
             RefPickDiag {
                 scoring_prec: p,
@@ -1108,9 +1337,13 @@ pub fn best_reference_diag(
                 winner_len: deep_len,
                 rescued: None,
                 fallback_escaper: false,
+                deep_perturb,
+                deep_scored,
+                perturb_rebases: rebases,
+                perturb_fallbacks: fallbacks,
             },
         ),
-        PickPass::Winner { point, deep_len, survivors } => {
+        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks } => {
             // The winner escapes before the render budget — either a genuine boundary/exterior
             // view (every point escapes) or a precision cliff between `quick` and `max_iter`.
             // Rescoring the centre at the BUILD precision separates them: only a cliff un-blinds.
@@ -1132,6 +1365,11 @@ pub fn best_reference_diag(
                         winner_len: centre_len,
                         rescued: Some("centre"),
                         fallback_escaper: false,
+                        // The winning score is the centre's plain rescue walk, not phase 2.
+                        deep_perturb: false,
+                        deep_scored: 0,
+                        perturb_rebases: 0,
+                        perturb_fallbacks: 0,
                     },
                 )
             } else {
@@ -1143,6 +1381,10 @@ pub fn best_reference_diag(
                         winner_len: deep_len,
                         rescued: None,
                         fallback_escaper: false,
+                        deep_perturb,
+                        deep_scored,
+                        perturb_rebases: rebases,
+                        perturb_fallbacks: fallbacks,
                     },
                 )
             }
@@ -1153,8 +1395,8 @@ pub fn best_reference_diag(
             // fiction. Redo the WHOLE selection at the build precision; a still-empty pass is
             // then a real exterior view and the longest escaper (at truthful scores) stands.
             let p2 = p + REF_RESCUE_EXTRA_BITS;
-            match pick_pass(center, span, formula, julia, julia_c, max_iter, p2) {
-                PickPass::Winner { point, deep_len, survivors } => (
+            match pick_pass(center, span, formula, julia, julia_c, max_iter, p2, force) {
+                PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks } => (
                     point,
                     RefPickDiag {
                         scoring_prec: p2,
@@ -1162,6 +1404,10 @@ pub fn best_reference_diag(
                         winner_len: deep_len,
                         rescued: Some("rescan"),
                         fallback_escaper: false,
+                        deep_perturb,
+                        deep_scored,
+                        perturb_rebases: rebases,
+                        perturb_fallbacks: fallbacks,
                     },
                 ),
                 PickPass::NoSurvivor { point, esc_len } => (
@@ -1172,6 +1418,10 @@ pub fn best_reference_diag(
                         winner_len: esc_len,
                         rescued: Some("rescan"),
                         fallback_escaper: true,
+                        deep_perturb: false,
+                        deep_scored: 0,
+                        perturb_rebases: 0,
+                        perturb_fallbacks: 0,
                     },
                 ),
             }
@@ -1179,7 +1429,8 @@ pub fn best_reference_diag(
     }
 }
 
-/// The original selection body, at one precision. See [`best_reference`] for the semantics.
+/// The original selection body, at one precision. See [`best_reference`] for the semantics and
+/// [`RefDeepScore`] for `force` (`None` = resolve the phase-2 engine from the inputs).
 #[allow(clippy::too_many_arguments)]
 fn pick_pass(
     center: &[BigFloat; 2],
@@ -1189,6 +1440,7 @@ fn pick_pass(
     julia_c: [f64; 2],
     max_iter: u32,
     p: usize,
+    force: Option<RefDeepScore>,
 ) -> PickPass {
     // Score candidates by orbit length in **bignum** (f64 coords collapse to the same value at deep
     // zoom, which broke reference selection on cold jumps). TWO PHASES: rank cheaply to `quick`, then
@@ -1254,20 +1506,117 @@ fn pick_pass(
     // Phase 2 — deep-rank survivors to the full render length; take the longest-surviving. The centre
     // (cands[0], usually best on the boundary) is scanned first — alone, so the common boundary case
     // stays a single deep orbit — and only if it does NOT survive the whole render do the remaining
-    // survivors get a parallel deep scan. The selection loop then replicates the old sequential
-    // early-break semantics over the in-order results, so the pick is identical.
+    // survivors get a deep scan. The selection loop then replicates the old sequential early-break
+    // semantics over the in-order results, so the pick is identical.
     // `dl >= max_iter` ⇒ a reference that survives the whole render (no rebasing at all).
+    //
+    // TWO SCORE ENGINES for the non-first survivors (design/pick-redesign.md). At depth every
+    // candidate sits within 0.5 view-spans of the first survivor (|Δc| ~ 1e-4000 at e4000), so
+    // their bignum orbits are near-pure duplication — 16 full-precision walks to escape lengths
+    // differing by ±0.01%. The perturbation engine walks the FIRST survivor once (recorded) and
+    // scores the rest by floatexp δ-iteration against it; the walk engine (the original, and the
+    // fallback for Julia / non-polynomial formulas / shallow views) walks each in bignum. Both
+    // feed the same selection loop; `--pickcheck` asserts they elect the same point.
     let first = survivors[0];
-    let dl0 = score(&cands[first][0], &cands[first][1], max_iter);
+    let rest: Vec<usize> = survivors.iter().skip(1).take(REF_DEEP_MAX - 1).copied().collect();
+    let use_perturb = perturb_scoring_supported(formula, julia)
+        && match force {
+            Some(RefDeepScore::Walk) => false,
+            Some(RefDeepScore::Perturb) => true,
+            None => {
+                span[0].log2() < REF_PICK_PERTURB_SPAN_LOG2
+                    && span[1].log2() < REF_PICK_PERTURB_SPAN_LOG2
+            }
+        };
+    let (dl0, ref_orbit) = if use_perturb && !rest.is_empty() {
+        debug_assert!(!julia, "perturb engine is gated to c-plane candidates");
+        let (len, samples) = orbit_length_bf_recorded(
+            &zero,
+            &zero,
+            &cands[first][0],
+            &cands[first][1],
+            formula,
+            max_iter,
+            p,
+        );
+        (len, Some(samples))
+    } else {
+        (score(&cands[first][0], &cands[first][1], max_iter), None)
+    };
     if dl0 >= max_iter {
         return PickPass::Winner {
             point: cands[first].clone(),
             deep_len: dl0,
             survivors: survivors.len(),
+            deep_perturb: false,
+            deep_scored: 0,
+            rebases: 0,
+            fallbacks: 0,
         };
     }
-    let rest: Vec<usize> = survivors.iter().skip(1).take(REF_DEEP_MAX - 1).copied().collect();
-    let deep = par_orbit_scores(&cands, &rest, max_iter, julia, &jcx, &jcy, formula, p);
+    let mut rebases = 0u32;
+    let mut fallbacks = 0u32;
+    let deep: Vec<u32> = match &ref_orbit {
+        Some(samples) => {
+            let power = formula_power(formula).unwrap_or(2);
+            // Exact bignum difference (the candidates agree in every leading bit, so the
+            // p-bit sub is exact), rounded ONCE to floatexp. Never a re-derived offset:
+            // the δ must describe the stored candidate the walk engine would score.
+            let dcs: Vec<CFloatExp> = rest
+                .iter()
+                .map(|&i| CFloatExp {
+                    re: bf_to_floatexp(&cands[i][0].sub(&cands[first][0], p, RM)),
+                    im: bf_to_floatexp(&cands[i][1].sub(&cands[first][1], p, RM)),
+                })
+                .collect();
+            // δ-walks across the machine's cores, like `par_orbit_scores`: each candidate's
+            // walk is an independent sequential loop and the results land in `rest` order, so
+            // the selection — and the rebase total, a sum of per-candidate counts — is
+            // byte-identical to a sequential scan; threading changes wall-clock only. (At
+            // ~1,700 bits the sequential version measured SLOWER than the old engine's
+            // parallel bignum batch — the δ-walk win must not be given back to the wall.)
+            let mut per: Vec<(Option<u32>, u32)> = vec![(None, 0); rest.len()];
+            let threads =
+                std::thread::available_parallelism().map_or(1, |n| n.get()).min(rest.len().max(1));
+            let chunk = rest.len().div_ceil(threads).max(1);
+            std::thread::scope(|sc| {
+                for (dc_chunk, out_chunk) in dcs.chunks(chunk).zip(per.chunks_mut(chunk)) {
+                    sc.spawn(move || {
+                        for (dc, out) in dc_chunk.iter().zip(out_chunk.iter_mut()) {
+                            let mut rb = 0u32;
+                            let len = perturb_orbit_length(samples, *dc, power, max_iter, &mut rb);
+                            *out = (len, rb);
+                        }
+                    });
+                }
+            });
+            let scored: Vec<Option<u32>> = per
+                .iter()
+                .map(|&(len, rb)| {
+                    rebases += rb;
+                    len
+                })
+                .collect();
+            // Distrusted scores (outlived the reference past the trust window) fall back to
+            // the walk engine's own arithmetic, batched in parallel — byte-identical to the
+            // old selection for exactly the drift-prone class.
+            let untrusted: Vec<usize> = rest
+                .iter()
+                .zip(scored.iter())
+                .filter(|(_, s)| s.is_none())
+                .map(|(&i, _)| i)
+                .collect();
+            fallbacks = untrusted.len() as u32;
+            let mut walked =
+                par_orbit_scores(&cands, &untrusted, max_iter, julia, &jcx, &jcy, formula, p)
+                    .into_iter();
+            scored
+                .into_iter()
+                .map(|s| s.unwrap_or_else(|| walked.next().expect("one walk per fallback")))
+                .collect()
+        }
+        None => par_orbit_scores(&cands, &rest, max_iter, julia, &jcx, &jcy, formula, p),
+    };
     let (mut best_i, mut best_len) = (first, dl0);
     for (&idx, &dl) in rest.iter().zip(deep.iter()) {
         if dl > best_len {
@@ -1282,7 +1631,60 @@ fn pick_pass(
         point: cands[best_i].clone(),
         deep_len: best_len,
         survivors: survivors.len(),
+        deep_perturb: ref_orbit.is_some(),
+        deep_scored: rest.len() as u32,
+        rebases,
+        fallbacks,
     }
+}
+
+/// How long the two [`RefDeepScore`] engines took and what each elected — the dual-run
+/// acceptance check behind `--pickcheck` (design/pick-redesign.md). `identical` compares the
+/// elected POINTS (value identity per coordinate), not scores: legitimate score differences of
+/// ±1 near the escape threshold are expected between the arithmetics; a different winner is not.
+pub struct RefPickDual {
+    pub walk: [BigFloat; 2],
+    pub walk_diag: RefPickDiag,
+    pub walk_secs: f64,
+    pub perturb: [BigFloat; 2],
+    pub perturb_diag: RefPickDiag,
+    pub perturb_secs: f64,
+    pub identical: bool,
+}
+
+/// Run BOTH phase-2 engines on identical inputs and compare the elected points. `Err` when the
+/// perturbation engine cannot express the request (Julia / non-polynomial formula) — callers
+/// report that as SKIPPED, never as a pass. Timings are reporting-only; no decision reads them.
+#[allow(clippy::too_many_arguments)]
+pub fn best_reference_dual(
+    center: &[BigFloat; 2],
+    span: [FloatExp; 2],
+    formula: u32,
+    julia: bool,
+    julia_c: [f64; 2],
+    max_iter: u32,
+    p: usize,
+) -> Result<RefPickDual, &'static str> {
+    if !perturb_scoring_supported(formula, julia) {
+        return Err(if julia {
+            "julia views keep the bignum walk"
+        } else {
+            "non-polynomial formula keeps the bignum walk"
+        });
+    }
+    let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
+    let t = std::time::Instant::now();
+    let (walk, walk_diag) = best_reference_diag_forced(
+        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Walk),
+    );
+    let walk_secs = t.elapsed().as_secs_f64();
+    let t = std::time::Instant::now();
+    let (perturb, perturb_diag) = best_reference_diag_forced(
+        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Perturb),
+    );
+    let perturb_secs = t.elapsed().as_secs_f64();
+    let identical = eq(&walk[0], &perturb[0]) && eq(&walk[1], &perturb[1]);
+    Ok(RefPickDual { walk, walk_diag, walk_secs, perturb, perturb_diag, perturb_secs, identical })
 }
 
 /// Score `idxs`-selected candidates' orbit lengths (up to `cap`) in parallel across the machine's
@@ -2396,6 +2798,246 @@ pub fn render_multiref_mandel(
 // (vs exact per-iteration accumulation), so we know BEFORE any GPU work whether the aux coloring
 // stats can safely ride BLA/SA iteration-skipping. Trap is the canary: a min over ~the same values,
 // so its error must be tiny; a large trap error means the ORACLE is buggy, not the method.
+#[cfg(test)]
+mod pick_deep_scoring {
+    use super::*;
+
+    /// δc = 0 must replay the reference exactly: the δ-recurrence stays at zero, the escape
+    /// test sees the recorded samples themselves, and the returned length is the recorded
+    /// walk's own. This is the identity the duplicate-centre candidates in the 5×5 grid rely
+    /// on (offset (0,0) exists at every scale), so it is pinned per supported power.
+    #[test]
+    fn a_zero_delta_perturbation_replays_the_reference() {
+        let p = 96;
+        for (formula, cx, cy) in [
+            (formula::MANDELBROT, -0.743643887037151, 0.131825904205330),
+            (formula::MULTIBROT3, 0.219533102209776, 0.731777007365920),
+            (formula::MULTIBROT5, 0.232076866967485, 0.773589556558284),
+        ] {
+            let zero = bf(0.0, p);
+            let (len, orbit) = orbit_length_bf_recorded(
+                &zero,
+                &zero,
+                &bf(cx, p),
+                &bf(cy, p),
+                formula,
+                50_000,
+                p,
+            );
+            assert!(len < 50_000, "fixture must escape (formula {formula}, got {len})");
+            assert_eq!(orbit.len() as u32, len + 1, "one sample per step plus the start");
+            let mut rebases = 0;
+            let power = formula_power(formula).unwrap();
+            let got = perturb_orbit_length(&orbit, CFloatExp::ZERO, power, 50_000, &mut rebases);
+            assert_eq!(rebases, 0, "a replay never rebases (formula {formula})");
+            assert_eq!(
+                got,
+                Some(len),
+                "δc = 0 must reproduce the recorded length (formula {formula})"
+            );
+        }
+    }
+
+    /// The scorer against its oracle, directly: for a spread of candidates around a deep
+    /// boundary coordinate — on-filament (outliving the reference), off-filament (escaping
+    /// before AND after it), and the reference itself — every TRUSTED score
+    /// (`Some`) from `perturb_orbit_length` must equal the escape length `orbit_length_bf`
+    /// computes in full precision, and a DISTRUSTED score (`None`, the post-first-rebase trust
+    /// budget ran out) is the fallback signal the pick answers with a bignum walk. The spread
+    /// deliberately includes candidates far outliving the reference: the probes that sized the
+    /// trust window caught a real survivor mis-scored at 0.6× there, so this pins both sides —
+    /// trusted-means-exact AND drift-prone-means-flagged. Runs per supported power — the arm
+    /// the Mandelbrot-only `--pickcheck` ladder cannot reach for the multibrot families.
+    /// `min_trusted` / `min_flagged` pin the fixture's regime: the tight-spread Mandelbrot set
+    /// must trust everything (the deep-zoom shape the redesign exists for), and the wide-spread
+    /// multibrot sets must actually trip the trust budget (the drift-prone shape it defends
+    /// against) — otherwise the respective path went untested and the test cannot go red.
+    fn scorer_matches_oracle_at(
+        formula: u32,
+        cx_s: &str,
+        cy_s: &str,
+        min_trusted: u32,
+        min_flagged: u32,
+    ) {
+        let p = 164;
+        let power = formula_power(formula).unwrap();
+        let cx = parse_bf_prec(cx_s, p).unwrap();
+        let cy = parse_bf_prec(cy_s, p).unwrap();
+        let span = FloatExp::from_f64(1.0e-30);
+        let max_iter = 30_000u32;
+        let zero = bf(0.0, p);
+        let mut cands: Vec<[BigFloat; 2]> = Vec::new();
+        for (fx, fy) in [
+            (0.0, 0.0),
+            (0.04, 0.0),
+            (-0.12, 0.28),
+            (0.5, -0.5),
+            (-0.28, -0.04),
+            (0.12, 0.12),
+        ] {
+            cands.push([
+                cx.add(&span.mul_f64(fx).to_bf(p), p, RM),
+                cy.add(&span.mul_f64(fy).to_bf(p), p, RM),
+            ]);
+        }
+        let oracle: Vec<u32> = cands
+            .iter()
+            .map(|c| orbit_length_bf(&zero, &zero, &c[0], &c[1], formula, max_iter, p))
+            .collect();
+        // Reference = the shortest ESCAPING candidate, so others outlive it and the
+        // reference-exhausted rebase + the trust budget are both exercised.
+        let (ri, _) = oracle
+            .iter()
+            .enumerate()
+            .filter(|(_, &l)| l < max_iter)
+            .min_by_key(|(_, &l)| l)
+            .expect("degenerate fixture: no candidate escapes — pick another coordinate");
+        assert!(
+            oracle.iter().any(|&l| l > oracle[ri]),
+            "degenerate fixture: nothing outlives the reference — rebase path untested"
+        );
+        let (rlen, orbit) = orbit_length_bf_recorded(
+            &zero, &zero, &cands[ri][0], &cands[ri][1], formula, max_iter, p,
+        );
+        assert_eq!(rlen, oracle[ri], "recording must not change the walk");
+        let (mut trusted, mut flagged) = (0u32, 0u32);
+        for (i, c) in cands.iter().enumerate() {
+            let dc = CFloatExp {
+                re: bf_to_floatexp(&c[0].sub(&cands[ri][0], p, RM)),
+                im: bf_to_floatexp(&c[1].sub(&cands[ri][1], p, RM)),
+            };
+            let mut rebases = 0;
+            match perturb_orbit_length(&orbit, dc, power, max_iter, &mut rebases) {
+                Some(got) => {
+                    trusted += 1;
+                    assert_eq!(
+                        got, oracle[i],
+                        "candidate {i} (power {power}): trusted perturb={got} oracle={} rebases={rebases}",
+                        oracle[i]
+                    );
+                }
+                None => flagged += 1,
+            }
+        }
+        assert!(
+            trusted >= min_trusted && flagged >= min_flagged,
+            "fixture regime shifted (power {power}): trusted={trusted} (want ≥{min_trusted})              flagged={flagged} (want ≥{min_flagged})"
+        );
+    }
+
+    /// Power 2, at the deep seahorse boundary coordinate the selftest goldens use.
+    #[test]
+    fn scorer_matches_oracle_mandelbrot() {
+        scorer_matches_oracle_at(
+            formula::MANDELBROT,
+            "-7.219621882920463979621343199249635039400777157391994056859e-1",
+            "2.406540627640154659873781066416545013133592385797331352286e-1",
+            6, // tight spread: every score trusted and exact, rebases included
+            0,
+        );
+    }
+
+    /// Power 3 — the binomial arm the Mandelbrot ladder never runs.
+    #[test]
+    fn scorer_matches_oracle_multibrot3() {
+        scorer_matches_oracle_at(
+            formula::MULTIBROT3,
+            "2.19533102209775940218788168856401426185991366731348781648e-1",
+            "7.317770073659198278104833118192370226116695264984596408352e-1",
+            1, // the reference itself, at least
+            1, // wide spread: the trust budget must actually fire
+        );
+    }
+
+    /// Power 5 — the widest binomial row.
+    #[test]
+    fn scorer_matches_oracle_multibrot5() {
+        scorer_matches_oracle_at(
+            formula::MULTIBROT5,
+            "2.320768669674853369085651557338865001525750889159483426277e-1",
+            "7.735895565582844849904484291320284693154748744446630197764e-1",
+            1,
+            1,
+        );
+    }
+
+    /// The acceptance property end to end, on the tight-spread fixture: both phase-2 engines
+    /// elect the SAME point, the perturbation engine actually scored someone (an early-return
+    /// fixture could never go red), and the production auto-resolution takes the new engine at
+    /// this depth and elects the same point. The committed depth ladder (e17 → e4000) is
+    /// `--pickcheck`; this is its fast always-on rung.
+    #[test]
+    fn both_engines_elect_the_same_reference() {
+        let p = 164;
+        let cx = parse_bf_prec("-7.219621882920463979621343199249635039400777157391994056859e-1", p)
+            .unwrap();
+        let cy = parse_bf_prec("2.406540627640154659873781066416545013133592385797331352286e-1", p)
+            .unwrap();
+        let span_y = FloatExp::from_f64(1.0e-30);
+        let span = [span_y.mul_f64(16.0 / 9.0), span_y];
+        let dual =
+            best_reference_dual(&[cx.clone(), cy.clone()], span, 0, false, [0.0, 0.0], 30_000, p)
+                .expect("mandelbrot is perturb-eligible");
+        assert!(
+            dual.identical,
+            "engines disagree: walk len={} vs perturb len={}",
+            dual.walk_diag.winner_len, dual.perturb_diag.winner_len
+        );
+        assert!(dual.perturb_diag.deep_perturb, "perturb engine must actually have run");
+        assert!(
+            dual.perturb_diag.deep_scored > 0,
+            "degenerate fixture: nothing beyond the first survivor was scored — pick another"
+        );
+        let (auto_point, auto_diag) =
+            best_reference_diag(&[cx, cy], span, 0, false, [0.0, 0.0], 30_000, p);
+        assert!(auto_diag.deep_perturb, "auto gate must engage at a 1e-30 span");
+        let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
+        assert!(
+            eq(&auto_point[0], &dual.perturb[0]) && eq(&auto_point[1], &dual.perturb[1]),
+            "auto resolution must elect the perturb engine's point"
+        );
+    }
+
+    /// The auto gate's other side: a shallow span keeps the walk engine, and so does a
+    /// non-polynomial formula at any depth. (Forcing can widen the span gate for the harness,
+    /// but never eligibility.)
+    #[test]
+    fn shallow_views_and_other_formulas_keep_the_walk() {
+        let p = 104;
+        let cx = bf(-0.743643887037151, p);
+        let cy = bf(0.131825904205330, p);
+        // Span 2^-40 — shallower than the 2^-44 auto floor.
+        let shallow = FloatExp::new(1.0, -40);
+        let (_, diag) = best_reference_diag(
+            &[cx.clone(), cy.clone()],
+            [shallow, shallow],
+            0,
+            false,
+            [0.0, 0.0],
+            8_000,
+            p,
+        );
+        assert!(!diag.deep_perturb, "2^-40 span must keep the bignum walk");
+        // Tricorn (non-holomorphic) at a deep span: eligibility, not the span, decides.
+        let deep = FloatExp::new(1.0, -100);
+        let (_, diag) = best_reference_diag(
+            &[cx.clone(), cy.clone()],
+            [deep, deep],
+            formula::TRICORN,
+            false,
+            [0.0, 0.0],
+            8_000,
+            p,
+        );
+        assert!(!diag.deep_perturb, "tricorn must keep the bignum walk");
+        assert!(
+            best_reference_dual(&[cx, cy], [deep, deep], formula::TRICORN, false, [0.0, 0.0], 8_000, p)
+                .is_err(),
+            "the dual harness must refuse (SKIP), not vacuously pass, an ineligible formula"
+        );
+    }
+}
+
 #[cfg(test)]
 mod misiurewicz_detection {
     use super::*;

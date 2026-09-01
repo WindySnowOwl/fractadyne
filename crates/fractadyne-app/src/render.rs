@@ -554,7 +554,7 @@ fn pick_reference(inp: &RecomputeInputs) -> [fractadyne_core::BigFloat; 2] {
         crate::diag::trace(
             "ref",
             format!(
-                "pick [{}]: ask={} scored@{}bits survivors={} winner_len={}{}{} offset=({dx:.3},{dy:.3}) spans",
+                "pick [{}]: ask={} scored@{}bits survivors={} winner_len={}{}{} offset=({dx:.3},{dy:.3}) spans{}",
                 inp.origin,
                 inp.gpu_iter,
                 diag.scoring_prec,
@@ -562,6 +562,16 @@ fn pick_reference(inp: &RecomputeInputs) -> [fractadyne_core::BigFloat; 2] {
                 diag.winner_len,
                 diag.rescued.map(|r| format!(" RESCUED={r}")).unwrap_or_default(),
                 if diag.fallback_escaper { " FALLBACK-ESCAPER" } else { "" },
+                // The redesigned phase-2 engine, when it scored anyone (design/pick-redesign.md):
+                // appended so every existing `pick [..]:` consumer keeps parsing unchanged.
+                if diag.deep_perturb {
+                    format!(
+                        " deep=perturb(scored={} rb={} fb={})",
+                        diag.deep_scored, diag.perturb_rebases, diag.perturb_fallbacks
+                    )
+                } else {
+                    String::new()
+                },
             ),
         );
     }
