@@ -1064,6 +1064,11 @@ Mockups: [design/mockups/](design/mockups/).
   actuals for the record: row 18 walk 43,969 @1,754 bits; row 19 60,186 @2,477; row 20 78,231
   @3,414 — all ≥15× under the budget.
 
+  ⭐**Handoff spec for the redesign: `design/pick-redesign.md`** — the measured breakdown, the
+  one-orbit-plus-perturbation idea, the spec rationale ("longest survivor" = live smoothness),
+  the gates that transitively pin the pick, the dual-run acceptance harness to build FIRST, and
+  the traps already paid for. Start there, not here.
+
   **WHAT REMAINS — the pick (113.7 s of the now-~180 s build) — is a REDESIGN, not a constant:**
   phase 1 (101 candidates × 4,096 @ full precision) is parallelized and cheap; the cost is phase
   2's deep survivor walks to `max_iter` (~16 orbits × ~443k steps at e4000, to separate escape
