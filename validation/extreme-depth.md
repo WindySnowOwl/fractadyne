@@ -100,13 +100,24 @@ independent second opinion.
 makes a pixel diff meaningless (see `corpus/README.md`), so this is a visual cross-check, which at
 this depth is the only kind available.
 
-⛔**F3 is much faster here, and the gap is ours to own.** F3: **60.3 s**. Us: **831 s**, of which
-**830 s was reference building** — the GPU render itself was **0.58 s**. Half of that was a
-duplicate build (fixed 2026-08-31, `render_export_corrected` now reuses the caller's request), and
-what remains is the `best_reference` **candidate scoring** cost that `DIAGNOSTICS.md` already names
-as the throughput lever — `--profile` attributes only ~410 ms of it to `ref ms`.
+⛔**F3 is much faster here, and the gap is ours to own.** F3: **60.3 s**. Us: **831 s** originally,
+of which **830 s was reference building** — the GPU render itself was **0.58 s**.
 
-⚠**Supersampling was not matched** (ours ss=2 = 4 samples/px vs F3's 1), but it cannot explain the
-gap: all the pixel work together was 0.58 s of 831 s. The comparison is a reference-build
-comparison, not a renderer comparison.
+Chasing that found the export path building the same reference two and three times over; both
+duplicates are now gone (`eaa16ec`, `f21683f` — the colour pass and the correction pass each reused
+`current_export_request_for` instead of the request already in hand). Measured here:
+
+| | e4000, 400×250 | hero, e500 |
+|---|---|---|
+| 3 builds (original) | 831 s | 24.3 s |
+| 2 builds | 771 s | 13.1 s |
+| 1 build | **529 s** | **10.3 s** |
+
+⚠**F3 is still ~9× ahead**, and what is left is not duplicated work: it is almost entirely
+`best_reference` **candidate scoring**, which `DIAGNOSTICS.md` already names as the throughput lever
+and which `--profile` under-reports as ~410 ms of `ref ms`.
+
+⚠**Supersampling was not matched in the original run** (ss=2 vs F3's 1); the 771 s and 529 s rows
+are ss=1. It changes nothing either way — all the pixel work together was 0.58 s of 831 s. This is
+a reference-BUILD comparison, not a renderer comparison.
 

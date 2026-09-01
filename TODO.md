@@ -1022,6 +1022,23 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**`find_nucleus` still takes `mag: f64`** — same shape, same ceiling, plus `reduce_period`'s
   linear `tol2`. The Minibrot half of the Go-to dialog is still capped. Filed below.~~
 
+- [ ] 🟡**THE GLITCH-CORRECTION DEADLINE DOES NOT COVER THE WORK IN FRONT OF IT (2026-08-31).**
+  `GLITCH_CORRECT_BUDGET` is 120 s and bounds the tiled correction loop — but not the reference
+  build that precedes it. At 2.37e4000× that build takes **387 s**, so the budget is three times
+  blown before the first tile, the whole pass is discarded, and the frame renders from the base
+  reference anyway.
+
+  ⭐Until `f21683f` that meant 387 s spent purely to throw away; the correction pass now clones the
+  caller's reference, so the waste is gone at this depth. **The deadline is still wrong though** —
+  it just no longer has a 387-second build to be wrong about. Any path that *does* have to build
+  (no request to clone: the selftest call, or a future caller) hits the same thing.
+
+  ⇒ Either check the deadline before starting a build that cannot finish inside it, or price the
+  build into the budget so the decision to attempt correction is made with the real cost in view.
+
+  ⚠**Do not simply raise the budget.** 120 s is a responsiveness contract for an interactive
+  export; the problem is that the expensive half is outside the thing measuring it.
+
 - [ ] 🟠**THE COARSE-FIRST PREVIEW IS A BLACK FRAME AT DEEP MISIUREWICZ VIEWS, AND IT HOLDS FOR
   MINUTES (user, 2026-08-31).** Reported at 2.37e4000×: *"about 100 seconds to build the reference,
   then it rendered an image for a moment, then went black and started working again."*
