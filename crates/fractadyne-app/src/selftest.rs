@@ -1326,7 +1326,7 @@ impl FractadyneApp {
                     vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
                     vp.precision = fractadyne_core::precision_for_magnification(mag);
                     if let Some(ci) =
-                        self.render_corrected_iter(device, queue, &vp, false, N, N, 40, None)
+                        self.render_corrected_iter(device, queue, &vp, false, N, N, 40, None, None)
                     {
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Glitch",

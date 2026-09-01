@@ -2285,6 +2285,7 @@ impl FractadyneApp {
         width: u32,
         height: u32,
         max_refs: usize,
+        req: Option<&fractadyne_gpu::ExportRequest>,
         deadline: Option<Instant>,
     ) -> Option<CorrectedIter> {
         // Per-dispatch work budget for the tiled correction renders (nominal steps = tile²·max_iter).
@@ -2293,7 +2294,20 @@ impl FractadyneApp {
         // nominal per-pixel work; small tiles keep each GPU dispatch well inside the TDR window and
         // leave the loop interruptible (between tiles) by `deadline`. This is the fix for the
         // >1h uninterruptible-dispatch pathology (TODO.md Open bugs).
-        let mut req = self.current_export_request_for(vp, julia);
+        // ⭐⭐**Clone the caller's reference rather than building a second one.** The base pass
+        // here wants the SAME orbit the caller already has — same viewport, same julia flag, so
+        // `current_export_request_for` returns an identical build (measured at 2.37e4000×: both
+        // came back `len=443144 iter=2008192 prec=13481`). At that depth the rebuild costs **387 s**
+        // against a `GLITCH_CORRECT_BUDGET` of 120 s, so the correction's deadline is three times
+        // blown before its first tile and the whole pass is discarded — 387 s spent to throw away.
+        // The clone copies the orbit (~7 MB there), which is nothing beside that.
+        //
+        // ⚠Only the frame size is checked, because `ss` and `glitch_on` are overridden below and
+        // the reference does not depend on them; a request for a different SIZE would be wrong.
+        let mut req = match req {
+            Some(r) if r.width == width && r.height == height => r.clone(),
+            _ => self.current_export_request_for(vp, julia),
+        };
         req.width = width;
         req.height = height;
         req.ss = 1;
@@ -2531,7 +2545,7 @@ impl FractadyneApp {
         {
             return None;
         }
-        let ci = self.render_corrected_iter(device, queue, vp, julia, width, height, 64, deadline)?;
+        let ci = self.render_corrected_iter(device, queue, vp, julia, width, height, 64, req, deadline)?;
         // ⚠The size guard is load-bearing: a request built for a different frame size would colour
         // the merged buffer against the wrong dimensions. Both real callers pass their own
         // `req.width`/`req.height` as `width`/`height`, so it holds; anything else rebuilds.
