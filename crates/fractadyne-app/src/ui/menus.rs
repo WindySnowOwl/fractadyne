@@ -1099,19 +1099,11 @@ impl FractadyneApp {
                 //
                 // Right-aligned into a fixed slot: monospace, so equal char counts are equal
                 // pixels by construction (`zoom_slot_width` is pinned by a test).
-                let zw = crate::zoom_slot_width();
-                if self.dual {
-                    mono(ui, format!(
-                        "zoom  M {:>zw$}×   J {:>zw$}×",
-                        fmt_zoom_log2(self.viewport.log2_magnification()),
-                        fmt_zoom_log2(self.julia_viewport.log2_magnification()),
-                    ));
-                } else {
-                    mono(ui, format!(
-                        "zoom {:>zw$}×",
-                        fmt_zoom_log2(self.viewport.log2_magnification())
-                    ));
-                }
+                mono(ui, crate::zoom_readout(
+                    self.dual,
+                    self.viewport.log2_magnification(),
+                    self.julia_viewport.log2_magnification(),
+                ));
                 ui.separator();
                 // Show the count actually rendered last frame (coarse while moving, full when
                 // settled) — matches the Performance panel's "eff iter".
@@ -1126,11 +1118,7 @@ impl FractadyneApp {
                     want_iter.min(zoom_iter_cap(self.viewport.log2_magnification()).max(256))
                 };
                 // Widest is `MAX_ITER_LIMIT` grouped — see the reservation note on `zoom` above.
-                mono(ui, format!(
-                    "iter {:>w$}",
-                    commas(&eff_iter.to_string()),
-                    w = crate::iter_slot_width()
-                ));
+                mono(ui, crate::iter_readout(eff_iter));
                 // Rendering-limit diagnostics: when a cap is genuinely binding, say so where the
                 // user is already looking, instead of leaving a black/flat view unexplained (the
                 // Misiurewicz-spar reports arrived as mystery screenshots precisely because the

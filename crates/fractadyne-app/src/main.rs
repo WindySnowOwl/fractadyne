@@ -2094,6 +2094,26 @@ pub(crate) fn zoom_slot_width() -> usize {
     21
 }
 
+/// The status bar's zoom readout, ASSEMBLED HERE so its width invariant is testable: for a given
+/// shape (single/dual) the string must be the same length for EVERY magnification, or the bar
+/// wraps when the value changes and the beta.149 reflow loop returns (a panel resize reads as an
+/// interaction → re-render → counters move → width changes again — the 2026-08-25 black-pane
+/// report). `status_readouts_never_change_width` sweeps the whole supported range against it.
+pub(crate) fn zoom_readout(dual: bool, m_log2: f64, j_log2: f64) -> String {
+    let zw = zoom_slot_width();
+    if dual {
+        format!("zoom  M {:>zw$}×   J {:>zw$}×", fmt_zoom_log2(m_log2), fmt_zoom_log2(j_log2))
+    } else {
+        format!("zoom {:>zw$}×", fmt_zoom_log2(m_log2))
+    }
+}
+
+/// The status bar's iteration readout — same width contract as [`zoom_readout`], and the field
+/// the beta.149 report actually wrapped on (`iter 1,395,703` alone on a second line).
+pub(crate) fn iter_readout(eff_iter: u32) -> String {
+    format!("iter {:>w$}", commas(&eff_iter.to_string()), w = iter_slot_width())
+}
+
 /// Character slot for the status bar's grouped iteration count — `MAX_ITER_LIMIT` is the widest
 /// value it can ever show. Same reflow reasoning as [`zoom_slot_width`].
 pub(crate) fn iter_slot_width() -> usize {
@@ -2102,7 +2122,48 @@ pub(crate) fn iter_slot_width() -> usize {
 
 #[cfg(test)]
 mod status_bar_slots {
-    use super::{commas, fmt_zoom_log2, iter_slot_width, zoom_slot_width, MAX_ITER_LIMIT};
+    use super::{
+        commas, fmt_zoom_log2, iter_readout, iter_slot_width, zoom_readout, zoom_slot_width,
+        MAX_ITER_LIMIT,
+    };
+
+    /// ⭐⭐**THE REGRESSION NET THE beta.149 REFLOW LOOP NEVER HAD.** The uitest height check passed
+    /// 26/26 on BOTH the broken and the fixed build, because it held the window width fixed and
+    /// never varied the ITERATION COUNT — the input that actually moves. This closes that gap at
+    /// the level where the invariant lives: the bar is monospace, so "never reflows as values
+    /// change" is exactly "the assembled readout has ONE length per shape, for every value it can
+    /// show". Deterministic on any machine — a pixel-level sweep would instead inherit each
+    /// font/DPI's own wrap point, which is how a gate starts crying wolf under load.
+    ///
+    /// Catches both regressions this entry is about: dropping the slot padding (the original bug)
+    /// and a future conditional element appended to either readout ("any conditional status-bar
+    /// element is a reflow bug").
+    #[test]
+    fn status_readouts_never_change_width() {
+        // Every decade of iteration count up to the panel ceiling, plus the report's own value.
+        let mut iters: Vec<u32> = (0..8).map(|d| 10u32.pow(d)).collect();
+        iters.extend([1_395_703, MAX_ITER_LIMIT, MAX_ITER_LIMIT - 1, 64]);
+        let w0 = iter_readout(1).chars().count();
+        for &it in &iters {
+            let w = iter_readout(it).chars().count();
+            assert_eq!(
+                w, w0,
+                "iter readout width moved ({w0} → {w} chars at iter {it}) — the bar can wrap when \
+                 the count changes, which restarts the render loop the count came from"
+            );
+        }
+        // The whole supported magnification range, densely across the 1020-octave format switch
+        // (decimal → scientific) — the same sweep discipline `zoom_slot_fits_every_magnification`
+        // uses, applied to the ASSEMBLED readout in both shapes.
+        let mut zooms: Vec<f64> = (0..=720).map(|i| i as f64 * 100.0).collect();
+        zooms.extend((900..=1100).map(|i| i as f64));
+        let single0 = zoom_readout(false, 0.0, 0.0).chars().count();
+        let dual0 = zoom_readout(true, 0.0, 0.0).chars().count();
+        for &z in &zooms {
+            assert_eq!(zoom_readout(false, z, 0.0).chars().count(), single0, "single, log2 {z}");
+            assert_eq!(zoom_readout(true, z, z / 2.0).chars().count(), dual0, "dual, log2 {z}");
+        }
+    }
 
     #[test]
     fn zoom_slot_fits_every_magnification() {
