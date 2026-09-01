@@ -1039,6 +1039,51 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**Do not simply raise the budget.** 120 s is a responsiveness contract for an interactive
   export; the problem is that the expensive half is outside the thing measuring it.
 
+- [ ] 🟠**WHY IS FRAKTALER-3 ~8× FASTER THAN US AT e4000? (user, 2026-08-31)** Same location, same
+  centre, same iteration/reference/perturb caps, 400×250:
+
+  | | wall | notes |
+  |---|---|---|
+  | Fraktaler-3 3.1 | **60.3 s** | `subframes = 1` |
+  | us (astro-float) | **526 s** | `--ss 1`, one reference build |
+  | us (rug/MPFR) | **490 s** | 1.07× — see the backend item below |
+
+  ⭐**It is not the GPU and not supersampling**: `gpu_iterate` was **0.58 s**. It is ~100% the
+  reference build. Measured split (`FRACTADYNE_TRACE=ref`, crumb-to-trace timestamps):
+
+  | depth | selection (`best_reference`) | orbit + SA + BLA | total |
+  |---|---|---|---|
+  | e500, 1,724-bit | 1.61 s (**70%**) | 0.68 s (30%) | 2.3 s |
+  | e4000, 13,353-bit | 113.7 s (**28%**) | **291.4 s (72%)** | 405 s |
+
+  ⚠⚠**The ratio INVERTS with depth, so `DIAGNOSTICS.md`'s "the ~99% remainder is candidate scoring"
+  is a shallow-view fact and must not be carried to e4000.** At the hero, selection dominates; at
+  e4000 it is barely a quarter and the work AFTER selection is the target.
+
+  ⭐**Leads, in the order the evidence supports them:**
+
+  1. **Split the 291 s.** `finish_reference` already computes `series_ms` and `bla_ms` for the
+     `--profile` table, so `--profile --regions` at this location should separate orbit / series
+     approximation / BLA without new instrumentation. ⚠SA is suspected big — `recompute_worker_staged`'s
+     own comment says its bignum coefficient pass "costs seconds at extreme depth (≈ as much as the
+     whole reference)". Do this first; everything else is guesswork until it is done.
+
+  2. **Selection scores 101 candidates** (1 + 4 scales × 5×5, `survivors=101` in the trace), each
+     walked to `REF_SCORE_SCAN = 4096` iterations at the FULL working precision — 13,353 bits here.
+     That is ~414k bignum steps against the winning orbit's 443k, i.e. a whole extra orbit's work
+     before the orbit starts. Does F3 search for a reference at all, or just use the view centre?
+     If the latter, that alone is a ~1.4× we could take by scoring at reduced precision.
+
+  3. ⭐⭐**`--bignum` does not reach the hot path.** `orbit_length_bf` (what selection walks) calls
+     `step_bf`, hardcoded to `<BigFloat as RefBackend>`; only `reference_orbit_in` honours the
+     `BackendChoice`. So MPFR accelerates one part of one phase — which is why rug measured 1.07×
+     rather than the documented 2.5–7×. Routing selection (and SA/BLA if they are also hardcoded)
+     through the backend would let the MPFR build actually pay.
+
+  ⚠**Do not treat this as one number.** e500 and e4000 have opposite profiles; a fix aimed at the
+  shallow one will not touch the deep one. ⛔And per the 4K table, "fractadyne owns deep and extreme"
+  is already known-false — F3 owning the extreme end is consistent with what we measured before.
+
 - [ ] 🟠**THE rug/MPFR BACKEND IS NOT A DROP-IN AT EXTREME DEPTH — NON-DETERMINISTIC, AND NOT
   BYTE-IDENTICAL TO astro-float (2026-08-31).** CHANGELOG 0.2.40 states the two engines "produce
   **byte-identical** results, verified across every fractal formula at six precisions and again at
