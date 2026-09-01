@@ -601,7 +601,10 @@ pub fn series_skip(
     }
     const EPS_LOG2: f64 = -16.0; // cubic term ≤ 2⁻¹⁶ of linear ⇒ ample accuracy
     const MIN_SKIP: u32 = 8; // below this the bookkeeping isn't worth it
-    let limit = max_iter.min(orbit_len.saturating_sub(2));
+    // Cost-bounded: see SA_COST_BUDGET. At blessed depths the budget exceeds the natural walk and
+    // this line is a no-op; at extreme depth it is the difference between a 258 s and a ~30 s
+    // build for the same frame.
+    let limit = max_iter.min(orbit_len.saturating_sub(2)).min(sa_step_budget(p));
     // Degree d of z^d + c, and the binomial weights that appear in the order-3 recurrence.
     let deg: u32 = match formula {
         formula::MULTIBROT3 => 3,
@@ -988,6 +991,34 @@ fn orbit_length_bf(
 /// is a candidate worth a deeper look; keeps the 5×5 bignum grid scan cheap). The survivors are then
 /// deep-ranked to the full render length — see [`best_reference`].
 const REF_SCORE_SCAN: u32 = 4096;
+
+/// Cost ceiling for the series-approximation coefficient walk, in **steps × bits²** — the walk's
+/// actual cost unit, since each SA step is ~20 full-precision bignum multiplies and a bignum
+/// multiply scales with precision².
+///
+/// ⭐⭐**WHY A BUDGET EXISTS (measured at 2.37e4000×, 13,353 bits, 2026-09-01)**: the SA walk ran
+/// 439,915 steps and cost **258.2 s of a 405 s reference build — 64% of the whole build** (orbit
+/// 32.8 s, candidate scoring 113.7 s, BLA 0.4 s), to compute a per-pixel iteration skip whose
+/// entire GPU saving is a fraction of a **0.58 s** iterate pass. SA's cost grows ~linearly in
+/// depth on top of precision², while its value is capped by the frame it feeds; past some depth
+/// it is a pure loss, and this is the deterministic bound that stops it.
+///
+/// ⭐**THE CONSTANT IS PLACED ABOVE EVERY BLESSED FIXTURE'S NATURAL WALK, so blessed outputs are
+/// bit-identical BY CONSTRUCTION** — where the budget does not bite, the walk is the walk it
+/// always was. The corpus's worst-case bound (walk ≤ its iteration count) is 6.99e12 (row 20,
+/// 600,008 iterations at 3,413 bits); `sa_budget_clears_every_blessed_fixture` pins every deep
+/// row against this constant, so shrinking it below a blessed fixture's need is a red test, not
+/// a silent re-bless. ⚠Where it DOES bite (past ~e1300 at corpus-scale iteration counts), the
+/// capped walk still emits a VALID skip — validity is proven per-step in the loop, so stopping
+/// early only shortens the skip, never corrupts it — but pixels drift in low bits against an
+/// uncapped render, which is why the line sits above the fixtures rather than at the knee.
+const SA_COST_BUDGET: u64 = 15_000_000_000_000;
+
+/// The SA walk length [`SA_COST_BUDGET`] buys at working precision `p`.
+fn sa_step_budget(p: usize) -> u32 {
+    let bits2 = (p as u64).saturating_mul(p as u64).max(1);
+    (SA_COST_BUDGET / bits2).min(u32::MAX as u64) as u32
+}
 
 /// Deep-scan at most this many survivors in phase 2 (bounds a pathological build; the survivors are
 /// in candidate order, so these are the most central — the likeliest good references).
@@ -2792,5 +2823,56 @@ mod aux_bla_oracle {
             to_f64(&m.cx),
             to_f64(&m.cy)
         );
+    }
+}
+
+#[cfg(test)]
+mod sa_budget_tests {
+    use super::sa_step_budget;
+
+    /// ⭐Every blessed fixture must clear the budget with margin, or a corpus/golden re-bless is
+    /// being smuggled in as a "tuning" change. The rows are the corpus's deep half — (working
+    /// precision, iteration count), iteration count being a HARD upper bound on the SA walk — so
+    /// this fails before `--check` would, and names the row.
+    #[test]
+    fn sa_budget_clears_every_blessed_fixture() {
+        // (slug, prec bits, iterations) — from validation/corpus/locations.toml; prec is the
+        // octaves+64 the SA pass receives, and the assertion adds the 128-bit orbit headroom on
+        // top so the bound holds under either precision reading. Measured actual walks are far
+        // smaller (row 20: 78,231 steps where this ceiling says 600,008) — the ceiling is the
+        // contract precisely so the test never depends on how early an orbit happens to escape.
+        let rows: [(&str, usize, u32); 8] = [
+            ("15-deep-3.7e163", 607, 1_600_000),
+            ("16-deep-2.1e250", 895, 600_008),
+            ("17-deep-4.2e275", 979, 600_008),
+            ("09-deep-6.1e500", 1_727, 150_000),
+            ("18-deep-4.1e508", 1_753, 600_008),
+            ("19-deep-1.3e726", 2_476, 600_008),
+            ("20-deep-1.2e1008", 3_413, 600_008),
+            ("10-deep-4.6e1105", 3_737, 250_000),
+        ];
+        for (slug, prec, iters) in rows {
+            let budget = sa_step_budget(prec + 128);
+            assert!(
+                budget >= iters,
+                "{slug}: SA budget {budget} steps at {prec} bits is below its {iters}-iteration \
+                 ceiling — the budget would change a BLESSED render; that needs a deliberate \
+                 re-bless, not a constant edit"
+            );
+        }
+    }
+
+    /// ...and it actually bites where it exists to bite: at the measured 2.37e4000× build the
+    /// natural walk was 439,915 steps at 13,353 bits (= 258 s); the budget must land well under
+    /// that, or it is a no-op wearing a comment.
+    #[test]
+    fn sa_budget_bites_at_extreme_depth() {
+        let b = sa_step_budget(13_353);
+        assert!(
+            b < 439_915 / 2,
+            "budget at 13,353 bits is {b} steps — not meaningfully below the 439,915-step walk \
+             that cost 258 s"
+        );
+        assert!(b >= 8, "the budget must never sit below MIN_SKIP, or SA silently dies entirely");
     }
 }

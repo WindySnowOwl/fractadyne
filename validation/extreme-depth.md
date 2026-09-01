@@ -113,9 +113,15 @@ duplicates are now gone (`eaa16ec`, `f21683f` — the colour pass and the correc
 | 2 builds | 771 s | 13.1 s |
 | 1 build | **529 s** | **10.3 s** |
 
-⚠**F3 is still ~9× ahead**, and what is left is not duplicated work: it is almost entirely
-`best_reference` **candidate scoring**, which `DIAGNOSTICS.md` already names as the throughput lever
-and which `--profile` under-reports as ~410 ms of `ref ms`.
+⚠**F3's lead is now ~2.9×** (2026-09-01): the 529 s row below predates the SA cost budget
+(`SA_COST_BUDGET`, fractadyne-core), which cut the series-approximation walk 258.2 s → 48.2 s at
+this location — same command, **333 s**, corpus 38/38 byte-identical, the spiral unchanged. ⚠A
+re-render of this location now differs from the committed PNGs in low bits (the skip moved
+439,915 → 84,126); the committed pair documents the 2026-08-31 comparison and stays. What remains
+of the gap is the reference PICK (113.7 s — deep survivor scoring), filed in TODO.md with the
+redesign options. The old note blamed candidate scoring for "~99%"; that is true only at shallow
+depth — at e4000 the split was pick 28% / orbit 8% / **SA 64%** / BLA 0.1%, which is why the SA
+budget was the first fix.
 
 ⚠**Supersampling was not matched in the original run** (ss=2 vs F3's 1); the 771 s and 529 s rows
 are ss=1. It changes nothing either way — all the pixel work together was 0.58 s of 831 s. This is
