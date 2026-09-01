@@ -3606,6 +3606,9 @@ struct FractadyneApp {
     /// bignum recompute off the render thread: the frame keeps using the cached reference until the
     /// worker's result arrives (see `build_params`).
     recompute_rx: [Option<std::sync::mpsc::Receiver<crate::render::RecomputeResult>>; 2],
+    /// A progressive cold start's coarse preview, parked between arrival and its usefulness probe
+    /// (`probe_pending_coarse`) — never installed sight-unseen; see `RecomputeResult::coarse_stage`.
+    pending_coarse: [Option<crate::render::RecomputeResult>; 2],
     /// Script-playback reference LOOKAHEAD queue (view 0): a tour knows its future camera path, so
     /// while the current reference serves the view, workers build the ones the dive is ABOUT to
     /// need (slots spaced ~2 octaves apart along the script). Finished results are held until the
@@ -4333,6 +4336,7 @@ impl FractadyneApp {
             update_manual: false,
             update_prompt_open: false,
             ref_cache: [RefCache::default(), RefCache::default()],
+            pending_coarse: [None, None],
             last_saved_ref_id: None,
             ref_save_pending: None,
             recompute_rx: [None, None],
@@ -4790,6 +4794,8 @@ impl FractadyneApp {
         // Drop any in-flight recompute — its result is for the old fractal/mode and must not
         // install (would render the wrong formula until the next recompute).
         self.recompute_rx = [None, None];
+        // ...and a parked coarse preview is a result from that same dropped pipeline.
+        self.pending_coarse = [None, None];
         // Same for the playback lookahead: a prefetched reference for the old fractal/params
         // must never install after a change.
         self.ref_prefetch.clear();
@@ -7749,9 +7755,14 @@ impl eframe::App for FractadyneApp {
                 let regions = match &self.profile_regions {
                     Some(path) => match profile::load_regions(std::path::Path::new(path)) {
                         Ok(r) => r,
+                        // FATAL, not a fallback. This fell back to the built-ins and exited 0,
+                        // so a regions file that failed to parse (measured: one cp1252 em-dash)
+                        // profiled eight unrelated views and reported success — the exact trap the
+                        // F3 harness taught us to check output files for. The flag is an explicit
+                        // request; honouring a different one is worse than stopping.
                         Err(e) => {
-                            eprintln!("--regions {path}: {e}; using built-in regions");
-                            profile::default_regions()
+                            eprintln!("fractadyne: --regions {path}: {e}");
+                            crate::exit(2);
                         }
                     },
                     None => profile::default_regions(),
@@ -8030,6 +8041,12 @@ impl eframe::App for FractadyneApp {
         // this frame reflects the new view; keep repainting until it finishes.
         if self.home_anim.is_some() && self.advance_home_anim(ctx) {
             self.schedule_repaint(ctx);
+        }
+
+        // A parked coarse-preview reference gets its usefulness probe here — update() owns the
+        // GPU handles the install path lacks. Before the draw, so a kept preview serves this frame.
+        if let Some((dev, q)) = &gpu {
+            self.probe_pending_coarse(dev, q);
         }
 
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame

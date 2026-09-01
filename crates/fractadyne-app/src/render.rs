@@ -230,6 +230,10 @@ pub(crate) struct CorrectedIter {
 /// A completed reference recompute (orbit + series-approximation + BLA), ready to install into a
 /// view's reference cache. Produced by [`recompute_worker`], off the render thread, so the slow
 /// deep-zoom bignum work never blocks a frame.
+///
+/// `Clone` is cheap on purpose (the orbit and BLA are `Arc`s): the coarse-preview probe clones a
+/// result to render a 56×56 verdict frame before deciding whether to install the original.
+#[derive(Clone)]
 pub(crate) struct RecomputeResult {
     orbit: std::sync::Arc<Vec<[f32; 4]>>,
     orbit_len: u32,
@@ -259,6 +263,14 @@ pub(crate) struct RecomputeResult {
     /// length so it never rebases past the short reference (which would glitch at extreme depth).
     /// False for a full or escaped orbit.
     partial: bool,
+    /// True ONLY for the throwaway first stage of a progressive cold start — the 16,384-iteration
+    /// preview `recompute_worker_staged` sends ahead of the full build. The install path parks
+    /// these for a usefulness probe instead of installing them sight-unseen: at a deep Misiurewicz
+    /// view the preview renders 100% capped, i.e. a SOLID BLACK frame replacing the reprojected
+    /// image, held for the minutes the full build takes (field report at 2.37e4000×: 283 s of
+    /// black). A coarse build that ESCAPED within the cap is complete, serves as the final result,
+    /// and carries `false` here.
+    coarse_stage: bool,
     /// Full-precision running state at the orbit's end, cached so a deeper same-point rebuild can
     /// extend it (see [`RefCache::orbit_tail`]). `None` when the orbit escaped (complete) or is empty.
     /// (The precision it was built at — depth precision + reuse HEADROOM — travels in `prec`.)
@@ -723,6 +735,7 @@ fn finish_reference(
         series_ms,
         bla_ms,
         partial,
+        coarse_stage: false,
         orbit_tail,
         spawn_orbit_id: inp.spawn_orbit_id,
     }
@@ -837,6 +850,9 @@ fn recompute_worker_staged(
             let _ = tx.send(coarse); // escaped within the cap → already the complete reference
             return;
         }
+        // Past the completeness check, so the flag never marks a coarse build that is actually
+        // the final answer — only the truncated preview the receiver may decline to show.
+        coarse.coarse_stage = true;
         if tx.send(coarse).is_err() {
             return; // receiver dropped (view/formula changed) → abandon the full stage
         }
@@ -844,6 +860,106 @@ fn recompute_worker_staged(
         let _ = tx.send(full);
     } else {
         let _ = tx.send(recompute_worker(inp));
+    }
+}
+
+/// Verdict on a coarse-preview probe frame: `(escaped_fraction, worth_showing)`.
+///
+/// `px` is `render_iter` output — `r < 0` = did not escape (interior OR capped; at the coarse
+/// cap the two are indistinguishable and equally invisible). A frame where ~nothing escapes is a
+/// single flat colour, and a flat colour must not replace the reprojected image the user still
+/// has. ⚠An unreadable probe fails OPEN (worth showing): the gate exists to remove a black frame,
+/// and it must never be able to remove a good one on a probe hiccup.
+pub(crate) fn coarse_preview_has_content(px: &[f32], w: u32, h: u32) -> (f64, bool) {
+    let n = (w as usize) * (h as usize);
+    if n == 0 || px.len() < n * 4 {
+        return (0.0, true);
+    }
+    let escaped = (0..n).filter(|i| px[i * 4] >= 0.0).count();
+    let frac = escaped as f64 / n as f64;
+    (frac, frac >= crate::COARSE_PREVIEW_MIN_ESCAPED)
+}
+
+impl FractadyneApp {
+    /// Probe a parked coarse-preview reference (56×56, at the preview's own iteration cap) and
+    /// install it only when the frame it would produce shows something. Runs in `update()`, which
+    /// owns the GPU handles the install path lacks — the autopilot steering probe set the pattern.
+    ///
+    /// ⚠**Every uncertain path fails OPEN** (install unprobed = the old behaviour). In particular
+    /// the request builder's `Precomputed` arm falls back to a SYNCHRONOUS full-depth reference
+    /// build on any mismatch — 400 s on this thread at the reported view — so the exact-match
+    /// inputs (`precomputed_matches`) are mirrored and checked HERE, before the builder can reach
+    /// that fallback. The mirror must stay in lock-step with `build_export_request`.
+    pub(crate) fn probe_pending_coarse(
+        &mut self,
+        dev: &eframe::wgpu::Device,
+        q: &eframe::wgpu::Queue,
+    ) {
+        for vi in 0..2 {
+            let Some(mut res) = self.pending_coarse[vi].take() else { continue };
+            // A probed result re-enters `install_recompute`; without this it would just re-park.
+            res.coarse_stage = false;
+            let (vp, julia) = if vi == 1 {
+                (self.julia_viewport.clone(), true)
+            } else {
+                (self.viewport.clone(), self.julia_mode)
+            };
+            // The one real precondition: the view must not have changed DEPTH mid-build, or the
+            // probe judges the wrong frame. Depth shows up as precision moving by tens-to-hundreds
+            // of bits — while ±a few bits is ordinary drift (measured at corpus 06: the precision
+            // ticked 144→145 during the ~1 s build and an exact-equality guard failed open on it).
+            // The probe itself is precision-agnostic (it clamps to the coarse orbit), so the
+            // tolerance costs nothing. The iteration ask is deliberately NOT compared — a LIVE
+            // spawn's headroomed ask (measured 208,192) never equals the export derivation
+            // (200,000), and the probe does not care.
+            if res.req_prec.abs_diff(vp.precision) > 8 {
+                if crate::diag::trace_on("ref") {
+                    crate::diag::trace(
+                        "ref",
+                        format!(
+                            "coarse probe v{vi}: view moved (prec {} vs {}) — installing unprobed",
+                            res.req_prec, vp.precision
+                        ),
+                    );
+                }
+                self.install_recompute(vi, res);
+                continue;
+            }
+            const N: u32 = 56;
+            let cap = res.orbit_len.saturating_sub(1).max(64);
+            let mut req = self.current_export_request_probe(&vp, julia, res.clone());
+            req.width = N;
+            req.height = N;
+            req.ss = 1;
+            // Iterate to the PREVIEW'S cap, exactly the budget the live frame would have (the
+            // partial clamp), and never past the short orbit.
+            req.max_iter = req.max_iter.min(cap);
+            crate::diag::set_manifest(format!(
+                "PROBE {N}x{N} ss=1 iter={} (coarse-preview gate, synchronous)",
+                req.max_iter
+            ));
+            let (frac, keep) = match fractadyne_gpu::render_iter(dev, q, &req) {
+                Ok(r) => coarse_preview_has_content(&r.pixels, N, N),
+                Err(_) => (f64::NAN, true), // unreadable probe → fail open
+            };
+            if crate::diag::trace_on("ref") {
+                crate::diag::trace(
+                    "ref",
+                    format!(
+                        "coarse probe v{vi}: {:.1}% escaped at cap {cap} → {}",
+                        frac * 100.0,
+                        if keep { "preview installed" } else {
+                            "preview SUPPRESSED (flat frame), holding reprojection for the full build"
+                        }
+                    ),
+                );
+            }
+            if keep {
+                self.install_recompute(vi, res);
+            }
+            // else: drop it. `will_reproject` stays true (no reference), the reprojected frame
+            // stays on screen, and the full stage lands through the still-open channel.
+        }
     }
 }
 
@@ -883,6 +999,13 @@ enum RefSource {
     /// request at the live viewport, and it renders what the live view would render — including
     /// the live path's truncation clamp. Falls back to `Fresh` when the cache cannot serve it.
     Live,
+    /// Use this reference UNCONDITIONALLY — no `precomputed_matches`, and above all **no `Fresh`
+    /// fallback**, which is a synchronous full-depth bignum build on the calling thread. Only for
+    /// the coarse-preview probe, which is sound with ANY reference for this view because it then
+    /// clamps its own `max_iter` to the reference's orbit length — no pixel can outrun the orbit.
+    /// The exact-match check cannot serve that caller: a LIVE spawn stamps its own headroomed ask
+    /// (measured 208,192 against the export derivation's 200,000), so equality never holds.
+    ProbeOnly(Box<RecomputeResult>),
 }
 
 /// The reference-dependent fields of an `ExportRequest`, assembled from a `RecomputeResult`.
@@ -1083,6 +1206,26 @@ impl FractadyneApp {
             }
             return;
         }
+        // ⭐A coarse preview stage is PARKED for a usefulness probe, not installed sight-unseen.
+        // Installing is what flips `will_reproject` off and replaces the reprojected old frame
+        // with whatever the preview renders — measured at 2.37e4000× (and reproduced at the e500
+        // hero): 100% of pixels capped, a solid black frame, held for the minutes the full build
+        // takes. The probe (`probe_pending_coarse`, next update, where the GPU handles live)
+        // renders 56×56 with this reference at its own cap and installs only if something escapes;
+        // a probed-and-kept result comes back through here with the flag cleared.
+        if res.coarse_stage {
+            if crate::diag::trace_on("ref") {
+                crate::diag::trace(
+                    "ref",
+                    format!("coarse stage parked for probe v{vi}: len={}", res.orbit_len),
+                );
+            }
+            self.pending_coarse[vi.min(1)] = Some(res);
+            return;
+        }
+        // Any real install supersedes a parked preview — most importantly the FULL stage of the
+        // same cold start, which must never lose to its own throwaway forerunner.
+        self.pending_coarse[vi.min(1)] = None;
         let long_partial = res.partial && res.orbit_len > crate::LIVE_REF_CAP.saturating_add(1);
         if long_partial && crate::diag::trace_on("ref") {
             crate::diag::trace(
@@ -2097,6 +2240,17 @@ impl FractadyneApp {
         )
     }
 
+    /// The coarse-preview probe's request: this exact reference, no matching, no fallback —
+    /// see [`RefSource::ProbeOnly`]. The caller MUST clamp `max_iter` to the orbit length.
+    pub(crate) fn current_export_request_probe(
+        &self,
+        vp: &Viewport,
+        julia: bool,
+        res: RecomputeResult,
+    ) -> fractadyne_gpu::ExportRequest {
+        self.build_export_request(vp, julia, RefSource::ProbeOnly(Box::new(res)))
+    }
+
     /// The shared body of the three request builders above; `src` selects where the reference comes
     /// from and changes NOTHING else.
     fn build_export_request(
@@ -2164,6 +2318,7 @@ impl FractadyneApp {
                     // Fallback is always safe.
                     let res = match src {
                         RefSource::Precomputed(r) if precomputed_matches(&r, eff_iter, precision) => *r,
+                        RefSource::ProbeOnly(r) => *r,
                         _ => {
                             let inputs = self.export_reference_inputs(vp, julia, mode, eff_iter, precision, scale.span_mantissa, delta_exp);
                             recompute_worker(inputs)
@@ -7160,5 +7315,52 @@ mod reuse_tests {
         // Zooming OUT: the ask drops below what is installed, and the floor drops with it — a
         // re-anchor on the way out must not rebuild the deepest orbit the session ever held.
         assert_eq!(live_orbit_cap(true, 400_000, 4_000_000), 400_000);
+    }
+}
+
+#[cfg(test)]
+mod coarse_preview_gate_tests {
+    use super::coarse_preview_has_content;
+
+    fn frame(n: usize, escaped: usize) -> Vec<f32> {
+        // render_iter layout: 4 floats/px, r-channel first; r < 0 = did not escape.
+        let mut px = vec![-1.0f32; n * 4];
+        for i in 0..escaped {
+            px[i * 4] = 100.0;
+        }
+        px
+    }
+
+    /// ⭐The reported frame: at a deep Misiurewicz view NOTHING escapes within the preview's
+    /// 16,384-iteration cap — solid black — and that frame must not replace the reprojected image.
+    #[test]
+    fn an_all_capped_preview_is_suppressed() {
+        let (frac, keep) = coarse_preview_has_content(&frame(3136, 0), 56, 56);
+        assert_eq!(frac, 0.0);
+        assert!(!keep, "a 100%-capped preview is a solid black frame and must not install");
+        // One stray pixel is still a flat frame for every practical purpose.
+        let (_, keep) = coarse_preview_has_content(&frame(3136, 1), 56, 56);
+        assert!(!keep);
+    }
+
+    /// The views the preview exists for (corpus 06/08 measured: the 16,384-iteration preview is
+    /// visually the finished render) escape most of the frame — those must keep installing.
+    #[test]
+    fn a_preview_with_content_still_installs() {
+        let (frac, keep) = coarse_preview_has_content(&frame(3136, 2800), 56, 56);
+        assert!(frac > 0.85);
+        assert!(keep);
+        // ...and the threshold itself is inclusive: exactly the tunable's share of escapes keeps.
+        let at = (3136.0 * crate::COARSE_PREVIEW_MIN_ESCAPED).ceil() as usize;
+        let (_, keep) = coarse_preview_has_content(&frame(3136, at), 56, 56);
+        assert!(keep, "the boundary case must keep — the gate removes only flat frames");
+    }
+
+    /// A probe the gate cannot read must FAIL OPEN: the gate exists to remove a black frame and
+    /// must never be able to remove a good one on a hiccup of its own.
+    #[test]
+    fn an_unreadable_probe_fails_open() {
+        assert!(coarse_preview_has_content(&[], 56, 56).1);
+        assert!(coarse_preview_has_content(&frame(10, 0), 56, 56).1); // short buffer
     }
 }

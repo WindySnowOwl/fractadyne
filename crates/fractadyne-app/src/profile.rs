@@ -25,7 +25,7 @@ pub struct ProfSetup {
 }
 
 /// One benchmark region: a view to render and time.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ProfRegion {
     pub name: String,
     pub fractal: FractalKind,
@@ -115,33 +115,56 @@ pub fn load_regions(path: &std::path::Path) -> Result<Vec<ProfRegion>, String> {
     if f.region.is_empty() {
         return Err("no [[region]] entries".into());
     }
-    let out = f
-        .region
-        .into_iter()
-        .take(256)
-        .map(|s| {
-            let zoom_log2 = s
-                .zoom_log2
-                .or_else(|| s.zoom.map(|z| z.max(1.0).log2()))
-                .unwrap_or(0.0)
-                .clamp(0.0, 1.0e6);
-            ProfRegion {
-                name: s.name.chars().take(48).collect(),
-                fractal: s
-                    .fractal
-                    .as_deref()
-                    .and_then(FractalKind::from_name)
-                    .unwrap_or(FractalKind::Mandelbrot),
-                cx: s.cx.chars().take(2048).collect(),
-                cy: s.cy.chars().take(2048).collect(),
-                zoom_log2,
-                iter: s.iter.unwrap_or(2_000).clamp(64, 200_000),
-                size: s.size.unwrap_or(512).clamp(16, 4_096),
-                ss: s.ss.unwrap_or(1).clamp(1, 8),
-                method: crate::ColorMethod::from_key(s.method.as_deref().unwrap_or("smooth")).to_u32(),
+    // ⚠**Out-of-range dev input is an ERROR here, never a silent adjustment.** This used to
+    // `take(2048)` the centre and `clamp(.., 200_000)` the iteration count, and both bit on the
+    // first real use: a 4,031-digit e4000 centre truncated to 2,048 digits picked a reference
+    // ~1e2000 view-widths off the view, and the profile reported `ref 0.31 ms` for a build that
+    // really costs 400 s — a wrong number formatted exactly like a right one. The whole point of a
+    // regions file is deep views; the caps must refuse, not quietly reshape the region into a
+    // different one. (Same class as the ~20 silent CLI defaults closed in 01add37.)
+    let mut out = Vec::new();
+    for s in f.region.into_iter().take(256) {
+        let zoom_log2 = s
+            .zoom_log2
+            .or_else(|| s.zoom.map(|z| z.max(1.0).log2()))
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0e6);
+        for (field, v) in [("cx", &s.cx), ("cy", &s.cy)] {
+            if v.len() > 100_000 {
+                return Err(format!(
+                    "region \"{}\": {field} is {} chars — not a plausible coordinate",
+                    s.name,
+                    v.len()
+                ));
             }
-        })
-        .collect();
+        }
+        let iter = s.iter.unwrap_or(2_000);
+        // The GUI's own ceiling; the old 200_000 cap could not even express the BUILT-IN
+        // deep-interior region (800_000), let alone an e4000 ask.
+        if !(64..=crate::MAX_ITER_LIMIT).contains(&iter) {
+            return Err(format!(
+                "region \"{}\": iter {} outside 64..={}",
+                s.name,
+                iter,
+                crate::MAX_ITER_LIMIT
+            ));
+        }
+        out.push(ProfRegion {
+            name: s.name.chars().take(48).collect(),
+            fractal: s
+                .fractal
+                .as_deref()
+                .and_then(FractalKind::from_name)
+                .unwrap_or(FractalKind::Mandelbrot),
+            cx: s.cx,
+            cy: s.cy,
+            zoom_log2,
+            iter,
+            size: s.size.unwrap_or(512).clamp(16, 4_096),
+            ss: s.ss.unwrap_or(1).clamp(1, 8),
+            method: crate::ColorMethod::from_key(s.method.as_deref().unwrap_or("smooth")).to_u32(),
+        });
+    }
     Ok(out)
 }
 
@@ -212,9 +235,9 @@ impl FractadyneApp {
             if self.render_cfg.use_bla { "on" } else { "off" },
         );
         println!(
-            "  {:<20} {:>5} {:>7} {:>8} {:>7} {:>8} {:>9} {:>8} {:>8} {:>9}",
-            "region", "mode", "skip", "ref ms", "bla ms", "iter ms", "render ms", "gpu-it", "gpu-col",
-            "total ms"
+            "  {:<20} {:>5} {:>7} {:>9} {:>9} {:>7} {:>8} {:>9} {:>8} {:>8} {:>9}",
+            "region", "mode", "skip", "ref ms", "series ms", "bla ms", "iter ms", "render ms",
+            "gpu-it", "gpu-col", "total ms"
         );
         println!(
             "  (iter/render = CPU wall-clock incl. submit+readback; gpu-it/gpu-col = pure-GPU pass \
@@ -270,10 +293,13 @@ impl FractadyneApp {
             let gpu_col_med = (!gpu_col.is_empty()).then(|| stat(&mut gpu_col).median);
             let fmt_opt = |v: Option<f64>| v.map_or_else(|| "n/a".to_string(), |x| format!("{x:.2}"));
 
+            // `series ms` was computed, summed into `total ms`, and never printed — so the one
+            // stage the coarse-preview comment names as "≈ as much as the whole reference" at
+            // extreme depth was invisible in the one table meant to break the build cost down.
             println!(
-                "  {:<20} {:>5} {:>7} {:>8.2} {:>7.2} {:>8.2} {:>9.2} {:>8} {:>8} {:>9.2}",
-                r.name, req.mode, req.sa_skip, setup.reference_ms, setup.bla_ms, iter_s.median,
-                render_s.median, fmt_opt(gpu_it_med), fmt_opt(gpu_col_med), total
+                "  {:<20} {:>5} {:>7} {:>9.2} {:>9.2} {:>7.2} {:>8.2} {:>9.2} {:>8} {:>8} {:>9.2}",
+                r.name, req.mode, req.sa_skip, setup.reference_ms, setup.series_ms, setup.bla_ms,
+                iter_s.median, render_s.median, fmt_opt(gpu_it_med), fmt_opt(gpu_col_med), total
             );
 
             json.push_str("    {\n");
@@ -920,5 +946,73 @@ impl FractadyneApp {
             Ok(()) => println!("frametest log → {}", out.display()),
             Err(e) => eprintln!("frametest log write failed: {e}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod region_loader_tests {
+    use super::load_regions;
+
+    fn load(body: &str) -> Result<Vec<super::ProfRegion>, String> {
+        let dir = std::env::temp_dir().join("fd-region-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Unique file per call, or parallel tests read each other's bodies.
+        let path = dir.join(format!(
+            "r-{}-{:?}.toml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, body).unwrap();
+        let r = load_regions(&path);
+        let _ = std::fs::remove_file(&path);
+        r
+    }
+
+
+    fn region(extra: &str) -> String {
+        format!(
+            "[[region]]\nname = \"t\"\ncx = \"-0.5\"\ncy = \"0.0\"\nzoom_log2 = 10.0\n{extra}"
+        )
+    }
+
+    /// ⭐The measured failure: a 4,031-digit e4000 centre was silently `take(2048)`-truncated, the
+    /// picked reference landed ~1e2000 view-widths off the view, and the profile printed
+    /// `ref 0.31 ms` for a 400-second build. Deep centres are the regions file's whole purpose —
+    /// every digit must survive the trip.
+    #[test]
+    fn a_deep_centre_round_trips_every_digit() {
+        let cx = format!("-0.{}", "123456789".repeat(500)); // 4,502 digits — past the old cap
+        let body = format!(
+            "[[region]]\nname = \"deep\"\ncx = \"{cx}\"\ncy = \"0.0\"\nzoom_log2 = 13288.0\niter = 2008192\n"
+        );
+        let r = load(&body).expect("a deep region must load");
+        assert_eq!(r[0].cx, cx, "the centre lost digits on the way in");
+        // ...and the iteration ask survives too: the old clamp(64, 200_000) silently rewrote
+        // 2,008,192 — while the BUILT-IN deep-interior region uses 800,000, which a file could
+        // not even express.
+        assert_eq!(r[0].iter, 2_008_192);
+    }
+
+    /// Out of range is an error, never a silent adjustment — the caller exits on Err, so the wrong
+    /// profile is never produced at all.
+    #[test]
+    fn out_of_range_input_is_refused_not_reshaped() {
+        let e = load(&region("iter = 20000001\n")).expect_err("iter past MAX_ITER_LIMIT");
+        assert!(e.contains("iter"), "error should name the field: {e}");
+        let giant = format!("cx = \"0.{}\"", "9".repeat(100_001));
+        let body = format!("[[region]]\nname = \"g\"\n{giant}\ncy = \"0.0\"\n");
+        let e = load(&body).expect_err("an implausible centre length");
+        assert!(e.contains("cx"), "error should name the field: {e}");
+    }
+
+    /// The e21000 and e4000 region files in the repo/scratchpad load — guarding the shipped
+    /// example against schema drift (unknown keys are silently ignored by serde, so a renamed
+    /// field would otherwise turn a deep region into a shallow default without a sound).
+    #[test]
+    fn the_shipped_extreme_region_still_loads_deep() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let r = load_regions(&root.join("validation/extreme-zoom.toml")).expect("shipped file");
+        assert_eq!(r.len(), 1);
+        assert!(r[0].zoom_log2 > 60_000.0, "the e21000 region lost its depth");
     }
 }

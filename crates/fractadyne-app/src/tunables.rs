@@ -749,6 +749,13 @@ pub(crate) const PACE_LAG_HI: f64 = 2.8;
 /// `recommended_max_iter`.
 pub(crate) const MAX_ITER_LIMIT: u32 = 10_000_000;
 
+/// Minimum fraction of a 56×56 coarse-preview probe that must ESCAPE for the preview to be worth
+/// installing over the reprojected previous frame. Measured poles: a deep Misiurewicz view at the
+/// preview's 16,384-iteration cap escapes NOTHING (0.0000 — solid black), while any view the
+/// preview genuinely serves escapes most of the frame (corpus 06/08: the preview is
+/// indistinguishable from the full render). 2% sits far from both.
+pub(crate) const COARSE_PREVIEW_MIN_ESCAPED: f64 = 0.02;
+
 /// Ceiling on the adaptive iteration boost multiplier. The old ×16 was a wall the Misiurewicz
 /// spar family outgrew by ~1e82×: `zoom_iter_cap` there is ~72k, so even a maxed boost stopped at
 /// ~1.15M while the field genuinely needs several million — the probe was still measuring "capped,
