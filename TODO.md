@@ -1039,6 +1039,51 @@ Mockups: [design/mockups/](design/mockups/).
   ⚠**Do not simply raise the budget.** 120 s is a responsiveness contract for an interactive
   export; the problem is that the expensive half is outside the thing measuring it.
 
+- [ ] 🟠**THE rug/MPFR BACKEND IS NOT A DROP-IN AT EXTREME DEPTH — NON-DETERMINISTIC, AND NOT
+  BYTE-IDENTICAL TO astro-float (2026-08-31).** CHANGELOG 0.2.40 states the two engines "produce
+  **byte-identical** results, verified across every fractal formula at six precisions and again at
+  the very large arithmetic widths extreme zoom uses, so the existing reference images check both."
+  At 2.37e4000× that does not hold.
+
+  **Measured**, same binary (GNU toolchain, `--features fractadyne-core/rug`), `FRACTADYNE_BIGNUM`
+  the only variable, 400×250 `--ss 1`:
+
+  | comparison | e500 (1,724-bit) | e4000 (13,353-bit) |
+  |---|---|---|
+  | rug run 1 vs rug run 2 | byte-identical | **DIFFERS — 3/400,000 bytes** |
+  | rug vs astro-float | byte-identical | **DIFFERS — 101/400,000, maxD 250** |
+  | astro GNU vs astro MSVC | byte-identical | byte-identical |
+
+  ⭐⭐**The toolchain is exonerated** (astro is byte-identical across MSVC and GNU builds), and
+  **astro-float is deterministic** while **rug is not**. A non-deterministic renderer breaks the
+  contract the corpus `--check` and the goldens rest on.
+
+  ⭐**It is not the orbit kernel.** All 80 core tests pass with `--features rug`, the bit-identity
+  contract in `backend_rug` included. The counters say where to look instead — under rug the same
+  frame does ~3× the corrective work, and varies run to run:
+
+  | run | rebase | glitch | bla_skip |
+  |---|---|---|---|
+  | rug #1 | 5,417,672 | 1,451 | 17,563,371 |
+  | rug #2 | 5,695,184 | 1,528 | 18,576,383 |
+  | astro  | 1,952,756 | **469** | 4,719,263 |
+
+  ⇒ Suspect **reference-point selection** (`best_reference`), not the arithmetic: a different or
+  unstably-chosen reference explains 3× the glitches, the extra rebases, and a near-identical final
+  image (correction converges anyway). ⚠A wall-clock cutoff would explain the non-determinism too —
+  `GLITCH_CORRECT_BUDGET` is 120 s and this render is ~490 s. **Both are hypotheses; neither is
+  tested.** The cheap next experiment is `--no-glitch` twice under rug: if the runs become identical,
+  the deadline is the cause and the backend is exonerated.
+
+  ⚠**And the reason to care is not speed.** rug buys only **1.07×** here (490 s vs 526 s), nowhere
+  near the documented 2.5–7×, because at this depth the cost is `best_reference` candidate scoring
+  rather than the orbit the backend accelerates — the "a kernel benchmark is not an engine
+  benchmark" lesson, now with a number at 13,353 bits.
+
+  ⛔**Scope**: one location, two depths, renders (not orbits). Off by default and not shipped, so
+  no user is exposed — but the CHANGELOG claim is public and currently too broad, and it says the
+  reference images check both backends, which at extreme depth they do not.
+
 - [ ] 🟠**THE COARSE-FIRST PREVIEW IS A BLACK FRAME AT DEEP MISIUREWICZ VIEWS, AND IT HOLDS FOR
   MINUTES (user, 2026-08-31).** Reported at 2.37e4000×: *"about 100 seconds to build the reference,
   then it rendered an image for a moment, then went black and started working again."*
