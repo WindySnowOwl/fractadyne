@@ -194,29 +194,7 @@ pub(crate) fn tile_trace_on() -> bool {
 }
 
 #[cfg(test)]
-mod tile_cap {
-    use super::export_tile_cap;
-
-    #[test]
-    fn a_hot_tile_halves_the_next_and_a_cheap_one_doubles_it() {
-        assert_eq!(export_tile_cap(64, 800.0, 2048), 32);
-        assert_eq!(export_tile_cap(64, 50.0, 2048), 128);
-        assert_eq!(export_tile_cap(64, 250.0, 2048), 64, "the band between holds");
-    }
-
-    #[test]
-    fn the_floor_and_the_static_ceiling_both_hold() {
-        assert_eq!(export_tile_cap(16, 5000.0, 2048), 16, "never below 16");
-        assert_eq!(export_tile_cap(70, 10.0, 70), 70, "never above the nominal bound");
-        assert_eq!(export_tile_cap(2048, 10.0, 2048), 2048);
-    }
-
-    #[test]
-    fn garbage_walls_change_nothing()  {
-        assert_eq!(export_tile_cap(64, f64::NAN, 2048), 64);
-        assert_eq!(export_tile_cap(64, -1.0, 2048), 64);
-    }
-}
+mod tile_cap;
 
 /// Iteration-window pricing for the per-tile chunked iterate — the actuator the area cap cannot
 /// be (crash-1787292746): a dwell-bound tile is LATENCY-bound, so its wall is
@@ -280,31 +258,7 @@ impl ChunkPricer {
 }
 
 #[cfg(test)]
-mod chunk_pricer {
-    use super::*;
-
-    #[test]
-    fn openings_are_bounded_by_the_serial_floor_and_tighten_on_worse_evidence() {
-        let mut p = ChunkPricer::new();
-        assert_eq!(p.open(4_000_000), 400_000, "1M it/s floor x 400 ms target");
-        p.observe(400_000, 800.0); // twice as slow as assumed
-        assert_eq!(p.open(4_000_000), 200_000);
-        p.observe(400_000, 8.0); // a cheap chunk must never re-widen the opening
-        assert_eq!(p.open(4_000_000), 200_000);
-        assert_eq!(p.open(50_000), 50_000, "never past the ask");
-    }
-
-    #[test]
-    fn windows_halve_hot_double_cheap_and_hold_the_band() {
-        let p = ChunkPricer::new();
-        assert_eq!(p.next(400_000, 800.0, 4_000_000), 200_000);
-        assert_eq!(p.next(400_000, 20.0, 4_000_000), 800_000);
-        assert_eq!(p.next(400_000, 250.0, 4_000_000), 400_000);
-        assert_eq!(p.next(20_000, 5000.0, 4_000_000), CHUNK_MIN_ITERS, "floor holds");
-        assert_eq!(p.next(3_000_000, 20.0, 4_000_000), 4_000_000, "ask caps growth");
-        assert_eq!(p.next(400_000, f64::NAN, 4_000_000), 400_000);
-    }
-}
+mod chunk_pricer;
 
 /// Per-render plumbing for the chunked per-tile iterate: the resumable chunk pipeline, the
 /// state->G-buffer resolve pipeline, and one max-tile-sized pair of ping-pong state texture sets

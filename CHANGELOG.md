@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Internal: unit tests moved out of the files they test** — 50 inline `#[cfg(test)]`
+  modules (6,884 lines, 299 tests) now live in sibling files declared as
+  `#[cfg(test)] mod name;` at their old positions (`render/*.rs` beside `render.rs`,
+  `tests.rs` beside `main.rs`, …), so module files are mainline code end to end
+  (`main.rs` 9,446 → 8,377 lines, `render.rs` 7,376 → 6,198, core `lib.rs` 1,375 → 85).
+  No shipped code changed and the workspace suite is count-identical before and after
+  (331 passing); the layout convention is documented in `CONTRIBUTING.md` and the
+  `main.rs` crate doc.
+
 - **The Misiurewicz finder reaches deep points instead of giving up at 20,000 iterations**
   (beta.4) — "Find near view" auto-detects the Misiurewicz `(k,p)` pair by walking the critical
   orbit for a near-return, but that walk was hard-capped at 20,000 iterations. At a 2.37e4001×

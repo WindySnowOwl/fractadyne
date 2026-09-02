@@ -132,6 +132,10 @@ performed because something moved, fix the step — do not skip it.
   version in `Cargo.toml`.
 - New behaviour should come with a test or a validation step (a core unit test, a
   `--selftest` case, or a documented manual check).
+- Unit tests live next to the code, not in it: a `#[cfg(test)] mod` body goes in its own
+  sibling file, declared `mod name;` under `#[cfg(test)]` where it is used (see
+  `render/*.rs` beside `render.rs`, or `icons_coverage.rs` beside `main.rs`), so module
+  files stay mainline code. A few short tail modules in small leaf files remain inline.
 - **Don't use `\` line-continuations inside Rust string literals here.** The repo is CRLF, and a
   continuation followed by `
 ` does not strip the next line's indentation the way it does with a
