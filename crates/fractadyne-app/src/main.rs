@@ -5567,11 +5567,11 @@ impl FractadyneApp {
             );
             return;
         }
-        let mag = self.viewport.magnification();
+        let mag_l2 = self.viewport.log2_magnification();
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
         let max_period =
             self.viewport.recommended_max_iter(self.render_cfg.max_iter).clamp(1_000, 100_000);
-        match fractadyne_core::find_nucleus(&center, mag, formula, max_period) {
+        match fractadyne_core::find_nucleus(&center, mag_l2, formula, max_period) {
             Some(n) => {
                 let cur_l2 = self.viewport.log2_magnification();
                 let (cx, cy, target) = self.newton_raphson_target(n.cx, n.cy, n.period, formula);
@@ -5678,7 +5678,6 @@ impl FractadyneApp {
         if self.feature_solve.is_some() {
             return; // one at a time; the button is disabled while it runs
         }
-        let mag = self.viewport.magnification();
         let cur_l2 = self.viewport.log2_magnification();
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
         let target_l2 = parse_zoom_to_log2(&self.goto.zoom).filter(|t| t.is_finite() && *t > cur_l2);
@@ -5695,7 +5694,7 @@ impl FractadyneApp {
                     .clamp(1_000, 100_000);
                 std::thread::spawn(move || {
                     let _ = tx.send(FeatureOutcome::Nucleus(fractadyne_core::find_nucleus(
-                        &center, mag, 0, max_period,
+                        &center, cur_l2, 0, max_period,
                     )));
                 });
             }

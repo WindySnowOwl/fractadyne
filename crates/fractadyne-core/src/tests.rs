@@ -608,7 +608,7 @@ fn smooth_agrees(a: f64, b: f64, max_iter: u32) -> bool {
 fn multi_reference_resolves_glitches() {
     // The large period-3 island on the real axis: low period ⇒ few iterations, so the f32-δz
     // *cancellation* glitch (fixable by a closer reference) dominates over mere accumulation.
-    let nuc = find_nucleus(&[bf(-1.7548, 96), bf(0.0, 96)], 1.0e3, 0, 100)
+    let nuc = find_nucleus(&[bf(-1.7548, 96), bf(0.0, 96)], 1.0e3f64.log2(), 0, 100)
         .expect("expected the period-3 minibrot");
     let p = 96;
     let (cx, cy) = (nuc.cx.clone(), nuc.cy.clone());
@@ -690,7 +690,7 @@ fn perturbation_matches_direct() {
 // report period 2 and Newton-snap to (-1, 0).
 #[test]
 fn find_nucleus_period2_disk() {
-    let n = find_nucleus(&[bf(-1.01, 80), bf(0.012, 80)], 50.0, 0, 2000).unwrap();
+    let n = find_nucleus(&[bf(-1.01, 80), bf(0.012, 80)], 50.0f64.log2(), 0, 2000).unwrap();
     assert_eq!(n.period, 2);
     approx(to_f64(&n.cx), -1.0);
     approx(to_f64(&n.cy), 0.0);
@@ -699,7 +699,7 @@ fn find_nucleus_period2_disk() {
 // The period-3 bulb's nucleus is c ≈ -0.122561 + 0.744862 i.
 #[test]
 fn find_nucleus_period3_bulb() {
-    let n = find_nucleus(&[bf(-0.12, 80), bf(0.74, 80)], 80.0, 0, 4000).unwrap();
+    let n = find_nucleus(&[bf(-0.12, 80), bf(0.74, 80)], 80.0f64.log2(), 0, 4000).unwrap();
     assert_eq!(n.period, 3);
     assert!((to_f64(&n.cx) - (-0.122561)).abs() < 1e-5, "cx={}", to_f64(&n.cx));
     assert!((to_f64(&n.cy) - 0.744862).abs() < 1e-5, "cy={}", to_f64(&n.cy));
@@ -772,7 +772,7 @@ fn known_nuclei_table() {
     for &(period, cx, cy) in table {
         // Start slightly off the exact nucleus so Newton has to converge to it.
         let start = [bf(cx + 1.0e-3, 96), bf(cy + 1.0e-3, 96)];
-        let n = find_nucleus(&start, 200.0, 0, 8000)
+        let n = find_nucleus(&start, 200.0f64.log2(), 0, 8000)
             .unwrap_or_else(|| panic!("no nucleus found near period-{period} ({cx},{cy})"));
         assert_eq!(n.period, period, "wrong period for ({cx},{cy})");
         assert!((to_f64(&n.cx) - cx).abs() < 1e-9, "cx off: {} vs {cx}", to_f64(&n.cx));
@@ -1079,7 +1079,7 @@ fn nucleus_size_known_components() {
 fn nucleus_size_deep_and_precision_stable() {
     // A period-3 minibrot found from a modest view — small enough to check by hand.
     let p = 256;
-    let n = find_nucleus(&[bf(-1.7548, p), bf(0.0, p)], 1.0e3, 0, 100)
+    let n = find_nucleus(&[bf(-1.7548, p), bf(0.0, p)], 1.0e3f64.log2(), 0, 100)
         .expect("period-3 minibrot");
     assert_eq!(n.period, 3);
     let lo = nucleus_size(&n.cx, &n.cy, n.period, 0, 128).unwrap();
@@ -1136,7 +1136,7 @@ fn misiurewicz_multiplier_exact_cases() {
 #[test]
 fn refine_nucleus_beats_atom_size() {
     let seed_p = 256;
-    let n = find_nucleus(&[bf(-1.7548, seed_p), bf(0.0, seed_p)], 1.0e3, 0, 100)
+    let n = find_nucleus(&[bf(-1.7548, seed_p), bf(0.0, seed_p)], 1.0e3f64.log2(), 0, 100)
         .expect("period-3 minibrot");
     let size = nucleus_size(&n.cx, &n.cy, n.period, 0, seed_p).unwrap().log2_size;
 

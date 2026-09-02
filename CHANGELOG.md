@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **"Find minibrot" works past 1e305x** (beta.6) — the nucleus finder took a linear `f64`
+  magnification, so the Go-to dialog's minibrot half stopped where the Misiurewicz half now
+  reaches e60000: the view span underflowed, the runaway rejection silently disabled
+  (0.0 > 0.0), and the period verification's tolerance hit exactly 0.0 - every genuine
+  nucleus then failed to verify and the finder answered "none" past ~1e305x. It now takes
+  the magnification as a log2 with every internal comparison in log space (the same
+  conversion the Misiurewicz solver got), so depth is bounded by the iteration budget, not
+  the number format. `--find-minibrot` drops its "past the f64 magnification range"
+  refusal. Pinned by a new outcome test: a solve at ~1e2000 must be accurate at that scale
+  (Newton-step residual < 2^-6000, vs the shallow answer's ~2^-40s) with the fundamental
+  period intact.
+
 - **The Misiurewicz finder reports the canonical pre-period** (beta.5) — auto-detect filled
   the dialog with an inflated k: once an orbit is pre-periodic at k it is pre-periodic at
   every k' > k, and the scale-aware ranking rightly prefers the index whose derivative

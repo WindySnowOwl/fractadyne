@@ -1895,14 +1895,20 @@ fn detect_period(cx: &BigFloat, cy: &BigFloat, formula: u32, max: u32, p: usize)
     let mut zx = bf(0.0, p);
     let mut zy = bf(0.0, p);
     let mut best_p = 0u32;
-    let mut best_m = f64::INFINITY;
+    let mut best_l2 = f64::INFINITY;
     for n in 1..=max.max(1) {
         let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
         zx = nx;
         zy = ny;
+        // The argmin is tracked in log2 so a deep seed's closest approach (|Z| far below
+        // f64's floor) still orders correctly. While the f64 image is non-zero the f64 log
+        // is used - bit-for-bit the old ordering - and only an underflowed approach falls
+        // back to the octave-granular exponent read, where the surviving candidates are
+        // thousands of octaves apart and one octave of slop is nothing.
         let m = mag2_bf(&zx, &zy);
-        if m < best_m {
-            best_m = m;
+        let l2 = if m > 0.0 { 0.5 * m.log2() } else { log2_abs_c(&zx, &zy) };
+        if l2 < best_l2 {
+            best_l2 = l2;
             best_p = n;
         }
         if m > 1.0e12 {
@@ -1913,39 +1919,62 @@ fn detect_period(cx: &BigFloat, cy: &BigFloat, formula: u32, max: u32, p: usize)
 }
 
 /// True (smallest) period at a converged nucleus `c`: the first `n` for which
-/// `|Z_n|² < tol²` (the critical orbit returns to 0). `None` if the orbit never returns
-/// within `p_est` steps — i.e. `c` is not actually a nucleus (Newton didn't converge).
-fn reduce_period(cx: &BigFloat, cy: &BigFloat, formula: u32, p_est: u32, tol2: f64, p: usize) -> Option<u32> {
+/// `log2|Z_n| < tol_log2` (the critical orbit returns to 0). `None` if the orbit never
+/// returns within `p_est` steps — i.e. `c` is not actually a nucleus (Newton didn't
+/// converge). ⚠The tolerance is a LOG: the old linear `tol2` underflowed to `0.0` past
+/// ~1e305×, so past the ceiling this returned `None` for every genuine nucleus — the
+/// silent half of the finder's f64 wall. (A perfect nucleus's exact-zero return is safe:
+/// `log2_abs_c` reads zero as −∞.)
+fn reduce_period(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    p_est: u32,
+    tol_log2: f64,
+    p: usize,
+) -> Option<u32> {
     let mut zx = bf(0.0, p);
     let mut zy = bf(0.0, p);
     for n in 1..=p_est {
         let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
         zx = nx;
         zy = ny;
-        if mag2_bf(&zx, &zy) < tol2 {
+        if log2_abs_c(&zx, &zy) < tol_log2 {
             return Some(n);
         }
     }
     None
 }
 
-/// Find the minibrot nucleus near `center` at the given magnification, for the
+/// Find the minibrot nucleus near `center` at magnification `2^log2_mag`, for the
 /// holomorphic families. Detects the period (atom domain), then Newton-refines `c` so
 /// the critical orbit closes exactly: solve `Z_period(c) = 0` via
 /// `c ← c − Z_period / (dZ_period/dc)` in arbitrary precision. Returns `None` if the
 /// formula is unsupported, no period is found, or Newton diverges away from the view.
+///
+/// ⚠`log2_mag`, not a linear magnification: the linear form saturates to `+∞` past
+/// ~1e308× (the beta.125 saturation class), and the internal span/tolerance/distance
+/// tests all underflowed with it — the finder simply declined past ~1e305× while the
+/// Misiurewicz half reached e60000. Every comparison is in log2 now (`log2_abs_c` reads
+/// exponents, so nothing underflows) — the same conversion `find_misiurewicz` got.
+///
+/// The seed must be VIEW-accurate — within ~8 view-widths of the nucleus, which a user
+/// looking at one always is; the runaway rejection enforces it. To deepen an
+/// already-known nucleus use [`refine_nucleus`] (exact seed + target precision): a solve
+/// has TWO magnifications, and this function's one parameter is the view's.
 pub fn find_nucleus(
     center: &[BigFloat; 2],
-    mag: f64,
+    log2_mag: f64,
     formula: u32,
     max_period: u32,
 ) -> Option<Nucleus> {
-    let p = precision_for_magnification(mag);
+    let p = precision_for_octaves(log2_mag.max(0.0).ceil() as u64);
     let k = formula_power(formula)?;
     let p_est = detect_period(&center[0], &center[1], formula, max_period, p)?;
 
-    let span = 3.0 / mag.max(1.0); // approx view width in complex units
-    let tol = span * 1.0e-9;
+    // Approx view width in complex units, as a log2 (`span = 3 / mag`).
+    let log2_span = 3.0f64.log2() - log2_mag.max(0.0);
+    let tol_log2 = log2_span + 1.0e-9f64.log2();
     let one = bf(1.0, p);
     let kf = bf(k as f64, p);
 
@@ -1972,7 +2001,7 @@ pub fn find_nucleus(
         }
         // Newton step: c -= Z / D = Z · conj(D) / |D|²
         let denom = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
-        if to_f64(&denom) == 0.0 {
+        if denom.is_zero() || denom.is_nan() || denom.is_inf() {
             return None;
         }
         let (numx, numy) = cmul_bf(&zx, &zy, &dx, &neg_bf(&dy, p), p);
@@ -1980,22 +2009,22 @@ pub fn find_nucleus(
         let stepy = numy.div(&denom, p, RM);
         cx = cx.sub(&stepx, p, RM);
         cy = cy.sub(&stepy, p, RM);
-        let stepm = (to_f64(&stepx).powi(2) + to_f64(&stepy).powi(2)).sqrt();
-        if stepm < tol {
+        if log2_abs_c(&stepx, &stepy) < tol_log2 {
             break;
         }
     }
 
     // Reject runaway Newton: the nucleus should sit within a few view-widths of where
-    // we started (otherwise it converged to some unrelated far component).
-    let dx = sub_f64(&cx, &center[0], p);
-    let dy = sub_f64(&cy, &center[1], p);
-    if (dx * dx + dy * dy).sqrt() > span * 8.0 {
+    // we started (otherwise it converged to some unrelated far component). In log2 —
+    // the old linear test underflowed BOTH sides to 0.0 at depth, which silently
+    // DISABLED the rejection rather than tightening it.
+    let ddx = cx.sub(&center[0], p, RM);
+    let ddy = cy.sub(&center[1], p, RM);
+    if log2_abs_c(&ddx, &ddy) > log2_span + 3.0 {
         return None;
     }
     // Verify Newton landed on a real nucleus and recover the true (smallest) period.
-    let tol2 = (span * 1.0e-3).powi(2);
-    let period = reduce_period(&cx, &cy, formula, period, tol2, p)?;
+    let period = reduce_period(&cx, &cy, formula, period, log2_span + 1.0e-3f64.log2(), p)?;
     Some(Nucleus { period, cx, cy })
 }
 

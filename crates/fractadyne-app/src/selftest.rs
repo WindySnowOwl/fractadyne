@@ -2440,7 +2440,7 @@ impl FractadyneApp {
                         else {
                             continue;
                         };
-                        match fractadyne_core::find_nucleus(&[sx, sy], e.zoom, formula, 100_000) {
+                        match fractadyne_core::find_nucleus(&[sx, sy], e.zoom.log2(), formula, 100_000) {
                             Some(n) => {
                                 let mut pass = n.period == e.period;
                                 let mut detail = format!("period {} (want {})", n.period, e.period);
@@ -3100,7 +3100,7 @@ impl FractadyneApp {
                 fractadyne_core::parse_bf(SX).unwrap(),
                 fractadyne_core::parse_bf(SY).unwrap(),
             ];
-            match fractadyne_core::find_nucleus(&seed, 1.0e6, 0, 100_000) {
+            match fractadyne_core::find_nucleus(&seed, 1.0e6f64.log2(), 0, 100_000) {
                 Some(n) => {
                     let size = fractadyne_core::nucleus_size(&n.cx, &n.cy, n.period, 0, 128)
                         .map(|a| a.log2_size);
