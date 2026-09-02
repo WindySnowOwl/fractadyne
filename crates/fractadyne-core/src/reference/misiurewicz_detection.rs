@@ -43,3 +43,25 @@ fn a_deep_spiral_centre_resolves_to_its_misiurewicz_pair() {
 fn points_without_a_misiurewicz_pair_are_declined() {
     assert_eq!(detect("2.0", "2.0", 128, 64, 32), None, "escapes immediately");
 }
+
+/// ⭐The reported pre-period must be the CANONICAL (minimal) one. Once an orbit is pre-periodic
+/// at k it is pre-periodic at every k′ > k, all of which Newton-solve to the same point — so
+/// before the reduction the k shown to the user was an accident of how many candidates the
+/// pre-filter admitted (field measurement at a 283,353× spiral: (95,1) reported for a point
+/// whose canonical pre-period is 16, and the reported k rose 33 → 95 → 159 as the pre-filter
+/// threshold was loosened 4× → 16× → 64×).
+///
+/// Seed: a hair inside the antenna tip (−2 + 1e−20 — canonically (2, 1)) with a ~1e−18 view
+/// span. The scale-aware ranking rightly prefers a LATE index of the fixed-point tail (the
+/// cycle derivative that matches the view span grows along the tail — that is how it finds the
+/// feature organizing the view), so without the reduction it reports the entry ~30 steps late.
+/// The reduction must walk it back to the true entry, holding the period fixed.
+#[test]
+fn the_reported_preperiod_is_the_canonical_minimal_one() {
+    let p = 192;
+    let cx = crate::parse_bf_prec("-1.99999999999999999999", p).expect("centre parses");
+    let cy = crate::parse_bf_prec("0.0", p).expect("centre parses");
+    let span_log2 = 1.0e-18f64.log2();
+    let got = detect_misiurewicz_at_scale(&cx, &cy, 0, 200, 32, p, Some(span_log2));
+    assert_eq!(got, Some((2, 1)), "canonical antenna-tip pair, not an inflated tail index");
+}

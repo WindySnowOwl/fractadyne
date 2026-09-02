@@ -2295,8 +2295,10 @@ pub fn detect_misiurewicz(
 /// Tracking `D` itself would overflow `f64` before 1e309× and cost a bignum multiply per step.
 /// Cost ceiling for the Misiurewicz DETECTOR's critical-orbit walk, in **steps × bits²** — the
 /// walk's cost unit (each step is one full-precision `z^k + c`, ~O(bits²)). Modelled on
-/// [`SA_COST_BUDGET`], but its OWN constant: the organizing point at a 2.37e4001× view sits at
-/// preperiod ~438,732, which `SA_COST_BUDGET` (~84k steps at 13k bits) cannot reach, while an
+/// [`SA_COST_BUDGET`], but its OWN constant: the organizing point at a 2.37e4001× view is only
+/// identified by its scale-matched near-return at index ~438,732 (its canonical pre-period is
+/// ~3,990 — the reduction below walks back to it), which `SA_COST_BUDGET` (~84k steps at 13k
+/// bits) cannot reach, while an
 /// unbounded walk would spend hours on a pathological 1e1000000× request. The orbit's own escape
 /// usually stops the walk far short of this. Budget in steps, never wall-clock (determinism).
 const DETECT_STEP_BUDGET: u64 = 100_000_000_000_000; // 1e14 ⇒ ~560k steps at p≈13,356 bits
@@ -2360,6 +2362,9 @@ pub fn detect_misiurewicz_at_scale(
     let mut best: Option<(BigFloat, usize, usize)> = None; // (sep², m, n)
     let mut best_scale = f64::INFINITY;
     let mut best_seg: Vec<(BigFloat, BigFloat)> = Vec::new();
+    // The winner's log2|D_m| — the local feature scale the pre-period reduction below judges
+    // against. Tracked alongside `best`; never consulted by the selection itself.
+    let mut best_l2d = 0.0f64;
 
     let mut acc = 0.0f64;
     let mut zx = bf(0.0, p);
@@ -2433,6 +2438,7 @@ pub fn detect_misiurewicz_at_scale(
                 if let Some(want) = want_l2d {
                     best_scale = (lm - want).abs();
                 }
+                best_l2d = lm;
                 // Snapshot z[m..=n] for harmonics — the whole segment is in the ring right now.
                 best_seg.clear();
                 for j in m..=n {
@@ -2468,8 +2474,73 @@ pub fn detect_misiurewicz_at_scale(
             break;
         }
     }
-    // `bm` indexes the orbit AFTER one step, so the preperiod is one-based.
-    Some((bm as u32 + 1, fundamental as u32))
+    // ⭐Pre-period reduction — the symmetric twin of the harmonics reduction above, and it was
+    // missing for a release: once an orbit is pre-periodic at k it is pre-periodic at every
+    // k′ > k, so `z_{k′+p} ≈ z_{k′}` holds for all of them and every pair Newton-solves to the
+    // SAME point. Which k the ranking hands back is an accident of how many candidates the
+    // pre-filter admits — measured at a 283,353× spiral: (95, 1) reported for a point whose
+    // canonical pre-period is 16, the reported k rising 33 → 95 → 159 as the threshold was
+    // loosened 4× → 16× → 64×. The harm was the NUMBER shown to the user (the dialog fills in
+    // what was detected); navigation was unaffected.
+    //
+    // ⚠NOT "take the smallest k among the candidates": at depth the closest-separation pair is
+    // routinely a different, coarser point — the reason the scale-aware ranking exists. The
+    // period is held FIXED and k walks down only while the near-return stays within the winner's
+    // own slack, exactly as the period reduction does — so this can only find an earlier entry
+    // into the winner's cycle, never a different point.
+    //
+    // ⚠The acceptance is scale-RELATIVE, not the harmonics' absolute slack. Under the
+    // scale-aware ranking the winner's separation is small relative to its OWN derivative
+    // |D_bm| — not small absolutely — so an absolute slack admits garbage at early k′ where
+    // |D| is tiny (measured: it reduced one deep view's winner to (1, 1), which does not even
+    // Newton-converge). The feature-relative separation `log2(sep) − log2|D_k|` is the very
+    // quantity the pre-filter ranks by, and along a genuinely pre-periodic tail it is
+    // k-invariant (separation and derivative grow by the same cycle multiplier per lap), so
+    // the true entry scores like the winner while everything before it scores far worse.
+    // Accept the FIRST k′ within +3 (×8 on separation) of the winner's score.
+    //
+    // The ring only holds the last `max_period` samples, so the early orbit is gone: re-walk
+    // it with a lag-`fundamental` window. Cost: ≤ bm + p extra steps — bounded by the walk
+    // already run — and it terminates at bm at the latest (the winner's own return, judged
+    // against its own score, always passes).
+    let entry = {
+        let lag = fundamental.max(1);
+        let winner_rel = 0.5 * log2_abs_bf(&bd) - best_l2d;
+        let mut ring: Vec<(BigFloat, BigFloat)> = Vec::with_capacity(lag);
+        let mut zx = bf(0.0, p);
+        let mut zy = bf(0.0, p);
+        let mut racc = 0.0f64;
+        let mut rl2: Vec<f64> = vec![0.0; lag];
+        let mut found = bm;
+        for n in 0..bm + lag {
+            let za = (crate::to_f64(&zx).powi(2) + crate::to_f64(&zy).powi(2)).sqrt();
+            if za > 0.0 {
+                racc += (2.0 * za).log2();
+            }
+            let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
+            zx = nx;
+            zy = ny;
+            if n >= lag {
+                let (ox, oy) = &ring[n % lag];
+                let dx = zx.sub(ox, p, RM);
+                let dy = zy.sub(oy, p, RM);
+                if log2_abs_c(&dx, &dy) - rl2[n % lag] < winner_rel + 3.0 {
+                    found = n - lag;
+                    break;
+                }
+            }
+            let slot = n % lag;
+            if ring.len() < lag {
+                ring.push((zx.clone(), zy.clone()));
+            } else {
+                ring[slot] = (zx.clone(), zy.clone());
+            }
+            rl2[slot] = racc.max(0.0);
+        }
+        found
+    };
+    // `entry` indexes the orbit AFTER one step, so the preperiod is one-based.
+    Some((entry as u32 + 1, fundamental as u32))
 }
 
 /// `log2|v|`, read off the exponent — to within one octave, and immune to the `f64` underflow

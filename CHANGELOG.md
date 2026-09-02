@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The Misiurewicz finder reports the canonical pre-period** (beta.5) — auto-detect filled
+  the dialog with an inflated k: once an orbit is pre-periodic at k it is pre-periodic at
+  every k' > k, and the scale-aware ranking rightly prefers the index whose derivative
+  matches the view - so a 283,353x spiral showed (95,1) for the point canonically known as
+  (16,1), the number drifting with the pre-filter threshold. The period was already reduced
+  to its fundamental; the symmetric pre-period reduction now walks k back to the first index
+  whose RELATIVE near-return (separation over local derivative - constant along a true
+  pre-periodic tail) matches the winner's own, so it can only find an earlier entry of the
+  same cycle, never a different point. Navigation was never affected (every inflated pair
+  Newton-solves to the same coordinates); the displayed number is now canonical. An
+  absolute-slack reduction was tried first and over-reduced deep views to pairs that do not
+  even converge - the gate test caught it; the relative criterion is pinned by a new
+  antenna-tip regression ((31,1) -> (2,1)). Discovery en route: the e4001 organizing point's
+  canonical pre-period is ~3,990; the "~438,732" recorded in beta.4 is its scale-matched
+  near-return index (both solve to the same point within 2^-95 view-widths).
+
 - **Internal: documentation brought current** — a staleness audit against the code fixed:
   the corpus is 38 locations to ~6.1e1105x (docs said 20 and 4.6e1105x; README even
   disagreed with itself), the self-test is ~170 checks + 18 goldens (docs said ~140/116/113
