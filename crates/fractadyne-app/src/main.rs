@@ -1279,6 +1279,39 @@ pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
     (ZOOM_ITER_BASE + o * ZOOM_ITER_PER_OCTAVE).min(u32::MAX as f64) as u32
 }
 
+/// A deep jump only warns from here down (~1e150): above it, a low explicit count is an
+/// ordinary artistic choice (fast escapes dominate), not the flat-frame trap.
+const DEEP_JUMP_WARN_FROM_OCTAVES: f64 = 500.0;
+/// The resolving line in iterations per octave, from the measured anchors ("the solver now
+/// reaches depths the renderer does not", 2026-08-30): the e500 hero resolves at 200,000
+/// (120/octave) while ~1e2000 is solid BLACK at 200,000 (30/octave) and resolves at
+/// 1,000,000 (150/octave). 100/octave sits between the anchors: everything measured black
+/// is flagged, everything measured to resolve is not.
+const DEEP_JUMP_ITER_PER_OCTAVE: f64 = 100.0;
+
+/// The iteration shortfall a deep feature jump would land with: `Some((have, typical))` when
+/// a FIXED (auto-iter OFF) count is below the resolving line for the target depth, `None`
+/// when the view will resolve. With auto-iterations ON the budget follows the jump exactly
+/// as it follows a hand zoom (`zoom_iter_cap` of the new depth × the adaptive boost), so
+/// only an explicit count can be starved — and per the beta.53 rule it is honoured
+/// verbatim, so the app WARNS rather than silently raising it. `typical` is
+/// [`zoom_iter_cap`] at the target — the count auto-iteration would run, a known-good
+/// suggestion rather than the bare minimum.
+pub(crate) fn deep_jump_iter_shortfall(
+    target_l2: f64,
+    max_iter: u32,
+    auto_iter: bool,
+) -> Option<(u32, u32)> {
+    if auto_iter || !target_l2.is_finite() || target_l2 < DEEP_JUMP_WARN_FROM_OCTAVES {
+        return None;
+    }
+    ((max_iter as f64) < target_l2 * DEEP_JUMP_ITER_PER_OCTAVE)
+        .then(|| (max_iter, zoom_iter_cap(target_l2)))
+}
+
+#[cfg(test)]
+mod deep_jump_warning;
+
 /// Anti-alias supersampling for progressive-settle stage `frame`, ramping 1→2→4→… up to `target`.
 /// A settled view refines from an instant coarse frame to full AA over a few frames, rather than
 /// blocking on one expensive full-AA frame. `frame` is capped so the shift can't overflow.
@@ -5871,19 +5904,40 @@ impl FractadyneApp {
                 self.finish_nav_jump();
                 self.goto.open = false;
                 let took = solve.started.elapsed().as_secs_f64();
+                // The flat-frame trap, said out loud at the moment it is entered: a fixed
+                // iteration count far below the destination depth's resolving line renders
+                // every pixel unescaped — a long wait for a solid-colour frame, with the
+                // coordinate perfectly correct underneath.
+                let iter_note = zoom_to
+                    .and_then(|t| {
+                        deep_jump_iter_shortfall(
+                            t,
+                            self.render_cfg.max_iter,
+                            self.render_cfg.auto_iter,
+                        )
+                    })
+                    .map(|(have, typical)| {
+                        format!(
+                            " ⚠ Iterations is fixed at {have}; this depth typically needs                              ~{typical} — raise it (or enable auto-iterations) if the view                              renders flat."
+                        )
+                    })
+                    .unwrap_or_default();
                 self.set_toast(
                     match (solve.depth_capped, zoom_to) {
                         // Landing short of what was asked, and saying so: the alternative is a
                         // centre that is wrong by tens of thousands of digits and a flat frame.
                         (Some(asked), _) => format!(
                             "Zoomed to the {label} — {}×. Solving is capped at {} octaves, so it \
-                             stopped there rather than {}×.",
+                             stopped there rather than {}×.{iter_note}",
                             fmt_zoom_field(l2),
                             MAX_SOLVE_OCTAVES as u64,
                             fmt_zoom_field(asked)
                         ),
                         (None, Some(t)) => {
-                            format!("Zoomed to the {label} — {}× ({took:.1}s)", fmt_zoom_field(t))
+                            format!(
+                                "Zoomed to the {label} — {}× ({took:.1}s){iter_note}",
+                                fmt_zoom_field(t)
+                            )
                         }
                         (None, None) => format!("Snapped to {label} center ({took:.1}s)"),
                     },

@@ -12,6 +12,17 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Deep feature jumps warn before rendering a flat frame** (beta.7) — the Go-to solver
+  reaches depths (to ~1e60000) where a fixed iteration count cannot resolve anything: at
+  ~1e2000 a 200,000-iteration view is solid black (every pixel still unescaped) while the
+  coordinate underneath is perfectly correct, which reads as a bug after a long wait. The
+  dialog now warns LIVE under the zoom field as a deep target is typed, and the jump toast
+  repeats it, naming the fixed count and the depth-typical one (the auto-iteration
+  appetite). Auto-iteration never warns - its budget follows the jump like a hand zoom.
+  The threshold is anchored to measurements (e500 resolves at 200k; e2000 is black at 200k,
+  fine at 1M) and engages only past ~1e150, so ordinary shallow settings are never nagged.
+  An explicit count is still honoured verbatim - the app warns, it does not override.
+
 - **"Find minibrot" works past 1e305x** (beta.6) — the nucleus finder took a linear `f64`
   magnification, so the Go-to dialog's minibrot half stopped where the Misiurewicz half now
   reaches e60000: the view span underflowed, the runaway rejection silently disabled

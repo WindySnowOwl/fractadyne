@@ -295,6 +295,27 @@ impl FractadyneApp {
                 let ry = ui.add(egui::TextEdit::singleline(&mut self.goto.y).desired_width(f32::INFINITY));
                 ui.label(egui::RichText::new("Zoom (magnification)").weak().small());
                 let rz = ui.add(egui::TextEdit::singleline(&mut self.goto.zoom).desired_width(220.0));
+                // Live warning for the flat-frame trap BEFORE the jump is made: the solver
+                // reaches depths the renderer's fixed iteration count cannot resolve, and a
+                // correct coordinate under a solid-colour frame reads as a bug. Auto-iteration
+                // never warns — its budget follows the jump like a hand zoom.
+                if let Some((have, typical)) = crate::parse_zoom_to_log2(&self.goto.zoom)
+                    .and_then(|t| {
+                        crate::deep_jump_iter_shortfall(
+                            t,
+                            self.render_cfg.max_iter,
+                            self.render_cfg.auto_iter,
+                        )
+                    })
+                {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "⚠ Iterations is fixed at {have}; this depth typically needs                              ~{typical}. The view will render flat until it is raised — or                              enable auto-iterations (Rendering panel), which adapts by itself."
+                        ))
+                        .small()
+                        .color(ui.visuals().warn_fg_color),
+                    );
+                }
                 // Same rule as the k/p boxes below: a message describes the inputs that produced
                 // it, so editing any of them retires it rather than leaving a stale verdict.
                 if rx.changed() || ry.changed() || rz.changed() {
