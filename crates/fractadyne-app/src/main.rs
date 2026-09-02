@@ -102,35 +102,562 @@ use std::time::Instant;
 #[global_allocator]
 static GLOBAL: alloc::ReportingAlloc = alloc::ReportingAlloc;
 
-/// The window's regions as laid out on the last frame. `None` = the region did not draw (the
-/// control panel when hidden, or anything on a frame that never reached it).
-///
-/// ⚠FOUR, not the five the checklist names: the menu bar and the toolbar share ONE wrapped
-/// `TopBottomPanel`, so on screen they are two rows a person can see and to the layout they are
-/// one rect. The human row still says five; the machine can only vouch for four.
-#[derive(Default, Clone, Copy)]
-pub(crate) struct LayoutRects {
-    /// The whole window, in the same point space as the regions — so "inside the window" is a
-    /// comparison between two recorded rects rather than a conversion between points and pixels.
-    pub(crate) window: Option<egui::Rect>,
-    pub(crate) top_bar: Option<egui::Rect>,
-    pub(crate) central: Option<egui::Rect>,
-    pub(crate) right_panel: Option<egui::Rect>,
-    pub(crate) status_bar: Option<egui::Rect>,
+// ================================================================================================
+// Entry: process launch, argv expansion, session restore, relaunch
+// ================================================================================================
+
+fn main() -> eframe::Result<()> {
+    env_logger::init();
+    // Expand `@response-file` args and `--args-file FILE` so the whole command line can live in a
+    // text file (see `expand_arg_files`). Do it once, up front, so every consumer sees the result.
+    let args = match expand_arg_files(&std::env::args().collect::<Vec<_>>()) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("fractadyne: {e}");
+            crate::exit(2);
+        }
+    };
+    // Crash/hang visibility (design/diagnostics.md D1): log file, panic hook, watchdog.
+    // Before run_headless so even the pre-GUI CLI modes get crash reports.
+    diag::init(&args);
+    // ⭐ARBITRARY-PRECISION BACKEND (`--bignum auto|astro|rug`, or FRACTADYNE_BIGNUM).
+    //
+    // Chosen here — after logging exists, before ANY mode runs — so a headless `--render`, a
+    // self-test and the GUI all iterate in the same arithmetic, and the choice lands in the log a
+    // bug report will carry.
+    //
+    // ⚠The ENV VAR is the one to use for a batch or gate run. Harnesses (`--torture` per rung, the
+    // corpus script per location) launch fractadyne as CHILD processes, so a flag on the parent
+    // never reaches them — the same reason `FRACTADYNE_NO_SOUND` exists. An explicit flag outranks
+    // the env var without unsetting it.
+    //
+    // ⚠A backend this build does not contain is FATAL, never a quiet fall back to astro-float: a
+    // silent downgrade would let a benchmark report numbers for arithmetic it never ran.
+    {
+        let flag = args
+            .iter()
+            .position(|a| a == "--bignum")
+            .and_then(|i| args.get(i + 1).map(String::as_str))
+            .or_else(|| args.iter().find_map(|a| a.strip_prefix("--bignum=")));
+        let env = std::env::var("FRACTADYNE_BIGNUM").ok();
+        if let Some(spec) = flag.map(str::to_string).or(env) {
+            match fractadyne_core::parse_backend_choice(&spec) {
+                Ok(choice) => {
+                    if let Err(e) = fractadyne_core::select_backend(choice) {
+                        eprintln!("fractadyne: {e}");
+                        crate::exit(2);
+                    }
+                    diag::log_line("start", &format!("bignum backend selected: {}", choice.name()));
+                }
+                Err(e) => {
+                    eprintln!("fractadyne: --bignum: {e}");
+                    crate::exit(2);
+                }
+            }
+        }
+    }
+    // ⭐DEBUG TUNABLE OVERRIDES (`--set NAME=VALUE`, repeatable). Applied here — after logging
+    // exists, before ANY mode runs — so a headless `--render`, a self-test and the GUI all get the
+    // same values, and so the startup line lands in the log file that a bug report will carry.
+    // A bad name or value is FATAL: a typo'd knob that silently did nothing would send a field
+    // diagnosis chasing a change that never happened.
+    {
+        let mut pairs = Vec::new();
+        let mut it = args.iter().skip(1);
+        while let Some(a) = it.next() {
+            let kv = if a == "--set" {
+                it.next().map(String::as_str)
+            } else {
+                a.strip_prefix("--set=")
+            };
+            if let Some(kv) = kv {
+                match kv.split_once('=') {
+                    Some((k, v)) => pairs.push((k.to_string(), v.to_string())),
+                    None => {
+                        eprintln!("fractadyne: --set expects NAME=VALUE (got '{kv}')");
+                        crate::exit(2);
+                    }
+                }
+            }
+        }
+        if !pairs.is_empty() {
+            if let Err(e) = tunables::apply_overrides(&pairs) {
+                eprintln!("fractadyne: {e}");
+                crate::exit(2);
+            }
+            // Loud, and in the log: every later reading in this process is off-stock.
+            diag::log_line("start", &format!("⚠TUNABLES {}", tunables::status_line()));
+            eprintln!(
+                "fractadyne: ⚠tunable override(s) in effect — {}\n\
+                 fractadyne: ⚠this is a DEBUGGING build state; the shipped defaults are the only \
+                 tested path, and this run's results describe no released configuration.",
+                tunables::status_line()
+            );
+        }
+    }
+    // `--oomtest`: force a real allocation failure, to prove the OOM path actually writes a crash
+    // report. It cannot be verified any other way — an out-of-memory abort skips the panic hook,
+    // which is the whole reason this machinery exists, and waiting for a genuine OOM means waiting
+    // for the deep reference build to die again.
+    if args.iter().any(|a| a == "--oomtest") {
+        diag::breadcrumb("oomtest: requesting an impossible allocation".into());
+        let n = usize::MAX / 2;
+        // Deliberately unsatisfiable: the allocator returns null, `ReportingAlloc` reports, and
+        // the runtime aborts on it exactly as a real exhaustion would.
+        let v: Vec<u8> = Vec::with_capacity(n);
+        std::hint::black_box(&v);
+        crate::exit(0);
+    }
+    if cli::run_headless(&args) {
+        return Ok(());
+    }
+
+    let native_options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        // Bound frames-in-flight to 1 so a slow deep-zoom frame can't accumulate a growing present
+        // queue — the swapchain backpressure that hung the UI thread on continuous df32 zoom-out.
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            desired_maximum_frame_latency: Some(1),
+            // Request GPU timestamp queries when the adapter supports them, so the profiling
+            // harness can time the iterate vs color passes in pure GPU time (see fractadyne_gpu::
+            // timing). Replicates egui-wgpu's default device_descriptor, adding only the one feature
+            // — the app degrades cleanly (CPU-timed columns only) on adapters that lack it.
+            wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
+                eframe::egui_wgpu::WgpuSetupCreateNew {
+                    // PIN the backend set to the one this build is validated on. eframe's default
+                    // is `PRIMARY | GL`, which includes DX12 — and since the app now compiles the
+                    // DX12 backend in (for `--gputest`, see Cargo.toml), leaving the default would
+                    // let a routine `cargo build` silently move every user onto a different shader
+                    // compiler and a different driver path. Everything cost-related is calibrated
+                    // against the current stack: the TDR step budgets, the dispatch caps, the
+                    // blessed goldens and livetest baselines. Switching backends is a deliberate,
+                    // re-measured decision, not a side effect. `WGPU_BACKEND` still overrides for
+                    // experiments, and `--gputest` grades every compiled-in backend regardless.
+                    instance_descriptor: eframe::wgpu::InstanceDescriptor {
+                        backends: eframe::wgpu::Backends::from_env().unwrap_or(
+                            eframe::wgpu::Backends::VULKAN | eframe::wgpu::Backends::GL,
+                        ),
+                        ..Default::default()
+                    },
+                    device_descriptor: std::sync::Arc::new(|adapter: &eframe::wgpu::Adapter| {
+                        let base_limits =
+                            if adapter.get_info().backend == eframe::wgpu::Backend::Gl {
+                                eframe::wgpu::Limits::downlevel_webgl2_defaults()
+                            } else {
+                                eframe::wgpu::Limits::default()
+                            };
+                        let mut features = eframe::wgpu::Features::empty();
+                        // `FRACTADYNE_NO_TIMESTAMPS=1` declines the feature even where the adapter
+                        // offers it. Not a user setting — it is the only way to exercise the
+                        // no-TIMESTAMP_QUERY path on a dev box whose GPU has it, and that path had
+                        // a reproducible bug (budget stuck at bootstrap → ~1/3 resolution forever)
+                        // that was invisible here for exactly that reason. Older Intel iGPUs, some
+                        // Mesa/RADV/ANV combinations, and the GL backend all land on it for real.
+                        let no_ts = std::env::var("FRACTADYNE_NO_TIMESTAMPS")
+                            .is_ok_and(|v| v != "0" && !v.is_empty());
+                        if !no_ts
+                            && adapter
+                                .features()
+                                .contains(eframe::wgpu::Features::TIMESTAMP_QUERY)
+                        {
+                            features |= eframe::wgpu::Features::TIMESTAMP_QUERY;
+                        }
+                        // Reference-orbit headroom: the default 128 MB storage-binding limit caps
+                        // the orbit+BLA buffer at ~928k samples — a wall the Misiurewicz spar
+                        // family hits by ~1e82× (its reference needs >928k iterations to escape,
+                        // so the view renders black there while shallower spar depths resolve).
+                        // Ask the ADAPTER for up to 1 GiB (≈7.4M samples); a lesser adapter grants
+                        // what it has, and `init_orbit_len_cap` sizes the cap from whatever was
+                        // actually granted, so nothing here assumes a big GPU.
+                        let want_binding: u32 = 1 << 30;
+                        let adapter_limits = adapter.limits();
+                        let binding = adapter_limits.max_storage_buffer_binding_size.min(want_binding);
+                        let buffer = adapter_limits.max_buffer_size.min(want_binding as u64);
+                        // Iteration-range tiling writes Rgba32Float state attachments per chunk
+                        // pass: THREE for direct/mode-0 (48 bytes/sample; the wgpu default limit is
+                        // 32), and FOUR for mode-2, whose floatexp state does not fit in three —
+                        // δz mantissa (4) + δz exponent (1) + derivative mantissa (4) + derivative
+                        // exponent (1) + status/iter (2) + ref_n (1) = 13 floats against 12, and the
+                        // two exponents cannot share one f32 channel at our depths (at 1e1105 the
+                        // binary exponent is ≈ −3670, so two fields need 13 bits each = 26 > the 24
+                        // an f32 holds exactly). So ask for 64.
+                        //
+                        // ⚠MEASURED before choosing this: the RTX 3080 reports 128 AVAILABLE while we
+                        // were requesting only 48, so the old ceiling was self-imposed, not hardware.
+                        // A lesser adapter grants what it has and the affected chunk path gates itself
+                        // off (`chunking_available` / `chunking_mode2_available`) — nothing here
+                        // assumes a big GPU.
+                        let attach_bytes = adapter_limits.max_color_attachment_bytes_per_sample.min(64);
+                        eframe::wgpu::DeviceDescriptor {
+                            label: Some("fractadyne device"),
+                            required_features: features,
+                            required_limits: eframe::wgpu::Limits {
+                                max_texture_dimension_2d: 8192,
+                                max_storage_buffer_binding_size: binding.max(base_limits.max_storage_buffer_binding_size),
+                                max_buffer_size: buffer.max(base_limits.max_buffer_size),
+                                max_color_attachment_bytes_per_sample: attach_bytes
+                                    .max(base_limits.max_color_attachment_bytes_per_sample),
+                                ..base_limits
+                            },
+                            memory_hints: eframe::wgpu::MemoryHints::default(),
+                        }
+                    }),
+                    ..Default::default()
+                },
+            ),
+            ..Default::default()
+        },
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1280.0, 800.0])
+            .with_min_inner_size([640.0, 400.0])
+            .with_title(window_title())
+            .with_icon(brand_icon()),
+        ..Default::default()
+    };
+
+    // Arm the unclean-exit marker around the event loop only (see `diag::begin_gui_session`).
+    // Every deliberate exit goes through `crate::exit`, which disarms it, so a clean shutdown can
+    // never be mistaken for a crash.
+    diag::begin_gui_session();
+    let r = eframe::run_native(
+        "Fractadyne",
+        native_options,
+        Box::new(move |cc| Ok(Box::new(FractadyneApp::new(cc, &args)))),
+    );
+    diag::end_session();
+    r
 }
 
-impl LayoutRects {
-    /// `(name, rect)` for every region that drew this frame.
-    pub(crate) fn present(&self) -> Vec<(&'static str, egui::Rect)> {
-        [
-            ("top bar", self.top_bar),
-            ("central", self.central),
-            ("control panel", self.right_panel),
-            ("status bar", self.status_bar),
-        ]
-        .into_iter()
-        .filter_map(|(n, r)| r.map(|r| (n, r)))
-        .collect()
+/// Terminate the process, disarming the unclean-exit marker first. EVERY `std::process::exit` in
+/// this crate goes through here: `exit` runs no destructors and no hooks, so a marker left armed
+/// by a deliberate quit would be reported as a crash on the next launch. One choke point is the
+/// only way to be sure none was missed.
+pub(crate) fn exit(code: i32) -> ! {
+    diag::end_session();
+    std::process::exit(code)
+}
+
+/// Parse the value of an option that WAS SUPPLIED, or exit saying so.
+///
+/// Replaces the `val("--x").and_then(|s| s.parse::<T>().ok())` idiom, which conflates two things
+/// that are not alike: the option is ABSENT (fall back to the default — correct, and still what
+/// happens, because the caller only reaches here inside `Some`), and the option is PRESENT with a
+/// value we cannot read (fall back to the default — a bug, because the program then does real,
+/// expensive, wrong work and exits 0). `--zoom` shipped in the second state long enough for the
+/// benchmark kit to measure a whole-set frame against a deep one and report a ratio; the only
+/// reason it was ever noticed is that somebody looked at the picture. Every option that steers a
+/// render or a comparison goes through here now, so an unreadable value is a message, not a
+/// plausible-looking result.
+fn arg_parse<T: std::str::FromStr>(name: &str, s: &str, expect: &str) -> T {
+    match s.parse::<T>() {
+        Ok(v) => v,
+        Err(_) => {
+            eprintln!("fractadyne: {name}: cannot read \"{s}\" as {expect}.");
+            crate::exit(2)
+        }
+    }
+}
+
+/// `--flag TOKEN` for a type parsed from a fixed vocabulary, fatal when supplied and
+/// unreadable. Same reason as [`arg_parse`]: a benchmark handed an unrecognised preset
+/// silently ran a DIFFERENT workload and still printed a complete, plausible report, with
+/// the preset it actually used named in the output where nobody rereads it.
+fn arg_token<T>(name: &str, s: &str, parse: impl Fn(&str) -> Option<T>, expect: &str) -> T {
+    match parse(s) {
+        Some(v) => v,
+        None => {
+            eprintln!("fractadyne: {name}: cannot read \"{s}\" as {expect}.");
+            crate::exit(2)
+        }
+    }
+}
+
+/// `--size` as `WIDTH` or `WIDTHxHEIGHT`, fatal when supplied and unreadable. A silent fallback
+/// here renders at the WRONG RESOLUTION and says nothing — the exact shape of the benchmark-kit
+/// defect where one renderer was handed 1280x720 while every other lane ran 1920x1080.
+fn arg_size(name: &str, s: &str) -> (Option<u32>, Option<u32>) {
+    let parsed = parse_size(s);
+    // A bare width is legitimate, but ONLY when there was no separator for a height to have
+    // failed on. `parse_size` parses the halves independently and returns (Some(w), None) for
+    // BOTH "1920" and "1920x108O", so accepting the second drops a height that WAS supplied,
+    // without a word: the tour then renders at the script's height, and the single-image lane
+    // at whatever aspect the restored session happens to have, which is not even reproducible.
+    // That is this entire class again, inside the fix for it.
+    let readable = match parsed {
+        (Some(_), Some(_)) => true,
+        (Some(_), None) => !size_has_separator(s),
+        _ => false,
+    };
+    if !readable {
+        eprintln!("fractadyne: {name}: cannot read \"{s}\" as WIDTH or WIDTHxHEIGHT.");
+        crate::exit(2)
+    }
+    parsed
+}
+
+/// A full-precision coordinate pair, fatal when either half is unreadable. `parse_bf` returns
+/// `None` on anything it cannot read and the `?` collapsed the PAIR, so one stray character in a
+/// pasted y ordinate threw the whole location away and rendered the fractal default centre at the
+/// requested depth — solid interior, full cost, exit 0.
+fn arg_center(name: &str, xs: &str, ys: &str) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat) {
+    let one = |t: &str| match fractadyne_core::parse_bf(t) {
+        Some(v) => v,
+        None => {
+            eprintln!("fractadyne: {name}: cannot read \"{t}\" as a decimal coordinate.");
+            crate::exit(2)
+        }
+    };
+    (one(xs), one(ys))
+}
+
+/// Tokenize an args (response) file: whitespace-separated tokens, honoring `"…"` / `'…'` quoting so
+/// values with spaces survive, with `#` starting a comment to end of line (outside quotes). One
+/// token per argument — the same as typing them on the command line.
+fn tokenize_args_file(text: &str) -> Vec<String> {
+    let mut toks = Vec::new();
+    for line in text.lines() {
+        let mut cur = String::new();
+        let mut in_tok = false;
+        let mut quote: Option<char> = None;
+        for c in line.chars() {
+            match quote {
+                Some(q) => {
+                    if c == q {
+                        quote = None;
+                    } else {
+                        cur.push(c);
+                    }
+                }
+                None if c == '"' || c == '\'' => {
+                    quote = Some(c);
+                    in_tok = true;
+                }
+                None if c == '#' => break, // comment to end of line
+                None if c.is_whitespace() => {
+                    if in_tok {
+                        toks.push(std::mem::take(&mut cur));
+                        in_tok = false;
+                    }
+                }
+                None => {
+                    cur.push(c);
+                    in_tok = true;
+                }
+            }
+        }
+        if in_tok {
+            toks.push(cur);
+        }
+    }
+    toks
+}
+
+/// Expand `@FILE` response-file arguments and `--args-file FILE` in `raw`, recursively (bounded), so
+/// an entire command line can be kept in a text file. Each referenced file's tokens are spliced in
+/// place; every other argument passes through untouched. `#` comments and quoting are supported.
+/// A missing/unreadable file is a hard error (the `@`/`--args-file` sigil is an explicit request).
+fn expand_arg_files(raw: &[String]) -> Result<Vec<String>, String> {
+    fn go(args: &[String], out: &mut Vec<String>, depth: u32) -> Result<(), String> {
+        if depth > 16 {
+            return Err("--args-file nesting too deep (cycle?)".to_string());
+        }
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            let path = if let Some(p) = a.strip_prefix('@') {
+                Some(p.to_string())
+            } else if a == "--args-file" || a == "--args" {
+                i += 1;
+                Some(args.get(i).ok_or("--args-file needs a file path")?.clone())
+            } else {
+                None
+            };
+            match path {
+                Some(p) => {
+                    let text = std::fs::read_to_string(&p).map_err(|e| format!("args file '{p}': {e}"))?;
+                    go(&tokenize_args_file(&text), out, depth + 1)?;
+                }
+                None => out.push(a.clone()),
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    go(raw, &mut out, 0)?;
+    Ok(out)
+}
+
+/// Whether this process was launched to run a HARNESS or an offline job rather than to be sat in
+/// front of. Used only to decide that a lost device must NOT relaunch.
+///
+/// A harness that resurrects itself is worse than one that dies. `--selftest` and `--livetest` drive
+/// the real windowed app (which is why the welcome dialog once blocked them), so before this the
+/// device-lost handler would spawn a FRESH PROCESS RE-RUNNING THE SAME TASK FLAGS: a `--torture` rung
+/// would orphan a GUI window its supervisor knows nothing about, and a `--livetest` could end up with
+/// two concurrent gates writing the same log. The guard was previously `elapsed_s() > 60`, which hid
+/// this for short runs by accident; it needs to be explicit.
+///
+/// Deliberately BROADER than `launched_for_a_task` (which exists for the welcome dialog): listing an
+/// extra flag here only ever means "do not relaunch", which is the safe direction. ⚠Add new harness
+/// and offline-job flags here.
+pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
+    const TASK_FLAGS: &[&str] = &[
+        "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--play-tour",
+        "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
+        "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
+        "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
+        "--chunk-sweep", "--bench-bignum", "--shot", "--soak", "--pickcheck",
+    ];
+    args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
+}
+
+#[cfg(test)]
+mod task_invocation;
+
+/// Whether a lost device may relaunch, and as which generation. `None` means stop.
+///
+/// Split out as a pure function so the policy is testable: it decides whether the user sees a
+/// recovery or a crash, and the previous version of it (`elapsed_s() > 60`) shipped untested and
+/// was wrong in the field. See `relaunch_after_device_loss` for the reasoning.
+pub(crate) fn relaunch_decision(generation: u32, elapsed_s: f64) -> Option<u32> {
+    const MAX_GENERATIONS: u32 = 3;
+    if generation >= MAX_GENERATIONS {
+        return None;
+    }
+    // A restarted generation that dies again almost immediately was not helped by restarting.
+    if generation > 0 && elapsed_s < 15.0 {
+        return None;
+    }
+    Some(generation + 1)
+}
+
+#[cfg(test)]
+mod relaunch_policy;
+
+/// A session's saved zoom, validated. `None` means "unusable — open at the default view instead".
+///
+/// The session restore was an ENTRY POINT WITHOUT A GUARD, the same shape as the tour `zoom` string
+/// that once sized a usize::MAX-bit allocation while the `.fdn` reader validated properly. Here
+/// `FloatExp::new(mantissa, exp)` was fed straight from the file, so a corrupted session handed the
+/// app a NaN zoom (field case 2026-08-18, build 1678: black screen, "iter capped", laggy desktop).
+/// `RenderMode::select` then compounded it by mapping NaN to the most expensive mode; that is fixed
+/// separately, and this stops the bad value entering at all.
+///
+/// Rejecting only the zoom, not the centre: a garbage magnification with a good centre still opens
+/// somewhere recognisable, and throwing away a 40-digit centre the user may not be able to retype is
+/// the more destructive failure.
+pub(crate) fn restored_units_per_pixel(mantissa: f64, exp: i32) -> Option<fractadyne_core::FloatExp> {
+    if !mantissa.is_finite() || mantissa <= 0.0 {
+        return None;
+    }
+    // Our deepest real views sit near a binary exponent of -7000 (about 1e2100x). Orders past that
+    // are corruption, not ambition.
+    if exp.unsigned_abs() > 1_000_000 {
+        return None;
+    }
+    let upp = fractadyne_core::FloatExp::new(mantissa, exp);
+    // The decisive test, and the one the field case would have failed: the magnification this
+    // implies has to be a real number.
+    let mut probe = Viewport::new(1280.0, 720.0);
+    probe.units_per_pixel = upp;
+    if !probe.log2_magnification().is_finite() {
+        return None;
+    }
+    Some(upp)
+}
+
+#[cfg(test)]
+mod session_zoom;
+
+/// Direct download URL for the accelerated package matching `version`.
+///
+/// Version-MATCHED on purpose. The two builds share settings, saved session and locations, so a
+/// user can move between them freely -- which is exactly why handing them a "latest" link would be
+/// the one way to cause confusion here: they would be running two different feature sets against
+/// one shared session without being told.
+///
+/// `version` is `sysinfo::version_string()`, which carries a "(build N)" suffix that is not part
+/// of the tag. Pinned by test against the name `scripts/build-accelerated.ps1` actually produces:
+/// if either side is renamed, the link dies silently, and a dead download link in a menu is worse
+/// than no menu entry.
+fn accelerated_asset_url(version: &str) -> String {
+    let tag = format!("v{}", version.split_whitespace().next().unwrap_or(version));
+    format!("https://github.com/WindySnowOwl/fractadyne/releases/download/{tag}/fractadyne-{tag}-windows-x64-accelerated.zip")
+}
+
+#[cfg(test)]
+mod accelerated_link;
+
+// ================================================================================================
+// Render regimes + frame/perf bookkeeping
+// ================================================================================================
+
+/// The numeric representation the renderer uses, chosen by depth (matches the shader's `mode`).
+/// Serialized to `u32` only when written into the GPU uniforms / export request.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RenderMode {
+    /// df32 perturbation of a reference orbit (`1e4× … PERT_FE_THRESHOLD`).
+    Df32Pert = 0,
+    /// Direct df32 from z₀, no reference (shallow `< 1e4×`, or a non-perturbation formula).
+    Direct = 1,
+    /// Extended-range floatexp perturbation (`≥ PERT_FE_THRESHOLD`).
+    Floatexp = 2,
+}
+
+impl RenderMode {
+    /// Pick the representation for a view: direct when shallow or the formula has no perturbation,
+    /// then df32, switching to floatexp past `PERT_FE_THRESHOLD`. The one place this is decided.
+    /// `julia` selects the much lower direct→perturbation crossover (see `PERT_JULIA_THRESHOLD`).
+    pub(crate) fn select(supports_perturbation: bool, julia: bool, mag: f64) -> RenderMode {
+        // ⚠**NaN ONLY — never `!is_finite()`.** A NaN zoom is garbage input and must pick the
+        // safest mode: every comparison against NaN is false, so the chain below falls through to
+        // `Floatexp`, and a corrupted session (2026-08-18, build 1678) silently selected the most
+        // expensive arithmetic at maximum depth — black screen, "iter capped", laggy desktop, a
+        // device loss waiting to happen (`arithmetic mode none → 2 at frame 1 (mag 2^NaN)`).
+        // Direct is right for garbage: no reference orbit, cheapest, and it renders *something*
+        // rather than wedging the GPU.
+        //
+        // ⭐But `+∞` IS NOT GARBAGE, and catching it here was a REGRESSION (`c59bda0`, 2026-08-17
+        // → fixed beta.124). `Viewport::magnification()` returns an f64 and therefore SATURATES
+        // to `+∞` past ~1e308×, so this guard silently demoted every genuinely extreme view to
+        // non-perturbation Direct — no reference, no BLA — and rendered a BLANK IMAGE. It reached
+        // the bench kit: the 4.6e1105× corpus scene "finished" in 1.8 s against Fraktaler-3's
+        // 258 s, and the 144× win was measuring an empty frame. Nothing caught it for four days
+        // because the F3 corpus gate (the only thing that renders past 1e308) last ran green on
+        // 2026-08-14, three days BEFORE the guard landed — and the unit test written with it
+        // asserted `INFINITY → Direct`, enshrining the defect. An infinite magnification means
+        // "deeper than an f64 can say", which is precisely what `Floatexp` exists for, so it must
+        // fall through to the bottom of the chain.
+        if mag.is_nan() {
+            return RenderMode::Direct;
+        }
+        let direct_below = if julia { PERT_JULIA_THRESHOLD } else { 1.0e4 };
+        if !supports_perturbation || mag < direct_below {
+            RenderMode::Direct
+        } else if mag < PERT_FE_THRESHOLD {
+            RenderMode::Df32Pert
+        } else {
+            RenderMode::Floatexp
+        }
+    }
+    pub(crate) fn to_u32(self) -> u32 {
+        self as u32
+    }
+    pub(crate) fn from_u32(v: u32) -> RenderMode {
+        match v {
+            1 => RenderMode::Direct,
+            2 => RenderMode::Floatexp,
+            _ => RenderMode::Df32Pert,
+        }
+    }
+    /// Direct path — no reference orbit, never glitches.
+    pub(crate) fn is_direct(self) -> bool {
+        matches!(self, RenderMode::Direct)
+    }
+    /// Extended-range floatexp path (the deep, ~5×-costlier mode-2).
+    pub(crate) fn is_floatexp(self) -> bool {
+        matches!(self, RenderMode::Floatexp)
     }
 }
 
@@ -733,182 +1260,194 @@ fn ema(prev: f64, sample: f64) -> f64 {
     }
 }
 
-/// State for the "Render script…" dialog and the render it launches.
-///
-/// The render runs as a CHILD PROCESS (`--render-tour`), not on a thread: a tour render mutates
-/// app state per frame — viewport, fractal, iteration budget — so moving it to a worker would mean
-/// extracting all of that first. A separate process also gets its own GPU device, which matters
-/// here specifically: a deep tour render is the heaviest thing this app does, and the failure mode
-/// on record is losing the device. In a child, that kills the render and leaves the editor alive.
-pub(crate) struct TourRenderUi {
-    pub(crate) open: bool,
-    pub(crate) out: String,
-    pub(crate) prefix: String,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-    /// Size dropdown is on "Custom…" — see `ExportState::custom_size` for why it is sticky.
-    pub(crate) custom_size: bool,
-    pub(crate) fps: f64,
-    pub(crate) ss: u32,
-    /// 0 = the whole tour; otherwise 1-based into the script's `[[segment]]` chapters.
-    pub(crate) segment: usize,
-    pub(crate) mp4: bool,
-    pub(crate) overwrite: bool,
-    /// Keep frames already on disk and render only what's missing (`--resume`).
-    pub(crate) resume: bool,
-    /// Render order: progressive (keyframes first, then bisect the largest gaps — preview the
-    /// whole tour early) vs the default sequential. Maps to `--order progressive`.
-    pub(crate) progressive: bool,
-    /// Latest line from the child (its "frame N/M …" progress), and the finished-run summary.
-    pub(crate) progress: String,
-    /// `(done, planned)` parsed from the latest progress line — drives the progress BAR; the raw
-    /// line stays underneath for the elapsed/left/fps detail. `None` until the first frame line
-    /// (or when a line doesn't parse — the bar simply holds its last state).
-    pub(crate) progress_frames: Option<(u64, u64)>,
-    /// First error line the child wrote to stderr — the reason a render stopped.
-    pub(crate) error: Option<String>,
-    pub(crate) status: Option<String>,
-    pub(crate) child: Option<std::process::Child>,
-    pub(crate) rx: Option<std::sync::mpsc::Receiver<crate::ui::tour_render::RenderLine>>,
+/// Zoom-appropriate iteration cap. A very high manual iteration count over-resolves the
+/// boundary's sub-pixel "dust" into per-pixel noise (and starves the render budget); this
+/// caps the count at a generous, zoom-scaled value so normal auto-iteration is never
+/// limited but an inflated base is. Used for both the live view and exports so they match.
+/// Zoom-appropriate iteration cap from the zoom **octaves** (`log2(magnification)`), taken
+/// directly so it stays finite past 1e308× where `magnification()` saturates to `∞`.
+pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
+    let o = octaves.max(0.0);
+    (ZOOM_ITER_BASE + o * ZOOM_ITER_PER_OCTAVE).min(u32::MAX as f64) as u32
 }
 
-impl Default for TourRenderUi {
-    fn default() -> Self {
-        Self {
-            open: false,
-            out: "frames".to_string(),
-            prefix: String::new(),
-            width: 1920,
-            height: 1080,
-            custom_size: false,
-            fps: 30.0,
-            ss: 2,
-            segment: 0,
-            mp4: false,
-            overwrite: true,
-            resume: false,
-            progressive: false,
-            progress: String::new(),
-            progress_frames: None,
-            error: None,
-            status: None,
-            child: None,
-            rx: None,
+/// Anti-alias supersampling for progressive-settle stage `frame`, ramping 1→2→4→… up to `target`.
+/// A settled view refines from an instant coarse frame to full AA over a few frames, rather than
+/// blocking on one expensive full-AA frame. `frame` is capped so the shift can't overflow.
+fn aa_ramp(frame: u32, target: u32) -> u32 {
+    (1u32 << frame.min(5)).min(target.max(1))
+}
+
+// ================================================================================================
+// Coloring methods, palettes, palette animation
+// ================================================================================================
+
+// Version / system-info / time helpers moved to `sysinfo.rs` (re-exported below).
+
+// ---- Fractadyne branding (matches design/Fractadyne.dc.html) ----
+// Branding (BRAND_ACCENT/BRAND_TEXT, apply_brand_theme, brand_wordmark, brand_icon) moved
+// to `theme.rs` (re-exported below).
+
+// ---- coloring-method / orbit-trap enums (Phase 4: typed dispatch) ----
+/// Coloring method — a typed replacement for the former bare `u32`. Discriminants match the GPU
+/// `color_method` ids in `mandelbrot.wgsl` `fs_color` (serialized via [`ColorMethod::to_u32`]); the
+/// `key` is the stable string persisted in the session / `.fdn`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum ColorMethod {
+    #[default]
+    Smooth = 0,
+    Stripe = 1,
+    TriangleIneq = 2,
+    OrbitTrap = 3,
+    Distance = 4,
+    Decomposition = 5,
+}
+
+impl ColorMethod {
+    pub(crate) const ALL: [ColorMethod; 6] = [
+        ColorMethod::Smooth,
+        ColorMethod::Stripe,
+        ColorMethod::TriangleIneq,
+        ColorMethod::OrbitTrap,
+        ColorMethod::Distance,
+        ColorMethod::Decomposition,
+    ];
+    /// GPU dispatch id (matches the shader).
+    pub(crate) fn to_u32(self) -> u32 {
+        self as u32
+    }
+    /// Stable persisted key.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            ColorMethod::Smooth => "smooth",
+            ColorMethod::Stripe => "stripe",
+            ColorMethod::TriangleIneq => "triangle",
+            ColorMethod::OrbitTrap => "trap",
+            ColorMethod::Distance => "distance",
+            ColorMethod::Decomposition => "decomposition",
         }
+    }
+    /// Human label for the UI combo box.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            ColorMethod::Smooth => "Smooth iteration",
+            ColorMethod::Stripe => "Stripe average",
+            ColorMethod::TriangleIneq => "Triangle inequality",
+            ColorMethod::OrbitTrap => "Orbit trap",
+            ColorMethod::Distance => "Distance estimate",
+            ColorMethod::Decomposition => "Decomposition",
+        }
+    }
+    pub(crate) fn from_key(s: &str) -> ColorMethod {
+        ColorMethod::ALL.into_iter().find(|m| m.key() == s).unwrap_or_default()
+    }
+    pub(crate) fn from_u32(v: u32) -> ColorMethod {
+        ColorMethod::ALL.into_iter().find(|m| m.to_u32() == v).unwrap_or_default()
+    }
+    /// Methods that accumulate the aux statistics texture (stripe / triangle-ineq / decomposition).
+    pub(crate) fn needs_aux(self) -> bool {
+        matches!(
+            self,
+            ColorMethod::Stripe | ColorMethod::TriangleIneq | ColorMethod::Decomposition
+        )
+    }
+
+    /// Methods that CANNOT skip iterations — BLA and series approximation must stay off. Two reasons
+    /// a method blocks skipping: (1) it accumulates a **running per-iteration** statistic (stripe /
+    /// triangle-inequality average, orbit-trap min) that skipped iterations would silently drop; or
+    /// (2) it is a **discontinuous function of the exact final escape point** — decomposition tiles
+    /// the plane into angular cells, so SA/BLA's small trajectory approximation shifts every cell
+    /// edge (measured ~15% of pixels change with SA enabled), so it is NOT skip-safe despite reading
+    /// only the final z. This set adds orbit-trap versus [`Self::needs_aux`] — the deep-zoom bug
+    /// where trap was absent and thus wrongly kept BLA/SA on, silently dropping skipped-run minima.
+    pub(crate) fn blocks_iter_skip(self) -> bool {
+        matches!(
+            self,
+            ColorMethod::Stripe
+                | ColorMethod::TriangleIneq
+                | ColorMethod::OrbitTrap
+                | ColorMethod::Decomposition
+        )
     }
 }
 
-/// Parse a `--size` value as either a bare width (`1920`) or `WIDTHxHEIGHT` (`5120x2160`,
-/// case-insensitive `x`/`X`/`×`). Returns `(width, height)` where each is `Some` when present and
-/// parseable. This lets callers accept both forms; a bare width leaves the height to `--height` or
-/// an aspect-ratio default.
-/// The separators `parse_size` splits on. Shared so a caller can ask "was a height SUPPLIED?"
-/// without re-listing the characters and drifting from the parser.
-pub(crate) fn size_has_separator(s: &str) -> bool {
-    s.contains(|c: char| c == 'x' || c == 'X' || c == '×')
+/// Orbit-trap shape (only meaningful for [`ColorMethod::OrbitTrap`]). Discriminants match the shader.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum TrapType {
+    #[default]
+    Point = 0,
+    Cross = 1,
+    Circle = 2,
 }
 
-pub(crate) fn parse_size(s: &str) -> (Option<u32>, Option<u32>) {
-    let sep = |c: char| c == 'x' || c == 'X' || c == '×';
-    match s.split_once(sep) {
-        Some((w, h)) => (w.trim().parse().ok(), h.trim().parse().ok()),
-        None => (s.trim().parse().ok(), None),
+impl TrapType {
+    pub(crate) const ALL: [TrapType; 3] = [TrapType::Point, TrapType::Cross, TrapType::Circle];
+    pub(crate) fn to_u32(self) -> u32 {
+        self as u32
+    }
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            TrapType::Point => "point",
+            TrapType::Cross => "cross",
+            TrapType::Circle => "circle",
+        }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            TrapType::Point => "Point",
+            TrapType::Cross => "Cross",
+            TrapType::Circle => "Circle",
+        }
+    }
+    pub(crate) fn from_key(s: &str) -> TrapType {
+        TrapType::ALL.into_iter().find(|t| t.key() == s).unwrap_or_default()
     }
 }
 
-/// Tokenize an args (response) file: whitespace-separated tokens, honoring `"…"` / `'…'` quoting so
-/// values with spaces survive, with `#` starting a comment to end of line (outside quotes). One
-/// token per argument — the same as typing them on the command line.
-fn tokenize_args_file(text: &str) -> Vec<String> {
-    let mut toks = Vec::new();
-    for line in text.lines() {
-        let mut cur = String::new();
-        let mut in_tok = false;
-        let mut quote: Option<char> = None;
-        for c in line.chars() {
-            match quote {
-                Some(q) => {
-                    if c == q {
-                        quote = None;
-                    } else {
-                        cur.push(c);
-                    }
-                }
-                None if c == '"' || c == '\'' => {
-                    quote = Some(c);
-                    in_tok = true;
-                }
-                None if c == '#' => break, // comment to end of line
-                None if c.is_whitespace() => {
-                    if in_tok {
-                        toks.push(std::mem::take(&mut cur));
-                        in_tok = false;
-                    }
-                }
-                None => {
-                    cur.push(c);
-                    in_tok = true;
-                }
-            }
-        }
-        if in_tok {
-            toks.push(cur);
-        }
-    }
-    toks
+/// Palette animation mode (continuously shifts the color offset).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PaletteAnim {
+    Off,
+    Forward,
+    Reverse,
+    PingPong,
+    Random,
 }
 
-/// Expand `@FILE` response-file arguments and `--args-file FILE` in `raw`, recursively (bounded), so
-/// an entire command line can be kept in a text file. Each referenced file's tokens are spliced in
-/// place; every other argument passes through untouched. `#` comments and quoting are supported.
-/// A missing/unreadable file is a hard error (the `@`/`--args-file` sigil is an explicit request).
-fn expand_arg_files(raw: &[String]) -> Result<Vec<String>, String> {
-    fn go(args: &[String], out: &mut Vec<String>, depth: u32) -> Result<(), String> {
-        if depth > 16 {
-            return Err("--args-file nesting too deep (cycle?)".to_string());
+impl PaletteAnim {
+    pub(crate) const ALL: [PaletteAnim; 5] = [
+        PaletteAnim::Off,
+        PaletteAnim::Forward,
+        PaletteAnim::Reverse,
+        PaletteAnim::PingPong,
+        PaletteAnim::Random,
+    ];
+    fn name(self) -> &'static str {
+        match self {
+            PaletteAnim::Off => "Off",
+            PaletteAnim::Forward => "Forward",
+            PaletteAnim::Reverse => "Reverse",
+            PaletteAnim::PingPong => "Ping-pong",
+            PaletteAnim::Random => "Random gradients",
         }
-        let mut i = 0;
-        while i < args.len() {
-            let a = &args[i];
-            let path = if let Some(p) = a.strip_prefix('@') {
-                Some(p.to_string())
-            } else if a == "--args-file" || a == "--args" {
-                i += 1;
-                Some(args.get(i).ok_or("--args-file needs a file path")?.clone())
-            } else {
-                None
-            };
-            match path {
-                Some(p) => {
-                    let text = std::fs::read_to_string(&p).map_err(|e| format!("args file '{p}': {e}"))?;
-                    go(&tokenize_args_file(&text), out, depth + 1)?;
-                }
-                None => out.push(a.clone()),
-            }
-            i += 1;
-        }
-        Ok(())
     }
-    let mut out = Vec::new();
-    go(raw, &mut out, 0)?;
-    Ok(out)
-}
-
-/// HSV (all 0..1) → RGB (0..1). For synthesizing vivid random palette stops.
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
-    let h6 = (h.fract() * 6.0).clamp(0.0, 6.0);
-    let i = h6.floor() as i32;
-    let f = h6 - i as f32;
-    let p = v * (1.0 - s);
-    let q = v * (1.0 - s * f);
-    let t = v * (1.0 - s * (1.0 - f));
-    match i % 6 {
-        0 => [v, t, p],
-        1 => [q, v, p],
-        2 => [p, v, t],
-        3 => [p, q, v],
-        4 => [t, p, v],
-        _ => [v, p, q],
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            PaletteAnim::Off => "off",
+            PaletteAnim::Forward => "forward",
+            PaletteAnim::Reverse => "reverse",
+            PaletteAnim::PingPong => "pingpong",
+            PaletteAnim::Random => "random",
+        }
+    }
+    pub(crate) fn from_key(s: &str) -> PaletteAnim {
+        match s {
+            "forward" => PaletteAnim::Forward,
+            "reverse" => PaletteAnim::Reverse,
+            "pingpong" => PaletteAnim::PingPong,
+            "random" => PaletteAnim::Random,
+            _ => PaletteAnim::Off,
+        }
     }
 }
 
@@ -1007,436 +1546,23 @@ impl RandomPalette {
     }
 }
 
-// `lerp_color` moved to `theme.rs` (re-exported below).
-
-const EASE_TAU: f64 = 0.15; // ease-in/out time constant (seconds)
-
-/// Dual-view divider bounds: the fraction of the width the LEFT (Mandelbrot) panel may take.
-/// Neither panel may collapse — a zero-width panel still costs a render and shows nothing. The
-/// drag handle, the session restore, and the scripted `dual_split` keyframe field all clamp here,
-/// so a script cannot reach a state the viewer cannot drag back out of.
-pub(crate) const DUAL_SPLIT_MIN: f32 = 0.15;
-pub(crate) const DUAL_SPLIT_MAX: f32 = 0.85;
-
-/// Anti-alias supersampling for progressive-settle stage `frame`, ramping 1→2→4→… up to `target`.
-/// A settled view refines from an instant coarse frame to full AA over a few frames, rather than
-/// blocking on one expensive full-AA frame. `frame` is capped so the shift can't overflow.
-fn aa_ramp(frame: u32, target: u32) -> u32 {
-    (1u32 << frame.min(5)).min(target.max(1))
-}
-
-
-
-
-/// Cache key for the interactive orbit (recompute only when these change).
-#[derive(Clone, PartialEq)]
-struct OrbitKey {
-    px: f64,
-    py: f64,
-    cx: f64,
-    cy: f64,
-    upp: f64,
-    julia: bool,
-    formula: u32,
-    jcx: f64,
-    jcy: f64,
-}
-struct OrbitCacheEntry {
-    key: OrbitKey,
-    pts: Vec<(f64, f64)>,
-}
-
-
-// Version / system-info / time helpers moved to `sysinfo.rs` (re-exported below).
-
-// ---- Fractadyne branding (matches design/Fractadyne.dc.html) ----
-// Branding (BRAND_ACCENT/BRAND_TEXT, apply_brand_theme, brand_wordmark, brand_icon) moved
-// to `theme.rs` (re-exported below).
-
-// ---- coloring-method / orbit-trap enums (Phase 4: typed dispatch) ----
-/// Coloring method — a typed replacement for the former bare `u32`. Discriminants match the GPU
-/// `color_method` ids in `mandelbrot.wgsl` `fs_color` (serialized via [`ColorMethod::to_u32`]); the
-/// `key` is the stable string persisted in the session / `.fdn`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum ColorMethod {
-    #[default]
-    Smooth = 0,
-    Stripe = 1,
-    TriangleIneq = 2,
-    OrbitTrap = 3,
-    Distance = 4,
-    Decomposition = 5,
-}
-impl ColorMethod {
-    pub(crate) const ALL: [ColorMethod; 6] = [
-        ColorMethod::Smooth,
-        ColorMethod::Stripe,
-        ColorMethod::TriangleIneq,
-        ColorMethod::OrbitTrap,
-        ColorMethod::Distance,
-        ColorMethod::Decomposition,
-    ];
-    /// GPU dispatch id (matches the shader).
-    pub(crate) fn to_u32(self) -> u32 {
-        self as u32
-    }
-    /// Stable persisted key.
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            ColorMethod::Smooth => "smooth",
-            ColorMethod::Stripe => "stripe",
-            ColorMethod::TriangleIneq => "triangle",
-            ColorMethod::OrbitTrap => "trap",
-            ColorMethod::Distance => "distance",
-            ColorMethod::Decomposition => "decomposition",
-        }
-    }
-    /// Human label for the UI combo box.
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            ColorMethod::Smooth => "Smooth iteration",
-            ColorMethod::Stripe => "Stripe average",
-            ColorMethod::TriangleIneq => "Triangle inequality",
-            ColorMethod::OrbitTrap => "Orbit trap",
-            ColorMethod::Distance => "Distance estimate",
-            ColorMethod::Decomposition => "Decomposition",
-        }
-    }
-    pub(crate) fn from_key(s: &str) -> ColorMethod {
-        ColorMethod::ALL.into_iter().find(|m| m.key() == s).unwrap_or_default()
-    }
-    pub(crate) fn from_u32(v: u32) -> ColorMethod {
-        ColorMethod::ALL.into_iter().find(|m| m.to_u32() == v).unwrap_or_default()
-    }
-    /// Methods that accumulate the aux statistics texture (stripe / triangle-ineq / decomposition).
-    pub(crate) fn needs_aux(self) -> bool {
-        matches!(
-            self,
-            ColorMethod::Stripe | ColorMethod::TriangleIneq | ColorMethod::Decomposition
-        )
-    }
-
-    /// Methods that CANNOT skip iterations — BLA and series approximation must stay off. Two reasons
-    /// a method blocks skipping: (1) it accumulates a **running per-iteration** statistic (stripe /
-    /// triangle-inequality average, orbit-trap min) that skipped iterations would silently drop; or
-    /// (2) it is a **discontinuous function of the exact final escape point** — decomposition tiles
-    /// the plane into angular cells, so SA/BLA's small trajectory approximation shifts every cell
-    /// edge (measured ~15% of pixels change with SA enabled), so it is NOT skip-safe despite reading
-    /// only the final z. This set adds orbit-trap versus [`Self::needs_aux`] — the deep-zoom bug
-    /// where trap was absent and thus wrongly kept BLA/SA on, silently dropping skipped-run minima.
-    pub(crate) fn blocks_iter_skip(self) -> bool {
-        matches!(
-            self,
-            ColorMethod::Stripe
-                | ColorMethod::TriangleIneq
-                | ColorMethod::OrbitTrap
-                | ColorMethod::Decomposition
-        )
+/// HSV (all 0..1) → RGB (0..1). For synthesizing vivid random palette stops.
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let h6 = (h.fract() * 6.0).clamp(0.0, 6.0);
+    let i = h6.floor() as i32;
+    let f = h6 - i as f32;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - s * f);
+    let t = v * (1.0 - s * (1.0 - f));
+    match i % 6 {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
     }
 }
-
-/// Orbit-trap shape (only meaningful for [`ColorMethod::OrbitTrap`]). Discriminants match the shader.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum TrapType {
-    #[default]
-    Point = 0,
-    Cross = 1,
-    Circle = 2,
-}
-impl TrapType {
-    pub(crate) const ALL: [TrapType; 3] = [TrapType::Point, TrapType::Cross, TrapType::Circle];
-    pub(crate) fn to_u32(self) -> u32 {
-        self as u32
-    }
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            TrapType::Point => "point",
-            TrapType::Cross => "cross",
-            TrapType::Circle => "circle",
-        }
-    }
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            TrapType::Point => "Point",
-            TrapType::Cross => "Cross",
-            TrapType::Circle => "Circle",
-        }
-    }
-    pub(crate) fn from_key(s: &str) -> TrapType {
-        TrapType::ALL.into_iter().find(|t| t.key() == s).unwrap_or_default()
-    }
-}
-
-/// The numeric representation the renderer uses, chosen by depth (matches the shader's `mode`).
-/// Serialized to `u32` only when written into the GPU uniforms / export request.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum RenderMode {
-    /// df32 perturbation of a reference orbit (`1e4× … PERT_FE_THRESHOLD`).
-    Df32Pert = 0,
-    /// Direct df32 from z₀, no reference (shallow `< 1e4×`, or a non-perturbation formula).
-    Direct = 1,
-    /// Extended-range floatexp perturbation (`≥ PERT_FE_THRESHOLD`).
-    Floatexp = 2,
-}
-
-/// A session's saved zoom, validated. `None` means "unusable — open at the default view instead".
-///
-/// The session restore was an ENTRY POINT WITHOUT A GUARD, the same shape as the tour `zoom` string
-/// that once sized a usize::MAX-bit allocation while the `.fdn` reader validated properly. Here
-/// `FloatExp::new(mantissa, exp)` was fed straight from the file, so a corrupted session handed the
-/// app a NaN zoom (field case 2026-08-18, build 1678: black screen, "iter capped", laggy desktop).
-/// `RenderMode::select` then compounded it by mapping NaN to the most expensive mode; that is fixed
-/// separately, and this stops the bad value entering at all.
-///
-/// Rejecting only the zoom, not the centre: a garbage magnification with a good centre still opens
-/// somewhere recognisable, and throwing away a 40-digit centre the user may not be able to retype is
-/// the more destructive failure.
-pub(crate) fn restored_units_per_pixel(mantissa: f64, exp: i32) -> Option<fractadyne_core::FloatExp> {
-    if !mantissa.is_finite() || mantissa <= 0.0 {
-        return None;
-    }
-    // Our deepest real views sit near a binary exponent of -7000 (about 1e2100x). Orders past that
-    // are corruption, not ambition.
-    if exp.unsigned_abs() > 1_000_000 {
-        return None;
-    }
-    let upp = fractadyne_core::FloatExp::new(mantissa, exp);
-    // The decisive test, and the one the field case would have failed: the magnification this
-    // implies has to be a real number.
-    let mut probe = Viewport::new(1280.0, 720.0);
-    probe.units_per_pixel = upp;
-    if !probe.log2_magnification().is_finite() {
-        return None;
-    }
-    Some(upp)
-}
-
-#[cfg(test)]
-mod session_zoom;
-
-/// Whether this process was launched to run a HARNESS or an offline job rather than to be sat in
-/// front of. Used only to decide that a lost device must NOT relaunch.
-///
-/// A harness that resurrects itself is worse than one that dies. `--selftest` and `--livetest` drive
-/// the real windowed app (which is why the welcome dialog once blocked them), so before this the
-/// device-lost handler would spawn a FRESH PROCESS RE-RUNNING THE SAME TASK FLAGS: a `--torture` rung
-/// would orphan a GUI window its supervisor knows nothing about, and a `--livetest` could end up with
-/// two concurrent gates writing the same log. The guard was previously `elapsed_s() > 60`, which hid
-/// this for short runs by accident; it needs to be explicit.
-///
-/// Deliberately BROADER than `launched_for_a_task` (which exists for the welcome dialog): listing an
-/// extra flag here only ever means "do not relaunch", which is the safe direction. ⚠Add new harness
-/// and offline-job flags here.
-pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
-    const TASK_FLAGS: &[&str] = &[
-        "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--play-tour",
-        "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
-        "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
-        "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
-        "--chunk-sweep", "--bench-bignum", "--shot", "--soak", "--pickcheck",
-    ];
-    args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
-}
-
-#[cfg(test)]
-mod task_invocation;
-
-/// Whether a lost device may relaunch, and as which generation. `None` means stop.
-///
-/// Split out as a pure function so the policy is testable: it decides whether the user sees a
-/// recovery or a crash, and the previous version of it (`elapsed_s() > 60`) shipped untested and
-/// was wrong in the field. See `relaunch_after_device_loss` for the reasoning.
-pub(crate) fn relaunch_decision(generation: u32, elapsed_s: f64) -> Option<u32> {
-    const MAX_GENERATIONS: u32 = 3;
-    if generation >= MAX_GENERATIONS {
-        return None;
-    }
-    // A restarted generation that dies again almost immediately was not helped by restarting.
-    if generation > 0 && elapsed_s < 15.0 {
-        return None;
-    }
-    Some(generation + 1)
-}
-
-#[cfg(test)]
-mod relaunch_policy;
-
-impl RenderMode {
-    /// Pick the representation for a view: direct when shallow or the formula has no perturbation,
-    /// then df32, switching to floatexp past `PERT_FE_THRESHOLD`. The one place this is decided.
-    /// `julia` selects the much lower direct→perturbation crossover (see `PERT_JULIA_THRESHOLD`).
-    pub(crate) fn select(supports_perturbation: bool, julia: bool, mag: f64) -> RenderMode {
-        // ⚠**NaN ONLY — never `!is_finite()`.** A NaN zoom is garbage input and must pick the
-        // safest mode: every comparison against NaN is false, so the chain below falls through to
-        // `Floatexp`, and a corrupted session (2026-08-18, build 1678) silently selected the most
-        // expensive arithmetic at maximum depth — black screen, "iter capped", laggy desktop, a
-        // device loss waiting to happen (`arithmetic mode none → 2 at frame 1 (mag 2^NaN)`).
-        // Direct is right for garbage: no reference orbit, cheapest, and it renders *something*
-        // rather than wedging the GPU.
-        //
-        // ⭐But `+∞` IS NOT GARBAGE, and catching it here was a REGRESSION (`c59bda0`, 2026-08-17
-        // → fixed beta.124). `Viewport::magnification()` returns an f64 and therefore SATURATES
-        // to `+∞` past ~1e308×, so this guard silently demoted every genuinely extreme view to
-        // non-perturbation Direct — no reference, no BLA — and rendered a BLANK IMAGE. It reached
-        // the bench kit: the 4.6e1105× corpus scene "finished" in 1.8 s against Fraktaler-3's
-        // 258 s, and the 144× win was measuring an empty frame. Nothing caught it for four days
-        // because the F3 corpus gate (the only thing that renders past 1e308) last ran green on
-        // 2026-08-14, three days BEFORE the guard landed — and the unit test written with it
-        // asserted `INFINITY → Direct`, enshrining the defect. An infinite magnification means
-        // "deeper than an f64 can say", which is precisely what `Floatexp` exists for, so it must
-        // fall through to the bottom of the chain.
-        if mag.is_nan() {
-            return RenderMode::Direct;
-        }
-        let direct_below = if julia { PERT_JULIA_THRESHOLD } else { 1.0e4 };
-        if !supports_perturbation || mag < direct_below {
-            RenderMode::Direct
-        } else if mag < PERT_FE_THRESHOLD {
-            RenderMode::Df32Pert
-        } else {
-            RenderMode::Floatexp
-        }
-    }
-    pub(crate) fn to_u32(self) -> u32 {
-        self as u32
-    }
-    pub(crate) fn from_u32(v: u32) -> RenderMode {
-        match v {
-            1 => RenderMode::Direct,
-            2 => RenderMode::Floatexp,
-            _ => RenderMode::Df32Pert,
-        }
-    }
-    /// Direct path — no reference orbit, never glitches.
-    pub(crate) fn is_direct(self) -> bool {
-        matches!(self, RenderMode::Direct)
-    }
-    /// Extended-range floatexp path (the deep, ~5×-costlier mode-2).
-    pub(crate) fn is_floatexp(self) -> bool {
-        matches!(self, RenderMode::Floatexp)
-    }
-}
-
-/// Fixed export aspect ratios (key, width ÷ height). "window" (not listed) matches the live view.
-///
-/// The keys are EXACT ratios, not marketing names, because [`aspect_key_for`] has to reproduce a
-/// preset's stated height to within half a pixel. "21:9" is the trap: no ultrawide display is
-/// actually 21:9 (2.333) — 2560×1080 is 64:27 (2.370) and 3440×1440 is 43:18 (2.389) — so a single
-/// "21:9" entry would render both at the wrong height. They get one key each, and the friendly
-/// names live in [`STANDARD_SIZES`] where users actually pick a size.
-const EXPORT_ASPECTS: [(&str, f64); 12] = [
-    ("16:9", 16.0 / 9.0),
-    ("16:10", 16.0 / 10.0),
-    ("3:2", 3.0 / 2.0),
-    ("4:3", 4.0 / 3.0),
-    ("1:1", 1.0),
-    ("2:3", 2.0 / 3.0),
-    ("9:16", 9.0 / 16.0),
-    ("2:1", 2.0),
-    ("64:27", 64.0 / 27.0),   // 21:9 ultrawide — 2560×1080, 3840×1620
-    ("43:18", 43.0 / 18.0),   // 21:9 ultrawide — 3440×1440 (UWQHD)
-    ("32:9", 32.0 / 9.0),     // super ultrawide — 5120×1440
-    ("256:135", 256.0 / 135.0), // DCI cinema — 2048×1080, 4096×2160
-];
-
-/// Standard output sizes offered by the export and tour-render dialogs: (label, width, height).
-///
-/// Every entry's ratio matches an [`EXPORT_ASPECTS`] key, because the image dialog stores a width
-/// plus an aspect and derives the height — a preset whose ratio it cannot express would silently
-/// render at a different size than its own label claims. [`aspect_key_for`] is what enforces that,
-/// and the `export-sizes` selftest fails if a row is ever added that breaks it.
-pub(crate) const STANDARD_SIZES: &[(&str, u32, u32)] = &[
-    ("HD 720p — 1280×720", 1280, 720),
-    ("Full HD 1080p — 1920×1080", 1920, 1080),
-    ("WUXGA — 1920×1200", 1920, 1200),
-    ("QHD 1440p — 2560×1440", 2560, 1440),
-    ("WQXGA — 2560×1600", 2560, 1600),
-    ("4K UHD — 3840×2160", 3840, 2160),
-    ("5K — 5120×2880", 5120, 2880),
-    ("8K UHD — 7680×4320", 7680, 4320),
-    ("UXGA 4:3 — 1600×1200", 1600, 1200),
-    ("3:2 — 1920×1280", 1920, 1280),
-    ("Square — 2048×2048", 2048, 2048),
-    ("Portrait 9:16 — 1080×1920", 1080, 1920),
-    ("UW-UXGA 21:9 — 2560×1080", 2560, 1080),
-    ("UWQHD 21:9 — 3440×1440", 3440, 1440),
-    ("UW4K 21:9 — 3840×1620", 3840, 1620),
-    ("Super ultrawide 32:9 — 5120×1440", 5120, 1440),
-    ("DCI 2K — 2048×1080", 2048, 1080),
-    ("DCI 4K — 4096×2160", 4096, 2160),
-];
-
-/// The [`EXPORT_ASPECTS`] key matching `w × h`, or `None` when no listed ratio reproduces it.
-/// The tolerance is half a pixel of height at this width: that is exactly the condition for the
-/// dialog's `round()`-ed height to come back as `h`, so a `Some` here is a promise the preset
-/// renders at its stated size. It is looser than exact equality on purpose: 1366×768 is not 16:9
-/// (1.7786 vs 1.7778) yet 1366/(16/9) rounds to exactly 768, so it IS reproducible and rejecting
-/// it would be wrong. A true mismatch — 3440×1440, whose 21:9 no key expresses — still fails.
-pub(crate) fn aspect_key_for(w: u32, h: u32) -> Option<&'static str> {
-    let (w, h) = (w as f64, h.max(1) as f64);
-    EXPORT_ASPECTS
-        .iter()
-        .find(|(_, r)| ((w / r) - h).abs() < 0.5)
-        .map(|(k, _)| *k)
-}
-
-
-/// Curated famous Mandelbrot locations: (name, center_x, center_y, magnification).
-/// Coordinates are full-precision strings so deep entries land exactly.
-const FAMOUS: &[(&str, &str, &str, f64)] = &[
-    ("Seahorse Valley", "-0.74364388703", "0.13182590421", 2.667e3),
-    ("Elephant Valley", "0.2925755", "-0.0149977", 2.0e3),
-    ("Triple Spiral", "-0.088643135", "0.654461185", 1.6e3),
-    ("Double Spiral", "-0.7470837", "0.1080358", 4.0e3),
-    ("Spiral Galaxy", "-0.7269", "0.1889", 2.667e3),
-    ("Mini Mandelbrot", "-1.7687788", "0.0017388", 8.0e3),
-    ("Deep Seahorse", "-0.743643887037151", "0.131825904205330", 1.333e7),
-];
-
-/// Curated well-known Misiurewicz points of interest: (name, center_re, center_im, magnification).
-/// Every center is an exact pre-periodic point (verified by Newton solve); the name carries its
-/// `(preperiod, period)`. Selecting one jumps there — and the parameterized finder re-derives any
-/// such point near the current view to arbitrary precision. Mandelbrot only.
-const MISIUREWICZ_POI: &[(&str, &str, &str, f64)] = &[
-    ("Antenna tip — Misiurewicz (2,1)", "-2.0", "0.0", 8.0),
-    ("Upper boundary c=i — Misiurewicz (2,2)", "0.0", "1.0", 8.0),
-    (
-        "Three-spar — Misiurewicz (4,1)",
-        "-0.101096363845622161025785445739",
-        "0.95628651080914150077109605773",
-        1.0e5,
-    ),
-    (
-        "Elephant spiral — Misiurewicz (7,1)",
-        "0.424512719050039642442472214172",
-        "0.207530228166745302506073482244",
-        1.0e4,
-    ),
-    (
-        "North antenna — Misiurewicz (4,3)",
-        "-0.173006716092090164776138289468",
-        "1.06275228084924256023519761268",
-        1.0e4,
-    ),
-];
-
-/// Zoom-appropriate iteration cap. A very high manual iteration count over-resolves the
-/// boundary's sub-pixel "dust" into per-pixel noise (and starves the render budget); this
-/// caps the count at a generous, zoom-scaled value so normal auto-iteration is never
-/// limited but an inflated base is. Used for both the live view and exports so they match.
-/// Zoom-appropriate iteration cap from the zoom **octaves** (`log2(magnification)`), taken
-/// directly so it stays finite past 1e308× where `magnification()` saturates to `∞`.
-pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
-    let o = octaves.max(0.0);
-    (ZOOM_ITER_BASE + o * ZOOM_ITER_PER_OCTAVE).min(u32::MAX as f64) as u32
-}
-
-
-
-
-
-
-
 
 // Self-test helpers + run_selftest moved to selftest.rs.
 
@@ -1477,378 +1603,51 @@ fn sample_stops(stops: &[[f32; 4]; fractadyne_color::MAX_STOPS], n: u32, t: f32)
     egui::Color32::from_rgb(g(col[0]), g(col[1]), g(col[2]))
 }
 
-// ---------------- Help content -------------------------------------------------
-// In-app Help content lives in help.rs (the help_* section fns; imported via use help::*).
-
-// ---- minimap overview ----
-/// Fixed complex region the minimap thumbnail covers (center + half-extents), so the
-/// "you are here" marker projects consistently regardless of the screen aspect.
-const MINIMAP_CX: f64 = -0.5;
-const MINIMAP_CY: f64 = 0.0;
-const MINIMAP_HX: f64 = 1.6;
-const MINIMAP_HY: f64 = 1.2;
-/// Thumbnail render resolution (display size is scaled down in the overlay).
-const MINIMAP_TW: u32 = 240;
-const MINIMAP_TH: u32 = 180;
-
-/// How deep a feature solve will go, in octaves. Not an arithmetic limit any more — the solver
-/// works in log magnification — but a sanity bound: its working precision grows with the ask, so
-/// a mistyped 1e1000000× would grind for hours producing a point no renderer could use. 200,000
-/// octaves is ~1e60000×, past anything this app has rendered.
-const MAX_SOLVE_OCTAVES: f64 = 200_000.0;
-
-/// The zoom factors the click-to-zoom tool offers (Settings ▸ Navigation). Named rather than
-/// written inline at the one control that draws them, because checklist step 17 asks a tester to
-/// try each one by name: the row, the buttons and the test that pins their arithmetic all have to
-/// be talking about the same list.
-const CLICK_ZOOM_FACTORS: [f32; 5] = [2.0, 4.0, 10.0, 50.0, 100.0];
-
-/// The toolbar magnifier buttons' step, as a `zoom_at` factor (< 1 zooms IN). Exact reciprocals,
-/// so in-then-out returns to the magnification you started at rather than drifting a little
-/// deeper on every pair of clicks.
-const TOOLBAR_ZOOM_IN_FACTOR: f64 = 0.5;
-const TOOLBAR_ZOOM_OUT_FACTOR: f64 = 2.0;
-
-/// "Zoom home" animation pacing: seconds per octave-ish of zoom-out, clamped so a
-/// shallow view still glides and an extreme one doesn't take forever.
-const HOME_SECONDS_PER_LOGMAG: f64 = 0.45;
-const HOME_MIN_SECONDS: f64 = 1.5;
-const HOME_MAX_SECONDS: f64 = 9.0;
-
-/// An in-progress smooth zoom-out to the home view (started by the Home button).
-struct HomeAnim {
-    start_time: f64,
-    duration: f64,
-    /// Mandelbrot/main view: center when the animation began + its ln(magnification).
-    m_start_center: (fractadyne_core::BigFloat, fractadyne_core::BigFloat),
-    m_start_logmag: f64,
-    /// Dual Julia view (only used when `dual`).
-    j_start_center: (fractadyne_core::BigFloat, fractadyne_core::BigFloat),
-    j_start_logmag: f64,
-    dual: bool,
-}
-
-fn main() -> eframe::Result<()> {
-    env_logger::init();
-    // Expand `@response-file` args and `--args-file FILE` so the whole command line can live in a
-    // text file (see `expand_arg_files`). Do it once, up front, so every consumer sees the result.
-    let args = match expand_arg_files(&std::env::args().collect::<Vec<_>>()) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("fractadyne: {e}");
-            crate::exit(2);
-        }
-    };
-    // Crash/hang visibility (design/diagnostics.md D1): log file, panic hook, watchdog.
-    // Before run_headless so even the pre-GUI CLI modes get crash reports.
-    diag::init(&args);
-    // ⭐ARBITRARY-PRECISION BACKEND (`--bignum auto|astro|rug`, or FRACTADYNE_BIGNUM).
-    //
-    // Chosen here — after logging exists, before ANY mode runs — so a headless `--render`, a
-    // self-test and the GUI all iterate in the same arithmetic, and the choice lands in the log a
-    // bug report will carry.
-    //
-    // ⚠The ENV VAR is the one to use for a batch or gate run. Harnesses (`--torture` per rung, the
-    // corpus script per location) launch fractadyne as CHILD processes, so a flag on the parent
-    // never reaches them — the same reason `FRACTADYNE_NO_SOUND` exists. An explicit flag outranks
-    // the env var without unsetting it.
-    //
-    // ⚠A backend this build does not contain is FATAL, never a quiet fall back to astro-float: a
-    // silent downgrade would let a benchmark report numbers for arithmetic it never ran.
-    {
-        let flag = args
-            .iter()
-            .position(|a| a == "--bignum")
-            .and_then(|i| args.get(i + 1).map(String::as_str))
-            .or_else(|| args.iter().find_map(|a| a.strip_prefix("--bignum=")));
-        let env = std::env::var("FRACTADYNE_BIGNUM").ok();
-        if let Some(spec) = flag.map(str::to_string).or(env) {
-            match fractadyne_core::parse_backend_choice(&spec) {
-                Ok(choice) => {
-                    if let Err(e) = fractadyne_core::select_backend(choice) {
-                        eprintln!("fractadyne: {e}");
-                        crate::exit(2);
-                    }
-                    diag::log_line("start", &format!("bignum backend selected: {}", choice.name()));
-                }
-                Err(e) => {
-                    eprintln!("fractadyne: --bignum: {e}");
-                    crate::exit(2);
-                }
-            }
-        }
-    }
-    // ⭐DEBUG TUNABLE OVERRIDES (`--set NAME=VALUE`, repeatable). Applied here — after logging
-    // exists, before ANY mode runs — so a headless `--render`, a self-test and the GUI all get the
-    // same values, and so the startup line lands in the log file that a bug report will carry.
-    // A bad name or value is FATAL: a typo'd knob that silently did nothing would send a field
-    // diagnosis chasing a change that never happened.
-    {
-        let mut pairs = Vec::new();
-        let mut it = args.iter().skip(1);
-        while let Some(a) = it.next() {
-            let kv = if a == "--set" {
-                it.next().map(String::as_str)
+/// One frame of palette animation: the new `(offset, direction)` for `mode` after advancing by
+/// `step` cycles. Split out of the per-frame update so "animates smoothly and stops cleanly when
+/// disabled" (checklist step 59) can be checked over many simulated frames without a clock.
+///
+/// The offset stays inside `0..=1` in every mode — it is a palette PHASE, and a value that walked
+/// out of range would either wrap visibly or freeze the animation at an end stop.
+pub(crate) fn palette_anim_step(mode: PaletteAnim, offset: f32, dir: f32, step: f32) -> (f32, f32) {
+    match mode {
+        PaletteAnim::Forward => ((offset + step).fract(), dir),
+        PaletteAnim::Reverse => ((offset - step).rem_euclid(1.0), dir),
+        PaletteAnim::PingPong => {
+            let o = offset + dir * step;
+            if o >= 1.0 {
+                (1.0, -1.0)
+            } else if o <= 0.0 {
+                (0.0, 1.0)
             } else {
-                a.strip_prefix("--set=")
-            };
-            if let Some(kv) = kv {
-                match kv.split_once('=') {
-                    Some((k, v)) => pairs.push((k.to_string(), v.to_string())),
-                    None => {
-                        eprintln!("fractadyne: --set expects NAME=VALUE (got '{kv}')");
-                        crate::exit(2);
-                    }
-                }
+                (o, dir)
             }
         }
-        if !pairs.is_empty() {
-            if let Err(e) = tunables::apply_overrides(&pairs) {
-                eprintln!("fractadyne: {e}");
-                crate::exit(2);
-            }
-            // Loud, and in the log: every later reading in this process is off-stock.
-            diag::log_line("start", &format!("⚠TUNABLES {}", tunables::status_line()));
-            eprintln!(
-                "fractadyne: ⚠tunable override(s) in effect — {}\n\
-                 fractadyne: ⚠this is a DEBUGGING build state; the shipped defaults are the only \
-                 tested path, and this run's results describe no released configuration.",
-                tunables::status_line()
-            );
-        }
-    }
-    // `--oomtest`: force a real allocation failure, to prove the OOM path actually writes a crash
-    // report. It cannot be verified any other way — an out-of-memory abort skips the panic hook,
-    // which is the whole reason this machinery exists, and waiting for a genuine OOM means waiting
-    // for the deep reference build to die again.
-    if args.iter().any(|a| a == "--oomtest") {
-        diag::breadcrumb("oomtest: requesting an impossible allocation".into());
-        let n = usize::MAX / 2;
-        // Deliberately unsatisfiable: the allocator returns null, `ReportingAlloc` reports, and
-        // the runtime aborts on it exactly as a real exhaustion would.
-        let v: Vec<u8> = Vec::with_capacity(n);
-        std::hint::black_box(&v);
-        crate::exit(0);
-    }
-    if cli::run_headless(&args) {
-        return Ok(());
-    }
-
-    let native_options = eframe::NativeOptions {
-        renderer: eframe::Renderer::Wgpu,
-        // Bound frames-in-flight to 1 so a slow deep-zoom frame can't accumulate a growing present
-        // queue — the swapchain backpressure that hung the UI thread on continuous df32 zoom-out.
-        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
-            desired_maximum_frame_latency: Some(1),
-            // Request GPU timestamp queries when the adapter supports them, so the profiling
-            // harness can time the iterate vs color passes in pure GPU time (see fractadyne_gpu::
-            // timing). Replicates egui-wgpu's default device_descriptor, adding only the one feature
-            // — the app degrades cleanly (CPU-timed columns only) on adapters that lack it.
-            wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
-                eframe::egui_wgpu::WgpuSetupCreateNew {
-                    // PIN the backend set to the one this build is validated on. eframe's default
-                    // is `PRIMARY | GL`, which includes DX12 — and since the app now compiles the
-                    // DX12 backend in (for `--gputest`, see Cargo.toml), leaving the default would
-                    // let a routine `cargo build` silently move every user onto a different shader
-                    // compiler and a different driver path. Everything cost-related is calibrated
-                    // against the current stack: the TDR step budgets, the dispatch caps, the
-                    // blessed goldens and livetest baselines. Switching backends is a deliberate,
-                    // re-measured decision, not a side effect. `WGPU_BACKEND` still overrides for
-                    // experiments, and `--gputest` grades every compiled-in backend regardless.
-                    instance_descriptor: eframe::wgpu::InstanceDescriptor {
-                        backends: eframe::wgpu::Backends::from_env().unwrap_or(
-                            eframe::wgpu::Backends::VULKAN | eframe::wgpu::Backends::GL,
-                        ),
-                        ..Default::default()
-                    },
-                    device_descriptor: std::sync::Arc::new(|adapter: &eframe::wgpu::Adapter| {
-                        let base_limits =
-                            if adapter.get_info().backend == eframe::wgpu::Backend::Gl {
-                                eframe::wgpu::Limits::downlevel_webgl2_defaults()
-                            } else {
-                                eframe::wgpu::Limits::default()
-                            };
-                        let mut features = eframe::wgpu::Features::empty();
-                        // `FRACTADYNE_NO_TIMESTAMPS=1` declines the feature even where the adapter
-                        // offers it. Not a user setting — it is the only way to exercise the
-                        // no-TIMESTAMP_QUERY path on a dev box whose GPU has it, and that path had
-                        // a reproducible bug (budget stuck at bootstrap → ~1/3 resolution forever)
-                        // that was invisible here for exactly that reason. Older Intel iGPUs, some
-                        // Mesa/RADV/ANV combinations, and the GL backend all land on it for real.
-                        let no_ts = std::env::var("FRACTADYNE_NO_TIMESTAMPS")
-                            .is_ok_and(|v| v != "0" && !v.is_empty());
-                        if !no_ts
-                            && adapter
-                                .features()
-                                .contains(eframe::wgpu::Features::TIMESTAMP_QUERY)
-                        {
-                            features |= eframe::wgpu::Features::TIMESTAMP_QUERY;
-                        }
-                        // Reference-orbit headroom: the default 128 MB storage-binding limit caps
-                        // the orbit+BLA buffer at ~928k samples — a wall the Misiurewicz spar
-                        // family hits by ~1e82× (its reference needs >928k iterations to escape,
-                        // so the view renders black there while shallower spar depths resolve).
-                        // Ask the ADAPTER for up to 1 GiB (≈7.4M samples); a lesser adapter grants
-                        // what it has, and `init_orbit_len_cap` sizes the cap from whatever was
-                        // actually granted, so nothing here assumes a big GPU.
-                        let want_binding: u32 = 1 << 30;
-                        let adapter_limits = adapter.limits();
-                        let binding = adapter_limits.max_storage_buffer_binding_size.min(want_binding);
-                        let buffer = adapter_limits.max_buffer_size.min(want_binding as u64);
-                        // Iteration-range tiling writes Rgba32Float state attachments per chunk
-                        // pass: THREE for direct/mode-0 (48 bytes/sample; the wgpu default limit is
-                        // 32), and FOUR for mode-2, whose floatexp state does not fit in three —
-                        // δz mantissa (4) + δz exponent (1) + derivative mantissa (4) + derivative
-                        // exponent (1) + status/iter (2) + ref_n (1) = 13 floats against 12, and the
-                        // two exponents cannot share one f32 channel at our depths (at 1e1105 the
-                        // binary exponent is ≈ −3670, so two fields need 13 bits each = 26 > the 24
-                        // an f32 holds exactly). So ask for 64.
-                        //
-                        // ⚠MEASURED before choosing this: the RTX 3080 reports 128 AVAILABLE while we
-                        // were requesting only 48, so the old ceiling was self-imposed, not hardware.
-                        // A lesser adapter grants what it has and the affected chunk path gates itself
-                        // off (`chunking_available` / `chunking_mode2_available`) — nothing here
-                        // assumes a big GPU.
-                        let attach_bytes = adapter_limits.max_color_attachment_bytes_per_sample.min(64);
-                        eframe::wgpu::DeviceDescriptor {
-                            label: Some("fractadyne device"),
-                            required_features: features,
-                            required_limits: eframe::wgpu::Limits {
-                                max_texture_dimension_2d: 8192,
-                                max_storage_buffer_binding_size: binding.max(base_limits.max_storage_buffer_binding_size),
-                                max_buffer_size: buffer.max(base_limits.max_buffer_size),
-                                max_color_attachment_bytes_per_sample: attach_bytes
-                                    .max(base_limits.max_color_attachment_bytes_per_sample),
-                                ..base_limits
-                            },
-                            memory_hints: eframe::wgpu::MemoryHints::default(),
-                        }
-                    }),
-                    ..Default::default()
-                },
-            ),
-            ..Default::default()
-        },
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([640.0, 400.0])
-            .with_title(window_title())
-            .with_icon(brand_icon()),
-        ..Default::default()
-    };
-
-    // Arm the unclean-exit marker around the event loop only (see `diag::begin_gui_session`).
-    // Every deliberate exit goes through `crate::exit`, which disarms it, so a clean shutdown can
-    // never be mistaken for a crash.
-    diag::begin_gui_session();
-    let r = eframe::run_native(
-        "Fractadyne",
-        native_options,
-        Box::new(move |cc| Ok(Box::new(FractadyneApp::new(cc, &args)))),
-    );
-    diag::end_session();
-    r
-}
-
-/// Terminate the process, disarming the unclean-exit marker first. EVERY `std::process::exit` in
-/// this crate goes through here: `exit` runs no destructors and no hooks, so a marker left armed
-/// by a deliberate quit would be reported as a crash on the next launch. One choke point is the
-/// only way to be sure none was missed.
-pub(crate) fn exit(code: i32) -> ! {
-    diag::end_session();
-    std::process::exit(code)
-}
-
-/// Direct download URL for the accelerated package matching `version`.
-///
-/// Version-MATCHED on purpose. The two builds share settings, saved session and locations, so a
-/// user can move between them freely -- which is exactly why handing them a "latest" link would be
-/// the one way to cause confusion here: they would be running two different feature sets against
-/// one shared session without being told.
-///
-/// `version` is `sysinfo::version_string()`, which carries a "(build N)" suffix that is not part
-/// of the tag. Pinned by test against the name `scripts/build-accelerated.ps1` actually produces:
-/// if either side is renamed, the link dies silently, and a dead download link in a menu is worse
-/// than no menu entry.
-fn accelerated_asset_url(version: &str) -> String {
-    let tag = format!("v{}", version.split_whitespace().next().unwrap_or(version));
-    format!("https://github.com/WindySnowOwl/fractadyne/releases/download/{tag}/fractadyne-{tag}-windows-x64-accelerated.zip")
-}
-
-#[cfg(test)]
-mod accelerated_link;
-
-/// Parse the value of an option that WAS SUPPLIED, or exit saying so.
-///
-/// Replaces the `val("--x").and_then(|s| s.parse::<T>().ok())` idiom, which conflates two things
-/// that are not alike: the option is ABSENT (fall back to the default — correct, and still what
-/// happens, because the caller only reaches here inside `Some`), and the option is PRESENT with a
-/// value we cannot read (fall back to the default — a bug, because the program then does real,
-/// expensive, wrong work and exits 0). `--zoom` shipped in the second state long enough for the
-/// benchmark kit to measure a whole-set frame against a deep one and report a ratio; the only
-/// reason it was ever noticed is that somebody looked at the picture. Every option that steers a
-/// render or a comparison goes through here now, so an unreadable value is a message, not a
-/// plausible-looking result.
-fn arg_parse<T: std::str::FromStr>(name: &str, s: &str, expect: &str) -> T {
-    match s.parse::<T>() {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("fractadyne: {name}: cannot read \"{s}\" as {expect}.");
-            crate::exit(2)
-        }
+        // Random walks its own state; Off holds still — the caller's business, not a phase step.
+        PaletteAnim::Random | PaletteAnim::Off => (offset, dir),
     }
 }
 
-/// `--flag TOKEN` for a type parsed from a fixed vocabulary, fatal when supplied and
-/// unreadable. Same reason as [`arg_parse`]: a benchmark handed an unrecognised preset
-/// silently ran a DIFFERENT workload and still printed a complete, plausible report, with
-/// the preset it actually used named in the output where nobody rereads it.
-fn arg_token<T>(name: &str, s: &str, parse: impl Fn(&str) -> Option<T>, expect: &str) -> T {
-    match parse(s) {
-        Some(v) => v,
-        None => {
-            eprintln!("fractadyne: {name}: cannot read \"{s}\" as {expect}.");
-            crate::exit(2)
-        }
-    }
+// ================================================================================================
+// Readouts + number/coordinate formatting (status bar, share, exports)
+// ================================================================================================
+
+/// Parse a `--size` value as either a bare width (`1920`) or `WIDTHxHEIGHT` (`5120x2160`,
+/// case-insensitive `x`/`X`/`×`). Returns `(width, height)` where each is `Some` when present and
+/// parseable. This lets callers accept both forms; a bare width leaves the height to `--height` or
+/// an aspect-ratio default.
+/// The separators `parse_size` splits on. Shared so a caller can ask "was a height SUPPLIED?"
+/// without re-listing the characters and drifting from the parser.
+pub(crate) fn size_has_separator(s: &str) -> bool {
+    s.contains(|c: char| c == 'x' || c == 'X' || c == '×')
 }
 
-/// `--size` as `WIDTH` or `WIDTHxHEIGHT`, fatal when supplied and unreadable. A silent fallback
-/// here renders at the WRONG RESOLUTION and says nothing — the exact shape of the benchmark-kit
-/// defect where one renderer was handed 1280x720 while every other lane ran 1920x1080.
-fn arg_size(name: &str, s: &str) -> (Option<u32>, Option<u32>) {
-    let parsed = parse_size(s);
-    // A bare width is legitimate, but ONLY when there was no separator for a height to have
-    // failed on. `parse_size` parses the halves independently and returns (Some(w), None) for
-    // BOTH "1920" and "1920x108O", so accepting the second drops a height that WAS supplied,
-    // without a word: the tour then renders at the script's height, and the single-image lane
-    // at whatever aspect the restored session happens to have, which is not even reproducible.
-    // That is this entire class again, inside the fix for it.
-    let readable = match parsed {
-        (Some(_), Some(_)) => true,
-        (Some(_), None) => !size_has_separator(s),
-        _ => false,
-    };
-    if !readable {
-        eprintln!("fractadyne: {name}: cannot read \"{s}\" as WIDTH or WIDTHxHEIGHT.");
-        crate::exit(2)
+pub(crate) fn parse_size(s: &str) -> (Option<u32>, Option<u32>) {
+    let sep = |c: char| c == 'x' || c == 'X' || c == '×';
+    match s.split_once(sep) {
+        Some((w, h)) => (w.trim().parse().ok(), h.trim().parse().ok()),
+        None => (s.trim().parse().ok(), None),
     }
-    parsed
-}
-
-/// A full-precision coordinate pair, fatal when either half is unreadable. `parse_bf` returns
-/// `None` on anything it cannot read and the `?` collapsed the PAIR, so one stray character in a
-/// pasted y ordinate threw the whole location away and rendered the fractal default centre at the
-/// requested depth — solid interior, full cost, exit 0.
-fn arg_center(name: &str, xs: &str, ys: &str) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat) {
-    let one = |t: &str| match fractadyne_core::parse_bf(t) {
-        Some(v) => v,
-        None => {
-            eprintln!("fractadyne: {name}: cannot read \"{t}\" as a decimal coordinate.");
-            crate::exit(2)
-        }
-    };
-    (one(xs), one(ys))
 }
 
 /// Group an integer string with commas every 3 digits (handles a leading `-`).
@@ -2125,6 +1924,196 @@ pub(crate) fn fmt_coord_deep(v: &fractadyne_core::BigFloat, log2mag: f64) -> Str
     }
 }
 
+// ================================================================================================
+// Locations + points of interest
+// ================================================================================================
+
+/// Curated famous Mandelbrot locations: (name, center_x, center_y, magnification).
+/// Coordinates are full-precision strings so deep entries land exactly.
+const FAMOUS: &[(&str, &str, &str, f64)] = &[
+    ("Seahorse Valley", "-0.74364388703", "0.13182590421", 2.667e3),
+    ("Elephant Valley", "0.2925755", "-0.0149977", 2.0e3),
+    ("Triple Spiral", "-0.088643135", "0.654461185", 1.6e3),
+    ("Double Spiral", "-0.7470837", "0.1080358", 4.0e3),
+    ("Spiral Galaxy", "-0.7269", "0.1889", 2.667e3),
+    ("Mini Mandelbrot", "-1.7687788", "0.0017388", 8.0e3),
+    ("Deep Seahorse", "-0.743643887037151", "0.131825904205330", 1.333e7),
+];
+
+/// Curated well-known Misiurewicz points of interest: (name, center_re, center_im, magnification).
+/// Every center is an exact pre-periodic point (verified by Newton solve); the name carries its
+/// `(preperiod, period)`. Selecting one jumps there — and the parameterized finder re-derives any
+/// such point near the current view to arbitrary precision. Mandelbrot only.
+const MISIUREWICZ_POI: &[(&str, &str, &str, f64)] = &[
+    ("Antenna tip — Misiurewicz (2,1)", "-2.0", "0.0", 8.0),
+    ("Upper boundary c=i — Misiurewicz (2,2)", "0.0", "1.0", 8.0),
+    (
+        "Three-spar — Misiurewicz (4,1)",
+        "-0.101096363845622161025785445739",
+        "0.95628651080914150077109605773",
+        1.0e5,
+    ),
+    (
+        "Elephant spiral — Misiurewicz (7,1)",
+        "0.424512719050039642442472214172",
+        "0.207530228166745302506073482244",
+        1.0e4,
+    ),
+    (
+        "North antenna — Misiurewicz (4,3)",
+        "-0.173006716092090164776138289468",
+        "1.06275228084924256023519761268",
+        1.0e4,
+    ),
+];
+
+/// How deep a feature solve will go, in octaves. Not an arithmetic limit any more — the solver
+/// works in log magnification — but a sanity bound: its working precision grows with the ask, so
+/// a mistyped 1e1000000× would grind for hours producing a point no renderer could use. 200,000
+/// octaves is ~1e60000×, past anything this app has rendered.
+const MAX_SOLVE_OCTAVES: f64 = 200_000.0;
+
+/// Pick a detail-rich location: bisect between an interior anchor and a random exterior
+/// direction to land ON the set boundary, then choose a magnification in 1e2..1e6. Returns
+/// `(center_x, center_y, magnification)`.
+///
+/// Boundary points are always detail-rich, which is the whole promise of the Random location
+/// menu item — so the failure mode is a seed that lands somewhere blank, and that is only
+/// findable by rendering several. Taking the seed as an argument (rather than reading the UI
+/// clock inside) is what lets the self-test do exactly that, and makes any bad seed it finds
+/// reproducible instead of a once-seen screenshot.
+pub(crate) fn random_boundary_location(seed: u64) -> (f64, f64, f64) {
+    let mut s = (seed ^ 0x9E37_79B9_7F4A_7C15) | 1;
+    let mut rnd = || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        (s >> 11) as f64 / ((1u64 << 53) as f64)
+    };
+    let theta = rnd() * std::f64::consts::TAU;
+    // Interior anchor (inside the main cardioid) → exterior point along θ.
+    let (mut ix, mut iy) = (-0.5_f64, 0.0_f64);
+    let (mut ox, mut oy) = (ix + 3.0 * theta.cos(), iy + 3.0 * theta.sin());
+    for _ in 0..64 {
+        let (mx, my) = ((ix + ox) * 0.5, (iy + oy) * 0.5);
+        if mandel_escapes(mx, my, 3000).is_some() {
+            ox = mx;
+            oy = my;
+        } else {
+            ix = mx;
+            iy = my;
+        }
+    }
+    let mag = 10f64.powf(2.0 + rnd() * 4.0); // 1e2 .. 1e6
+    ((ix + ox) * 0.5, (iy + oy) * 0.5, mag)
+}
+
+/// Whether untrusted text may be handed to `load_view_metadata` as a location, and why not when
+/// it may not. One gate for all three doors — the Share dialog's Apply, File ▸ Open on a `.fdn`,
+/// and a dropped file — so a location the app itself wrote can never be accepted by one and
+/// refused by another.
+///
+/// The content test is deliberately loose: our own tag OR a centre field, because a location
+/// hand-edited down to just the coordinates is still a location. What it excludes is arbitrary
+/// text, which `load_view_metadata` would silently accept as "no recognised keys" and apply as a
+/// no-op jump, leaving the user staring at an unchanged view with no error.
+pub(crate) fn location_text_verdict(t: &str) -> Result<(), &'static str> {
+    let t = t.trim();
+    if t.is_empty() || t.len() > SHARE_MAX {
+        return Err("Nothing to load (or text too large).");
+    }
+    if meta_get(t, "app") != "Fractadyne" && meta_get(t, "center_re").is_empty() {
+        return Err("Not a Fractadyne location.");
+    }
+    Ok(())
+}
+
+// ---------------- Help content -------------------------------------------------
+// In-app Help content lives in help.rs (the help_* section fns; imported via use help::*).
+
+// ---- minimap overview ----
+/// Fixed complex region the minimap thumbnail covers (center + half-extents), so the
+/// "you are here" marker projects consistently regardless of the screen aspect.
+const MINIMAP_CX: f64 = -0.5;
+
+const MINIMAP_CY: f64 = 0.0;
+
+const MINIMAP_HX: f64 = 1.6;
+
+const MINIMAP_HY: f64 = 1.2;
+
+/// Thumbnail render resolution (display size is scaled down in the overlay).
+const MINIMAP_TW: u32 = 240;
+
+const MINIMAP_TH: u32 = 180;
+
+// ================================================================================================
+// Export + gallery helpers
+// ================================================================================================
+
+/// Fixed export aspect ratios (key, width ÷ height). "window" (not listed) matches the live view.
+///
+/// The keys are EXACT ratios, not marketing names, because [`aspect_key_for`] has to reproduce a
+/// preset's stated height to within half a pixel. "21:9" is the trap: no ultrawide display is
+/// actually 21:9 (2.333) — 2560×1080 is 64:27 (2.370) and 3440×1440 is 43:18 (2.389) — so a single
+/// "21:9" entry would render both at the wrong height. They get one key each, and the friendly
+/// names live in [`STANDARD_SIZES`] where users actually pick a size.
+const EXPORT_ASPECTS: [(&str, f64); 12] = [
+    ("16:9", 16.0 / 9.0),
+    ("16:10", 16.0 / 10.0),
+    ("3:2", 3.0 / 2.0),
+    ("4:3", 4.0 / 3.0),
+    ("1:1", 1.0),
+    ("2:3", 2.0 / 3.0),
+    ("9:16", 9.0 / 16.0),
+    ("2:1", 2.0),
+    ("64:27", 64.0 / 27.0),   // 21:9 ultrawide — 2560×1080, 3840×1620
+    ("43:18", 43.0 / 18.0),   // 21:9 ultrawide — 3440×1440 (UWQHD)
+    ("32:9", 32.0 / 9.0),     // super ultrawide — 5120×1440
+    ("256:135", 256.0 / 135.0), // DCI cinema — 2048×1080, 4096×2160
+];
+
+/// Standard output sizes offered by the export and tour-render dialogs: (label, width, height).
+///
+/// Every entry's ratio matches an [`EXPORT_ASPECTS`] key, because the image dialog stores a width
+/// plus an aspect and derives the height — a preset whose ratio it cannot express would silently
+/// render at a different size than its own label claims. [`aspect_key_for`] is what enforces that,
+/// and the `export-sizes` selftest fails if a row is ever added that breaks it.
+pub(crate) const STANDARD_SIZES: &[(&str, u32, u32)] = &[
+    ("HD 720p — 1280×720", 1280, 720),
+    ("Full HD 1080p — 1920×1080", 1920, 1080),
+    ("WUXGA — 1920×1200", 1920, 1200),
+    ("QHD 1440p — 2560×1440", 2560, 1440),
+    ("WQXGA — 2560×1600", 2560, 1600),
+    ("4K UHD — 3840×2160", 3840, 2160),
+    ("5K — 5120×2880", 5120, 2880),
+    ("8K UHD — 7680×4320", 7680, 4320),
+    ("UXGA 4:3 — 1600×1200", 1600, 1200),
+    ("3:2 — 1920×1280", 1920, 1280),
+    ("Square — 2048×2048", 2048, 2048),
+    ("Portrait 9:16 — 1080×1920", 1080, 1920),
+    ("UW-UXGA 21:9 — 2560×1080", 2560, 1080),
+    ("UWQHD 21:9 — 3440×1440", 3440, 1440),
+    ("UW4K 21:9 — 3840×1620", 3840, 1620),
+    ("Super ultrawide 32:9 — 5120×1440", 5120, 1440),
+    ("DCI 2K — 2048×1080", 2048, 1080),
+    ("DCI 4K — 4096×2160", 4096, 2160),
+];
+
+/// The [`EXPORT_ASPECTS`] key matching `w × h`, or `None` when no listed ratio reproduces it.
+/// The tolerance is half a pixel of height at this width: that is exactly the condition for the
+/// dialog's `round()`-ed height to come back as `h`, so a `Some` here is a promise the preset
+/// renders at its stated size. It is looser than exact equality on purpose: 1366×768 is not 16:9
+/// (1.7786 vs 1.7778) yet 1366/(16/9) rounds to exactly 768, so it IS reproducible and rejecting
+/// it would be wrong. A true mismatch — 3440×1440, whose 21:9 no key expresses — still fails.
+pub(crate) fn aspect_key_for(w: u32, h: u32) -> Option<&'static str> {
+    let (w, h) = (w as f64, h.max(1) as f64);
+    EXPORT_ASPECTS
+        .iter()
+        .find(|(_, r)| ((w / r) - h).abs() < 0.5)
+        .map(|(k, _)| *k)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExportFormat {
     Png,
@@ -2140,136 +2129,6 @@ enum DualExport {
     Separate,
     /// Just the main/left panel.
     ActiveOnly,
-}
-
-// System-facts helpers (process_memory, SysInfo, gather_system_info, CPU/VRAM probes)
-// moved to sysinfo.rs (re-exported below).
-// ---- Scripting: keyframe camera tours (also drives the benchmark) ----
-
-// Scripting/benchmark types + helpers moved to scripting.rs.
-
-/// A feature solve (Go-to ▸ nearest minibrot / Misiurewicz) running OFF the UI thread.
-///
-/// ⭐These are arbitrary-precision Newton solves whose cost grows with depth, and at depth they
-/// are not "slow", they are *seconds to minutes*: a field report at 2.63e58899× (precision 195,724
-/// bits) froze the window hard enough for Windows to paint "(Not Responding)" on the title bar. A
-/// modal that stops repainting cannot even show progress, so the work has to leave the UI thread.
-///
-/// The worker runs only the pure `fractadyne-core` calls; everything that needs `&self` — the
-/// Newton-Raphson zoom target, the label, the navigation — happens on the main thread when the
-/// result arrives.
-struct FeatureSolve {
-    rx: std::sync::mpsc::Receiver<FeatureOutcome>,
-    started: Instant,
-    /// The zoom the user asked to land at, carried across so the reply does not have to re-parse.
-    zoom_to: Option<f64>,
-    /// Set when the requested depth is past what the solver can express, so the reply can say so
-    /// instead of navigating to a depth the answer is not accurate for.
-    depth_capped: Option<f64>,
-}
-
-/// What a [`FeatureSolve`] worker computed.
-enum FeatureOutcome {
-    Nucleus(Option<fractadyne_core::Nucleus>),
-    Misiurewicz {
-        /// The pair used: detected from the orbit when the user left the boxes blank.
-        k: u32,
-        p: u32,
-        /// Whether that pair was auto-detected (so the UI can fill the boxes in).
-        detected: bool,
-        outcome: Result<fractadyne_core::Misiurewicz, fractadyne_core::MisiurewiczMiss>,
-    },
-    /// Auto-detection found no pair at all, so there was nothing to solve for.
-    NoPairDetected,
-}
-
-/// Which picture the selected formula is drawn as — the "Show" axis of the fractal picker.
-///
-/// A Julia set is not a different fractal; it is one POINT of the parameter plane, drawn as its
-/// own picture. A new user has no way to know that, and the app's own best explanation of it —
-/// the linked dual view — was buried as a checkbox called "Dual view". Modelling the three states
-/// as one choice is what lets the picker say so.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ShowMode {
-    /// The parameter plane: the Mandelbrot-type set for this formula.
-    Set,
-    /// The Julia set for the current `c`, filling the window.
-    Julia,
-    /// Both, linked: the parameter plane on the left, the Julia of the cursor's point on the right.
-    Both,
-}
-
-/// Which picture a `(dual, julia_mode)` pair actually puts on screen.
-///
-/// `dual` wins: the dual path draws both panes regardless of `julia_mode`, so a stale `true`
-/// underneath it must still READ as `Both` or the picker would show a state the renderer is not
-/// in. (`set_show_mode` normalises the flag away, but sessions written by older builds carry it.)
-pub(crate) fn show_mode_of(dual: bool, julia_mode: bool) -> ShowMode {
-    if dual {
-        ShowMode::Both
-    } else if julia_mode {
-        ShowMode::Julia
-    } else {
-        ShowMode::Set
-    }
-}
-
-/// The `(dual, julia_mode)` a mode means — the inverse of [`show_mode_of`] over the three legal
-/// states. Kept as a pair of functions rather than open-coded at the call sites so the mapping
-/// cannot be written one way in the picker and another way in a script or a session load.
-pub(crate) fn show_mode_flags(m: ShowMode) -> (bool, bool) {
-    match m {
-        ShowMode::Set => (false, false),
-        ShowMode::Julia => (false, true),
-        ShowMode::Both => (true, false),
-    }
-}
-
-/// Palette animation mode (continuously shifts the color offset).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum PaletteAnim {
-    Off,
-    Forward,
-    Reverse,
-    PingPong,
-    Random,
-}
-
-impl PaletteAnim {
-    pub(crate) const ALL: [PaletteAnim; 5] = [
-        PaletteAnim::Off,
-        PaletteAnim::Forward,
-        PaletteAnim::Reverse,
-        PaletteAnim::PingPong,
-        PaletteAnim::Random,
-    ];
-    fn name(self) -> &'static str {
-        match self {
-            PaletteAnim::Off => "Off",
-            PaletteAnim::Forward => "Forward",
-            PaletteAnim::Reverse => "Reverse",
-            PaletteAnim::PingPong => "Ping-pong",
-            PaletteAnim::Random => "Random gradients",
-        }
-    }
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            PaletteAnim::Off => "off",
-            PaletteAnim::Forward => "forward",
-            PaletteAnim::Reverse => "reverse",
-            PaletteAnim::PingPong => "pingpong",
-            PaletteAnim::Random => "random",
-        }
-    }
-    pub(crate) fn from_key(s: &str) -> PaletteAnim {
-        match s {
-            "forward" => PaletteAnim::Forward,
-            "reverse" => PaletteAnim::Reverse,
-            "pingpong" => PaletteAnim::PingPong,
-            "random" => PaletteAnim::Random,
-            _ => PaletteAnim::Off,
-        }
-    }
 }
 
 /// A render+write job handed to the background export worker.
@@ -2336,95 +2195,17 @@ pub(crate) fn export_file_name(fractal: &str, secs: u64, ext: &str) -> String {
     format!("fractadyne_{}_{}.{ext}", fractal.replace(' ', ""), FractadyneApp::file_stamp(secs))
 }
 
-/// The GitHub new-issue URL for a report with `subject`. The report body itself rides the
-/// clipboard, not the URL (length limits), so the body here is only a paste hint.
-pub(crate) fn issue_new_url(subject: &str) -> String {
-    format!(
-        "{ISSUES_URL}/new?title={}&body={}",
-        mailto_encode(subject),
-        mailto_encode(
-            "<!-- The full report is on your clipboard — paste it here (Ctrl+V). \
-             Screenshots can be dragged in. -->\n\n"
-        ),
-    )
-}
-
-/// The `mailto:` fallback for reporters without a GitHub account, addressed to [`REPORT_EMAIL`].
-pub(crate) fn issue_mailto_url(subject: &str) -> String {
-    format!(
-        "mailto:{REPORT_EMAIL}?subject={}&body={}",
-        mailto_encode(subject),
-        mailto_encode(
-            "The full report has been copied to your clipboard — paste it here (Ctrl+V). \
-             You can also attach a saved report file.\n\n"
-        ),
-    )
-}
-
-/// One frame of palette animation: the new `(offset, direction)` for `mode` after advancing by
-/// `step` cycles. Split out of the per-frame update so "animates smoothly and stops cleanly when
-/// disabled" (checklist step 59) can be checked over many simulated frames without a clock.
-///
-/// The offset stays inside `0..=1` in every mode — it is a palette PHASE, and a value that walked
-/// out of range would either wrap visibly or freeze the animation at an end stop.
-pub(crate) fn palette_anim_step(mode: PaletteAnim, offset: f32, dir: f32, step: f32) -> (f32, f32) {
-    match mode {
-        PaletteAnim::Forward => ((offset + step).fract(), dir),
-        PaletteAnim::Reverse => ((offset - step).rem_euclid(1.0), dir),
-        PaletteAnim::PingPong => {
-            let o = offset + dir * step;
-            if o >= 1.0 {
-                (1.0, -1.0)
-            } else if o <= 0.0 {
-                (0.0, 1.0)
-            } else {
-                (o, dir)
-            }
-        }
-        // Random walks its own state; Off holds still — the caller's business, not a phase step.
-        PaletteAnim::Random | PaletteAnim::Off => (offset, dir),
-    }
-}
-
-/// The two panel WIDTHS, in pixels, for an offline dual render at `width`.
-///
-/// The right panel is DERIVED from the left rather than rounded independently: an odd frame width
-/// rounded twice silently loses or gains a column against the size that was asked for, and the
-/// stitched frame then does not match the requested export size.
-pub(crate) fn dual_panel_widths(width: u32, split: f32) -> (u32, u32) {
-    let split = split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX);
-    let lw = ((width as f32 * split).round() as u32).clamp(1, width.saturating_sub(1).max(1));
-    (lw, width.saturating_sub(lw).max(1))
-}
-
-/// Whether the welcome / quick-start modal opens on this launch.
-///
-/// Two rules, and the second is load-bearing: it is shown once on a fresh profile and never again
-/// (dismissal persists as `welcome_seen`), and it is NEVER shown in front of a harness — a modal
-/// there blocks the run, which is how `--livetest` once sat behind this dialog rendering frames
-/// and never starting its tour.
-pub(crate) fn welcome_should_open(welcome_seen: bool, launched_for_a_task: bool) -> bool {
-    !welcome_seen && !launched_for_a_task
-}
-
-/// Whether untrusted text may be handed to `load_view_metadata` as a location, and why not when
-/// it may not. One gate for all three doors — the Share dialog's Apply, File ▸ Open on a `.fdn`,
-/// and a dropped file — so a location the app itself wrote can never be accepted by one and
-/// refused by another.
-///
-/// The content test is deliberately loose: our own tag OR a centre field, because a location
-/// hand-edited down to just the coordinates is still a location. What it excludes is arbitrary
-/// text, which `load_view_metadata` would silently accept as "no recognised keys" and apply as a
-/// no-op jump, leaving the user staring at an unchanged view with no error.
-pub(crate) fn location_text_verdict(t: &str) -> Result<(), &'static str> {
-    let t = t.trim();
-    if t.is_empty() || t.len() > SHARE_MAX {
-        return Err("Nothing to load (or text too large).");
-    }
-    if meta_get(t, "app") != "Fractadyne" && meta_get(t, "center_re").is_empty() {
-        return Err("Not a Fractadyne location.");
-    }
-    Ok(())
+/// One exported image discovered by the gallery browser.
+struct GalleryEntry {
+    path: std::path::PathBuf,
+    meta: String,
+    fractal: String,
+    zoom: String,
+    saved: String,
+    notes: String,
+    app_version: String,
+    thumb: Option<egui::TextureHandle>,
+    thumb_tried: bool,
 }
 
 /// Scan a folder for exported images carrying Fractadyne view metadata: `(path, metadata blob)`,
@@ -2461,39 +2242,495 @@ pub(crate) fn scan_gallery_dir(dir: &std::path::Path) -> Vec<(std::path::PathBuf
     out
 }
 
-/// Pick a detail-rich location: bisect between an interior anchor and a random exterior
-/// direction to land ON the set boundary, then choose a magnification in 1e2..1e6. Returns
-/// `(center_x, center_y, magnification)`.
-///
-/// Boundary points are always detail-rich, which is the whole promise of the Random location
-/// menu item — so the failure mode is a seed that lands somewhere blank, and that is only
-/// findable by rendering several. Taking the seed as an argument (rather than reading the UI
-/// clock inside) is what lets the self-test do exactly that, and makes any bad seed it finds
-/// reproducible instead of a once-seen screenshot.
-pub(crate) fn random_boundary_location(seed: u64) -> (f64, f64, f64) {
-    let mut s = (seed ^ 0x9E37_79B9_7F4A_7C15) | 1;
-    let mut rnd = || {
-        s ^= s << 13;
-        s ^= s >> 7;
-        s ^= s << 17;
-        (s >> 11) as f64 / ((1u64 << 53) as f64)
-    };
-    let theta = rnd() * std::f64::consts::TAU;
-    // Interior anchor (inside the main cardioid) → exterior point along θ.
-    let (mut ix, mut iy) = (-0.5_f64, 0.0_f64);
-    let (mut ox, mut oy) = (ix + 3.0 * theta.cos(), iy + 3.0 * theta.sin());
-    for _ in 0..64 {
-        let (mx, my) = ((ix + ox) * 0.5, (iy + oy) * 0.5);
-        if mandel_escapes(mx, my, 3000).is_some() {
-            ox = mx;
-            oy = my;
-        } else {
-            ix = mx;
-            iy = my;
+// ================================================================================================
+// Issue reporting (Help -> Report an issue)
+// ================================================================================================
+
+/// Scattered window/panel open-flags plus two small chrome selections — pure UI-visibility state the
+/// egui layer reads. Only `right_panel_open` & `minimap` persist; the rest are transient. (Phase 2a.)
+/// Where the issue reporter sends to (Help → Report an issue…). The project's own support mailbox
+/// as of 2026-08-15, confirmed live before this was changed — a dead support address is worse than
+/// none, which is why the TODO entry for it waited on the mailbox actually existing.
+pub(crate) const REPORT_EMAIL: &str = "feedback@fractadyne.org";
+
+/// GitHub issue tracker — the PRIMARY reporting channel (public, searchable, and other users can
+/// confirm/subscribe); email stays as the private fallback.
+pub(crate) const ISSUES_URL: &str = "https://github.com/WindySnowOwl/fractadyne/issues";
+
+/// Minimal percent-encoding for a `mailto:` subject/body component (keeps RFC 3986 unreserved).
+pub(crate) fn mailto_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
         }
     }
-    let mag = 10f64.powf(2.0 + rnd() * 4.0); // 1e2 .. 1e6
-    ((ix + ox) * 0.5, (iy + oy) * 0.5, mag)
+    out
+}
+
+/// What kind of issue is being reported (drives the report header + email subject).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IssueKind {
+    Crash,
+    Rendering,
+    Performance,
+    Ui,
+    Feature,
+    Other,
+}
+
+impl IssueKind {
+    pub(crate) const ALL: [IssueKind; 6] = [
+        IssueKind::Crash,
+        IssueKind::Rendering,
+        IssueKind::Performance,
+        IssueKind::Ui,
+        IssueKind::Feature,
+        IssueKind::Other,
+    ];
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            IssueKind::Crash => "Application crash / freeze",
+            IssueKind::Rendering => "Incorrect rendering",
+            IssueKind::Performance => "Performance issue",
+            IssueKind::Ui => "UI / usability issue",
+            IssueKind::Feature => "Feature request",
+            IssueKind::Other => "Other",
+        }
+    }
+}
+
+/// Optional severity for triage (`Unspecified` = omitted from the report).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Severity {
+    Unspecified,
+    Low,
+    Medium,
+    High,
+    Blocking,
+}
+
+impl Severity {
+    pub(crate) const ALL: [Severity; 5] = [
+        Severity::Unspecified,
+        Severity::Low,
+        Severity::Medium,
+        Severity::High,
+        Severity::Blocking,
+    ];
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Severity::Unspecified => "—",
+            Severity::Low => "Low",
+            Severity::Medium => "Medium",
+            Severity::High => "High",
+            Severity::Blocking => "Blocking",
+        }
+    }
+}
+
+/// How reproducible the issue is (`Unspecified` = omitted from the report).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Repro {
+    Unspecified,
+    Always,
+    Sometimes,
+    Once,
+    Cannot,
+}
+
+impl Repro {
+    pub(crate) const ALL: [Repro; 5] =
+        [Repro::Unspecified, Repro::Always, Repro::Sometimes, Repro::Once, Repro::Cannot];
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Repro::Unspecified => "—",
+            Repro::Always => "Always",
+            Repro::Sometimes => "Sometimes",
+            Repro::Once => "Happened once",
+            Repro::Cannot => "Can't reproduce",
+        }
+    }
+}
+
+/// The GitHub new-issue URL for a report with `subject`. The report body itself rides the
+/// clipboard, not the URL (length limits), so the body here is only a paste hint.
+pub(crate) fn issue_new_url(subject: &str) -> String {
+    format!(
+        "{ISSUES_URL}/new?title={}&body={}",
+        mailto_encode(subject),
+        mailto_encode(
+            "<!-- The full report is on your clipboard — paste it here (Ctrl+V). \
+             Screenshots can be dragged in. -->\n\n"
+        ),
+    )
+}
+
+/// The `mailto:` fallback for reporters without a GitHub account, addressed to [`REPORT_EMAIL`].
+pub(crate) fn issue_mailto_url(subject: &str) -> String {
+    format!(
+        "mailto:{REPORT_EMAIL}?subject={}&body={}",
+        mailto_encode(subject),
+        mailto_encode(
+            "The full report has been copied to your clipboard — paste it here (Ctrl+V). \
+             You can also attach a saved report file.\n\n"
+        ),
+    )
+}
+
+// ================================================================================================
+// UI geometry + interaction helpers
+// ================================================================================================
+
+/// The window's regions as laid out on the last frame. `None` = the region did not draw (the
+/// control panel when hidden, or anything on a frame that never reached it).
+///
+/// ⚠FOUR, not the five the checklist names: the menu bar and the toolbar share ONE wrapped
+/// `TopBottomPanel`, so on screen they are two rows a person can see and to the layout they are
+/// one rect. The human row still says five; the machine can only vouch for four.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct LayoutRects {
+    /// The whole window, in the same point space as the regions — so "inside the window" is a
+    /// comparison between two recorded rects rather than a conversion between points and pixels.
+    pub(crate) window: Option<egui::Rect>,
+    pub(crate) top_bar: Option<egui::Rect>,
+    pub(crate) central: Option<egui::Rect>,
+    pub(crate) right_panel: Option<egui::Rect>,
+    pub(crate) status_bar: Option<egui::Rect>,
+}
+
+impl LayoutRects {
+    /// `(name, rect)` for every region that drew this frame.
+    pub(crate) fn present(&self) -> Vec<(&'static str, egui::Rect)> {
+        [
+            ("top bar", self.top_bar),
+            ("central", self.central),
+            ("control panel", self.right_panel),
+            ("status bar", self.status_bar),
+        ]
+        .into_iter()
+        .filter_map(|(n, r)| r.map(|r| (n, r)))
+        .collect()
+    }
+}
+
+/// The two panel WIDTHS, in pixels, for an offline dual render at `width`.
+///
+/// The right panel is DERIVED from the left rather than rounded independently: an odd frame width
+/// rounded twice silently loses or gains a column against the size that was asked for, and the
+/// stitched frame then does not match the requested export size.
+pub(crate) fn dual_panel_widths(width: u32, split: f32) -> (u32, u32) {
+    let split = split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX);
+    let lw = ((width as f32 * split).round() as u32).clamp(1, width.saturating_sub(1).max(1));
+    (lw, width.saturating_sub(lw).max(1))
+}
+
+/// Whether the welcome / quick-start modal opens on this launch.
+///
+/// Two rules, and the second is load-bearing: it is shown once on a fresh profile and never again
+/// (dismissal persists as `welcome_seen`), and it is NEVER shown in front of a harness — a modal
+/// there blocks the run, which is how `--livetest` once sat behind this dialog rendering frames
+/// and never starting its tour.
+pub(crate) fn welcome_should_open(welcome_seen: bool, launched_for_a_task: bool) -> bool {
+    !welcome_seen && !launched_for_a_task
+}
+
+/// Which picture the selected formula is drawn as — the "Show" axis of the fractal picker.
+///
+/// A Julia set is not a different fractal; it is one POINT of the parameter plane, drawn as its
+/// own picture. A new user has no way to know that, and the app's own best explanation of it —
+/// the linked dual view — was buried as a checkbox called "Dual view". Modelling the three states
+/// as one choice is what lets the picker say so.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ShowMode {
+    /// The parameter plane: the Mandelbrot-type set for this formula.
+    Set,
+    /// The Julia set for the current `c`, filling the window.
+    Julia,
+    /// Both, linked: the parameter plane on the left, the Julia of the cursor's point on the right.
+    Both,
+}
+
+/// Which picture a `(dual, julia_mode)` pair actually puts on screen.
+///
+/// `dual` wins: the dual path draws both panes regardless of `julia_mode`, so a stale `true`
+/// underneath it must still READ as `Both` or the picker would show a state the renderer is not
+/// in. (`set_show_mode` normalises the flag away, but sessions written by older builds carry it.)
+pub(crate) fn show_mode_of(dual: bool, julia_mode: bool) -> ShowMode {
+    if dual {
+        ShowMode::Both
+    } else if julia_mode {
+        ShowMode::Julia
+    } else {
+        ShowMode::Set
+    }
+}
+
+/// The `(dual, julia_mode)` a mode means — the inverse of [`show_mode_of`] over the three legal
+/// states. Kept as a pair of functions rather than open-coded at the call sites so the mapping
+/// cannot be written one way in the picker and another way in a script or a session load.
+pub(crate) fn show_mode_flags(m: ShowMode) -> (bool, bool) {
+    match m {
+        ShowMode::Set => (false, false),
+        ShowMode::Julia => (false, true),
+        ShowMode::Both => (true, false),
+    }
+}
+
+/// Dual-view divider bounds: the fraction of the width the LEFT (Mandelbrot) panel may take.
+/// Neither panel may collapse — a zero-width panel still costs a render and shows nothing. The
+/// drag handle, the session restore, and the scripted `dual_split` keyframe field all clamp here,
+/// so a script cannot reach a state the viewer cannot drag back out of.
+pub(crate) const DUAL_SPLIT_MIN: f32 = 0.15;
+
+pub(crate) const DUAL_SPLIT_MAX: f32 = 0.85;
+
+// `lerp_color` moved to `theme.rs` (re-exported below).
+
+const EASE_TAU: f64 = 0.15; // ease-in/out time constant (seconds)
+
+/// The zoom factors the click-to-zoom tool offers (Settings ▸ Navigation). Named rather than
+/// written inline at the one control that draws them, because checklist step 17 asks a tester to
+/// try each one by name: the row, the buttons and the test that pins their arithmetic all have to
+/// be talking about the same list.
+const CLICK_ZOOM_FACTORS: [f32; 5] = [2.0, 4.0, 10.0, 50.0, 100.0];
+
+/// The toolbar magnifier buttons' step, as a `zoom_at` factor (< 1 zooms IN). Exact reciprocals,
+/// so in-then-out returns to the magnification you started at rather than drifting a little
+/// deeper on every pair of clicks.
+const TOOLBAR_ZOOM_IN_FACTOR: f64 = 0.5;
+
+const TOOLBAR_ZOOM_OUT_FACTOR: f64 = 2.0;
+
+// `FractalInfo` / `FractalKind` moved to `fractal.rs` (re-exported at the top of this file).
+
+/// An in-progress **zoom box** (Shift+drag): rubber-band rectangle from `start` to `end`
+/// (egui points) that, on release, zooms so the box fills the panel. `is_julia` tags which
+/// panel it belongs to (dual view).
+struct ZoomBox {
+    start: egui::Pos2,
+    end: egui::Pos2,
+    is_julia: bool,
+}
+
+/// Constrain a free drag (`start`→`end`) to the panel's aspect ratio, anchored at `start` and
+/// clamped inside `rect`, so the resulting box zooms to fill without distortion.
+fn aspect_zoom_box(start: egui::Pos2, end: egui::Pos2, rect: egui::Rect) -> egui::Rect {
+    let aspect = (rect.width() / rect.height().max(1.0)).max(1e-3);
+    let (dx, dy) = ((end.x - start.x).abs(), (end.y - start.y).abs());
+    let sx = if end.x >= start.x { 1.0 } else { -1.0 };
+    let sy = if end.y >= start.y { 1.0 } else { -1.0 };
+    // Enclose the drag, then clamp to what fits inside `rect` from `start` (keeping aspect).
+    let maxw = if sx > 0.0 { rect.max.x - start.x } else { start.x - rect.min.x };
+    let maxh = if sy > 0.0 { rect.max.y - start.y } else { start.y - rect.min.y };
+    let w = dx.max(dy * aspect).min(maxw.max(0.0)).min(maxh.max(0.0) * aspect);
+    let corner = egui::pos2(start.x + sx * w, start.y + sy * (w / aspect));
+    egui::Rect::from_two_pos(start, corner)
+}
+
+// ================================================================================================
+// The state FractadyneApp stores (field types, grouped by domain)
+// ================================================================================================
+
+/// "Zoom home" animation pacing: seconds per octave-ish of zoom-out, clamped so a
+/// shallow view still glides and an extreme one doesn't take forever.
+const HOME_SECONDS_PER_LOGMAG: f64 = 0.45;
+
+const HOME_MIN_SECONDS: f64 = 1.5;
+
+const HOME_MAX_SECONDS: f64 = 9.0;
+
+/// An in-progress smooth zoom-out to the home view (started by the Home button).
+struct HomeAnim {
+    start_time: f64,
+    duration: f64,
+    /// Mandelbrot/main view: center when the animation began + its ln(magnification).
+    m_start_center: (fractadyne_core::BigFloat, fractadyne_core::BigFloat),
+    m_start_logmag: f64,
+    /// Dual Julia view (only used when `dual`).
+    j_start_center: (fractadyne_core::BigFloat, fractadyne_core::BigFloat),
+    j_start_logmag: f64,
+    dual: bool,
+}
+
+/// Cache key for the interactive orbit (recompute only when these change).
+#[derive(Clone, PartialEq)]
+struct OrbitKey {
+    px: f64,
+    py: f64,
+    cx: f64,
+    cy: f64,
+    upp: f64,
+    julia: bool,
+    formula: u32,
+    jcx: f64,
+    jcy: f64,
+}
+
+struct OrbitCacheEntry {
+    key: OrbitKey,
+    pts: Vec<(f64, f64)>,
+}
+
+/// State of the "Go to location" dialog (transient — not persisted). One of the field groups
+/// (from the completed refactor) that break up the flat `FractadyneApp` struct.
+/// Which parameterized feature the Go-to dialog's finder solves for (Mandelbrot only).
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum FeatureKind {
+    /// Pre-periodic branch/spiral center — Newton on `Z_{k+p}=Z_k` (preperiod `k`, period `p`).
+    #[default]
+    Misiurewicz,
+    /// Nearest minibrot nucleus — `Z_n=0`, period auto-detected (same as the M-key snap).
+    Minibrot,
+}
+
+// System-facts helpers (process_memory, SysInfo, gather_system_info, CPU/VRAM probes)
+// moved to sysinfo.rs (re-exported below).
+// ---- Scripting: keyframe camera tours (also drives the benchmark) ----
+
+// Scripting/benchmark types + helpers moved to scripting.rs.
+
+/// A feature solve (Go-to ▸ nearest minibrot / Misiurewicz) running OFF the UI thread.
+///
+/// ⭐These are arbitrary-precision Newton solves whose cost grows with depth, and at depth they
+/// are not "slow", they are *seconds to minutes*: a field report at 2.63e58899× (precision 195,724
+/// bits) froze the window hard enough for Windows to paint "(Not Responding)" on the title bar. A
+/// modal that stops repainting cannot even show progress, so the work has to leave the UI thread.
+///
+/// The worker runs only the pure `fractadyne-core` calls; everything that needs `&self` — the
+/// Newton-Raphson zoom target, the label, the navigation — happens on the main thread when the
+/// result arrives.
+struct FeatureSolve {
+    rx: std::sync::mpsc::Receiver<FeatureOutcome>,
+    started: Instant,
+    /// The zoom the user asked to land at, carried across so the reply does not have to re-parse.
+    zoom_to: Option<f64>,
+    /// Set when the requested depth is past what the solver can express, so the reply can say so
+    /// instead of navigating to a depth the answer is not accurate for.
+    depth_capped: Option<f64>,
+}
+
+/// What a [`FeatureSolve`] worker computed.
+enum FeatureOutcome {
+    Nucleus(Option<fractadyne_core::Nucleus>),
+    Misiurewicz {
+        /// The pair used: detected from the orbit when the user left the boxes blank.
+        k: u32,
+        p: u32,
+        /// Whether that pair was auto-detected (so the UI can fill the boxes in).
+        detected: bool,
+        outcome: Result<fractadyne_core::Misiurewicz, fractadyne_core::MisiurewiczMiss>,
+    },
+    /// Auto-detection found no pair at all, so there was nothing to solve for.
+    NoPairDetected,
+}
+
+#[derive(Default)]
+struct GotoDialog {
+    open: bool,
+    x: String,
+    y: String,
+    zoom: String,
+    msg: Option<String>,
+    /// Feature-finder inputs (parameterized "go to feature").
+    feat_kind: FeatureKind,
+    feat_k: String,
+    feat_p: String,
+}
+
+/// State of the "Share location" (`.fdn`) dialog (transient).
+#[derive(Default)]
+struct ShareDialog {
+    open: bool,
+    text: String,
+    msg: Option<String>,
+}
+
+/// Benchmark-configuration dialog state (transient).
+struct BenchConfig {
+    standard: bool,
+    res: BenchRes,
+    depth: BenchDepth,
+    burnin: bool,
+    passes: u32,
+}
+
+impl Default for BenchConfig {
+    fn default() -> Self {
+        Self {
+            standard: true,
+            res: BenchRes::P1080,
+            depth: BenchDepth::Standard,
+            burnin: false,
+            passes: 10,
+        }
+    }
+}
+
+/// State for the "Render script…" dialog and the render it launches.
+///
+/// The render runs as a CHILD PROCESS (`--render-tour`), not on a thread: a tour render mutates
+/// app state per frame — viewport, fractal, iteration budget — so moving it to a worker would mean
+/// extracting all of that first. A separate process also gets its own GPU device, which matters
+/// here specifically: a deep tour render is the heaviest thing this app does, and the failure mode
+/// on record is losing the device. In a child, that kills the render and leaves the editor alive.
+pub(crate) struct TourRenderUi {
+    pub(crate) open: bool,
+    pub(crate) out: String,
+    pub(crate) prefix: String,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    /// Size dropdown is on "Custom…" — see `ExportState::custom_size` for why it is sticky.
+    pub(crate) custom_size: bool,
+    pub(crate) fps: f64,
+    pub(crate) ss: u32,
+    /// 0 = the whole tour; otherwise 1-based into the script's `[[segment]]` chapters.
+    pub(crate) segment: usize,
+    pub(crate) mp4: bool,
+    pub(crate) overwrite: bool,
+    /// Keep frames already on disk and render only what's missing (`--resume`).
+    pub(crate) resume: bool,
+    /// Render order: progressive (keyframes first, then bisect the largest gaps — preview the
+    /// whole tour early) vs the default sequential. Maps to `--order progressive`.
+    pub(crate) progressive: bool,
+    /// Latest line from the child (its "frame N/M …" progress), and the finished-run summary.
+    pub(crate) progress: String,
+    /// `(done, planned)` parsed from the latest progress line — drives the progress BAR; the raw
+    /// line stays underneath for the elapsed/left/fps detail. `None` until the first frame line
+    /// (or when a line doesn't parse — the bar simply holds its last state).
+    pub(crate) progress_frames: Option<(u64, u64)>,
+    /// First error line the child wrote to stderr — the reason a render stopped.
+    pub(crate) error: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) child: Option<std::process::Child>,
+    pub(crate) rx: Option<std::sync::mpsc::Receiver<crate::ui::tour_render::RenderLine>>,
+}
+
+impl Default for TourRenderUi {
+    fn default() -> Self {
+        Self {
+            open: false,
+            out: "frames".to_string(),
+            prefix: String::new(),
+            width: 1920,
+            height: 1080,
+            custom_size: false,
+            fps: 30.0,
+            ss: 2,
+            segment: 0,
+            mp4: false,
+            overwrite: true,
+            resume: false,
+            progressive: false,
+            progress: String::new(),
+            progress_frames: None,
+            error: None,
+            status: None,
+            child: None,
+            rx: None,
+        }
+    }
 }
 
 /// Per-view cached perturbation reference orbit (arbitrary precision).
@@ -2647,106 +2884,6 @@ struct ViewSnapshot {
     prec: usize,
 }
 
-/// One exported image discovered by the gallery browser.
-struct GalleryEntry {
-    path: std::path::PathBuf,
-    meta: String,
-    fractal: String,
-    zoom: String,
-    saved: String,
-    notes: String,
-    app_version: String,
-    thumb: Option<egui::TextureHandle>,
-    thumb_tried: bool,
-}
-
-// `FractalInfo` / `FractalKind` moved to `fractal.rs` (re-exported at the top of this file).
-
-/// An in-progress **zoom box** (Shift+drag): rubber-band rectangle from `start` to `end`
-/// (egui points) that, on release, zooms so the box fills the panel. `is_julia` tags which
-/// panel it belongs to (dual view).
-struct ZoomBox {
-    start: egui::Pos2,
-    end: egui::Pos2,
-    is_julia: bool,
-}
-
-/// Constrain a free drag (`start`→`end`) to the panel's aspect ratio, anchored at `start` and
-/// clamped inside `rect`, so the resulting box zooms to fill without distortion.
-fn aspect_zoom_box(start: egui::Pos2, end: egui::Pos2, rect: egui::Rect) -> egui::Rect {
-    let aspect = (rect.width() / rect.height().max(1.0)).max(1e-3);
-    let (dx, dy) = ((end.x - start.x).abs(), (end.y - start.y).abs());
-    let sx = if end.x >= start.x { 1.0 } else { -1.0 };
-    let sy = if end.y >= start.y { 1.0 } else { -1.0 };
-    // Enclose the drag, then clamp to what fits inside `rect` from `start` (keeping aspect).
-    let maxw = if sx > 0.0 { rect.max.x - start.x } else { start.x - rect.min.x };
-    let maxh = if sy > 0.0 { rect.max.y - start.y } else { start.y - rect.min.y };
-    let w = dx.max(dy * aspect).min(maxw.max(0.0)).min(maxh.max(0.0) * aspect);
-    let corner = egui::pos2(start.x + sx * w, start.y + sy * (w / aspect));
-    egui::Rect::from_two_pos(start, corner)
-}
-
-/// State of the "Go to location" dialog (transient — not persisted). One of the field groups
-/// (from the completed refactor) that break up the flat `FractadyneApp` struct.
-/// Which parameterized feature the Go-to dialog's finder solves for (Mandelbrot only).
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum FeatureKind {
-    /// Pre-periodic branch/spiral center — Newton on `Z_{k+p}=Z_k` (preperiod `k`, period `p`).
-    #[default]
-    Misiurewicz,
-    /// Nearest minibrot nucleus — `Z_n=0`, period auto-detected (same as the M-key snap).
-    Minibrot,
-}
-
-#[derive(Default)]
-struct GotoDialog {
-    open: bool,
-    x: String,
-    y: String,
-    zoom: String,
-    msg: Option<String>,
-    /// Feature-finder inputs (parameterized "go to feature").
-    feat_kind: FeatureKind,
-    feat_k: String,
-    feat_p: String,
-}
-
-/// State of the "Share location" (`.fdn`) dialog (transient).
-#[derive(Default)]
-struct ShareDialog {
-    open: bool,
-    text: String,
-    msg: Option<String>,
-}
-
-/// Benchmark-configuration dialog state (transient).
-struct BenchConfig {
-    standard: bool,
-    res: BenchRes,
-    depth: BenchDepth,
-    burnin: bool,
-    passes: u32,
-}
-impl Default for BenchConfig {
-    fn default() -> Self {
-        Self {
-            standard: true,
-            res: BenchRes::P1080,
-            depth: BenchDepth::Standard,
-            burnin: false,
-            passes: 10,
-        }
-    }
-}
-
-/// Gallery-browser dialog state (transient): open flag, scanned folder, and its entries.
-#[derive(Default)]
-struct GalleryState {
-    open: bool,
-    dir: std::path::PathBuf,
-    entries: Vec<GalleryEntry>,
-}
-
 /// Navigation history for undo/redo of view changes (transient).
 ///
 /// The stack arithmetic lives here rather than on the app, so checklist step 21 ("undo steps back
@@ -2802,6 +2939,14 @@ impl NavHistory {
         self.undo.push(s.clone());
         Some(s)
     }
+}
+
+/// Gallery-browser dialog state (transient): open flag, scanned folder, and its entries.
+#[derive(Default)]
+struct GalleryState {
+    open: bool,
+    dir: std::path::PathBuf,
+    entries: Vec<GalleryEntry>,
 }
 
 /// Export-dialog state: the dialog's options, the in-flight background export, and the persisted
@@ -3025,111 +3170,6 @@ struct AnimationState {
     random_palette: RandomPalette,
 }
 
-/// Scattered window/panel open-flags plus two small chrome selections — pure UI-visibility state the
-/// egui layer reads. Only `right_panel_open` & `minimap` persist; the rest are transient. (Phase 2a.)
-/// Where the issue reporter sends to (Help → Report an issue…). The project's own support mailbox
-/// as of 2026-08-15, confirmed live before this was changed — a dead support address is worse than
-/// none, which is why the TODO entry for it waited on the mailbox actually existing.
-pub(crate) const REPORT_EMAIL: &str = "feedback@fractadyne.org";
-
-/// GitHub issue tracker — the PRIMARY reporting channel (public, searchable, and other users can
-/// confirm/subscribe); email stays as the private fallback.
-pub(crate) const ISSUES_URL: &str = "https://github.com/WindySnowOwl/fractadyne/issues";
-
-/// Minimal percent-encoding for a `mailto:` subject/body component (keeps RFC 3986 unreserved).
-pub(crate) fn mailto_encode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// What kind of issue is being reported (drives the report header + email subject).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IssueKind {
-    Crash,
-    Rendering,
-    Performance,
-    Ui,
-    Feature,
-    Other,
-}
-impl IssueKind {
-    pub(crate) const ALL: [IssueKind; 6] = [
-        IssueKind::Crash,
-        IssueKind::Rendering,
-        IssueKind::Performance,
-        IssueKind::Ui,
-        IssueKind::Feature,
-        IssueKind::Other,
-    ];
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            IssueKind::Crash => "Application crash / freeze",
-            IssueKind::Rendering => "Incorrect rendering",
-            IssueKind::Performance => "Performance issue",
-            IssueKind::Ui => "UI / usability issue",
-            IssueKind::Feature => "Feature request",
-            IssueKind::Other => "Other",
-        }
-    }
-}
-
-/// Optional severity for triage (`Unspecified` = omitted from the report).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Severity {
-    Unspecified,
-    Low,
-    Medium,
-    High,
-    Blocking,
-}
-impl Severity {
-    pub(crate) const ALL: [Severity; 5] = [
-        Severity::Unspecified,
-        Severity::Low,
-        Severity::Medium,
-        Severity::High,
-        Severity::Blocking,
-    ];
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Severity::Unspecified => "—",
-            Severity::Low => "Low",
-            Severity::Medium => "Medium",
-            Severity::High => "High",
-            Severity::Blocking => "Blocking",
-        }
-    }
-}
-
-/// How reproducible the issue is (`Unspecified` = omitted from the report).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Repro {
-    Unspecified,
-    Always,
-    Sometimes,
-    Once,
-    Cannot,
-}
-impl Repro {
-    pub(crate) const ALL: [Repro; 5] =
-        [Repro::Unspecified, Repro::Always, Repro::Sometimes, Repro::Once, Repro::Cannot];
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Repro::Unspecified => "—",
-            Repro::Always => "Always",
-            Repro::Sometimes => "Sometimes",
-            Repro::Once => "Happened once",
-            Repro::Cannot => "Can't reproduce",
-        }
-    }
-}
-
 /// State for the "Report an issue" dialog: the classification, description, which artifacts to
 /// include, and the last status line. The report is assembled on demand from these + live
 /// diagnostics ([`FractadyneApp::build_report`]); nothing is sent until the user acts.
@@ -3149,6 +3189,7 @@ struct ReportState {
     include_test: bool,
     msg: Option<String>,
 }
+
 impl Default for ReportState {
     fn default() -> Self {
         // Include everything by default (crash auto-drops when there's none); system info is opt-out.
@@ -3205,6 +3246,10 @@ struct DialogState {
     /// toast, without borrowing an unrelated window's title.
     notice: Option<(String, String)>,
 }
+
+// ================================================================================================
+// FractadyneApp - all application state
+// ================================================================================================
 
 struct FractadyneApp {
     viewport: Viewport,
@@ -3425,7 +3470,12 @@ struct FractadyneApp {
     dirty_since: Option<f64>,
 }
 
+// ================================================================================================
+// impl FractadyneApp - Construction + applying the parsed CLI
+// ================================================================================================
+
 impl FractadyneApp {
+
     fn new(cc: &eframe::CreationContext<'_>, args: &[String]) -> Self {
         // A missing wgpu render state means the GPU backend failed to initialize. Report it
         // plainly and exit cleanly rather than surfacing a Rust panic + backtrace to the user.
@@ -4391,6 +4441,13 @@ impl FractadyneApp {
             }
         }
     }
+}
+
+// ================================================================================================
+// impl FractadyneApp - Session persistence + autosave
+// ================================================================================================
+
+impl FractadyneApp {
 
     /// Snapshot current state and save it ~1 s after the last change (or on close).
     fn autosave(&mut self, ctx: &egui::Context) {
@@ -4568,108 +4625,13 @@ impl FractadyneApp {
             let _ = refcache_persist::save(&snapshot);
         });
     }
+}
 
-    /// Switch fractal type, resetting to that fractal's default view.
-    fn set_fractal(&mut self, kind: FractalKind) {
-        if self.fractal == kind {
-            return;
-        }
-        self.fractal = kind;
-        if !kind.supports_julia() {
-            self.julia_mode = false;
-            self.dual = false; // no Julia counterpart → dual view is meaningless
-        }
-        let (cx, cy) = kind.default_center();
-        self.viewport.reset();
-        self.viewport.center_x = fractadyne_core::BigFloat::from_f64(cx, 64);
-        self.viewport.center_y = fractadyne_core::BigFloat::from_f64(cy, 64);
-        self.pointer.zoom_vel = 0.0;
-        self.invalidate_refs(); // dynamics changed → drop the cached reference orbits
-    }
+// ================================================================================================
+// impl FractadyneApp - Bookmarks, thumbnails + the gallery
+// ================================================================================================
 
-    /// Whether view `v` currently holds a tiled settle grid — the precondition a check about
-    /// stale tiles has to assert rather than assume.
-    pub(crate) fn tile_state_present(&self, v: usize) -> bool {
-        self.perf.tile_state.get(v).is_some_and(|g| g.is_some())
-    }
-
-    /// Drop both per-view reference caches (call when the formula/mode/center changes
-    /// such that the cached references no longer apply).
-    fn invalidate_refs(&mut self) {
-        self.ref_cache[0].ref_pt = None;
-        self.ref_cache[1].ref_pt = None;
-        // A new view's reference may escape where the old one didn't — retry extensions there.
-        // Drop any in-flight recompute — its result is for the old fractal/mode and must not
-        // install (would render the wrong formula until the next recompute).
-        self.recompute_rx = [None, None];
-        // ...and a parked coarse preview is a result from that same dropped pipeline.
-        self.pending_coarse = [None, None];
-        // Same for the playback lookahead: a prefetched reference for the old fractal/params
-        // must never install after a change.
-        self.ref_prefetch.clear();
-        self.hold_prefetch.clear();
-        // A new view's iteration needs are unrelated — restart the adaptive budget probe.
-        self.perf.iter_boost = [1.0, 1.0];
-        self.perf.iter_probe = [None, None];
-        self.perf.iter_plateau = [false, false];
-        self.perf.iter_stall = [0, 0];
-        self.perf.iter_stall_base = [1.0, 1.0];
-        self.perf.capped_frac = [None, None];
-        self.perf.iter_exhausted = [false, false];
-        self.perf.norm_range = [None, None];
-    }
-
-    /// Request the next animation frame. Frame pacing (the cap) is enforced at the end
-    /// of `update`; this just keeps the animation loop alive.
-    fn schedule_repaint(&self, ctx: &egui::Context) {
-        ctx.request_repaint();
-    }
-
-    // compute_reference / series_skip_for / current_export_request_for moved to render.rs.
-
-    /// Build the export job for the current state (single view, or dual per the chosen
-    /// layout).
-    /// Export image height (px) for the current width + aspect setting. "window" matches the live
-    /// view's pixel aspect (same as the render); a fixed key uses that ratio. Uses the pixel aspect,
-    /// not `complex_span` (which saturates to 0 past ~1e308× → a bogus 1-px height).
-    fn export_height(&self) -> u32 {
-        let ratio = if self.export.aspect == "window" {
-            (self.viewport.width_px / self.viewport.height_px.max(1.0)).max(1.0e-6)
-        } else {
-            EXPORT_ASPECTS
-                .iter()
-                .find(|(k, _)| *k == self.export.aspect)
-                .map(|(_, r)| *r)
-                .unwrap_or(self.viewport.width_px / self.viewport.height_px.max(1.0))
-        };
-        ((self.export.width as f64) / ratio).round().max(1.0) as u32
-    }
-
-    fn build_export_job(&self) -> ExportJob {
-        // Apply the chosen aspect: override the request height (the render centers the extra/fewer
-        // rows on the same center; width stays `export_width`). For "window" this equals the height
-        // the request already derived, so it's a no-op.
-        let h = self.export_height();
-        let fit = |mut req: fractadyne_gpu::ExportRequest| {
-            req.height = h;
-            // Keep the per-texel step isotropic (the GPU derives step = span/resolution per axis):
-            // set the vertical span to match the horizontal step × the chosen height, so the fractal
-            // isn't stretched when the aspect differs from the window. No-op for "Match window".
-            req.span_mantissa.y = req.span_mantissa.x * (h as f64 / req.width.max(1) as f64);
-            req
-        };
-        if self.dual {
-            let map = fit(self.current_export_request_for(&self.viewport, false));
-            let jul = fit(self.current_export_request_for(&self.julia_viewport, true));
-            match self.export.dual_mode {
-                DualExport::SideBySide => ExportJob::SideBySide(map, jul),
-                DualExport::Separate => ExportJob::Separate(map, jul),
-                DualExport::ActiveOnly => ExportJob::Single(map),
-            }
-        } else {
-            ExportJob::Single(fit(self.current_export_request_for(&self.viewport, self.julia_mode)))
-        }
-    }
+impl FractadyneApp {
 
     /// Default Pictures directory (fallback: current dir).
     fn pictures_dir() -> std::path::PathBuf {
@@ -4950,50 +4912,6 @@ impl FractadyneApp {
         Some(tex)
     }
 
-    /// UTC civil date/time `(year, month, day, hour, min, sec)` from a Unix timestamp
-    /// (Hinnant's civil-from-days algorithm).
-    fn civil_utc(secs: u64) -> (i64, i64, i64, u64, u64, u64) {
-        let days = (secs / 86400) as i64;
-        let rem = secs % 86400;
-        let (hh, mm, sss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-        let z = days + 719468;
-        let era = if z >= 0 { z } else { z - 146096 } / 146097;
-        let doe = z - era * 146097;
-        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-        let y = yoe + era * 400;
-        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-        let mp = (5 * doy + 2) / 153;
-        let d = doy - (153 * mp + 2) / 5 + 1;
-        let m = if mp < 10 { mp + 3 } else { mp - 9 };
-        let y = if m <= 2 { y + 1 } else { y };
-        (y, m, d, hh, mm, sss)
-    }
-
-    /// UTC `YYYY-MM-DD HH:MM:SS` from a Unix timestamp.
-    fn utc_date_string(secs: u64) -> String {
-        let (y, m, d, hh, mm, sss) = Self::civil_utc(secs);
-        format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{sss:02} UTC")
-    }
-
-    /// Frame size for a headless harness: `--size W|WxH` (with `--height` overriding the height)
-    /// when given, else the harness's own default. Shares the tour flags so every harness takes
-    /// the same size options.
-    fn tour_size_or(&self, dw: u32, dh: u32) -> (u32, u32) {
-        let w = self.render_cli.tour_cfg.width.unwrap_or(dw).clamp(16, 16384);
-        let h = self
-            .render_cli.tour_cfg
-            .height
-            .unwrap_or(if self.render_cli.tour_cfg.width.is_some() { (w * 9 / 16).max(16) } else { dh })
-            .clamp(16, 16384);
-        (w, h)
-    }
-
-    /// Filename-safe `YYYYMMDD_HHMMSS` stamp (local-readable, sorts chronologically).
-    fn file_stamp(secs: u64) -> String {
-        let (y, m, d, hh, mm, sss) = Self::civil_utc(secs);
-        format!("{y:04}{m:02}{d:02}_{hh:02}{mm:02}{sss:02}")
-    }
-
     // view_metadata / load_view_metadata / open_view moved to export.rs.
     /// Scan the gallery folder for exported PNG/EXR files with Fractadyne metadata,
     /// newest first. Thumbnails load lazily afterward.
@@ -5017,29 +4935,354 @@ impl FractadyneApp {
             });
         }
     }
+}
 
-    // export_ext / start_export / quick_export / render_to_file(_iter) / start_export_to moved to export.rs.
+// ================================================================================================
+// impl FractadyneApp - Navigation, view control + pointer input
+// ================================================================================================
 
-    // build_params moved to render.rs.
+impl FractadyneApp {
 
-    /// Palette-cycle scaling for the GPU. The bounded statistical methods (stripe /
-    /// triangle-inequality / decomposition) produce a 0..1 value, so they want a few
-    /// cycles across the palette; the unbounded ones (iteration / trap / distance) use
-    /// the fine per-unit scaling.
-    fn color_cycle(&self) -> f32 {
-        if self.coloring.color_method.needs_aux() {
-            0.5 + self.coloring.cycle * 4.0
-        } else {
-            0.004 + self.coloring.cycle * 0.06
+    /// Switch fractal type, resetting to that fractal's default view.
+    fn set_fractal(&mut self, kind: FractalKind) {
+        if self.fractal == kind {
+            return;
+        }
+        self.fractal = kind;
+        if !kind.supports_julia() {
+            self.julia_mode = false;
+            self.dual = false; // no Julia counterpart → dual view is meaningless
+        }
+        let (cx, cy) = kind.default_center();
+        self.viewport.reset();
+        self.viewport.center_x = fractadyne_core::BigFloat::from_f64(cx, 64);
+        self.viewport.center_y = fractadyne_core::BigFloat::from_f64(cy, 64);
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs(); // dynamics changed → drop the cached reference orbits
+    }
+
+    /// Drop both per-view reference caches (call when the formula/mode/center changes
+    /// such that the cached references no longer apply).
+    fn invalidate_refs(&mut self) {
+        self.ref_cache[0].ref_pt = None;
+        self.ref_cache[1].ref_pt = None;
+        // A new view's reference may escape where the old one didn't — retry extensions there.
+        // Drop any in-flight recompute — its result is for the old fractal/mode and must not
+        // install (would render the wrong formula until the next recompute).
+        self.recompute_rx = [None, None];
+        // ...and a parked coarse preview is a result from that same dropped pipeline.
+        self.pending_coarse = [None, None];
+        // Same for the playback lookahead: a prefetched reference for the old fractal/params
+        // must never install after a change.
+        self.ref_prefetch.clear();
+        self.hold_prefetch.clear();
+        // A new view's iteration needs are unrelated — restart the adaptive budget probe.
+        self.perf.iter_boost = [1.0, 1.0];
+        self.perf.iter_probe = [None, None];
+        self.perf.iter_plateau = [false, false];
+        self.perf.iter_stall = [0, 0];
+        self.perf.iter_stall_base = [1.0, 1.0];
+        self.perf.capped_frac = [None, None];
+        self.perf.iter_exhausted = [false, false];
+        self.perf.norm_range = [None, None];
+    }
+
+    /// Zoom the main viewport about its center (factor < 1 zooms in).
+    fn zoom_center(&mut self, factor: f64) {
+        let (cx, cy) = (self.viewport.width_px * 0.5, self.viewport.height_px * 0.5);
+        self.viewport.zoom_at(cx, cy, factor);
+    }
+
+    /// Click-to-zoom action (single view): recenter on a canvas point (`px`/`py` in device pixels)
+    /// and dive in by `render_cfg.click_zoom_factor`, or back out by it when `out`. Reuses the
+    /// box-zoom recenter idiom (pan the point to center, then scale via the bignum viewport, so it
+    /// stays deep-zoom-correct). Records a nav step so each click is Backspace-undoable, and marks
+    /// the view interacting so it settles to full quality afterward. `now` = `ctx.input(|i| i.time)`.
+    fn click_zoom_at(&mut self, px: f64, py: f64, out: bool, now: f64) {
+        let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
+        let factor = if out { f } else { 1.0 / f }; // zoom_at: factor < 1 ⇒ zoom in
+        self.viewport.recenter_and_zoom(px, py, factor);
+        self.pointer.zoom_vel = 0.0; // cancel any continuous-zoom glide so the jump lands clean
+        self.pointer.settle_t[0] = now;
+        self.record_nav();
+    }
+
+    /// Snapshot the current location for navigation history.
+    fn snapshot_view(&self) -> ViewSnapshot {
+        ViewSnapshot {
+            cx: self.viewport.center_x.clone(),
+            cy: self.viewport.center_y.clone(),
+            upp: self.viewport.units_per_pixel,
+            prec: self.viewport.precision,
         }
     }
 
-    /// The live-render work budget (`WORK_BUDGET`) scaled by the user's `work_budget_scale`. Higher
-    /// lets deep/large frames render at fuller resolution (crisper) before the color pass falls back
-    /// to a box-filtered upscale — at the cost of frame-rate and GPU-watchdog margin. Export is
-    /// unaffected (always full resolution).
-    pub(crate) fn effective_work_budget(&self) -> u64 {
-        ((WORK_BUDGET as f64) * self.render_cfg.work_budget_scale.clamp(0.25, 8.0)).max(1.0e9) as u64
+    /// Restore a navigation snapshot (location only).
+    fn apply_snapshot(&mut self, s: &ViewSnapshot) {
+        self.viewport.center_x = s.cx.clone();
+        self.viewport.center_y = s.cy.clone();
+        self.viewport.units_per_pixel = s.upp;
+        self.viewport.precision = s.prec;
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs();
+    }
+
+    /// Record the current location onto the undo history (deduped vs. the top), and
+    /// clear the redo stack. Called when the view settles and after discrete jumps.
+    fn record_nav(&mut self) {
+        let snap = self.snapshot_view();
+        self.nav.record(snap);
+    }
+
+    /// Step back / forward through visited locations.
+    fn undo_view(&mut self) {
+        if let Some(prev) = self.nav.undo() {
+            self.apply_snapshot(&prev);
+            self.nav.was_interacting = false;
+        }
+    }
+
+    fn redo_view(&mut self) {
+        if let Some(s) = self.nav.redo() {
+            self.apply_snapshot(&s);
+            self.nav.was_interacting = false;
+        }
+    }
+
+    /// Shared tail of a navigation jump: stop any glide, drop cached references, push history.
+    fn finish_nav_jump(&mut self) {
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+    }
+
+    /// Reset the current view to the fractal's default (both panels in dual view).
+    fn reset_view(&mut self) {
+        let (cx, cy) = self.fractal.default_center();
+        self.viewport.reset_to(cx, cy);
+        if self.dual {
+            self.julia_viewport.reset_to(0.0, 0.0);
+        }
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+    }
+
+    /// Begin a smooth zoom-out back to the home view. If already at (or near) home,
+    /// just snaps via `reset_view`. `now` is the current app time (`ctx.input.time`).
+    fn zoom_home(&mut self, now: f64) {
+        let m_logmag = self.viewport.magnification().max(1.0).ln();
+        let j_logmag = if self.dual {
+            self.julia_viewport.magnification().max(1.0).ln()
+        } else {
+            0.0
+        };
+        let deepest = m_logmag.max(j_logmag);
+        if deepest < 0.02 {
+            self.reset_view();
+            return;
+        }
+        let duration =
+            (deepest * HOME_SECONDS_PER_LOGMAG).clamp(HOME_MIN_SECONDS, HOME_MAX_SECONDS);
+        self.home_anim = Some(HomeAnim {
+            start_time: now,
+            duration,
+            m_start_center: (self.viewport.center_x.clone(), self.viewport.center_y.clone()),
+            m_start_logmag: m_logmag,
+            j_start_center: (
+                self.julia_viewport.center_x.clone(),
+                self.julia_viewport.center_y.clone(),
+            ),
+            j_start_logmag: j_logmag,
+            dual: self.dual,
+        });
+        self.pointer.zoom_vel = 0.0;
+    }
+
+    /// Advance the active zoom-home animation by one frame. Returns true while it is
+    /// still running (so the caller can keep requesting repaints).
+    fn advance_home_anim(&mut self, ctx: &egui::Context) -> bool {
+        let Some(anim) = self.home_anim.take() else {
+            return false;
+        };
+        // Let the user grab control: any pan/zoom input cancels the glide in place.
+        let interrupted = ctx.input(|i| {
+            i.pointer.primary_down()
+                || i.key_down(egui::Key::Space)
+                || i.smooth_scroll_delta.y != 0.0
+        });
+        if interrupted {
+            return false;
+        }
+        let now = ctx.input(|i| i.time);
+        let u = ((now - anim.start_time) / anim.duration).clamp(0.0, 1.0);
+        if u >= 1.0 {
+            self.reset_view(); // exact home (center + zoom), invalidates references
+            return false;
+        }
+        // Ease in/out (smoothstep) on the remaining log-magnification.
+        let e = u * u * (3.0 - 2.0 * u);
+        let remain = 1.0 - e;
+        self.viewport
+            .home_lerp(self.fractal.default_center(), &anim.m_start_center, anim.m_start_logmag * remain);
+        if anim.dual {
+            self.julia_viewport
+                .home_lerp((0.0, 0.0), &anim.j_start_center, anim.j_start_logmag * remain);
+        }
+        // Treat the glide as interaction so AA stays off and references aren't
+        // recomputed every frame (rebasing covers the motion; quality on settle).
+        self.pointer.settle_t = [now; 2];
+        self.home_anim = Some(anim);
+        true
+    }
+
+    /// Toggle the dual linked view, framing the Julia panel when turning it on.
+    fn toggle_dual(&mut self) {
+        if !self.fractal.supports_julia() {
+            self.dual = false; // no Julia → no dual (guards any non-UI caller)
+            return;
+        }
+        self.dual = !self.dual;
+        if self.dual {
+            self.julia_viewport.reset_to(0.0, 0.0);
+        }
+        self.invalidate_refs();
+    }
+
+    /// Which of the three pictures the current formula is being shown as.
+    ///
+    /// `julia_mode` and `dual` are two booleans, but only THREE of their four combinations are
+    /// legal, and the UI already spent effort suppressing the fourth (the Julia checkbox was
+    /// disabled while dual was on). Naming the three states directly is what lets the picker
+    /// present them as one choice — and one choice is what can be worded to explain that a Julia
+    /// set is a point of the parameter plane rather than a separate fractal.
+    fn show_mode(&self) -> ShowMode {
+        show_mode_of(self.dual, self.julia_mode)
+    }
+
+    /// Move to one of the three states, whatever the current one is.
+    ///
+    /// Goes through `toggle_dual` rather than assigning `dual`, because that is where the Julia
+    /// panel's framing and the reference invalidation live — two copies of "what entering dual
+    /// means" is exactly how the old toolbar/menu pair drifted apart. `julia_mode` is also
+    /// NORMALISED here (cleared when entering dual), so the flag a session saves always matches
+    /// the picture on screen; it used to keep a stale `true` underneath a dual view.
+    fn set_show_mode(&mut self, m: ShowMode) {
+        if self.show_mode() == m {
+            return;
+        }
+        if m != ShowMode::Set && !self.fractal.supports_julia() {
+            return; // no free parameter → no Julia, and no dual either
+        }
+        let (want_dual, want_julia) = show_mode_flags(m);
+        if want_dual != self.dual {
+            self.toggle_dual();
+        }
+        if want_julia != self.julia_mode {
+            self.julia_mode = want_julia;
+            self.invalidate_refs();
+        }
+    }
+
+    /// Newton-Raphson zoom framing: the minibrot's own width occupies this fraction of the view
+    /// height after the jump.
+    ///
+    /// Chosen by measurement, not taste. The visible copy — cardioid, bulbs, and the embedded
+    /// Julia decoration that reads as part of it — runs about 1.6× the bare size estimate at high
+    /// period, so 0.25 puts roughly 40% of the frame on the minibrot and leaves the rest as
+    /// context. It also makes the degenerate case exact: period 1 (the whole set, size 1) frames
+    /// at magnification 1 — precisely the home view.
+    const ATOM_FILL: f64 = 0.25;
+
+    /// Depth that frames a minibrot of the given `log₂` size — the destination of a
+    /// Newton-Raphson zoom.
+    fn atom_frame_log2mag(log2_size: f64) -> f64 {
+        Viewport::REFERENCE_HEIGHT.log2() + Self::ATOM_FILL.log2() - log2_size
+    }
+
+    /// Jump to a Mandelbrot location (full-precision center strings + magnification),
+    /// e.g. a famous-locations entry. Switches to Mandelbrot, single view.
+    fn goto_location(&mut self, cx: &str, cy: &str, mag: f64, name: &str, ctx: &egui::Context) {
+        let (Some(x), Some(y)) =
+            (fractadyne_core::parse_bf(cx), fractadyne_core::parse_bf(cy))
+        else {
+            return;
+        };
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        self.viewport.set_center_mag(x, y, mag.max(1.0));
+        self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+        self.set_toast(format!("{name} · {}×", fmt_zoom(mag)), ctx);
+    }
+
+    /// Jump to a random interesting location: find a point on the set boundary by
+    /// bisecting between an interior anchor and a random exterior direction, then zoom in
+    /// a random amount. Boundary points are always detail-rich.
+    fn random_location(&mut self, ctx: &egui::Context) {
+        let seed = ctx.input(|i| i.time).to_bits();
+        let (cx, cy, mag) = random_boundary_location(seed);
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        self.viewport.set_center_mag(
+            fractadyne_core::BigFloat::from_f64(cx, 64),
+            fractadyne_core::BigFloat::from_f64(cy, 64),
+            mag,
+        );
+        self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+        self.set_toast(format!("Random location · {}×", fmt_zoom(mag)), ctx);
+    }
+
+    /// Open the go-to-location dialog, pre-filled with the current view.
+    fn open_goto(&mut self) {
+        self.goto.x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
+        self.goto.y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
+        self.goto.zoom = fmt_zoom_field(self.viewport.log2_magnification());
+        self.goto.msg = None;
+        self.goto.open = true;
+    }
+
+    /// Apply the go-to-location dialog: parse + validate, then jump (recording history).
+    fn apply_goto(&mut self) {
+        // Zoom first: it sets the precision the coordinates are parsed at, so an inexact
+        // rational like 37/100 carries enough digits to be viewed at the requested depth.
+        // Clamp to a sane octave bound so a pasted absurd zoom can't request runaway precision.
+        let log2mag = parse_zoom_to_log2(&self.goto.zoom)
+            .filter(|l| l.is_finite())
+            .map(|l| l.clamp(0.0, 1.0e6));
+        let prec = fractadyne_core::precision_for_octaves(log2mag.unwrap_or(0.0) as u64);
+        // The real field also accepts a whole complex expression — `(37+16i)/100` fills both
+        // coordinates at once. Both fields are rewritten to the resolved decimals so what was
+        // applied is visible rather than implied.
+        let (cx, cy) = match fractadyne_core::parse_complex_prec(self.goto.x.trim(), prec) {
+            Some((re, im)) if !im.is_zero() => {
+                self.goto.x = fractadyne_core::to_decimal_string(&re);
+                self.goto.y = fractadyne_core::to_decimal_string(&im);
+                (Some(re), Some(im))
+            }
+            _ => (
+                fractadyne_core::parse_bf_prec(self.goto.x.trim(), prec),
+                fractadyne_core::parse_bf_prec(self.goto.y.trim(), prec),
+            ),
+        };
+        match (cx, cy, log2mag) {
+            (Some(cx), Some(cy), Some(l)) => {
+                self.viewport.set_center_log2mag(cx, cy, l);
+                self.pointer.zoom_vel = 0.0;
+                self.invalidate_refs();
+                self.record_nav();
+                self.goto.msg = None;
+                self.goto.open = false;
+            }
+            _ => {
+                self.goto.msg = Some("Invalid input — check the coordinates and zoom.".into());
+            }
+        }
     }
 
     /// Render one fractal panel: navigation (drag-pan, wheel-zoom) + draw. Returns
@@ -5287,7 +5530,6 @@ impl FractadyneApp {
         resp
     }
 
-
     /// Screen position (points) of a complex coordinate in the Mandelbrot viewport,
     /// within the given panel rect. Inverse of `complex_at_pixel_f64`.
     fn complex_screen_pos(&self, c: (f64, f64), rect: egui::Rect, ppp: f64) -> egui::Pos2 {
@@ -5300,7 +5542,1328 @@ impl FractadyneApp {
             rect.min.y + (py / ppp) as f32,
         )
     }
+}
 
+// ================================================================================================
+// impl FractadyneApp - Feature solve (minibrot / Misiurewicz) + location exchange (.fdn/.kfr, issue reports)
+// ================================================================================================
+
+impl FractadyneApp {
+
+    fn find_minibrot(&mut self, ctx: &egui::Context) {
+        let formula = self.fractal.formula_id();
+        if !matches!(formula, 0..=3) {
+            self.set_toast(
+                "Minibrot finder needs a holomorphic family (Mandelbrot / Multibrot).",
+                ctx,
+            );
+            return;
+        }
+        let mag = self.viewport.magnification();
+        let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+        let max_period =
+            self.viewport.recommended_max_iter(self.render_cfg.max_iter).clamp(1_000, 100_000);
+        match fractadyne_core::find_nucleus(&center, mag, formula, max_period) {
+            Some(n) => {
+                let cur_l2 = self.viewport.log2_magnification();
+                let (cx, cy, target) = self.newton_raphson_target(n.cx, n.cy, n.period, formula);
+                match target.filter(|t| *t > cur_l2) {
+                    Some(t) => {
+                        self.viewport.set_center_log2mag(cx, cy, t);
+                        self.finish_nav_jump();
+                        self.set_toast(
+                            format!(
+                                "Zoomed to the period-{} minibrot — {}×",
+                                n.period,
+                                fmt_zoom_field(t)
+                            ),
+                            ctx,
+                        );
+                    }
+                    // No size estimate (non-quadratic family), or the view is already deeper
+                    // than the minibrot's own scale — keep the depth, just fix the center.
+                    None => {
+                        self.viewport.set_center_log2mag(cx, cy, cur_l2);
+                        self.finish_nav_jump();
+                        self.set_toast(
+                            format!("Snapped to period-{} minibrot center", n.period),
+                            ctx,
+                        );
+                    }
+                }
+            }
+            None => self.set_toast("No minibrot center found near the view center.", ctx),
+        }
+    }
+
+    /// Size up a located minibrot and refine its center to the precision that depth demands.
+    ///
+    /// Two passes, because the two quantities define each other: the size estimate needs an
+    /// accurate center, and how accurate the center must be is set by the depth the size implies.
+    /// The first pass sizes the atom from the (shallow) center Newton just produced, which is
+    /// plenty to pick the destination depth; the second re-solves the center at that depth's
+    /// precision and re-sizes from it. Returns the refined center and the framing depth (`None`
+    /// when the family has no size estimate).
+    fn newton_raphson_target(
+        &self,
+        cx0: fractadyne_core::BigFloat,
+        cy0: fractadyne_core::BigFloat,
+        period: u32,
+        formula: u32,
+    ) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat, Option<f64>) {
+        // Ceiling on `period × precision-bits` for the synchronous deep refine. The refine runs a
+        // few Newton steps of `period` bignum iterations each ON THE UI THREAD; past this budget
+        // (roughly a second of blocking on a fast core) the jump is declined in favor of a plain
+        // center snap, rather than freezing the window for a period-100k atom at thousands of
+        // bits. (The right long-term fix is an off-thread refine with a spinner — TODO'd.)
+        const NR_REFINE_MAX_BIT_ITERS: u64 = 400_000_000;
+        let mut cx = cx0;
+        let mut cy = cy0;
+        let mut prec = self.viewport.precision;
+        let mut target = None;
+        for _ in 0..2 {
+            let Some(atom) = fractadyne_core::nucleus_size(&cx, &cy, period, formula, prec) else {
+                break;
+            };
+            let t = Self::atom_frame_log2mag(atom.log2_size);
+            if !t.is_finite() || t <= 0.0 {
+                break;
+            }
+            // Guard bits above the destination depth so the center is exact *within* the frame.
+            let need = fractadyne_core::precision_for_octaves(t as u64) + 64;
+            if need <= prec {
+                target = Some(t); // already precise enough for this depth — jump is safe
+                break;
+            }
+            if (period as u64).saturating_mul(need as u64) > NR_REFINE_MAX_BIT_ITERS {
+                break; // refine too costly for a synchronous call — recenter only, keep the depth
+            }
+            prec = need;
+            let Some((rx, ry)) = fractadyne_core::refine_nucleus(&cx, &cy, period, formula, prec)
+            else {
+                break; // no refined center → no jump: an unrefined center at the atom's own
+                       // scale would land the view on empty space
+            };
+            cx = rx;
+            cy = ry;
+            target = Some(t); // center now refined for this depth — jump is safe
+        }
+        (cx, cy, target)
+    }
+
+    /// Newton-solve a parameterized feature near the current view center and snap onto its exact
+    /// center (arbitrary precision): a Misiurewicz `(k,p)` branch/spiral center, or the nearest
+    /// minibrot nucleus. Seeded from where you're looking, so it finds the feature you're near.
+    /// Mandelbrot only. Driven by the Go-to dialog's feature finder.
+    /// Start a feature solve, OFF THE UI THREAD, and show a spinner until it lands.
+    ///
+    /// ⭐These solves are arbitrary-precision Newton iterations whose cost grows with depth. At
+    /// 2.63e58899× (195,724 bits) the in-line version froze the window long enough for Windows to
+    /// paint "(Not Responding)" on the title bar — and a frozen window cannot even show that it is
+    /// working. The worker runs the pure core calls; everything needing `&self` waits for
+    /// [`poll_feature_solve`](Self::poll_feature_solve).
+    fn goto_feature(&mut self, ctx: &egui::Context) {
+        if self.fractal.formula_id() != 0 {
+            self.goto.msg = Some("Feature finding is Mandelbrot-only.".into());
+            return;
+        }
+        if self.feature_solve.is_some() {
+            return; // one at a time; the button is disabled while it runs
+        }
+        let mag = self.viewport.magnification();
+        let cur_l2 = self.viewport.log2_magnification();
+        let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+        let target_l2 = parse_zoom_to_log2(&self.goto.zoom).filter(|t| t.is_finite() && *t > cur_l2);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut depth_capped = None;
+        let mut zoom_to = target_l2;
+
+        match self.goto.feat_kind {
+            FeatureKind::Minibrot => {
+                let max_period = self
+                    .viewport
+                    .recommended_max_iter(self.render_cfg.max_iter)
+                    .clamp(1_000, 100_000);
+                std::thread::spawn(move || {
+                    let _ = tx.send(FeatureOutcome::Nucleus(fractadyne_core::find_nucleus(
+                        &center, mag, 0, max_period,
+                    )));
+                });
+            }
+            FeatureKind::Misiurewicz => {
+                let k = self.goto.feat_k.trim().parse::<u32>().ok().filter(|&v| v > 0);
+                let p = self.goto.feat_p.trim().parse::<u32>().ok().filter(|&v| v > 0);
+                let pair = match (k, p) {
+                    (Some(k), Some(p)) => Some((k, p)),
+                    _ => None, // blank fields mean DETECT them, on the worker
+                };
+                // The detector's own `DETECT_STEP_BUDGET` bounds the critical-orbit walk (and the
+                // orbit's escape usually stops it sooner), so this no longer needs the old flat
+                // 20k ceiling — which capped the walk ~22× short of the preperiod (~438,732) that
+                // organizes a 1e4001 view, the reported "no point found" failure. Pass the full
+                // zoom-appropriate ask and let the cost budget bound it.
+                let iters = self
+                    .viewport
+                    .recommended_max_iter(self.render_cfg.max_iter)
+                    .clamp(256, 2_000_000);
+                let precision = self.viewport.precision;
+                // Detect at the VIEW'S scale — see `detect_misiurewicz_at_scale`. A log, because
+                // the linear span underflows f64 to zero past ~1e308×.
+                let span_log2 =
+                    self.viewport.units_per_pixel.log2() + self.viewport.width_px.log2();
+                // ⭐The solve now works in LOG magnification, so the depth asked for is the depth
+                // solved at — the old `f64` magnification stopped at 2^1020 ≈ 1e307 and returned a
+                // centre good to ~307 digits for a view needing tens of thousands, which rendered
+                // as a single flat colour. What remains is a sanity bound, not an arithmetic one:
+                // precision grows with the ask, and an accidental 1e1000000× would spend hours in
+                // bignum for a view nothing can render.
+                let solve_l2 = match target_l2 {
+                    Some(t) => {
+                        if t > MAX_SOLVE_OCTAVES {
+                            depth_capped = Some(t);
+                            zoom_to = Some(MAX_SOLVE_OCTAVES);
+                        }
+                        t.min(MAX_SOLVE_OCTAVES)
+                    }
+                    None => cur_l2,
+                };
+                std::thread::spawn(move || {
+                    let found = match pair {
+                        Some(kp) => Some(kp),
+                        None => fractadyne_core::detect_misiurewicz_at_scale(
+                            &center[0],
+                            &center[1],
+                            0,
+                            iters,
+                            1_024,
+                            precision,
+                            Some(span_log2),
+                        ),
+                    };
+                    let msg = match found {
+                        Some((k, p)) => FeatureOutcome::Misiurewicz {
+                            k,
+                            p,
+                            detected: pair.is_none(),
+                            outcome: fractadyne_core::find_misiurewicz(
+                                &center,
+                                k,
+                                p,
+                                // Solve for the depth ASKED FOR, but judge "is this the feature
+                                // on screen?" against the view the seed came from. They are the
+                                // same number only when you are not asking to go deeper.
+                                fractadyne_core::SolveScale {
+                                    log2_seed: cur_l2,
+                                    log2_target: solve_l2,
+                                },
+                                0,
+                            ),
+                        },
+                        None => FeatureOutcome::NoPairDetected,
+                    };
+                    let _ = tx.send(msg);
+                });
+            }
+        }
+        self.feature_solve = Some(FeatureSolve {
+            rx,
+            started: Instant::now(),
+            zoom_to,
+            depth_capped,
+        });
+        self.goto.msg = None;
+        self.schedule_repaint(ctx);
+    }
+
+    /// Collect a finished feature solve and act on it. Called once per frame from `update`.
+    fn poll_feature_solve(&mut self, ctx: &egui::Context) {
+        let Some(solve) = &self.feature_solve else { return };
+        // Closing the dialog ABANDONS the search. Without this, a solve started and then dismissed
+        // would land minutes later and jump the view out from under whatever the user had moved on
+        // to — the dialog only closes itself AFTER a result is applied, so an open dialog is the
+        // signal that someone is still waiting for one.
+        if !self.goto.open {
+            self.feature_solve = None;
+            return;
+        }
+        // Keep repainting while it runs, or the spinner would freeze on an idle window — the very
+        // impression this change exists to remove.
+        self.schedule_repaint(ctx);
+        let Ok(outcome) = solve.rx.try_recv() else { return };
+        let solve = self.feature_solve.take().expect("checked above");
+        let cur_l2 = self.viewport.log2_magnification();
+        let mut zoom_to = solve.zoom_to;
+        let mut misi_miss = None;
+
+        let (found, label) = match outcome {
+            FeatureOutcome::Nucleus(Some(n)) => {
+                let period = n.period;
+                let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, 0);
+                zoom_to = t.filter(|t| *t > cur_l2);
+                (Some((cx, cy)), format!("period-{period} minibrot"))
+            }
+            FeatureOutcome::Nucleus(None) => (None, String::new()),
+            FeatureOutcome::NoPairDetected => {
+                // Deliberately hedged: the detector searches the critical orbit within a cost
+                // budget, so `None` means EITHER the centre is not near pre-periodic structure OR
+                // the organizing point is deeper than the walk reached here — not necessarily
+                // that the view is mis-centred (the old text wrongly blamed centring, which
+                // misled a user already sitting exactly on a deep spiral).
+                self.goto.msg = Some(
+                    "No Misiurewicz point found within the search budget — the point may be \
+                     deeper than the finder reaches at this view, or the centre may not be near a \
+                     spiral or branch point."
+                        .into(),
+                );
+                return;
+            }
+            FeatureOutcome::Misiurewicz { k, p, detected, outcome } => {
+                if detected {
+                    // Show what was found: a silent auto-detect leaves no way to tell a good fit
+                    // from a guess. (The "Auto" button beside the boxes clears them again.)
+                    self.goto.feat_k = k.to_string();
+                    self.goto.feat_p = p.to_string();
+                }
+                match outcome {
+                    Ok(m) => {
+                        // The multiplier λ of the cycle the point lands on: |λ| is the ZOOM
+                        // PERIOD (the view repeats every log₂|λ| octaves) and arg λ the twist
+                        // per repeat. The numbers that say what diving here will look like.
+                        let lam = fractadyne_core::misiurewicz_multiplier(
+                            &m.cx,
+                            &m.cy,
+                            m.preperiod,
+                            m.period,
+                            0,
+                            self.viewport.precision,
+                        );
+                        let label = match lam {
+                            Some(l) => format!(
+                                "Misiurewicz ({},{}) — repeats every {:.2} octaves, twist {:.1}°",
+                                m.preperiod,
+                                m.period,
+                                l.log2_abs,
+                                l.arg.to_degrees()
+                            ),
+                            None => format!("Misiurewicz ({},{})", m.preperiod, m.period),
+                        };
+                        (Some((m.cx, m.cy)), label)
+                    }
+                    Err(why) => {
+                        misi_miss = Some(why);
+                        (None, format!("Misiurewicz ({k},{p})"))
+                    }
+                }
+            }
+        };
+        match found {
+            Some((cx, cy)) => {
+                let l2 = zoom_to.unwrap_or(cur_l2);
+                self.viewport.set_center_log2mag(cx, cy, l2);
+                self.finish_nav_jump();
+                self.goto.open = false;
+                let took = solve.started.elapsed().as_secs_f64();
+                self.set_toast(
+                    match (solve.depth_capped, zoom_to) {
+                        // Landing short of what was asked, and saying so: the alternative is a
+                        // centre that is wrong by tens of thousands of digits and a flat frame.
+                        (Some(asked), _) => format!(
+                            "Zoomed to the {label} — {}×. Solving is capped at {} octaves, so it \
+                             stopped there rather than {}×.",
+                            fmt_zoom_field(l2),
+                            MAX_SOLVE_OCTAVES as u64,
+                            fmt_zoom_field(asked)
+                        ),
+                        (None, Some(t)) => {
+                            format!("Zoomed to the {label} — {}× ({took:.1}s)", fmt_zoom_field(t))
+                        }
+                        (None, None) => format!("Snapped to {label} center ({took:.1}s)"),
+                    },
+                    ctx,
+                );
+            }
+            None => {
+                self.goto.msg = Some(match self.goto.feat_kind {
+                    FeatureKind::Minibrot => {
+                        "No minibrot center found near the view — zoom closer to one.".to_string()
+                    }
+                    FeatureKind::Misiurewicz => match misi_miss {
+                        // The one worth spelling out: a REAL point was found, just not here. The
+                        // distance is the actionable part — it says how far out to zoom.
+                        Some(fractadyne_core::MisiurewiczMiss::TooFar { log2_view_widths }) => {
+                            // ⚠**The distance decides which story is true**, and saying the wrong
+                            // one is worse than saying nothing. A point 2^187 view-widths out is a
+                            // different, far coarser feature and the answer is to zoom out. A
+                            // point 23 view-widths out is the SAME neighbourhood, just off-screen,
+                            // and telling that user their feature is "far COARSER" sent them
+                            // hunting in the wrong direction (user, 2026-08-31).
+                            let widths = fmt_log2_count(log2_view_widths);
+                            let octaves = log2_view_widths.max(0.0).ceil();
+                            if log2_view_widths < 12.0 {
+                                format!(
+                                    "Found a {label} point just outside this view — {widths} \
+                                     view-widths away. Zoom out about {octaves:.0} octaves to \
+                                     bring it on screen, or set a larger preperiod for a feature \
+                                     at this scale."
+                                )
+                            } else {
+                                format!(
+                                    "Found a {label} point, but it is {widths} view-widths away — \
+                                     that feature is far COARSER than this view. Zoom OUT by about \
+                                     {octaves:.0} octaves to reach it, or try a larger preperiod \
+                                     for a feature at this scale."
+                                )
+                            }
+                        }
+                        Some(fractadyne_core::MisiurewiczMiss::NotPreperiodic { residual }) => format!(
+                            "{label} does not fit the orbit here (residual {residual:.1e}) — \
+                             clear both boxes to detect the pair from the view."
+                        ),
+                        Some(fractadyne_core::MisiurewiczMiss::NotConverged) | None => format!(
+                            "No {label} point converged near the view — navigate closer, or try \
+                             different k/p."
+                        ),
+                        Some(fractadyne_core::MisiurewiczMiss::BadRequest) => {
+                            "Preperiod and period must both be positive.".to_string()
+                        }
+                    },
+                });
+            }
+        }
+    }
+
+    /// Load a Kalles Fraktaler `.kfr` location file and jump to it. Defensive: bounds the
+    /// file size and delegates to the hardened `parse_kfr`. (KF's zoom and ours are both
+    /// linear magnification from the home view — close enough that the location lands at
+    /// essentially the right place and scale.)
+    fn load_kfr_file(&mut self, path: &std::path::Path) -> Result<String, crate::error::AppError> {
+        use crate::error::AppError;
+        let meta = std::fs::metadata(path)?;
+        if meta.len() > 4_000_000 {
+            return Err(AppError::Message("file too large (not a .kfr location?)".into()));
+        }
+        let text = std::fs::read_to_string(path)?;
+        let v = fractadyne_core::parse_kfr(&text)
+            .ok_or_else(|| AppError::Parse("not a valid .kfr location (need Re / Im / Zoom)".into()))?;
+        let zoom = v.zoom;
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        if let Some(it) = v.iterations {
+            self.render_cfg.max_iter = it.clamp(64, 50_000);
+            self.render_cfg.auto_iter = false;
+        }
+        self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
+        self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+        Ok(format!("Imported .kfr location @ {}×", fmt_zoom(zoom)))
+    }
+
+    /// Load an **Imagina TEXT location** (`--import-imagina`). Mirrors `load_kfr_file`.
+    ///
+    /// The BINARY `.im` form is refused by its magic rather than parsed: its payload needs `HRReal`'s
+    /// layout and GMP `mpf` raw streams, which are not documented in the source available to read, and
+    /// a guessed binary parser is worse than none — it imports a plausible wrong location silently.
+    /// Telling the user to re-save as text is the honest outcome.
+    fn load_imagina_file(&mut self, path: &std::path::Path) -> Result<String, crate::error::AppError> {
+        use crate::error::AppError;
+        let meta = std::fs::metadata(path)?;
+        if meta.len() > 4_000_000 {
+            return Err(AppError::Message("file too large (not an Imagina location?)".into()));
+        }
+        let bytes = std::fs::read(path)?;
+        if bytes.starts_with(&fractadyne_core::IMAGINA_BINARY_MAGIC) {
+            return Err(AppError::Message(
+                "this is a BINARY Imagina .im file, which is not supported — re-save it from Imagina as a text location (File type: Imagina text) and import that"
+                    .into(),
+            ));
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        let v = fractadyne_core::parse_imagina_text(&text).ok_or_else(|| {
+            AppError::Parse("not a valid Imagina text location (need Location Size / Re / Im)".into())
+        })?;
+        let zoom = v.zoom;
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        if let Some(it) = v.iterations {
+            self.render_cfg.max_iter = it.clamp(64, MAX_ITER_LIMIT);
+            self.render_cfg.auto_iter = false;
+        }
+        self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
+        self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+        Ok(format!("Imported Imagina location @ {}×", fmt_zoom(zoom)))
+    }
+
+    /// File-dialog import of a Kalles Fraktaler `.kfr` location.
+    fn import_kfr(&mut self, ctx: &egui::Context) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Kalles Fraktaler location", &["kfr"])
+            .set_directory(self.dialog_dir_default())
+            .pick_file()
+        else {
+            return;
+        };
+        self.remember_dir(&path);
+        match self.load_kfr_file(&path) {
+            Ok(m) => self.set_toast(m, ctx),
+            Err(e) => self.set_toast(format!("Import failed: {e}"), ctx),
+        }
+    }
+
+    /// Open the Share-location dialog, pre-filled with the current view as `.fdn` text.
+    fn open_share(&mut self) {
+        self.share.text = self.view_metadata();
+        self.share.msg = None;
+        self.share.open = true;
+    }
+
+    /// Apply the Share dialog's text as a location (hardened: bounded, allow-list parse via
+    /// `load_view_metadata`, every field validated/clamped — no paths or code).
+    fn apply_share_text(&mut self, ctx: &egui::Context) {
+        let t = self.share.text.trim();
+        if let Err(why) = location_text_verdict(t) {
+            self.share.msg = Some(why.into());
+            return;
+        }
+        let t = t.to_string();
+        let report = self.load_view_metadata(&t); // performs the jump + records history
+        let zoom = fmt_zoom_log2(self.viewport.log2_magnification());
+        match report.note() {
+            None => {
+                self.set_toast(format!("Loaded location @ {zoom}×"), ctx);
+                self.share.open = false;
+            }
+            // Keep the dialog open and surface the report rather than silently jumping.
+            Some(n) => {
+                self.share.msg = Some(format!("Loaded @ {zoom}× — {n}."));
+            }
+        }
+    }
+
+    /// Save the Share dialog's text to a `.fdn` file.
+    fn save_share_file(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Fractadyne location", &["fdn"])
+            .set_directory(self.dialog_dir_default())
+            .set_file_name("location.fdn")
+            .save_file()
+        {
+            self.remember_dir(&path);
+            match std::fs::write(&path, self.share.text.as_bytes()) {
+                Ok(()) => self.share.msg = Some("Saved.".into()),
+                Err(e) => self.share.msg = Some(format!("Save failed: {e}")),
+            }
+        }
+    }
+
+    /// Load a `.fdn` file into the Share dialog's text box (size-bounded; not auto-applied,
+    /// so the user can review before jumping).
+    fn load_share_file(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Fractadyne location", &["fdn"])
+            .set_directory(self.dialog_dir_default())
+            .pick_file()
+        else {
+            return;
+        };
+        self.remember_dir(&path);
+        match std::fs::metadata(&path) {
+            Ok(m) if (m.len() as usize) <= SHARE_MAX => match std::fs::read_to_string(&path) {
+                Ok(t) => {
+                    self.share.text = t;
+                    self.share.msg = Some("Loaded into the box — review, then Apply.".into());
+                }
+                Err(e) => self.share.msg = Some(format!("Read failed: {e}")),
+            },
+            Ok(_) => self.share.msg = Some("File too large (not a .fdn location?).".into()),
+            Err(e) => self.share.msg = Some(format!("Read failed: {e}")),
+        }
+    }
+
+    /// Compact, PII-free system-info block for issue reports (version, OS, CPU, GPU, VRAM).
+    fn system_info_block(&self) -> String {
+        let si = &self.sysinfo;
+        let cache = match (si.l2_kb, si.l3_kb) {
+            (0, 0) => "—".to_string(),
+            (l2, 0) => format!("L2 {l2} KB"),
+            (l2, l3) => format!("L2 {l2} KB / L3 {l3} KB"),
+        };
+        let vram = if si.vram_mb > 0 { format!("{} MB", si.vram_mb) } else { "unknown".to_string() };
+        format!(
+            "Fractadyne v{}\n{}\nOS:   {} / {}\nCPU:  {} ({} physical / {} logical, {})\nGPU:  {} ({})\nVRAM: {}\nBignum: {} (built with: {})\n",
+            version_string(),
+            now_utc_string(),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            if si.cpu.is_empty() { "unknown" } else { si.cpu.as_str() },
+            si.physical,
+            si.logical,
+            cache,
+            self.gpu_name,
+            self.gpu_backend,
+            vram,
+            // Both halves matter in a bug report: which backend this session actually iterated in,
+            // and which ones the build could have used. A deep-zoom report without them cannot be
+            // reproduced once more than one backend ships.
+            fractadyne_core::backend_status_line(),
+            fractadyne_core::built_in_backends(),
+        )
+    }
+
+    /// Email subject line for the issue report — the issue type, so it triages in the inbox.
+    fn report_subject(&self) -> String {
+        format!("Fractadyne issue: {}", self.report.kind.label())
+    }
+
+    /// Assemble the full issue-report text from the dialog state + live diagnostics — exactly what
+    /// the preview shows and what Copy/Save/Email use. Nothing is transmitted here.
+    fn build_report(&self) -> String {
+        let mut s = String::new();
+        s.push_str("Fractadyne issue report\n");
+        s.push_str(&format!("To: {REPORT_EMAIL}\n"));
+        s.push_str(&format!("Type: {}\n", self.report.kind.label()));
+        if self.report.severity != Severity::Unspecified {
+            s.push_str(&format!("Severity: {}\n", self.report.severity.label()));
+        }
+        if self.report.repro != Repro::Unspecified {
+            s.push_str(&format!("Reproducibility: {}\n", self.report.repro.label()));
+        }
+        s.push('\n');
+        s.push_str("== Description ==\n");
+        let d = self.report.description.trim();
+        s.push_str(if d.is_empty() { "(none provided)" } else { d });
+        s.push_str("\n\n");
+        if self.report.include_sysinfo {
+            s.push_str("== System ==\n");
+            s.push_str(&self.system_info_block());
+            s.push('\n');
+        }
+        if self.report.include_location {
+            s.push_str("== Current location (.fdn) ==\n");
+            s.push_str(&self.view_metadata());
+            s.push('\n');
+        }
+        if self.report.include_crash {
+            if let Some((name, body)) = crate::diag::latest_crash() {
+                s.push_str(&format!("== Latest crash report ({name}) ==\n"));
+                s.push_str(body.trim_end());
+                s.push_str("\n\n");
+            }
+        }
+        // Before the log, so a reader meets the machine-validated verdict before the raw tail.
+        if self.report.include_test {
+            if let Some(block) = self.test_result_block() {
+                s.push_str("== Diagnostics test result ==\n");
+                s.push_str(block.trim_end());
+                s.push_str("\n\n");
+            }
+        }
+        if self.report.include_log {
+            if let Some(log) = crate::diag::recent_log(48 * 1024) {
+                s.push_str("== Recent log (tail) ==\n");
+                s.push_str(log.trim_end());
+                s.push('\n');
+            }
+        }
+        s
+    }
+}
+
+// ================================================================================================
+// impl FractadyneApp - Coloring + animation
+// ================================================================================================
+
+impl FractadyneApp {
+
+    // export_ext / start_export / quick_export / render_to_file(_iter) / start_export_to moved to export.rs.
+
+    // build_params moved to render.rs.
+
+    /// Palette-cycle scaling for the GPU. The bounded statistical methods (stripe /
+    /// triangle-inequality / decomposition) produce a 0..1 value, so they want a few
+    /// cycles across the palette; the unbounded ones (iteration / trap / distance) use
+    /// the fine per-unit scaling.
+    fn color_cycle(&self) -> f32 {
+        if self.coloring.color_method.needs_aux() {
+            0.5 + self.coloring.cycle * 4.0
+        } else {
+            0.004 + self.coloring.cycle * 0.06
+        }
+    }
+
+    // Autopilot (toggle_autopilot / autopilot_step / autopilot_pick_target) moved to autopilot.rs.
+
+    /// Stops uploaded to the GPU: the morphing random gradient when in Random mode,
+    /// otherwise the selected preset.
+    fn active_stops(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
+        if self.anim.palette_anim == PaletteAnim::Random {
+            self.anim.random_palette.current()
+        } else if self.coloring.use_binary {
+            // Flat exterior: a single stop of the `hi` color (interior uses `lo`).
+            let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
+            out[0] = [self.coloring.duotone_hi[0], self.coloring.duotone_hi[1], self.coloring.duotone_hi[2], 0.0];
+            (out, 1)
+        } else if self.coloring.use_duotone {
+            // Smooth two-color ramp lo → hi → lo (seamless under cycling).
+            let (lo, hi) = (self.coloring.duotone_lo, self.coloring.duotone_hi);
+            let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
+            out[0] = [lo[0], lo[1], lo[2], 0.0];
+            out[1] = [hi[0], hi[1], hi[2], 0.5];
+            out[2] = [lo[0], lo[1], lo[2], 1.0];
+            (out, 3)
+        } else if self.coloring.use_custom_palette {
+            self.pack_custom()
+        } else {
+            fractadyne_color::PRESETS[self.coloring.palette_idx].packed()
+        }
+    }
+
+    /// In-set (interior) color for the GPU. Binary/duotone use the chosen `lo` color so the
+    /// set reads as one solid color; otherwise the default near-black.
+    fn interior_color(&self) -> [f32; 4] {
+        if self.coloring.use_binary || self.coloring.use_duotone {
+            [self.coloring.duotone_lo[0], self.coloring.duotone_lo[1], self.coloring.duotone_lo[2], 1.0]
+        } else {
+            [0.02, 0.02, 0.03, 1.0]
+        }
+    }
+
+    /// Pack the custom gradient into the GPU stop format `[r, g, b, pos]` (sorted by
+    /// position, count clamped to `MAX_STOPS`). Falls back to a preset if empty.
+    fn pack_custom(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
+        if self.coloring.custom_palette.is_empty() {
+            return fractadyne_color::PRESETS[self.coloring.palette_idx].packed();
+        }
+        let mut stops = self.coloring.custom_palette.clone();
+        stops.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        let n = stops.len().clamp(1, fractadyne_color::MAX_STOPS);
+        let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
+        for (i, slot) in out.iter_mut().enumerate() {
+            let s = stops[i.min(n - 1)];
+            *slot = [s[1], s[2], s[3], s[0]];
+        }
+        (out, n as u32)
+    }
+
+    /// The given preset's stops as editable `[pos, r, g, b]` rows (to seed the editor).
+    fn preset_as_stops(&self, idx: usize) -> Vec<[f32; 4]> {
+        fractadyne_color::PRESETS[idx.min(fractadyne_color::PRESETS.len() - 1)]
+            .stops
+            .iter()
+            .map(|(pos, c)| [*pos, c[0], c[1], c[2]])
+            .collect()
+    }
+
+    /// Advance the palette animation for this frame (offset shift, or random morph).
+    fn advance_palette_anim(&mut self, ctx: &egui::Context) {
+        let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1) as f32;
+        // Distance-estimate glow cycling — flows the contour bands (independent of the
+        // palette animation; shares the Speed slider). Phase is in cycles, period 1.
+        if self.effects.de && self.effects.de_anim && self.anim.palette_anim_speed > 0.0 {
+            self.effects.de_phase = (self.effects.de_phase + self.anim.palette_anim_speed * dt).rem_euclid(1.0);
+            self.schedule_repaint(ctx);
+        }
+        // Rotate the relief light direction (cheap — it's a color-pass param).
+        if self.effects.light && self.effects.light_anim && self.anim.palette_anim_speed > 0.0 {
+            self.effects.light_angle = (self.effects.light_angle
+                + self.anim.palette_anim_speed * dt * std::f32::consts::TAU)
+                .rem_euclid(std::f32::consts::TAU);
+            self.schedule_repaint(ctx);
+        }
+        if self.anim.palette_anim == PaletteAnim::Off || self.anim.palette_anim_speed <= 0.0 {
+            return;
+        }
+        let step = self.anim.palette_anim_speed * dt;
+        match self.anim.palette_anim {
+            PaletteAnim::Random => self.anim.random_palette.advance(dt, self.anim.palette_anim_speed),
+            mode => {
+                let (o, d) = palette_anim_step(mode, self.coloring.offset, self.anim.anim_dir, step);
+                self.coloring.offset = o;
+                self.anim.anim_dir = d;
+            }
+        }
+        self.schedule_repaint(ctx);
+    }
+
+    // start_benchmark / load_script / advance_playback / format_bench moved to scripting.rs.
+
+    /// Advance the orbit racing-dot animation (position along the path + hue).
+    fn advance_orbit_anim(&mut self, ctx: &egui::Context) {
+        if !(self.anim.show_orbits && self.anim.orbit_anim) {
+            return;
+        }
+        let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1) as f32;
+        self.anim.orbit_phase = (self.anim.orbit_phase + self.anim.orbit_anim_speed * dt) % 1.0e6;
+        self.anim.orbit_hue = (self.anim.orbit_hue + 0.22 * dt).fract(); // ~4.5 s per color cycle
+        self.schedule_repaint(ctx);
+    }
+
+    /// The custom-gradient editor window: live gradient preview, per-stop color + position
+    /// controls, add/remove, and seed-from-preset. Edits bump `palette_rev`.
+    fn palette_editor_window(&mut self, ctx: &egui::Context) {
+        if !self.coloring.palette_editor_open {
+            return;
+        }
+        let mut open = self.coloring.palette_editor_open;
+        let mut changed = false;
+        egui::Window::new("Gradient editor")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(340.0)
+            .show(ctx, |ui| {
+                // Live gradient preview bar.
+                let (packed, n) = self.pack_custom();
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
+                let pr = ui.painter_at(rect);
+                let steps = rect.width().ceil().max(1.0) as usize;
+                for s in 0..steps {
+                    let t = s as f32 / steps as f32;
+                    let x = rect.min.x + t * rect.width();
+                    let col = sample_stops(&packed, n, t);
+                    pr.line_segment(
+                        [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
+                        egui::Stroke::new(1.5_f32, col),
+                    );
+                }
+                pr.rect_stroke(
+                    rect,
+                    2.0,
+                    egui::Stroke::new(1.0_f32, BRAND_ACCENT),
+                    egui::StrokeKind::Inside,
+                );
+                ui.add_space(6.0);
+
+                // Per-stop rows (color + position + remove).
+                let mut remove: Option<usize> = None;
+                let count = self.coloring.custom_palette.len();
+                for i in 0..count {
+                    ui.horizontal(|ui| {
+                        let mut rgb = [
+                            self.coloring.custom_palette[i][1],
+                            self.coloring.custom_palette[i][2],
+                            self.coloring.custom_palette[i][3],
+                        ];
+                        if ui.color_edit_button_rgb(&mut rgb).changed() {
+                            self.coloring.custom_palette[i][1] = rgb[0];
+                            self.coloring.custom_palette[i][2] = rgb[1];
+                            self.coloring.custom_palette[i][3] = rgb[2];
+                            changed = true;
+                        }
+                        let mut pos = self.coloring.custom_palette[i][0];
+                        if ui
+                            .add(egui::Slider::new(&mut pos, 0.0..=1.0).text("pos").fixed_decimals(3))
+                            .changed()
+                        {
+                            self.coloring.custom_palette[i][0] = pos.clamp(0.0, 1.0);
+                            changed = true;
+                        }
+                        if count > 2 && ui.button(crate::icons::CLOSE).on_hover_text("Remove stop").clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                }
+                if let Some(i) = remove {
+                    self.coloring.custom_palette.remove(i);
+                    changed = true;
+                }
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if self.coloring.custom_palette.len() < fractadyne_color::MAX_STOPS
+                        && ui.button(format!("{} Add stop", crate::icons::ADD)).clicked()
+                    {
+                        self.coloring.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
+                        changed = true;
+                    }
+                    ui.menu_button("Copy preset…", |ui| {
+                        for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
+                            if ui.button(p.name).clicked() {
+                                self.coloring.custom_palette = self.preset_as_stops(i);
+                                changed = true;
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    ui.toggle_value(&mut self.coloring.paste_open, "Paste…")
+                        .on_hover_text("Import a palette from hex colours or 0–255 RGB triples");
+                });
+
+                // Paste-a-palette. The cheapest possible bridge to the existing palette cultures:
+                // no file format to agree on, no dialog, and it covers "I found a palette on the
+                // web" as well as pasting the body of a Fractint/KF `.map`.
+                if self.coloring.paste_open {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Paste hex colours (#ff8800) or 0–255 triples (255 136 0), separated \
+                             by commas, spaces or new lines:",
+                        )
+                        .weak()
+                        .small(),
+                    );
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.coloring.paste_text)
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("#000000, #8b1a1a, #ff8800, #ffe6b3"),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Apply").clicked() {
+                            match fractadyne_color::parse_palette_text(&self.coloring.paste_text) {
+                                Ok(colors) => {
+                                    let got = colors.len();
+                                    let used = fractadyne_color::resample_colors(
+                                        &colors,
+                                        fractadyne_color::MAX_STOPS,
+                                    );
+                                    // Spread the imported colours evenly; a single colour becomes
+                                    // one stop at 0 rather than dividing by zero.
+                                    let n = used.len();
+                                    self.coloring.custom_palette = used
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, c)| {
+                                            let pos = if n > 1 {
+                                                i as f32 / (n - 1) as f32
+                                            } else {
+                                                0.0
+                                            };
+                                            [pos, c[0], c[1], c[2]]
+                                        })
+                                        .collect();
+                                    self.coloring.paste_msg = Some(if got > n {
+                                        format!(
+                                            "Imported {n} of {got} colours — the gradient carries \
+                                             {} stops, sampled evenly across your list.",
+                                            fractadyne_color::MAX_STOPS
+                                        )
+                                    } else {
+                                        format!("Imported {n} colours.")
+                                    });
+                                    changed = true;
+                                }
+                                Err(e) => self.coloring.paste_msg = Some(format!("Couldn't read that: {e}")),
+                            }
+                        }
+                        if ui.button("Clear").clicked() {
+                            self.coloring.paste_text.clear();
+                            self.coloring.paste_msg = None;
+                        }
+                    });
+                    if let Some(m) = &self.coloring.paste_msg {
+                        ui.label(egui::RichText::new(m).weak().small());
+                    }
+                }
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{}/{} stops · positions may overlap; they're sorted automatically.",
+                        self.coloring.custom_palette.len(),
+                        fractadyne_color::MAX_STOPS
+                    ))
+                    .weak()
+                    .small(),
+                );
+            });
+        if changed {
+            self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
+            self.coloring.use_custom_palette = true;
+        }
+        self.coloring.palette_editor_open = open;
+    }
+}
+
+// ================================================================================================
+// impl FractadyneApp - Windows, overlays + the update check
+// ================================================================================================
+
+impl FractadyneApp {
+
+    /// Render the static home-view thumbnail for the minimap (fixed complex region), as
+    /// an egui image. Cheap (small, direct path); only called when the thumbnail key
+    /// changes. Returns `None` if the GPU render fails.
+    fn render_minimap_image(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+    ) -> Option<egui::ColorImage> {
+        let mut vp = Viewport::new(MINIMAP_TW as f64, MINIMAP_TH as f64);
+        vp.center_x = fractadyne_core::BigFloat::from_f64(MINIMAP_CX, 64);
+        vp.center_y = fractadyne_core::BigFloat::from_f64(MINIMAP_CY, 64);
+        vp.units_per_pixel = fractadyne_core::FloatExp::from_f64((2.0 * MINIMAP_HX) / MINIMAP_TW as f64);
+        vp.precision = 64;
+        let mut req = self.current_export_request_for(&vp, false);
+        req.width = MINIMAP_TW;
+        req.height = MINIMAP_TH;
+        req.ss = 1;
+        req.max_iter = req.max_iter.clamp(200, 600);
+        let progress = std::sync::atomic::AtomicU32::new(0);
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let res = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()?;
+        // Linear RGBA f32 → sRGB u8 (approx gamma) for display.
+        let n = (res.width * res.height) as usize;
+        let mut pixels = Vec::with_capacity(n * 4);
+        for i in 0..n {
+            for k in 0..3 {
+                let c = res.pixels[i * 4 + k].clamp(0.0, 1.0);
+                pixels.push((c.powf(1.0 / 2.2) * 255.0 + 0.5) as u8);
+            }
+            pixels.push(255);
+        }
+        Some(egui::ColorImage::from_rgba_unmultiplied(
+            [res.width as usize, res.height as usize],
+            &pixels,
+        ))
+    }
+
+    /// Refresh the cached minimap thumbnail if its key (formula / palette / method)
+    /// changed. No-op when the minimap is hidden.
+    fn update_minimap(
+        &mut self,
+        ctx: &egui::Context,
+        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
+    ) {
+        // Shown for single Mandelbrot-family views and in dual view (the left panel is the
+        // Mandelbrot map); hidden only for a single Julia view, where a Mandelbrot overview
+        // wouldn't correspond to the shown set.
+        if !self.dialogs.minimap || (self.julia_mode && !self.dual) {
+            return;
+        }
+        // Key includes the palette identity (preset index or a sentinel) and a revision so
+        // the thumbnail refreshes when the gradient / duotone colors change.
+        let duo_hash = self
+            .coloring
+            .duotone_lo
+            .iter()
+            .chain(&self.coloring.duotone_hi)
+            .fold(0u32, |a, &c| a.wrapping_mul(16_777_619) ^ c.to_bits());
+        let (pal_idx, pal_rev) = if self.coloring.use_binary {
+            (usize::MAX - 2, duo_hash)
+        } else if self.coloring.use_duotone {
+            (usize::MAX - 1, duo_hash)
+        } else if self.coloring.use_custom_palette {
+            (usize::MAX, self.coloring.palette_rev)
+        } else {
+            (self.coloring.palette_idx, 0)
+        };
+        let key = (self.fractal.formula_id(), pal_idx, self.coloring.color_method.to_u32(), pal_rev);
+        if self.minimap_key == Some(key) && self.minimap_tex.is_some() {
+            return;
+        }
+        if let Some((dev, q)) = gpu {
+            if let Some(img) = self.render_minimap_image(dev, q) {
+                let tex = ctx.load_texture("fractadyne.minimap", img, egui::TextureOptions::LINEAR);
+                self.minimap_tex = Some(tex);
+                self.minimap_key = Some(key);
+            }
+        }
+    }
+
+    /// The Help window: a left-hand table of contents + a scrollable content pane.
+    /// The "Faster deep zoom" dialog: what the accelerated build is, and where to get it.
+    ///
+    /// Two states, because the honest thing to show depends on which binary is running, and that
+    /// is taken from `fractadyne_core::available_backends()` -- a compile-time fact of THIS binary
+    /// rather than a flag or a setting that could disagree with it.
+    fn accelerated_window(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.accelerated_open {
+            return;
+        }
+        let have_it = fractadyne_core::available_backends().len() > 1;
+        let ver = crate::sysinfo::version_string();
+        let asset = accelerated_asset_url(&ver);
+        let releases = "https://github.com/WindySnowOwl/fractadyne/releases";
+
+        let mut open = self.dialogs.accelerated_open;
+        egui::Window::new("Faster deep zoom")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(520.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                if have_it {
+                    ui.heading("You are running the accelerated build");
+                    ui.label(
+                        "Deep-zoom reference orbits are being computed with MPFR/GMP, which is \
+                         2.5-6.4x faster than the standard build at that step - the pause before \
+                         a deep view starts resolving.",
+                    );
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Arithmetic in use: {}",
+                            fractadyne_core::backend_status_line()
+                        ))
+                        .monospace()
+                        .small(),
+                    );
+                } else {
+                    ui.heading("An optional build is 2.5-6.4x faster at depth");
+                    ui.label(
+                        "Deep zoom spends much of its time computing reference orbits on the CPU \
+                         - the pause before a deep view starts resolving. An optional build does \
+                         that with the MPFR/GMP libraries instead, which is 2.5 to 6.4 times \
+                         faster, and more so the deeper you go. Everything else is the same.",
+                    );
+                    ui.separator();
+                    ui.label(
+                        "The images are BYTE-IDENTICAL - it is the same mathematics computed by a \
+                         faster library, checked across every fractal formula and the whole \
+                         deep-zoom comparison corpus.",
+                    );
+                    ui.label(
+                        "Your settings, saved session and locations are shared between the two, \
+                         so you can switch freely and nothing needs importing.",
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "It is a separate download because the libraries it uses cannot be \
+                             built with the compiler the standard Windows build uses, and they \
+                             carry a different licence (GNU LGPL v3) from Fractadyne's own.",
+                        )
+                        .small(),
+                    );
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Download for this version")
+                            .on_hover_text(&asset)
+                            .clicked()
+                        {
+                            ctx.open_url(egui::OpenUrl::new_tab(&asset));
+                        }
+                        if ui
+                            .button("All releases")
+                            .on_hover_text(
+                                "If the direct link 404s, this version has no accelerated build \
+                                 yet - pick the nearest one here.",
+                            )
+                            .clicked()
+                        {
+                            ctx.open_url(egui::OpenUrl::new_tab(releases));
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new(
+                            "Extract it and run fractadyne.exe from that folder, keeping the .dll \
+                             files beside it.",
+                        )
+                        .small(),
+                    );
+                }
+            });
+        self.dialogs.accelerated_open = open;
+    }
+
+    fn help_window(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.help_open {
+            return;
+        }
+        const SECTIONS: [&str; help::SECTION_NAMES.len()] = help::SECTION_NAMES;
+        let mut open = self.dialogs.help_open;
+        // Cap the size to the screen so the content ScrollArea scrolls (rather than the window
+        // growing to fit) and the window can't be resized past the screen edge (which pushed
+        // the title-bar close button off-screen).
+        let max_h = (ctx.screen_rect().height() - 80.0).max(360.0);
+        let max_w = (ctx.screen_rect().width() - 40.0).max(480.0);
+        egui::Window::new("Fractadyne Help")
+            .open(&mut open)
+            .default_size([800.0, 560.0])
+            .min_width(480.0) // keep room for the content beside the fixed-width contents list
+            .min_height(300.0)
+            .max_width(max_w)
+            .max_height(max_h)
+            .constrain(true) // keep the whole window on-screen
+            .resizable(true)
+            .show(ctx, |ui| {
+                // Manual two-column split (fixed contents list + scrollable content pane).
+                // Explicit widths make the content both wrap AND fill the window, so the
+                // window's resize grip stays at the true bottom-right — nested SidePanel/
+                // CentralPanel mis-reported the width and stranded the grip beside the list.
+                let toc_w = 165.0_f32;
+                let avail = ui.available_size();
+                ui.horizontal_top(|ui| {
+                    // Contents list (fixed width).
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(toc_w, avail.y),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_width(toc_w);
+                            ui.set_max_width(toc_w);
+                            ui.add_space(4.0);
+                            for (i, name) in SECTIONS.iter().enumerate() {
+                                ui.selectable_value(&mut self.dialogs.help_section, i, *name);
+                            }
+                        },
+                    );
+                    ui.separator();
+                    ui.add_space(8.0); // left inset so the separator doesn't touch the text
+                    let content_w = ui.available_width().max(240.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(content_w, avail.y),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_width(content_w);
+                            ui.set_max_width(content_w);
+                            // Solid, only-when-needed scrollbar (not floating/hover-only).
+                            ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .scroll_bar_visibility(
+                                    egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                                )
+                                .show(ui, |ui| {
+                                    ui.set_max_width(content_w - 18.0); // leave room for the bar
+                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                                    // Indexed, not matched: the old `_ => help_about(ui)` arm
+                                    // meant a section added to the list without a body silently
+                                    // rendered About under its own name. The name and the body
+                                    // are now one table entry, checked by a test.
+                                    let i = self.dialogs.help_section.min(SECTIONS.len() - 1);
+                                    help::SECTION_BODIES[i](ui);
+                                });
+                        },
+                    );
+                });
+            });
+        self.dialogs.help_open = open;
+    }
+
+    /// Set a transient status toast (auto-fades after a few seconds).
+    fn set_toast(&mut self, msg: impl Into<String>, ctx: &egui::Context) {
+        self.toast = Some((msg.into(), ctx.input(|i| i.time)));
+    }
+
+    /// "Zoom to center": find the nearby minibrot's exact nucleus (Newton-Raphson in
+    /// arbitrary precision) and snap the view center to it, keeping the current zoom.
+    /// Reports the period. Holomorphic families only (Mandelbrot / Multibrot).
+    /// Kick off an update check on a background thread (non-blocking). `manual` = user-initiated
+    /// (toast every outcome); the launch check passes `false` (toast only when an update exists).
+    /// No-op if a check is already running.
+    fn start_update_check(&mut self, manual: bool) {
+        if self.update_rx.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let track = self.update_track;
+        let cur = update::running_version();
+        std::thread::spawn(move || {
+            let _ = tx.send(update::check(track, &cur));
+        });
+        self.update_rx = Some(rx);
+        self.update_status = None;
+        self.update_manual = manual;
+    }
+
+    /// Poll the in-flight update check; on completion keep the status (for the Help menu) and toast
+    /// the outcome — a manual check reports all outcomes, the silent launch check only an update.
+    fn poll_update_check(&mut self, ctx: &egui::Context) {
+        let done = self.update_rx.as_ref().and_then(|rx| rx.try_recv().ok());
+        if let Some(status) = done {
+            self.update_rx = None;
+            match &status {
+                // Surface the download link directly via the update prompt (below), not a
+                // dead-end toast that just points at the Help menu.
+                update::UpdateStatus::Available { .. } => {
+                    self.update_prompt_open = true;
+                }
+                update::UpdateStatus::UpToDate if self.update_manual => {
+                    self.set_toast("You're on the latest version.", ctx);
+                }
+                update::UpdateStatus::Error(e) if self.update_manual => {
+                    self.set_toast(format!("Update check failed: {e}"), ctx);
+                }
+                _ => {}
+            }
+            self.update_status = Some(status);
+        }
+    }
+
+    /// The "Update available" prompt: shows the new version + a direct **Download from GitHub**
+    /// link (opens the release page). Dismissable ("Remind me later"); the Help menu keeps the
+    /// same link afterwards. No auto-install.
+    fn draw_update_dialog(&mut self, ctx: &egui::Context) {
+        if !self.update_prompt_open {
+            return;
+        }
+        // Only meaningful while an update is actually pending.
+        let Some(update::UpdateStatus::Available { version, url, prerelease }) = &self.update_status
+        else {
+            self.update_prompt_open = false;
+            return;
+        };
+        let (version, url, prerelease) = (version.clone(), url.clone(), *prerelease);
+        let channel = update::channel_word(prerelease);
+        let track = self.update_track.label();
+        let current = update::running_version();
+        let green = egui::Color32::from_rgb(0x5C, 0xC0, 0x6C);
+        let mut open = true;
+        let (mut download, mut later) = (false, false);
+        egui::Window::new("Update available")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(430.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("\u{2B06}").size(22.0).color(green));
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Fractadyne {version} ({channel}) is available"
+                            ))
+                            .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "You're running {current}  ·  {track}"
+                            ))
+                            .weak()
+                            .small(),
+                        );
+                    });
+                });
+                ui.add_space(10.0);
+                ui.label("Download the latest release from GitHub:");
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("\u{2B07}  Download from GitHub")
+                                    .color(egui::Color32::WHITE),
+                            )
+                            .fill(green),
+                        )
+                        .clicked()
+                    {
+                        download = true;
+                    }
+                    if ui.button("Remind me later").clicked() {
+                        later = true;
+                    }
+                });
+                ui.add_space(6.0);
+                ui.hyperlink_to(
+                    egui::RichText::new(format!("{url} \u{2197}")).small(),
+                    &url,
+                );
+            });
+        if download {
+            ctx.open_url(egui::OpenUrl::new_tab(url));
+        }
+        if download || later || !open {
+            self.update_prompt_open = false;
+        }
+    }
 
     /// Performance diagnostics, rendered into a docked panel section (FPS, CPU/GPU
     /// split, reference-recompute cost, and current render state).
@@ -5602,1589 +7165,85 @@ impl FractadyneApp {
              launch. Useful as a rate over a known interval; a number climbing while nothing \
              moves is the signal worth chasing.");
     }
+}
 
-    /// Snapshot the current location for navigation history.
-    fn snapshot_view(&self) -> ViewSnapshot {
-        ViewSnapshot {
-            cx: self.viewport.center_x.clone(),
-            cy: self.viewport.center_y.clone(),
-            upp: self.viewport.units_per_pixel,
-            prec: self.viewport.precision,
-        }
-    }
+// ================================================================================================
+// impl FractadyneApp - Export glue
+// ================================================================================================
 
-    /// Restore a navigation snapshot (location only).
-    fn apply_snapshot(&mut self, s: &ViewSnapshot) {
-        self.viewport.center_x = s.cx.clone();
-        self.viewport.center_y = s.cy.clone();
-        self.viewport.units_per_pixel = s.upp;
-        self.viewport.precision = s.prec;
-        self.pointer.zoom_vel = 0.0;
-        self.invalidate_refs();
-    }
+impl FractadyneApp {
 
-    /// Record the current location onto the undo history (deduped vs. the top), and
-    /// clear the redo stack. Called when the view settles and after discrete jumps.
-    fn record_nav(&mut self) {
-        let snap = self.snapshot_view();
-        self.nav.record(snap);
-    }
+    // compute_reference / series_skip_for / current_export_request_for moved to render.rs.
 
-    /// Step back / forward through visited locations.
-    fn undo_view(&mut self) {
-        if let Some(prev) = self.nav.undo() {
-            self.apply_snapshot(&prev);
-            self.nav.was_interacting = false;
-        }
-    }
-    fn redo_view(&mut self) {
-        if let Some(s) = self.nav.redo() {
-            self.apply_snapshot(&s);
-            self.nav.was_interacting = false;
-        }
-    }
-
-    /// Open the go-to-location dialog, pre-filled with the current view.
-    fn open_goto(&mut self) {
-        self.goto.x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
-        self.goto.y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
-        self.goto.zoom = fmt_zoom_field(self.viewport.log2_magnification());
-        self.goto.msg = None;
-        self.goto.open = true;
-    }
-
-    /// Apply the go-to-location dialog: parse + validate, then jump (recording history).
-    fn apply_goto(&mut self) {
-        // Zoom first: it sets the precision the coordinates are parsed at, so an inexact
-        // rational like 37/100 carries enough digits to be viewed at the requested depth.
-        // Clamp to a sane octave bound so a pasted absurd zoom can't request runaway precision.
-        let log2mag = parse_zoom_to_log2(&self.goto.zoom)
-            .filter(|l| l.is_finite())
-            .map(|l| l.clamp(0.0, 1.0e6));
-        let prec = fractadyne_core::precision_for_octaves(log2mag.unwrap_or(0.0) as u64);
-        // The real field also accepts a whole complex expression — `(37+16i)/100` fills both
-        // coordinates at once. Both fields are rewritten to the resolved decimals so what was
-        // applied is visible rather than implied.
-        let (cx, cy) = match fractadyne_core::parse_complex_prec(self.goto.x.trim(), prec) {
-            Some((re, im)) if !im.is_zero() => {
-                self.goto.x = fractadyne_core::to_decimal_string(&re);
-                self.goto.y = fractadyne_core::to_decimal_string(&im);
-                (Some(re), Some(im))
-            }
-            _ => (
-                fractadyne_core::parse_bf_prec(self.goto.x.trim(), prec),
-                fractadyne_core::parse_bf_prec(self.goto.y.trim(), prec),
-            ),
-        };
-        match (cx, cy, log2mag) {
-            (Some(cx), Some(cy), Some(l)) => {
-                self.viewport.set_center_log2mag(cx, cy, l);
-                self.pointer.zoom_vel = 0.0;
-                self.invalidate_refs();
-                self.record_nav();
-                self.goto.msg = None;
-                self.goto.open = false;
-            }
-            _ => {
-                self.goto.msg = Some("Invalid input — check the coordinates and zoom.".into());
-            }
-        }
-    }
-
-    /// Set a transient status toast (auto-fades after a few seconds).
-    fn set_toast(&mut self, msg: impl Into<String>, ctx: &egui::Context) {
-        self.toast = Some((msg.into(), ctx.input(|i| i.time)));
-    }
-
-    /// "Zoom to center": find the nearby minibrot's exact nucleus (Newton-Raphson in
-    /// arbitrary precision) and snap the view center to it, keeping the current zoom.
-    /// Reports the period. Holomorphic families only (Mandelbrot / Multibrot).
-    /// Kick off an update check on a background thread (non-blocking). `manual` = user-initiated
-    /// (toast every outcome); the launch check passes `false` (toast only when an update exists).
-    /// No-op if a check is already running.
-    fn start_update_check(&mut self, manual: bool) {
-        if self.update_rx.is_some() {
-            return;
-        }
-        let (tx, rx) = std::sync::mpsc::channel();
-        let track = self.update_track;
-        let cur = update::running_version();
-        std::thread::spawn(move || {
-            let _ = tx.send(update::check(track, &cur));
-        });
-        self.update_rx = Some(rx);
-        self.update_status = None;
-        self.update_manual = manual;
-    }
-
-    /// Poll the in-flight update check; on completion keep the status (for the Help menu) and toast
-    /// the outcome — a manual check reports all outcomes, the silent launch check only an update.
-    fn poll_update_check(&mut self, ctx: &egui::Context) {
-        let done = self.update_rx.as_ref().and_then(|rx| rx.try_recv().ok());
-        if let Some(status) = done {
-            self.update_rx = None;
-            match &status {
-                // Surface the download link directly via the update prompt (below), not a
-                // dead-end toast that just points at the Help menu.
-                update::UpdateStatus::Available { .. } => {
-                    self.update_prompt_open = true;
-                }
-                update::UpdateStatus::UpToDate if self.update_manual => {
-                    self.set_toast("You're on the latest version.", ctx);
-                }
-                update::UpdateStatus::Error(e) if self.update_manual => {
-                    self.set_toast(format!("Update check failed: {e}"), ctx);
-                }
-                _ => {}
-            }
-            self.update_status = Some(status);
-        }
-    }
-
-    /// The "Update available" prompt: shows the new version + a direct **Download from GitHub**
-    /// link (opens the release page). Dismissable ("Remind me later"); the Help menu keeps the
-    /// same link afterwards. No auto-install.
-    fn draw_update_dialog(&mut self, ctx: &egui::Context) {
-        if !self.update_prompt_open {
-            return;
-        }
-        // Only meaningful while an update is actually pending.
-        let Some(update::UpdateStatus::Available { version, url, prerelease }) = &self.update_status
-        else {
-            self.update_prompt_open = false;
-            return;
-        };
-        let (version, url, prerelease) = (version.clone(), url.clone(), *prerelease);
-        let channel = update::channel_word(prerelease);
-        let track = self.update_track.label();
-        let current = update::running_version();
-        let green = egui::Color32::from_rgb(0x5C, 0xC0, 0x6C);
-        let mut open = true;
-        let (mut download, mut later) = (false, false);
-        egui::Window::new("Update available")
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
-            .default_width(430.0)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("\u{2B06}").size(22.0).color(green));
-                    ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "Fractadyne {version} ({channel}) is available"
-                            ))
-                            .strong(),
-                        );
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "You're running {current}  ·  {track}"
-                            ))
-                            .weak()
-                            .small(),
-                        );
-                    });
-                });
-                ui.add_space(10.0);
-                ui.label("Download the latest release from GitHub:");
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new("\u{2B07}  Download from GitHub")
-                                    .color(egui::Color32::WHITE),
-                            )
-                            .fill(green),
-                        )
-                        .clicked()
-                    {
-                        download = true;
-                    }
-                    if ui.button("Remind me later").clicked() {
-                        later = true;
-                    }
-                });
-                ui.add_space(6.0);
-                ui.hyperlink_to(
-                    egui::RichText::new(format!("{url} \u{2197}")).small(),
-                    &url,
-                );
-            });
-        if download {
-            ctx.open_url(egui::OpenUrl::new_tab(url));
-        }
-        if download || later || !open {
-            self.update_prompt_open = false;
-        }
-    }
-
-    /// Newton-Raphson zoom framing: the minibrot's own width occupies this fraction of the view
-    /// height after the jump.
-    ///
-    /// Chosen by measurement, not taste. The visible copy — cardioid, bulbs, and the embedded
-    /// Julia decoration that reads as part of it — runs about 1.6× the bare size estimate at high
-    /// period, so 0.25 puts roughly 40% of the frame on the minibrot and leaves the rest as
-    /// context. It also makes the degenerate case exact: period 1 (the whole set, size 1) frames
-    /// at magnification 1 — precisely the home view.
-    const ATOM_FILL: f64 = 0.25;
-
-    /// Depth that frames a minibrot of the given `log₂` size — the destination of a
-    /// Newton-Raphson zoom.
-    fn atom_frame_log2mag(log2_size: f64) -> f64 {
-        Viewport::REFERENCE_HEIGHT.log2() + Self::ATOM_FILL.log2() - log2_size
-    }
-
-    fn find_minibrot(&mut self, ctx: &egui::Context) {
-        let formula = self.fractal.formula_id();
-        if !matches!(formula, 0..=3) {
-            self.set_toast(
-                "Minibrot finder needs a holomorphic family (Mandelbrot / Multibrot).",
-                ctx,
-            );
-            return;
-        }
-        let mag = self.viewport.magnification();
-        let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
-        let max_period =
-            self.viewport.recommended_max_iter(self.render_cfg.max_iter).clamp(1_000, 100_000);
-        match fractadyne_core::find_nucleus(&center, mag, formula, max_period) {
-            Some(n) => {
-                let cur_l2 = self.viewport.log2_magnification();
-                let (cx, cy, target) = self.newton_raphson_target(n.cx, n.cy, n.period, formula);
-                match target.filter(|t| *t > cur_l2) {
-                    Some(t) => {
-                        self.viewport.set_center_log2mag(cx, cy, t);
-                        self.finish_nav_jump();
-                        self.set_toast(
-                            format!(
-                                "Zoomed to the period-{} minibrot — {}×",
-                                n.period,
-                                fmt_zoom_field(t)
-                            ),
-                            ctx,
-                        );
-                    }
-                    // No size estimate (non-quadratic family), or the view is already deeper
-                    // than the minibrot's own scale — keep the depth, just fix the center.
-                    None => {
-                        self.viewport.set_center_log2mag(cx, cy, cur_l2);
-                        self.finish_nav_jump();
-                        self.set_toast(
-                            format!("Snapped to period-{} minibrot center", n.period),
-                            ctx,
-                        );
-                    }
-                }
-            }
-            None => self.set_toast("No minibrot center found near the view center.", ctx),
-        }
-    }
-
-    /// Size up a located minibrot and refine its center to the precision that depth demands.
-    ///
-    /// Two passes, because the two quantities define each other: the size estimate needs an
-    /// accurate center, and how accurate the center must be is set by the depth the size implies.
-    /// The first pass sizes the atom from the (shallow) center Newton just produced, which is
-    /// plenty to pick the destination depth; the second re-solves the center at that depth's
-    /// precision and re-sizes from it. Returns the refined center and the framing depth (`None`
-    /// when the family has no size estimate).
-    fn newton_raphson_target(
-        &self,
-        cx0: fractadyne_core::BigFloat,
-        cy0: fractadyne_core::BigFloat,
-        period: u32,
-        formula: u32,
-    ) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat, Option<f64>) {
-        // Ceiling on `period × precision-bits` for the synchronous deep refine. The refine runs a
-        // few Newton steps of `period` bignum iterations each ON THE UI THREAD; past this budget
-        // (roughly a second of blocking on a fast core) the jump is declined in favor of a plain
-        // center snap, rather than freezing the window for a period-100k atom at thousands of
-        // bits. (The right long-term fix is an off-thread refine with a spinner — TODO'd.)
-        const NR_REFINE_MAX_BIT_ITERS: u64 = 400_000_000;
-        let mut cx = cx0;
-        let mut cy = cy0;
-        let mut prec = self.viewport.precision;
-        let mut target = None;
-        for _ in 0..2 {
-            let Some(atom) = fractadyne_core::nucleus_size(&cx, &cy, period, formula, prec) else {
-                break;
-            };
-            let t = Self::atom_frame_log2mag(atom.log2_size);
-            if !t.is_finite() || t <= 0.0 {
-                break;
-            }
-            // Guard bits above the destination depth so the center is exact *within* the frame.
-            let need = fractadyne_core::precision_for_octaves(t as u64) + 64;
-            if need <= prec {
-                target = Some(t); // already precise enough for this depth — jump is safe
-                break;
-            }
-            if (period as u64).saturating_mul(need as u64) > NR_REFINE_MAX_BIT_ITERS {
-                break; // refine too costly for a synchronous call — recenter only, keep the depth
-            }
-            prec = need;
-            let Some((rx, ry)) = fractadyne_core::refine_nucleus(&cx, &cy, period, formula, prec)
-            else {
-                break; // no refined center → no jump: an unrefined center at the atom's own
-                       // scale would land the view on empty space
-            };
-            cx = rx;
-            cy = ry;
-            target = Some(t); // center now refined for this depth — jump is safe
-        }
-        (cx, cy, target)
-    }
-
-    /// Shared tail of a navigation jump: stop any glide, drop cached references, push history.
-    fn finish_nav_jump(&mut self) {
-        self.pointer.zoom_vel = 0.0;
-        self.invalidate_refs();
-        self.record_nav();
-    }
-
-    /// Newton-solve a parameterized feature near the current view center and snap onto its exact
-    /// center (arbitrary precision): a Misiurewicz `(k,p)` branch/spiral center, or the nearest
-    /// minibrot nucleus. Seeded from where you're looking, so it finds the feature you're near.
-    /// Mandelbrot only. Driven by the Go-to dialog's feature finder.
-    /// Start a feature solve, OFF THE UI THREAD, and show a spinner until it lands.
-    ///
-    /// ⭐These solves are arbitrary-precision Newton iterations whose cost grows with depth. At
-    /// 2.63e58899× (195,724 bits) the in-line version froze the window long enough for Windows to
-    /// paint "(Not Responding)" on the title bar — and a frozen window cannot even show that it is
-    /// working. The worker runs the pure core calls; everything needing `&self` waits for
-    /// [`poll_feature_solve`](Self::poll_feature_solve).
-    fn goto_feature(&mut self, ctx: &egui::Context) {
-        if self.fractal.formula_id() != 0 {
-            self.goto.msg = Some("Feature finding is Mandelbrot-only.".into());
-            return;
-        }
-        if self.feature_solve.is_some() {
-            return; // one at a time; the button is disabled while it runs
-        }
-        let mag = self.viewport.magnification();
-        let cur_l2 = self.viewport.log2_magnification();
-        let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
-        let target_l2 = parse_zoom_to_log2(&self.goto.zoom).filter(|t| t.is_finite() && *t > cur_l2);
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut depth_capped = None;
-        let mut zoom_to = target_l2;
-
-        match self.goto.feat_kind {
-            FeatureKind::Minibrot => {
-                let max_period = self
-                    .viewport
-                    .recommended_max_iter(self.render_cfg.max_iter)
-                    .clamp(1_000, 100_000);
-                std::thread::spawn(move || {
-                    let _ = tx.send(FeatureOutcome::Nucleus(fractadyne_core::find_nucleus(
-                        &center, mag, 0, max_period,
-                    )));
-                });
-            }
-            FeatureKind::Misiurewicz => {
-                let k = self.goto.feat_k.trim().parse::<u32>().ok().filter(|&v| v > 0);
-                let p = self.goto.feat_p.trim().parse::<u32>().ok().filter(|&v| v > 0);
-                let pair = match (k, p) {
-                    (Some(k), Some(p)) => Some((k, p)),
-                    _ => None, // blank fields mean DETECT them, on the worker
-                };
-                // The detector's own `DETECT_STEP_BUDGET` bounds the critical-orbit walk (and the
-                // orbit's escape usually stops it sooner), so this no longer needs the old flat
-                // 20k ceiling — which capped the walk ~22× short of the preperiod (~438,732) that
-                // organizes a 1e4001 view, the reported "no point found" failure. Pass the full
-                // zoom-appropriate ask and let the cost budget bound it.
-                let iters = self
-                    .viewport
-                    .recommended_max_iter(self.render_cfg.max_iter)
-                    .clamp(256, 2_000_000);
-                let precision = self.viewport.precision;
-                // Detect at the VIEW'S scale — see `detect_misiurewicz_at_scale`. A log, because
-                // the linear span underflows f64 to zero past ~1e308×.
-                let span_log2 =
-                    self.viewport.units_per_pixel.log2() + self.viewport.width_px.log2();
-                // ⭐The solve now works in LOG magnification, so the depth asked for is the depth
-                // solved at — the old `f64` magnification stopped at 2^1020 ≈ 1e307 and returned a
-                // centre good to ~307 digits for a view needing tens of thousands, which rendered
-                // as a single flat colour. What remains is a sanity bound, not an arithmetic one:
-                // precision grows with the ask, and an accidental 1e1000000× would spend hours in
-                // bignum for a view nothing can render.
-                let solve_l2 = match target_l2 {
-                    Some(t) => {
-                        if t > MAX_SOLVE_OCTAVES {
-                            depth_capped = Some(t);
-                            zoom_to = Some(MAX_SOLVE_OCTAVES);
-                        }
-                        t.min(MAX_SOLVE_OCTAVES)
-                    }
-                    None => cur_l2,
-                };
-                std::thread::spawn(move || {
-                    let found = match pair {
-                        Some(kp) => Some(kp),
-                        None => fractadyne_core::detect_misiurewicz_at_scale(
-                            &center[0],
-                            &center[1],
-                            0,
-                            iters,
-                            1_024,
-                            precision,
-                            Some(span_log2),
-                        ),
-                    };
-                    let msg = match found {
-                        Some((k, p)) => FeatureOutcome::Misiurewicz {
-                            k,
-                            p,
-                            detected: pair.is_none(),
-                            outcome: fractadyne_core::find_misiurewicz(
-                                &center,
-                                k,
-                                p,
-                                // Solve for the depth ASKED FOR, but judge "is this the feature
-                                // on screen?" against the view the seed came from. They are the
-                                // same number only when you are not asking to go deeper.
-                                fractadyne_core::SolveScale {
-                                    log2_seed: cur_l2,
-                                    log2_target: solve_l2,
-                                },
-                                0,
-                            ),
-                        },
-                        None => FeatureOutcome::NoPairDetected,
-                    };
-                    let _ = tx.send(msg);
-                });
-            }
-        }
-        self.feature_solve = Some(FeatureSolve {
-            rx,
-            started: Instant::now(),
-            zoom_to,
-            depth_capped,
-        });
-        self.goto.msg = None;
-        self.schedule_repaint(ctx);
-    }
-
-    /// Collect a finished feature solve and act on it. Called once per frame from `update`.
-    fn poll_feature_solve(&mut self, ctx: &egui::Context) {
-        let Some(solve) = &self.feature_solve else { return };
-        // Closing the dialog ABANDONS the search. Without this, a solve started and then dismissed
-        // would land minutes later and jump the view out from under whatever the user had moved on
-        // to — the dialog only closes itself AFTER a result is applied, so an open dialog is the
-        // signal that someone is still waiting for one.
-        if !self.goto.open {
-            self.feature_solve = None;
-            return;
-        }
-        // Keep repainting while it runs, or the spinner would freeze on an idle window — the very
-        // impression this change exists to remove.
-        self.schedule_repaint(ctx);
-        let Ok(outcome) = solve.rx.try_recv() else { return };
-        let solve = self.feature_solve.take().expect("checked above");
-        let cur_l2 = self.viewport.log2_magnification();
-        let mut zoom_to = solve.zoom_to;
-        let mut misi_miss = None;
-
-        let (found, label) = match outcome {
-            FeatureOutcome::Nucleus(Some(n)) => {
-                let period = n.period;
-                let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, 0);
-                zoom_to = t.filter(|t| *t > cur_l2);
-                (Some((cx, cy)), format!("period-{period} minibrot"))
-            }
-            FeatureOutcome::Nucleus(None) => (None, String::new()),
-            FeatureOutcome::NoPairDetected => {
-                // Deliberately hedged: the detector searches the critical orbit within a cost
-                // budget, so `None` means EITHER the centre is not near pre-periodic structure OR
-                // the organizing point is deeper than the walk reached here — not necessarily
-                // that the view is mis-centred (the old text wrongly blamed centring, which
-                // misled a user already sitting exactly on a deep spiral).
-                self.goto.msg = Some(
-                    "No Misiurewicz point found within the search budget — the point may be \
-                     deeper than the finder reaches at this view, or the centre may not be near a \
-                     spiral or branch point."
-                        .into(),
-                );
-                return;
-            }
-            FeatureOutcome::Misiurewicz { k, p, detected, outcome } => {
-                if detected {
-                    // Show what was found: a silent auto-detect leaves no way to tell a good fit
-                    // from a guess. (The "Auto" button beside the boxes clears them again.)
-                    self.goto.feat_k = k.to_string();
-                    self.goto.feat_p = p.to_string();
-                }
-                match outcome {
-                    Ok(m) => {
-                        // The multiplier λ of the cycle the point lands on: |λ| is the ZOOM
-                        // PERIOD (the view repeats every log₂|λ| octaves) and arg λ the twist
-                        // per repeat. The numbers that say what diving here will look like.
-                        let lam = fractadyne_core::misiurewicz_multiplier(
-                            &m.cx,
-                            &m.cy,
-                            m.preperiod,
-                            m.period,
-                            0,
-                            self.viewport.precision,
-                        );
-                        let label = match lam {
-                            Some(l) => format!(
-                                "Misiurewicz ({},{}) — repeats every {:.2} octaves, twist {:.1}°",
-                                m.preperiod,
-                                m.period,
-                                l.log2_abs,
-                                l.arg.to_degrees()
-                            ),
-                            None => format!("Misiurewicz ({},{})", m.preperiod, m.period),
-                        };
-                        (Some((m.cx, m.cy)), label)
-                    }
-                    Err(why) => {
-                        misi_miss = Some(why);
-                        (None, format!("Misiurewicz ({k},{p})"))
-                    }
-                }
-            }
-        };
-        match found {
-            Some((cx, cy)) => {
-                let l2 = zoom_to.unwrap_or(cur_l2);
-                self.viewport.set_center_log2mag(cx, cy, l2);
-                self.finish_nav_jump();
-                self.goto.open = false;
-                let took = solve.started.elapsed().as_secs_f64();
-                self.set_toast(
-                    match (solve.depth_capped, zoom_to) {
-                        // Landing short of what was asked, and saying so: the alternative is a
-                        // centre that is wrong by tens of thousands of digits and a flat frame.
-                        (Some(asked), _) => format!(
-                            "Zoomed to the {label} — {}×. Solving is capped at {} octaves, so it \
-                             stopped there rather than {}×.",
-                            fmt_zoom_field(l2),
-                            MAX_SOLVE_OCTAVES as u64,
-                            fmt_zoom_field(asked)
-                        ),
-                        (None, Some(t)) => {
-                            format!("Zoomed to the {label} — {}× ({took:.1}s)", fmt_zoom_field(t))
-                        }
-                        (None, None) => format!("Snapped to {label} center ({took:.1}s)"),
-                    },
-                    ctx,
-                );
-            }
-            None => {
-                self.goto.msg = Some(match self.goto.feat_kind {
-                    FeatureKind::Minibrot => {
-                        "No minibrot center found near the view — zoom closer to one.".to_string()
-                    }
-                    FeatureKind::Misiurewicz => match misi_miss {
-                        // The one worth spelling out: a REAL point was found, just not here. The
-                        // distance is the actionable part — it says how far out to zoom.
-                        Some(fractadyne_core::MisiurewiczMiss::TooFar { log2_view_widths }) => {
-                            // ⚠**The distance decides which story is true**, and saying the wrong
-                            // one is worse than saying nothing. A point 2^187 view-widths out is a
-                            // different, far coarser feature and the answer is to zoom out. A
-                            // point 23 view-widths out is the SAME neighbourhood, just off-screen,
-                            // and telling that user their feature is "far COARSER" sent them
-                            // hunting in the wrong direction (user, 2026-08-31).
-                            let widths = fmt_log2_count(log2_view_widths);
-                            let octaves = log2_view_widths.max(0.0).ceil();
-                            if log2_view_widths < 12.0 {
-                                format!(
-                                    "Found a {label} point just outside this view — {widths} \
-                                     view-widths away. Zoom out about {octaves:.0} octaves to \
-                                     bring it on screen, or set a larger preperiod for a feature \
-                                     at this scale."
-                                )
-                            } else {
-                                format!(
-                                    "Found a {label} point, but it is {widths} view-widths away — \
-                                     that feature is far COARSER than this view. Zoom OUT by about \
-                                     {octaves:.0} octaves to reach it, or try a larger preperiod \
-                                     for a feature at this scale."
-                                )
-                            }
-                        }
-                        Some(fractadyne_core::MisiurewiczMiss::NotPreperiodic { residual }) => format!(
-                            "{label} does not fit the orbit here (residual {residual:.1e}) — \
-                             clear both boxes to detect the pair from the view."
-                        ),
-                        Some(fractadyne_core::MisiurewiczMiss::NotConverged) | None => format!(
-                            "No {label} point converged near the view — navigate closer, or try \
-                             different k/p."
-                        ),
-                        Some(fractadyne_core::MisiurewiczMiss::BadRequest) => {
-                            "Preperiod and period must both be positive.".to_string()
-                        }
-                    },
-                });
-            }
-        }
-    }
-
-    /// Render the static home-view thumbnail for the minimap (fixed complex region), as
-    /// an egui image. Cheap (small, direct path); only called when the thumbnail key
-    /// changes. Returns `None` if the GPU render fails.
-    fn render_minimap_image(
-        &self,
-        device: &eframe::wgpu::Device,
-        queue: &eframe::wgpu::Queue,
-    ) -> Option<egui::ColorImage> {
-        let mut vp = Viewport::new(MINIMAP_TW as f64, MINIMAP_TH as f64);
-        vp.center_x = fractadyne_core::BigFloat::from_f64(MINIMAP_CX, 64);
-        vp.center_y = fractadyne_core::BigFloat::from_f64(MINIMAP_CY, 64);
-        vp.units_per_pixel = fractadyne_core::FloatExp::from_f64((2.0 * MINIMAP_HX) / MINIMAP_TW as f64);
-        vp.precision = 64;
-        let mut req = self.current_export_request_for(&vp, false);
-        req.width = MINIMAP_TW;
-        req.height = MINIMAP_TH;
-        req.ss = 1;
-        req.max_iter = req.max_iter.clamp(200, 600);
-        let progress = std::sync::atomic::AtomicU32::new(0);
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        let res = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()?;
-        // Linear RGBA f32 → sRGB u8 (approx gamma) for display.
-        let n = (res.width * res.height) as usize;
-        let mut pixels = Vec::with_capacity(n * 4);
-        for i in 0..n {
-            for k in 0..3 {
-                let c = res.pixels[i * 4 + k].clamp(0.0, 1.0);
-                pixels.push((c.powf(1.0 / 2.2) * 255.0 + 0.5) as u8);
-            }
-            pixels.push(255);
-        }
-        Some(egui::ColorImage::from_rgba_unmultiplied(
-            [res.width as usize, res.height as usize],
-            &pixels,
-        ))
-    }
-
-    /// Refresh the cached minimap thumbnail if its key (formula / palette / method)
-    /// changed. No-op when the minimap is hidden.
-    fn update_minimap(
-        &mut self,
-        ctx: &egui::Context,
-        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
-    ) {
-        // Shown for single Mandelbrot-family views and in dual view (the left panel is the
-        // Mandelbrot map); hidden only for a single Julia view, where a Mandelbrot overview
-        // wouldn't correspond to the shown set.
-        if !self.dialogs.minimap || (self.julia_mode && !self.dual) {
-            return;
-        }
-        // Key includes the palette identity (preset index or a sentinel) and a revision so
-        // the thumbnail refreshes when the gradient / duotone colors change.
-        let duo_hash = self
-            .coloring
-            .duotone_lo
-            .iter()
-            .chain(&self.coloring.duotone_hi)
-            .fold(0u32, |a, &c| a.wrapping_mul(16_777_619) ^ c.to_bits());
-        let (pal_idx, pal_rev) = if self.coloring.use_binary {
-            (usize::MAX - 2, duo_hash)
-        } else if self.coloring.use_duotone {
-            (usize::MAX - 1, duo_hash)
-        } else if self.coloring.use_custom_palette {
-            (usize::MAX, self.coloring.palette_rev)
+    /// Build the export job for the current state (single view, or dual per the chosen
+    /// layout).
+    /// Export image height (px) for the current width + aspect setting. "window" matches the live
+    /// view's pixel aspect (same as the render); a fixed key uses that ratio. Uses the pixel aspect,
+    /// not `complex_span` (which saturates to 0 past ~1e308× → a bogus 1-px height).
+    fn export_height(&self) -> u32 {
+        let ratio = if self.export.aspect == "window" {
+            (self.viewport.width_px / self.viewport.height_px.max(1.0)).max(1.0e-6)
         } else {
-            (self.coloring.palette_idx, 0)
+            EXPORT_ASPECTS
+                .iter()
+                .find(|(k, _)| *k == self.export.aspect)
+                .map(|(_, r)| *r)
+                .unwrap_or(self.viewport.width_px / self.viewport.height_px.max(1.0))
         };
-        let key = (self.fractal.formula_id(), pal_idx, self.coloring.color_method.to_u32(), pal_rev);
-        if self.minimap_key == Some(key) && self.minimap_tex.is_some() {
-            return;
-        }
-        if let Some((dev, q)) = gpu {
-            if let Some(img) = self.render_minimap_image(dev, q) {
-                let tex = ctx.load_texture("fractadyne.minimap", img, egui::TextureOptions::LINEAR);
-                self.minimap_tex = Some(tex);
-                self.minimap_key = Some(key);
-            }
-        }
+        ((self.export.width as f64) / ratio).round().max(1.0) as u32
     }
 
-
-
-    /// The custom-gradient editor window: live gradient preview, per-stop color + position
-    /// controls, add/remove, and seed-from-preset. Edits bump `palette_rev`.
-    fn palette_editor_window(&mut self, ctx: &egui::Context) {
-        if !self.coloring.palette_editor_open {
-            return;
-        }
-        let mut open = self.coloring.palette_editor_open;
-        let mut changed = false;
-        egui::Window::new("Gradient editor")
-            .open(&mut open)
-            .resizable(false)
-            .default_width(340.0)
-            .show(ctx, |ui| {
-                // Live gradient preview bar.
-                let (packed, n) = self.pack_custom();
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
-                let pr = ui.painter_at(rect);
-                let steps = rect.width().ceil().max(1.0) as usize;
-                for s in 0..steps {
-                    let t = s as f32 / steps as f32;
-                    let x = rect.min.x + t * rect.width();
-                    let col = sample_stops(&packed, n, t);
-                    pr.line_segment(
-                        [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
-                        egui::Stroke::new(1.5_f32, col),
-                    );
-                }
-                pr.rect_stroke(
-                    rect,
-                    2.0,
-                    egui::Stroke::new(1.0_f32, BRAND_ACCENT),
-                    egui::StrokeKind::Inside,
-                );
-                ui.add_space(6.0);
-
-                // Per-stop rows (color + position + remove).
-                let mut remove: Option<usize> = None;
-                let count = self.coloring.custom_palette.len();
-                for i in 0..count {
-                    ui.horizontal(|ui| {
-                        let mut rgb = [
-                            self.coloring.custom_palette[i][1],
-                            self.coloring.custom_palette[i][2],
-                            self.coloring.custom_palette[i][3],
-                        ];
-                        if ui.color_edit_button_rgb(&mut rgb).changed() {
-                            self.coloring.custom_palette[i][1] = rgb[0];
-                            self.coloring.custom_palette[i][2] = rgb[1];
-                            self.coloring.custom_palette[i][3] = rgb[2];
-                            changed = true;
-                        }
-                        let mut pos = self.coloring.custom_palette[i][0];
-                        if ui
-                            .add(egui::Slider::new(&mut pos, 0.0..=1.0).text("pos").fixed_decimals(3))
-                            .changed()
-                        {
-                            self.coloring.custom_palette[i][0] = pos.clamp(0.0, 1.0);
-                            changed = true;
-                        }
-                        if count > 2 && ui.button(crate::icons::CLOSE).on_hover_text("Remove stop").clicked() {
-                            remove = Some(i);
-                        }
-                    });
-                }
-                if let Some(i) = remove {
-                    self.coloring.custom_palette.remove(i);
-                    changed = true;
-                }
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if self.coloring.custom_palette.len() < fractadyne_color::MAX_STOPS
-                        && ui.button(format!("{} Add stop", crate::icons::ADD)).clicked()
-                    {
-                        self.coloring.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
-                        changed = true;
-                    }
-                    ui.menu_button("Copy preset…", |ui| {
-                        for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
-                            if ui.button(p.name).clicked() {
-                                self.coloring.custom_palette = self.preset_as_stops(i);
-                                changed = true;
-                                ui.close_menu();
-                            }
-                        }
-                    });
-                    ui.toggle_value(&mut self.coloring.paste_open, "Paste…")
-                        .on_hover_text("Import a palette from hex colours or 0–255 RGB triples");
-                });
-
-                // Paste-a-palette. The cheapest possible bridge to the existing palette cultures:
-                // no file format to agree on, no dialog, and it covers "I found a palette on the
-                // web" as well as pasting the body of a Fractint/KF `.map`.
-                if self.coloring.paste_open {
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "Paste hex colours (#ff8800) or 0–255 triples (255 136 0), separated \
-                             by commas, spaces or new lines:",
-                        )
-                        .weak()
-                        .small(),
-                    );
-                    ui.add(
-                        egui::TextEdit::multiline(&mut self.coloring.paste_text)
-                            .desired_rows(3)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("#000000, #8b1a1a, #ff8800, #ffe6b3"),
-                    );
-                    ui.horizontal(|ui| {
-                        if ui.button("Apply").clicked() {
-                            match fractadyne_color::parse_palette_text(&self.coloring.paste_text) {
-                                Ok(colors) => {
-                                    let got = colors.len();
-                                    let used = fractadyne_color::resample_colors(
-                                        &colors,
-                                        fractadyne_color::MAX_STOPS,
-                                    );
-                                    // Spread the imported colours evenly; a single colour becomes
-                                    // one stop at 0 rather than dividing by zero.
-                                    let n = used.len();
-                                    self.coloring.custom_palette = used
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(i, c)| {
-                                            let pos = if n > 1 {
-                                                i as f32 / (n - 1) as f32
-                                            } else {
-                                                0.0
-                                            };
-                                            [pos, c[0], c[1], c[2]]
-                                        })
-                                        .collect();
-                                    self.coloring.paste_msg = Some(if got > n {
-                                        format!(
-                                            "Imported {n} of {got} colours — the gradient carries \
-                                             {} stops, sampled evenly across your list.",
-                                            fractadyne_color::MAX_STOPS
-                                        )
-                                    } else {
-                                        format!("Imported {n} colours.")
-                                    });
-                                    changed = true;
-                                }
-                                Err(e) => self.coloring.paste_msg = Some(format!("Couldn't read that: {e}")),
-                            }
-                        }
-                        if ui.button("Clear").clicked() {
-                            self.coloring.paste_text.clear();
-                            self.coloring.paste_msg = None;
-                        }
-                    });
-                    if let Some(m) = &self.coloring.paste_msg {
-                        ui.label(egui::RichText::new(m).weak().small());
-                    }
-                }
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{}/{} stops · positions may overlap; they're sorted automatically.",
-                        self.coloring.custom_palette.len(),
-                        fractadyne_color::MAX_STOPS
-                    ))
-                    .weak()
-                    .small(),
-                );
-            });
-        if changed {
-            self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
-            self.coloring.use_custom_palette = true;
-        }
-        self.coloring.palette_editor_open = open;
-    }
-
-    /// Jump to a Mandelbrot location (full-precision center strings + magnification),
-    /// e.g. a famous-locations entry. Switches to Mandelbrot, single view.
-    fn goto_location(&mut self, cx: &str, cy: &str, mag: f64, name: &str, ctx: &egui::Context) {
-        let (Some(x), Some(y)) =
-            (fractadyne_core::parse_bf(cx), fractadyne_core::parse_bf(cy))
-        else {
-            return;
+    fn build_export_job(&self) -> ExportJob {
+        // Apply the chosen aspect: override the request height (the render centers the extra/fewer
+        // rows on the same center; width stays `export_width`). For "window" this equals the height
+        // the request already derived, so it's a no-op.
+        let h = self.export_height();
+        let fit = |mut req: fractadyne_gpu::ExportRequest| {
+            req.height = h;
+            // Keep the per-texel step isotropic (the GPU derives step = span/resolution per axis):
+            // set the vertical span to match the horizontal step × the chosen height, so the fractal
+            // isn't stretched when the aspect differs from the window. No-op for "Match window".
+            req.span_mantissa.y = req.span_mantissa.x * (h as f64 / req.width.max(1) as f64);
+            req
         };
-        self.fractal = FractalKind::Mandelbrot;
-        self.julia_mode = false;
-        self.viewport.set_center_mag(x, y, mag.max(1.0));
-        self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
-        self.pointer.zoom_vel = 0.0;
-        self.invalidate_refs();
-        self.record_nav();
-        self.set_toast(format!("{name} · {}×", fmt_zoom(mag)), ctx);
-    }
-
-    /// Jump to a random interesting location: find a point on the set boundary by
-    /// bisecting between an interior anchor and a random exterior direction, then zoom in
-    /// a random amount. Boundary points are always detail-rich.
-    fn random_location(&mut self, ctx: &egui::Context) {
-        let seed = ctx.input(|i| i.time).to_bits();
-        let (cx, cy, mag) = random_boundary_location(seed);
-        self.fractal = FractalKind::Mandelbrot;
-        self.julia_mode = false;
-        self.viewport.set_center_mag(
-            fractadyne_core::BigFloat::from_f64(cx, 64),
-            fractadyne_core::BigFloat::from_f64(cy, 64),
-            mag,
-        );
-        self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
-        self.pointer.zoom_vel = 0.0;
-        self.invalidate_refs();
-        self.record_nav();
-        self.set_toast(format!("Random location · {}×", fmt_zoom(mag)), ctx);
-    }
-
-    /// The Help window: a left-hand table of contents + a scrollable content pane.
-    /// The "Faster deep zoom" dialog: what the accelerated build is, and where to get it.
-    ///
-    /// Two states, because the honest thing to show depends on which binary is running, and that
-    /// is taken from `fractadyne_core::available_backends()` -- a compile-time fact of THIS binary
-    /// rather than a flag or a setting that could disagree with it.
-    fn accelerated_window(&mut self, ctx: &egui::Context) {
-        if !self.dialogs.accelerated_open {
-            return;
-        }
-        let have_it = fractadyne_core::available_backends().len() > 1;
-        let ver = crate::sysinfo::version_string();
-        let asset = accelerated_asset_url(&ver);
-        let releases = "https://github.com/WindySnowOwl/fractadyne/releases";
-
-        let mut open = self.dialogs.accelerated_open;
-        egui::Window::new("Faster deep zoom")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(520.0)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
-                if have_it {
-                    ui.heading("You are running the accelerated build");
-                    ui.label(
-                        "Deep-zoom reference orbits are being computed with MPFR/GMP, which is \
-                         2.5-6.4x faster than the standard build at that step - the pause before \
-                         a deep view starts resolving.",
-                    );
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "Arithmetic in use: {}",
-                            fractadyne_core::backend_status_line()
-                        ))
-                        .monospace()
-                        .small(),
-                    );
-                } else {
-                    ui.heading("An optional build is 2.5-6.4x faster at depth");
-                    ui.label(
-                        "Deep zoom spends much of its time computing reference orbits on the CPU \
-                         - the pause before a deep view starts resolving. An optional build does \
-                         that with the MPFR/GMP libraries instead, which is 2.5 to 6.4 times \
-                         faster, and more so the deeper you go. Everything else is the same.",
-                    );
-                    ui.separator();
-                    ui.label(
-                        "The images are BYTE-IDENTICAL - it is the same mathematics computed by a \
-                         faster library, checked across every fractal formula and the whole \
-                         deep-zoom comparison corpus.",
-                    );
-                    ui.label(
-                        "Your settings, saved session and locations are shared between the two, \
-                         so you can switch freely and nothing needs importing.",
-                    );
-                    ui.label(
-                        egui::RichText::new(
-                            "It is a separate download because the libraries it uses cannot be \
-                             built with the compiler the standard Windows build uses, and they \
-                             carry a different licence (GNU LGPL v3) from Fractadyne's own.",
-                        )
-                        .small(),
-                    );
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button("Download for this version")
-                            .on_hover_text(&asset)
-                            .clicked()
-                        {
-                            ctx.open_url(egui::OpenUrl::new_tab(&asset));
-                        }
-                        if ui
-                            .button("All releases")
-                            .on_hover_text(
-                                "If the direct link 404s, this version has no accelerated build \
-                                 yet - pick the nearest one here.",
-                            )
-                            .clicked()
-                        {
-                            ctx.open_url(egui::OpenUrl::new_tab(releases));
-                        }
-                    });
-                    ui.label(
-                        egui::RichText::new(
-                            "Extract it and run fractadyne.exe from that folder, keeping the .dll \
-                             files beside it.",
-                        )
-                        .small(),
-                    );
-                }
-            });
-        self.dialogs.accelerated_open = open;
-    }
-
-    fn help_window(&mut self, ctx: &egui::Context) {
-        if !self.dialogs.help_open {
-            return;
-        }
-        const SECTIONS: [&str; help::SECTION_NAMES.len()] = help::SECTION_NAMES;
-        let mut open = self.dialogs.help_open;
-        // Cap the size to the screen so the content ScrollArea scrolls (rather than the window
-        // growing to fit) and the window can't be resized past the screen edge (which pushed
-        // the title-bar close button off-screen).
-        let max_h = (ctx.screen_rect().height() - 80.0).max(360.0);
-        let max_w = (ctx.screen_rect().width() - 40.0).max(480.0);
-        egui::Window::new("Fractadyne Help")
-            .open(&mut open)
-            .default_size([800.0, 560.0])
-            .min_width(480.0) // keep room for the content beside the fixed-width contents list
-            .min_height(300.0)
-            .max_width(max_w)
-            .max_height(max_h)
-            .constrain(true) // keep the whole window on-screen
-            .resizable(true)
-            .show(ctx, |ui| {
-                // Manual two-column split (fixed contents list + scrollable content pane).
-                // Explicit widths make the content both wrap AND fill the window, so the
-                // window's resize grip stays at the true bottom-right — nested SidePanel/
-                // CentralPanel mis-reported the width and stranded the grip beside the list.
-                let toc_w = 165.0_f32;
-                let avail = ui.available_size();
-                ui.horizontal_top(|ui| {
-                    // Contents list (fixed width).
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(toc_w, avail.y),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_min_width(toc_w);
-                            ui.set_max_width(toc_w);
-                            ui.add_space(4.0);
-                            for (i, name) in SECTIONS.iter().enumerate() {
-                                ui.selectable_value(&mut self.dialogs.help_section, i, *name);
-                            }
-                        },
-                    );
-                    ui.separator();
-                    ui.add_space(8.0); // left inset so the separator doesn't touch the text
-                    let content_w = ui.available_width().max(240.0);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(content_w, avail.y),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_min_width(content_w);
-                            ui.set_max_width(content_w);
-                            // Solid, only-when-needed scrollbar (not floating/hover-only).
-                            ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .scroll_bar_visibility(
-                                    egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
-                                )
-                                .show(ui, |ui| {
-                                    ui.set_max_width(content_w - 18.0); // leave room for the bar
-                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                                    // Indexed, not matched: the old `_ => help_about(ui)` arm
-                                    // meant a section added to the list without a body silently
-                                    // rendered About under its own name. The name and the body
-                                    // are now one table entry, checked by a test.
-                                    let i = self.dialogs.help_section.min(SECTIONS.len() - 1);
-                                    help::SECTION_BODIES[i](ui);
-                                });
-                        },
-                    );
-                });
-            });
-        self.dialogs.help_open = open;
-    }
-
-    /// Load a Kalles Fraktaler `.kfr` location file and jump to it. Defensive: bounds the
-    /// file size and delegates to the hardened `parse_kfr`. (KF's zoom and ours are both
-    /// linear magnification from the home view — close enough that the location lands at
-    /// essentially the right place and scale.)
-    fn load_kfr_file(&mut self, path: &std::path::Path) -> Result<String, crate::error::AppError> {
-        use crate::error::AppError;
-        let meta = std::fs::metadata(path)?;
-        if meta.len() > 4_000_000 {
-            return Err(AppError::Message("file too large (not a .kfr location?)".into()));
-        }
-        let text = std::fs::read_to_string(path)?;
-        let v = fractadyne_core::parse_kfr(&text)
-            .ok_or_else(|| AppError::Parse("not a valid .kfr location (need Re / Im / Zoom)".into()))?;
-        let zoom = v.zoom;
-        self.fractal = FractalKind::Mandelbrot;
-        self.julia_mode = false;
-        if let Some(it) = v.iterations {
-            self.render_cfg.max_iter = it.clamp(64, 50_000);
-            self.render_cfg.auto_iter = false;
-        }
-        self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
-        self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
-        self.pointer.zoom_vel = 0.0;
-        self.invalidate_refs();
-        self.record_nav();
-        Ok(format!("Imported .kfr location @ {}×", fmt_zoom(zoom)))
-    }
-
-    /// Load an **Imagina TEXT location** (`--import-imagina`). Mirrors `load_kfr_file`.
-    ///
-    /// The BINARY `.im` form is refused by its magic rather than parsed: its payload needs `HRReal`'s
-    /// layout and GMP `mpf` raw streams, which are not documented in the source available to read, and
-    /// a guessed binary parser is worse than none — it imports a plausible wrong location silently.
-    /// Telling the user to re-save as text is the honest outcome.
-    fn load_imagina_file(&mut self, path: &std::path::Path) -> Result<String, crate::error::AppError> {
-        use crate::error::AppError;
-        let meta = std::fs::metadata(path)?;
-        if meta.len() > 4_000_000 {
-            return Err(AppError::Message("file too large (not an Imagina location?)".into()));
-        }
-        let bytes = std::fs::read(path)?;
-        if bytes.starts_with(&fractadyne_core::IMAGINA_BINARY_MAGIC) {
-            return Err(AppError::Message(
-                "this is a BINARY Imagina .im file, which is not supported — re-save it from Imagina as a text location (File type: Imagina text) and import that"
-                    .into(),
-            ));
-        }
-        let text = String::from_utf8_lossy(&bytes);
-        let v = fractadyne_core::parse_imagina_text(&text).ok_or_else(|| {
-            AppError::Parse("not a valid Imagina text location (need Location Size / Re / Im)".into())
-        })?;
-        let zoom = v.zoom;
-        self.fractal = FractalKind::Mandelbrot;
-        self.julia_mode = false;
-        if let Some(it) = v.iterations {
-            self.render_cfg.max_iter = it.clamp(64, MAX_ITER_LIMIT);
-            self.render_cfg.auto_iter = false;
-        }
-        self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
-        self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
-        self.pointer.zoom_vel = 0.0;
-        self.invalidate_refs();
-        self.record_nav();
-        Ok(format!("Imported Imagina location @ {}×", fmt_zoom(zoom)))
-    }
-
-    /// Open the Share-location dialog, pre-filled with the current view as `.fdn` text.
-    fn open_share(&mut self) {
-        self.share.text = self.view_metadata();
-        self.share.msg = None;
-        self.share.open = true;
-    }
-
-    /// Apply the Share dialog's text as a location (hardened: bounded, allow-list parse via
-    /// `load_view_metadata`, every field validated/clamped — no paths or code).
-    fn apply_share_text(&mut self, ctx: &egui::Context) {
-        let t = self.share.text.trim();
-        if let Err(why) = location_text_verdict(t) {
-            self.share.msg = Some(why.into());
-            return;
-        }
-        let t = t.to_string();
-        let report = self.load_view_metadata(&t); // performs the jump + records history
-        let zoom = fmt_zoom_log2(self.viewport.log2_magnification());
-        match report.note() {
-            None => {
-                self.set_toast(format!("Loaded location @ {zoom}×"), ctx);
-                self.share.open = false;
-            }
-            // Keep the dialog open and surface the report rather than silently jumping.
-            Some(n) => {
-                self.share.msg = Some(format!("Loaded @ {zoom}× — {n}."));
-            }
-        }
-    }
-
-    /// Compact, PII-free system-info block for issue reports (version, OS, CPU, GPU, VRAM).
-    fn system_info_block(&self) -> String {
-        let si = &self.sysinfo;
-        let cache = match (si.l2_kb, si.l3_kb) {
-            (0, 0) => "—".to_string(),
-            (l2, 0) => format!("L2 {l2} KB"),
-            (l2, l3) => format!("L2 {l2} KB / L3 {l3} KB"),
-        };
-        let vram = if si.vram_mb > 0 { format!("{} MB", si.vram_mb) } else { "unknown".to_string() };
-        format!(
-            "Fractadyne v{}\n{}\nOS:   {} / {}\nCPU:  {} ({} physical / {} logical, {})\nGPU:  {} ({})\nVRAM: {}\nBignum: {} (built with: {})\n",
-            version_string(),
-            now_utc_string(),
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-            if si.cpu.is_empty() { "unknown" } else { si.cpu.as_str() },
-            si.physical,
-            si.logical,
-            cache,
-            self.gpu_name,
-            self.gpu_backend,
-            vram,
-            // Both halves matter in a bug report: which backend this session actually iterated in,
-            // and which ones the build could have used. A deep-zoom report without them cannot be
-            // reproduced once more than one backend ships.
-            fractadyne_core::backend_status_line(),
-            fractadyne_core::built_in_backends(),
-        )
-    }
-
-    /// Email subject line for the issue report — the issue type, so it triages in the inbox.
-    fn report_subject(&self) -> String {
-        format!("Fractadyne issue: {}", self.report.kind.label())
-    }
-
-    /// Assemble the full issue-report text from the dialog state + live diagnostics — exactly what
-    /// the preview shows and what Copy/Save/Email use. Nothing is transmitted here.
-    fn build_report(&self) -> String {
-        let mut s = String::new();
-        s.push_str("Fractadyne issue report\n");
-        s.push_str(&format!("To: {REPORT_EMAIL}\n"));
-        s.push_str(&format!("Type: {}\n", self.report.kind.label()));
-        if self.report.severity != Severity::Unspecified {
-            s.push_str(&format!("Severity: {}\n", self.report.severity.label()));
-        }
-        if self.report.repro != Repro::Unspecified {
-            s.push_str(&format!("Reproducibility: {}\n", self.report.repro.label()));
-        }
-        s.push('\n');
-        s.push_str("== Description ==\n");
-        let d = self.report.description.trim();
-        s.push_str(if d.is_empty() { "(none provided)" } else { d });
-        s.push_str("\n\n");
-        if self.report.include_sysinfo {
-            s.push_str("== System ==\n");
-            s.push_str(&self.system_info_block());
-            s.push('\n');
-        }
-        if self.report.include_location {
-            s.push_str("== Current location (.fdn) ==\n");
-            s.push_str(&self.view_metadata());
-            s.push('\n');
-        }
-        if self.report.include_crash {
-            if let Some((name, body)) = crate::diag::latest_crash() {
-                s.push_str(&format!("== Latest crash report ({name}) ==\n"));
-                s.push_str(body.trim_end());
-                s.push_str("\n\n");
-            }
-        }
-        // Before the log, so a reader meets the machine-validated verdict before the raw tail.
-        if self.report.include_test {
-            if let Some(block) = self.test_result_block() {
-                s.push_str("== Diagnostics test result ==\n");
-                s.push_str(block.trim_end());
-                s.push_str("\n\n");
-            }
-        }
-        if self.report.include_log {
-            if let Some(log) = crate::diag::recent_log(48 * 1024) {
-                s.push_str("== Recent log (tail) ==\n");
-                s.push_str(log.trim_end());
-                s.push('\n');
-            }
-        }
-        s
-    }
-
-    /// Save the Share dialog's text to a `.fdn` file.
-    fn save_share_file(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Fractadyne location", &["fdn"])
-            .set_directory(self.dialog_dir_default())
-            .set_file_name("location.fdn")
-            .save_file()
-        {
-            self.remember_dir(&path);
-            match std::fs::write(&path, self.share.text.as_bytes()) {
-                Ok(()) => self.share.msg = Some("Saved.".into()),
-                Err(e) => self.share.msg = Some(format!("Save failed: {e}")),
-            }
-        }
-    }
-
-    /// Load a `.fdn` file into the Share dialog's text box (size-bounded; not auto-applied,
-    /// so the user can review before jumping).
-    fn load_share_file(&mut self) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("Fractadyne location", &["fdn"])
-            .set_directory(self.dialog_dir_default())
-            .pick_file()
-        else {
-            return;
-        };
-        self.remember_dir(&path);
-        match std::fs::metadata(&path) {
-            Ok(m) if (m.len() as usize) <= SHARE_MAX => match std::fs::read_to_string(&path) {
-                Ok(t) => {
-                    self.share.text = t;
-                    self.share.msg = Some("Loaded into the box — review, then Apply.".into());
-                }
-                Err(e) => self.share.msg = Some(format!("Read failed: {e}")),
-            },
-            Ok(_) => self.share.msg = Some("File too large (not a .fdn location?).".into()),
-            Err(e) => self.share.msg = Some(format!("Read failed: {e}")),
-        }
-    }
-
-    /// File-dialog import of a Kalles Fraktaler `.kfr` location.
-    fn import_kfr(&mut self, ctx: &egui::Context) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("Kalles Fraktaler location", &["kfr"])
-            .set_directory(self.dialog_dir_default())
-            .pick_file()
-        else {
-            return;
-        };
-        self.remember_dir(&path);
-        match self.load_kfr_file(&path) {
-            Ok(m) => self.set_toast(m, ctx),
-            Err(e) => self.set_toast(format!("Import failed: {e}"), ctx),
-        }
-    }
-
-    /// Reset the current view to the fractal's default (both panels in dual view).
-    fn reset_view(&mut self) {
-        let (cx, cy) = self.fractal.default_center();
-        self.viewport.reset_to(cx, cy);
         if self.dual {
-            self.julia_viewport.reset_to(0.0, 0.0);
-        }
-        self.pointer.zoom_vel = 0.0;
-        self.invalidate_refs();
-        self.record_nav();
-    }
-
-    /// Begin a smooth zoom-out back to the home view. If already at (or near) home,
-    /// just snaps via `reset_view`. `now` is the current app time (`ctx.input.time`).
-    fn zoom_home(&mut self, now: f64) {
-        let m_logmag = self.viewport.magnification().max(1.0).ln();
-        let j_logmag = if self.dual {
-            self.julia_viewport.magnification().max(1.0).ln()
-        } else {
-            0.0
-        };
-        let deepest = m_logmag.max(j_logmag);
-        if deepest < 0.02 {
-            self.reset_view();
-            return;
-        }
-        let duration =
-            (deepest * HOME_SECONDS_PER_LOGMAG).clamp(HOME_MIN_SECONDS, HOME_MAX_SECONDS);
-        self.home_anim = Some(HomeAnim {
-            start_time: now,
-            duration,
-            m_start_center: (self.viewport.center_x.clone(), self.viewport.center_y.clone()),
-            m_start_logmag: m_logmag,
-            j_start_center: (
-                self.julia_viewport.center_x.clone(),
-                self.julia_viewport.center_y.clone(),
-            ),
-            j_start_logmag: j_logmag,
-            dual: self.dual,
-        });
-        self.pointer.zoom_vel = 0.0;
-    }
-
-    /// Advance the active zoom-home animation by one frame. Returns true while it is
-    /// still running (so the caller can keep requesting repaints).
-    fn advance_home_anim(&mut self, ctx: &egui::Context) -> bool {
-        let Some(anim) = self.home_anim.take() else {
-            return false;
-        };
-        // Let the user grab control: any pan/zoom input cancels the glide in place.
-        let interrupted = ctx.input(|i| {
-            i.pointer.primary_down()
-                || i.key_down(egui::Key::Space)
-                || i.smooth_scroll_delta.y != 0.0
-        });
-        if interrupted {
-            return false;
-        }
-        let now = ctx.input(|i| i.time);
-        let u = ((now - anim.start_time) / anim.duration).clamp(0.0, 1.0);
-        if u >= 1.0 {
-            self.reset_view(); // exact home (center + zoom), invalidates references
-            return false;
-        }
-        // Ease in/out (smoothstep) on the remaining log-magnification.
-        let e = u * u * (3.0 - 2.0 * u);
-        let remain = 1.0 - e;
-        self.viewport
-            .home_lerp(self.fractal.default_center(), &anim.m_start_center, anim.m_start_logmag * remain);
-        if anim.dual {
-            self.julia_viewport
-                .home_lerp((0.0, 0.0), &anim.j_start_center, anim.j_start_logmag * remain);
-        }
-        // Treat the glide as interaction so AA stays off and references aren't
-        // recomputed every frame (rebasing covers the motion; quality on settle).
-        self.pointer.settle_t = [now; 2];
-        self.home_anim = Some(anim);
-        true
-    }
-
-    // Autopilot (toggle_autopilot / autopilot_step / autopilot_pick_target) moved to autopilot.rs.
-
-    /// Stops uploaded to the GPU: the morphing random gradient when in Random mode,
-    /// otherwise the selected preset.
-    fn active_stops(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
-        if self.anim.palette_anim == PaletteAnim::Random {
-            self.anim.random_palette.current()
-        } else if self.coloring.use_binary {
-            // Flat exterior: a single stop of the `hi` color (interior uses `lo`).
-            let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
-            out[0] = [self.coloring.duotone_hi[0], self.coloring.duotone_hi[1], self.coloring.duotone_hi[2], 0.0];
-            (out, 1)
-        } else if self.coloring.use_duotone {
-            // Smooth two-color ramp lo → hi → lo (seamless under cycling).
-            let (lo, hi) = (self.coloring.duotone_lo, self.coloring.duotone_hi);
-            let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
-            out[0] = [lo[0], lo[1], lo[2], 0.0];
-            out[1] = [hi[0], hi[1], hi[2], 0.5];
-            out[2] = [lo[0], lo[1], lo[2], 1.0];
-            (out, 3)
-        } else if self.coloring.use_custom_palette {
-            self.pack_custom()
-        } else {
-            fractadyne_color::PRESETS[self.coloring.palette_idx].packed()
-        }
-    }
-
-    /// In-set (interior) color for the GPU. Binary/duotone use the chosen `lo` color so the
-    /// set reads as one solid color; otherwise the default near-black.
-    fn interior_color(&self) -> [f32; 4] {
-        if self.coloring.use_binary || self.coloring.use_duotone {
-            [self.coloring.duotone_lo[0], self.coloring.duotone_lo[1], self.coloring.duotone_lo[2], 1.0]
-        } else {
-            [0.02, 0.02, 0.03, 1.0]
-        }
-    }
-
-    /// Pack the custom gradient into the GPU stop format `[r, g, b, pos]` (sorted by
-    /// position, count clamped to `MAX_STOPS`). Falls back to a preset if empty.
-    fn pack_custom(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
-        if self.coloring.custom_palette.is_empty() {
-            return fractadyne_color::PRESETS[self.coloring.palette_idx].packed();
-        }
-        let mut stops = self.coloring.custom_palette.clone();
-        stops.sort_by(|a, b| a[0].total_cmp(&b[0]));
-        let n = stops.len().clamp(1, fractadyne_color::MAX_STOPS);
-        let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
-        for (i, slot) in out.iter_mut().enumerate() {
-            let s = stops[i.min(n - 1)];
-            *slot = [s[1], s[2], s[3], s[0]];
-        }
-        (out, n as u32)
-    }
-
-    /// The given preset's stops as editable `[pos, r, g, b]` rows (to seed the editor).
-    fn preset_as_stops(&self, idx: usize) -> Vec<[f32; 4]> {
-        fractadyne_color::PRESETS[idx.min(fractadyne_color::PRESETS.len() - 1)]
-            .stops
-            .iter()
-            .map(|(pos, c)| [*pos, c[0], c[1], c[2]])
-            .collect()
-    }
-
-    /// Advance the palette animation for this frame (offset shift, or random morph).
-    fn advance_palette_anim(&mut self, ctx: &egui::Context) {
-        let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1) as f32;
-        // Distance-estimate glow cycling — flows the contour bands (independent of the
-        // palette animation; shares the Speed slider). Phase is in cycles, period 1.
-        if self.effects.de && self.effects.de_anim && self.anim.palette_anim_speed > 0.0 {
-            self.effects.de_phase = (self.effects.de_phase + self.anim.palette_anim_speed * dt).rem_euclid(1.0);
-            self.schedule_repaint(ctx);
-        }
-        // Rotate the relief light direction (cheap — it's a color-pass param).
-        if self.effects.light && self.effects.light_anim && self.anim.palette_anim_speed > 0.0 {
-            self.effects.light_angle = (self.effects.light_angle
-                + self.anim.palette_anim_speed * dt * std::f32::consts::TAU)
-                .rem_euclid(std::f32::consts::TAU);
-            self.schedule_repaint(ctx);
-        }
-        if self.anim.palette_anim == PaletteAnim::Off || self.anim.palette_anim_speed <= 0.0 {
-            return;
-        }
-        let step = self.anim.palette_anim_speed * dt;
-        match self.anim.palette_anim {
-            PaletteAnim::Random => self.anim.random_palette.advance(dt, self.anim.palette_anim_speed),
-            mode => {
-                let (o, d) = palette_anim_step(mode, self.coloring.offset, self.anim.anim_dir, step);
-                self.coloring.offset = o;
-                self.anim.anim_dir = d;
+            let map = fit(self.current_export_request_for(&self.viewport, false));
+            let jul = fit(self.current_export_request_for(&self.julia_viewport, true));
+            match self.export.dual_mode {
+                DualExport::SideBySide => ExportJob::SideBySide(map, jul),
+                DualExport::Separate => ExportJob::Separate(map, jul),
+                DualExport::ActiveOnly => ExportJob::Single(map),
             }
-        }
-        self.schedule_repaint(ctx);
-    }
-
-    // start_benchmark / load_script / advance_playback / format_bench moved to scripting.rs.
-
-    /// Advance the orbit racing-dot animation (position along the path + hue).
-    fn advance_orbit_anim(&mut self, ctx: &egui::Context) {
-        if !(self.anim.show_orbits && self.anim.orbit_anim) {
-            return;
-        }
-        let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1) as f32;
-        self.anim.orbit_phase = (self.anim.orbit_phase + self.anim.orbit_anim_speed * dt) % 1.0e6;
-        self.anim.orbit_hue = (self.anim.orbit_hue + 0.22 * dt).fract(); // ~4.5 s per color cycle
-        self.schedule_repaint(ctx);
-    }
-
-    /// Zoom the main viewport about its center (factor < 1 zooms in).
-    fn zoom_center(&mut self, factor: f64) {
-        let (cx, cy) = (self.viewport.width_px * 0.5, self.viewport.height_px * 0.5);
-        self.viewport.zoom_at(cx, cy, factor);
-    }
-
-    /// Click-to-zoom action (single view): recenter on a canvas point (`px`/`py` in device pixels)
-    /// and dive in by `render_cfg.click_zoom_factor`, or back out by it when `out`. Reuses the
-    /// box-zoom recenter idiom (pan the point to center, then scale via the bignum viewport, so it
-    /// stays deep-zoom-correct). Records a nav step so each click is Backspace-undoable, and marks
-    /// the view interacting so it settles to full quality afterward. `now` = `ctx.input(|i| i.time)`.
-    fn click_zoom_at(&mut self, px: f64, py: f64, out: bool, now: f64) {
-        let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
-        let factor = if out { f } else { 1.0 / f }; // zoom_at: factor < 1 ⇒ zoom in
-        self.viewport.recenter_and_zoom(px, py, factor);
-        self.pointer.zoom_vel = 0.0; // cancel any continuous-zoom glide so the jump lands clean
-        self.pointer.settle_t[0] = now;
-        self.record_nav();
-    }
-
-    /// Which of the three pictures the current formula is being shown as.
-    ///
-    /// `julia_mode` and `dual` are two booleans, but only THREE of their four combinations are
-    /// legal, and the UI already spent effort suppressing the fourth (the Julia checkbox was
-    /// disabled while dual was on). Naming the three states directly is what lets the picker
-    /// present them as one choice — and one choice is what can be worded to explain that a Julia
-    /// set is a point of the parameter plane rather than a separate fractal.
-    fn show_mode(&self) -> ShowMode {
-        show_mode_of(self.dual, self.julia_mode)
-    }
-
-    /// Move to one of the three states, whatever the current one is.
-    ///
-    /// Goes through `toggle_dual` rather than assigning `dual`, because that is where the Julia
-    /// panel's framing and the reference invalidation live — two copies of "what entering dual
-    /// means" is exactly how the old toolbar/menu pair drifted apart. `julia_mode` is also
-    /// NORMALISED here (cleared when entering dual), so the flag a session saves always matches
-    /// the picture on screen; it used to keep a stale `true` underneath a dual view.
-    fn set_show_mode(&mut self, m: ShowMode) {
-        if self.show_mode() == m {
-            return;
-        }
-        if m != ShowMode::Set && !self.fractal.supports_julia() {
-            return; // no free parameter → no Julia, and no dual either
-        }
-        let (want_dual, want_julia) = show_mode_flags(m);
-        if want_dual != self.dual {
-            self.toggle_dual();
-        }
-        if want_julia != self.julia_mode {
-            self.julia_mode = want_julia;
-            self.invalidate_refs();
+        } else {
+            ExportJob::Single(fit(self.current_export_request_for(&self.viewport, self.julia_mode)))
         }
     }
+}
 
-    /// Toggle the dual linked view, framing the Julia panel when turning it on.
-    fn toggle_dual(&mut self) {
-        if !self.fractal.supports_julia() {
-            self.dual = false; // no Julia → no dual (guards any non-UI caller)
-            return;
-        }
-        self.dual = !self.dual;
-        if self.dual {
-            self.julia_viewport.reset_to(0.0, 0.0);
-        }
-        self.invalidate_refs();
+// ================================================================================================
+// impl FractadyneApp - Frame measurement + budget plumbing
+// ================================================================================================
+
+impl FractadyneApp {
+
+    /// Whether view `v` currently holds a tiled settle grid — the precondition a check about
+    /// stale tiles has to assert rather than assume.
+    pub(crate) fn tile_state_present(&self, v: usize) -> bool {
+        self.perf.tile_state.get(v).is_some_and(|g| g.is_some())
+    }
+
+    /// The live-render work budget (`WORK_BUDGET`) scaled by the user's `work_budget_scale`. Higher
+    /// lets deep/large frames render at fuller resolution (crisper) before the color pass falls back
+    /// to a box-filtered upscale — at the cost of frame-rate and GPU-watchdog margin. Export is
+    /// unaffected (always full resolution).
+    pub(crate) fn effective_work_budget(&self) -> u64 {
+        ((WORK_BUDGET as f64) * self.render_cfg.work_budget_scale.clamp(0.25, 8.0)).max(1.0e9) as u64
+    }
+
+    /// Request the next animation frame. Frame pacing (the cap) is enforced at the end
+    /// of `update`; this just keeps the animation loop alive.
+    fn schedule_repaint(&self, ctx: &egui::Context) {
+        ctx.request_repaint();
     }
 
     /// `src` tag for a reading that came from a real GPU timestamp query. The wall-clock fallback
@@ -7363,11 +7422,60 @@ impl FractadyneApp {
     }
 }
 
-// Menu bar, toolbar, control panels, status bar, and the central fractal canvas. The modal
-// dialogs moved to `ui/dialogs.rs`; the remaining draw_* surfaces will follow into
-// `ui/{menus,panels,central}.rs` (REFACTOR-PLAN Phase 3).
+// ================================================================================================
+// impl FractadyneApp - Small utilities
+// ================================================================================================
+
 impl FractadyneApp {
+
+    /// UTC civil date/time `(year, month, day, hour, min, sec)` from a Unix timestamp
+    /// (Hinnant's civil-from-days algorithm).
+    fn civil_utc(secs: u64) -> (i64, i64, i64, u64, u64, u64) {
+        let days = (secs / 86400) as i64;
+        let rem = secs % 86400;
+        let (hh, mm, sss) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+        let z = days + 719468;
+        let era = if z >= 0 { z } else { z - 146096 } / 146097;
+        let doe = z - era * 146097;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = if m <= 2 { y + 1 } else { y };
+        (y, m, d, hh, mm, sss)
+    }
+
+    /// UTC `YYYY-MM-DD HH:MM:SS` from a Unix timestamp.
+    fn utc_date_string(secs: u64) -> String {
+        let (y, m, d, hh, mm, sss) = Self::civil_utc(secs);
+        format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{sss:02} UTC")
+    }
+
+    /// Frame size for a headless harness: `--size W|WxH` (with `--height` overriding the height)
+    /// when given, else the harness's own default. Shares the tour flags so every harness takes
+    /// the same size options.
+    fn tour_size_or(&self, dw: u32, dh: u32) -> (u32, u32) {
+        let w = self.render_cli.tour_cfg.width.unwrap_or(dw).clamp(16, 16384);
+        let h = self
+            .render_cli.tour_cfg
+            .height
+            .unwrap_or(if self.render_cli.tour_cfg.width.is_some() { (w * 9 / 16).max(16) } else { dh })
+            .clamp(16, 16384);
+        (w, h)
+    }
+
+    /// Filename-safe `YYYYMMDD_HHMMSS` stamp (local-readable, sorts chronologically).
+    fn file_stamp(secs: u64) -> String {
+        let (y, m, d, hh, mm, sss) = Self::civil_utc(secs);
+        format!("{y:04}{m:02}{d:02}_{hh:02}{mm:02}{sss:02}")
+    }
 }
+
+// ================================================================================================
+// The frame loop
+// ================================================================================================
 
 impl eframe::App for FractadyneApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {

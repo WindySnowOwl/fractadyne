@@ -136,6 +136,12 @@ performed because something moved, fix the step — do not skip it.
   sibling file, declared `mod name;` under `#[cfg(test)]` where it is used (see
   `render/*.rs` beside `render.rs`, or `icons_coverage.rs` beside `main.rs`), so module
   files stay mainline code. A few short tail modules in small leaf files remain inline.
+- Item order within a file: module doc → imports/`mod` decls → file-scoped consts → the
+  file's primary entry (`fn main`, the main API) → types with their `impl`s immediately
+  adjacent (never separated) → helpers next to their callers, grouped by topic. Big files
+  use `// ====` section banners, and a large type's methods split into one bannered
+  `impl` block per topic (see `main.rs` / `render.rs`). A `#[cfg(test)] mod x;` decl sits
+  directly after its subject; whole-file test decls go last.
 - **Don't use `\` line-continuations inside Rust string literals here.** The repo is CRLF, and a
   continuation followed by `
 ` does not strip the next line's indentation the way it does with a

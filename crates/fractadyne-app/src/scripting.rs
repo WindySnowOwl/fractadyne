@@ -5,6 +5,7 @@
 use crate::{now_utc_string, process_memory, version_string, FractadyneApp, FractalKind};
 use serde::Deserialize;
 
+
 /// Script schema version. **v2 is a breaking restructure of v1** — absolute keyframe times, one
 /// `[[annotation]]` array, `[render]`, `[[location]]`, `zoom` strings, per-keyframe budgets — and
 /// there is deliberately no v1 reader: a v1 script is rejected with a migration message rather
@@ -279,6 +280,80 @@ pub(crate) struct Caption {
     pub(crate) size: f32,
 }
 
+fn fade_alpha(t: f64, start: f64, end: f64, fade: f64) -> f32 {
+    if t < start || t > end {
+        return 0.0;
+    }
+    let f = fade.max(1.0e-3);
+    let a = ((t - start) / f).min(1.0);
+    let b = ((end - t) / f).min(1.0);
+    (a.min(b).clamp(0.0, 1.0)) as f32
+}
+
+impl Caption {
+    /// Opacity (0..1) of this caption at tour time `t`, with eased fade in/out; 0 = not shown.
+    pub(crate) fn alpha_at(&self, t: f64) -> f32 {
+        fade_alpha(t, self.start, self.end, self.fade)
+    }
+}
+
+/// A labeled marker anchored to a fractal coordinate — tracks the point as the view pans/zooms.
+pub(crate) struct Callout {
+    pub(crate) text: String,
+    pub(crate) cx: fractadyne_core::BigFloat,
+    pub(crate) cy: fractadyne_core::BigFloat,
+    pub(crate) start: f64,
+    pub(crate) end: f64,
+    pub(crate) fade: f64,
+    pub(crate) size: f32,
+}
+
+impl Callout {
+    pub(crate) fn alpha_at(&self, t: f64) -> f32 {
+        fade_alpha(t, self.start, self.end, self.fade)
+    }
+}
+
+/// A spotlight vignette anchored to a fractal coordinate (dims everything outside a soft circle).
+pub(crate) struct Spotlight {
+    pub(crate) cx: fractadyne_core::BigFloat,
+    pub(crate) cy: fractadyne_core::BigFloat,
+    pub(crate) radius: f32,
+    pub(crate) soft: f32,
+    pub(crate) dim: f32,
+    pub(crate) start: f64,
+    pub(crate) end: f64,
+    pub(crate) fade: f64,
+}
+
+impl Spotlight {
+    pub(crate) fn alpha_at(&self, t: f64) -> f32 {
+        fade_alpha(t, self.start, self.end, self.fade)
+    }
+}
+
+/// The GPU vignette for the first spotlight active at tour time `t`, anchored via `vp` (so it
+/// tracks its point + stays a constant on-screen size). Off (`on == 0`) when none is active.
+pub(crate) fn vignette_for(spots: &[Spotlight], vp: &fractadyne_core::Viewport, t: f64) -> fractadyne_gpu::Vignette {
+    for sp in spots {
+        let a = sp.alpha_at(t);
+        if a <= 0.0 {
+            continue;
+        }
+        let (vpx, vpy) = vp.complex_to_pixel(&sp.cx, &sp.cy);
+        return fractadyne_gpu::Vignette {
+            on: 1,
+            dim: sp.dim * a, // fade the dimming in/out with the window
+            soft: sp.soft,
+            center: [(vpx / vp.width_px) as f32, (vpy / vp.height_px) as f32],
+            radius: sp.radius,
+        };
+    }
+    fractadyne_gpu::Vignette::default()
+}
+
+// ---- tour-render execution helpers (encode jobs, console status, overwrite prompt) ----
+
 /// Eased fade opacity (0..1) for a timed annotation window `[start, end]` at tour time `t`.
 /// `(width, height)` of a COMPLETE PNG, or `None` if the file is missing, malformed, or truncated.
 ///
@@ -403,78 +478,6 @@ fn fmt_hms(secs: f64) -> String {
     } else {
         format!("{m}m{sec:02}s")
     }
-}
-
-fn fade_alpha(t: f64, start: f64, end: f64, fade: f64) -> f32 {
-    if t < start || t > end {
-        return 0.0;
-    }
-    let f = fade.max(1.0e-3);
-    let a = ((t - start) / f).min(1.0);
-    let b = ((end - t) / f).min(1.0);
-    (a.min(b).clamp(0.0, 1.0)) as f32
-}
-
-impl Caption {
-    /// Opacity (0..1) of this caption at tour time `t`, with eased fade in/out; 0 = not shown.
-    pub(crate) fn alpha_at(&self, t: f64) -> f32 {
-        fade_alpha(t, self.start, self.end, self.fade)
-    }
-}
-
-/// A labeled marker anchored to a fractal coordinate — tracks the point as the view pans/zooms.
-pub(crate) struct Callout {
-    pub(crate) text: String,
-    pub(crate) cx: fractadyne_core::BigFloat,
-    pub(crate) cy: fractadyne_core::BigFloat,
-    pub(crate) start: f64,
-    pub(crate) end: f64,
-    pub(crate) fade: f64,
-    pub(crate) size: f32,
-}
-
-impl Callout {
-    pub(crate) fn alpha_at(&self, t: f64) -> f32 {
-        fade_alpha(t, self.start, self.end, self.fade)
-    }
-}
-
-/// A spotlight vignette anchored to a fractal coordinate (dims everything outside a soft circle).
-pub(crate) struct Spotlight {
-    pub(crate) cx: fractadyne_core::BigFloat,
-    pub(crate) cy: fractadyne_core::BigFloat,
-    pub(crate) radius: f32,
-    pub(crate) soft: f32,
-    pub(crate) dim: f32,
-    pub(crate) start: f64,
-    pub(crate) end: f64,
-    pub(crate) fade: f64,
-}
-
-impl Spotlight {
-    pub(crate) fn alpha_at(&self, t: f64) -> f32 {
-        fade_alpha(t, self.start, self.end, self.fade)
-    }
-}
-
-/// The GPU vignette for the first spotlight active at tour time `t`, anchored via `vp` (so it
-/// tracks its point + stays a constant on-screen size). Off (`on == 0`) when none is active.
-pub(crate) fn vignette_for(spots: &[Spotlight], vp: &fractadyne_core::Viewport, t: f64) -> fractadyne_gpu::Vignette {
-    for sp in spots {
-        let a = sp.alpha_at(t);
-        if a <= 0.0 {
-            continue;
-        }
-        let (vpx, vpy) = vp.complex_to_pixel(&sp.cx, &sp.cy);
-        return fractadyne_gpu::Vignette {
-            on: 1,
-            dim: sp.dim * a, // fade the dimming in/out with the window
-            soft: sp.soft,
-            center: [(vpx / vp.width_px) as f32, (vpy / vp.height_px) as f32],
-            radius: sp.radius,
-        };
-    }
-    fractadyne_gpu::Vignette::default()
 }
 
 #[derive(Deserialize, Clone, Default)]
@@ -3913,7 +3916,9 @@ impl BenchRes {
 /// Canonical settings the standardized benchmark pins (so the score means the same on
 /// every machine). Recorded verbatim in the report.
 pub(crate) const STD_AA: u32 = 2; // 2×2 supersampling
+
 pub(crate) const STD_FRAMES: u32 = 60; // frames rendered along the fixed dive
+
 /// Standard dive: 1 -> 1e32x. Every preset crosses [`crate::PERT_FE_THRESHOLD`] (1e28) on
 /// purpose, because for a long time none did. Standard was 1 -> 1e12x and Ultra 1 -> 1e28x,
 /// and measured at 720p their splits were 20/40/0 and 9/51/0 direct/df32/floatexp: Ultra's
@@ -3922,6 +3927,7 @@ pub(crate) const STD_FRAMES: u32 = 60; // frames rendered along the fixed dive
 /// had never executed in a benchmark whose fixed-settings block prints "BLA on". At 1e32x
 /// the split is 8 / 44 / 8 - the shallowest dive that still measures the deep path.
 pub(crate) const STD_ZOOM_LOG10: f64 = 32.0;
+
 /// Ultra-deep dive: 1 -> 1e48x, splitting 5 / 30 / 25. The endpoint is derived rather than
 /// chosen: for a 60-frame geometric dive the direct edge sits at 4/Z of the range and the
 /// floatexp edge at 28/Z, so Z = 48 buys real time in each regime rather than a token frame
@@ -3936,6 +3942,7 @@ pub(crate) const STD_ZOOM_LOG10_ULTRA: f64 = 48.0;
 /// meaningful floatexp frame at all. Scores from before that change are not comparable
 /// with scores after it, which is why the report names the dive site.
 const STD_CX: &str = "3.5634774601304382214593134944855658665333542382319826904819524052878394297711653798870071071230880055625454711405583e-1";
+
 const STD_CY: &str = "6.5517219785957047867473526044384060240158237433104919183695119307267363068091251654291035030800580107809850539974573e-1";
 
 /// Dive depth for the standardized benchmark. Deeper endpoints exercise the deep-zoom path

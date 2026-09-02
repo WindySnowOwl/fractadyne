@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Internal: files reorganized for first-read comprehension** — `main.rs` now opens with
+  `fn main` (it sat at line 1,531 behind ~1,400 lines of helpers), its top-level items are
+  grouped under banner sections (entry, render regimes, coloring, readouts, locations,
+  export/gallery, issue reporting, UI geometry, app-state types), and the 87-method
+  `impl FractadyneApp` is split into ten topical impl blocks with `update()` last.
+  `RenderMode` and other types are reunited with their impls. `render.rs`'s giant impl
+  becomes seven bannered impls (reference pipeline / export requests / corrected renders /
+  settle / `build_params` + stages, the stage structs seated beside their methods);
+  `scripting.rs`'s Caption/encode clusters untangled. Every move is a pure item relocation
+  proven by parse-tiling; the ordering convention is documented in `CONTRIBUTING.md`.
+  The reorganization commit is listed in `.git-blame-ignore-revs` (GitHub honors it), so
+  blame still reaches each line's real author. Gates: suite 331; selftest 168/168 +
+  goldens 18/18; bench-matrix/profile signatures identical.
+
 - **Internal: the app struct and the frame builder untangled** — `FractadyneApp`'s 52
   CLI/harness-mode fields (selftest/profile/frametest/benchmark/render-and-exit/dev-harness
   drivers) now live in six structs in `cli.rs`, so the app struct is 83 fields of interactive

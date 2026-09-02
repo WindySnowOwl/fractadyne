@@ -14,6 +14,7 @@ use std::time::Instant;
 pub(crate) use crate::tunables::*;
 
 
+
 /// How a view is classified for cost purposes, and the per-frame GPU work budget that follows.
 ///
 /// Split out of `build_params` so the classification is testable: `is_pert` **must** agree with
@@ -73,8 +74,6 @@ pub(crate) fn frame_cost(
 
 #[cfg(test)]
 mod frame_cost_tests;
-
-
 
 /// One view's tiled-settle progress. `None` geometry = ARMED: the view has rendered its coarse
 /// single-dispatch frame under this key and the next settled frame may start the grid. Tiles then
@@ -188,7 +187,6 @@ struct ReuseRef {
     tail: fractadyne_core::OrbitTail,
     prec: usize,
 }
-
 
 /// Which queued lookahead slot the dive has ARRIVED at: the DEEPEST ready target at or below the
 /// current depth `cur_l2`, or `None` if every ready slot is still ahead of the view. Slots ahead of
@@ -477,8 +475,6 @@ fn pick_reference(inp: &RecomputeInputs) -> [fractadyne_core::BigFloat; 2] {
     }
     point
 }
-
-
 
 /// Build the orbit (to `orbit_iter`, at reuse-headroom precision) + series-approximation skip + BLA
 /// tree for a PRE-CHOSEN reference point `rp`. Split out of `recompute_worker` so a progressive cold
@@ -790,89 +786,6 @@ pub(crate) fn coarse_preview_has_content(px: &[f32], w: u32, h: u32) -> (f64, bo
     (frac, frac >= crate::COARSE_PREVIEW_MIN_ESCAPED)
 }
 
-impl FractadyneApp {
-    /// Probe a parked coarse-preview reference (56×56, at the preview's own iteration cap) and
-    /// install it only when the frame it would produce shows something. Runs in `update()`, which
-    /// owns the GPU handles the install path lacks — the autopilot steering probe set the pattern.
-    ///
-    /// ⚠**Every uncertain path fails OPEN** (install unprobed = the old behaviour). In particular
-    /// the request builder's `Precomputed` arm falls back to a SYNCHRONOUS full-depth reference
-    /// build on any mismatch — 400 s on this thread at the reported view — so the exact-match
-    /// inputs (`precomputed_matches`) are mirrored and checked HERE, before the builder can reach
-    /// that fallback. The mirror must stay in lock-step with `build_export_request`.
-    pub(crate) fn probe_pending_coarse(
-        &mut self,
-        dev: &eframe::wgpu::Device,
-        q: &eframe::wgpu::Queue,
-    ) {
-        for vi in 0..2 {
-            let Some(mut res) = self.pending_coarse[vi].take() else { continue };
-            // A probed result re-enters `install_recompute`; without this it would just re-park.
-            res.coarse_stage = false;
-            let (vp, julia) = if vi == 1 {
-                (self.julia_viewport.clone(), true)
-            } else {
-                (self.viewport.clone(), self.julia_mode)
-            };
-            // The one real precondition: the view must not have changed DEPTH mid-build, or the
-            // probe judges the wrong frame. Depth shows up as precision moving by tens-to-hundreds
-            // of bits — while ±a few bits is ordinary drift (measured at corpus 06: the precision
-            // ticked 144→145 during the ~1 s build and an exact-equality guard failed open on it).
-            // The probe itself is precision-agnostic (it clamps to the coarse orbit), so the
-            // tolerance costs nothing. The iteration ask is deliberately NOT compared — a LIVE
-            // spawn's headroomed ask (measured 208,192) never equals the export derivation
-            // (200,000), and the probe does not care.
-            if res.req_prec.abs_diff(vp.precision) > 8 {
-                if crate::diag::trace_on("ref") {
-                    crate::diag::trace(
-                        "ref",
-                        format!(
-                            "coarse probe v{vi}: view moved (prec {} vs {}) — installing unprobed",
-                            res.req_prec, vp.precision
-                        ),
-                    );
-                }
-                self.install_recompute(vi, res);
-                continue;
-            }
-            const N: u32 = 56;
-            let cap = res.orbit_len.saturating_sub(1).max(64);
-            let mut req = self.current_export_request_probe(&vp, julia, res.clone());
-            req.width = N;
-            req.height = N;
-            req.ss = 1;
-            // Iterate to the PREVIEW'S cap, exactly the budget the live frame would have (the
-            // partial clamp), and never past the short orbit.
-            req.max_iter = req.max_iter.min(cap);
-            crate::diag::set_manifest(format!(
-                "PROBE {N}x{N} ss=1 iter={} (coarse-preview gate, synchronous)",
-                req.max_iter
-            ));
-            let (frac, keep) = match fractadyne_gpu::render_iter(dev, q, &req) {
-                Ok(r) => coarse_preview_has_content(&r.pixels, N, N),
-                Err(_) => (f64::NAN, true), // unreadable probe → fail open
-            };
-            if crate::diag::trace_on("ref") {
-                crate::diag::trace(
-                    "ref",
-                    format!(
-                        "coarse probe v{vi}: {:.1}% escaped at cap {cap} → {}",
-                        frac * 100.0,
-                        if keep { "preview installed" } else {
-                            "preview SUPPRESSED (flat frame), holding reprojection for the full build"
-                        }
-                    ),
-                );
-            }
-            if keep {
-                self.install_recompute(vi, res);
-            }
-            // else: drop it. `will_reproject` stays true (no reference), the reprojected frame
-            // stays on screen, and the full stage lands through the still-open channel.
-        }
-    }
-}
-
 /// The iteration settings a reference build is priced with.
 ///
 /// ⭐Explicit, and required at every call site, because it must be the budget of the frame the
@@ -969,46 +882,12 @@ pub(crate) struct NormMap {
     pub(crate) lo: f32,
 }
 
-/// One frame's work-budget decisions — `build_params`'s budget stage output
-/// (`bp_frame_budget`): the affordable pixel/iteration shape before tiling and path select.
-struct BudgetPlan {
-    /// Native-resolution texel count of the ask (before `res_scale`).
-    px: u64,
-    /// Perturbation-priced frame (df32/floatexp) rather than direct.
-    is_pert: bool,
-    /// The per-frame step budget the watchdog controller granted.
-    budget: u64,
-    /// Hard iteration ceiling for the ask (`MAX_ITER_LIMIT` on both branches).
-    iter_cap: u32,
-    /// This frame's live iteration ask (budget-capped, boost-applied).
-    gpu_iter: u32,
-}
-
-/// `bp_chunk_tiling`'s output: this frame's chunked-walk dispatch (if the frame is
-/// chunk-governed) and whether the budget-climb probe forced a re-measure.
-struct ChunkPlan {
-    /// The iteration range `[cursor, end)` this frame dispatches; `None` = not chunk-governed.
-    chunk_range: Option<[u32; 2]>,
-    /// The walk's pass index (dedupe key for the GPU).
-    chunk_idx: u32,
-    /// The budget-climb probe fired: this frame re-measures under an unchanged key.
-    probe_fired: bool,
-}
-
-/// `bp_present_gate`'s output: the frame's hold/reveal decision plus the settled-cost
-/// bootstrap flag and the color-pass AA widening.
-struct PresentGate {
-    /// Take the hold snapshot THIS frame (first gated frame of a compose).
-    hold_copy: bool,
-    /// Serve the held snapshot instead of the live texture.
-    display_hold: bool,
-    /// The hold is a pin-continue/dirty-texture hold, not a compose hold.
-    pin_gate: bool,
-    /// Color-pass box-filter width when true supersampling wasn't affordable.
-    aa_filter: u32,
-}
+// ================================================================================================
+// impl FractadyneApp - live palette auto-normalization
+// ================================================================================================
 
 impl FractadyneApp {
+
     /// The live auto-normalized `(cycle, offset)` for view `vi`, when active: "Normalize deep
     /// colors" on, Smooth method, and a live-measured escaped smooth-iter range wider than the
     /// threshold. Maps the range to `0.5 + cycle·6` palette sweeps (the `--normalize` export
@@ -1080,6 +959,13 @@ impl FractadyneApp {
             _ => None,
         }
     }
+}
+
+// ================================================================================================
+// impl FractadyneApp - the live reference pipeline: install, prefetch, persist, rebuild
+// ================================================================================================
+
+impl FractadyneApp {
 
     /// Install a finished recompute into view `vi`'s reference cache (bumps `orbit_id`, refreshes
     /// SA + BLA), and record the recompute cost. Called on the main thread for both the sync
@@ -1306,6 +1192,87 @@ impl FractadyneApp {
         self.perf.recompute_ms = res.ref_ms;
         self.perf.recompute_total += 1;
         self.perf.rate_count += 1;
+    }
+
+    /// Probe a parked coarse-preview reference (56×56, at the preview's own iteration cap) and
+    /// install it only when the frame it would produce shows something. Runs in `update()`, which
+    /// owns the GPU handles the install path lacks — the autopilot steering probe set the pattern.
+    ///
+    /// ⚠**Every uncertain path fails OPEN** (install unprobed = the old behaviour). In particular
+    /// the request builder's `Precomputed` arm falls back to a SYNCHRONOUS full-depth reference
+    /// build on any mismatch — 400 s on this thread at the reported view — so the exact-match
+    /// inputs (`precomputed_matches`) are mirrored and checked HERE, before the builder can reach
+    /// that fallback. The mirror must stay in lock-step with `build_export_request`.
+    pub(crate) fn probe_pending_coarse(
+        &mut self,
+        dev: &eframe::wgpu::Device,
+        q: &eframe::wgpu::Queue,
+    ) {
+        for vi in 0..2 {
+            let Some(mut res) = self.pending_coarse[vi].take() else { continue };
+            // A probed result re-enters `install_recompute`; without this it would just re-park.
+            res.coarse_stage = false;
+            let (vp, julia) = if vi == 1 {
+                (self.julia_viewport.clone(), true)
+            } else {
+                (self.viewport.clone(), self.julia_mode)
+            };
+            // The one real precondition: the view must not have changed DEPTH mid-build, or the
+            // probe judges the wrong frame. Depth shows up as precision moving by tens-to-hundreds
+            // of bits — while ±a few bits is ordinary drift (measured at corpus 06: the precision
+            // ticked 144→145 during the ~1 s build and an exact-equality guard failed open on it).
+            // The probe itself is precision-agnostic (it clamps to the coarse orbit), so the
+            // tolerance costs nothing. The iteration ask is deliberately NOT compared — a LIVE
+            // spawn's headroomed ask (measured 208,192) never equals the export derivation
+            // (200,000), and the probe does not care.
+            if res.req_prec.abs_diff(vp.precision) > 8 {
+                if crate::diag::trace_on("ref") {
+                    crate::diag::trace(
+                        "ref",
+                        format!(
+                            "coarse probe v{vi}: view moved (prec {} vs {}) — installing unprobed",
+                            res.req_prec, vp.precision
+                        ),
+                    );
+                }
+                self.install_recompute(vi, res);
+                continue;
+            }
+            const N: u32 = 56;
+            let cap = res.orbit_len.saturating_sub(1).max(64);
+            let mut req = self.current_export_request_probe(&vp, julia, res.clone());
+            req.width = N;
+            req.height = N;
+            req.ss = 1;
+            // Iterate to the PREVIEW'S cap, exactly the budget the live frame would have (the
+            // partial clamp), and never past the short orbit.
+            req.max_iter = req.max_iter.min(cap);
+            crate::diag::set_manifest(format!(
+                "PROBE {N}x{N} ss=1 iter={} (coarse-preview gate, synchronous)",
+                req.max_iter
+            ));
+            let (frac, keep) = match fractadyne_gpu::render_iter(dev, q, &req) {
+                Ok(r) => coarse_preview_has_content(&r.pixels, N, N),
+                Err(_) => (f64::NAN, true), // unreadable probe → fail open
+            };
+            if crate::diag::trace_on("ref") {
+                crate::diag::trace(
+                    "ref",
+                    format!(
+                        "coarse probe v{vi}: {:.1}% escaped at cap {cap} → {}",
+                        frac * 100.0,
+                        if keep { "preview installed" } else {
+                            "preview SUPPRESSED (flat frame), holding reprojection for the full build"
+                        }
+                    ),
+                );
+            }
+            if keep {
+                self.install_recompute(vi, res);
+            }
+            // else: drop it. `will_reproject` stays true (no reference), the reprojected frame
+            // stays on screen, and the full stage lands through the still-open channel.
+        }
     }
 
     /// Script-playback reference LOOKAHEAD: a tour knows its whole future camera path, so build the
@@ -1844,58 +1811,6 @@ impl FractadyneApp {
         (std::sync::Arc::new(o), l, rp)
     }
 
-    /// Owned, `Send` inputs for the reference recompute of an **export** view (single view or one
-    /// panel of the dual). Mirrors the live path's `RecomputeInputs`, but with export-appropriate
-    /// choices: the orbit is built to exactly `eff_iter` (no live-style spare headroom), and the BLA
-    /// `dc_max` is the per-frame-tight bound (no `×2` pan-reuse margin). `None` for the direct path
-    /// (`mode == 1`), which iterates from 0 with no reference. Series approximation applies to the
-    /// holomorphic polynomial families (Mandelbrot / Multibrot 3-5) with a non-aux coloring method.
-    #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: fold into a reference-inputs struct
-    fn export_reference_inputs(
-        &self,
-        vp: &Viewport,
-        julia: bool,
-        mode: RenderMode,
-        eff_iter: u32,
-        precision: usize,
-        span_mantissa: fractadyne_core::SpanMantissa,
-        delta_exp: i32,
-    ) -> RecomputeInputs {
-        let bla_dc_max = self
-            .bla_eligible(mode, julia)
-            .then(|| Self::bla_dc_max(span_mantissa, delta_exp));
-        // BLA subsumes SA: when a BLA tree is built for this render it skips the same initial
-        // iterations the series seed would (measured: gpu-it 22→27 ms at 1e1105×), while the SA
-        // coefficient pass is the DOMINANT deep build cost (~9.4 s of a ~10.8 s build at 1e1105×,
-        // ~8× the whole build). So compute SA only when no BLA tree will exist for this view
-        // (df32-pert mode 0, Multibrot, BLA off/aux-gated) — there it remains the only skip.
-        let do_sa = (!mode.is_direct())
-            && !julia
-            && self.fractal.formula_id() <= 3
-            && !self.coloring.color_method.blocks_iter_skip()
-            && self.render_cfg.series_approx
-            && bla_dc_max.is_none();
-        RecomputeInputs {
-            origin: "export",
-            center_bf: [vp.center_x.clone(), vp.center_y.clone()],
-            span: vp.complex_span_fe(),
-            span_mantissa,
-            delta_exp,
-            gpu_iter: eff_iter,
-            orbit_len_cap: u32::MAX, // export: full appetite (only the device buffer bounds it)
-            precision,
-            julia,
-            formula: self.fractal.formula_id(),
-            julia_c: self.julia_c,
-            do_sa,
-            bla_dc_max,
-            stripe_freq: self.coloring.stripe_freq as f64,
-            trap_type: self.coloring.trap_type as u32,
-            reuse: None, // one-shot export: always a fresh build
-            spawn_orbit_id: 0, // export never installs into a live cache
-        }
-    }
-
     /// Assemble an export request's reference fields by BORROWING the live view's resident
     /// reference, plus the iteration ceiling that reference can honestly support. `None` when the
     /// cache cannot serve this view, and the caller must build a fresh one.
@@ -2026,6 +1941,65 @@ impl FractadyneApp {
         }
         Some(std::sync::Arc::new(fractadyne_core::bla_to_gpu(&levels)))
     }
+}
+
+// ================================================================================================
+// impl FractadyneApp - offline/export render requests
+// ================================================================================================
+
+impl FractadyneApp {
+
+    /// Owned, `Send` inputs for the reference recompute of an **export** view (single view or one
+    /// panel of the dual). Mirrors the live path's `RecomputeInputs`, but with export-appropriate
+    /// choices: the orbit is built to exactly `eff_iter` (no live-style spare headroom), and the BLA
+    /// `dc_max` is the per-frame-tight bound (no `×2` pan-reuse margin). `None` for the direct path
+    /// (`mode == 1`), which iterates from 0 with no reference. Series approximation applies to the
+    /// holomorphic polynomial families (Mandelbrot / Multibrot 3-5) with a non-aux coloring method.
+    #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: fold into a reference-inputs struct
+    fn export_reference_inputs(
+        &self,
+        vp: &Viewport,
+        julia: bool,
+        mode: RenderMode,
+        eff_iter: u32,
+        precision: usize,
+        span_mantissa: fractadyne_core::SpanMantissa,
+        delta_exp: i32,
+    ) -> RecomputeInputs {
+        let bla_dc_max = self
+            .bla_eligible(mode, julia)
+            .then(|| Self::bla_dc_max(span_mantissa, delta_exp));
+        // BLA subsumes SA: when a BLA tree is built for this render it skips the same initial
+        // iterations the series seed would (measured: gpu-it 22→27 ms at 1e1105×), while the SA
+        // coefficient pass is the DOMINANT deep build cost (~9.4 s of a ~10.8 s build at 1e1105×,
+        // ~8× the whole build). So compute SA only when no BLA tree will exist for this view
+        // (df32-pert mode 0, Multibrot, BLA off/aux-gated) — there it remains the only skip.
+        let do_sa = (!mode.is_direct())
+            && !julia
+            && self.fractal.formula_id() <= 3
+            && !self.coloring.color_method.blocks_iter_skip()
+            && self.render_cfg.series_approx
+            && bla_dc_max.is_none();
+        RecomputeInputs {
+            origin: "export",
+            center_bf: [vp.center_x.clone(), vp.center_y.clone()],
+            span: vp.complex_span_fe(),
+            span_mantissa,
+            delta_exp,
+            gpu_iter: eff_iter,
+            orbit_len_cap: u32::MAX, // export: full appetite (only the device buffer bounds it)
+            precision,
+            julia,
+            formula: self.fractal.formula_id(),
+            julia_c: self.julia_c,
+            do_sa,
+            bla_dc_max,
+            stripe_freq: self.coloring.stripe_freq as f64,
+            trap_type: self.coloring.trap_type as u32,
+            reuse: None, // one-shot export: always a fresh build
+            spawn_orbit_id: 0, // export never installs into a live cache
+        }
+    }
 
     /// The reference-recompute inputs for an export view, or `None` for the direct path (`mode == 1`,
     /// no reference). Computes `mode` / `eff_iter` / `precision` / scale exactly as
@@ -2097,44 +2071,6 @@ impl FractadyneApp {
             let _ = tx.send(recompute_worker(inputs));
         });
         Some(rx)
-    }
-
-    /// Has the live view finished resolving — is there anything left for the renderer to do?
-    ///
-    /// "Resolved" is deliberately NOT "most pixels escaped": a minibrot interior is legitimately
-    /// black, and demanding escapes there would wait forever. It is "there is a SETTLED
-    /// measurement of this view at its current budget, and either almost nothing is still capped
-    /// or the budget cannot be raised any further" — precisely the state in which waiting longer
-    /// cannot change the picture. `None` means no settled reading exists yet (the view is moving,
-    /// or its first settled frame hasn't landed), which is never "resolved".
-    pub(crate) fn view_resolved(&self, view: usize) -> bool {
-        let v = view.min(1);
-        // (A view whose reference is terminally clamped once short-circuited to `true` here, from a
-        // freeze-guard REFUSAL record. Guard v2 (v0.2.40-beta.49/50) installs long partial
-        // references at a floor budget instead of refusing them, so nothing is ever refused and
-        // that path is gone; a clamped-but-improving view now resolves through the normal settled
-        // reading below. See git history / TODO.md for the refusal-loop saga.)
-        match self.perf.capped_frac[v] {
-            None => false,
-            Some(frac) => {
-                frac < 0.02
-                    || self.perf.budget_maxed[v]
-                    || self.perf.iter_plateau[v]
-                    || self.perf.iter_exhausted[v]
-            }
-        }
-    }
-
-    /// Is view `view` completely idle — settled, nothing in flight, and no new counter reading to
-    /// act on? A settled view that needs no re-iterate produces no counter at all, so "no reading"
-    /// on its own is ambiguous: it means either *finished* or *hasn't started yet*. The caller
-    /// disambiguates with time (see the settle grace period in `advance_playback_core`); this is
-    /// only the "nothing is happening" half.
-    pub(crate) fn view_idle(&self, view: usize) -> bool {
-        let v = view.min(1);
-        self.perf.capped_frac[v].is_none()
-            && self.recompute_rx[v].is_none()
-            && !self.perf.tile_pending[v]
     }
 
     /// Build an export request for a given viewport + Julia flag at the export
@@ -2372,6 +2308,13 @@ impl FractadyneApp {
             interior_col: self.interior_color(),
         }
     }
+}
+
+// ================================================================================================
+// impl FractadyneApp - glitch-corrected + normalized offline renders
+// ================================================================================================
+
+impl FractadyneApp {
 
     /// Render the iteration buffer with **multi-reference glitch correction** (offscreen). Renders
     /// with the base reference (Pauldelbrot flagging on), then repeatedly drops a fresh reference
@@ -2790,6 +2733,58 @@ impl FractadyneApp {
         res.counters = iter.counters;
         Some((res, (clo, chi)))
     }
+}
+
+// ================================================================================================
+// impl FractadyneApp - view state queries
+// ================================================================================================
+
+impl FractadyneApp {
+
+    /// Has the live view finished resolving — is there anything left for the renderer to do?
+    ///
+    /// "Resolved" is deliberately NOT "most pixels escaped": a minibrot interior is legitimately
+    /// black, and demanding escapes there would wait forever. It is "there is a SETTLED
+    /// measurement of this view at its current budget, and either almost nothing is still capped
+    /// or the budget cannot be raised any further" — precisely the state in which waiting longer
+    /// cannot change the picture. `None` means no settled reading exists yet (the view is moving,
+    /// or its first settled frame hasn't landed), which is never "resolved".
+    pub(crate) fn view_resolved(&self, view: usize) -> bool {
+        let v = view.min(1);
+        // (A view whose reference is terminally clamped once short-circuited to `true` here, from a
+        // freeze-guard REFUSAL record. Guard v2 (v0.2.40-beta.49/50) installs long partial
+        // references at a floor budget instead of refusing them, so nothing is ever refused and
+        // that path is gone; a clamped-but-improving view now resolves through the normal settled
+        // reading below. See git history / TODO.md for the refusal-loop saga.)
+        match self.perf.capped_frac[v] {
+            None => false,
+            Some(frac) => {
+                frac < 0.02
+                    || self.perf.budget_maxed[v]
+                    || self.perf.iter_plateau[v]
+                    || self.perf.iter_exhausted[v]
+            }
+        }
+    }
+
+    /// Is view `view` completely idle — settled, nothing in flight, and no new counter reading to
+    /// act on? A settled view that needs no re-iterate produces no counter at all, so "no reading"
+    /// on its own is ambiguous: it means either *finished* or *hasn't started yet*. The caller
+    /// disambiguates with time (see the settle grace period in `advance_playback_core`); this is
+    /// only the "nothing is happening" half.
+    pub(crate) fn view_idle(&self, view: usize) -> bool {
+        let v = view.min(1);
+        self.perf.capped_frac[v].is_none()
+            && self.recompute_rx[v].is_none()
+            && !self.perf.tile_pending[v]
+    }
+}
+
+// ================================================================================================
+// impl FractadyneApp - the tiled settle
+// ================================================================================================
+
+impl FractadyneApp {
 
     /// Advance a view's tiled settle by one tile and return its rect (base px). Grid geometry is
     /// frozen at grid start; the cursor walks the tiles CENTER-OUT, so the part of the image the
@@ -2935,6 +2930,52 @@ impl FractadyneApp {
         self.perf.tile_pending[vidx] = state.next < n;
         (rect(idx), true)
     }
+}
+
+// ================================================================================================
+// impl FractadyneApp - build_params - the live frame request, staged
+// ================================================================================================
+
+/// One frame's work-budget decisions — `build_params`'s budget stage output
+/// (`bp_frame_budget`): the affordable pixel/iteration shape before tiling and path select.
+struct BudgetPlan {
+    /// Native-resolution texel count of the ask (before `res_scale`).
+    px: u64,
+    /// Perturbation-priced frame (df32/floatexp) rather than direct.
+    is_pert: bool,
+    /// The per-frame step budget the watchdog controller granted.
+    budget: u64,
+    /// Hard iteration ceiling for the ask (`MAX_ITER_LIMIT` on both branches).
+    iter_cap: u32,
+    /// This frame's live iteration ask (budget-capped, boost-applied).
+    gpu_iter: u32,
+}
+
+/// `bp_chunk_tiling`'s output: this frame's chunked-walk dispatch (if the frame is
+/// chunk-governed) and whether the budget-climb probe forced a re-measure.
+struct ChunkPlan {
+    /// The iteration range `[cursor, end)` this frame dispatches; `None` = not chunk-governed.
+    chunk_range: Option<[u32; 2]>,
+    /// The walk's pass index (dedupe key for the GPU).
+    chunk_idx: u32,
+    /// The budget-climb probe fired: this frame re-measures under an unchanged key.
+    probe_fired: bool,
+}
+
+/// `bp_present_gate`'s output: the frame's hold/reveal decision plus the settled-cost
+/// bootstrap flag and the color-pass AA widening.
+struct PresentGate {
+    /// Take the hold snapshot THIS frame (first gated frame of a compose).
+    hold_copy: bool,
+    /// Serve the held snapshot instead of the live texture.
+    display_hold: bool,
+    /// The hold is a pin-continue/dirty-texture hold, not a compose hold.
+    pin_gate: bool,
+    /// Color-pass box-filter width when true supersampling wasn't affordable.
+    aa_filter: u32,
+}
+
+impl FractadyneApp {
 
     /// `build_params` stage: bound this frame's GPU work (watchdog budget), run the
     /// adaptive live-iteration probe + the escape-range/gradient drains, and derive the
@@ -5790,6 +5831,11 @@ impl FractadyneApp {
         )
     }
 }
+
+// ================================================================================================
+// Pure frame-controller functions + their property tests (extracted so they can be
+// tested without an app; each test module sits beside its subject)
+// ================================================================================================
 
 /// One step of the frame-budget search, as a pure function so it can be property-tested.
 ///
