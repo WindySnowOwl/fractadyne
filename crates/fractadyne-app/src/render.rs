@@ -969,6 +969,45 @@ pub(crate) struct NormMap {
     pub(crate) lo: f32,
 }
 
+/// One frame's work-budget decisions — `build_params`'s budget stage output
+/// (`bp_frame_budget`): the affordable pixel/iteration shape before tiling and path select.
+struct BudgetPlan {
+    /// Native-resolution texel count of the ask (before `res_scale`).
+    px: u64,
+    /// Perturbation-priced frame (df32/floatexp) rather than direct.
+    is_pert: bool,
+    /// The per-frame step budget the watchdog controller granted.
+    budget: u64,
+    /// Hard iteration ceiling for the ask (`MAX_ITER_LIMIT` on both branches).
+    iter_cap: u32,
+    /// This frame's live iteration ask (budget-capped, boost-applied).
+    gpu_iter: u32,
+}
+
+/// `bp_chunk_tiling`'s output: this frame's chunked-walk dispatch (if the frame is
+/// chunk-governed) and whether the budget-climb probe forced a re-measure.
+struct ChunkPlan {
+    /// The iteration range `[cursor, end)` this frame dispatches; `None` = not chunk-governed.
+    chunk_range: Option<[u32; 2]>,
+    /// The walk's pass index (dedupe key for the GPU).
+    chunk_idx: u32,
+    /// The budget-climb probe fired: this frame re-measures under an unchanged key.
+    probe_fired: bool,
+}
+
+/// `bp_present_gate`'s output: the frame's hold/reveal decision plus the settled-cost
+/// bootstrap flag and the color-pass AA widening.
+struct PresentGate {
+    /// Take the hold snapshot THIS frame (first gated frame of a compose).
+    hold_copy: bool,
+    /// Serve the held snapshot instead of the live texture.
+    display_hold: bool,
+    /// The hold is a pin-continue/dirty-texture hold, not a compose hold.
+    pin_gate: bool,
+    /// Color-pass box-filter width when true supersampling wasn't affordable.
+    aa_filter: u32,
+}
+
 impl FractadyneApp {
     /// The live auto-normalized `(cycle, offset)` for view `vi`, when active: "Normalize deep
     /// colors" on, Smooth method, and a live-measured escaped smooth-iter range wider than the
@@ -2897,171 +2936,22 @@ impl FractadyneApp {
         (rect(idx), true)
     }
 
-    /// Build the GPU params for one fractal view, computing the perturbation
-    /// reference (deep Mandelbrot) or selecting the direct df32 path. Shared by the
-    /// single view and both panels of the dual view.
+    /// `build_params` stage: bound this frame's GPU work (watchdog budget), run the
+    /// adaptive live-iteration probe + the escape-range/gradient drains, and derive the
+    /// frame's iteration ask. Body moved verbatim from `build_params`; the stage's whole
+    /// interface is scalars in, [`BudgetPlan`] out (every `self` effect is on `perf`).
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn build_params(
+    fn bp_frame_budget(
         &mut self,
-        center_bf: [fractadyne_core::BigFloat; 2],
-        center: (f64, f64),
-        span: (fractadyne_core::FloatExp, fractadyne_core::FloatExp),
         magnification: f64,
         log2mag: f64,
         fractal: FractalKind,
         julia: bool,
         eff_iter: u32,
         interacting: bool,
-        // Anti-alias supersampling target for this frame (1 while moving; ramps up on settle via the
-        // caller's progressive-settle stages). Clamped to the GPU texture limit below.
-        aa_target: u32,
         resolution: [u32; 2],
         view_id: u32,
-        // Some(uv_offset) → pan reprojection: reuse the cached orbit + frozen iteration texture
-        // and translate it in the color pass (no bignum recompute, no re-iterate). Only honoured
-        // at deep zoom (mode ≠ 1) once a reference exists for this view.
-        reproject: Option<[f32; 2]>,
-    ) -> MandelbrotParams {
-        // ---- pinned refresh, pre-step (option C, design/mode2-chunking.md §10-§11) ----
-        // While a chunked refresh is PINNED, this frame renders the pinned view — the view
-        // parameters are shadowed below, so every derivation downstream (offsets, SA/BLA gating,
-        // step math) is exactly what it would be if the user sat at the pinned view — while the
-        // display keeps serving the hold snapshot under a transform that tracks the LIVE view.
-        // The pin's verdict runs FIRST, on the live inputs: `Adopt` must land before `reuse_hold`
-        // reads `frozen_l2`, and only `Continue` licenses the shadowing.
-        let vsub = (view_id as usize).min(1);
-        // The panel-size PARAM, saved before `resolution` is rebound downstream: the pin captures
-        // it, and any change abandons (a resize re-scales everything derived from it).
-        let panel_res = resolution;
-        // Live-view values the display transform needs on pin frames (after the shadowing, the
-        // locals describe the pinned view). The delta_exp/mantissa/precision trio is derived from
-        // the LIVE span so the hold transform's offsets stay O(1) at any depth.
-        let live_l2 = log2mag;
-        let (live_de, live_smx, live_smy, live_prec) = {
-            let de = if span.0.m == 0.0 { 0 } else { span.0.log2().floor() as i32 };
-            let s = -(de as f64);
-            (
-                de,
-                span.0.mul_pow2(s).to_f64(),
-                span.1.mul_pow2(s).to_f64(),
-                fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64),
-            )
-        };
-        let mut pin_frame = false;
-        if self.perf.pin[vsub].is_some() {
-            let verdict = {
-                let pin = self.perf.pin[vsub].as_ref().unwrap();
-                // Pan drift in LIVE view-spans. The shared exponent cancels in the ratio, and the
-                // live values keep both mantissas O(1), so this is depth-safe.
-                let pan_spans = if interacting {
-                    let dx = fractadyne_core::ref_offset_mantissa(
-                        &center_bf[0], &pin.center_bf[0], live_de, live_prec,
-                    ) / live_smx;
-                    let dy = fractadyne_core::ref_offset_mantissa(
-                        &center_bf[1], &pin.center_bf[1], live_de, live_prec,
-                    ) / live_smy;
-                    dx.abs().max(dy.abs())
-                } else {
-                    0.0 // the verdict stops on `interacting` before this can matter
-                };
-                let rc = &self.ref_cache[vsub];
-                pin_verdict(
-                    pin,
-                    &PinInputs {
-                        interacting,
-                        caller_reproject: reproject.is_some(),
-                        drift_oct: (log2mag - pin.log2mag).abs(),
-                        pan_spans,
-                        orbit_id: rc.orbit_id,
-                        orbit_len: rc.orbit_len,
-                        panel: panel_res,
-                        frame_idx: self.perf.frame_idx,
-                        cursor: self.perf.chunk_cursor[vsub],
-                    },
-                )
-            };
-            match verdict {
-                PinVerdict::Adopt => {
-                    let pin = self.perf.pin[vsub].take().unwrap();
-                    // ADOPT-ON-COMPLETION: the last pass landed, so the live G-buffer holds a
-                    // COMPLETE render of the pinned view. Latch it as the frozen frame — the
-                    // write every pin frame deferred — and let this frame proceed live: small
-                    // drift → `reuse_hold` reprojects the new texture (the reveal, through the
-                    // ordinary freeze path — a proven drop, not a new gate); large drift → the
-                    // next pin starts this same frame, snapshotting the fresh texture.
-                    self.ref_cache[vsub].frozen_center = Some(pin.center_bf.clone());
-                    self.ref_cache[vsub].frozen_l2 = pin.log2mag;
-                    self.ref_cache[vsub].frozen_upp_l2 = pin.upp_l2;
-                    self.ref_cache[vsub].frozen_at = Some(Instant::now());
-                    self.perf.chunk_dirty[vsub] = false;
-                    self.perf.adopt_complete[vsub] =
-                        self.perf.adopt_complete[vsub].wrapping_add(1);
-                    if crate::diag::trace_on("tile") {
-                        crate::diag::trace(
-                            "tile",
-                            format!(
-                                "pin-adopt v={vsub} f={} ask={} lag_oct={:.2}",
-                                self.perf.frame_idx,
-                                pin.gpu_iter,
-                                (live_l2 - pin.log2mag).abs()
-                            ),
-                        );
-                    }
-                }
-                PinVerdict::Stop(reason) => {
-                    self.perf.pin[vsub] = None;
-                    // The dirty residue survives most abandons (the texture still diverges from
-                    // the frozen bookkeeping, and the display must keep serving the snapshot
-                    // until something complete lands) — except at the settle edge, where the
-                    // settled path recomposes and its progressive partials are the accepted
-                    // settled UX.
-                    if reason == PinStop::Settled {
-                        self.perf.chunk_dirty[vsub] = false;
-                    }
-                    if crate::diag::trace_on("tile") {
-                        crate::diag::trace(
-                            "tile",
-                            format!(
-                                "pin-abandon v={vsub} f={} reason={reason:?} cur={} ask={}",
-                                self.perf.frame_idx,
-                                self.perf.chunk_cursor[vsub],
-                                self.perf.chunk_sig[vsub].1
-                            ),
-                        );
-                    }
-                }
-                PinVerdict::Continue => pin_frame = true,
-            }
-        }
-        // The live center survives only on pin frames (the hold transform needs it); everything
-        // else the transform needs was derived above.
-        let live_center_bf = if pin_frame { Some(center_bf.clone()) } else { None };
-        let (center_bf, center, span, magnification, log2mag, eff_iter, aa_target, pin_geom) =
-            if pin_frame {
-                let p = self.perf.pin[vsub].as_ref().unwrap();
-                (
-                    p.center_bf.clone(),
-                    p.center,
-                    p.span,
-                    p.magnification,
-                    p.log2mag,
-                    p.eff_iter,
-                    1,
-                    Some((p.resolution, p.ss, p.gpu_iter)),
-                )
-            } else {
-                (center_bf, center, span, magnification, log2mag, eff_iter, aa_target, None)
-            };
-        let (stops, stop_count) = self.active_stops();
-        let (cx, cy) = center;
-        // Extended-range scale → shared base-2 exponent + O(1) span mantissas, so nothing
-        // underflows/overflows past ~1e308× (the per-pixel δ stays O(1); the GPU re-applies
-        // the exponent). `span.0`/`span.1` are FloatExp, valid at any depth.
-        let delta_exp = if span.0.m == 0.0 { 0 } else { span.0.log2().floor() as i32 };
-        let sm = -(delta_exp as f64);
-        let span_mantissa =
-            fractadyne_core::SpanMantissa::new(span.0.mul_pow2(sm).to_f64(), span.1.mul_pow2(sm).to_f64());
-
+    ) -> BudgetPlan {
         // Bound per-frame GPU work so a single render can't trip the OS GPU watchdog
         // (TDR ≈ 2 s → device-lost crash). Work ≈ texels × iterations = px·ss²·iter.
         //
@@ -3358,6 +3248,1055 @@ impl FractadyneApp {
             )
             .min(iter_cap)
         };
+        BudgetPlan { px, is_pert, budget, iter_cap, gpu_iter }
+    }
+
+    /// `build_params` stage: the iteration-range (chunked) walk — price-serialized pass
+    /// sizing, the walk cursor/signature bookkeeping, the every-mode cost trace, and the
+    /// budget-climb probe. Body moved verbatim from `build_params`; outs are the dispatch
+    /// range/index and whether the probe forced a re-measure ([`ChunkPlan`]).
+    #[allow(clippy::too_many_arguments)]
+    fn bp_chunk_tiling(
+        &mut self,
+        center: (f64, f64),
+        magnification: f64,
+        interacting: bool,
+        resolution: [u32; 2],
+        gpu_iter: u32,
+        ss: u32,
+        spx: u64,
+        tdr_steps: u64,
+        tdr_allowed: u64,
+        max_tiles: u64,
+        chunk_over: bool,
+        pin_frame: bool,
+        key_changed: bool,
+        tile: Option<[u32; 4]>,
+        will_reproject: bool,
+        can_tile: bool,
+        tiling: bool,
+        fresh_res: [u32; 2],
+        view_key: (u64, u32, u64, [u32; 2], u64),
+        offscreen: bool,
+        vidx: usize,
+        vs: usize,
+    ) -> ChunkPlan {
+        // ---- iteration-range tiling (direct + df32-perturbation; see `chunk_over` above) ----
+        // One bounded resumable pass over [cursor, cursor+step) per frame at FULL resolution; the
+        // cursor advances while the view holds still and restarts on any view change or
+        // interaction. Escaped pixels appear progressively (a moving frame shows everything that
+        // escapes within one step — visually what a capped render would show); a settled view runs
+        // the cursor to max_iter and is then EXACT, honouring the explicit count across frames
+        // instead of in one watchdog-tripping dispatch.
+        let mut chunk_range: Option<[u32; 2]> = None;
+        let mut chunk_idx = 0u32;
+        self.perf.chunk_pending[vs] = false;
+        self.perf.chunk_governed[vs] = chunk_over;
+        if chunk_over {
+            // The iteration axis owns this compose (see the eligibility above): a settle grid
+            // must not stay ARMED underneath it — its tiles can never form (emission requires
+            // `!chunk_over`), and an armed-forever grid pins the present gate's `composing` true,
+            // which is the beta.103 never-reveals shape through a third door. Caught by the
+            // "a completed tiled settle REVEALS" selftest the moment the eligibility widened.
+            if !interacting {
+                self.perf.tile_state[vidx] = None;
+                self.perf.tile_pending[vidx] = false;
+            }
+            let ss2 = (ss as u64).saturating_mul(ss as u64);
+            // The 256-iteration floor keeps a MEASURED progression from thrashing in slivers, but
+            // an UNMEASURED opening dispatch must honour the bootstrap bound at ANY panel size —
+            // floor × a large panel exceeds it severalfold (1445×1134 × 256 = 4.195e8 vs the 4e8
+            // bootstrap, caught by the "unmeasured budget bounds the FIRST dispatch" selftest; a
+            // 4K panel would be 5×). Until a measurement exists the plain division is the bound;
+            // the floor applies from the first measured budget onward.
+            // ⭐⭐**A WALL-AWARE FLOOR, AND IT CAN ONLY EVER GO LOWER THAN 256.**
+            //
+            // `budget_step` below is wall-derived (it divides a measured step budget by the pixel
+            // count), so the controller already sizes itself from evidence — right up until this
+            // floor overrides it. And the floor binds precisely when `budget_step` wants to go
+            // BELOW 256, i.e. exactly when the measurement is saying "this region is hostile, go
+            // smaller". A fixed ITERATION count cannot bound WALL time, because cost per iteration
+            // varies by orders of magnitude between regions.
+            //
+            // ⛔The 256 rested on a claim that has gone stale: "~256 iterations is ~70 ms even at
+            // the worst rate ever measured on this hardware" (see `chunk_band_license`). The
+            // 2026-08-22 field loss ran **1024 iterations in 1216 ms** — 1.19 ms/iteration — so 256
+            // there is **~304 ms**, not ~70, and a region only **3× more hostile than that** makes
+            // the floor ITSELF lethal (900 ms / 256 = 3.5 ms per iteration).
+            //
+            // So derive it from the worst rate actually measured for this mode (`mode_rate` is
+            // kept as a running MINIMUM, i.e. already pessimistic) and take whichever is SMALLER.
+            // ⚠`min`, deliberately: in a benign region the computed value is far above 256 and
+            // this changes nothing, so the blast radius is confined to regions whose own
+            // measurements say the old floor was too big. It can never raise the floor, never
+            // enlarge a pass, and never slow a healthy walk.
+            let floor = if self.perf.fe_budget[vidx] == 0 {
+                1
+            } else {
+                let affordable = self.perf.worst_rate_steps_per_ms(vidx).map(|rate| {
+                    // steps/ms ÷ steps-per-iteration = iterations per ms, times the target wall.
+                    let per_iter = spx.saturating_mul(ss2).max(1) as f64;
+                    ((crate::tunables::cost().tdr_budget_ms * rate) / per_iter) as u32
+                });
+                affordable.map_or(256, |a| a.clamp(1, 256))
+            };
+            // ---- PRICE-SERIALIZED WALKING, pricing half (design/mode2-chunking.md §12) ----
+            // The settled walk holds AT MOST ONE unpriced pass in flight. The in-flight pass
+            // accumulates every following frame interval until a frame comes back quicker than
+            // CHUNK_DRAIN_DT_MS — with one pass in flight, a quick present is PROOF the queue
+            // drained — and that sum is the pass's wall price (conservative: it includes present
+            // overhead, which is the safe direction). This is the signal a saturated queue
+            // cannot silence; the fatal sessions' timestamps were silent precisely because
+            // saturation never let them arm.
+            let target_ms = if self.render_cfg.auto_iter {
+                crate::tunables::cost().tdr_budget_ms
+            } else {
+                crate::tunables::cost().tdr_explicit_budget_ms
+            };
+            if !interacting && !pin_frame {
+                if let Some((size, band, acc, shed)) = self.perf.chunk_inflight[vs] {
+                    let acc = acc + self.perf.last_dt_ms.max(0.0);
+                    // ⭐⭐WALL-CLOCK RETREAT. Until this existed the ledger learned NOTHING about a
+                    // pass until it drained or hit the wedge backstop — and the backstop is
+                    // `target × 60`, i.e. ~24 s at a 400 ms target, long after a device would be
+                    // gone. That is the gap the 2026-08-22 field loss fell through: the release
+                    // gate below wants a QUICK PRESENT as proof the queue drained, and a queue on
+                    // its way to losing the device never produces one, so the one pass whose price
+                    // would shed the licence is exactly the pass that cannot be priced.
+                    //
+                    // Accumulated wall is a conservative LOWER BOUND on what this pass has already
+                    // cost: if `acc` has reached the lethal band the pass has *already* been that
+                    // expensive, no drain required to know it. So shed the ledger on that alone.
+                    //
+                    // ⚠SHED, DO NOT RELEASE. The next dispatch stays blocked until the genuine
+                    // drain below — "releasing the next dispatch onto a pass that is merely SLOW is
+                    // how a 10 s single got company on its way to the TDR", and that reasoning is
+                    // untouched. This only updates what the NEXT pass would be allowed to ask for.
+                    // ⚠LATCHED (`shed`) so a pass sitting in the band for many frames sheds once
+                    // rather than re-shedding every frame — the ledger is already at the floor.
+                    let shed = if !shed && acc >= crate::tunables::cost().tdr_lethal_ms {
+                        chunk_band_retreat(&mut self.perf.chunk_bands[vs]);
+                        crate::diag::log_line(
+                            "render",
+                            &format!(
+                                "⚠IN-FLIGHT PASS IN THE LETHAL BAND: view={vs} size={size} band={band} acc={acc:.0}ms (band ≥{:.0}ms, no drain yet) — chunk-band licences shed",
+                                crate::tunables::cost().tdr_lethal_ms
+                            ),
+                        );
+                        true
+                    } else {
+                        shed
+                    };
+                    // ⚠The backstop is a WEDGE escape only (a compositor that never goes
+                    // idle), far beyond any survivable pass — releasing the next dispatch onto
+                    // a pass that is merely SLOW is how a 10 s single got company on its way
+                    // to the TDR. The genuine release is the quick frame.
+                    if self.perf.last_dt_ms < crate::tunables::CHUNK_DRAIN_DT_MS
+                        || acc > target_ms * 60.0
+                    {
+                        // Drained (or the absolute backstop, so a machine whose presents never
+                        // come back quick cannot wedge the walk): price the pass, feed both
+                        // ledgers, release the next dispatch.
+                        self.perf.chunk_pass_dt[vs] = acc;
+                        chunk_band_update(
+                            &mut self.perf.chunk_bands[vs],
+                            band as usize,
+                            size,
+                            acc,
+                            target_ms,
+                        );
+                        self.perf.chunk_inflight[vs] = None;
+                    } else {
+                        self.perf.chunk_inflight[vs] = Some((size, band, acc, shed));
+                    }
+                }
+            } else {
+                // Motion abandons the walk (the cursor resets below); a stale in-flight record
+                // must not price itself against unrelated frames after the next settle.
+                self.perf.chunk_inflight[vs] = None;
+            }
+            // Wall-clock pass pricing: a settled pass is the budget scaled by what the previous
+            // pass actually cost. Motion and pin passes keep the budget's own sizing (their
+            // cadence is priced by the retreat as before).
+            let pace = if interacting || pin_frame {
+                1.0
+            } else {
+                chunk_step_factor(self.perf.chunk_pass_dt[vs], target_ms)
+            };
+            // Per-frame iteration step that keeps this frame's dispatch inside the budget.
+            // ⚠`tdr_steps` — ONE dispatch budget — NOT `tdr_allowed`. The allowance multiplies
+            // the budget by `max_tiles` on a settled tiling-eligible frame because TILES spend it
+            // as many bounded dispatches; a chunk pass is ONE submission, and sizing it from the
+            // allowance dispatched single passes worth exactly 16 budgets — field device loss
+            // 2026-08-19 (crash-1787158916-0, RTX 3080, minibrot interior at an explicit 4M,
+            // settled with the budget still CLIMBING so the allowance was pinned at
+            // TDR_MAX_TILES): 9.600e11-step passes against a 6.000e10 budget, 1136 ms and 912 ms
+            // lethal-band readings, and the emergency retreat could not help because the next
+            // pass was again 16× the retreated budget. `bla_skip` collapsing to 0 at the interior
+            // made nominal cost real cost at exactly that moment. Pinned by the "a settled
+            // chunked pass stays inside ONE dispatch budget" selftest.
+            let budget_step = (((tdr_steps as f64 * pace) as u64
+                / spx.saturating_mul(ss2).max(1)) as u32)
+                .clamp(floor, gpu_iter.max(floor));
+            // View signature: anything that shapes the render restarts the progression.
+            // ⚠The REFERENCE LENGTH is part of it. `orbit_len` feeds both the per-pass BLA table
+            // (mode 2 rebuilds it every pass) and the `ref_n + 1 >= orbit_len` rebase trigger, so a
+            // reference extended mid-settle — the e72/e82/e94 shape, and mode 2 is exactly where
+            // that happens — would have a pass resume `ref_n` against a DIFFERENT orbit than the
+            // pass that stored it. The install runs later in this frame than this check, so the
+            // change is seen one frame late; that is harmless, because a sig change resets the
+            // cursor to 0 and the offending pass's state is discarded rather than resumed.
+            let sig = (
+                center.0.to_bits()
+                    ^ center.1.to_bits().rotate_left(17)
+                    ^ magnification.to_bits().rotate_left(34)
+                    ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51),
+                gpu_iter,
+                resolution,
+                ss,
+            );
+            if pin_frame {
+                // The pin owns the progression: every sig input above is captured, so the sig is
+                // constant by construction, and the interacting reset below — the §10 defect — is
+                // bypassed. The freeze verdict cannot flip a pin frame into a reprojection (the
+                // pre-step abandons on every input that could: orbit change, caller reproject,
+                // drift, pan, panel), so the cursor advance further down is safe — and
+                // belt-checked at the commit point after the freeze anyway.
+            } else if self.perf.chunk_sig[vs] != sig || interacting {
+                if self.perf.chunk_sig[vs] != sig {
+                    // Another view/ask: its prices describe another walk entirely.
+                    self.perf.chunk_bands[vs] = [0; crate::tunables::CHUNK_BANDS];
+                    self.perf.chunk_pass_dt[vs] = 0.0;
+                }
+                // ⭐The band ledger SURVIVES a same-sig restart on purpose: every hold/refresh
+                // cycle restarts the walk, and re-crossing the wrap-storm band with amnesia is
+                // how the cliff got re-rolled dozens of times in one session.
+                self.perf.chunk_sig[vs] = sig;
+                self.perf.chunk_cursor[vs] = 0;
+                self.perf.chunk_idx[vs] = 0;
+                self.perf.chunk_last_range[vs] = None;
+                self.perf.chunk_inflight[vs] = None;
+                // A restarted walk's escape bands are a different progression's data.
+            }
+            let cur = self.perf.chunk_cursor[vs];
+            // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
+            // during interaction is the regime the motion-presentation assertions cover —
+            // `--motiontest` fails a run that never produced any (anti-vacuity).
+            if interacting {
+                self.perf.chunk_motion_frames[vs] =
+                    self.perf.chunk_motion_frames[vs].wrapping_add(1);
+            }
+            if crate::diag::trace_on("tile") {
+                crate::diag::trace(
+                    "tile",
+                    format!(
+                        "chunk f={} vs={vs} cur={cur} step={budget_step} gpu_iter={gpu_iter} \
+                         sig=({:x},{},{}x{},{}) interacting={interacting} pin={pin_frame}",
+                        self.perf.frame_idx, sig.0, sig.1, sig.2[0], sig.2[1], sig.3
+                    ),
+                );
+            }
+            if cur < gpu_iter {
+                // ---- PRICE-SERIALIZED WALKING, dispatch half ----
+                // A settled pass may only launch when the previous one has been PRICED
+                // (chunk_inflight is None). While one is in flight, hold the LAST DISPATCHED
+                // range — the (key, tile, chunk, probe) triple stays unchanged, the GPU dedupes
+                // it, zero work runs, and the drain frame this produces is the very measurement
+                // that releases the next pass. Motion frames keep their per-frame cadence
+                // (the cursor resets each frame anyway) and PIN frames their own (§10-§11).
+                let serialized_hold = !interacting
+                    && !pin_frame
+                    && self.perf.chunk_inflight[vs].is_some()
+                    && self.perf.chunk_last_range[vs].is_some();
+                if serialized_hold {
+                    chunk_range = self.perf.chunk_last_range[vs];
+                    chunk_idx = self.perf.chunk_idx[vs];
+                    // Still mid-flight: keep repaints coming so the drain frames actually happen.
+                    self.perf.chunk_pending[vs] = true;
+                } else {
+                    // The REGIONAL license (see chunk_band_license): the walk may spend the
+                    // budget's sizing only where prices have earned it; new territory starts at
+                    // half its predecessor's license, so a cost cliff is met with at most ONE
+                    // modestly-sized unpriced pass — and serialization guarantees its price is
+                    // seen before anything else launches.
+                    let band = chunk_band_of(cur) as u8;
+                    let step = if interacting || pin_frame {
+                        budget_step
+                    } else {
+                        budget_step.min(chunk_band_license(
+                            &self.perf.chunk_bands[vs],
+                            band as usize,
+                            floor.max(256),
+                        ))
+                    };
+                    let end = cur.saturating_add(step).min(gpu_iter);
+                    chunk_range = Some([cur, end]);
+                    chunk_idx = self.perf.chunk_idx[vs];
+                    // Moving frames restart at 0 next frame (the sig reset above); settled frames
+                    // and PIN frames advance until the full count is honoured. A pin keeps
+                    // `chunk_pending` up through its completing pass, so repaints keep coming for
+                    // the adoption frame even if the user's input pauses inside the settle window.
+                    if !interacting || pin_frame {
+                        self.perf.chunk_cursor[vs] = end;
+                        self.perf.chunk_idx[vs] = chunk_idx.wrapping_add(1);
+                        self.perf.chunk_pending[vs] = end < gpu_iter || pin_frame;
+                        // THE COMPLETION EVENT: the walk's whole-ask escape range feeds the
+                        // palette window here, once. The completing pass's own band is still in
+                        // flight (readings lag) — it folds into the NEXT walk's accumulator,
+                        // which at the same view is a head start, not pollution. A restarted
+                        // walk that never completed feeds nothing (its accumulator is cleared
+                        // with the reset above).
+                        // (The walk-COMPLETION feed that used to live here is gone: readings are
+                        // whole-frame now, so they feed the EMA directly at the drain. The event
+                        // it waited for did not reliably fire — see the drain's note.)
+                    }
+                    self.perf.chunk_last_range[vs] = chunk_range;
+                    if !interacting && !pin_frame {
+                        self.perf.chunk_inflight[vs] =
+                            Some((end.saturating_sub(cur), band, 0.0, false));
+                    }
+                    // This frame runs a real bounded pass; pair the measurement with ITS cost.
+                    self.perf.fe_steps_last[vs] =
+                        spx.saturating_mul(ss2).saturating_mul((end - cur).max(1) as u64);
+                    self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
+                }
+            } else {
+                // Progression complete: emit the empty tail range — the (key, tile, chunk) triple
+                // stops changing after one cheap pass-through frame, and the view is served from
+                // the texture like any settled one.
+                chunk_range = Some([gpu_iter, gpu_iter]);
+                chunk_idx = self.perf.chunk_idx[vs];
+            }
+        }
+        // Every mode — this trace is how a frame's cost bound is inspected, and the df32 path is
+        // now budgeted and tileable too, so hiding it there would hide the case that crashed.
+        if crate::diag::trace_on("tile") {
+            let steps = spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64);
+            crate::diag::trace(
+                "tile",
+                format!(
+                    "f={} view={vs} res={}x{} ss={ss} gpu_iter={gpu_iter} steps={:.3e} \
+                     budget={:.3e} reproj={will_reproject} iterates={key_changed} tile={:?} pending={} \
+                     interacting={interacting} can_tile={can_tile} tiling={tiling} \
+                     fresh={}x{} geo={:?} max_tiles={max_tiles} ok={} allowed={:.3e} \
+                     key={view_key:?} allow={} offs={offscreen}",
+                    self.perf.frame_idx,
+                    resolution[0],
+                    resolution[1],
+                    steps as f64,
+                    tdr_steps as f64,
+                    tile,
+                    self.perf.tile_pending[vs],
+                    fresh_res[0],
+                    fresh_res[1],
+                    self.perf.tile_state[vidx].as_ref().and_then(|g| g.geo),
+                    self.perf.fe_budget_ok[vidx],
+                    tdr_allowed as f64,
+                    self.allow_tiled_settle,
+                ),
+            );
+        }
+        let mut probe_fired = false;
+        // Budget-climb probe: on a settled view whose budget hasn't converged and where NOTHING
+        // else will dispatch this frame, force a re-measure. Without this the climb deadlocks at
+        // the resolution floor: one ×1.5 budget step is too small to unfloor a 16×16 frame under a
+        // huge iteration count, so the key never changes → no dispatch → no measurement → the
+        // budget freezes one step off the bootstrap and the view stays pixellated forever (seen
+        // at the 197k× spar with an explicit 4M count after restart — interaction used to mask it
+        // by re-keying every frame, and before beta.65/66 this state usually crashed first).
+        // Each forced dispatch is budget-sized by the shrink above, so it is TDR-safe by
+        // construction; convergence (`fe_budget_ok`) stops the probe and hands off to the settle.
+        if !interacting
+            && !offscreen
+            && !will_reproject
+            && !self.tour_playing()
+            && !key_changed
+            && tile.is_none()
+            && chunk_range.is_none()
+            && !self.perf.fe_budget_ok[vidx]
+            // PACED: at least 3 frames since the last real dispatch. An unpaced probe re-created
+            // the beta.48 death — near convergence each dispatch is ~TDR_BUDGET_MS (400 ms since
+            // 2026-08-16; it was 900 ms when this was written, which is what made it lethal), and
+            // firing one EVERY frame ran ~1 s dispatches back-to-back with zero idle → device lost
+            // at f=68 of the first climb soak. The gap leaves present-able frames between
+            // dispatches (~⅓ duty), which is the profile the converged controller already runs.
+            && self.perf.frame_idx.saturating_sub(self.perf.fe_dispatch_frame[vs]) >= 3
+            // CEILINGED: the probe stops growing the budget at ~2e10 nominal (~60–90 ms real in
+            // the no-skip regime) instead of riding the controller to its target. The
+            // second climb soak PROVED the target is lethal in this regime even paced: at a
+            // 99-sample escaped reference with bla_skip=0 (nominal = real, zero preemption inside
+            // the fullscreen draw), the ×1.5 growth step from ~600 ms landed a ~1.3 s dispatch and
+            // lost the device — the intermittent Event-153 marginality of the beta.48 saga, made
+            // reproducible. Below the ceiling the deadlock is still broken (16×16 → ~84×66 at a
+            // 4M explicit ask, stable and alive); a native-res render of such an ask needs the
+            // chunked path extended to perturbation modes (TODO), not bigger single dispatches.
+            && budget_base(self.perf.fe_budget[vidx], self.perf.bootstrap_steps(vidx))
+                < crate::tunables::cost().explicit_dispatch_cap
+        {
+            self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
+            probe_fired = true;
+            // This frame now runs a real pass under an unchanged key — pair the measurement
+            // with its cost (the same bookkeeping the `key_changed` block below does).
+            self.perf.fe_steps_last[vs] = spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64);
+            self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
+            self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
+        }
+        ChunkPlan { chunk_range, chunk_idx, probe_fired }
+    }
+
+    /// `build_params` stage: present-gating ("prefer detail", stage B) — decide whether
+    /// this frame's display serves the held snapshot while compose work runs underneath,
+    /// arm the settled-cost probe, and choose the color-pass AA widening. Body moved
+    /// verbatim from `build_params`; outs in [`PresentGate`].
+    #[allow(clippy::too_many_arguments)]
+    fn bp_present_gate(
+        &mut self,
+        chunk_mode: RenderMode,
+        chunk_over: bool,
+        chunk_range: Option<[u32; 2]>,
+        probe_fired: bool,
+        tile_work: bool,
+        res_scale: f64,
+        interacting: bool,
+        offscreen: bool,
+        will_reproject: bool,
+        key_changed: bool,
+        gpu_iter: u32,
+        ss: u32,
+        spx: u64,
+        vidx: usize,
+        vs: usize,
+        vsub: usize,
+    ) -> PresentGate {
+        // ---- present-gating ("prefer detail", stage B) ----
+        // While ANY compose work runs on a settled prefer-detail view — a settle tile, an armed
+        // grid's coarse full frame, a chunk range, or a climb-probe re-measure — the display
+        // serves a snapshot of the last complete frame (`hold_copy` takes it on the FIRST such
+        // frame, before the compose pass lands) and the composite builds invisibly underneath.
+        // When nothing composes, the flag drops and the finished frame reveals whole. Interaction
+        // breaks the gate (Stage A's motion reprojection takes over); direct mode is excluded
+        // (cheap and sharp live). Between ss-ramp stages the gate re-engages per stage, so each
+        // REVEALED image is complete at its quality level — a stage-wise progressive reveal.
+        // Settled CHUNKED walks hold-then-reveal BY DEFAULT (`|| chunk_over`), prefer-detail or
+        // not: a walk's progressive display shows nothing until the cursor crosses the view's
+        // minimum dwell — which at a deep view sits near the orbit length, so the screen is
+        // solid interior color for most of the walk, indistinguishable from a hang (field
+        // report: black at "refining 19.8%"). The gate serves the previous complete content
+        // under its captured transform and reveals the finished frame whole; a fresh view with
+        // nothing rendered falls through gracefully (the GPU gate needs `view.rendered`) to the
+        // honest progressive-plus-spinner. Non-chunked tiled settles keep their progressive
+        // default — each landed tile is complete content, which reads as sharpening, not as a
+        // hang.
+        let gate_capable = (self.render_cfg.prefer_detail || chunk_over)
+            && !offscreen
+            && !interacting
+            && !chunk_mode.is_direct();
+        // ⚠`tile_work`, NOT `tile.is_some()`. A COMPLETED grid goes on emitting its final rect
+        // every frame by design, so `tile.is_some()` is true forever after the first grid finishes
+        // — the gate never dropped, the display kept serving the snapshot it took when the grid
+        // ARMED (a coarse, budget-shrunk frame), and the sharp composite sat in the texture unseen.
+        // That is the 2026-08-15 field report in full: "it does the computation but doesn't update
+        // the image; it shows up as soon as I resize slightly smaller" — a resize interacts, and
+        // interaction breaks the gate, revealing the texture that was finished all along. The
+        // chunked path's own term already excludes its completed tail (`e > s`, and the tail emits
+        // `[iter, iter]`); this is the same care, which the tile path was missing.
+        // Pinned by `--selftest live-res` → "a completed tiled settle REVEALS".
+        let composing = tile_work
+            || chunk_range.is_some_and(|[s, e]| e > s)
+            || probe_fired
+            || self.perf.tile_state[vidx].as_ref().is_some_and(|g| match g.geo {
+                None => true, // armed — the coarse arm frame is about to render
+                Some((gres, _, side)) => {
+                    let total =
+                        gres[0].div_ceil(side).max(1) * gres[1].div_ceil(side).max(1);
+                    g.next < total
+                }
+            });
+        let mut pin_gate = false;
+        let (hold_copy, display_hold) = if gate_capable && composing {
+            let fresh = !self.perf.hold_active[vs];
+            self.perf.hold_active[vs] = true;
+            (fresh, true)
+        } else if interacting && (self.perf.pin[vsub].is_some() || self.perf.chunk_dirty[vsub]) {
+            // Pin CONTINUE frames, and any interacting frame while the live texture diverges
+            // from the frozen bookkeeping (an abandoned pin's residue — holds, freezes, pan
+            // reprojections): serve the hold snapshot, never the diverged texture. `fresh` fires
+            // only on the FIRST such frame — an abandoned pin's re-pin must NOT retake the
+            // snapshot over the dirty texture, and `hold_active` staying up is what prevents it.
+            // (A pin START cannot be seen here — it is decided at the commit point after the
+            // freeze verdict, which flips these flags itself.)
+            pin_gate = true;
+            let fresh = !self.perf.hold_active[vs];
+            self.perf.hold_active[vs] = true;
+            (fresh, true)
+        } else {
+            self.perf.hold_active[vs] = false;
+            (false, false)
+        };
+        let bootstrap =
+            self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none();
+        // Armed on EVERY mode. While this was floatexp-only, a df32 view's budget never left the
+        // 4e8 bootstrap, so both bounds above were computed from a number that had measured
+        // nothing — and the shrink they gate was itself floatexp-only, so nothing bound the frame.
+        if !interacting
+            && !will_reproject
+            && !self.tour_playing() // tour frames move every keyframe — not settled-cost data
+            && (key_changed || bootstrap)
+        {
+            // Carry this frame's nominal step count: both arming conditions re-iterate (a changed key
+            // re-runs the iterate; a bootstrap frame is the first settled one after the view moved), so
+            // the interval that resolves the probe prices real GPU work and yields `fe_rate_spm`.
+            let steps = spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64);
+            self.perf.aa_probe[vs] = Some((ss, self.perf.frame_idx, 0.0, steps));
+        }
+        // Color-pass anti-aliasing when true supersampling wasn't affordable: widen the box
+        // to match an upscaled (resolution-reduced) texture, or apply a gentle 2× box when
+        // the budget forced ss=1 on a settled view the user wanted anti-aliased.
+        let aa_filter = if res_scale < 1.0 && !will_reproject {
+            ((1.0 / res_scale).round() as u32).clamp(2, 4)
+        } else if ss == 1 && self.render_cfg.aa > 1 && !interacting {
+            2
+        } else {
+            1
+        };
+        PresentGate { hold_copy, display_hold, pin_gate, aa_filter }
+    }
+
+    /// `build_params` epilogue: the no-reference placeholder guard on the iteration ask,
+    /// the LIVE manifest + per-frame cost stamps + motion-jam accounting, and the final
+    /// [`MandelbrotParams`] assembly. Body moved verbatim from `build_params`.
+    #[allow(clippy::too_many_arguments)]
+    fn bp_finish_params(
+        &mut self,
+        center_df: [f32; 4],
+        julia_c: [f32; 4],
+        span_mantissa: fractadyne_core::SpanMantissa,
+        delta_exp: i32,
+        stops: [[f32; 4]; 8],
+        stop_count: u32,
+        sa: fractadyne_core::SeriesSkip,
+        bla: std::sync::Arc<Vec<[f32; 4]>>,
+        bla_on: u32,
+        ref_offset: RefOffset,
+        reproject: Option<[f32; 2]>,
+        reproject_scale: f32,
+        mode: RenderMode,
+        fractal: FractalKind,
+        julia: bool,
+        eff_iter: u32,
+        gpu_iter: u32,
+        interacting: bool,
+        will_reproject: bool,
+        key_changed: bool,
+        resolution: [u32; 2],
+        ss: u32,
+        spx: u64,
+        tdr_steps: u64,
+        tile: Option<[u32; 4]>,
+        chunk_range: Option<[u32; 2]>,
+        chunk_idx: u32,
+        aa_filter: u32,
+        hold_copy: bool,
+        display_hold: bool,
+        view_id: u32,
+        vi: usize,
+        vs: usize,
+        vidx: usize,
+        vsub: usize,
+    ) -> MandelbrotParams {
+        // Never submit a full-length perturbation iterate without a reference. During the async
+        // cold-start (`ref_pt` None) a FRESH view can't reproject the placeholder — there is no
+        // frozen frame to reproject — so the shader falls through to a real iterate, but with an
+        // empty orbit every pixel runs to `max_iter` against a null reference. At deep zoom with a
+        // large `max_iter` (e.g. 500k) that single GPU frame overruns the Windows GPU-watchdog (TDR)
+        // timeout → the device is lost → wgpu treats it as fatal and the process aborts. Cap the
+        // placeholder to a trivially cheap iterate (a flat interior fill) until the reference lands.
+        // Direct mode has no reference by design, so it keeps its full iteration count.
+        const PLACEHOLDER_ITER_CAP: u32 = 256;
+        let shader_iter = if mode.is_direct() {
+            gpu_iter
+        } else if self.ref_cache[vi].ref_pt.is_none() {
+            gpu_iter.min(PLACEHOLDER_ITER_CAP) // no reference yet → cheap flat placeholder (TDR-safe)
+        } else if self.ref_cache[vi].partial {
+            // Coarse (truncated) reference from a progressive cold start: cap at orbit_len-1 so the
+            // shader never rebases past the short reference into df32-inaccurate territory (which
+            // speckles at extreme depth) — a clean partial image (fast escapers correct, the rest
+            // interior) until the full reference lands and refines it. (Do NOT cap escaped-short
+            // references: those pixels ESCAPE, they don't rebase-glitch — the deep-exterior "tiles"
+            // were the BLA/SA issue, fixed in `finish_reference`. Capping an escaped-short reference
+            // instead collapses every late-escaping BOUNDARY pixel to interior → a hard black border
+            // with no filament detail around a deep minibrot.)
+            gpu_iter.min(self.ref_cache[vi].orbit_len.saturating_sub(1))
+        } else {
+            gpu_iter
+        };
+
+        // LIVE MANIFEST. A frame that re-iterates is the only thing here that can lose the device,
+        // and until now the crash report's `manifest:` line was EMPTY for every live crash — it is
+        // set by the EXPORT request builder, so an on-screen death recorded nothing about the frame
+        // that caused it. State the dispatch: this is the record that says whether a TDR came from
+        // resolution, supersampling, or the iteration budget. Only on re-iterating frames, so a
+        // reproject/cached frame costs nothing.
+        // `sa_skip` and `bla_on` ride along because a chunk window is NOT priced by its width:
+        // `fs_iterate_chunk` seeds `iter = sa_skip`, so every window ending at or below the skip
+        // breaks on its first test and costs ~0 ms (`--chunk-sweep` measures exactly that). Without
+        // the skip stamped, `chunk=[768,1792)` in a death manifest cannot say whether the ladder
+        // that led there was climbing FREE windows — the fast lane doubles the licence on each —
+        // or real ones, and that is the open question in the field device-loss item. `bla_on=0` is
+        // the other silent multiplier: the e100 crash was a pass running an empty tree at 0.04
+        // Gsteps/s beside a 174 Gsteps/s pass in the SAME frame.
+        let sa_skip_eff = usable_sa_skip(sa.skip, shader_iter);
+        if !will_reproject {
+            // A chunked frame's real dispatch is its RANGE, not the full-frame nominal — the
+            // same honesty rule the fe_steps stamp follows. The 985x735 "steps=1.810e11 vs
+            // budget=6.000e10" manifest in crash-1787275348-0 read as a frame that ignored its
+            // budget; it was a budget-sized chunk pass wearing the whole frame's price tag.
+            let steps = match chunk_range {
+                Some([s, e]) => spx
+                    .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                    .saturating_mul(u64::from(e.saturating_sub(s)).max(1)),
+                None => spx
+                    .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                    .saturating_mul(shader_iter.max(1) as u64),
+            };
+            let chunk_note = match chunk_range {
+                Some([s, e]) => format!(" chunk=[{s},{e})"),
+                None => String::new(),
+            };
+            // Per-view, for the LETHAL-BAND line in `update`: that line is ALWAYS logged, so it
+            // is what a field report carries when nobody had a trace enabled. Recorded on
+            // dispatching frames only — a reprojected frame prices nothing.
+            // ⚠Record and report the EFFECTIVE skip — the number actually sent to the shader —
+            // not `sa.skip`. The raw value is what the reference happens to carry; the shader may
+            // be refusing it (see `usable_sa_skip`). A manifest printing the raw one says
+            // `sa_skip=266796` on a frame whose shader was handed 0, which is exactly the question
+            // this line exists to answer. Effective first, raw in parentheses.
+            self.perf.last_sa_skip_v[vs.min(1)] = sa_skip_eff;
+            self.perf.last_res_v[vs.min(1)] = [resolution[0], resolution[1]];
+            let manifest = format!(
+                "LIVE view={vs} mode={} {}x{} ss={ss} iter={shader_iter} (gpu_iter={gpu_iter}, \
+                 eff={eff_iter}, boost={:.2}) steps={steps:.3e}{chunk_note} sa_skip={} (raw {}) \
+                 bla_on={bla_on} budget={tdr_steps:.3e} tile={} orbit_len={} partial={} \
+                 settled={} since_mode_switch={}",
+                mode.to_u32(),
+                resolution[0],
+                resolution[1],
+                self.perf.iter_boost[vs.min(1)],
+                sa_skip_eff,
+                sa.skip,
+                tile.is_some(),
+                self.ref_cache[vi].orbit_len,
+                self.ref_cache[vi].partial,
+                !interacting,
+                match self.perf.mode_switch_frame[vidx] {
+                    u64::MAX => "never".to_string(),
+                    f => format!("{} frames", self.perf.frame_idx.saturating_sub(f)),
+                },
+            );
+            // Also emit it under `req`, the same category the export builder traces its manifest
+            // under. A crash report only ever shows the LAST frame; the field question — did the
+            // chunk ladder climb windows that sat inside the SA skip — is about the frames BEFORE
+            // it, and this is the only way to read them without waiting for another device loss.
+            if crate::diag::trace_on("req") {
+                crate::diag::trace("req", manifest.clone());
+            }
+            crate::diag::set_manifest(manifest);
+        }
+
+        // Record the nominal cost of a frame that will actually re-iterate, so `update` can price the
+        // measurement that comes back for it. Only such frames run the pass, so only they arm a
+        // timestamp — but the SINK must be attached on EVERY frame: the readback lands a couple of
+        // frames later, by which time the view is usually serving cached/reproject frames, and a
+        // sink-less pump would silently discard the reading.
+        // Every mode: the controller in `update` SKIPS a view whose `fe_steps_last` is zero, so
+        // leaving this floatexp-only would have armed df32 probes above that could never resolve
+        // into a budget — measurement in name only.
+        //
+        // Keyed on `key_changed` ALONE. `&& !will_reproject` looked right — a reprojecting frame
+        // re-samples the frozen texture instead of iterating — but it is not what the GPU actually
+        // dispatches on, and on a view that reaches its final state during the reproject window it
+        // meant the number was NEVER written: measured at the 6.6e18× df32 view as
+        // `no reading (bits=true, ms=0.28, steps=0)` — a real timing thrown away for want of the
+        // step count to price it against, on every frame, forever. With nothing to price, the
+        // budget stays at the bootstrap floor, and once that floor drives the resolution shrink the
+        // view is pinned at 205x162 upscaled to a 1431x1134 panel. The timing itself only ever
+        // arrives from a dispatch that really ran, so pairing it with the last key change is safe;
+        // a stale pairing costs one mis-priced measurement, which the ratio search corrects.
+        // ⚠NOT on chunked frames. The chunk block has already paired this frame's dispatch
+        // with its RANGE cost, and overwriting that with the full-frame count priced readings
+        // against ~250× too many steps — Radeon autodive, 2026-08-20 (crash-1787261212-0): the
+        // saved session booted DEEP, reference installs re-keyed a chunked dive frame every
+        // ~300 ms, each stamped 1.838e11 against a ~210 ms bounded pass, and the budget rocketed
+        // 6.8e9 → 6.0e10 in three seconds on rates the hardware never produced — every margin on
+        // the Home glide's shallow side was then sized from that fantasy, and the device died at
+        // the re-dive. The stamp still applies to un-chunked frames (R12: key on `key_changed`
+        // alone, never `!will_reproject`); a chunked frame's completed-tail re-key goes unstamped
+        // on purpose — one stale pairing costs one mis-priced measurement, which the ratio
+        // search corrects, exactly as the paragraph above records.
+        if key_changed && chunk_range.is_none() {
+            self.perf.fe_steps_last[vs] = spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64);
+            self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
+            self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
+        }
+        // MOTION-JAM ACCOUNTING — one site, after every dispatch path has stamped its cost.
+        // Whatever shape this frame dispatched (full frame, settle tile, chunk range, climb
+        // probe), `fe_dispatch_frame` says it ran and `fe_steps_last` says what it cost; count it
+        // toward the unpriced backlog when it is full-size against the learned budget. A consumed
+        // full-size reading retires exactly ONE dispatch in `update` — see `Perf::unpriced_full`
+        // for why any looser credit (the original clear-on-any-reading) re-arms the gate off
+        // stale small readings and lets monsters stack anyway (crash-1787275348-0). A
+        // jam-clamped frame stays under the threshold by construction, so a jam never counts
+        // itself.
+        if !will_reproject && self.perf.fe_dispatch_frame[vs] == self.perf.frame_idx {
+            let learned = budget_base(self.perf.fe_budget[vs], self.perf.bootstrap_steps(vs));
+            if motion_jam_counts(self.perf.fe_steps_last[vs], learned) {
+                self.perf.full_inflight[vs] = self.perf.full_inflight[vs].saturating_add(1);
+                // Retirement is a REAL completion signal, not a reading: `update` registers a
+                // `Queue::on_submitted_work_done` callback for this dispatch on the next frame
+                // (after eframe has submitted this one) and decrements when it fires. Two
+                // reading-based credits were tried and both were unsound — see the field doc on
+                // `Perf::full_inflight` for the incidents.
+                self.perf.full_reg_pending[vs] = self.perf.full_reg_pending[vs].saturating_add(1);
+                let n = self.perf.full_inflight[vs];
+                if interacting && n as u64 == crate::tunables::cost().motion_unpriced_max {
+                    // Logged, not trace-gated (the lethal-band rule): if the field needed this
+                    // gate, the log must already say so. But THROTTLED to one line per 5 s —
+                    // episodes recur every few frames while a heavy dive outruns its readings,
+                    // and a line per episode buried a session under ~1,300 of them.
+                    let due = self
+                        .perf
+                        .jam_log_at
+                        .is_none_or(|at| at.elapsed().as_secs_f64() > 5.0);
+                    if due {
+                        self.perf.jam_log_at = Some(std::time::Instant::now());
+                        crate::diag::log_line(
+                            "render",
+                            &format!(
+                                "motion jam: {n} full-size dispatches unpriced (budget {:.3e}) — motion frames dispatch at bootstrap until a price returns",
+                                learned as f64
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        // The sink is what carries the GPU timestamp back at all. Attaching it only on floatexp was
+        // the root of the whole floatexp-only budget: with no sink there is no measurement, so no
+        // budget, so nothing for the shrink or the tiled settle to size a frame against — and those
+        // were then gated on `is_fe` to match. Every mode measures now.
+        let iterate_ms = Some(self.perf.iterate_ms[vs].clone());
+        let iterate_steps = Some(self.perf.iterate_steps[vs].clone());
+        // The GPU self-arms the maxiter-fraction readback on full-frame iterates and computes the
+        // fraction itself (count and pixel denominator always from the same frame).
+        let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
+        let norm_range = Some(self.perf.norm_sink[vs.min(1)].clone());
+        let grad_range = Some(self.perf.grad_sink[vs.min(1)].clone());
+        let work_counters = Some(self.perf.work_sink[vs.min(1)].clone());
+        // LIVE palette auto-normalization (see `live_norm_cycle_offset`): when the frame's escaped
+        // smooth-iter range is huge, a fixed cycle wraps the palette thousands of times between
+        // adjacent pixels and a CORRECT dense escape field reads as speckle "noise pools" (the
+        // corpus-14/15 aliasing, now surfacing live since the adaptive budget resolves these
+        // fields). Smooth method only; range-thresholded so ordinary views keep classic coloring.
+        let nm = self.live_norm_cycle_offset(vs).unwrap_or(NormMap {
+            cycle: self.color_cycle(),
+            offset: self.coloring.offset,
+            mode: 0,
+            lo: 0.0,
+        });
+        let (cycle_eff, offset_eff) = (nm.cycle, nm.offset);
+
+        // This dispatch's nominal cost: the TILE's pixels under a settle grid, the whole frame
+        // otherwise; a CHUNKED frame's cost is the whole frame over its iteration RANGE, not the
+        // full count. Travels with the pass so the timing comes back already paired.
+        let nominal_steps = match (chunk_range, tile) {
+            (Some([cs, ce]), _) => spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul((ce.saturating_sub(cs)).max(1) as u64),
+            (None, Some(r)) => (r[2] as u64)
+                .saturating_mul(r[3] as u64)
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64),
+            (None, None) => spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64),
+        };
+        // Display-honesty tripwire (`--motiontest` A3): an interacting frame whose live texture
+        // diverges from the frozen bookkeeping must be serving the hold snapshot. If this ever
+        // counts, some path displayed under-iterated content — the exact defect the pin exists to
+        // prevent. (Pan-reproject frames display the snapshot too; their transform can lag the
+        // pan by design — a recorded edge, not a defect.)
+        if interacting && self.perf.chunk_dirty[vsub] && !display_hold {
+            self.perf.dirty_shown[vsub] = self.perf.dirty_shown[vsub].wrapping_add(1);
+        }
+        let params = MandelbrotParams {
+            iterate_ms,
+            iterate_steps,
+            nominal_steps,
+            maxiter_count,
+            norm_range,
+            grad_range,
+            work_counters,
+            tile,
+            chunk_range,
+            chunk_idx,
+            probe_nonce: self.perf.probe_nonce[vs],
+            orbit: self.ref_cache[vi].orbit.clone(),
+            orbit_id: self.ref_cache[vi].orbit_id,
+            orbit_len: self.ref_cache[vi].orbit_len,
+            bla,
+            bla_on,
+            ref_offset,
+            delta_exp,
+            sa_skip: sa_skip_eff,
+            sa_a: sa.a,
+            sa_a_exp: sa.a_exp,
+            sa_b: sa.b,
+            sa_b_exp: sa.b_exp,
+            sa_c: sa.c,
+            sa_c_exp: sa.c_exp,
+            center: center_df,
+            julia_c,
+            mode: mode.to_u32(),
+            formula: fractal.formula_id(),
+            julia: julia as u32,
+            span_mantissa,
+            max_iter: shader_iter,
+            cycle: cycle_eff,
+            offset: offset_eff,
+            norm_mode: nm.mode,
+            norm_lo: nm.lo,
+            stop_count,
+            stops,
+            light: self.effects.light as u32,
+            light_angle: self.effects.light_angle,
+            light_height: self.effects.light_height,
+            de_on: self.effects.de as u32,
+            de_strength: self.effects.de_strength,
+            de_width: self.effects.de_width,
+            de_phase: self.effects.de_phase,
+            color_method: self.coloring.color_method.to_u32(),
+            stripe_freq: self.coloring.stripe_freq,
+            trap_type: self.coloring.trap_type.to_u32(),
+            aa_filter,
+            interior_col: self.interior_color(),
+            resolution,
+            ss,
+            reproject: reproject.is_some() as u32,
+            // A gated frame's DISPLAY samples the hold snapshot with its transform; reproject
+            // frames keep their own. When the two co-assert — a freeze or pan while a PINNED
+            // refresh (or its dirty residue) gates the display — the hold wins: the snapshot is
+            // the last COMPLETE frame, and the live texture it would otherwise reproject is
+            // mid-composition. (The settled gate never co-asserts: it requires a settled view.)
+            uv_offset: if display_hold {
+                [self.perf.hold_uv[vs][0], self.perf.hold_uv[vs][1]]
+            } else {
+                reproject.unwrap_or([0.0, 0.0])
+            },
+            uv_scale: if display_hold { self.perf.hold_uv[vs][2] } else { reproject_scale },
+            hold_copy,
+            display_hold,
+            // Guided-tour spotlight (main view only), anchored to its fractal coordinate.
+            vignette: if view_id == 0 {
+                self.playback
+                    .as_ref()
+                    .map(|pb| crate::scripting::vignette_for(&pb.spotlights, &self.viewport, pb.cur_t))
+                    .unwrap_or_default()
+            } else {
+                Default::default()
+            },
+            view_id,
+        };
+        // Record whether THIS frame really re-iterates (vs reprojecting a held frame) — the
+        // motion-res controller adapts only on the interval that FOLLOWS a real frame, since
+        // reprojection frames are ~free and carry no signal about the iterate cost (adapting on
+        // them was the mixed-signal bug that pushed motion res to native between refreshes).
+        self.perf.prev_real[vi.min(1)] = params.reproject == 0;
+        params
+    }
+
+    /// Build the GPU params for one fractal view, computing the perturbation
+    /// reference (deep Mandelbrot) or selecting the direct df32 path. Shared by the
+    /// single view and both panels of the dual view.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn build_params(
+        &mut self,
+        center_bf: [fractadyne_core::BigFloat; 2],
+        center: (f64, f64),
+        span: (fractadyne_core::FloatExp, fractadyne_core::FloatExp),
+        magnification: f64,
+        log2mag: f64,
+        fractal: FractalKind,
+        julia: bool,
+        eff_iter: u32,
+        interacting: bool,
+        // Anti-alias supersampling target for this frame (1 while moving; ramps up on settle via the
+        // caller's progressive-settle stages). Clamped to the GPU texture limit below.
+        aa_target: u32,
+        resolution: [u32; 2],
+        view_id: u32,
+        // Some(uv_offset) → pan reprojection: reuse the cached orbit + frozen iteration texture
+        // and translate it in the color pass (no bignum recompute, no re-iterate). Only honoured
+        // at deep zoom (mode ≠ 1) once a reference exists for this view.
+        reproject: Option<[f32; 2]>,
+    ) -> MandelbrotParams {
+        // ---- pinned refresh, pre-step (option C, design/mode2-chunking.md §10-§11) ----
+        // While a chunked refresh is PINNED, this frame renders the pinned view — the view
+        // parameters are shadowed below, so every derivation downstream (offsets, SA/BLA gating,
+        // step math) is exactly what it would be if the user sat at the pinned view — while the
+        // display keeps serving the hold snapshot under a transform that tracks the LIVE view.
+        // The pin's verdict runs FIRST, on the live inputs: `Adopt` must land before `reuse_hold`
+        // reads `frozen_l2`, and only `Continue` licenses the shadowing.
+        let vsub = (view_id as usize).min(1);
+        // The panel-size PARAM, saved before `resolution` is rebound downstream: the pin captures
+        // it, and any change abandons (a resize re-scales everything derived from it).
+        let panel_res = resolution;
+        // Live-view values the display transform needs on pin frames (after the shadowing, the
+        // locals describe the pinned view). The delta_exp/mantissa/precision trio is derived from
+        // the LIVE span so the hold transform's offsets stay O(1) at any depth.
+        let live_l2 = log2mag;
+        let (live_de, live_smx, live_smy, live_prec) = {
+            let de = if span.0.m == 0.0 { 0 } else { span.0.log2().floor() as i32 };
+            let s = -(de as f64);
+            (
+                de,
+                span.0.mul_pow2(s).to_f64(),
+                span.1.mul_pow2(s).to_f64(),
+                fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64),
+            )
+        };
+        let mut pin_frame = false;
+        if self.perf.pin[vsub].is_some() {
+            let verdict = {
+                let pin = self.perf.pin[vsub].as_ref().unwrap();
+                // Pan drift in LIVE view-spans. The shared exponent cancels in the ratio, and the
+                // live values keep both mantissas O(1), so this is depth-safe.
+                let pan_spans = if interacting {
+                    let dx = fractadyne_core::ref_offset_mantissa(
+                        &center_bf[0], &pin.center_bf[0], live_de, live_prec,
+                    ) / live_smx;
+                    let dy = fractadyne_core::ref_offset_mantissa(
+                        &center_bf[1], &pin.center_bf[1], live_de, live_prec,
+                    ) / live_smy;
+                    dx.abs().max(dy.abs())
+                } else {
+                    0.0 // the verdict stops on `interacting` before this can matter
+                };
+                let rc = &self.ref_cache[vsub];
+                pin_verdict(
+                    pin,
+                    &PinInputs {
+                        interacting,
+                        caller_reproject: reproject.is_some(),
+                        drift_oct: (log2mag - pin.log2mag).abs(),
+                        pan_spans,
+                        orbit_id: rc.orbit_id,
+                        orbit_len: rc.orbit_len,
+                        panel: panel_res,
+                        frame_idx: self.perf.frame_idx,
+                        cursor: self.perf.chunk_cursor[vsub],
+                    },
+                )
+            };
+            match verdict {
+                PinVerdict::Adopt => {
+                    let pin = self.perf.pin[vsub].take().unwrap();
+                    // ADOPT-ON-COMPLETION: the last pass landed, so the live G-buffer holds a
+                    // COMPLETE render of the pinned view. Latch it as the frozen frame — the
+                    // write every pin frame deferred — and let this frame proceed live: small
+                    // drift → `reuse_hold` reprojects the new texture (the reveal, through the
+                    // ordinary freeze path — a proven drop, not a new gate); large drift → the
+                    // next pin starts this same frame, snapshotting the fresh texture.
+                    self.ref_cache[vsub].frozen_center = Some(pin.center_bf.clone());
+                    self.ref_cache[vsub].frozen_l2 = pin.log2mag;
+                    self.ref_cache[vsub].frozen_upp_l2 = pin.upp_l2;
+                    self.ref_cache[vsub].frozen_at = Some(Instant::now());
+                    self.perf.chunk_dirty[vsub] = false;
+                    self.perf.adopt_complete[vsub] =
+                        self.perf.adopt_complete[vsub].wrapping_add(1);
+                    if crate::diag::trace_on("tile") {
+                        crate::diag::trace(
+                            "tile",
+                            format!(
+                                "pin-adopt v={vsub} f={} ask={} lag_oct={:.2}",
+                                self.perf.frame_idx,
+                                pin.gpu_iter,
+                                (live_l2 - pin.log2mag).abs()
+                            ),
+                        );
+                    }
+                }
+                PinVerdict::Stop(reason) => {
+                    self.perf.pin[vsub] = None;
+                    // The dirty residue survives most abandons (the texture still diverges from
+                    // the frozen bookkeeping, and the display must keep serving the snapshot
+                    // until something complete lands) — except at the settle edge, where the
+                    // settled path recomposes and its progressive partials are the accepted
+                    // settled UX.
+                    if reason == PinStop::Settled {
+                        self.perf.chunk_dirty[vsub] = false;
+                    }
+                    if crate::diag::trace_on("tile") {
+                        crate::diag::trace(
+                            "tile",
+                            format!(
+                                "pin-abandon v={vsub} f={} reason={reason:?} cur={} ask={}",
+                                self.perf.frame_idx,
+                                self.perf.chunk_cursor[vsub],
+                                self.perf.chunk_sig[vsub].1
+                            ),
+                        );
+                    }
+                }
+                PinVerdict::Continue => pin_frame = true,
+            }
+        }
+        // The live center survives only on pin frames (the hold transform needs it); everything
+        // else the transform needs was derived above.
+        let live_center_bf = if pin_frame { Some(center_bf.clone()) } else { None };
+        let (center_bf, center, span, magnification, log2mag, eff_iter, aa_target, pin_geom) =
+            if pin_frame {
+                let p = self.perf.pin[vsub].as_ref().unwrap();
+                (
+                    p.center_bf.clone(),
+                    p.center,
+                    p.span,
+                    p.magnification,
+                    p.log2mag,
+                    p.eff_iter,
+                    1,
+                    Some((p.resolution, p.ss, p.gpu_iter)),
+                )
+            } else {
+                (center_bf, center, span, magnification, log2mag, eff_iter, aa_target, None)
+            };
+        let (stops, stop_count) = self.active_stops();
+        let (cx, cy) = center;
+        // Extended-range scale → shared base-2 exponent + O(1) span mantissas, so nothing
+        // underflows/overflows past ~1e308× (the per-pixel δ stays O(1); the GPU re-applies
+        // the exponent). `span.0`/`span.1` are FloatExp, valid at any depth.
+        let delta_exp = if span.0.m == 0.0 { 0 } else { span.0.log2().floor() as i32 };
+        let sm = -(delta_exp as f64);
+        let span_mantissa =
+            fractadyne_core::SpanMantissa::new(span.0.mul_pow2(sm).to_f64(), span.1.mul_pow2(sm).to_f64());
+
+        let BudgetPlan { px, is_pert, budget, iter_cap, gpu_iter } = self.bp_frame_budget(
+            magnification,
+            log2mag,
+            fractal,
+            julia,
+            eff_iter,
+            interacting,
+            resolution,
+            view_id,
+        );
         // A pinned refresh renders the ASK captured at pin time: every pass of one progression
         // must target the same count (the resume contract). The inputs above are all pinned or
         // interaction-stable, so this usually re-derives the same number — forcing it turns that
@@ -4156,463 +5095,49 @@ impl FractadyneApp {
                 self.perf.tile_pending[vidx] = false;
             }
         }
-        // ---- iteration-range tiling (direct + df32-perturbation; see `chunk_over` above) ----
-        // One bounded resumable pass over [cursor, cursor+step) per frame at FULL resolution; the
-        // cursor advances while the view holds still and restarts on any view change or
-        // interaction. Escaped pixels appear progressively (a moving frame shows everything that
-        // escapes within one step — visually what a capped render would show); a settled view runs
-        // the cursor to max_iter and is then EXACT, honouring the explicit count across frames
-        // instead of in one watchdog-tripping dispatch.
-        let mut chunk_range: Option<[u32; 2]> = None;
-        let mut chunk_idx = 0u32;
-        self.perf.chunk_pending[vs] = false;
-        self.perf.chunk_governed[vs] = chunk_over;
-        if chunk_over {
-            // The iteration axis owns this compose (see the eligibility above): a settle grid
-            // must not stay ARMED underneath it — its tiles can never form (emission requires
-            // `!chunk_over`), and an armed-forever grid pins the present gate's `composing` true,
-            // which is the beta.103 never-reveals shape through a third door. Caught by the
-            // "a completed tiled settle REVEALS" selftest the moment the eligibility widened.
-            if !interacting {
-                self.perf.tile_state[vidx] = None;
-                self.perf.tile_pending[vidx] = false;
-            }
-            let ss2 = (ss as u64).saturating_mul(ss as u64);
-            // The 256-iteration floor keeps a MEASURED progression from thrashing in slivers, but
-            // an UNMEASURED opening dispatch must honour the bootstrap bound at ANY panel size —
-            // floor × a large panel exceeds it severalfold (1445×1134 × 256 = 4.195e8 vs the 4e8
-            // bootstrap, caught by the "unmeasured budget bounds the FIRST dispatch" selftest; a
-            // 4K panel would be 5×). Until a measurement exists the plain division is the bound;
-            // the floor applies from the first measured budget onward.
-            // ⭐⭐**A WALL-AWARE FLOOR, AND IT CAN ONLY EVER GO LOWER THAN 256.**
-            //
-            // `budget_step` below is wall-derived (it divides a measured step budget by the pixel
-            // count), so the controller already sizes itself from evidence — right up until this
-            // floor overrides it. And the floor binds precisely when `budget_step` wants to go
-            // BELOW 256, i.e. exactly when the measurement is saying "this region is hostile, go
-            // smaller". A fixed ITERATION count cannot bound WALL time, because cost per iteration
-            // varies by orders of magnitude between regions.
-            //
-            // ⛔The 256 rested on a claim that has gone stale: "~256 iterations is ~70 ms even at
-            // the worst rate ever measured on this hardware" (see `chunk_band_license`). The
-            // 2026-08-22 field loss ran **1024 iterations in 1216 ms** — 1.19 ms/iteration — so 256
-            // there is **~304 ms**, not ~70, and a region only **3× more hostile than that** makes
-            // the floor ITSELF lethal (900 ms / 256 = 3.5 ms per iteration).
-            //
-            // So derive it from the worst rate actually measured for this mode (`mode_rate` is
-            // kept as a running MINIMUM, i.e. already pessimistic) and take whichever is SMALLER.
-            // ⚠`min`, deliberately: in a benign region the computed value is far above 256 and
-            // this changes nothing, so the blast radius is confined to regions whose own
-            // measurements say the old floor was too big. It can never raise the floor, never
-            // enlarge a pass, and never slow a healthy walk.
-            let floor = if self.perf.fe_budget[vidx] == 0 {
-                1
-            } else {
-                let affordable = self.perf.worst_rate_steps_per_ms(vidx).map(|rate| {
-                    // steps/ms ÷ steps-per-iteration = iterations per ms, times the target wall.
-                    let per_iter = spx.saturating_mul(ss2).max(1) as f64;
-                    ((crate::tunables::cost().tdr_budget_ms * rate) / per_iter) as u32
-                });
-                affordable.map_or(256, |a| a.clamp(1, 256))
-            };
-            // ---- PRICE-SERIALIZED WALKING, pricing half (design/mode2-chunking.md §12) ----
-            // The settled walk holds AT MOST ONE unpriced pass in flight. The in-flight pass
-            // accumulates every following frame interval until a frame comes back quicker than
-            // CHUNK_DRAIN_DT_MS — with one pass in flight, a quick present is PROOF the queue
-            // drained — and that sum is the pass's wall price (conservative: it includes present
-            // overhead, which is the safe direction). This is the signal a saturated queue
-            // cannot silence; the fatal sessions' timestamps were silent precisely because
-            // saturation never let them arm.
-            let target_ms = if self.render_cfg.auto_iter {
-                crate::tunables::cost().tdr_budget_ms
-            } else {
-                crate::tunables::cost().tdr_explicit_budget_ms
-            };
-            if !interacting && !pin_frame {
-                if let Some((size, band, acc, shed)) = self.perf.chunk_inflight[vs] {
-                    let acc = acc + self.perf.last_dt_ms.max(0.0);
-                    // ⭐⭐WALL-CLOCK RETREAT. Until this existed the ledger learned NOTHING about a
-                    // pass until it drained or hit the wedge backstop — and the backstop is
-                    // `target × 60`, i.e. ~24 s at a 400 ms target, long after a device would be
-                    // gone. That is the gap the 2026-08-22 field loss fell through: the release
-                    // gate below wants a QUICK PRESENT as proof the queue drained, and a queue on
-                    // its way to losing the device never produces one, so the one pass whose price
-                    // would shed the licence is exactly the pass that cannot be priced.
-                    //
-                    // Accumulated wall is a conservative LOWER BOUND on what this pass has already
-                    // cost: if `acc` has reached the lethal band the pass has *already* been that
-                    // expensive, no drain required to know it. So shed the ledger on that alone.
-                    //
-                    // ⚠SHED, DO NOT RELEASE. The next dispatch stays blocked until the genuine
-                    // drain below — "releasing the next dispatch onto a pass that is merely SLOW is
-                    // how a 10 s single got company on its way to the TDR", and that reasoning is
-                    // untouched. This only updates what the NEXT pass would be allowed to ask for.
-                    // ⚠LATCHED (`shed`) so a pass sitting in the band for many frames sheds once
-                    // rather than re-shedding every frame — the ledger is already at the floor.
-                    let shed = if !shed && acc >= crate::tunables::cost().tdr_lethal_ms {
-                        chunk_band_retreat(&mut self.perf.chunk_bands[vs]);
-                        crate::diag::log_line(
-                            "render",
-                            &format!(
-                                "⚠IN-FLIGHT PASS IN THE LETHAL BAND: view={vs} size={size} band={band} acc={acc:.0}ms (band ≥{:.0}ms, no drain yet) — chunk-band licences shed",
-                                crate::tunables::cost().tdr_lethal_ms
-                            ),
-                        );
-                        true
-                    } else {
-                        shed
-                    };
-                    // ⚠The backstop is a WEDGE escape only (a compositor that never goes
-                    // idle), far beyond any survivable pass — releasing the next dispatch onto
-                    // a pass that is merely SLOW is how a 10 s single got company on its way
-                    // to the TDR. The genuine release is the quick frame.
-                    if self.perf.last_dt_ms < crate::tunables::CHUNK_DRAIN_DT_MS
-                        || acc > target_ms * 60.0
-                    {
-                        // Drained (or the absolute backstop, so a machine whose presents never
-                        // come back quick cannot wedge the walk): price the pass, feed both
-                        // ledgers, release the next dispatch.
-                        self.perf.chunk_pass_dt[vs] = acc;
-                        chunk_band_update(
-                            &mut self.perf.chunk_bands[vs],
-                            band as usize,
-                            size,
-                            acc,
-                            target_ms,
-                        );
-                        self.perf.chunk_inflight[vs] = None;
-                    } else {
-                        self.perf.chunk_inflight[vs] = Some((size, band, acc, shed));
-                    }
-                }
-            } else {
-                // Motion abandons the walk (the cursor resets below); a stale in-flight record
-                // must not price itself against unrelated frames after the next settle.
-                self.perf.chunk_inflight[vs] = None;
-            }
-            // Wall-clock pass pricing: a settled pass is the budget scaled by what the previous
-            // pass actually cost. Motion and pin passes keep the budget's own sizing (their
-            // cadence is priced by the retreat as before).
-            let pace = if interacting || pin_frame {
-                1.0
-            } else {
-                chunk_step_factor(self.perf.chunk_pass_dt[vs], target_ms)
-            };
-            // Per-frame iteration step that keeps this frame's dispatch inside the budget.
-            // ⚠`tdr_steps` — ONE dispatch budget — NOT `tdr_allowed`. The allowance multiplies
-            // the budget by `max_tiles` on a settled tiling-eligible frame because TILES spend it
-            // as many bounded dispatches; a chunk pass is ONE submission, and sizing it from the
-            // allowance dispatched single passes worth exactly 16 budgets — field device loss
-            // 2026-08-19 (crash-1787158916-0, RTX 3080, minibrot interior at an explicit 4M,
-            // settled with the budget still CLIMBING so the allowance was pinned at
-            // TDR_MAX_TILES): 9.600e11-step passes against a 6.000e10 budget, 1136 ms and 912 ms
-            // lethal-band readings, and the emergency retreat could not help because the next
-            // pass was again 16× the retreated budget. `bla_skip` collapsing to 0 at the interior
-            // made nominal cost real cost at exactly that moment. Pinned by the "a settled
-            // chunked pass stays inside ONE dispatch budget" selftest.
-            let budget_step = (((tdr_steps as f64 * pace) as u64
-                / spx.saturating_mul(ss2).max(1)) as u32)
-                .clamp(floor, gpu_iter.max(floor));
-            // View signature: anything that shapes the render restarts the progression.
-            // ⚠The REFERENCE LENGTH is part of it. `orbit_len` feeds both the per-pass BLA table
-            // (mode 2 rebuilds it every pass) and the `ref_n + 1 >= orbit_len` rebase trigger, so a
-            // reference extended mid-settle — the e72/e82/e94 shape, and mode 2 is exactly where
-            // that happens — would have a pass resume `ref_n` against a DIFFERENT orbit than the
-            // pass that stored it. The install runs later in this frame than this check, so the
-            // change is seen one frame late; that is harmless, because a sig change resets the
-            // cursor to 0 and the offending pass's state is discarded rather than resumed.
-            let sig = (
-                center.0.to_bits()
-                    ^ center.1.to_bits().rotate_left(17)
-                    ^ magnification.to_bits().rotate_left(34)
-                    ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51),
+        let ChunkPlan { chunk_range, chunk_idx, probe_fired } = self.bp_chunk_tiling(
+            center,
+            magnification,
+            interacting,
+            resolution,
+            gpu_iter,
+            ss,
+            spx,
+            tdr_steps,
+            tdr_allowed,
+            max_tiles,
+            chunk_over,
+            pin_frame,
+            key_changed,
+            tile,
+            will_reproject,
+            can_tile,
+            tiling,
+            fresh_res,
+            view_key,
+            offscreen,
+            vidx,
+            vs,
+        );
+        let PresentGate { mut hold_copy, mut display_hold, mut pin_gate, aa_filter } =
+            self.bp_present_gate(
+                chunk_mode,
+                chunk_over,
+                chunk_range,
+                probe_fired,
+                tile_work,
+                res_scale,
+                interacting,
+                offscreen,
+                will_reproject,
+                key_changed,
                 gpu_iter,
-                resolution,
                 ss,
+                spx,
+                vidx,
+                vs,
+                vsub,
             );
-            if pin_frame {
-                // The pin owns the progression: every sig input above is captured, so the sig is
-                // constant by construction, and the interacting reset below — the §10 defect — is
-                // bypassed. The freeze verdict cannot flip a pin frame into a reprojection (the
-                // pre-step abandons on every input that could: orbit change, caller reproject,
-                // drift, pan, panel), so the cursor advance further down is safe — and
-                // belt-checked at the commit point after the freeze anyway.
-            } else if self.perf.chunk_sig[vs] != sig || interacting {
-                if self.perf.chunk_sig[vs] != sig {
-                    // Another view/ask: its prices describe another walk entirely.
-                    self.perf.chunk_bands[vs] = [0; crate::tunables::CHUNK_BANDS];
-                    self.perf.chunk_pass_dt[vs] = 0.0;
-                }
-                // ⭐The band ledger SURVIVES a same-sig restart on purpose: every hold/refresh
-                // cycle restarts the walk, and re-crossing the wrap-storm band with amnesia is
-                // how the cliff got re-rolled dozens of times in one session.
-                self.perf.chunk_sig[vs] = sig;
-                self.perf.chunk_cursor[vs] = 0;
-                self.perf.chunk_idx[vs] = 0;
-                self.perf.chunk_last_range[vs] = None;
-                self.perf.chunk_inflight[vs] = None;
-                // A restarted walk's escape bands are a different progression's data.
-            }
-            let cur = self.perf.chunk_cursor[vs];
-            // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
-            // during interaction is the regime the motion-presentation assertions cover —
-            // `--motiontest` fails a run that never produced any (anti-vacuity).
-            if interacting {
-                self.perf.chunk_motion_frames[vs] =
-                    self.perf.chunk_motion_frames[vs].wrapping_add(1);
-            }
-            if crate::diag::trace_on("tile") {
-                crate::diag::trace(
-                    "tile",
-                    format!(
-                        "chunk f={} vs={vs} cur={cur} step={budget_step} gpu_iter={gpu_iter} \
-                         sig=({:x},{},{}x{},{}) interacting={interacting} pin={pin_frame}",
-                        self.perf.frame_idx, sig.0, sig.1, sig.2[0], sig.2[1], sig.3
-                    ),
-                );
-            }
-            if cur < gpu_iter {
-                // ---- PRICE-SERIALIZED WALKING, dispatch half ----
-                // A settled pass may only launch when the previous one has been PRICED
-                // (chunk_inflight is None). While one is in flight, hold the LAST DISPATCHED
-                // range — the (key, tile, chunk, probe) triple stays unchanged, the GPU dedupes
-                // it, zero work runs, and the drain frame this produces is the very measurement
-                // that releases the next pass. Motion frames keep their per-frame cadence
-                // (the cursor resets each frame anyway) and PIN frames their own (§10-§11).
-                let serialized_hold = !interacting
-                    && !pin_frame
-                    && self.perf.chunk_inflight[vs].is_some()
-                    && self.perf.chunk_last_range[vs].is_some();
-                if serialized_hold {
-                    chunk_range = self.perf.chunk_last_range[vs];
-                    chunk_idx = self.perf.chunk_idx[vs];
-                    // Still mid-flight: keep repaints coming so the drain frames actually happen.
-                    self.perf.chunk_pending[vs] = true;
-                } else {
-                    // The REGIONAL license (see chunk_band_license): the walk may spend the
-                    // budget's sizing only where prices have earned it; new territory starts at
-                    // half its predecessor's license, so a cost cliff is met with at most ONE
-                    // modestly-sized unpriced pass — and serialization guarantees its price is
-                    // seen before anything else launches.
-                    let band = chunk_band_of(cur) as u8;
-                    let step = if interacting || pin_frame {
-                        budget_step
-                    } else {
-                        budget_step.min(chunk_band_license(
-                            &self.perf.chunk_bands[vs],
-                            band as usize,
-                            floor.max(256),
-                        ))
-                    };
-                    let end = cur.saturating_add(step).min(gpu_iter);
-                    chunk_range = Some([cur, end]);
-                    chunk_idx = self.perf.chunk_idx[vs];
-                    // Moving frames restart at 0 next frame (the sig reset above); settled frames
-                    // and PIN frames advance until the full count is honoured. A pin keeps
-                    // `chunk_pending` up through its completing pass, so repaints keep coming for
-                    // the adoption frame even if the user's input pauses inside the settle window.
-                    if !interacting || pin_frame {
-                        self.perf.chunk_cursor[vs] = end;
-                        self.perf.chunk_idx[vs] = chunk_idx.wrapping_add(1);
-                        self.perf.chunk_pending[vs] = end < gpu_iter || pin_frame;
-                        // THE COMPLETION EVENT: the walk's whole-ask escape range feeds the
-                        // palette window here, once. The completing pass's own band is still in
-                        // flight (readings lag) — it folds into the NEXT walk's accumulator,
-                        // which at the same view is a head start, not pollution. A restarted
-                        // walk that never completed feeds nothing (its accumulator is cleared
-                        // with the reset above).
-                        // (The walk-COMPLETION feed that used to live here is gone: readings are
-                        // whole-frame now, so they feed the EMA directly at the drain. The event
-                        // it waited for did not reliably fire — see the drain's note.)
-                    }
-                    self.perf.chunk_last_range[vs] = chunk_range;
-                    if !interacting && !pin_frame {
-                        self.perf.chunk_inflight[vs] =
-                            Some((end.saturating_sub(cur), band, 0.0, false));
-                    }
-                    // This frame runs a real bounded pass; pair the measurement with ITS cost.
-                    self.perf.fe_steps_last[vs] =
-                        spx.saturating_mul(ss2).saturating_mul((end - cur).max(1) as u64);
-                    self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
-                }
-            } else {
-                // Progression complete: emit the empty tail range — the (key, tile, chunk) triple
-                // stops changing after one cheap pass-through frame, and the view is served from
-                // the texture like any settled one.
-                chunk_range = Some([gpu_iter, gpu_iter]);
-                chunk_idx = self.perf.chunk_idx[vs];
-            }
-        }
-        // Every mode — this trace is how a frame's cost bound is inspected, and the df32 path is
-        // now budgeted and tileable too, so hiding it there would hide the case that crashed.
-        if crate::diag::trace_on("tile") {
-            let steps = spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64);
-            crate::diag::trace(
-                "tile",
-                format!(
-                    "f={} view={vs} res={}x{} ss={ss} gpu_iter={gpu_iter} steps={:.3e} \
-                     budget={:.3e} reproj={will_reproject} iterates={key_changed} tile={:?} pending={} \
-                     interacting={interacting} can_tile={can_tile} tiling={tiling} \
-                     fresh={}x{} geo={:?} max_tiles={max_tiles} ok={} allowed={:.3e} \
-                     key={view_key:?} allow={} offs={offscreen}",
-                    self.perf.frame_idx,
-                    resolution[0],
-                    resolution[1],
-                    steps as f64,
-                    tdr_steps as f64,
-                    tile,
-                    self.perf.tile_pending[vs],
-                    fresh_res[0],
-                    fresh_res[1],
-                    self.perf.tile_state[vidx].as_ref().and_then(|g| g.geo),
-                    self.perf.fe_budget_ok[vidx],
-                    tdr_allowed as f64,
-                    self.allow_tiled_settle,
-                ),
-            );
-        }
-        let mut probe_fired = false;
-        // Budget-climb probe: on a settled view whose budget hasn't converged and where NOTHING
-        // else will dispatch this frame, force a re-measure. Without this the climb deadlocks at
-        // the resolution floor: one ×1.5 budget step is too small to unfloor a 16×16 frame under a
-        // huge iteration count, so the key never changes → no dispatch → no measurement → the
-        // budget freezes one step off the bootstrap and the view stays pixellated forever (seen
-        // at the 197k× spar with an explicit 4M count after restart — interaction used to mask it
-        // by re-keying every frame, and before beta.65/66 this state usually crashed first).
-        // Each forced dispatch is budget-sized by the shrink above, so it is TDR-safe by
-        // construction; convergence (`fe_budget_ok`) stops the probe and hands off to the settle.
-        if !interacting
-            && !offscreen
-            && !will_reproject
-            && !self.tour_playing()
-            && !key_changed
-            && tile.is_none()
-            && chunk_range.is_none()
-            && !self.perf.fe_budget_ok[vidx]
-            // PACED: at least 3 frames since the last real dispatch. An unpaced probe re-created
-            // the beta.48 death — near convergence each dispatch is ~TDR_BUDGET_MS (400 ms since
-            // 2026-08-16; it was 900 ms when this was written, which is what made it lethal), and
-            // firing one EVERY frame ran ~1 s dispatches back-to-back with zero idle → device lost
-            // at f=68 of the first climb soak. The gap leaves present-able frames between
-            // dispatches (~⅓ duty), which is the profile the converged controller already runs.
-            && self.perf.frame_idx.saturating_sub(self.perf.fe_dispatch_frame[vs]) >= 3
-            // CEILINGED: the probe stops growing the budget at ~2e10 nominal (~60–90 ms real in
-            // the no-skip regime) instead of riding the controller to its target. The
-            // second climb soak PROVED the target is lethal in this regime even paced: at a
-            // 99-sample escaped reference with bla_skip=0 (nominal = real, zero preemption inside
-            // the fullscreen draw), the ×1.5 growth step from ~600 ms landed a ~1.3 s dispatch and
-            // lost the device — the intermittent Event-153 marginality of the beta.48 saga, made
-            // reproducible. Below the ceiling the deadlock is still broken (16×16 → ~84×66 at a
-            // 4M explicit ask, stable and alive); a native-res render of such an ask needs the
-            // chunked path extended to perturbation modes (TODO), not bigger single dispatches.
-            && budget_base(self.perf.fe_budget[vidx], self.perf.bootstrap_steps(vidx))
-                < crate::tunables::cost().explicit_dispatch_cap
-        {
-            self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
-            probe_fired = true;
-            // This frame now runs a real pass under an unchanged key — pair the measurement
-            // with its cost (the same bookkeeping the `key_changed` block below does).
-            self.perf.fe_steps_last[vs] = spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64);
-            self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
-            self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
-        }
-        // ---- present-gating ("prefer detail", stage B) ----
-        // While ANY compose work runs on a settled prefer-detail view — a settle tile, an armed
-        // grid's coarse full frame, a chunk range, or a climb-probe re-measure — the display
-        // serves a snapshot of the last complete frame (`hold_copy` takes it on the FIRST such
-        // frame, before the compose pass lands) and the composite builds invisibly underneath.
-        // When nothing composes, the flag drops and the finished frame reveals whole. Interaction
-        // breaks the gate (Stage A's motion reprojection takes over); direct mode is excluded
-        // (cheap and sharp live). Between ss-ramp stages the gate re-engages per stage, so each
-        // REVEALED image is complete at its quality level — a stage-wise progressive reveal.
-        // Settled CHUNKED walks hold-then-reveal BY DEFAULT (`|| chunk_over`), prefer-detail or
-        // not: a walk's progressive display shows nothing until the cursor crosses the view's
-        // minimum dwell — which at a deep view sits near the orbit length, so the screen is
-        // solid interior color for most of the walk, indistinguishable from a hang (field
-        // report: black at "refining 19.8%"). The gate serves the previous complete content
-        // under its captured transform and reveals the finished frame whole; a fresh view with
-        // nothing rendered falls through gracefully (the GPU gate needs `view.rendered`) to the
-        // honest progressive-plus-spinner. Non-chunked tiled settles keep their progressive
-        // default — each landed tile is complete content, which reads as sharpening, not as a
-        // hang.
-        let gate_capable = (self.render_cfg.prefer_detail || chunk_over)
-            && !offscreen
-            && !interacting
-            && !chunk_mode.is_direct();
-        // ⚠`tile_work`, NOT `tile.is_some()`. A COMPLETED grid goes on emitting its final rect
-        // every frame by design, so `tile.is_some()` is true forever after the first grid finishes
-        // — the gate never dropped, the display kept serving the snapshot it took when the grid
-        // ARMED (a coarse, budget-shrunk frame), and the sharp composite sat in the texture unseen.
-        // That is the 2026-08-15 field report in full: "it does the computation but doesn't update
-        // the image; it shows up as soon as I resize slightly smaller" — a resize interacts, and
-        // interaction breaks the gate, revealing the texture that was finished all along. The
-        // chunked path's own term already excludes its completed tail (`e > s`, and the tail emits
-        // `[iter, iter]`); this is the same care, which the tile path was missing.
-        // Pinned by `--selftest live-res` → "a completed tiled settle REVEALS".
-        let composing = tile_work
-            || chunk_range.is_some_and(|[s, e]| e > s)
-            || probe_fired
-            || self.perf.tile_state[vidx].as_ref().is_some_and(|g| match g.geo {
-                None => true, // armed — the coarse arm frame is about to render
-                Some((gres, _, side)) => {
-                    let total =
-                        gres[0].div_ceil(side).max(1) * gres[1].div_ceil(side).max(1);
-                    g.next < total
-                }
-            });
-        let mut pin_gate = false;
-        let (mut hold_copy, mut display_hold) = if gate_capable && composing {
-            let fresh = !self.perf.hold_active[vs];
-            self.perf.hold_active[vs] = true;
-            (fresh, true)
-        } else if interacting && (self.perf.pin[vsub].is_some() || self.perf.chunk_dirty[vsub]) {
-            // Pin CONTINUE frames, and any interacting frame while the live texture diverges
-            // from the frozen bookkeeping (an abandoned pin's residue — holds, freezes, pan
-            // reprojections): serve the hold snapshot, never the diverged texture. `fresh` fires
-            // only on the FIRST such frame — an abandoned pin's re-pin must NOT retake the
-            // snapshot over the dirty texture, and `hold_active` staying up is what prevents it.
-            // (A pin START cannot be seen here — it is decided at the commit point after the
-            // freeze verdict, which flips these flags itself.)
-            pin_gate = true;
-            let fresh = !self.perf.hold_active[vs];
-            self.perf.hold_active[vs] = true;
-            (fresh, true)
-        } else {
-            self.perf.hold_active[vs] = false;
-            (false, false)
-        };
-        let bootstrap =
-            self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none();
-        // Armed on EVERY mode. While this was floatexp-only, a df32 view's budget never left the
-        // 4e8 bootstrap, so both bounds above were computed from a number that had measured
-        // nothing — and the shrink they gate was itself floatexp-only, so nothing bound the frame.
-        if !interacting
-            && !will_reproject
-            && !self.tour_playing() // tour frames move every keyframe — not settled-cost data
-            && (key_changed || bootstrap)
-        {
-            // Carry this frame's nominal step count: both arming conditions re-iterate (a changed key
-            // re-runs the iterate; a bootstrap frame is the first settled one after the view moved), so
-            // the interval that resolves the probe prices real GPU work and yields `fe_rate_spm`.
-            let steps = spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64);
-            self.perf.aa_probe[vs] = Some((ss, self.perf.frame_idx, 0.0, steps));
-        }
-        // Color-pass anti-aliasing when true supersampling wasn't affordable: widen the box
-        // to match an upscaled (resolution-reduced) texture, or apply a gentle 2× box when
-        // the budget forced ss=1 on a settled view the user wanted anti-aliased.
-        let aa_filter = if res_scale < 1.0 && !will_reproject {
-            ((1.0 / res_scale).round() as u32).clamp(2, 4)
-        } else if ss == 1 && self.render_cfg.aa > 1 && !interacting {
-            2
-        } else {
-            1
-        };
 
         // Render path: 1 = direct df32 (shallow / unsupported formulas), 0 = df32
         // perturbation (fast, common deep range), 2 = floatexp perturbation (past df32's
@@ -5226,316 +5751,43 @@ impl FractadyneApp {
             self.perf.last_sa_skip = sa.skip;
         }
 
-        // Never submit a full-length perturbation iterate without a reference. During the async
-        // cold-start (`ref_pt` None) a FRESH view can't reproject the placeholder — there is no
-        // frozen frame to reproject — so the shader falls through to a real iterate, but with an
-        // empty orbit every pixel runs to `max_iter` against a null reference. At deep zoom with a
-        // large `max_iter` (e.g. 500k) that single GPU frame overruns the Windows GPU-watchdog (TDR)
-        // timeout → the device is lost → wgpu treats it as fatal and the process aborts. Cap the
-        // placeholder to a trivially cheap iterate (a flat interior fill) until the reference lands.
-        // Direct mode has no reference by design, so it keeps its full iteration count.
-        const PLACEHOLDER_ITER_CAP: u32 = 256;
-        let shader_iter = if mode.is_direct() {
-            gpu_iter
-        } else if self.ref_cache[vi].ref_pt.is_none() {
-            gpu_iter.min(PLACEHOLDER_ITER_CAP) // no reference yet → cheap flat placeholder (TDR-safe)
-        } else if self.ref_cache[vi].partial {
-            // Coarse (truncated) reference from a progressive cold start: cap at orbit_len-1 so the
-            // shader never rebases past the short reference into df32-inaccurate territory (which
-            // speckles at extreme depth) — a clean partial image (fast escapers correct, the rest
-            // interior) until the full reference lands and refines it. (Do NOT cap escaped-short
-            // references: those pixels ESCAPE, they don't rebase-glitch — the deep-exterior "tiles"
-            // were the BLA/SA issue, fixed in `finish_reference`. Capping an escaped-short reference
-            // instead collapses every late-escaping BOUNDARY pixel to interior → a hard black border
-            // with no filament detail around a deep minibrot.)
-            gpu_iter.min(self.ref_cache[vi].orbit_len.saturating_sub(1))
-        } else {
-            gpu_iter
-        };
-
-        // LIVE MANIFEST. A frame that re-iterates is the only thing here that can lose the device,
-        // and until now the crash report's `manifest:` line was EMPTY for every live crash — it is
-        // set by the EXPORT request builder, so an on-screen death recorded nothing about the frame
-        // that caused it. State the dispatch: this is the record that says whether a TDR came from
-        // resolution, supersampling, or the iteration budget. Only on re-iterating frames, so a
-        // reproject/cached frame costs nothing.
-        // `sa_skip` and `bla_on` ride along because a chunk window is NOT priced by its width:
-        // `fs_iterate_chunk` seeds `iter = sa_skip`, so every window ending at or below the skip
-        // breaks on its first test and costs ~0 ms (`--chunk-sweep` measures exactly that). Without
-        // the skip stamped, `chunk=[768,1792)` in a death manifest cannot say whether the ladder
-        // that led there was climbing FREE windows — the fast lane doubles the licence on each —
-        // or real ones, and that is the open question in the field device-loss item. `bla_on=0` is
-        // the other silent multiplier: the e100 crash was a pass running an empty tree at 0.04
-        // Gsteps/s beside a 174 Gsteps/s pass in the SAME frame.
-        let sa_skip_eff = usable_sa_skip(sa.skip, shader_iter);
-        if !will_reproject {
-            // A chunked frame's real dispatch is its RANGE, not the full-frame nominal — the
-            // same honesty rule the fe_steps stamp follows. The 985x735 "steps=1.810e11 vs
-            // budget=6.000e10" manifest in crash-1787275348-0 read as a frame that ignored its
-            // budget; it was a budget-sized chunk pass wearing the whole frame's price tag.
-            let steps = match chunk_range {
-                Some([s, e]) => spx
-                    .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                    .saturating_mul(u64::from(e.saturating_sub(s)).max(1)),
-                None => spx
-                    .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                    .saturating_mul(shader_iter.max(1) as u64),
-            };
-            let chunk_note = match chunk_range {
-                Some([s, e]) => format!(" chunk=[{s},{e})"),
-                None => String::new(),
-            };
-            // Per-view, for the LETHAL-BAND line in `update`: that line is ALWAYS logged, so it
-            // is what a field report carries when nobody had a trace enabled. Recorded on
-            // dispatching frames only — a reprojected frame prices nothing.
-            // ⚠Record and report the EFFECTIVE skip — the number actually sent to the shader —
-            // not `sa.skip`. The raw value is what the reference happens to carry; the shader may
-            // be refusing it (see `usable_sa_skip`). A manifest printing the raw one says
-            // `sa_skip=266796` on a frame whose shader was handed 0, which is exactly the question
-            // this line exists to answer. Effective first, raw in parentheses.
-            self.perf.last_sa_skip_v[vs.min(1)] = sa_skip_eff;
-            self.perf.last_res_v[vs.min(1)] = [resolution[0], resolution[1]];
-            let manifest = format!(
-                "LIVE view={vs} mode={} {}x{} ss={ss} iter={shader_iter} (gpu_iter={gpu_iter}, \
-                 eff={eff_iter}, boost={:.2}) steps={steps:.3e}{chunk_note} sa_skip={} (raw {}) \
-                 bla_on={bla_on} budget={tdr_steps:.3e} tile={} orbit_len={} partial={} \
-                 settled={} since_mode_switch={}",
-                mode.to_u32(),
-                resolution[0],
-                resolution[1],
-                self.perf.iter_boost[vs.min(1)],
-                sa_skip_eff,
-                sa.skip,
-                tile.is_some(),
-                self.ref_cache[vi].orbit_len,
-                self.ref_cache[vi].partial,
-                !interacting,
-                match self.perf.mode_switch_frame[vidx] {
-                    u64::MAX => "never".to_string(),
-                    f => format!("{} frames", self.perf.frame_idx.saturating_sub(f)),
-                },
-            );
-            // Also emit it under `req`, the same category the export builder traces its manifest
-            // under. A crash report only ever shows the LAST frame; the field question — did the
-            // chunk ladder climb windows that sat inside the SA skip — is about the frames BEFORE
-            // it, and this is the only way to read them without waiting for another device loss.
-            if crate::diag::trace_on("req") {
-                crate::diag::trace("req", manifest.clone());
-            }
-            crate::diag::set_manifest(manifest);
-        }
-
-        // Record the nominal cost of a frame that will actually re-iterate, so `update` can price the
-        // measurement that comes back for it. Only such frames run the pass, so only they arm a
-        // timestamp — but the SINK must be attached on EVERY frame: the readback lands a couple of
-        // frames later, by which time the view is usually serving cached/reproject frames, and a
-        // sink-less pump would silently discard the reading.
-        // Every mode: the controller in `update` SKIPS a view whose `fe_steps_last` is zero, so
-        // leaving this floatexp-only would have armed df32 probes above that could never resolve
-        // into a budget — measurement in name only.
-        //
-        // Keyed on `key_changed` ALONE. `&& !will_reproject` looked right — a reprojecting frame
-        // re-samples the frozen texture instead of iterating — but it is not what the GPU actually
-        // dispatches on, and on a view that reaches its final state during the reproject window it
-        // meant the number was NEVER written: measured at the 6.6e18× df32 view as
-        // `no reading (bits=true, ms=0.28, steps=0)` — a real timing thrown away for want of the
-        // step count to price it against, on every frame, forever. With nothing to price, the
-        // budget stays at the bootstrap floor, and once that floor drives the resolution shrink the
-        // view is pinned at 205x162 upscaled to a 1431x1134 panel. The timing itself only ever
-        // arrives from a dispatch that really ran, so pairing it with the last key change is safe;
-        // a stale pairing costs one mis-priced measurement, which the ratio search corrects.
-        // ⚠NOT on chunked frames. The chunk block has already paired this frame's dispatch
-        // with its RANGE cost, and overwriting that with the full-frame count priced readings
-        // against ~250× too many steps — Radeon autodive, 2026-08-20 (crash-1787261212-0): the
-        // saved session booted DEEP, reference installs re-keyed a chunked dive frame every
-        // ~300 ms, each stamped 1.838e11 against a ~210 ms bounded pass, and the budget rocketed
-        // 6.8e9 → 6.0e10 in three seconds on rates the hardware never produced — every margin on
-        // the Home glide's shallow side was then sized from that fantasy, and the device died at
-        // the re-dive. The stamp still applies to un-chunked frames (R12: key on `key_changed`
-        // alone, never `!will_reproject`); a chunked frame's completed-tail re-key goes unstamped
-        // on purpose — one stale pairing costs one mis-priced measurement, which the ratio
-        // search corrects, exactly as the paragraph above records.
-        if key_changed && chunk_range.is_none() {
-            self.perf.fe_steps_last[vs] = spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64);
-            self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
-            self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
-        }
-        // MOTION-JAM ACCOUNTING — one site, after every dispatch path has stamped its cost.
-        // Whatever shape this frame dispatched (full frame, settle tile, chunk range, climb
-        // probe), `fe_dispatch_frame` says it ran and `fe_steps_last` says what it cost; count it
-        // toward the unpriced backlog when it is full-size against the learned budget. A consumed
-        // full-size reading retires exactly ONE dispatch in `update` — see `Perf::unpriced_full`
-        // for why any looser credit (the original clear-on-any-reading) re-arms the gate off
-        // stale small readings and lets monsters stack anyway (crash-1787275348-0). A
-        // jam-clamped frame stays under the threshold by construction, so a jam never counts
-        // itself.
-        if !will_reproject && self.perf.fe_dispatch_frame[vs] == self.perf.frame_idx {
-            let learned = budget_base(self.perf.fe_budget[vs], self.perf.bootstrap_steps(vs));
-            if motion_jam_counts(self.perf.fe_steps_last[vs], learned) {
-                self.perf.full_inflight[vs] = self.perf.full_inflight[vs].saturating_add(1);
-                // Retirement is a REAL completion signal, not a reading: `update` registers a
-                // `Queue::on_submitted_work_done` callback for this dispatch on the next frame
-                // (after eframe has submitted this one) and decrements when it fires. Two
-                // reading-based credits were tried and both were unsound — see the field doc on
-                // `Perf::full_inflight` for the incidents.
-                self.perf.full_reg_pending[vs] = self.perf.full_reg_pending[vs].saturating_add(1);
-                let n = self.perf.full_inflight[vs];
-                if interacting && n as u64 == crate::tunables::cost().motion_unpriced_max {
-                    // Logged, not trace-gated (the lethal-band rule): if the field needed this
-                    // gate, the log must already say so. But THROTTLED to one line per 5 s —
-                    // episodes recur every few frames while a heavy dive outruns its readings,
-                    // and a line per episode buried a session under ~1,300 of them.
-                    let due = self
-                        .perf
-                        .jam_log_at
-                        .is_none_or(|at| at.elapsed().as_secs_f64() > 5.0);
-                    if due {
-                        self.perf.jam_log_at = Some(std::time::Instant::now());
-                        crate::diag::log_line(
-                            "render",
-                            &format!(
-                                "motion jam: {n} full-size dispatches unpriced (budget {:.3e}) — motion frames dispatch at bootstrap until a price returns",
-                                learned as f64
-                            ),
-                        );
-                    }
-                }
-            }
-        }
-        // The sink is what carries the GPU timestamp back at all. Attaching it only on floatexp was
-        // the root of the whole floatexp-only budget: with no sink there is no measurement, so no
-        // budget, so nothing for the shrink or the tiled settle to size a frame against — and those
-        // were then gated on `is_fe` to match. Every mode measures now.
-        let iterate_ms = Some(self.perf.iterate_ms[vs].clone());
-        let iterate_steps = Some(self.perf.iterate_steps[vs].clone());
-        // The GPU self-arms the maxiter-fraction readback on full-frame iterates and computes the
-        // fraction itself (count and pixel denominator always from the same frame).
-        let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
-        let norm_range = Some(self.perf.norm_sink[vs.min(1)].clone());
-        let grad_range = Some(self.perf.grad_sink[vs.min(1)].clone());
-        let work_counters = Some(self.perf.work_sink[vs.min(1)].clone());
-        // LIVE palette auto-normalization (see `live_norm_cycle_offset`): when the frame's escaped
-        // smooth-iter range is huge, a fixed cycle wraps the palette thousands of times between
-        // adjacent pixels and a CORRECT dense escape field reads as speckle "noise pools" (the
-        // corpus-14/15 aliasing, now surfacing live since the adaptive budget resolves these
-        // fields). Smooth method only; range-thresholded so ordinary views keep classic coloring.
-        let nm = self.live_norm_cycle_offset(vs).unwrap_or(NormMap {
-            cycle: self.color_cycle(),
-            offset: self.coloring.offset,
-            mode: 0,
-            lo: 0.0,
-        });
-        let (cycle_eff, offset_eff) = (nm.cycle, nm.offset);
-
-        // This dispatch's nominal cost: the TILE's pixels under a settle grid, the whole frame
-        // otherwise; a CHUNKED frame's cost is the whole frame over its iteration RANGE, not the
-        // full count. Travels with the pass so the timing comes back already paired.
-        let nominal_steps = match (chunk_range, tile) {
-            (Some([cs, ce]), _) => spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul((ce.saturating_sub(cs)).max(1) as u64),
-            (None, Some(r)) => (r[2] as u64)
-                .saturating_mul(r[3] as u64)
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64),
-            (None, None) => spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64),
-        };
-        // Display-honesty tripwire (`--motiontest` A3): an interacting frame whose live texture
-        // diverges from the frozen bookkeeping must be serving the hold snapshot. If this ever
-        // counts, some path displayed under-iterated content — the exact defect the pin exists to
-        // prevent. (Pan-reproject frames display the snapshot too; their transform can lag the
-        // pan by design — a recorded edge, not a defect.)
-        if interacting && self.perf.chunk_dirty[vsub] && !display_hold {
-            self.perf.dirty_shown[vsub] = self.perf.dirty_shown[vsub].wrapping_add(1);
-        }
-        let params = MandelbrotParams {
-            iterate_ms,
-            iterate_steps,
-            nominal_steps,
-            maxiter_count,
-            norm_range,
-            grad_range,
-            work_counters,
-            tile,
-            chunk_range,
-            chunk_idx,
-            probe_nonce: self.perf.probe_nonce[vs],
-            orbit: self.ref_cache[vi].orbit.clone(),
-            orbit_id: self.ref_cache[vi].orbit_id,
-            orbit_len: self.ref_cache[vi].orbit_len,
+        self.bp_finish_params(
+            center_df,
+            julia_c,
+            span_mantissa,
+            delta_exp,
+            stops,
+            stop_count,
+            sa,
             bla,
             bla_on,
             ref_offset,
-            delta_exp,
-            sa_skip: sa_skip_eff,
-            sa_a: sa.a,
-            sa_a_exp: sa.a_exp,
-            sa_b: sa.b,
-            sa_b_exp: sa.b_exp,
-            sa_c: sa.c,
-            sa_c_exp: sa.c_exp,
-            center: center_df,
-            julia_c,
-            mode: mode.to_u32(),
-            formula: fractal.formula_id(),
-            julia: julia as u32,
-            span_mantissa,
-            max_iter: shader_iter,
-            cycle: cycle_eff,
-            offset: offset_eff,
-            norm_mode: nm.mode,
-            norm_lo: nm.lo,
-            stop_count,
-            stops,
-            light: self.effects.light as u32,
-            light_angle: self.effects.light_angle,
-            light_height: self.effects.light_height,
-            de_on: self.effects.de as u32,
-            de_strength: self.effects.de_strength,
-            de_width: self.effects.de_width,
-            de_phase: self.effects.de_phase,
-            color_method: self.coloring.color_method.to_u32(),
-            stripe_freq: self.coloring.stripe_freq,
-            trap_type: self.coloring.trap_type.to_u32(),
-            aa_filter,
-            interior_col: self.interior_color(),
+            reproject,
+            reproject_scale,
+            mode,
+            fractal,
+            julia,
+            eff_iter,
+            gpu_iter,
+            interacting,
+            will_reproject,
+            key_changed,
             resolution,
             ss,
-            reproject: reproject.is_some() as u32,
-            // A gated frame's DISPLAY samples the hold snapshot with its transform; reproject
-            // frames keep their own. When the two co-assert — a freeze or pan while a PINNED
-            // refresh (or its dirty residue) gates the display — the hold wins: the snapshot is
-            // the last COMPLETE frame, and the live texture it would otherwise reproject is
-            // mid-composition. (The settled gate never co-asserts: it requires a settled view.)
-            uv_offset: if display_hold {
-                [self.perf.hold_uv[vs][0], self.perf.hold_uv[vs][1]]
-            } else {
-                reproject.unwrap_or([0.0, 0.0])
-            },
-            uv_scale: if display_hold { self.perf.hold_uv[vs][2] } else { reproject_scale },
+            spx,
+            tdr_steps,
+            tile,
+            chunk_range,
+            chunk_idx,
+            aa_filter,
             hold_copy,
             display_hold,
-            // Guided-tour spotlight (main view only), anchored to its fractal coordinate.
-            vignette: if view_id == 0 {
-                self.playback
-                    .as_ref()
-                    .map(|pb| crate::scripting::vignette_for(&pb.spotlights, &self.viewport, pb.cur_t))
-                    .unwrap_or_default()
-            } else {
-                Default::default()
-            },
             view_id,
-        };
-        // Record whether THIS frame really re-iterates (vs reprojecting a held frame) — the
-        // motion-res controller adapts only on the interval that FOLLOWS a real frame, since
-        // reprojection frames are ~free and carry no signal about the iterate cost (adapting on
-        // them was the mixed-signal bug that pushed motion res to native between refreshes).
-        self.perf.prev_real[vi.min(1)] = params.reproject == 0;
-        params
+            vi,
+            vs,
+            vidx,
+            vsub,
+        )
     }
 }
 

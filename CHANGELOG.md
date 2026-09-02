@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Internal: the app struct and the frame builder untangled** — `FractadyneApp`'s 52
+  CLI/harness-mode fields (selftest/profile/frametest/benchmark/render-and-exit/dev-harness
+  drivers) now live in six structs in `cli.rs`, so the app struct is 83 fields of interactive
+  state; `update()`'s harness hooks and CLI-mode ladder moved to `cli.rs` beside them
+  (930 → ~620 lines). `build_params` — grown to 2,636 lines — sheds four stages moved
+  verbatim behind typed interfaces (`bp_frame_budget`, `bp_chunk_tiling`, `bp_present_gate`,
+  `bp_finish_params`) and is 1,663 lines; the reference-acquisition and path-assembly cores
+  remain for a future pass. Verified behavior- and performance-neutral: workspace suite 331;
+  selftest 168/168 + goldens 18/18; `--livetest` grand tour 24 checkpoints 0 drift;
+  `--bench-matrix`/`--profile` deterministic signatures identical with timings inside the
+  measured run-to-run noise floor. (`--motiontest` A2 flickered ~50% during verification —
+  measured at the same rate on the unmodified build under the same desktop load, 5/9 vs 4/9
+  passes, so it is a machine-state marginality of the gate, not an effect of this change;
+  noted for the mode-2 motion investigation.)
+
 - **Internal: the empty `fractadyne-render` stub crate is removed** — it held no code (a
   doc-comment lib.rs), nothing depended on it, and an empty placeholder is not needed to
   add the crate back when the render-orchestration refactor actually lands. The workspace
