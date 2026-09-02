@@ -100,7 +100,7 @@ golden and blessed baseline is the output of exactly one.
 
 | Flag | What |
 |------|------|
-| `--selftest [--out report.md] [--bless]` | The full correctness suite (~140 checks + 18 goldens; it prints its own totals, so this text cannot go stale), streamed live; hermetic (resets config at entry, echoes it); GPU errors are printed, never silently skipped; data files resolve relative to the repo even when run elsewhere. The last 20 checks are the `bench-matrix` group — deterministic path-signature tripwires (see `--bench-matrix`) |
+| `--selftest [--out report.md] [--bless]` | The full correctness suite (~170 checks + 18 goldens; it prints its own totals, so this text cannot go stale), streamed live; hermetic (resets config at entry, echoes it); GPU errors are printed, never silently skipped; data files resolve relative to the repo even when run elsewhere. The run's tail is the `bench-matrix` group — deterministic path-signature tripwires (see `--bench-matrix`) |
 | `--selftest-filter <substr>` | Run only matching check groups / goldens (fast iteration on one failure; not a release verdict — groups share state) |
 | `--selftest-list` | Print the group tags usable with `--selftest-filter` |
 | `--profile [--regions file.toml] [--reps N]` | Per-region reference/SA/BLA build ms + pure-GPU pass ms (TIMESTAMP_QUERY); includes a corpus-14-class `deep-interior-1e148` region (dip orbit, 800k iters — the export-throughput-gap regime) |
@@ -212,7 +212,7 @@ routinely-exercised view. Two committed forms live in `validation/`:
 
 Deliberately **not** a selftest golden or an F3 corpus entry: a full render here is minutes
 (bignum-bound), far too slow for the byte-identical goldens; and ~1e21000× is ~20× beyond
-Fraktaler-3's demonstrated range (the deepest F3-matched corpus pair is 4.6e1105×), so there is no
+Fraktaler-3's demonstrated range (the deepest F3-matched corpus pair is 6.13e1105×), so there is no
 F3 image to compare against. Its value is diagnostic (responsiveness + cost), not render-comparison.
 
 ## Orbit forensics (CPU probes, no GPU)

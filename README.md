@@ -15,7 +15,7 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   direct df32 → df32 perturbation → **floatexp** perturbation (df32 mantissa + i32
   exponent), so the deviation never runs out of `f32` exponent range. Zhuoran rebasing;
   depth is bounded by coordinate precision and the iteration budget, not a fixed wall —
-  renders match **Fraktaler-3** across a 20-location reference corpus up to **~1e1105×**
+  renders match **Fraktaler-3** across a 38-location reference corpus up to **~1e1105×**
   (pixel-exact against F3's raw iteration counts where directly comparable) and are
   self-consistency-validated far deeper (to 1e1000000×); a bundled tour dives to **~1e838×**. **Series
   approximation** (order-3) skips the early iterations of deep Mandelbrot renders by seeding
@@ -173,7 +173,7 @@ fractadyne --check-updates [stable|beta]            # check GitHub for a newer r
 fractadyne --profile [--reps N --regions f.toml --out logs/p.json]
                                                     # dev: time render stages per benchmark
                                                     # region → JSON log (see scripts/profile*.ps1)
-fractadyne --bench-matrix [--bless] [--reps N]      # dev: 22-segment path-coverage perf + regression
+fractadyne --bench-matrix [--bless] [--reps N]      # dev: 28-segment path-coverage perf + regression
                                                     # suite vs a blessed baseline (design/bench-matrix.md)
 fractadyne --divetest tour.toml [--out log.json]    # dev: headless live-dive perf harness — real-time
                                                     # tour windows per depth band (fps/hitches/refresh)

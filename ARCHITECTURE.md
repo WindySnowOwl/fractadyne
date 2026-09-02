@@ -1,6 +1,6 @@
 # Fractadyne — Architecture (as-built)
 
-**Version:** 0.2.0 · **Updated:** 2026-07-09
+**Version:** 0.2.41 (unreleased) · **Updated:** 2026-09-02
 
 This document describes the system **as it is actually implemented**. It is the counterpart to
 [`DESIGN.md`](DESIGN.md), which is the *original design intent* (2026-06-25) and has diverged from
@@ -9,8 +9,9 @@ state; [`CHANGELOG.md`](CHANGELOG.md) is the running per-version log.
 
 > **Divergence summary (design → as-built):** the `Fractal`/`RenderStrategy` trait abstraction was
 > not built (formulas are a `FractalKind` enum switched on by hand-written per-path `match` arms);
-> one crate (`-render`) is an empty stub whose intended logic lives in `fractadyne-app` (the `-ui`
-> and `-fractals` stubs were retired, and UI is split under `fractadyne-app/src/ui/`); the live view
+> the `-render`, `-ui` and `-fractals` stub crates were
+> retired (render orchestration lives in `fractadyne-app`; UI is split under
+> `fractadyne-app/src/ui/`); the live view
 > uses **full-frame render + reprojection freeze**, not a per-tile
 > RAM cache; `rayon` is not used (off-thread work is `std::thread`); and the programmable formula
 > DSL, L-systems, cellular automata, and histogram coloring are **not implemented** (roadmap).
@@ -24,7 +25,7 @@ A native **Windows** desktop fractal explorer (Rust + `wgpu`/`egui`/`eframe` 0.3
 `fractadyne` (crate `fractadyne-app`).
 
 Deep zoom is bounded by coordinate precision + iteration/compute budget, not a fixed wall:
-renders match **Fraktaler-3** across a 20-location reference corpus up to **~4.6e1105×**
+renders match **Fraktaler-3** across a 38-location reference corpus up to **~6.1e1105×**
 (pixel-exact against F3's raw iteration counts where directly comparable), a bundled tour dives
 live to ~1e838× (and generated dives beyond 1e1200×), and the arbitrary-precision core is
 self-consistency-validated to 1e1000000×.
@@ -46,20 +47,28 @@ lands — its intended responsibility currently lives in `fractadyne-app`.)
 | `fractadyne-export` | ✅ | PNG/OpenEXR encode/decode + embedded view metadata. |
 | `fractadyne-app` | ✅ | **Everything else** — app struct, UI, input, scripting, CLI, autopilot, coloring/mode logic, `FractalKind`. Split into modules (below). |
 
-**`fractadyne-app` modules:** `main.rs` (app struct + `update()` UI loop), `render.rs` (mode
-select + reference recompute / reuse / freeze-reproject + export requests), `autopilot.rs`
-(auto-zoom), `scripting.rs` (tours + `render_tour_to_dir`), `help.rs` (`CLI_REFERENCE` + Help
-window), `cli.rs` (headless modes), `export.rs` (view-metadata / `.fdn`), `fractal.rs`
+**`fractadyne-app` modules:** `main.rs` (entry + app struct + `update()` frame loop, in
+banner-sectioned reading order), `render.rs` (mode select + reference recompute / reuse /
+freeze-reproject + export requests + the staged `build_params` frame builder), `autopilot.rs`
+(auto-zoom + `--autodive`), `scripting.rs` (tours + `render_tour_to_dir`), `help.rs`
+(`CLI_REFERENCE` + Help window), `cli.rs` (headless commands, the CLI-launched mode-state
+structs, and `update()`'s harness hooks + mode ladder), `export.rs` (view-metadata / `.fdn`),
+`tunables.rs` (every frame-cost constant; `--set` overrides), `fractal.rs`
 (`FractalKind`), `refcache_persist.rs` (persist/restore the deep-zoom reference), `error.rs`
 (`AppError`), `selftest.rs` (GPU validation), `theme.rs`, `profile.rs` (profiling + the
 `--frametest`/`--divetest` harnesses), `livetest.rs` (the live-vs-offline output harness),
 `sysinfo.rs`, `diag.rs` (log/crash/watchdog/trace), `alloc.rs` (allocation-failure hook),
 `update.rs` (GitHub-Releases update check, Stable/Beta tracks), `bench_matrix.rs` (the
-`--bench-matrix` path-coverage perf/regression suite), `gputest.rs` (`--gputest`: the WGSL
+`--bench-matrix` path-coverage perf/regression suite), `motiontest.rs` (`--motiontest`:
+the motion-presentation gate), `chunksweep.rs` (`--chunk-sweep`), `torture.rs` (`--torture`
+escalation suite), `soak.rs` (`--soak` liveness), `shot.rs` (`--shot` screenshot regen),
+`tone.rs` (finish sound), `icons.rs` (generated Lucide subset), `gputest.rs` (`--gputest`: the WGSL
 df32/floatexp primitives against CPU oracles, swept over every backend — the harness that found
 NVIDIA's shader compiler folding the error-free transforms), `uitest.rs` (`--uitest`: the scripted
 UI + live-render walk), `reusetest.rs`, and a `ui/` submodule tree (`central.rs`, `menus.rs`,
 `panels.rs`, `dialogs.rs`, `tour_render.rs`, `diagnostics.rs`) from the intra-crate UI split.
+Unit tests live in sibling files (`#[cfg(test)] mod name;` beside the code under test — see
+`CONTRIBUTING.md` for the layout and item-order conventions).
 
 ---
 
@@ -168,6 +177,16 @@ and growing gently when real frames run cheap, floored at the user's `min_motion
 - **Quality on settle:** anti-aliasing (SSAA 1–8×) runs only when the view settles; motion stays
   smooth. A `WORK_BUDGET` (texels × iterations) auto-reduces supersampling on heavy frames to stay
   under the GPU watchdog (TDR) — important for deep dual-view renders.
+- **Frame-cost control (TDR safety).** Every dispatch is priced in nominal steps (px·ss²·iter)
+  against a per-view budget learned from **measured GPU timings** (`TIMESTAMP_QUERY`, with a
+  wall-clock fallback when timestamps starve). Its actuators: motion frames shrink the
+  iteration-texture resolution; a settled frame that exceeds one dispatch budget runs either a
+  **tiled settle** (a grid of bounded dispatches, revealed whole) or — where a spatial split
+  cannot bound the cost — a resumable **iteration-range chunked walk**
+  (`fs_iterate_chunk`/`fs_resolve`), price-serialized so at most one unpriced pass is in
+  flight. A **present gate** serves the last complete frame while compose work runs
+  underneath. The constants live in `tunables.rs` (`--set NAME=VALUE` per run for field
+  experiments; `--selftest` refuses to pass under overrides).
 - **Auto-zoom autopilot** ([`autopilot.rs`](crates/fractadyne-app/src/autopilot.rs)): renders a small
   56×56 iteration field, steers toward the boundary/gradient-richest cell, and dives. Smooth glide up
   to a "smooth regime" (log₂ 900 ≈ 1e271×); past that it switches to a **stepped dive** (jump ×4 →
@@ -255,7 +274,10 @@ confirm) removes the whole config dir.
 `@args-file`; dev harnesses: `--profile`, `--bench-matrix` (path-coverage perf/regression suite vs
 a blessed baseline), `--frametest`, `--divetest` (headless live-dive windows per depth band),
 `--livetest` (live-output validation against offline renders of the same views), `--uitest`
-(scripted UI + live-render walk with screenshots), `--juliadive`, `--reusetest`, `--refdiag`.
+(scripted UI + live-render walk with screenshots), `--juliadive`, `--reusetest`, `--refdiag`, `--autodive` (unpaced frame-cost controller
+hammer), `--motiontest` (motion-presentation gate), `--chunk-sweep`, `--soak`, `--shot`
+(screenshot regeneration), `--torture` (the escalation suite), `--pickcheck`; `--set
+NAME=VALUE` overrides one frame-cost tunable for a single run.
 
 `--selftest`, `--uitest` and `--gputest` are also reachable without a command line: **Help →
 Diagnostics…** (`ui/diagnostics.rs`) runs the first two as child processes — so a lost device kills
@@ -271,14 +293,14 @@ Layered, mostly external-data-free:
 
 - **Core exact-math tests** (`cargo test -p fractadyne-core`) — perturbation/SA/BLA reproduce the
   exact bignum recurrence; nuclei Newton-solve to known constants; coordinate round-trips.
-- **`--selftest`** (**~140 checks + 18 goldens**; the run prints its own totals) — GPU pipeline compared pixel-for-pixel against an
+- **`--selftest`** (**~170 checks + 18 goldens**; the run prints its own totals) — GPU pipeline compared pixel-for-pixel against an
   independent arbitrary-precision **CPU dwell oracle** (shares nothing with the GPU path), plus
-  **golden images** (17: a direct-mode overview per family + a deep df32-perturbation, 1e6×, golden
+  **golden images** (18: a direct-mode overview per family + a deep df32-perturbation, 1e6×, golden
   per polynomial family — so per-formula dispatch and the deep reference-orbit path are both
   guarded; read from the canonical `validation/golden/`; all render-affecting state pinned so
   they're deterministic; `--bless` records, and also stamps `BLESSED-GPU.txt` with the card that
-  produced them), plus the **bench-matrix** group: 20 deterministic rendering-path signatures
-  (mode / SA-skip / orbit length / GPU event counters) checked against
+  produced them), plus the **bench-matrix** group: the matrix's deterministic rendering-path signatures
+  (mode / SA-skip / orbit length / GPU event counters; 28-segment suite) checked against
   `benchmarks/bench-matrix-baseline.json` — an algorithmic-regression tripwire for any change
   touching the rendering pipeline (see
   [design/bench-matrix.md](design/bench-matrix.md)).

@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Internal: documentation brought current** — a staleness audit against the code fixed:
+  the corpus is 38 locations to ~6.1e1105x (docs said 20 and 4.6e1105x; README even
+  disagreed with itself), the self-test is ~170 checks + 18 goldens (docs said ~140/116/113
+  checks and 17 goldens in various places), the bench matrix is 28 segments (was "22"),
+  `ARCHITECTURE.md` gains the frame-cost controller (tiled settle / chunked walk / present
+  gate) it never described plus the six missing harness modules and a fresh version stamp,
+  `design/render-pipeline.md` records the staged `build_params` and marks its hold-e72
+  "unusable gate" warning RESOLVED (beta.98; re-verified 2026-09-02), the `main.rs` crate
+  doc describes the reorganized layout, and `rustfmt.toml` no longer points at the archived
+  REFACTOR-PLAN.md. Deliberately untouched: `DESIGN.md`/`UI-DESIGN.md` (self-described
+  historical intent), `TOURS.md` (generated, test-enforced), `THIRD-PARTY-NOTICES.md`
+  (generated at release), and dated measurements inside design notes.
+
 - **Internal: files reorganized for first-read comprehension** — `main.rs` now opens with
   `fn main` (it sat at line 1,531 behind ~1,400 lines of helpers), its top-level items are
   grouped under banner sections (entry, render regimes, coloring, readouts, locations,

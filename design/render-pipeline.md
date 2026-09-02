@@ -4,7 +4,9 @@ A map of what happens between "the view changed" and "pixels on screen", and of 
 that make this the most delicate part of the codebase.
 
 **Why this document exists:** the pipeline's behaviour is spread across `render.rs::build_params`
-(1,784 lines), `fractadyne-gpu/src/lib.rs`, and `mandelbrot.wgsl`, and no single file states the
+(staged 2026-09-02 into `bp_frame_budget` / `bp_chunk_tiling` / `bp_present_gate` /
+`bp_finish_params` around a ~1,700-line core), `fractadyne-gpu/src/lib.rs`, and
+`mandelbrot.wgsl`, and no single file states the
 whole shape. It is also the thing a refactor must *not* change — so this describes **behaviour**,
 deliberately not code structure. If restructuring `build_params` changes anything in this document,
 the refactor changed something it shouldn't have.
@@ -166,9 +168,9 @@ depth.
 should preserve every arrow above. The suite is an unusually good guard for that work:
 
 - `chunked direct render is bit-identical` — catches stage-3 divergence,
-- 20 bench-matrix path signatures (mode / sa-skip / orbit length / eff-iter / counters) — catch a
-  changed *decision* in stage 1,
-- 17 golden images — catch a changed pixel,
+- the bench-matrix path signatures (mode / sa-skip / orbit length / eff-iter / counters;
+  28-segment suite) — catch a changed *decision* in stage 1,
+- 18 golden images — catch a changed pixel,
 - `--livetest` — catches the live view disagreeing with an offline render of the same view.
 
 Run all four before and after. A refactor that leaves this document accurate is a good one.
@@ -188,3 +190,10 @@ Run all four before and after. A refactor that leaves this document accurate is 
 > Until that cliff is fixed (TODO.md, "the e72 reference build is on a knife edge"), treat the
 > other three gates as the refactor guard and read `hold-e72` as unresolved rather than as a
 > verdict. It is a product bug first: a user parked at e72 is one hiccup from the same 27% black.
+>
+> **RESOLVED (0.2.40-beta.98):** the knife edge was the reference build's ABSOLUTE motion cap —
+> a rebuild that could not reuse came back *shorter*, and the next hold rendered black. With the
+> cap made relative, `hold-e72` adjudicates again. Verified in anger 2026-09-02: the staged
+> `build_params` split ran all four gates — livetest 24/24 checkpoints (0 drifted), signatures
+> identical, goldens byte-identical — and this document needed no behavioural edits, which is
+> exactly the contract it exists to enforce.

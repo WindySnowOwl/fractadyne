@@ -18,29 +18,37 @@
 //! # This crate's modules
 //!
 //! Extracted modules (cohesive units lifted out to keep `main.rs` navigable):
-//! - [`cli`]      — headless CLI modes (`--find-minibrot`, `--compare`, `--crosscheck-f3`,
-//!   `--validate-deep`), so `fn main` is just dispatch + window setup.
+//! - [`cli`]      — the CLI surface: headless commands (`--find-minibrot`, `--compare`,
+//!   `--crosscheck-f3`, `--validate-deep`), the CLI-launched mode state
+//!   (`SelftestCli`/`ProfileCli`/`FrametestCli`/`BenchState`/`RenderCli`/`HarnessModes`),
+//!   and `update()`'s per-frame harness hooks + mode ladder — `fn main` stays dispatch +
+//!   window setup.
 //! - [`render`]   — the render-request builders: reference orbit, series-skip, mode select,
-//!   `MandelbrotParams`/`ExportRequest` assembly (the performance-critical bridge to the GPU).
+//!   the staged `build_params` (frame budget → chunk walk → present gate → params), and
+//!   `ExportRequest` assembly (the performance-critical bridge to the GPU).
 //! - [`export`]   — render-to-file (PNG/EXR), the reloadable view-metadata blob, Open-view.
-//! - [`autopilot`]— the hands-free auto-zoom dive.
+//! - [`autopilot`]— the hands-free auto-zoom dive (+ the `--autodive` controller hammer).
 //! - [`fractal`]  — the [`FractalKind`] domain enum (families, formula ids, descriptions).
 //! - [`help`]     — the in-app Help window content.
-//! - [`theme`]    — branding colors, dark visuals, wordmark, window icon.
+//! - [`theme`]    — branding colors, dark/light visuals, fonts, wordmark, window icon.
+//! - [`tunables`] — every frame-cost constant, centralized; `--set NAME=VALUE` overrides.
 //! - [`sysinfo`]  — version string, UTC formatter, CPU/VRAM/RAM probes.
 //! - [`selftest`] — the `--selftest` GPU validation suite (render-path cross-checks + goldens).
-//! - [`profile`]  — the `--profile` development profiling harness (benchmark regions → logs).
+//! - [`profile`]  — `--profile`, plus the `--frametest`/`--divetest`/`--resizetest` harnesses.
+//! - dev harnesses in their own files: [`livetest`], [`uitest`] (+ `--juliadive`),
+//!   [`motiontest`], [`chunksweep`], [`torture`], [`soak`], [`shot`], [`gputest`],
+//!   [`reusetest`], [`bench_matrix`]; UI draw surfaces under `ui/`.
 //!
-//! `main.rs` itself now holds: small shared types/helpers (`Perf`, `RandomPalette`,
-//! formatting, tunables); `fn main` (CLI dispatch + window setup); and [`FractadyneApp`] —
-//! all app state plus the remaining behavior (UI panels/dialogs/toolbar/menus, bookmarks,
-//! goto/locations, gallery, scripting, minimap, coloring) and the `eframe::App` `update`.
+//! `main.rs` itself holds, in banner-sectioned reading order: `fn main` + startup; the
+//! render-regime/perf bookkeeping types (`Perf`, `RenderMode`); coloring + palette types;
+//! readout formatting; locations; export/gallery and issue-report helpers; UI geometry;
+//! the app-state types; and [`FractadyneApp`] — its behavior split across topical `impl`
+//! blocks (construction, persistence, bookmarks, navigation, features, coloring, windows,
+//! measurement), ending in the `eframe::App` frame loop.
 //!
-//! Modularization is ongoing — the bulk left is the UI (the large `update` method and the
-//! dialog/panel renderers); navigation, scripting, and coloring are also candidates. Moving
-//! items between modules in one crate has no runtime cost (no added indirection; inlining is
-//! unaffected) — purely an
-//! organization/readability change.
+//! Modularization is ongoing — navigation, scripting, and coloring remain extraction
+//! candidates. Moving items between modules in one crate has no runtime cost (no added
+//! indirection; inlining is unaffected) — purely an organization/readability change.
 //!
 //! Test layout: a `#[cfg(test)] mod` body does not share a file with the code it tests. Each
 //! is declared `mod name;` under `#[cfg(test)]` and its body lives in a sibling file —

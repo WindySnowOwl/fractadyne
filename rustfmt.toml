@@ -3,5 +3,5 @@
 # Stable defaults are used deliberately: the existing code is already rustfmt-clean at these
 # settings, so a `cargo fmt` pass is a (near) no-op and stays reviewable. A dedicated formatting
 # sweep — and any opinionated overrides (e.g. import grouping) — is deferred to a standalone commit
-# so it never mixes with a behavior change (see REFACTOR-PLAN.md).
+# so it never mixes with a behavior change (see CONTRIBUTING.md, "Keep changes focused").
 edition = "2021"

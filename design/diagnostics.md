@@ -43,7 +43,7 @@ Two cross-cutting lessons:
 > **Snapshot as of when this plan was written (v0.2.2–0.2.9).** Deliberately left as-is — the
 > point of the list is what was available when the plan was made, and rewriting it would erase
 > the reasoning. For the *current* tooling see [DIAGNOSTICS.md](../DIAGNOSTICS.md); the counts
-> below have since grown (the self-test is 113 checks + 17 goldens), and see "After this plan"
+> below have since grown (the self-test is 168 checks + 18 goldens as of 0.2.41), and see "After this plan"
 > at the end for the tooling added later.
 
 - `FRACTADYNE_TRACE=1` — ad-hoc but proven stderr tracing: `[fd-trace]` per-frame GPU sizing,

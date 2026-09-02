@@ -1,9 +1,10 @@
 # Fractadyne ↔ Kalles Fraktaler comparison corpus
 
-Twenty reference locations — from the full-set overview down to **1.58e1008×** (deepest matched
-pair **6.13e1105×**) — rendered by both apps from the **exact same center, magnification, and
+Thirty-eight reference locations — from the full-set overview down to the deepest matched
+pair at **6.13e1105×** — rendered by both apps from the **exact same center, magnification, and
 iteration count**, for side-by-side structural comparison. Locations 11–20 are user-saved
-Fraktaler-3 finds (2.27e124× → 1.58e1008×), imported verbatim from their `.exr` headers. Open **[catalog.html](catalog.html)** to view the pairs with each
+Fraktaler-3 finds (2.27e124× → 1.58e1008×), imported verbatim from their `.exr` headers; later
+additions (21–38) extend the corpus into the extreme-depth regime. Open **[catalog.html](catalog.html)** to view the pairs with each
 location's full compute details.
 
 ## Layout
