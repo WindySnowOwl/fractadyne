@@ -3009,6 +3009,7 @@ impl FractadyneApp {
     #[allow(clippy::too_many_arguments)]
     fn bp_frame_budget(
         &mut self,
+        center: (f64, f64),
         magnification: f64,
         log2mag: f64,
         fractal: FractalKind,
@@ -3133,15 +3134,31 @@ impl FractadyneApp {
             // range moves smoothly with the view, and the EMA keeps the derived palette mapping
             // from flickering frame to frame.
             // Local-gradient drain: `(Σ×16) << 32 | (n + 1)`; 0 = never published this frame.
+            // Decide-once-and-hold for the live normalization mapping (`norm_feed_decision`):
+            // the signature is the view + the iteration ask. Computed here, applied to BOTH
+            // drains below, and the lock is taken when the RANGE adopts (the gradient may
+            // arrive on its own; it must not lock a mapping whose range is still the old view's).
+            let nsig = center.0.to_bits()
+                ^ center.1.to_bits().rotate_left(17)
+                ^ log2mag.to_bits().rotate_left(34)
+                ^ (budget_now as u64).rotate_left(51);
+            let nfeed =
+                norm_feed_decision(nsig, self.perf.norm_sig[vb], self.perf.norm_locked[vb], interacting);
+            if self.perf.norm_sig[vb] != nsig {
+                self.perf.norm_sig[vb] = nsig;
+                self.perf.norm_locked[vb] = false;
+            }
             let gr = self.perf.grad_sink[vb].swap(0, SeqCst);
-            if gr != 0 {
+            if gr != 0 && nfeed != NormFeed::Hold {
                 let (sum, n) = ((gr >> 32) as u32, (gr as u32).saturating_sub(1));
                 if n > 0 {
                     let mean = (sum as f32) / 16.0 / (n as f32);
-                    // Same 0.3 EMA as the range: the mapping must not flicker frame to frame.
-                    self.perf.norm_grad[vb] = Some(match self.perf.norm_grad[vb] {
-                        Some(g) => g + 0.3 * (mean - g),
-                        None => mean,
+                    self.perf.norm_grad[vb] = Some(match (nfeed, self.perf.norm_grad[vb]) {
+                        // Adoption takes the settled reading outright — decided once.
+                        (NormFeed::Adopt, _) | (_, None) => mean,
+                        // Motion: same 0.3 EMA as the range, so nothing flickers frame to frame.
+                        (NormFeed::Chase, Some(g)) => g + 0.3 * (mean - g),
+                        (NormFeed::Hold, Some(g)) => g, // unreachable (gated above)
                     });
                 }
             }
@@ -3174,15 +3191,24 @@ impl FractadyneApp {
                         // the exterior aliased into speckle. Measured before the fix: consecutive
                         // frames read [46422,54614] then [54614,63736] — adjacent windows, never a
                         // frame range. After: [45075,63736] on the first reading.
-                        let (_, ema) =
-                            norm_window_feed(None, (mn, mx), false, self.perf.norm_range[vb]);
-                        if let Some(e) = ema {
-                            self.perf.norm_range[vb] = Some(e);
+                        match nfeed {
+                            NormFeed::Hold => {} // decided for this view — held while it refines
+                            NormFeed::Adopt => {
+                                self.perf.norm_range[vb] = Some((mn, mx));
+                                self.perf.norm_locked[vb] = true;
+                            }
+                            NormFeed::Chase => {
+                                let (_, ema) =
+                                    norm_window_feed(None, (mn, mx), false, self.perf.norm_range[vb]);
+                                if let Some(e) = ema {
+                                    self.perf.norm_range[vb] = Some(e);
+                                }
+                            }
                         }
                         crate::diag::trace(
                             "gpu",
                             format!(
-                                "norm range: frame [{mn:.0},{mx:.0}] governed={} ema {:?} grad {:?} phase/px {:.3} engaged={}",
+                                "norm range: frame [{mn:.0},{mx:.0}] {nfeed:?} governed={} ema {:?} grad {:?} phase/px {:.3} engaged={}",
                                 self.perf.chunk_governed[vb],
                                 self.perf.norm_range[vb],
                                 self.perf.norm_grad[vb],
@@ -4354,6 +4380,7 @@ impl FractadyneApp {
             fractadyne_core::SpanMantissa::new(span.0.mul_pow2(sm).to_f64(), span.1.mul_pow2(sm).to_f64());
 
         let BudgetPlan { px, is_pert, budget, iter_cap, gpu_iter } = self.bp_frame_budget(
+            center,
             magnification,
             log2mag,
             fractal,
@@ -6117,6 +6144,43 @@ mod chunk_pace;
 /// So: readings ACCUMULATE (min-min/max-max) while a progression is mid-flight, and the EMA is
 /// fed once, with the whole-ask range, when it completes — which is also exactly one feed per
 /// settled frame in the un-chunked case, the pre-walk behaviour.
+/// What a live-normalization reading may do to the mapping, given where the view stands.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NormFeed {
+    /// Motion: chase the reading with the EMA, exactly the pre-hold behaviour — a dive's
+    /// mapping glides instead of snapping per frame.
+    Chase,
+    /// First settled reading of this view signature: adopt the whole-frame reading OUTRIGHT
+    /// and lock. One α=0.3 feed would leave the mapping 70% at the previous view's range;
+    /// the first settled full-res reading is exactly what the offline anchors measure.
+    Adopt,
+    /// Same signature, already decided: the mapping is HELD — the reading is discarded, so
+    /// ss-ramp stages, settle tiles and chunked-walk refreshes stop re-mapping the picture
+    /// under the user ("re-mapped, not sharpened" — the user report this closes).
+    Hold,
+}
+
+/// The live half of "the palette mapping moves while the image resolves": decide the
+/// mapping ONCE per view and hold it while that view refines. The signature is the set of
+/// inputs whose change makes it a genuinely different picture (view centre, depth, and the
+/// iteration ask — a budget raise extends real escapes, so re-deciding there is honest);
+/// everything else that produces a fresh reading — supersampling stages, tiles, walk
+/// refreshes — shares the signature and is held. Pure, so the state machine is testable
+/// without a GPU. Rhymes with the offline sequence fix: decide from the VIEW, never from
+/// render history.
+pub(crate) fn norm_feed_decision(sig: u64, prev_sig: u64, locked: bool, interacting: bool) -> NormFeed {
+    if interacting {
+        return NormFeed::Chase;
+    }
+    if sig == prev_sig && locked {
+        return NormFeed::Hold;
+    }
+    NormFeed::Adopt
+}
+
+#[cfg(test)]
+mod norm_hold;
+
 pub(crate) fn norm_window_feed(
     acc: Option<(f32, f32)>,
     reading: (f32, f32),

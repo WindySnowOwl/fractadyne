@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The live normalized palette no longer re-maps while a view settles** (beta.9 - the live
+  half of beta.8's fix; user-reported). As a deep view refined, every supersampling stage,
+  settle tile and chunked-walk refresh fed a new escape-range reading into the mapping EMA,
+  so the colours shifted under you - re-mapped, not sharpened. The mapping is now DECIDED
+  ONCE per view and held: motion still glides on the EMA, the first settled reading of a new
+  view adopts the whole-frame range outright (what the offline keyframe anchors measure),
+  and every further reading at the same view is discarded until the view itself changes
+  (pan, zoom, or an iteration-budget raise - which extends real escapes and honestly
+  re-decides). Verified live: a traced windowed dive shows motion chasing, settled views
+  adopting once, and refinement readings held (13/2/10); the grand-tour livetest is
+  drift-free against the existing blessed baseline.
+
 - **A normalized tour's palette no longer depends on render order** (beta.8) — the
   `normalize` mapping was smoothed frame-to-frame in RENDER order, so the same script
   produced a different video under `--order progressive` (measured: 5 of 6 frames differed,

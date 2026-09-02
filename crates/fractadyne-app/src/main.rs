@@ -1049,6 +1049,11 @@ struct Perf {
     work_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
+    /// The view signature `norm_range`/`norm_grad` were DECIDED for, and whether that decision
+    /// is locked. The live mapping is decided once per view and held while the view refines —
+    /// see `norm_feed_decision` (render.rs) for the whole story.
+    norm_sig: [u64; 2],
+    norm_locked: [bool; 2],
     /// EMA-smoothed MEAN |Δ smooth-iter| between neighbouring escaped pixels, per view.
     norm_grad: [Option<f32>; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
@@ -1253,6 +1258,8 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             norm_range: [None, None],
+            norm_sig: [0, 0],
+            norm_locked: [false, false],
             norm_grad: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
@@ -5026,6 +5033,8 @@ impl FractadyneApp {
         self.perf.capped_frac = [None, None];
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
+        self.perf.norm_sig = [0, 0];
+        self.perf.norm_locked = [false, false];
     }
 
     /// Zoom the main viewport about its center (factor < 1 zooms in).
