@@ -694,6 +694,8 @@ impl FractadyneApp {
                 }
             }
             Phase::Done => {
+                let probe = self.uitest_thumb_probe_result();
+                ut.results.push(probe);
                 let code = self.uitest_finish(&ut);
                 crate::exit(code);
             }
@@ -829,6 +831,12 @@ impl FractadyneApp {
                 self.coloring.log_palette = true;
                 self.set_fractal(crate::FractalKind::BurningShip);
                 self.set_show_mode(crate::ShowMode::Both);
+                // Regression probe (field report 2026-09-01): a bookmark added IN DUAL VIEW must
+                // still capture a real thumbnail. The dual path used to return before writing
+                // `central_rect_px`, so a dual-since-launch session cropped every thumbnail to a
+                // 1x1 chrome pixel. The capture rides this step's ordinary frames; the verdict
+                // (file exists, decodes, is not degenerate) and the cleanup happen at finish.
+                self.add_bookmark("uitest-thumb-probe");
             }
             // ...and now switch the formula WITHOUT touching the canvas. Nothing else changes:
             // still dual, still settled. This is the reported gesture exactly.
@@ -1383,6 +1391,81 @@ impl FractadyneApp {
 
     /// Write the bundle (log.txt + report.md + report.json) and return the process exit code
     /// (0 = no FAIL, 1 = at least one FAIL).
+    /// Verdict for the dual-view bookmark-thumbnail probe added by the DualFormulaA step, and
+    /// its cleanup (the probe bookmark and its thumbnail file are removed so a run against a
+    /// real profile leaves no residue). Fails when the thumbnail never captured, or captured
+    /// degenerate -- the 1x1-chrome-pixel regression this exists to pin.
+    fn uitest_thumb_probe_result(&mut self) -> StepResult {
+        let mut checks = Vec::new();
+        let idx = self.bookmarks.iter().position(|b| b.name == "uitest-thumb-probe");
+        match idx {
+            None => checks.push(Check {
+                name: "probe bookmark exists".into(),
+                verdict: Verdict::Fail,
+                detail: "the DualFormulaA step's add_bookmark left no bookmark".into(),
+            }),
+            Some(i) => {
+                let id = self.bookmarks[i].thumb.clone();
+                if id.is_empty() {
+                    checks.push(Check {
+                        name: "thumbnail captured".into(),
+                        verdict: Verdict::Fail,
+                        detail: "no thumbnail id -- the capture round-trip never completed".into(),
+                    });
+                } else {
+                    match Self::bookmark_thumb_path(&id)
+                        .ok_or_else(|| "no config dir".to_string())
+                        .and_then(|p| {
+                            fractadyne_export::read_png_rgba8(&p).map_err(|e| e.to_string())
+                        }) {
+                        Ok((w, h, _)) if w >= 8 && h >= 8 => checks.push(pass(
+                            "thumbnail captured",
+                            format!("{w}x{h} px (dual view)"),
+                        )),
+                        Ok((w, h, _)) => checks.push(Check {
+                            name: "thumbnail captured".into(),
+                            verdict: Verdict::Fail,
+                            detail: format!(
+                                "DEGENERATE {w}x{h} px -- the 1x1 chrome-pixel regression"
+                            ),
+                        }),
+                        Err(e) => checks.push(Check {
+                            name: "thumbnail captured".into(),
+                            verdict: Verdict::Fail,
+                            detail: format!("thumb id set but file unreadable: {e}"),
+                        }),
+                    }
+                }
+                // Cleanup: never leave the probe in a real profile.
+                if let Some(old) = crate::take_bookmark(&mut self.bookmarks, i) {
+                    if let Some(p) = Self::bookmark_thumb_path(&old) {
+                        let _ = std::fs::remove_file(p);
+                    }
+                }
+                self.save_bookmarks();
+            }
+        }
+        StepResult {
+            name: "dual-bookmark-thumb".into(),
+            kind: "probe",
+            file: String::new(),
+            width: 0,
+            height: 0,
+            checks,
+            mode: None,
+            eff_iter: None,
+            orbit_len: None,
+            precision: None,
+            mag_log10: None,
+            frame_ms: None,
+            mean_luma: 0.0,
+            luma_stddev: 0.0,
+            buckets: 0,
+            left_fp: Vec::new(),
+            tiled: false,
+        }
+    }
+
     fn uitest_finish(&self, ut: &UiTest) -> i32 {
         let (mut pass_n, mut warn_n, mut fail_n) = (0u32, 0u32, 0u32);
         for r in &ut.results {

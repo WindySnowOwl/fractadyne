@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Bookmarks added in dual view capture a real thumbnail again** (beta.3) - the thumbnail
+  crops the central panel out of a window screenshot, but dual view returned from the panel
+  draw before the crop rectangle was ever written, so a session that had been dual since
+  launch kept the zeroed init and every bookmark saved an invisible 1x1 crop of the window's
+  top-left chrome pixel (field report: the e38/e4000/e4001 bookmarks, added in dual view,
+  against shallower ones added in single view). The rectangle is now set before the dual
+  split - in dual view the thumbnail is the whole central area, both panes - and the crop
+  falls back to the full window shot if the rectangle is ever degenerate again, pinned by
+  unit tests and a dual-view probe in --uitest. Existing casualties self-heal: jumping to a
+  bookmark whose thumbnail is missing or degenerate recaptures it once the render settles,
+  guarded so any pan or zoom off the exact bookmarked view cancels the recapture, and the
+  replaced thumbnail file is deleted rather than leaked.
+
 - **The accelerated build's speed now reaches the reference pick** (beta.2) — the pick's
   bignum walks (candidate ranking, the deep walks, the recorded scoring orbit, trust
   fallbacks, the cliff-rescue passes) were hardcoded astro-float, so `--bignum rug` never

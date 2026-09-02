@@ -2812,6 +2812,53 @@ struct Bookmark {
 /// directly, so a stale index would have panicked rather than been ignored. Returning the
 /// thumbnail id rather than deleting the file here keeps the list surgery pure and testable
 /// while leaving exactly one caller responsible for the file system.
+#[cfg(test)]
+mod bookmark_thumb_crop {
+    use super::thumb_crop;
+
+    /// The regression exactly: an unset (all-zero) rect against a real window shot must fall
+    /// back to the WHOLE frame -- the pre-beta.3 clamp turned it into a 1x1 crop of the
+    /// window's top-left chrome pixel, which is the invisible gray dot of the field report.
+    #[test]
+    fn a_zero_rect_captures_the_whole_shot_not_one_pixel() {
+        assert_eq!(thumb_crop([0, 0, 0, 0], 1920, 1080), (0, 0, 1920, 1080));
+    }
+
+    #[test]
+    fn a_normal_rect_is_passed_through() {
+        assert_eq!(thumb_crop([0, 40, 1920, 1040], 1920, 1080), (0, 40, 1920, 1040));
+    }
+
+    #[test]
+    fn a_rect_hanging_past_the_shot_is_clamped_inside_it() {
+        // e.g. a shot taken at a smaller window than the rect was measured at.
+        assert_eq!(thumb_crop([0, 40, 1920, 1040], 1280, 720), (0, 40, 1280, 680));
+        // Origin beyond the shot entirely: clamped to the last pixel, 1x1 -- the honest
+        // answer for a truly disjoint rect (not reachable from the panel's own geometry).
+        assert_eq!(thumb_crop([5000, 5000, 100, 100], 1280, 720), (1279, 719, 1, 1));
+    }
+
+    #[test]
+    fn a_degenerate_shot_never_panics() {
+        assert_eq!(thumb_crop([0, 0, 100, 100], 0, 0), (0, 0, 1, 1));
+    }
+}
+
+/// The screenshot crop for a bookmark thumbnail: the central-panel rect clamped into the shot,
+/// falling back to the WHOLE shot when the rect is degenerate. The fallback is the pin against
+/// the 1x1 class: before 0.2.41-beta.3 a dual-view session never wrote `central_rect_px`, and
+/// the old inline clamp turned [0,0,0,0] into a 1x1 crop of the window's top-left chrome pixel
+/// -- an invisible thumbnail. A whole-window thumb is imperfect; a 1x1 one is a lie.
+fn thumb_crop(rect: [u32; 4], iw: u32, ih: u32) -> (u32, u32, u32, u32) {
+    let [cx, cy, cw, chh] = rect;
+    if cw == 0 || chh == 0 || iw == 0 || ih == 0 {
+        return (0, 0, iw.max(1), ih.max(1));
+    }
+    let x0 = cx.min(iw.saturating_sub(1));
+    let y0 = cy.min(ih.saturating_sub(1));
+    (x0, y0, cw.min(iw - x0).max(1), chh.min(ih - y0).max(1))
+}
+
 pub(crate) fn take_bookmark(list: &mut Vec<Bookmark>, i: usize) -> Option<String> {
     if i >= list.len() {
         return None;
@@ -3571,6 +3618,12 @@ struct FractadyneApp {
     /// A just-added bookmark whose thumbnail still needs rendering (deferred to `update`,
     /// where the GPU is available and the current view still matches the bookmark).
     pending_thumb: Option<usize>,
+    /// Heal-on-jump: a bookmark was jumped to that has no usable thumbnail (empty id, or the
+    /// 1x1 chrome-pixel captures the dual-view rect bug wrote before 0.2.41-beta.3); once the
+    /// view has SETTLED and is still exactly at the bookmark's coordinates, recapture it.
+    /// Holds (bookmark index, target centre x/y, target log2 magnification); any interaction
+    /// moves the viewport off the exact target and disarms it.
+    heal_thumb: Option<(usize, fractadyne_core::BigFloat, fractadyne_core::BigFloat, f64)>,
     /// A bookmark-thumbnail SCREENSHOT is in flight (the reply lands next frame as
     /// `egui::Event::Screenshot`); holds the bookmark index it belongs to.
     thumb_shot: Option<usize>,
@@ -4292,6 +4345,7 @@ impl FractadyneApp {
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             bookmarks: Self::load_bookmarks(),
             pending_thumb: None,
+            heal_thumb: None,
             thumb_shot: None,
             central_rect_px: [0, 0, 0, 0],
             uitest_central_w: None,
@@ -5057,11 +5111,7 @@ impl FractadyneApp {
                 if i < self.bookmarks.len() {
                     let (iw, ih) = (img.size[0] as u32, img.size[1] as u32);
                     // Crop the central panel (physical px), clamped to the shot's bounds.
-                    let [cx, cy, cw, chh] = self.central_rect_px;
-                    let x0 = cx.min(iw.saturating_sub(1));
-                    let y0 = cy.min(ih.saturating_sub(1));
-                    let cw = cw.min(iw - x0).max(1);
-                    let chh = chh.min(ih - y0).max(1);
+                    let (x0, y0, cw, chh) = thumb_crop(self.central_rect_px, iw, ih);
                     let mut rgba = Vec::with_capacity((cw * chh * 4) as usize);
                     for y in y0..y0 + chh {
                         let row = &img.pixels[(y * iw + x0) as usize..(y * iw + x0 + cw) as usize];
@@ -5082,7 +5132,15 @@ impl FractadyneApp {
                             let _ = std::fs::create_dir_all(parent);
                         }
                         if fractadyne_export::write_png_rgba8(&path, tw, th, &tpx, None).is_ok() {
-                            self.bookmarks[i].thumb = id;
+                            // A RECAPTURE (heal-on-jump) replaces the id -- delete the file the
+                            // old id named, or every heal leaks an orphan PNG in the config dir.
+                            let old = std::mem::replace(&mut self.bookmarks[i].thumb, id);
+                            if !old.is_empty() {
+                                if let Some(p) = Self::bookmark_thumb_path(&old) {
+                                    let _ = std::fs::remove_file(p);
+                                }
+                                self.thumb_cache.remove(&old);
+                            }
                             self.save_bookmarks();
                         }
                     }
@@ -5099,6 +5157,84 @@ impl FractadyneApp {
         }
     }
 
+    /// Does this bookmark need a (re)capture? Yes when it has no thumbnail id at all, and yes
+    /// when the file its id names is missing or DEGENERATE -- the 1x1 chrome-pixel PNGs the
+    /// dual-view rect bug wrote before 0.2.41-beta.3 (an 86-byte gray dot that renders as
+    /// nothing against the menu background). Decoding an ~86-byte header at click time is free.
+    fn thumb_needs_capture(&self, i: usize) -> bool {
+        let id = &self.bookmarks[i].thumb;
+        if id.is_empty() {
+            return true;
+        }
+        let Some(path) = Self::bookmark_thumb_path(id) else { return false };
+        match fractadyne_export::read_png_rgba8(&path) {
+            Ok((w, h, _)) => w < 8 || h < 8,
+            Err(_) => true,
+        }
+    }
+
+    /// Jump to bookmark `i` (restore its view), arming heal-on-jump when its thumbnail needs a
+    /// (re)capture: once the view settles -- still exactly at the bookmark's coordinates -- the
+    /// ordinary two-frame capture runs. The single entry point for both the menu rows and the
+    /// Manage dialog, so the two jump paths cannot drift.
+    pub(crate) fn bookmark_jump(&mut self, i: usize) {
+        if i >= self.bookmarks.len() {
+            return;
+        }
+        let heal = self.thumb_needs_capture(i);
+        let meta = self.bookmarks[i].meta.clone();
+        self.load_view_metadata(&meta);
+        self.heal_thumb = if heal {
+            Some((
+                i,
+                self.viewport.center_x.clone(),
+                self.viewport.center_y.clone(),
+                self.viewport.log2_magnification(),
+            ))
+        } else {
+            None
+        };
+    }
+
+    /// Drive heal-on-jump: fire the capture once the render has settled, DISARM the moment the
+    /// view is no longer exactly the bookmark's (any pan/zoom -- a healed thumbnail must show
+    /// the bookmarked view, never wherever the user wandered next). Settled = the same
+    /// [`Self::spinner_busy`] inputs the working cue uses, both panes in dual view.
+    fn process_thumb_heal(&mut self, ctx: &egui::Context) {
+        let Some((i, ref tx, ref ty, tl2)) = self.heal_thumb else { return };
+        if i >= self.bookmarks.len() || !self.thumb_needs_capture(i) {
+            self.heal_thumb = None;
+            return;
+        }
+        let at_target = self.viewport.center_x.cmp(tx).is_some_and(|o| o == 0)
+            && self.viewport.center_y.cmp(ty).is_some_and(|o| o == 0)
+            && (self.viewport.log2_magnification() - tl2).abs() < 1e-9;
+        if !at_target {
+            self.heal_thumb = None;
+            return;
+        }
+        let busy = Self::spinner_busy(
+            self.recompute_rx[0].is_some(),
+            self.perf.tile_pending[0],
+            self.perf.chunk_pending[0],
+            self.tour_playing(),
+        ) || (self.dual
+            && Self::spinner_busy(
+                self.recompute_rx[1].is_some(),
+                self.perf.tile_pending[1],
+                self.perf.chunk_pending[1],
+                self.tour_playing(),
+            ));
+        if busy || self.pending_thumb.is_some() || self.thumb_shot.is_some() {
+            // Not settled yet (or a capture is already in flight): keep the frame clock ticking
+            // so the busy-to-idle transition is observed even on an otherwise idle UI.
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            return;
+        }
+        self.heal_thumb = None;
+        self.pending_thumb = Some(i);
+    }
+
     /// Fetch (lazily loading + caching) the texture for a bookmark thumbnail id.
     fn bookmark_thumb_texture(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureHandle> {
         if id.is_empty() {
@@ -5109,6 +5245,12 @@ impl FractadyneApp {
         }
         let path = Self::bookmark_thumb_path(id)?;
         let (w, h, rgba) = fractadyne_export::read_png_rgba8(&path).ok()?;
+        if w < 8 || h < 8 {
+            // A degenerate capture (the pre-beta.3 1x1 chrome pixel) stretched to a 64px button
+            // image is an invisible gray square -- worse than the honest no-thumbnail row. Not
+            // cached: heal-on-jump replaces the file, and the cache would outlive it.
+            return None;
+        }
         let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
         let tex = ctx.load_texture(format!("bmthumb.{id}"), img, egui::TextureOptions::LINEAR);
         self.thumb_cache.insert(id.to_string(), tex.clone());
@@ -8284,6 +8426,7 @@ impl eframe::App for FractadyneApp {
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
         // view still matches the bookmark, since adding it didn't move the view).
         self.process_pending_thumb(ctx);
+        self.process_thumb_heal(ctx);
         // ~1 Hz process-memory poll for the perf panel (deliberately not per-frame).
         if self.perf.mem_poll.is_none_or(|t| t.elapsed().as_secs_f64() > 1.0) {
             self.perf.mem_poll = Some(std::time::Instant::now());

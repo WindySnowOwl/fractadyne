@@ -498,7 +498,7 @@ impl FractadyneApp {
     /// walks, then an `!auto_iter` gate that was standing in for "this will be quick").
     /// Whether it is worth SHOWING is a separate question, answered by `SHOW_DELAY` at the
     /// call site - which measures duration directly instead of guessing at it.
-    fn spinner_busy(
+    pub(crate) fn spinner_busy(
         reference_building: bool,
         tile_pending: bool,
         chunk_pending: bool,
@@ -783,6 +783,24 @@ impl FractadyneApp {
         let central = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
+                // The central area in PHYSICAL pixels — what a bookmark thumbnail crops out of
+                // the window screenshot (`process_pending_thumb`). Assigned BEFORE the dual
+                // split on purpose: this used to live only on the single-view path below, so a
+                // session that had been dual since launch kept the [0,0,0,0] init and every
+                // bookmark thumbnail captured as a 1×1 crop of the window's top-left chrome
+                // pixel (field report 2026-09-01 — the e38/e4000/e4001 bookmarks, added in
+                // dual view, against e27–e157 added in single view). In dual view the thumb is
+                // the whole central area, both panes: exactly what the user bookmarked.
+                {
+                    let rect = ui.max_rect();
+                    let ppp = ctx.pixels_per_point() as f64;
+                    self.central_rect_px = [
+                        (rect.min.x as f64 * ppp) as u32,
+                        (rect.min.y as f64 * ppp) as u32,
+                        (rect.width() as f64 * ppp) as u32,
+                        (rect.height() as f64 * ppp) as u32,
+                    ];
+                }
                 if self.dual {
                     self.draw_dual(ui, ctx);
                     return;
@@ -1059,14 +1077,6 @@ impl FractadyneApp {
                 let resolution = [
                     (rect.width() as f64 * ppp) as u32,
                     (rect.height() as f64 * ppp) as u32,
-                ];
-                // The central rect in PHYSICAL pixels — what a bookmark thumbnail crops out of
-                // the window screenshot (see `process_pending_thumb`).
-                self.central_rect_px = [
-                    (rect.min.x as f64 * ppp) as u32,
-                    (rect.min.y as f64 * ppp) as u32,
-                    resolution[0],
-                    resolution[1],
                 ];
                 // Pan reprojection: while dragging, translate the last detailed frame instead
                 // of re-rendering coarse (see `nav_and_draw` for the full rationale).

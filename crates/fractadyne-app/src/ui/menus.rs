@@ -55,8 +55,7 @@ impl FractadyneApp {
                 }
             }
             if let Some(i) = jump {
-                let meta = self.bookmarks[i].meta.clone();
-                self.load_view_metadata(&meta);
+                self.bookmark_jump(i); // restores the view + arms heal-on-jump for a missing thumb
                 ui.close_menu();
             }
         }
