@@ -594,7 +594,7 @@ impl FractadyneApp {
             if let Some((res, _range)) = self
                 // Interactive single export: the standard export tile budget (not the tour's tighter
                 // one — an on-screen export is a one-off, not a many-frame sequence).
-                .render_export_normalized(device, queue, vp, julia, req.width, req.height, req.ss, None, None, 20_000_000_000)
+                .render_export_normalized(device, queue, vp, julia, req.width, req.height, req.ss, crate::render::NormRange::OwnFrame, None, 20_000_000_000)
             {
                 return Ok(res);
             }

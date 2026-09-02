@@ -627,7 +627,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "max_iter", ty: "int", default: "(session, min 500000)", doc: "Iteration budget for frames whose keyframes don't state their own. Deep tours SHOULD set a per-keyframe budget instead: the depth formula under-budgets hard fields badly (a Misiurewicz spar gets ~46k at 1e61x where it needs 222k), and every frame there renders flat." },
             SchemaField { name: "auto_iter", ty: "bool", default: "true", doc: "Whether this `max_iter` is a base that still scales with depth (true) or an exact count used as-is (false). Per-keyframe budgets are always exact." },
             SchemaField { name: "show_location", ty: "bool", default: "false", doc: "Burn a zoom-level + coordinate HUD into every frame (same as the --show-location CLI flag)." },
-            SchemaField { name: "normalize", ty: "bool", default: "false", doc: "Auto-normalize the palette cycle to each frame's escape-value range, temporally smoothed so a video doesn't shimmer. Deep tours need it — past ~1e50x a fixed cycle aliases the escape field into confetti. (Colors up to ~40 Mpx/frame; above that the frame falls back to un-normalized with a logged warning, pending a tiled normalized color pass.)" },
+            SchemaField { name: "normalize", ty: "bool", default: "false", doc: "Auto-normalize the palette cycle to the escape-value range. Deep tours need it — past ~1e50x a fixed cycle aliases the escape field into confetti. The range is TIME-KEYED: measured once at each keyframe's view (small fixed resolution, the keyframe's own iteration budget) and interpolated along the tour's time axis, so the mapping is identical in any render order, across --resume, across shards, and at any output size. (Colors up to ~40 Mpx/frame; above that the frame falls back to un-normalized with a logged warning, pending a tiled normalized color pass.)" },
         ],
     },
     SchemaTable {
@@ -1020,6 +1020,33 @@ mod resume_vetting_tests;
 
 #[cfg(test)]
 mod order_tests;
+
+/// The normalize range for tour time `t`, interpolated piecewise-linearly between the
+/// canonical keyframe anchors `(t, (lo, hi))` (time-sorted). Clamped at both ends;
+/// `None` when no anchor measured. Pure, so the mapping for a frame is a function of the
+/// TOUR alone — not of render order, of what a `--resume` skipped, or of which shard the
+/// frame landed on.
+pub(crate) fn norm_anchor_range(anchors: &[(f64, (f32, f32))], t: f64) -> Option<(f32, f32)> {
+    let (first, rest) = anchors.split_first()?;
+    if t <= first.0 {
+        return Some(first.1);
+    }
+    let mut prev = first;
+    for a in rest {
+        if t <= a.0 {
+            let w = ((t - prev.0) / (a.0 - prev.0).max(f64::EPSILON)).clamp(0.0, 1.0) as f32;
+            return Some((
+                prev.1 .0 + (a.1 .0 - prev.1 .0) * w,
+                prev.1 .1 + (a.1 .1 - prev.1 .1) * w,
+            ));
+        }
+        prev = a;
+    }
+    Some(prev.1)
+}
+
+#[cfg(test)]
+mod norm_anchor_tests;
 
 pub(crate) fn segment_range(frames: u64, n: u64, k: u64) -> (u64, u64) {
     let n = n.max(1);
@@ -3087,10 +3114,11 @@ impl FractadyneApp {
         // Overwrite policy: `overwrite_all` skips the per-frame prompt; `canceled` breaks the render.
         let mut overwrite_all = overwrite;
         let mut canceled = false;
-        // Tour normalize: the escape-value range smoothed across frames (see
-        // `render_export_normalized`), and a one-shot flag so an oversized frame warns once rather
-        // than per-frame. `resume` may start mid-tour with no prior range — the EMA simply seeds
-        // from the first rendered frame, which is what `None` does.
+        // Tour normalize, LEGACY fallback half: the render-order EMA survives only for the
+        // degenerate case where no time-keyed anchor could be measured (see the anchor pass
+        // below) — everywhere else the mapping is `NormRange::Fixed` from the anchors, and this
+        // variable never feeds a frame. The one-shot flag keeps an oversized frame warning once
+        // rather than per-frame.
         let mut norm_range: Option<(f32, f32)> = None;
         let mut norm_oversize_warned = false;
         let want_normalize = pb.render.normalize;
@@ -3123,17 +3151,9 @@ impl FractadyneApp {
                 "Render order: progressive — keyframes first, then bisecting the largest gaps; \
                  a coarse flip-book of the whole tour appears first and refines to full rate",
             );
-            if want_normalize {
-                // The normalize range is smoothed frame-to-frame IN RENDER ORDER (an EMA, to stop
-                // the palette breathing). Under bisection, frames adjacent in TIME render far
-                // apart in the walk, so the assembled video can shimmer at refinement
-                // boundaries. Fine for previewing; re-render sequentially for final delivery.
-                say(
-                    "⚠ progressive + normalize: palette smoothing follows RENDER order, so the \
-                     assembled video may shimmer between refinement passes — use the default \
-                     sequential order for a final normalized render",
-                );
-            }
+            // (Normalize used to warn here: its range was smoothed in RENDER order, so
+            // bisection shimmered at refinement boundaries. The time-keyed anchors below made
+            // the mapping order-blind, so progressive + normalize is now a first-class path.)
             progressive_frame_order(first_frame, last_frame, &kf_frames)
         } else {
             (first_frame..=last_frame).collect()
@@ -3152,6 +3172,66 @@ impl FractadyneApp {
                  which bisecting order does not render first — dissolves will appear as hard cuts. \
                  Use the default sequential order for delivery.",
             );
+        }
+        // ⭐Time-keyed normalize ranges (the "palette mapping moves" fix, sequence half): the
+        // range a frame APPLIES is decided by the tour's own time axis, never by render
+        // history. One canonical measuring pass per keyframe view — small fixed resolution,
+        // the keyframe's own iteration budget — yields (t, range) anchors; every frame
+        // interpolates between them (`norm_anchor_range`). The mapping is therefore identical
+        // whatever the render order, across `--resume` restarts, and across `--segment` shards
+        // (on identical hardware — cross-GPU escape values differ, as everywhere). Measured
+        // before this existed: sequential vs `--order progressive` on a 2-keyframe probe
+        // disagreed on 5 of 6 frames, up to maxΔ 247/255 over 97% of the pixels.
+        // The measuring resolution is FIXED so the mapping is also output-size-independent
+        // (a 720p preview and the 4K final share one palette). An all-interior or aux-colored
+        // keyframe measures nothing and is skipped; if NO anchor measures, the legacy EMA
+        // fallback above still runs.
+        let mut norm_anchors: Vec<(f64, (f32, f32))> = Vec::new();
+        if want_normalize {
+            const NORM_MEASURE_W: u32 = 480;
+            const NORM_MEASURE_H: u32 = 270;
+            let mut kf_frames: Vec<u64> = pb
+                .kfs
+                .iter()
+                .map(|k| ((k.at * fps).round() as u64).min(last_frame))
+                .collect();
+            kf_frames.dedup();
+            for &kfi in &kf_frames {
+                let t = if pb.total <= 0.0 { 0.0 } else { (kfi as f64 / fps).min(pb.total) };
+                let s = pb.sample(t);
+                self.fractal = s.fractal;
+                self.julia_mode = s.julia && s.fractal.supports_julia();
+                self.dual = s.dual;
+                if let Some(c) = s.julia_c {
+                    self.julia_c = c;
+                }
+                let frame_budget = Self::sampled_iter_budget(&s, base_iter, base_auto);
+                self.render_cfg.max_iter = frame_budget.max_iter;
+                self.render_cfg.auto_iter = frame_budget.auto_iter;
+                self.apply_sampled_settings(&s);
+                if let Some((_, range)) = self.render_export_normalized(
+                    device,
+                    queue,
+                    &self.viewport,
+                    self.julia_mode,
+                    NORM_MEASURE_W,
+                    NORM_MEASURE_H,
+                    1,
+                    crate::render::NormRange::OwnFrame,
+                    None,
+                    TOUR_WORK_BUDGET,
+                ) {
+                    norm_anchors.push((t, range));
+                }
+            }
+            if !norm_anchors.is_empty() {
+                say(&format!(
+                    "normalize: {} time-keyed range anchor(s) measured at the keyframes — the \
+                     palette mapping is identical in any render order, across --resume, and \
+                     across shards",
+                    norm_anchors.len()
+                ));
+            }
         }
         // The last frame that is not itself mid-dissolve: what a dissolve rises through.
         let mut frozen_frame: Option<(u32, u32, Vec<f32>)> = None;
@@ -3297,9 +3377,13 @@ impl FractadyneApp {
                 // The normalized path returns `None` for an all-interior frame or aux coloring; in
                 // that case fall through to the normal render (with the reference it handed back).
                 let normalized = if want_normalize && !over_cap {
+                    let spec = match norm_anchor_range(&norm_anchors, t) {
+                        Some(r) => crate::render::NormRange::Fixed(r),
+                        None => crate::render::NormRange::Ema(norm_range),
+                    };
                     self.render_export_normalized(
                         device, queue, &self.viewport, self.julia_mode, width, height, ss,
-                        norm_range, this_ref.take(), TOUR_WORK_BUDGET,
+                        spec, this_ref.take(), TOUR_WORK_BUDGET,
                     )
                 } else {
                     None

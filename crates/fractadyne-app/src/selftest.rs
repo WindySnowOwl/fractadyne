@@ -4264,7 +4264,7 @@ zoom = \"1e94\"
             // and vacuous. `render_export_normalized` is the mapping the checkbox selects.
             let normed = |app: &Self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue|
              -> Option<Vec<u8>> {
-                app.render_export_normalized(dev, q, &app.viewport, false, cw, ch, 1, None, None, u64::MAX)
+                app.render_export_normalized(dev, q, &app.viewport, false, cw, ch, 1, crate::render::NormRange::OwnFrame, None, u64::MAX)
                     .map(|(r, _)| fractadyne_export::to_srgb8_dithered(&r.pixels, r.width))
             };
             // A deep, dense field: the regime where an un-normalized palette aliases into

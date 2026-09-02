@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A normalized tour's palette no longer depends on render order** (beta.8) — the
+  `normalize` mapping was smoothed frame-to-frame in RENDER order, so the same script
+  produced a different video under `--order progressive` (measured: 5 of 6 frames differed,
+  up to 247/255 over 97% of pixels), `--resume` restarted the smoothing cold mid-video, and
+  a sharded render seamed at every boundary. The range is now TIME-KEYED: measured once at
+  each keyframe's view (fixed small resolution, the keyframe's own iteration budget) and
+  interpolated along the tour's own time axis, so a frame's mapping is a function of the
+  tour alone - sequential, progressive, and a resumed render now produce byte-identical
+  frames (verified: maxΔ 0.000000 across all three on every frame). Also: the mapping is
+  output-size-independent (a 720p preview shares the 4K final's palette), an all-interior
+  frame mid-tour keeps the sequence's mapping instead of silently rendering un-normalized
+  for one frame, and the progressive+normalize warning is lifted. Single-image
+  `--render --normalize` output is byte-identical to before. (The LIVE view's
+  settle-time mapping stability is a separate open item.)
+
 - **Deep feature jumps warn before rendering a flat frame** (beta.7) — the Go-to solver
   reaches depths (to ~1e60000) where a fixed iteration count cannot resolve anything: at
   ~1e2000 a 200,000-iteration view is solid black (every pixel still unescaped) while the

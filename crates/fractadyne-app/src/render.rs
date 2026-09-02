@@ -2640,7 +2640,7 @@ impl FractadyneApp {
         width: u32,
         height: u32,
         ss: u32,
-        prev_smoothed: Option<(f32, f32)>,
+        norm: NormRange,
         precomputed: Option<RecomputeResult>,
         work_budget: u64,
     ) -> Option<(fractadyne_gpu::ExportResult, (f32, f32))> {
@@ -2665,29 +2665,37 @@ impl FractadyneApp {
         // caller-supplied `work_budget` keeps each tile's dispatch under the OS watchdog for a
         // shallow-view/high-iter tour frame (see `render_export`'s `work_budget`).
         let iter = fractadyne_gpu::render_iter_tiled(device, queue, &req, work_budget, None, None).ok()?;
-        // Escape-value range over escaped pixels (channel 0 = smooth iter; < 0 = interior).
-        let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-        for px in iter.pixels.chunks_exact(4) {
-            let v = px[0];
-            if v >= 0.0 {
-                lo = lo.min(v);
-                hi = hi.max(v);
+        let (clo, chi) = match norm {
+            // A time-keyed range is applied EXACTLY — no measurement reduction, and no
+            // all-interior fallback: a frame with nothing escaped keeps the sequence's mapping
+            // (the interior colour is range-independent anyway) instead of silently flipping to
+            // the un-normalized path for one frame, which was itself a mapping discontinuity.
+            NormRange::Fixed(r) => r,
+            NormRange::OwnFrame | NormRange::Ema(_) => {
+                // Escape-value range over escaped pixels (channel 0 = smooth iter; < 0 = interior).
+                let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+                for px in iter.pixels.chunks_exact(4) {
+                    let v = px[0];
+                    if v >= 0.0 {
+                        lo = lo.min(v);
+                        hi = hi.max(v);
+                    }
+                }
+                if hi < lo {
+                    return None; // all-interior frame: nothing to normalize → normal path
+                }
+                // Legacy render-order smoothing (see [`NormRange::Ema`]): α = 0.2 lags a range
+                // that only grows. A single export (`OwnFrame`, and `Ema(None)`) uses the
+                // frame's own range, byte-identical to the original behaviour.
+                const NORM_EMA_ALPHA: f32 = 0.2;
+                match norm {
+                    NormRange::Ema(Some((plo, phi))) => (
+                        plo + NORM_EMA_ALPHA * (lo - plo),
+                        phi + NORM_EMA_ALPHA * (hi - phi),
+                    ),
+                    _ => (lo, hi),
+                }
             }
-        }
-        if hi < lo {
-            return None; // all-interior frame: nothing to normalize → normal path
-        }
-        // Temporal smoothing for tours (see `prev_smoothed`): exponential moving average of the
-        // range. α = 0.2 keeps the mapping stable across a fast dive (a few frames of lag on a
-        // range that only grows) while still tracking; a single export (prev = None) uses the
-        // frame's own range, so GUI/CLI output is byte-identical to before.
-        const NORM_EMA_ALPHA: f32 = 0.2;
-        let (clo, chi) = match prev_smoothed {
-            Some((plo, phi)) => (
-                plo + NORM_EMA_ALPHA * (lo - plo),
-                phi + NORM_EMA_ALPHA * (hi - phi),
-            ),
-            None => (lo, hi),
         };
         let range = (chi - clo).max(1.0);
         // With normalize on, the `cycle` slider means palette SWEEPS across the escape range.
@@ -2935,6 +2943,23 @@ impl FractadyneApp {
 // ================================================================================================
 // impl FractadyneApp - build_params - the live frame request, staged
 // ================================================================================================
+
+/// How a normalized render decides the escape-value range the palette maps onto.
+#[derive(Clone, Copy)]
+pub(crate) enum NormRange {
+    /// Measure this frame and use its own range — single exports (byte-identical to the
+    /// pre-enum behaviour) and the tour's canonical keyframe-anchor measurements.
+    OwnFrame,
+    /// Measure, then EMA against the previous smoothed range (α = 0.2). The legacy tour
+    /// behaviour, kept ONLY as the fallback when no time-keyed anchor could be measured
+    /// (an all-interior tour): it makes the mapping a function of RENDER HISTORY, which is
+    /// exactly the order/resume/shard shimmer the anchors exist to remove.
+    Ema(Option<(f32, f32)>),
+    /// Apply exactly this range — the tour's time-keyed anchor interpolation
+    /// (`norm_anchor_range`), identical for a frame no matter when, where, or in what
+    /// order it renders.
+    Fixed((f32, f32)),
+}
 
 /// One frame's work-budget decisions — `build_params`'s budget stage output
 /// (`bp_frame_budget`): the affordable pixel/iteration shape before tiling and path select.
