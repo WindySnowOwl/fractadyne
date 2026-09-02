@@ -1,0 +1,6 @@
+# Commits to skip in git blame: pure mechanical reorganizations (item moves, no line
+# content changed). GitHub honors this file in its blame view; locally, git is pointed
+# at it via `git config blame.ignoreRevsFile .git-blame-ignore-revs` (repo-scoped).
+
+# Reorganize main.rs, render.rs, scripting.rs for first-read order (2026-09-02)
+1a13c685350ff4d8490e5b67873c93c637708923
