@@ -1439,10 +1439,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fractadyne-render"
-version = "0.2.41-beta.4"
-
-[[package]]
 name = "fractadyne-state"
 version = "0.2.41-beta.4"
 dependencies = [

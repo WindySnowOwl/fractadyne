@@ -57,7 +57,6 @@ thiserror = "2"
 fractadyne-core = { path = "crates/fractadyne-core" }
 fractadyne-gpu = { path = "crates/fractadyne-gpu" }
 fractadyne-color = { path = "crates/fractadyne-color" }
-fractadyne-render = { path = "crates/fractadyne-render" }
 fractadyne-state = { path = "crates/fractadyne-state" }
 fractadyne-export = { path = "crates/fractadyne-export" }
 

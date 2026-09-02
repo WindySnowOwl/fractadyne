@@ -270,12 +270,12 @@ or internal cross-checks):
 
 ## Layout
 
-Cargo workspace under `crates/` (7 crates): `fractadyne-core` (numerics / viewport),
+Cargo workspace under `crates/` (6 crates): `fractadyne-core` (numerics / viewport),
 `fractadyne-gpu` (wgpu pipelines + WGSL shaders), `fractadyne-color` (palettes),
 `fractadyne-state` (session / bookmarks), `fractadyne-export` (PNG/EXR + reloadable metadata), and
 `fractadyne-app` (the binary — app logic, UI split under `src/ui/`, scripting, CLI, all in modules).
-One crate (`fractadyne-render`) remains a reserved stub for a planned refactor; that logic currently
-lives in `fractadyne-app`. (The earlier `fractadyne-ui` / `fractadyne-fractals` stubs were retired.)
+Render orchestration (tile scheduler / cache) is planned to become its own crate one day; that logic
+currently lives in `fractadyne-app`. (The earlier stub crates were retired rather than left empty.)
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the system as built (authoritative),
 [DESIGN.md](DESIGN.md) for the original design intent, and [UI-DESIGN.md](UI-DESIGN.md),

@@ -33,8 +33,9 @@ self-consistency-validated to 1e1000000×.
 
 ## 2. Crate layout
 
-A 7-crate Cargo workspace under `crates/`: **six are functional** and one (`fractadyne-render`) is a
-reserved stub whose intended responsibility currently lives in `fractadyne-app`.
+A 6-crate Cargo workspace under `crates/`. (The earlier `-ui` / `-fractals` stubs, and later the
+`-render` stub, were retired; render orchestration can return as its own crate if that refactor
+lands — its intended responsibility currently lives in `fractadyne-app`.)
 
 | Crate | Status | Responsibility |
 |-------|--------|----------------|
@@ -44,7 +45,6 @@ reserved stub whose intended responsibility currently lives in `fractadyne-app`.
 | `fractadyne-state` | ✅ | Session persistence (`session.toml`), versioned state, `config_dir()` + `FRACTADYNE_CONFIG_DIR`, reset. |
 | `fractadyne-export` | ✅ | PNG/OpenEXR encode/decode + embedded view metadata. |
 | `fractadyne-app` | ✅ | **Everything else** — app struct, UI, input, scripting, CLI, autopilot, coloring/mode logic, `FractalKind`. Split into modules (below). |
-| `fractadyne-render` | ⛔ stub | *Planned:* tile scheduler / cache. (Placeholder; the two earlier `-ui` / `-fractals` stubs were retired in the refactor.) |
 
 **`fractadyne-app` modules:** `main.rs` (app struct + `update()` UI loop), `render.rs` (mode
 select + reference recompute / reuse / freeze-reproject + export requests), `autopilot.rs`
@@ -323,7 +323,7 @@ aspirationally) — the scoped-thread fan-outs above are plain `std::thread`.
 Present in `DESIGN.md` as intent, **not implemented**: the `Fractal`/`RenderStrategy` trait
 abstraction; the programmable **formula DSL** + auto-derived perturbation + guided/raw authoring
 (M6); **L-systems** and **cellular automata**; **histogram/equalized** coloring; layers/compositing;
-3D (Mandelbulb/box); a live **tile cache** (`fractadyne-render`). Also open (`TODO.md`): XaoS-style
+3D (Mandelbulb/box); a live **tile cache** (a future render-orchestration crate). Also open (`TODO.md`): XaoS-style
 prior-frame **pixel-reuse** during zoom (the frame-reprojection foundation exists as a stall fallback
 only), live-view multi-reference glitch correction, and autopilot steering modes. Newton stays direct
 (~1e6×) — its convergence dynamics don't fit the perturbation coloring.

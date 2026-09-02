@@ -12,6 +12,13 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Internal: the empty `fractadyne-render` stub crate is removed** — it held no code (a
+  doc-comment lib.rs), nothing depended on it, and an empty placeholder is not needed to
+  add the crate back when the render-orchestration refactor actually lands. The workspace
+  is 6 crates; `ARCHITECTURE.md`/`README.md` updated (`DESIGN.md` keeps the original
+  intent, unchanged). `THIRD-PARTY-NOTICES.md` is a generated release-time snapshot and
+  loses its line at the next `cargo-about` regeneration.
+
 - **Internal: unit tests moved out of the files they test** — 50 inline `#[cfg(test)]`
   modules (6,884 lines, 299 tests) now live in sibling files declared as
   `#[cfg(test)] mod name;` at their old positions (`render/*.rs` beside `render.rs`,
