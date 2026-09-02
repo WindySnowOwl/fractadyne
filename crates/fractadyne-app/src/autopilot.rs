@@ -374,7 +374,7 @@ impl crate::FractadyneApp {
     /// One frame of `--autodive`. Same in-loop shape as `uitest_frame` / `juliadive_frame`.
     pub(crate) fn autodive_frame(&mut self, ctx: &egui::Context) {
         const LOG2_10: f64 = 3.321_928_094_887_362;
-        let Some(mut d) = self.autodive.take() else { return };
+        let Some(mut d) = self.harness.autodive.take() else { return };
 
         // Sample the controller's own measurement rather than scraping the log. `gpu_iterate=` in
         // the log only ever appears INSIDE the lethal message, so log-scraping is circular — it can
@@ -479,7 +479,7 @@ impl crate::FractadyneApp {
                     self.toggle_autopilot(ctx);
                 }
             }
-            self.autodive = Some(d);
+            self.harness.autodive = Some(d);
             ctx.request_repaint();
             return;
         }
@@ -492,7 +492,7 @@ impl crate::FractadyneApp {
                 &format!("1e{:.1}x reached — ZOOM HOME (the stress test)", d.current_log10),
             );
             self.zoom_home(now);
-            self.autodive = Some(d);
+            self.harness.autodive = Some(d);
             ctx.request_repaint();
             return;
         }
@@ -547,7 +547,7 @@ impl crate::FractadyneApp {
             crate::exit(if d.lethal > 0 { 0 } else { 2 });
         }
 
-        self.autodive = Some(d);
+        self.harness.autodive = Some(d);
         ctx.request_repaint();
     }
 }

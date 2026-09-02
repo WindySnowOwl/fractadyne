@@ -135,7 +135,7 @@ impl FractadyneApp {
     ) -> bool {
         let len = self.ref_cache[0].orbit_len;
         let partial = self.ref_cache[0].partial;
-        let Some(sw) = self.chunk_sweep.as_mut() else { return false };
+        let Some(sw) = self.harness.chunk_sweep.as_mut() else { return false };
         if sw.done {
             return true;
         }

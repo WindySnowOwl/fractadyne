@@ -63,9 +63,9 @@ impl crate::FractadyneApp {
         ctx.request_repaint(); // unattended: there is no user input to wake the loop
 
         // ---- one-time setup -----------------------------------------------------------------
-        if !self.shot.as_ref().is_some_and(|s| s.applied) {
+        if !self.harness.shot.as_ref().is_some_and(|s| s.applied) {
             let (loc, size) = {
-                let s = self.shot.as_ref().unwrap();
+                let s = self.harness.shot.as_ref().unwrap();
                 (s.location.clone(), s.size)
             };
             let text = match std::fs::read_to_string(&loc) {
@@ -109,7 +109,7 @@ impl crate::FractadyneApp {
             )));
 
             let now = Instant::now();
-            let s = self.shot.as_mut().unwrap();
+            let s = self.harness.shot.as_mut().unwrap();
             s.applied = true;
             s.start = now;
             s.ref_changed_at = now;
@@ -117,7 +117,7 @@ impl crate::FractadyneApp {
         }
 
         // ---- harvest a capture already in flight ---------------------------------------------
-        if self.shot.as_ref().is_some_and(|s| s.pending) {
+        if self.harness.shot.as_ref().is_some_and(|s| s.pending) {
             let image = ctx.input(|i| {
                 i.events.iter().find_map(|e| match e {
                     egui::Event::Screenshot { image, .. } => Some(image.clone()),
@@ -130,7 +130,7 @@ impl crate::FractadyneApp {
             for px in &image.pixels {
                 bytes.extend_from_slice(&[px.r(), px.g(), px.b(), px.a()]);
             }
-            let out = self.shot.as_ref().unwrap().out.clone();
+            let out = self.harness.shot.as_ref().unwrap().out.clone();
             if let Some(dir) = out.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
@@ -152,7 +152,7 @@ impl crate::FractadyneApp {
         let building = self.recompute_rx[0].is_some()
             || self.perf.tile_pending[0]
             || self.perf.chunk_pending[0];
-        let s = self.shot.as_mut().unwrap();
+        let s = self.harness.shot.as_mut().unwrap();
         if orbit != s.ref_len_seen {
             s.ref_len_seen = orbit;
             s.ref_changed_at = now;

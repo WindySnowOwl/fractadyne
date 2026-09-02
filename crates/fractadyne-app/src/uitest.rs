@@ -359,7 +359,7 @@ impl FractadyneApp {
     pub(crate) fn juliadive_frame(&mut self, ctx: &egui::Context) {
         const TARGET_L2: f64 = 15.0; // ≈ 32,000× — crosses PERT_JULIA_THRESHOLD (1e2) and 1e4
         const OCTAVES_PER_S: f64 = 2.0;
-        let Some(jd) = self.juliadive.as_mut() else { return };
+        let Some(jd) = self.harness.juliadive.as_mut() else { return };
         jd.frame += 1;
         if jd.frame == 1 {
             // The reporter's setup: dual view, a BOUNDARY Julia c (dense structure at every
@@ -379,7 +379,7 @@ impl FractadyneApp {
             return;
         }
         // Harvest a pending screenshot reply.
-        if let Some(name) = self.juliadive.as_ref().and_then(|j| j.pending.clone()) {
+        if let Some(name) = self.harness.juliadive.as_ref().and_then(|j| j.pending.clone()) {
             let shot = ctx.input(|i| {
                 i.events.iter().find_map(|e| match e {
                     egui::Event::Screenshot { image, .. } => Some(image.clone()),
@@ -392,7 +392,7 @@ impl FractadyneApp {
                 for px in &image.pixels {
                     bytes.extend_from_slice(&[px.r(), px.g(), px.b(), px.a()]);
                 }
-                let jd = self.juliadive.as_mut().unwrap();
+                let jd = self.harness.juliadive.as_mut().unwrap();
                 let path = jd.out_dir.join(&name);
                 if let Err(e) = fractadyne_export::write_png_rgba8(&path, w, h, &bytes, None) {
                     eprintln!("--juliadive: write {name}: {e}");
@@ -411,7 +411,7 @@ impl FractadyneApp {
             }
         }
         let l2 = self.julia_viewport.log2_magnification();
-        let jd = self.juliadive.as_mut().unwrap();
+        let jd = self.harness.juliadive.as_mut().unwrap();
         if jd.stopped_at.is_none() {
             if l2 < TARGET_L2 {
                 // Zoom about the Julia panel centre, with the same interaction stamp the real
@@ -421,7 +421,7 @@ impl FractadyneApp {
                 let (w, h) = (self.julia_viewport.width_px, self.julia_viewport.height_px);
                 self.julia_viewport.zoom_at(w * 0.5, h * 0.5, factor);
                 self.pointer.settle_t[1] = ctx.input(|i| i.time);
-                let jd = self.juliadive.as_mut().unwrap();
+                let jd = self.harness.juliadive.as_mut().unwrap();
                 if l2 >= jd.next_shot_l2 && jd.pending.is_none() {
                     let name = format!("mid-l2-{:04.1}.png", l2);
                     jd.pending = Some(name);
@@ -548,7 +548,7 @@ fn build_steps() -> Vec<Step> {
 impl FractadyneApp {
     /// Whether a `--uitest` walk is active (used to suppress autosave etc.).
     pub(crate) fn uitest_active(&self) -> bool {
-        self.uitest.is_some()
+        self.harness.uitest.is_some()
     }
 
     /// One frame of the `--uitest` state machine. Called early in `update()` once the GPU is up.
@@ -557,7 +557,7 @@ impl FractadyneApp {
         // Keep the loop spinning without user input (headless has no events to wake it).
         ctx.request_repaint();
 
-        let Some(mut ut) = self.uitest.take() else { return };
+        let Some(mut ut) = self.harness.uitest.take() else { return };
         if ut.gpu_name.is_none() {
             ut.gpu_name = gpu_name.map(|s| s.to_string());
         }
@@ -639,8 +639,8 @@ impl FractadyneApp {
                             (self.perf.layout.right_panel, self.perf.layout.central)
                         {
                             ut.panel_w = Some(p.width());
-                            self.uitest_panel_w = Some(p.width());
-                            self.uitest_central_w = Some(c.width());
+                            self.harness.uitest_panel_w = Some(p.width());
+                            self.harness.uitest_central_w = Some(c.width());
                             self.dialogs.right_panel_open = false;
                             // Give the hidden layout its own settle rather than screenshotting
                             // the frame the toggle happened on.
@@ -701,7 +701,7 @@ impl FractadyneApp {
             }
         }
 
-        self.uitest = Some(ut);
+        self.harness.uitest = Some(ut);
     }
 
     /// Put the app into the state a step wants to capture.
@@ -742,8 +742,8 @@ impl FractadyneApp {
                         // layout — and every window step opens the home screen, which closes the
                         // panel, so the widths were simply absent (measured: "no before/after
                         // canvas width recorded").
-                        self.uitest_panel_w = None;
-                        self.uitest_central_w = None;
+                        self.harness.uitest_panel_w = None;
+                        self.harness.uitest_central_w = None;
                         self.dialogs.right_panel_open = true;
                     }
                 }
@@ -789,7 +789,7 @@ impl FractadyneApp {
             Screen::BenchConfig => self.dialogs.bench_dialog_open = true,
             Screen::BenchResults => {
                 // Synthetic fixture so the populated results layout (Copy/Save/Run-again) renders.
-                self.bench_report = Some(
+                self.bench.report = Some(
                     "Fractadyne benchmark (synthetic UI-test fixture)\n\
                      iterate  12.3 ms   color  1.1 ms   1920x1080 ss1\n\
                      (values are placeholder — this screen validates layout, not perf)"
@@ -1310,7 +1310,7 @@ impl FractadyneApp {
             // "hid" by drawing itself transparently (or a canvas that did not reflow) fails.
             if win.action == WindowAction::TogglePanel {
                 let now_w = self.perf.layout.central.map(|r| r.width());
-                match (self.uitest_central_w, self.uitest_panel_w, now_w) {
+                match (self.harness.uitest_central_w, self.harness.uitest_panel_w, now_w) {
                     (Some(before), Some(panel), Some(after)) => {
                         let gained = after - before;
                         // Within a couple of points of the panel's width: the divider and the

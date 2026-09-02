@@ -123,7 +123,7 @@ impl FractadyneApp {
     /// as `autodive_frame`). Sets input state BEFORE the central draw of the same `update()`, so
     /// the frame it shapes is the frame the counters describe.
     pub(crate) fn motiontest_frame(&mut self, ctx: &egui::Context) {
-        let Some(mut mt) = self.motiontest.take() else { return };
+        let Some(mut mt) = self.harness.motiontest.take() else { return };
         mt.frames += 1;
         let in_phase = mt.phase_t0.elapsed().as_secs_f64();
         let now = ctx.input(|i| i.time);
@@ -255,7 +255,7 @@ impl FractadyneApp {
             }
         }
 
-        self.motiontest = Some(mt);
+        self.harness.motiontest = Some(mt);
         ctx.request_repaint();
     }
 

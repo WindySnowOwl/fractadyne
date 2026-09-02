@@ -2003,7 +2003,7 @@ impl FractadyneApp {
         // tours/grand-tour.toml rendered FLAT at iter=82,627 (the cap at 1e94×) while the same
         // view resolves at 545k (maxiter=11 of 129,600 px). Offline video is exactly where the
         // full appetite matters, so the cap does not apply there.
-        if self.render_tour.is_some() {
+        if self.render_cli.tour.is_some() {
             return u32::MAX;
         }
         let vi = (self.dual && julia) as usize;
@@ -3603,7 +3603,7 @@ impl FractadyneApp {
         // shrunk motion path. Once holds began settling (beta.35) the first full-resolution settled
         // frame went straight over the ceiling and LOST THE DEVICE — crash report 2026-08-07
         // 17:01 UTC, `wgpu device lost (Unknown)` inside `queue.submit` at 51.8 s of a live tour.
-        let offscreen = self.auto_render;
+        let offscreen = self.render_cli.run;
         // A MODE SWITCH is a cost discontinuity, so the budget measured in the old mode must not
         // size a frame in the new one: a nominal step costs several times more in floatexp than in
         // df32, and the dive crosses that boundary at speed. Now that every mode measures, this is

@@ -1077,3 +1077,478 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     false
 }
 
+
+use crate::{diag, profile, scripting};
+
+// ==== CLI-launched mode state ====
+// The flags parsed from argv that drive `update()`'s mode ladder, grouped out of
+// `FractadyneApp` so the app struct reads as the interactive application. Field docs
+// moved verbatim from the original `main.rs` declarations.
+
+/// `--selftest` mode state, parsed from the EXPANDED argv (see `selftest_filter`'s
+/// old note: raw `std::env::args()` would bypass `@response-file` expansion).
+pub(crate) struct SelftestCli {
+    /// CLI `--selftest`: run the GPU validation suite, print a report, and exit.
+    pub(crate) run: bool,
+    pub(crate) done: bool,
+    /// `--selftest-filter <substr>`, `--selftest-list`, `--bless` — parsed here from the
+    /// EXPANDED args so they honor `@response-file` / `--args-file` expansion. `run_selftest`
+    /// must read these, NOT `std::env::args()` (raw args bypass the expansion `main()` did).
+    pub(crate) filter: Option<String>,
+    pub(crate) list: bool,
+    pub(crate) bless: bool,
+}
+
+/// `--profile` mode state (the profiling harness: benchmark regions -> logs/).
+pub(crate) struct ProfileCli {
+    /// CLI `--profile`: run the profiling harness (benchmark regions), log to `logs/`, exit.
+    pub(crate) run: bool,
+    pub(crate) done: bool,
+    pub(crate) reps: u32,
+    pub(crate) regions: Option<String>,
+    pub(crate) out: Option<std::path::PathBuf>,
+}
+
+/// `--frametest` mode state (frame-timing / stutter harness dive shape).
+pub(crate) struct FrametestCli {
+    /// CLI `--frametest`: run the frame-timing / stutter harness (deep-zoom dive), log, exit.
+    pub(crate) run: bool,
+    /// `--frametest --center X Y` (full-precision decimals; default seahorse).
+    pub(crate) center: Option<(String, String)>,
+    pub(crate) steps: u32,
+    pub(crate) hold: u32,
+    pub(crate) dive: f64,
+}
+
+/// Benchmark state - the GUI standardized benchmark plus the `--benchmark` /
+/// `--benchmark-std` CLI drivers share it.
+pub(crate) struct BenchState {
+    /// Last benchmark report text + whether its window is open.
+    pub(crate) report: Option<String>,
+    pub(crate) cfg: crate::BenchConfig,
+    /// In-flight standardized benchmark, advanced one pass per frame from `update()`.
+    pub(crate) std: Option<crate::StdBench>,
+    /// CLI `--benchmark-std [--res RES] [--burnin N]`: run headless, save, quit.
+    pub(crate) auto_std: bool,
+    pub(crate) auto_std_done: bool,
+    pub(crate) std_res: crate::BenchRes,
+    pub(crate) std_passes: u32,
+    pub(crate) std_depth: crate::BenchDepth,
+    /// CLI auto-benchmark: run on startup, save to this path, then quit.
+    pub(crate) auto: bool,
+    pub(crate) auto_out: Option<std::path::PathBuf>,
+    pub(crate) auto_done: bool,
+}
+
+/// Render-and-exit CLI modes: `--render` (PNG / `--render-iter` EXR), `--render-tour`,
+/// and `--play` (tour in the live view).
+pub(crate) struct RenderCli {
+    /// CLI render-and-exit: render one image to `out`, then quit.
+    pub(crate) run: bool,
+    pub(crate) out: Option<std::path::PathBuf>,
+    pub(crate) done: bool,
+    /// `--render-iter`: write the raw iteration texture as EXR instead of a colored image.
+    pub(crate) iter_mode: bool,
+    /// CLI `--render-tour FILE`: render a keyframe tour to a PNG frame sequence, then quit.
+    pub(crate) tour: Option<std::path::PathBuf>,
+    pub(crate) tour_done: bool,
+    /// The tour-render flags as GIVEN — each `None` means "the script's `[render]` block decides"
+    /// (and a built-in default if it's silent too). Resolving here would erase the difference
+    /// between a flag the user passed and a default we made up.
+    pub(crate) tour_cfg: crate::scripting::TourRenderConfig,
+    /// CLI `--play FILE`: start the GUI with this tour already playing in the LIVE view. The only
+    /// way to exercise the on-screen playback path (present, watchdog budget, tiled settle) from a
+    /// command line — a headless harness cannot reach it.
+    pub(crate) play: Option<std::path::PathBuf>,
+    pub(crate) play_done: bool,
+}
+
+/// One-shot dev-harness modes: each field is a CLI-requested mode that drives the app
+/// from `update()`'s ladder (`cli_mode_ladder` / `harness_frame_hooks`) and exits or
+/// finishes on its own.
+pub(crate) struct HarnessModes {
+    /// CLI `--uitest [DIR]`: scripted walk through every UI screen + the live-render bands,
+    /// screenshotting each and writing a review bundle (see `mod uitest`), then exit.
+    pub(crate) uitest: Option<crate::uitest::UiTest>,
+    /// `--uitest` scratch for the control-panel toggle step: the canvas and panel widths measured
+    /// while the panel was still open, so the reflow after hiding it can be compared against what
+    /// the layout actually did rather than against the panel's nominal width.
+    pub(crate) uitest_central_w: Option<f32>,
+    pub(crate) uitest_panel_w: Option<f32>,
+    pub(crate) soak: Option<crate::soak::Soak>,
+    /// `--shot`: regenerate the published screenshot from a saved location, then exit.
+    pub(crate) shot: Option<crate::shot::Shot>,
+    /// CLI `--juliadive [DIR]`: dev harness — dual view, continuous in-app Julia zoom to ~1400×
+    /// with periodic screenshots (see `uitest::JuliaDive`). Reproduces the dual-view Julia motion
+    /// path deterministically (synthetic OS input proved unreliable for wheel/focus).
+    pub(crate) juliadive: Option<crate::uitest::JuliaDive>,
+    /// CLI `--autodive [LOG10]`: unpaced autopilot dive that hammers the frame-cost controller and
+    /// reports whether the lethal regime was reached. See `autopilot::AutoDive`.
+    pub(crate) autodive: Option<crate::autopilot::AutoDive>,
+    /// CLI `--chunk-sweep [ITERS]`: measure the UNCENSORED per-window wall cost of a chunked
+    /// iterate at the current view. The one measurement that separates the two branches of the
+    /// 2026-08-22 device loss — see `mod chunksweep`.
+    pub(crate) chunk_sweep: Option<crate::chunksweep::ChunkSweep>,
+    /// CLI `--motiontest`: the motion-presentation gate (design/mode2-chunking.md §11) — the
+    /// in-loop harness that can see what `--livetest`'s settled checkpoints cannot: what a
+    /// chunked view ADOPTS as its frozen texture while the camera is moving.
+    pub(crate) motiontest: Option<crate::motiontest::MotionTest>,
+    /// CLI `--divetest FILE`: headless live-dive performance harness (real-time tour windows at
+    /// increasing depths through the ACTUAL playback machinery), report + JSON, exit.
+    pub(crate) divetest: Option<std::path::PathBuf>,
+    /// CLI `--livetest FILE`: headless live-OUTPUT harness — plays a tour through the live
+    /// pipeline and validates the frames it shows against offline renders of the same views.
+    pub(crate) livetest: Option<std::path::PathBuf>,
+    /// `--quick` with `--livetest`: skip the offline oracle (context/black metrics only).
+    pub(crate) livetest_quick: bool,
+    /// CLI `--reusetest`: measure reuse-first-zoom reprojection staleness vs Δ-octaves, exit.
+    pub(crate) reusetest: bool,
+    pub(crate) reusetest_done: bool,
+    /// CLI `--resizetest`: headless window-resize aspect-invariant regression harness, exit.
+    pub(crate) resizetest: bool,
+    /// CLI `--bench-matrix [--bless] [--reps N]`: run the path-coverage perf + regression suite,
+    /// compare against (or bless) the baseline, and exit.
+    pub(crate) bench_matrix: bool,
+    pub(crate) bench_matrix_done: bool,
+}
+
+impl crate::FractadyneApp {
+    /// Per-frame advance hooks for the in-loop dev harnesses (`--shot`, `--uitest`,
+    /// `--soak`, `--juliadive`, `--autodive`, `--chunk-sweep`, `--motiontest`).
+    /// Order matters and is documented inline; moved verbatim from `update()`.
+    pub(crate) fn harness_frame_hooks(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
+        gpu_name: &Option<String>,
+    ) {
+        // --uitest: advance the scripted UI/live walk. Runs each frame and does NOT exit early —
+        // the flags it sets (which dialog is open, which view) must be drawn by the rest of this
+        // update(); it screenshots and exits itself once the walk is done. Gated on GPU being up.
+        // --shot: load, settle, capture, exit. Before --uitest so the two can never both
+        // drive a frame.
+        if self.harness.shot.is_some() && gpu.is_some() {
+            self.shot_frame(ctx);
+        }
+        if self.harness.uitest.is_some() && gpu.is_some() {
+            self.uitest_frame(ctx, gpu_name.as_deref());
+        }
+        // --soak: sit at a deep view and assert the app keeps producing frames.
+        if self.harness.soak.is_some() && gpu.is_some() {
+            self.soak_frame(ctx);
+        }
+        // --juliadive: dev harness for the dual-view Julia motion path (same in-loop pattern).
+        if self.harness.juliadive.is_some() && gpu.is_some() {
+            self.juliadive_frame(ctx);
+        }
+        // --autodive: unpaced controller hammer (same in-loop pattern). Must run AFTER the
+        // measurement apply above, so the reading it samples is this frame's.
+        if self.harness.autodive.is_some() && gpu.is_some() {
+            self.autodive_frame(ctx);
+        }
+        // --chunk-sweep: let the live view settle, then measure the chunked iterate's per-window
+        // wall cost offscreen and exit. It borrows the resident reference, so it MUST run after
+        // the reference pipeline has had frames to finish — hence the settle countdown inside.
+        if self.harness.chunk_sweep.is_some() {
+            if let Some((dev, q)) = gpu {
+                let dev = dev.clone();
+                let q = q.clone();
+                if self.chunk_sweep_step(&dev, &q) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    ctx.request_repaint();
+                }
+            }
+        }
+        // --motiontest: the motion-presentation gate (same in-loop pattern). It sets this frame's
+        // input state (zoom_vel / the Home glide), so it runs BEFORE the central draw below.
+        if self.harness.motiontest.is_some() && gpu.is_some() {
+            self.motiontest_frame(ctx);
+        }
+    }
+
+    /// The CLI-mode ladder: every `--flag` that runs a suite/render and exits (or, for
+    /// the GUI standardized bench and `--play`, arms ongoing state). One branch per
+    /// mode, in load-bearing order; moved verbatim from `update()`.
+    pub(crate) fn cli_mode_ladder(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
+    ) {
+        // CLI self-test: run the GPU validation suite, print the report, and exit with a
+        // status code (0 = all passed).
+        if self.selftest.run && !self.selftest.done {
+            if let Some((dev, q)) = gpu {
+                self.selftest.done = true;
+                let ok = self.run_selftest(dev, q);
+                crate::exit(if ok { 0 } else { 1 });
+            }
+        }
+
+        // CLI profiling: render the benchmark regions, time the costly stages, log to `logs/`.
+        if self.profile.run && !self.profile.done {
+            if let Some((dev, q)) = gpu {
+                self.profile.done = true;
+                let regions = match &self.profile.regions {
+                    Some(path) => match profile::load_regions(std::path::Path::new(path)) {
+                        Ok(r) => r,
+                        // FATAL, not a fallback. This fell back to the built-ins and exited 0,
+                        // so a regions file that failed to parse (measured: one cp1252 em-dash)
+                        // profiled eight unrelated views and reported success — the exact trap the
+                        // F3 harness taught us to check output files for. The flag is an explicit
+                        // request; honouring a different one is worse than stopping.
+                        Err(e) => {
+                            eprintln!("fractadyne: --regions {path}: {e}");
+                            crate::exit(2);
+                        }
+                    },
+                    None => profile::default_regions(),
+                };
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let out = self.profile.out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from(format!("logs/profile-{}.json", Self::file_stamp(secs)))
+                });
+                let reps = self.profile.reps;
+                self.run_profile(dev, q, &regions, reps, &out);
+                crate::exit(0);
+            }
+        }
+
+        // CLI path-matrix benchmark: exercise every rendering path, compare (or bless) the
+        // baseline, and flag regressions. `--bless` records; `--reps N` sets timed reps.
+        if self.harness.bench_matrix && !self.harness.bench_matrix_done {
+            if let Some((dev, q)) = gpu {
+                self.harness.bench_matrix_done = true;
+                let bless = self.selftest.bless; // shared `--bless` flag
+                let reps = self.profile.reps; // shared `--reps N` flag (default 5)
+                let code = self.run_bench_matrix(dev, q, bless, reps, false);
+                crate::exit(code);
+            }
+        }
+
+        // CLI resize regression harness: scripted drag-resize through the real frame logic,
+        // asserting every painted frame is aspect-correct (exit 0 = invariant held).
+        if self.harness.resizetest {
+            if let Some((dev, q)) = gpu {
+                self.harness.resizetest = false;
+                self.run_resizetest(dev, q); // exits
+            }
+        }
+
+        if self.harness.reusetest && !self.harness.reusetest_done {
+            if let Some((dev, q)) = gpu {
+                self.harness.reusetest_done = true;
+                self.run_reusetest(dev, q);
+                crate::exit(0);
+            }
+        }
+
+        // CLI headless live-dive harness: real-time tour windows at increasing depths through the
+        // actual playback machinery (pacer + lookahead + reuse-hold), stats per depth band, exit.
+        if let Some(tour) = self.harness.divetest.clone() {
+            if let Some((dev, q)) = gpu {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let out = self.profile.out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from(format!("logs/divetest-{}.json", Self::file_stamp(secs)))
+                });
+                self.run_divetest(dev, q, &tour, &out);
+                crate::exit(0);
+            }
+        }
+
+        // CLI headless live-OUTPUT harness: play a tour through the live pipeline and validate the
+        // frames it puts on screen against offline renders of the same views, exit non-zero on a
+        // failing checkpoint (so it can gate a release the way the selftest does).
+        if let Some(tour) = self.harness.livetest.clone() {
+            if let Some((dev, q)) = gpu {
+                let (w, h) = self.tour_size_or(960, 540);
+                let out = self
+                    .render_cli.tour_cfg
+                    .out
+                    .clone()
+                    .unwrap_or_else(|| std::path::PathBuf::from("logs"));
+                let seg = self.render_cli.tour_cfg.segment.clone();
+                let fails =
+                    self.run_livetest(dev, q, &tour, seg.as_deref(), [w, h], &out, self.harness.livetest_quick);
+                crate::exit(if fails > 0 { 1 } else { 0 });
+            }
+        }
+
+        if self.frametest.run {
+            if let Some((dev, q)) = gpu {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let out = self.profile.out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from(format!("logs/frametest-{}.json", Self::file_stamp(secs)))
+                });
+                let (steps, hold, dive) = (self.frametest.steps, self.frametest.hold, self.frametest.dive);
+                self.run_frametest(dev, q, steps, hold, dive, 512, &out);
+                crate::exit(0);
+            }
+        }
+
+        // CLI standardized benchmark (`--benchmark-std [--res] [--burnin] [--depth]`): run all
+        // passes synchronously, print + save the report, and quit.
+        if self.bench.auto_std && !self.bench.auto_std_done {
+            if let Some((dev, q)) = gpu {
+                self.bench.auto_std_done = true;
+                let (res, passes, depth) = (self.bench.std_res, self.bench.std_passes, self.bench.std_depth);
+                println!(
+                    "Fractadyne standardized benchmark — {} · {} × {passes} pass{}",
+                    res.label(),
+                    depth.label(),
+                    if passes == 1 { "" } else { "es" }
+                );
+                let mut run = self.begin_standard_bench(res, passes, depth);
+                // step_std_bench now advances one dive-frame per call; print only when a pass
+                // finishes (passes_done ticks up), not on every frame.
+                let mut reported = 0u32;
+                loop {
+                    let done = self.step_std_bench(&mut run, dev, q);
+                    if run.passes_done > reported {
+                        reported = run.passes_done;
+                        println!(
+                            "  pass {}/{}  {:.1} fps",
+                            run.passes_done,
+                            run.passes_total,
+                            run.pass_fps.last().copied().unwrap_or(0.0)
+                        );
+                    }
+                    if done {
+                        break;
+                    }
+                }
+                let report = self.format_std_bench(&run);
+                println!("\n{report}");
+                let out = self.bench.auto_out.clone().unwrap_or_else(|| {
+                    std::path::PathBuf::from("fractadyne_benchmark.txt")
+                });
+                match std::fs::write(&out, &report) {
+                    Ok(()) => println!("\nSaved benchmark → {}", out.display()),
+                    Err(e) => eprintln!("Failed to save benchmark to {}: {e}", out.display()),
+                }
+                crate::exit(0);
+            }
+        }
+
+        // GUI standardized benchmark: advance one pass per frame so the window stays responsive
+        // (and cancellable) between passes.
+        if let Some(mut run) = self.bench.std.take() {
+            if let Some((dev, q)) = gpu {
+                let done = self.step_std_bench(&mut run, dev, q);
+                if done {
+                    self.bench.report = Some(self.format_std_bench(&run));
+                    self.dialogs.bench_open = true;
+                    let snap = run.take_snapshot();
+                    self.restore_from_bench(snap);
+                } else {
+                    self.bench.std = Some(run);
+                    ctx.request_repaint();
+                }
+            } else {
+                self.bench.std = Some(run); // wait for the GPU handles
+            }
+        }
+
+        // CLI render-and-exit: render one image offscreen (or the raw iteration EXR), save
+        // it, and quit.
+        if self.render_cli.run && !self.render_cli.done {
+            if let Some((dev, q)) = gpu {
+                self.render_cli.done = true;
+                if !self.watermark && !self.render_cli.iter_mode {
+                    println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
+                }
+                let t0 = std::time::Instant::now();
+                let result = if self.render_cli.iter_mode {
+                    let out = self
+                        .render_cli.out
+                        .clone()
+                        .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_iter.exr"));
+                    self.render_iter_to_file(dev, q, &out)
+                } else {
+                    let out = self
+                        .render_cli.out
+                        .clone()
+                        .unwrap_or_else(|| std::path::PathBuf::from("fractadyne_render.png"));
+                    self.render_to_file(ctx, dev, q, &out)
+                };
+                if self.render_cfg.finish_sound {
+                    // Blocking on purpose: the process exits right after the message prints,
+                    // which would cut a detached tune mid-note.
+                    crate::tone::play_finish_sound(true);
+                }
+                match result {
+                    Ok(m) => println!("{m}  (in {})", Self::fmt_export_duration(t0.elapsed())),
+                    Err(e) => {
+                        // Fail with a real exit code: the Close path always exits 0, which
+                        // made scripted corpus renders unable to detect failures (D1/F8).
+                        eprintln!("Render failed: {e}");
+                        diag::log_line("render", &format!("FAILED: {e}"));
+                        crate::exit(1);
+                    }
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+
+        // CLI render-tour: render the keyframe script to a PNG frame sequence, then quit.
+        if let Some(script) = self.render_cli.tour.clone() {
+            if !self.render_cli.tour_done {
+                if let Some((dev, q)) = gpu {
+                    self.render_cli.tour_done = true;
+                    if !self.watermark {
+                        println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
+                    }
+                    let cfg = self.render_cli.tour_cfg.clone();
+                    match self.render_tour_to_dir(ctx, dev, q, &script, &cfg) {
+                        Ok(m) => println!("{m}"),
+                        Err(e) => {
+                            eprintln!("Tour render failed: {e}");
+                            diag::log_line("render", &format!("tour FAILED: {e}"));
+                            crate::exit(1);
+                        }
+                    }
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+
+        // CLI `--play FILE`: start the tour in the LIVE view (once). Unlike every other tour entry
+        // point this one keeps the GUI running, so it exercises the on-screen path — present,
+        // watchdog budget, tiled settle — which no headless harness can reach.
+        if let Some(script) = self.render_cli.play.clone() {
+            if !self.render_cli.play_done {
+                self.render_cli.play_done = true;
+                match scripting::parse_tour_file(&script) {
+                    Ok(pb) => {
+                        println!("Playing \"{}\" ({:.0}s) in the live view…", pb.name, pb.total);
+                        self.playback_restore = Some(scripting::PlaybackRestore {
+                            max_iter: self.render_cfg.max_iter,
+                            auto_iter: self.render_cfg.auto_iter,
+                            palette_idx: self.coloring.palette_idx,
+                            use_custom_palette: self.coloring.use_custom_palette,
+                            use_binary: self.coloring.use_binary,
+                            use_duotone: self.coloring.use_duotone,
+                            minimap: self.dialogs.minimap,
+                            show_orbits: self.anim.show_orbits,
+                            dual_split: self.dual_split,
+                        });
+                        self.playback = Some(pb);
+                    }
+                    Err(e) => {
+                        eprintln!("Could not play {}: {e}", script.display());
+                        crate::exit(2);
+                    }
+                }
+            }
+        }
+    }
+}

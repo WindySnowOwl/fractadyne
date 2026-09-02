@@ -1203,27 +1203,27 @@ impl FractadyneApp {
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.label("Mode");
-                ui.radio_value(&mut self.bench_cfg.standard, false, "Current settings")
+                ui.radio_value(&mut self.bench.cfg.standard, false, "Current settings")
                     .on_hover_text("Play the fixed deep-zoom tour into the live view using your current resolution and settings.");
-                ui.radio_value(&mut self.bench_cfg.standard, true, "Standardized")
+                ui.radio_value(&mut self.bench.cfg.standard, true, "Standardized")
                     .on_hover_text("Pin resolution + all render settings so the score is comparable across machines.");
-                ui.add_enabled_ui(self.bench_cfg.standard, |ui| {
+                ui.add_enabled_ui(self.bench.cfg.standard, |ui| {
                     ui.separator();
                     ui.label("Resolution");
                     egui::ComboBox::from_id_salt("bench_res")
-                        .selected_text(self.bench_cfg.res.label())
+                        .selected_text(self.bench.cfg.res.label())
                         .show_ui(ui, |ui| {
                             for r in BenchRes::ALL {
-                                ui.selectable_value(&mut self.bench_cfg.res, r, r.label());
+                                ui.selectable_value(&mut self.bench.cfg.res, r, r.label());
                             }
                         });
                     ui.add_space(4.0);
                     ui.label("Depth");
                     egui::ComboBox::from_id_salt("bench_depth")
-                        .selected_text(self.bench_cfg.depth.label())
+                        .selected_text(self.bench.cfg.depth.label())
                         .show_ui(ui, |ui| {
                             for d in BenchDepth::ALL {
-                                ui.selectable_value(&mut self.bench_cfg.depth, d, d.label());
+                                ui.selectable_value(&mut self.bench.cfg.depth, d, d.label());
                             }
                         })
                         .response
@@ -1233,10 +1233,10 @@ impl FractadyneApp {
                              takes correspondingly longer to run.",
                         );
                     ui.add_space(4.0);
-                    ui.checkbox(&mut self.bench_cfg.burnin, "Burn-in (repeat)")
+                    ui.checkbox(&mut self.bench.cfg.burnin, "Burn-in (repeat)")
                         .on_hover_text("Run the benchmark repeatedly to reveal stability and thermal throttling.");
-                    ui.add_enabled_ui(self.bench_cfg.burnin, |ui| {
-                        ui.add(egui::Slider::new(&mut self.bench_cfg.passes, 2..=200).text("passes"));
+                    ui.add_enabled_ui(self.bench.cfg.burnin, |ui| {
+                        ui.add(egui::Slider::new(&mut self.bench.cfg.passes, 2..=200).text("passes"));
                     });
                 });
                 ui.separator();
@@ -1248,23 +1248,23 @@ impl FractadyneApp {
                         self.dialogs.bench_dialog_open = false;
                     }
                 });
-                if self.bench_cfg.standard {
-                    let (w, h) = self.bench_cfg.res.dims();
+                if self.bench.cfg.standard {
+                    let (w, h) = self.bench.cfg.res.dims();
                     ui.add_space(2.0);
                     ui.weak(format!(
                         "Renders offscreen at {w}×{h}, {}× SS, Mandelbrot/smooth, 60-frame dive to 1e{:.0}×.",
                         scripting::STD_AA,
-                        self.bench_cfg.depth.zoom_log10(),
+                        self.bench.cfg.depth.zoom_log10(),
                     ));
                 }
             });
         self.dialogs.bench_dialog_open = open;
         if run_now {
             self.dialogs.bench_dialog_open = false;
-            if self.bench_cfg.standard {
-                let passes = if self.bench_cfg.burnin { self.bench_cfg.passes } else { 1 };
-                let run = self.begin_standard_bench(self.bench_cfg.res, passes, self.bench_cfg.depth);
-                self.std_bench = Some(run);
+            if self.bench.cfg.standard {
+                let passes = if self.bench.cfg.burnin { self.bench.cfg.passes } else { 1 };
+                let run = self.begin_standard_bench(self.bench.cfg.res, passes, self.bench.cfg.depth);
+                self.bench.std = Some(run);
                 ctx.request_repaint();
             } else {
                 self.start_benchmark();
@@ -1275,7 +1275,7 @@ impl FractadyneApp {
     /// Standardized-benchmark progress window (advances one dive-frame per event-loop tick).
     pub(crate) fn draw_bench_progress_dialog(&mut self, ctx: &egui::Context) {
         let Some((label, done, total, last_fps, (fdone, ftotal))) =
-            self.std_bench.as_ref().map(|r| {
+            self.bench.std.as_ref().map(|r| {
                 (r.res.label(), r.passes_done, r.passes_total, r.pass_fps.last().copied(), r.frame_progress())
             })
         else {
@@ -1309,12 +1309,12 @@ impl FractadyneApp {
                 }
             });
         if cancel {
-            if let Some(run) = self.std_bench.take() {
+            if let Some(run) = self.bench.std.take() {
                 let report = (!run.pass_fps.is_empty()).then(|| self.format_std_bench(&run));
                 let snap = run.take_snapshot();
                 self.restore_from_bench(snap);
                 if let Some(r) = report {
-                    self.bench_report = Some(r);
+                    self.bench.report = Some(r);
                     self.dialogs.bench_open = true;
                 }
             }
@@ -1368,7 +1368,7 @@ impl FractadyneApp {
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
-                if let Some(r) = self.bench_report.clone() {
+                if let Some(r) = self.bench.report.clone() {
                     ui.monospace(&r);
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {

@@ -3756,7 +3756,7 @@ impl FractadyneApp {
                 // there is nothing to scrub back into, so it still tears down. `pb` is already out
                 // of `self.playback`, so this only hands the viewer's settings back.
                 self.stop_playback();
-                self.bench_report = Some(self.format_bench(&pb, &b));
+                self.bench.report = Some(self.format_bench(&pb, &b));
                 self.dialogs.bench_open = true;
                 return PlaybackTick::Finished(None); // report dialog carries the outcome
             }

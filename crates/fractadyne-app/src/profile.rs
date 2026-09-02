@@ -832,7 +832,7 @@ impl FractadyneApp {
             "0.131825904205311970493132056385139",
         );
         let (sx, sy) = self
-            .frametest_center
+            .frametest.center
             .clone()
             .unwrap_or_else(|| (def_x.to_string(), def_y.to_string()));
         let (cx, cy) = crate::arg_center("--center", &sx, &sy);

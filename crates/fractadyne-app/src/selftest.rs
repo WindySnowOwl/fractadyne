@@ -317,7 +317,7 @@ impl FractadyneApp {
         // ITERATION, not release gating — the summary says so when a filter is active.
         // The flags come from `new()` (the EXPANDED args), NOT std::env::args(), so
         // `@response-file` expansion is honored (raw args would silently drop them).
-        let filter: Option<String> = self.selftest_filter.clone();
+        let filter: Option<String> = self.selftest.filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "iter-budget", "iter-chunk", "nr-zoom", "coords",
@@ -325,7 +325,7 @@ impl FractadyneApp {
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist",
         ];
-        if self.selftest_list {
+        if self.selftest.list {
             println!("selftest groups (use with --selftest-filter <substr>):");
             for g in GROUPS {
                 println!("  {g}");
@@ -4650,7 +4650,7 @@ zoom = \"1e94\"
         // state), so the goldens depend only on the spec and never on the loaded session / current
         // defaults. Fields gated off here (light/de/duotone/binary, orbit-trap) don't reach the
         // output, so their sub-parameters are left as-is.
-        let bless = self.selftest_bless; // from new()'s expanded args (honors @response-file)
+        let bless = self.selftest.bless; // from new()'s expanded args (honors @response-file)
         let report_path = std::env::args()
             .position(|a| a == "--out" || a == "-o")
             .and_then(|i| std::env::args().nth(i + 1))

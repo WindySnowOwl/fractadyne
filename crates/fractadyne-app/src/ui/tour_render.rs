@@ -116,7 +116,7 @@ impl FractadyneApp {
             self.tour_render.child = None;
             self.tour_render.rx = None;
             // The finish tone — a tour render is the longest wait in the app.
-            if self.render_cfg.finish_sound && self.uitest.is_none() {
+            if self.render_cfg.finish_sound && self.harness.uitest.is_none() {
                 crate::tone::play_finish_sound(false);
             }
             self.tour_render.status = Some(if ok {

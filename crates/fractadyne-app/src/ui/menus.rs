@@ -547,7 +547,7 @@ impl FractadyneApp {
                             self.dialogs.bench_dialog_open = true;
                             ui.close_menu();
                         }
-                        if self.bench_report.is_some()
+                        if self.bench.report.is_some()
                             && ui.button("Show last benchmark").clicked()
                         {
                             self.dialogs.bench_open = true;

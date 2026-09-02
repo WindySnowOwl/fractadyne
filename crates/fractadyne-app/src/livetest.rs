@@ -620,7 +620,7 @@ impl FractadyneApp {
                  large `stale` ⇒ the screen is showing an old frame reprojected."
             );
         }
-        if self.selftest_bless {
+        if self.selftest.bless {
             return self.bless_livetest(&results, tour, resolution);
         }
         self.compare_livetest(&results, tour, resolution, fails)

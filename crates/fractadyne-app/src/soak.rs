@@ -106,7 +106,7 @@ impl crate::FractadyneApp {
     /// One frame of the soak. Jumps to the deep view on the first call, then just watches.
     pub(crate) fn soak_frame(&mut self, ctx: &egui::Context) {
         ctx.request_repaint(); // idle means no input events; keep the loop turning
-        let Some(mut s) = self.soak.take() else { return };
+        let Some(mut s) = self.harness.soak.take() else { return };
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
         if n == 0 {
             // The view under soak: deep enough to be on the perturbation path with a real
@@ -142,7 +142,7 @@ impl crate::FractadyneApp {
             let code = self.soak_finish(&s);
             crate::exit(code);
         }
-        self.soak = Some(s);
+        self.harness.soak = Some(s);
     }
 
     /// Verdict + exit code. Every failure is named; a pass says what it measured.
