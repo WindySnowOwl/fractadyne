@@ -2293,6 +2293,27 @@ pub fn detect_misiurewicz(
 /// dominates `D_{n+1} = 2·z_n·D_n + 1`. The `+1` is dropped, which is wrong while `|D|` is O(1)
 /// and irrelevant once it is astronomically large, and only the ORDER OF MAGNITUDE is used here.
 /// Tracking `D` itself would overflow `f64` before 1e309× and cost a bignum multiply per step.
+/// Cost ceiling for the Misiurewicz DETECTOR's critical-orbit walk, in **steps × bits²** — the
+/// walk's cost unit (each step is one full-precision `z^k + c`, ~O(bits²)). Modelled on
+/// [`SA_COST_BUDGET`], but its OWN constant: the organizing point at a 2.37e4001× view sits at
+/// preperiod ~438,732, which `SA_COST_BUDGET` (~84k steps at 13k bits) cannot reach, while an
+/// unbounded walk would spend hours on a pathological 1e1000000× request. The orbit's own escape
+/// usually stops the walk far short of this. Budget in steps, never wall-clock (determinism).
+const DETECT_STEP_BUDGET: u64 = 100_000_000_000_000; // 1e14 ⇒ ~560k steps at p≈13,356 bits
+
+/// The detector walk length [`DETECT_STEP_BUDGET`] buys at working precision `p`.
+fn detect_step_budget(p: usize) -> usize {
+    let bits2 = (p as u64).saturating_mul(p as u64).max(1);
+    (DETECT_STEP_BUDGET / bits2).min(u32::MAX as u64) as usize
+}
+
+/// Bignum separation `|z_i − z_j|²` between two ring slots (the detector's lazy tie-break).
+fn ring_sep2(rzx: &[BigFloat], rzy: &[BigFloat], i: usize, j: usize, p: usize) -> BigFloat {
+    let dx = rzx[i].sub(&rzx[j], p, RM);
+    let dy = rzy[i].sub(&rzy[j], p, RM);
+    dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM)
+}
+
 pub fn detect_misiurewicz_at_scale(
     cx: &BigFloat,
     cy: &BigFloat,
@@ -2303,18 +2324,48 @@ pub fn detect_misiurewicz_at_scale(
     target_span_log2: Option<f64>,
 ) -> Option<(u32, u32)> {
     formula_power(formula)?;
-    let max_iter = max_iter.clamp(8, 20_000) as usize;
     let max_period = max_period.clamp(1, 4_096) as usize;
+    // Walk length: bounded by the caller's ask AND a steps×bits² budget (see
+    // [`detect_step_budget`]), so a deep detection reaches a large preperiod while a pathological
+    // request still terminates. The orbit's own escape usually stops the walk first.
+    let walk = (max_iter as usize).clamp(8, detect_step_budget(p));
 
-    // The orbit, kept in full precision, with an f64 shadow for the pre-filter.
-    let mut zs: Vec<(BigFloat, BigFloat)> = Vec::with_capacity(max_iter);
-    let mut sh: Vec<(f64, f64)> = Vec::with_capacity(max_iter);
-    // log2|dz/dc| alongside, for the scale test. See the doc comment for why it is a log sum.
-    let mut l2d: Vec<f64> = Vec::with_capacity(max_iter);
+    // ⭐⭐STREAMING rank. The historical body stored the whole orbit
+    // (`Vec<(BigFloat, BigFloat)>`, ~1.5 GB at 450k × 13k bits) and collected every near-return
+    // pair (17.5M at 2.37e4001×) before ranking — both unbounded in depth, so the detector could
+    // not reach a deep organizing point. Because the ranking is a single pass over the candidates
+    // in (n outer, m inner) order, the pre-filter and that same running-best update are run INLINE
+    // during the walk, keeping only a ring of the last `max_period` samples (f64 shadow + `l2d` +
+    // bignum `z`, for the pre-filter and a lazy bignum tie-break) and a snapshot of the current
+    // winner's `[bm..=bn]` segment (for the harmonics reduction). The selection is BYTE-IDENTICAL
+    // to the old batch at every depth (same candidates, order, comparison, harmonics); only the
+    // memory and cost are bounded. The bignum separation is computed only for scale-competitive
+    // candidates — outside the 0.5-octave tie window the comparison never reads it — so the 17.5M
+    // flood costs f64 comparisons, not bignum multiplies.
+    let cap = max_period + 1;
+    let mut rsh: Vec<(f64, f64)> = vec![(0.0, 0.0); cap];
+    let mut rl2d: Vec<f64> = vec![0.0; cap];
+    let mut rzx: Vec<BigFloat> = vec![bf(0.0, p); cap];
+    let mut rzy: Vec<BigFloat> = vec![bf(0.0, p); cap];
+
+    /// How many view-widths from the seed a root may be and still be worth ranking.
+    const NEAR_SPANS_LOG2: f64 = 3.0;
+    /// Fallback when there is no view to measure against: the historical absolute cut.
+    const COARSE_FLOOR: f64 = 1.0e-6;
+    let near_l2 = target_span_log2.filter(|s| s.is_finite()).map(|s| s + NEAR_SPANS_LOG2);
+    let want_l2d = target_span_log2.filter(|s| s.is_finite()).map(|s| -s);
+
+    // Winner state (mirrors the old `best` / `best_scale`) + the `[bm..=bn]` bignum snapshot,
+    // updated only when the winner changes.
+    let mut best: Option<(BigFloat, usize, usize)> = None; // (sep², m, n)
+    let mut best_scale = f64::INFINITY;
+    let mut best_seg: Vec<(BigFloat, BigFloat)> = Vec::new();
+
     let mut acc = 0.0f64;
     let mut zx = bf(0.0, p);
     let mut zy = bf(0.0, p);
-    for _ in 0..max_iter {
+    let mut count = 0usize; // samples produced so far; `n` is the CURRENT sample's index
+    for _ in 0..walk {
         // The growth factor uses the PRE-step z, matching D_{n+1} = k·z_n^{k-1}·D_n + 1.
         let za = (crate::to_f64(&zx).powi(2) + crate::to_f64(&zy).powi(2)).sqrt();
         if za > 0.0 {
@@ -2326,91 +2377,80 @@ pub fn detect_misiurewicz_at_scale(
         if mag2_bf(&zx, &zy) > 16.0 {
             break; // escaped: the orbit is not pre-periodic
         }
-        sh.push((crate::to_f64(&zx), crate::to_f64(&zy)));
-        zs.push((zx.clone(), zy.clone()));
-        l2d.push(acc.max(0.0));
-    }
-    if zs.len() < 4 {
-        return None;
-    }
-
-    // Pre-filter in f64, to keep the bignum ranking below off pairs whose point cannot be near the
-    // view. ⭐⭐**The test is on the distance to the ROOT, not on the separation** — Newton's first
-    // step, |z_n - z_m| / |F'|, with |D_n| for |F'| (the larger of the two derivatives dominates).
-    //
-    // ⚠⚠**A CUT ON THE RAW SEPARATION CANNOT WORK AT BOTH ENDS, and both ends were measured
-    // failing.** The old fixed 1e-6 discarded everything at a 283,353x spiral, where the real
-    // point's near-return is 2.9e-5 (fixed by scaling it to the view). It then failed the OTHER
-    // WAY at 2.37e40x: the pair identifying the point at the view centre, (3999,4000), separates
-    // by 2.6e-4 — 264x ABOVE the cut — so it was thrown out and the detector answered a pair whose
-    // point is 15-23 view-widths away (user, 2026-08-31).
-    //
-    // ⭐The reason the two ends disagree: a deep point's signature is NOT a small separation. It is
-    // one small *relative to the derivative*, and at 1e40x |D_n| is around 1e37, so a genuinely
-    // near root sits behind a perfectly ordinary-looking separation. Dividing by |D_n| is what
-    // makes one threshold serve every depth.
-    //
-    // ⚠Conservative by construction: a genuinely tiny separation underflows the f64 shadow to noise
-    // or to zero, which only makes the estimate SMALLER, so this never discards a real candidate.
-    /// How many view-widths from the seed a root may be and still be worth ranking.
-    const NEAR_SPANS_LOG2: f64 = 3.0;
-    /// Fallback when there is no view to measure against: the historical absolute cut.
-    const COARSE_FLOOR: f64 = 1.0e-6;
-    let near_l2 = target_span_log2.filter(|s| s.is_finite()).map(|s| s + NEAR_SPANS_LOG2);
-    let mut cand: Vec<(usize, usize)> = Vec::new();
-    for n in 1..sh.len() {
+        let n = count;
+        let sn = (crate::to_f64(&zx), crate::to_f64(&zy));
+        let ln = acc.max(0.0);
+        let ns = n % cap;
+        rsh[ns] = sn;
+        rl2d[ns] = ln;
+        rzx[ns] = zx.clone();
+        rzy[ns] = zy.clone();
+        count += 1;
+        if n < 1 {
+            continue;
+        }
         let lo = n.saturating_sub(max_period);
         for m in lo..n {
-            let (dx, dy) = (sh[n].0 - sh[m].0, sh[n].1 - sh[m].1);
+            let ms = m % cap;
+            let (mx, my) = rsh[ms];
+            let (dx, dy) = (sn.0 - mx, sn.1 - my);
             let keep = match near_l2 {
-                // log2(sep) - log2|D_n| < log2(span) + 3, all in logs so nothing underflows.
-                Some(t) => 0.5 * (dx * dx + dy * dy).max(f64::MIN_POSITIVE).log2() - l2d[n] < t,
+                // log2(sep) − log2|D_n| < log2(span) + 3, all in logs so nothing underflows.
+                Some(t) => 0.5 * (dx * dx + dy * dy).max(f64::MIN_POSITIVE).log2() - ln < t,
                 None => dx * dx + dy * dy < COARSE_FLOOR * COARSE_FLOOR,
             };
-            if keep {
-                cand.push((m, n));
+            if !keep {
+                continue;
             }
-        }
-    }
-    if cand.is_empty() {
-        return None;
-    }
-
-    // Rank the survivors. With a target span, by how closely the pair's own feature scale matches
-    // the view; otherwise by separation, which is the historical behaviour.
-    let want_l2d = target_span_log2.filter(|s| s.is_finite()).map(|s| -s);
-    let mut best: Option<(BigFloat, usize, usize)> = None;
-    let mut best_scale = f64::INFINITY;
-    for (m, n) in cand {
-        let dx = zs[n].0.sub(&zs[m].0, p, RM);
-        let dy = zs[n].1.sub(&zs[m].1, p, RM);
-        let d = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
-        let better = match want_l2d {
-            Some(want) => {
-                // Octaves between this pair's feature size and the view's. Ties (and they are
-                // common, since a period's harmonics share a preperiod) fall back to separation.
-                let err = (l2d.get(m).copied().unwrap_or(0.0) - want).abs();
-                if (err - best_scale).abs() < 0.5 {
-                    best.as_ref().is_none_or(|(bd, _, _)| d.cmp(bd).is_some_and(|o| o < 0))
-                } else {
-                    err < best_scale
+            let lm = rl2d[ms];
+            // Reproduce the old ranking exactly, computing the bignum separation only when the
+            // comparison actually consults it (the tie window, or a clear improvement to store).
+            let (better, dopt) = match want_l2d {
+                Some(want) => {
+                    let err = (lm - want).abs();
+                    if err > best_scale + 0.5 {
+                        (false, None) // clearly coarser than the winner — no bignum needed
+                    } else if (err - best_scale).abs() < 0.5 {
+                        let d = ring_sep2(&rzx, &rzy, ns, ms, p);
+                        let b = best
+                            .as_ref()
+                            .is_none_or(|(bd, _, _)| d.cmp(bd).is_some_and(|o| o < 0));
+                        (b, Some(d))
+                    } else {
+                        (true, Some(ring_sep2(&rzx, &rzy, ns, ms, p))) // err < best_scale − 0.5
+                    }
                 }
+                None => {
+                    let d = ring_sep2(&rzx, &rzy, ns, ms, p);
+                    let b = best
+                        .as_ref()
+                        .is_none_or(|(bd, _, _)| d.cmp(bd).is_some_and(|o| o < 0));
+                    (b, Some(d))
+                }
+            };
+            if better {
+                let d = dopt.unwrap_or_else(|| ring_sep2(&rzx, &rzy, ns, ms, p));
+                if let Some(want) = want_l2d {
+                    best_scale = (lm - want).abs();
+                }
+                // Snapshot z[m..=n] for harmonics — the whole segment is in the ring right now.
+                best_seg.clear();
+                for j in m..=n {
+                    let js = j % cap;
+                    best_seg.push((rzx[js].clone(), rzy[js].clone()));
+                }
+                best = Some((d, m, n));
             }
-            // astro-float's `cmp` yields a SIGN, not an Ordering.
-            None => best.as_ref().is_none_or(|(bd, _, _)| d.cmp(bd).is_some_and(|o| o < 0)),
-        };
-        if better {
-            if let Some(want) = want_l2d {
-                best_scale = (l2d.get(m).copied().unwrap_or(0.0) - want).abs();
-            }
-            best = Some((d, m, n));
         }
+    }
+    if count < 4 {
+        return None;
     }
     let (bd, bm, bn) = best?;
 
     // Harmonics: if (k, p) fits, so does (k, 2p), (k, 3p)… and they can score almost as well.
     // Prefer the SMALLEST period whose separation is within a factor of the winner, so the answer
-    // is the fundamental cycle rather than a multiple of it.
+    // is the fundamental cycle rather than a multiple of it. `best_seg[j]` is z[bm + j].
     let period = bn - bm;
     let slack = bd.mul(&bf(64.0, p), p, RM);
     let mut fundamental = period;
@@ -2418,12 +2458,10 @@ pub fn detect_misiurewicz_at_scale(
         if period % q != 0 {
             continue;
         }
-        let n2 = bm + q;
-        if n2 >= zs.len() {
-            continue;
-        }
-        let dx = zs[n2].0.sub(&zs[bm].0, p, RM);
-        let dy = zs[n2].1.sub(&zs[bm].1, p, RM);
+        let (z0x, z0y) = (&best_seg[0].0, &best_seg[0].1);
+        let (zqx, zqy) = (&best_seg[q].0, &best_seg[q].1);
+        let dx = zqx.sub(z0x, p, RM);
+        let dy = zqy.sub(z0y, p, RM);
         let d = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
         if d.cmp(&slack).is_some_and(|o| o < 0) {
             fundamental = q;

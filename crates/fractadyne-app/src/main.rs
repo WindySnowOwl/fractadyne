@@ -6299,10 +6299,15 @@ impl FractadyneApp {
                     (Some(k), Some(p)) => Some((k, p)),
                     _ => None, // blank fields mean DETECT them, on the worker
                 };
+                // The detector's own `DETECT_STEP_BUDGET` bounds the critical-orbit walk (and the
+                // orbit's escape usually stops it sooner), so this no longer needs the old flat
+                // 20k ceiling — which capped the walk ~22× short of the preperiod (~438,732) that
+                // organizes a 1e4001 view, the reported "no point found" failure. Pass the full
+                // zoom-appropriate ask and let the cost budget bound it.
                 let iters = self
                     .viewport
                     .recommended_max_iter(self.render_cfg.max_iter)
-                    .clamp(256, 20_000);
+                    .clamp(256, 2_000_000);
                 let precision = self.viewport.precision;
                 // Detect at the VIEW'S scale — see `detect_misiurewicz_at_scale`. A log, because
                 // the linear span underflows f64 to zero past ~1e308×.
@@ -6401,9 +6406,15 @@ impl FractadyneApp {
             }
             FeatureOutcome::Nucleus(None) => (None, String::new()),
             FeatureOutcome::NoPairDetected => {
+                // Deliberately hedged: the detector searches the critical orbit within a cost
+                // budget, so `None` means EITHER the centre is not near pre-periodic structure OR
+                // the organizing point is deeper than the walk reached here — not necessarily
+                // that the view is mis-centred (the old text wrongly blamed centring, which
+                // misled a user already sitting exactly on a deep spiral).
                 self.goto.msg = Some(
-                    "No Misiurewicz point found near this view — try centring closer to a spiral \
-                     or branch point."
+                    "No Misiurewicz point found within the search budget — the point may be \
+                     deeper than the finder reaches at this view, or the centre may not be near a \
+                     spiral or branch point."
                         .into(),
                 );
                 return;

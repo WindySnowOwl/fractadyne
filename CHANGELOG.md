@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The Misiurewicz finder reaches deep points instead of giving up at 20,000 iterations**
+  (beta.4) — "Find near view" auto-detects the Misiurewicz `(k,p)` pair by walking the critical
+  orbit for a near-return, but that walk was hard-capped at 20,000 iterations. At a 2.37e4001×
+  spiral the organizing point sits at preperiod ~438,732 — ~22× past the cap — so the detector
+  returned nothing and the dialog wrongly blamed your centring ("try centring closer to a
+  spiral"). The walk is now bounded by a steps×bits² cost budget (like the series-approximation
+  budget) rather than a flat cap, and the orbit's own escape usually stops it sooner. Reaching
+  those depths also meant not storing the whole orbit (~1.5 GB at 450k steps × 13k bits) or
+  collecting every near-return pair (17.5 million at that view): the ranking now streams during
+  the walk, keeping only a small ring of recent orbit values, and is byte-identical to the old
+  result at shallow depth (all existing detector tests unchanged). The failure message is now
+  honest — a point may simply be deeper than the finder reaches at this view. Detection depth is
+  budget-bounded (~e5000 in seconds-to-minutes); far deeper views remain out of practical reach.
+
 - **Bookmarks added in dual view capture a real thumbnail again** (beta.3) - the thumbnail
   crops the central panel out of a window screenshot, but dual view returned from the panel
   draw before the crop rectangle was ever written, so a session that had been dual since
