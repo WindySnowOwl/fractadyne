@@ -1075,7 +1075,7 @@ Mockups: [design/mockups/](design/mockups/).
   MPFR twin must match the astro walk byte-for-byte the way beta.2's
   `the_pick_scoring_walk_is_backend_identical` pins the pick (720-case precedent), and corpus
   38/38 must stay byte-identical astro↔MPFR. ⛔One location at 400×250 does not make an
-  "owns extreme" claim — the 4K table showed resolution flips these; publish per-config only.
+  "owns extreme" claim — the 4K table showed resolution flips these; publish per-config only. ⭐Design surveyed 2026-09-02: `design/sa-backend-routing.md` — step_gen already backend-generic, RZ discipline established, mul_u32 shift-and-add mirroring is the one subtle bit; start there.
 
 - [x] 🟠**WHY IS FRAKTALER-3 ~8× FASTER THAN US AT e4000? — ✅RESOLVED 2026-09-02 (beta.11
   re-measure): the question is answered, both halves shipped, and the gap is measured
