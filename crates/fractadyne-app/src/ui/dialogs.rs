@@ -438,12 +438,23 @@ impl FractadyneApp {
                         if let Some(elapsed) = self.feature_solve.as_ref().map(|f| f.started.elapsed()) {
                             ui.horizontal(|ui| {
                                 ui.add(egui::Spinner::new().size(16.0));
+                                ui.label(egui::RichText::new("Solving…").weak());
+                                // The ticking number is MONOSPACE and right-aligned in a
+                                // reserved width, so the line doesn't bounce as digits change —
+                                // the status-bar reflow rule (any element whose width follows a
+                                // live value is a reflow bug; see `ui/menus.rs`).
                                 ui.label(
                                     egui::RichText::new(format!(
-                                        "Solving… {:.1}s  (arbitrary precision; deep views take \
-                                         longer)",
+                                        "{:>7.1}s",
                                         elapsed.as_secs_f64()
                                     ))
+                                    .weak()
+                                    .monospace(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(
+                                        "(arbitrary precision; deep views take longer)",
+                                    )
                                     .weak(),
                                 );
                                 // ⭐A VISIBLE way out. Closing the dialog already abandons the

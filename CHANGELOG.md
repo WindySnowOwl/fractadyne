@@ -12,6 +12,11 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The Go-to solve timer no longer makes the line bounce** (beta.10, user-reported) - the
+  elapsed seconds in "Solving..." rendered in the proportional face, so the text shifted
+  as digits ticked. The number is now monospace, right-aligned in a reserved width; the
+  spinner, number, and explanation all hold still while a deep solve counts.
+
 - **The live normalized palette no longer re-maps while a view settles** (beta.9 - the live
   half of beta.8's fix; user-reported). As a deep view refined, every supersampling stage,
   settle tile and chunked-walk refresh fed a new escape-range reading into the mapping EMA,
