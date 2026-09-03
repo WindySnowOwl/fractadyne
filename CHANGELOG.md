@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Glitch-corrected output is now deterministic: the correction loop is bounded in work,
+  not wall time** (beta.11). The corrector's 120 s wall-clock deadline cut the pass loop at a
+  load-dependent point - two runs of the same binary at e4000 differed by 3-101 bytes - and
+  never covered the reference build in front of the loop at all (387 s at e4000, spent before
+  the clock started). Both are replaced by a work budget priced at admission: reference builds
+  (the front one included) in steps-times-bits-squared, correction passes in nominal GPU steps,
+  so a build or pass that cannot fit never starts and the cut point depends only on the
+  request. A new selftest check runs the same corrected render twice under a deliberately
+  binding budget and requires bit-identical buffers with the cut at the same pass; an
+  end-to-end double render with correction fully engaged (64 references) compares identical
+  to the pixel. Shallow and normal corrections are orders of magnitude under the budgets and
+  behave exactly as before.
+
 - **The Go-to solve timer no longer makes the line bounce** (beta.10, user-reported) - the
   elapsed seconds in "Solving..." rendered in the proportional face, so the text shifted
   as digits ticked. The number is now monospace, right-aligned in a reserved width; the

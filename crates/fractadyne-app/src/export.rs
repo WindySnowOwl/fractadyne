@@ -197,12 +197,10 @@ const MAX_LOAD_OCTAVES: f64 = 3.4e7;
 const MAX_LOAD_ITER: u32 = 10_000_000;
 
 /// Wall-clock budget for an export's multi-reference glitch-correction loop. Correction runs
-/// synchronously on the device thread and its dispatches are now tiled (so this is actually
-/// enforceable between tiles); past the budget the loop stops and colors the best-effort merge so
-/// far. This converts the deep-interior "dark dendrite core" pathology (corpus 14/15 — cores that
-/// no acceleration can skip, which used to hang correction for >1 h) into a bounded partial render.
-/// Shallow/normal views finish in well under this and are unaffected. (Candidate for a setting.)
-const GLITCH_CORRECT_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
+// (The 120 s `GLITCH_CORRECT_BUDGET` wall clock lived here until v0.2.41-beta.11. A
+// wall-clock cut made corrected output load-dependent — two runs of the same binary at
+// e4000 differed by 3–101 bytes — so the bound is now WORK, admission-priced: see
+// `render::CorrectionBudget` and the `GLITCH_CPU_BUDGET`/`GLITCH_GPU_BUDGET` tunables.)
 
 /// Report from restoring view metadata, so callers can surface anything noteworthy
 /// (a newer file format, clamped values, unrecognized fields) instead of loading silently.
@@ -574,7 +572,7 @@ impl FractadyneApp {
     /// fresh references). Correction is synchronous (multi-pass GPU + readback), so this must run on
     /// the thread owning the device; it falls back to the plain render for aux coloring / oversized
     /// views / when nothing is glitched. The correction loop is wall-clock bounded by
-    /// [`GLITCH_CORRECT_BUDGET`] (its dispatches are tiled, so the budget is actually enforceable).
+    /// the correction work budget (its dispatches are tiled; see `render::CorrectionBudget`).
     #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: fold the request params into a struct
     fn render_export_view(
         &self,
@@ -600,8 +598,8 @@ impl FractadyneApp {
             }
         }
         if self.render_cfg.glitch_correct {
-            let deadline = Some(std::time::Instant::now() + GLITCH_CORRECT_BUDGET);
-            if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height, Some(req), deadline) {
+            let budget = crate::render::CorrectionBudget::standard();
+            if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height, Some(req), budget) {
                 return Ok(res);
             }
         }
@@ -810,8 +808,8 @@ impl FractadyneApp {
     ) -> Option<String> {
         let meta = self.view_metadata();
         let correct = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
-            let deadline = Some(std::time::Instant::now() + GLITCH_CORRECT_BUDGET);
-            self.render_export_corrected(device, queue, vp, julia, req.width, req.height, Some(req), deadline)
+            let budget = crate::render::CorrectionBudget::standard();
+            self.render_export_corrected(device, queue, vp, julia, req.width, req.height, Some(req), budget)
         };
         let write = |p: &std::path::Path,
                      w: u32,

@@ -624,6 +624,29 @@ pub(crate) const BLA_EPS: f64 = 1.0e-6;
 
 pub(crate) const CORRECT_WORK_BUDGET: u64 = 2_000_000_000;
 
+/// Total CPU cost budget for one glitch-corrected render's reference builds — the front
+/// build when the caller's request cannot be cloned, plus every correction pass's fresh
+/// orbit + BLA tree — in **steps × bits²**, the unit `SA_COST_BUDGET` and
+/// `DETECT_STEP_BUDGET` established for arbitrary-precision walks. Replaces the CPU half
+/// of the old `GLITCH_CORRECT_BUDGET` wall clock (120 s): a wall-clock cut lands wherever
+/// machine load happens to put it, and two runs of the SAME binary at 2.37e4000× differed
+/// by 3–101 bytes with counters swinging 5% — a determinism contract cannot contain a
+/// load-dependent stage. 3e14 ≈ the old 120 s intent on the dev machine (measured: the
+/// e4001 detector walk spent ~8e13 in ~65 s at 13.4k bits).
+pub(crate) const GLITCH_CPU_BUDGET: u64 = 300_000_000_000_000;
+
+/// Total GPU **nominal-step** budget (glitched pixels × iterations, summed over the
+/// correction passes) for one glitch-corrected render — the GPU half of the same
+/// conversion. The BASE render is deliberately not priced: it is the frame itself (the
+/// fallback renders it uncorrected anyway, so declining it saves nothing), and nominal
+/// steps overprice a BLA/SA-skipping deep frame by orders of magnitude. Passes run with
+/// SA off and a fresh per-pass BLA, so nominal is honest there. 4e12 ≈ ~80 s at the
+/// ~50 Gsteps/s a no-skip corrective regime measures on the dev card — the regime the old
+/// wall clock existed to bound (the corpus-14/15 dark-dendrite cores). Benign passes are
+/// orders of magnitude under this; per-dispatch TDR safety is separate and unchanged
+/// (`CORRECT_WORK_BUDGET` tiles each dispatch).
+pub(crate) const GLITCH_GPU_BUDGET: u64 = 4_000_000_000_000;
+
 
 // ----------------------------------------------------------------------------
 // Reference caps and build-rate limits

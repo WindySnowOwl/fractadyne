@@ -2136,6 +2136,28 @@ impl FractadyneApp {
         self.build_export_request(vp, julia, RefSource::ProbeOnly(Box::new(res)))
     }
 
+    /// The iteration count an export request for `vp` will carry (before the live-borrow cap,
+    /// which only `RefSource::Live` can apply): the auto-iter zoom cap, or the configured count
+    /// verbatim when auto-iter is off. Split out of `build_export_request` so ADMISSION PRICING —
+    /// the glitch corrector prices its front reference build with this before paying for it —
+    /// can never drift from what the builder actually asks.
+    pub(crate) fn export_eff_iter(&self, vp: &Viewport, julia: bool) -> u32 {
+        if self.render_cfg.auto_iter {
+            // Cap at the zoom-appropriate count (boosted by the live adaptive budget — see
+            // `export_auto_iter_cap`): avoids noise from over-resolving sub-pixel dust, and keeps
+            // the export fast/responsive.
+            vp.recommended_max_iter(self.render_cfg.max_iter)
+                .min(self.export_auto_iter_cap(vp.log2_magnification(), julia))
+        } else {
+            // Auto-iter OFF is an explicit instruction — honor the count verbatim (must stay in
+            // lock-step with `export_reference_inputs_for` above). Capping it silently rendered
+            // deep validation-corpus locations interior-black (their structure escapes above the
+            // cap) while Fraktaler-3 used the full count — breaking the corpus contract of "same
+            // iterations, both apps".
+            self.render_cfg.max_iter
+        }
+    }
+
     /// The shared body of the three request builders above; `src` selects where the reference comes
     /// from and changes NOTHING else.
     fn build_export_request(
@@ -2144,25 +2166,11 @@ impl FractadyneApp {
         julia: bool,
         src: RefSource,
     ) -> fractadyne_gpu::ExportRequest {
-        let log2mag = vp.log2_magnification();
         let width = self.export.width.max(1);
         // height from aspect: span_y/span_x = height_px/width_px (the scale cancels).
         let height = ((width as f64) * vp.height_px / vp.width_px).round().max(1.0) as u32;
         let mag = vp.magnification(); // saturates to ∞ past 1e308×; fine for the mode compares
-        let eff_iter = if self.render_cfg.auto_iter {
-            // Cap at the zoom-appropriate count (boosted by the live adaptive budget — see
-            // `export_auto_iter_cap`): avoids noise from over-resolving sub-pixel dust, and keeps
-            // the export fast/responsive.
-            vp.recommended_max_iter(self.render_cfg.max_iter)
-                .min(self.export_auto_iter_cap(log2mag, julia))
-        } else {
-            // Auto-iter OFF is an explicit instruction — honor the count verbatim (must stay in
-            // lock-step with `export_reference_inputs_for` above). Capping it silently rendered
-            // deep validation-corpus locations interior-black (their structure escapes above the
-            // cap) while Fraktaler-3 used the full count — breaking the corpus contract of "same
-            // iterations, both apps".
-            self.render_cfg.max_iter
-        };
+        let eff_iter = self.export_eff_iter(vp, julia);
         let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, mag);
         let precision = vp.precision; // maintained by the viewport; valid at any depth
         let (cx, cy) = vp.center_f64();
@@ -2333,27 +2341,47 @@ impl FractadyneApp {
         height: u32,
         max_refs: usize,
         req: Option<&fractadyne_gpu::ExportRequest>,
-        deadline: Option<Instant>,
+        budget: CorrectionBudget,
     ) -> Option<CorrectedIter> {
         // Per-dispatch work budget for the tiled correction renders (nominal steps = tile²·max_iter).
         // Smaller than the export path's (fractadyne-gpu `TILE_WORK_BUDGET` = 2e10) because
         // correction passes run with BLA OFF, so deep-interior "dark core" pixels cost ~50× the
-        // nominal per-pixel work; small tiles keep each GPU dispatch well inside the TDR window and
-        // leave the loop interruptible (between tiles) by `deadline`. This is the fix for the
-        // >1h uninterruptible-dispatch pathology (TODO.md Open bugs).
+        // nominal per-pixel work; small tiles keep each GPU dispatch well inside the TDR window.
+        // This is the fix for the >1h uninterruptible-dispatch pathology (TODO.md Open bugs).
+        // The LOOP is bounded by `budget` — admission-priced work, never a wall clock (a
+        // wall-clock cut made corrected output load-dependent; see [`CorrectionBudget`]).
         // ⭐⭐**Clone the caller's reference rather than building a second one.** The base pass
         // here wants the SAME orbit the caller already has — same viewport, same julia flag, so
         // `current_export_request_for` returns an identical build (measured at 2.37e4000×: both
         // came back `len=443144 iter=2008192 prec=13481`). At that depth the rebuild costs **387 s**
-        // against a `GLITCH_CORRECT_BUDGET` of 120 s, so the correction's deadline is three times
-        // blown before its first tile and the whole pass is discarded — 387 s spent to throw away.
-        // The clone copies the orbit (~7 MB there), which is nothing beside that.
+        // against the old 120 s wall-clock deadline, so the correction was three times blown before
+        // its first tile and the whole pass was discarded — 387 s spent to throw away. The clone
+        // copies the orbit (~7 MB there), which is nothing beside that.
         //
         // ⚠Only the frame size is checked, because `ss` and `glitch_on` are overridden below and
         // the reference does not depend on them; a request for a different SIZE would be wrong.
+        let mut cpu_spent = 0u64;
+        let mut gpu_spent = 0u64;
         let mut req = match req {
             Some(r) if r.width == width && r.height == height => r.clone(),
-            _ => self.current_export_request_for(vp, julia),
+            _ => {
+                // The build in FRONT of the loop, priced BEFORE it is paid — the other half
+                // of the old defect: at 2.37e4000× this build alone took 387 s against a
+                // 120 s deadline that only started counting afterwards, so the whole render
+                // was spent to be thrown away. If the front build cannot fit the budget,
+                // decline up front and let the caller fall back to the plain export.
+                let ask = self.export_eff_iter(vp, julia);
+                let price = glitch_build_price(ask, vp.precision);
+                if price > budget.cpu_bits2 {
+                    crate::diag::breadcrumb(format!(
+                        "glitch correction: declined — front reference build priced {price} against a {} steps·bits² budget",
+                        budget.cpu_bits2
+                    ));
+                    return None;
+                }
+                cpu_spent += price;
+                self.current_export_request_for(vp, julia)
+            }
         };
         req.width = width;
         req.height = height;
@@ -2365,7 +2393,13 @@ impl FractadyneApp {
         let mut counters = [0u64; fractadyne_gpu::COUNTER_SLOTS];
         let mut iterate_ms = 0.0f64;
         let mut max_dispatch_ms = 0.0f64;
-        let base = fractadyne_gpu::render_iter_tiled(device, queue, &req, CORRECT_WORK_BUDGET, deadline, None).ok()?;
+        // The base render is NOT priced against the budget: it is the frame itself — the
+        // caller's fallback renders the exact same frame uncorrected, so declining it here
+        // cannot save any work, only degrade the output. (Its nominal steps also wildly
+        // overprice a BLA/SA-skipping deep frame: the 2.37e4000× base measured 0.58 s of GPU.)
+        // The budget bounds the CORRECTION OVERHEAD — the optional passes beyond this frame.
+        // Per-dispatch TDR safety inside the base is CORRECT_WORK_BUDGET's tiling, unchanged.
+        let base = fractadyne_gpu::render_iter_tiled(device, queue, &req, CORRECT_WORK_BUDGET, None, None).ok()?;
         for (c, v) in counters.iter_mut().zip(base.counters) {
             *c += v;
         }
@@ -2395,16 +2429,6 @@ impl FractadyneApp {
         let mut gather: Option<fractadyne_gpu::GatherPass> = None;
 
         for _ in 1..max_refs {
-            // Time-box: if the deadline has passed, stop and return the best-effort merge so far
-            // (partial correction beats an unbounded hang; the caller colors what we have).
-            if deadline.is_some_and(|d| Instant::now() >= d) {
-                crate::diag::breadcrumb(format!(
-                    "glitch correction: time-boxed after {} refs, {:.1}s",
-                    refs_used,
-                    t_glitch.elapsed().as_secs_f64()
-                ));
-                break;
-            }
             // Glitched pixels carry the -2 sentinel (r < -1.5); interior is -1, escaped ≥ 0.
             let glitch: Vec<usize> = (0..w * h).filter(|&i| merged[i * 4] < -1.5).collect();
             if glitch.is_empty() {
@@ -2439,6 +2463,32 @@ impl FractadyneApp {
             let vpx = ((seed % w) as f64 + 0.5) * (vp.width_px / w as f64);
             let vpy = ((seed / w) as f64 + 0.5) * (vp.height_px / h as f64);
             let (rx, ry) = vp.pixel_to_complex(vpx, vpy);
+            // WORK-box — both halves admitted here, BEFORE the pass pays for anything, so
+            // the loop's cut point is a function of the request, never of machine load (the
+            // wall-clock predecessor cut two identical runs at different passes, 3–101 bytes
+            // apart, whenever the box was busy). CPU: this pass's fresh orbit + BLA tree.
+            // GPU: the pass renders exactly the glitched pixels (an admitted pass then runs
+            // to completion; per-dispatch TDR bounds are separate and unchanged). Checking
+            // GPU admission up here too keeps a GPU-refused pass from paying a CPU build
+            // it would then throw away.
+            let build_price = glitch_build_price(eff_iter, precision);
+            if cpu_spent.saturating_add(build_price) > budget.cpu_bits2 {
+                crate::diag::breadcrumb(format!(
+                    "glitch correction: work-boxed (CPU) after {refs_used} refs — next build priced {build_price}, {cpu_spent} of {} spent",
+                    budget.cpu_bits2
+                ));
+                break;
+            }
+            let pass_steps = (glitch.len() as u64).saturating_mul(eff_iter.max(1) as u64);
+            if gpu_spent.saturating_add(pass_steps) > budget.gpu_steps {
+                crate::diag::breadcrumb(format!(
+                    "glitch correction: work-boxed (GPU) after {refs_used} refs — next pass priced {pass_steps} nominal steps, {gpu_spent} of {} spent",
+                    budget.gpu_steps
+                ));
+                break;
+            }
+            cpu_spent += build_price;
+            gpu_spent += pass_steps;
             let (orbit, len, rp) =
                 self.compute_reference(&center_bf, span, eff_iter, precision, julia, Some([rx, ry]));
             let dx = fractadyne_core::ref_offset_mantissa(&center_bf[0], &rp[0], delta_exp, precision);
@@ -2496,15 +2546,15 @@ impl FractadyneApp {
             // a gather batch is a handful of pixels, so its dispatch is one pixel's entire dependent
             // chain and no batch size shortens it, whereas a tile can be split along the ITERATION
             // axis. `gather_dispatch_safe` asks the chunk pricer the same question it asks for a
-            // tile, so the two agree on what "too long for one dispatch" means. Either way the
-            // deadline is honoured between dispatches: a mid-pass expiry returns Canceled and we
-            // keep the merge earlier passes accumulated rather than blocking on one huge dispatch.
+            // tile, so the two agree on what "too long for one dispatch" means. Either way an
+            // ADMITTED pass runs to completion (its steps are already spent against the budget);
+            // an `Err` is a genuine device failure, and we keep the merge earlier passes built.
             let coords: Vec<[u32; 2]> =
                 glitch.iter().map(|&i| [(i % w) as u32, (i / w) as u32]).collect();
             // Both branches yield the same thing: the G-buffer for `glitch`, in `glitch` order.
             let pass = if fractadyne_gpu::gather_dispatch_safe(r.max_iter) {
                 let gp = gather.get_or_insert_with(|| fractadyne_gpu::GatherPass::new(device));
-                match gp.run(device, queue, &r, &coords, CORRECT_WORK_BUDGET, deadline) {
+                match gp.run(device, queue, &r, &coords, CORRECT_WORK_BUDGET, None) {
                     Ok(g) => {
                         for (c, v) in counters.iter_mut().zip(g.counters) {
                             *c += v;
@@ -2521,7 +2571,7 @@ impl FractadyneApp {
                     roi[i] = true;
                 }
                 match fractadyne_gpu::render_iter_tiled(
-                    device, queue, &r, CORRECT_WORK_BUDGET, deadline, Some(&roi),
+                    device, queue, &r, CORRECT_WORK_BUDGET, None, Some(&roi),
                 ) {
                     Ok(p) => {
                         for (c, v) in counters.iter_mut().zip(p.counters) {
@@ -2576,13 +2626,13 @@ impl FractadyneApp {
         width: u32,
         height: u32,
         req: Option<&fractadyne_gpu::ExportRequest>,
-        deadline: Option<Instant>,
+        budget: CorrectionBudget,
     ) -> Option<fractadyne_gpu::ExportResult> {
-        // The multi-reference ITERATION is now tiled + deadline-bounded (see render_corrected_iter),
+        // The multi-reference ITERATION is tiled + work-bounded (see render_corrected_iter),
         // but the final COLOR pass still colors the merged buffer in one un-tiled texture set
         // (≈ 32 B/px), so this path is still bounded by the GPU's max 2-D texture dimension and a
         // conservative area cap to avoid OOM. Above either, fall back to the tiled (uncorrected)
-        // path. ~32 MP covers 4K/5K/6K comfortably. `deadline` time-boxes the correction loop.
+        // path. ~32 MP covers 4K/5K/6K comfortably. `budget` work-boxes the correction loop.
         const MAX_CORRECT_PX: u64 = 32_000_000;
         let max_dim = device.limits().max_texture_dimension_2d;
         if width > max_dim
@@ -2592,7 +2642,7 @@ impl FractadyneApp {
         {
             return None;
         }
-        let ci = self.render_corrected_iter(device, queue, vp, julia, width, height, 64, req, deadline)?;
+        let ci = self.render_corrected_iter(device, queue, vp, julia, width, height, 64, req, budget)?;
         // ⚠The size guard is load-bearing: a request built for a different frame size would colour
         // the merged buffer against the wrong dimensions. Both real callers pass their own
         // `req.width`/`req.height` as `width`/`height`, so it holds; anything else rebuilds.
@@ -2959,6 +3009,41 @@ pub(crate) enum NormRange {
     /// (`norm_anchor_range`), identical for a frame no matter when, where, or in what
     /// order it renders.
     Fixed((f32, f32)),
+}
+
+/// Deterministic work budget for one glitch-corrected render — the replacement for the
+/// wall-clock deadline that made corrected output NON-DETERMINISTIC under load (two runs
+/// of the same binary differed by 3–101 bytes at e4000; the cut landed wherever load put
+/// it). Both halves are admission-priced: a reference build or a correction pass that
+/// would exceed its half never starts, so the cut point is a function of the REQUEST
+/// alone. Wall time now scales with hardware like every other budgeted stage; the export
+/// dialog's cancel remains the interactive out.
+#[derive(Clone, Copy)]
+pub(crate) struct CorrectionBudget {
+    /// CPU half: reference builds (front + per-pass orbit + BLA), in steps × bits².
+    pub(crate) cpu_bits2: u64,
+    /// GPU half: nominal iterate steps (pixels × iterations), base + passes.
+    pub(crate) gpu_steps: u64,
+}
+
+impl CorrectionBudget {
+    /// The standard budget (`GLITCH_CPU_BUDGET` / `GLITCH_GPU_BUDGET`) — the old 120 s
+    /// responsiveness intent, restated in deterministic work.
+    pub(crate) fn standard() -> Self {
+        Self { cpu_bits2: crate::GLITCH_CPU_BUDGET, gpu_steps: crate::GLITCH_GPU_BUDGET }
+    }
+    /// No bound — the selftest's convergence checks, which assert full correction.
+    pub(crate) const UNBOUNDED: Self = Self { cpu_bits2: u64::MAX, gpu_steps: u64::MAX };
+}
+
+/// The admission price of ONE correction-pass reference build, in steps × bits²: the
+/// orbit walk plus the fresh BLA tree, priced at 2× the orbit's `iter × precision²` ask.
+/// Priced by the ASK (deterministic), never by what a build actually consumed — an orbit
+/// that escapes early still admitted what it might have cost. Shared by the loop and the
+/// selftest determinism check so the two can never drift.
+pub(crate) fn glitch_build_price(iter: u32, precision: usize) -> u64 {
+    2u64.saturating_mul(iter as u64)
+        .saturating_mul((precision as u64).saturating_mul(precision as u64))
 }
 
 /// One frame's work-budget decisions — `build_params`'s budget stage output

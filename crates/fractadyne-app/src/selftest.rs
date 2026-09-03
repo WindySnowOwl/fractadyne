@@ -1325,9 +1325,10 @@ impl FractadyneApp {
                     vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
                     vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
                     vp.precision = fractadyne_core::precision_for_magnification(mag);
-                    if let Some(ci) =
-                        self.render_corrected_iter(device, queue, &vp, false, N, N, 40, None, None)
-                    {
+                    if let Some(ci) = self.render_corrected_iter(
+                        device, queue, &vp, false, N, N, 40, None,
+                        crate::render::CorrectionBudget::UNBOUNDED,
+                    ) {
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Glitch",
                             name: "multi-reference correction resolves glitches".into(),
@@ -1335,6 +1336,52 @@ impl FractadyneApp {
                             result: format!("{} references, {} residual glitches", ci.refs_used, ci.residual),
                             threshold: "0 residual glitches",
                             pass: ci.residual == 0,
+                        });
+
+                        // (D2e) The correction CUT is deterministic. The old wall-clock deadline
+                        // cut the loop wherever machine load happened to put it — two runs of the
+                        // same binary at e4000 differed by 3–101 bytes. Bounded in WORK, the same
+                        // request must cut at the same pass every run: size the CPU budget to admit
+                        // the front build plus exactly one correction pass, run twice, and require
+                        // bit-identical buffers AND that the budget actually bound (fewer refs than
+                        // the unbounded run above — a cut that never engages proves nothing).
+                        let ask = self.export_eff_iter(&vp, false);
+                        let price = crate::render::glitch_build_price(ask, vp.precision);
+                        let bounded = crate::render::CorrectionBudget {
+                            cpu_bits2: price.saturating_mul(5) / 2,
+                            gpu_steps: u64::MAX,
+                        };
+                        let a = self.render_corrected_iter(
+                            device, queue, &vp, false, N, N, 40, None, bounded,
+                        );
+                        let b = self.render_corrected_iter(
+                            device, queue, &vp, false, N, N, 40, None, bounded,
+                        );
+                        let (pass, result) = match (&a, &b) {
+                            (Some(x), Some(y)) => {
+                                let identical = x.pixels.len() == y.pixels.len()
+                                    && x.pixels
+                                        .iter()
+                                        .zip(&y.pixels)
+                                        .all(|(p, q)| p.to_bits() == q.to_bits());
+                                let bound = x.refs_used < ci.refs_used;
+                                (
+                                    identical && x.refs_used == y.refs_used && bound,
+                                    format!(
+                                        "run A {} refs, run B {} refs, identical {identical}, bound engaged {bound} (unbounded used {})",
+                                        x.refs_used, y.refs_used, ci.refs_used
+                                    ),
+                                )
+                            }
+                            _ => (false, "a bounded run returned None".into()),
+                        };
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Glitch",
+                            name: "work-boxed correction cuts deterministically".into(),
+                            params: "seahorse, 1e8×, CPU budget = front + 1 pass, run twice".into(),
+                            result,
+                            threshold: "bit-identical buffers, same refs, budget engaged",
+                            pass,
                         });
                     }
 
@@ -1347,7 +1394,10 @@ impl FractadyneApp {
                     let d2d_method = self.coloring.color_method;
                     self.coloring.color_method = crate::ColorMethod::Smooth;
                     if let (Some(cor), Some(plain)) = (
-                        self.render_export_corrected(device, queue, &vp, false, N, N, None, None),
+                        self.render_export_corrected(
+                            device, queue, &vp, false, N, N, None,
+                            crate::render::CorrectionBudget::UNBOUNDED,
+                        ),
                         render(&make(self, SX, SY, mag)),
                     ) {
                         let n = (N * N) as usize;
