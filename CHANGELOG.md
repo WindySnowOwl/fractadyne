@@ -12,6 +12,13 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The UI validation harness no longer captures mid-refinement frames under machine load**
+  (beta.13, developer-facing). A capture could land in the one-frame gap between
+  supersampling stages - both grid-pending flags read false there - and score a sharp frame
+  against a mid-ramp one, failing a check that nothing in the render pipeline had broken.
+  Captures now wait for the AA ramp to reach target quality and for the pipeline to hold
+  quiet for 350 ms; the check's threshold is unchanged.
+
 - **The accelerated (MPFR) build now leads Fraktaler-3 at the e4000 benchmark location**
   (beta.12). The series-approximation coefficient walk - the last reference-build stage
   hardwired to astro-float on both builds - now dispatches through the bignum backend like

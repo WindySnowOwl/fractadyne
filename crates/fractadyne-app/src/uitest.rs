@@ -234,6 +234,12 @@ pub(crate) struct UiTest {
     // regardless of how fast the machine builds it.
     ref_len_seen: u32,
     ref_changed_at: Instant,
+    // When the render pipeline was last observed BUSY (grid pending or AA ramp mid-climb) for the
+    // current step. A screen capture requires this to be a quiet period old: between settle stages
+    // both pending flags read false for a frame while the next, sharper stage has not yet
+    // dispatched, and a capture that fires in that gap lands on a mid-ramp frame — the
+    // meanD-9.9-under-load minimap-pan false red (fixed population 0.0-2.2 against a 9.5 gate).
+    quiet_since: Instant,
     /// Crash reports already on disk when the walk started. Anything not in this list at the end
     /// appeared DURING the run — which is the only version of "no crash reports" that means
     /// anything on a config dir that is not wiped.
@@ -294,6 +300,7 @@ impl UiTest {
             sb_max: 0.0,
             ref_len_seen: 0,
             ref_changed_at: Instant::now(),
+            quiet_since: Instant::now(),
             crashes_at_start: crate::diag::crash_report_names(),
             panel_w: None,
             prev_unclean: crate::diag::previous_session_unclean(),
@@ -588,6 +595,7 @@ impl FractadyneApp {
                 ut.sb_max = 0.0;
                 ut.ref_len_seen = 0;
                 ut.ref_changed_at = ut.step_start;
+                ut.quiet_since = ut.step_start;
                 ut.panel_w = None;
                 ut.phase = Phase::Settle;
             }
@@ -659,10 +667,34 @@ impl FractadyneApp {
                 // frames read 2.8, 3.1 and 17.8 on successive runs of the SAME build. A flaky
                 // gate is worse than no gate. Wait for the grid to drain (bounded, as ever, by
                 // the hard cap, so a wedge still cannot hang the harness).
-                let settling = self.perf.tile_pending[0]
+                //
+                // ⚠⚠AND A CLEARED PENDING FLAG IS NOT "FULLY RESOLVED". The AA ramp
+                // (`aa_ramp`) advances only between grids: the frame a grid drains, both
+                // pending flags read false while the next, SHARPER stage has not yet
+                // dispatched — and the ramp then re-arms a fresh grid one frame later. A
+                // capture firing inside that gap lands on a mid-ramp frame (ss=1 against the
+                // other step's ss=2), which is the meanD-9.9-under-load false red
+                // minimap-pan-redraws produced (its fixed population is 0.0–2.2 against a
+                // 9.5 gate; machine load WIDENS the gap, it does not create it). So
+                // "resolved" means: no grid pending AND the AA ramp at target on every
+                // rendered view — held for a QUIET PERIOD, so no stage handoff the flags
+                // cannot see slips a capture through (the same lesson as the reference
+                // gate's 700 ms). The remedy quiets the measurement; the 9.5 gate stands.
+                let ramp_done = |v: usize| {
+                    crate::aa_ramp(self.pointer.settle_frame[v], self.render_cfg.aa)
+                        >= self.render_cfg.aa.max(1)
+                };
+                let busy = self.perf.tile_pending[0]
                     || self.perf.chunk_pending[0]
                     || self.perf.tile_pending[1]
-                    || self.perf.chunk_pending[1];
+                    || self.perf.chunk_pending[1]
+                    || !ramp_done(0)
+                    || (self.dual && !ramp_done(1));
+                if busy {
+                    ut.quiet_since = now;
+                }
+                let settling =
+                    busy || now.duration_since(ut.quiet_since) < std::time::Duration::from_millis(350);
                 let ready = now >= ut.settle_until
                     && match &ut.steps[ut.idx].kind {
                         StepKind::Live(v) => v.expect == RenderMode::Direct || ref_settled,

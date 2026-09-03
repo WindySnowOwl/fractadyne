@@ -1322,7 +1322,7 @@ mod deep_jump_warning;
 /// Anti-alias supersampling for progressive-settle stage `frame`, ramping 1→2→4→… up to `target`.
 /// A settled view refines from an instant coarse frame to full AA over a few frames, rather than
 /// blocking on one expensive full-AA frame. `frame` is capped so the shift can't overflow.
-fn aa_ramp(frame: u32, target: u32) -> u32 {
+pub(crate) fn aa_ramp(frame: u32, target: u32) -> u32 {
     (1u32 << frame.min(5)).min(target.max(1))
 }
 
