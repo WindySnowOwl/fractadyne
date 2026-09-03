@@ -629,3 +629,137 @@ pub(crate) fn try_orbit_length_inplace(
 }
 
 
+
+/// The series-approximation coefficient walk in MPFR — the twin of `series_skip_astro`
+/// (fractadyne-core `reference.rs`), Mandelbrot (`d = 2`) only; `None` = not handled here,
+/// and the caller falls through to the astro walk (correct arithmetic for every family —
+/// the fallback costs speed, never bits).
+///
+/// Mirrored LITERALLY, operation for operation, at the same word-rounded precision with the
+/// same truncate-toward-zero rounding:
+///   * `cmul` is `cmul_bf`'s sequence — 4 rounded muls, a rounded sub and a rounded add, in
+///     the same operand order;
+///   * the d = 2 recurrence factors are 1 and 2, and astro's `mul_u32_bf` applies those as
+///     the identity and one exact doubling — so this twin needs no shift-and-add mirror at
+///     all (`fdouble` is the exact counterpart of `double_bf`);
+///   * the orbit advances through the SAME generic step (`step_gen::<Float>`), already held
+///     byte-identical by the orbit matrix;
+///   * validity reads exponents by the same max-of-components rule, reproducing astro's
+///     `Some(0)`-for-zero convention (a zero early `C` coefficient reads exponent 0, not −∞);
+///   * the escape view is the truncating `to_f64_trunc`, the twin of `to_f64`.
+///
+/// Returns the walk's `best` with the six final coefficients carried back to `BigFloat`
+/// EXACTLY (`to_carrier`), so the shared tail in `reference` owns the one conversion to GPU
+/// values. Pinned bitwise by `the_sa_walk_is_backend_identical`.
+pub(crate) fn try_series_skip_walk(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    log2_max_dc: f64,
+    limit: u32,
+    formula: u32,
+    p: usize,
+) -> Option<Option<(u32, [BigFloat; 6])>> {
+    use crate::fractal::Field;
+
+    if formula != crate::formula::MANDELBROT {
+        return None;
+    }
+
+    /// `cmul_bf`'s exact operation sequence on MPFR values.
+    fn cmul(ax: &Float, ay: &Float, bx: &Float, by: &Float, p: u32) -> (Float, Float) {
+        let rx = ax.fmul(bx, p).fsub(&ay.fmul(by, p), p);
+        let ry = ax.fmul(by, p).fadd(&ay.fmul(bx, p), p);
+        (rx, ry)
+    }
+
+    /// `log2_cmag`'s rule on MPFR values: max component exponent, with astro-float's
+    /// conventions — zero reads exponent 0 (astro `exponent()` is `Some(0)` for zero), and
+    /// only a value with no exponent at all (NaN/∞) contributes `None`.
+    fn log2_cmag_rug(re: &Float, im: &Float) -> f64 {
+        let e = |v: &Float| -> Option<i64> {
+            if v.is_zero() {
+                Some(0)
+            } else {
+                v.get_exp().map(|x| x as i64)
+            }
+        };
+        match (e(re), e(im)) {
+            (None, None) => f64::NEG_INFINITY,
+            (a, b) => a.unwrap_or(i64::MIN).max(b.unwrap_or(i64::MIN)) as f64,
+        }
+    }
+
+    let ctx = <Float as RefBackend>::ctx_for(p);
+    let one = Float::with_val(ctx, 1u32);
+    let zero = || Float::with_val(ctx, 0u32);
+    let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
+    let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
+    let (mut zx, mut zy) = (zero(), zero());
+    let (mut ax, mut ay) = (zero(), zero());
+    let (mut bx, mut by) = (zero(), zero());
+    let (mut cxx, mut cyy) = (zero(), zero());
+    let mut best: Option<(u32, [Float; 6])> = None;
+    for n in 1..=limit {
+        // For d = 2: Z^{d-1} = Z itself (astro's `cpow_bf(z, 1)` is an exact clone) and the
+        // Z^{d-2} factor is the identity, so the recurrence collapses to the lines below.
+        let (a2x, a2y) = cmul(&ax, &ay, &ax, &ay, ctx); // A²
+        let (abx, aby) = cmul(&ax, &ay, &bx, &by, ctx); // A·B
+        // A' = 2·(Z·A) + 1
+        let (t, u) = cmul(&zx, &zy, &ax, &ay, ctx);
+        let na_x = t.fdouble().fadd(&one, ctx);
+        let na_y = u.fdouble();
+        // B' = 2·(Z·B) + A²    (C(2,2)·… — the ×1 is the identity in `mul_u32_bf` too)
+        let (t, u) = cmul(&zx, &zy, &bx, &by, ctx);
+        let nb_x = t.fdouble().fadd(&a2x, ctx);
+        let nb_y = u.fdouble().fadd(&a2y, ctx);
+        // C' = 2·(Z·C) + 2·(A·B)    (C(2,3) = 0 — no third term)
+        let (t, u) = cmul(&zx, &zy, &cxx, &cyy, ctx);
+        let nc_x = t.fdouble().fadd(&abx.fdouble(), ctx);
+        let nc_y = u.fdouble().fadd(&aby.fdouble(), ctx);
+        // Advance the reference through the shared generic step (byte-identical by the
+        // orbit matrix), then swap — the same order as the astro loop.
+        let (nzx, nzy) = crate::reference::step_gen::<Float>(&zx, &zy, &rcx, &rcy, formula, ctx);
+        zx = nzx;
+        zy = nzy;
+        ax = na_x;
+        ay = na_y;
+        bx = nb_x;
+        by = nb_y;
+        cxx = nc_x;
+        cyy = nc_y;
+        let la = log2_cmag_rug(&ax, &ay);
+        let lc = log2_cmag_rug(&cxx, &cyy);
+        if !la.is_finite() {
+            continue;
+        }
+        let valid = lc + 2.0 * log2_max_dc < la + crate::reference::SA_EPS_LOG2;
+        if n >= crate::reference::SA_MIN_SKIP {
+            if valid {
+                best = Some((
+                    n,
+                    [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()],
+                ));
+            } else {
+                break; // coefficients only grow ⇒ once invalid, stays invalid
+            }
+        }
+        // Stop if the reference itself escaped (truncating f64 view, like `to_f64`).
+        let (fx, fy) = (zx.to_f64_trunc(), zy.to_f64_trunc());
+        if fx * fx + fy * fy > 1.0e12 {
+            break;
+        }
+    }
+    Some(best.map(|(n, k)| {
+        (
+            n,
+            [
+                k[0].to_carrier(ctx),
+                k[1].to_carrier(ctx),
+                k[2].to_carrier(ctx),
+                k[3].to_carrier(ctx),
+                k[4].to_carrier(ctx),
+                k[5].to_carrier(ctx),
+            ],
+        )
+    }))
+}

@@ -133,10 +133,12 @@ budget was the first fix.
 | **F3's lead** | **3.05×** | **1.36×** | — |
 
 astro↔MPFR decoded-RGB 0/100,000 pixels differ, same winner (443,199), identical pick
-counters. SA is now the largest accelerated slice and is astro-hardcoded on both builds
-(sa_ms 47.4 vs 47.5 s) — routing it through the backend is filed in TODO.md as the next
-lever (projected ≈46 s at the orbit's 4.4× precedent, which would pass F3 at this location
-on the accelerated build; one location at 400×250 is not an "owns extreme" claim).
+counters. ✅**The SA lever landed (0.2.41-beta.12, 2026-09-03)**: the coefficient walk now
+dispatches through the backend like the pick — accelerated SA 47.5 → 13.6 s, **wall 82.2 →
+47.5 s, ahead of F3's 60.3 s at this location** (pick 23.3 / orbit 7.3 / SA 13.6 / BLA 0.5;
+pixels still 0/100,000 differ vs astro, same skip 84,126). Default build unchanged
+(183.8 s — the astro walk is kept verbatim). One location at 400×250 is not an "owns
+extreme" claim; publish per-config only.
 
 ⚠**Supersampling was not matched in the original run** (ss=2 vs F3's 1); the 771 s and 529 s rows
 are ss=1. It changes nothing either way — all the pixel work together was 0.58 s of 831 s. This is

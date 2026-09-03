@@ -568,6 +568,63 @@ fn log2_cmag(re: &BigFloat, im: &BigFloat) -> f64 {
     }
 }
 
+/// Cubic term ≤ 2⁻¹⁶ of linear ⇒ ample accuracy. Shared by the astro walk and the MPFR twin
+/// (`backend_rug::try_series_skip_walk`) so the validity rule can never drift between them.
+pub(crate) const SA_EPS_LOG2: f64 = -16.0;
+/// Below this skip the bookkeeping isn't worth it (shared likewise).
+pub(crate) const SA_MIN_SKIP: u32 = 8;
+
+/// [`series_skip`] with an explicit backend — the cross-backend identity suite drives both
+/// arms directly (no global selection flips; the same pattern as `reference_orbit_t_in`).
+/// The MPFR twin covers Mandelbrot (`d = 2`, the only family with deep-zoom SA traffic);
+/// any other family under `Rug` falls through to the astro walk, which is correct
+/// arithmetic for every family — the fallback costs speed, never bits, because the twin is
+/// held byte-equal to the astro walk by `the_sa_walk_is_backend_identical`.
+#[allow(clippy::too_many_arguments)]
+pub fn series_skip_in(
+    backend: crate::BackendChoice,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    log2_max_dc: f64,
+    max_iter: u32,
+    orbit_len: u32,
+    formula: u32,
+    p: usize,
+) -> SeriesSkip {
+    if !log2_max_dc.is_finite() {
+        return SeriesSkip::NONE;
+    }
+    match backend {
+        crate::BackendChoice::Astro => {}
+        #[cfg(feature = "rug")]
+        crate::BackendChoice::Rug => {
+            let limit = max_iter.min(orbit_len.saturating_sub(2)).min(sa_step_budget(p));
+            if let Some(best) =
+                crate::backend_rug::try_series_skip_walk(cx, cy, log2_max_dc, limit, formula, p)
+            {
+                crate::backend::note_observed::<rug::Float>();
+                return series_best_to_skip(best);
+            }
+        }
+    }
+    series_skip_astro(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p)
+}
+
+/// The walk's `best` → the emitted [`SeriesSkip`]. One conversion path for both backends:
+/// the MPFR twin carries its final coefficients back exactly (`to_carrier`), so `coeff_to_fe`
+/// is the only place a coefficient becomes a GPU value.
+fn series_best_to_skip(best: Option<(u32, [BigFloat; 6])>) -> SeriesSkip {
+    match best {
+        None => SeriesSkip::NONE,
+        Some((skip, k)) => {
+            let (a, a_exp) = coeff_to_fe(&k[0], &k[1]);
+            let (b, b_exp) = coeff_to_fe(&k[2], &k[3]);
+            let (c, c_exp) = coeff_to_fe(&k[4], &k[5]);
+            SeriesSkip { skip, a, a_exp, b, b_exp, c, c_exp }
+        }
+    }
+}
+
 /// Compute the [`SeriesSkip`] for a reference at `c = (cx, cy)` of the polynomial family
 /// `formula` (Mandelbrot `z²+c` = 0, Multibrot `z³/z⁴/z⁵+c` = 1/2/3). Iterates the reference
 /// together with the order-3 series coefficients in arbitrary precision, and skips while the
@@ -584,11 +641,26 @@ pub fn series_skip(
     formula: u32,
     p: usize,
 ) -> SeriesSkip {
+    series_skip_in(crate::backend::selected(), cx, cy, log2_max_dc, max_iter, orbit_len, formula, p)
+}
+
+/// The astro-float coefficient walk — the historical `series_skip` body, VERBATIM (every
+/// blessed render's skip came from these exact operations; the corpus pins it). The MPFR
+/// twin mirrors this loop op-for-op; change one only with the other, and with
+/// `the_sa_walk_is_backend_identical` green.
+#[allow(clippy::too_many_arguments)]
+fn series_skip_astro(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    log2_max_dc: f64,
+    max_iter: u32,
+    orbit_len: u32,
+    formula: u32,
+    p: usize,
+) -> SeriesSkip {
     if !log2_max_dc.is_finite() {
         return SeriesSkip::NONE;
     }
-    const EPS_LOG2: f64 = -16.0; // cubic term ≤ 2⁻¹⁶ of linear ⇒ ample accuracy
-    const MIN_SKIP: u32 = 8; // below this the bookkeeping isn't worth it
     // Cost-bounded: see SA_COST_BUDGET. At blessed depths the budget exceeds the natural walk and
     // this line is a no-op; at extreme depth it is the difference between a 258 s and a ~30 s
     // build for the same frame.
@@ -667,8 +739,8 @@ pub fn series_skip(
         if !la.is_finite() {
             continue;
         }
-        let valid = lc + 2.0 * log2_max_dc < la + EPS_LOG2;
-        if n >= MIN_SKIP {
+        let valid = lc + 2.0 * log2_max_dc < la + SA_EPS_LOG2;
+        if n >= SA_MIN_SKIP {
             if valid {
                 best = Some((n, [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()]));
             } else {
@@ -680,15 +752,7 @@ pub fn series_skip(
             break;
         }
     }
-    match best {
-        None => SeriesSkip::NONE,
-        Some((skip, k)) => {
-            let (a, a_exp) = coeff_to_fe(&k[0], &k[1]);
-            let (b, b_exp) = coeff_to_fe(&k[2], &k[3]);
-            let (c, c_exp) = coeff_to_fe(&k[4], &k[5]);
-            SeriesSkip { skip, a, a_exp, b, b_exp, c, c_exp }
-        }
-    }
+    series_best_to_skip(best)
 }
 
 // ---------------- BLA (bilinear approximation) -----------------------------------

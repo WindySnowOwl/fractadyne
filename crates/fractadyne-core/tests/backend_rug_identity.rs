@@ -310,3 +310,68 @@ fn the_pick_scoring_walk_is_backend_identical() {
     assert!(bad.is_empty(), "{} of {cases} cases diverged:\n{}", bad.len(), bad.join("\n"));
     assert!(samples > 100_000, "matrix shrank — {samples} samples is not the coverage this pins");
 }
+
+/// Does the MPFR series-approximation walk reproduce astro-float's **byte for byte**?
+///
+/// `try_series_skip_walk` mirrors the astro recurrence op-for-op; this matrix holds it to
+/// that: same skip index, same six coefficient mantissa lanes (bit-compared), same shared
+/// exponents — across centres, precisions, worst-case |δc| depths and iteration caps. The
+/// multibrot ids exercise the dispatch fallback (twin declines → astro runs under `Rug`),
+/// which must also be identical, trivially. Anti-vacuity is asserted three ways: real skips
+/// were produced, the twin actually RAN (the observed-backend stamp — a matrix whose Rug arm
+/// silently fell back to astro everywhere would compare astro to astro and prove nothing),
+/// and both cut regimes (validity break, cap bind) appeared.
+#[test]
+fn the_sa_walk_is_backend_identical() {
+    let precisions = [64usize, 128, 576, 2112];
+    let dcs = [-30.0f64, -100.0, -1000.0, -8000.0]; // log2 worst-case |δc|: shallow → deep
+    let caps: &[(u32, u32)] = &[(50, 52), (500, 502), (5000, 5002), (5000, 40)];
+    let bits4 = |q: &[f32; 4]| [q[0].to_bits(), q[1].to_bits(), q[2].to_bits(), q[3].to_bits()];
+    let (mut cases, mut with_skip, mut cap_bound) = (0usize, 0usize, 0usize);
+    let mut bad: Vec<String> = Vec::new();
+    for formula in [fc::formula::MANDELBROT, fc::formula::MULTIBROT3, fc::formula::MULTIBROT5] {
+        for (label, sx, sy, _zx, _zy) in POINTS {
+            for &p in &precisions {
+                let cx = fc::parse_bf_prec(sx, p).unwrap();
+                let cy = fc::parse_bf_prec(sy, p).unwrap();
+                for &dc in &dcs {
+                    for &(mi, ol) in caps {
+                        let a = fc::series_skip_in(
+                            BackendChoice::Astro, &cx, &cy, dc, mi, ol, formula, p,
+                        );
+                        let r = fc::series_skip_in(
+                            BackendChoice::Rug, &cx, &cy, dc, mi, ol, formula, p,
+                        );
+                        cases += 1;
+                        let same = a.skip == r.skip
+                            && bits4(&a.a) == bits4(&r.a) && a.a_exp == r.a_exp
+                            && bits4(&a.b) == bits4(&r.b) && a.b_exp == r.b_exp
+                            && bits4(&a.c) == bits4(&r.c) && a.c_exp == r.c_exp;
+                        if !same {
+                            bad.push(format!(
+                                "{label} f={formula} p={p} dc={dc} mi={mi} ol={ol}: astro skip {} vs rug {}",
+                                a.skip, r.skip
+                            ));
+                        }
+                        if a.skip > 0 {
+                            with_skip += 1;
+                            // The cap regime: the skip ran into `limit` rather than a
+                            // validity break (limit = min(mi, ol−2, budget); budget never
+                            // binds at these sizes).
+                            if a.skip == mi.min(ol.saturating_sub(2)) {
+                                cap_bound += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{} of {cases} cases diverged:\n{}", bad.len(), bad.join("\n"));
+    assert!(with_skip >= 50, "vacuous: only {with_skip} of {cases} cases produced a skip");
+    assert!(cap_bound >= 5, "vacuous: the cap-bound cut never appeared ({cap_bound})");
+    assert!(
+        fc::observed_backends().iter().any(|n| n.contains("rug")),
+        "the MPFR twin never actually ran — every Rug case silently fell back to astro"
+    );
+}

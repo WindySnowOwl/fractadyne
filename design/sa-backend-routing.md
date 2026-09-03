@@ -1,5 +1,11 @@
 # SA coefficient walk through the bignum backend — design (2026-09-02)
 
+> ✅**SHIPPED 0.2.41-beta.12 (2026-09-03), as designed** — with one simplification the survey
+> missed: at d=2 every `mul_u32_bf` factor is 1 or 2, i.e. EXACT (identity / doubling), so no
+> shift-and-add mirror was needed at all. Measured: accelerated e4000 SA 47.5 → 13.6 s, wall
+> 82.2 → **47.5 s vs F3's 60.3 s** — the projection ("~45-50 s") held. All proof obligations
+> met (1,152-case identity matrix; default build byte-inert; corpus cross-backend maxD 0).
+
 The measured next lever from the beta.11 F3-gap close (TODO.md "ROUTE THE SERIES-APPROXIMATION
 COEFFICIENT WALK THROUGH THE BIGNUM BACKEND"): `series_skip` is astro-hardcoded on both builds
 (e4000: sa_ms 47,386 default vs 47,511 accelerated — 58% of the accelerated 82.2 s wall), and the

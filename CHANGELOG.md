@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The accelerated (MPFR) build now leads Fraktaler-3 at the e4000 benchmark location**
+  (beta.12). The series-approximation coefficient walk - the last reference-build stage
+  hardwired to astro-float on both builds - now dispatches through the bignum backend like
+  the orbit and the reference pick before it: measured at 2.37e4000x, SA 47.5 s -> 13.6 s
+  and the whole render 82.2 s -> 47.5 s against Fraktaler-3's 60.3 s (a per-configuration
+  result at one location, not a general claim). The standard build is untouched - the astro
+  walk is kept verbatim and the MPFR twin mirrors it operation for operation, held to it by
+  a 1,152-case bit-identity matrix; renders are byte-identical across backends, as before.
+
 - **Glitch-corrected output is now deterministic: the correction loop is bounded in work,
   not wall time** (beta.11). The corrector's 120 s wall-clock deadline cut the pass loop at a
   load-dependent point - two runs of the same binary at e4000 differed by 3-101 bytes - and
