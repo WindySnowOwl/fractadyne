@@ -1,5 +1,12 @@
 # Reference-pick redesign — handoff spec (2026-09-01)
 
+> ✅**SHIPPED**: 0.2.41-beta.1 `23d03f7` (one recorded walk + parallel δ-scoring, trust
+> valve) and beta.2 `52b5b72` (walks dispatch through the bignum backend). Final e4000
+> re-measure 2026-09-02 on beta.11: wall 183.8 s default / 82.2 s accelerated vs F3's
+> 60.3 s (was 529 s when this spec was written); pick 99.4 s / 23.5 s at the full ask.
+> The numbers and the remaining lever (SA through the backend) live in
+> `validation/extreme-depth.md` and TODO.md. The spec below is kept as written.
+
 The remaining half of the Fraktaler-3 gap at extreme depth. Written at the end of the session
 that measured the problem and fixed the other half (`7cdd7c4`, the SA cost budget), so a fresh
 session can start from the numbers instead of re-deriving them.

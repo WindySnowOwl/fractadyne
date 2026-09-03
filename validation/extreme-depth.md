@@ -123,6 +123,21 @@ redesign options. The old note blamed candidate scoring for "~99%"; that is true
 depth — at e4000 the split was pick 28% / orbit 8% / **SA 64%** / BLA 0.1%, which is why the SA
 budget was the first fix.
 
+✅**Re-measured 2026-09-02 (0.2.41-beta.11), same command** — the pick redesign
+(`23d03f7`) and its backend dispatch (`52b5b72`) landed since the 333 s row:
+
+| | default (astro) | accelerated (MPFR) | Fraktaler-3 |
+|---|---|---|---|
+| pick / orbit / SA / BLA | 99.4 / 33.3 / 47.4 / 0.4 s | 23.5 / 7.6 / 47.5 / 0.5 s | — |
+| **wall** | **183.8 s** | **82.2 s** | **60.3 s** |
+| **F3's lead** | **3.05×** | **1.36×** | — |
+
+astro↔MPFR decoded-RGB 0/100,000 pixels differ, same winner (443,199), identical pick
+counters. SA is now the largest accelerated slice and is astro-hardcoded on both builds
+(sa_ms 47.4 vs 47.5 s) — routing it through the backend is filed in TODO.md as the next
+lever (projected ≈46 s at the orbit's 4.4× precedent, which would pass F3 at this location
+on the accelerated build; one location at 400×250 is not an "owns extreme" claim).
+
 ⚠**Supersampling was not matched in the original run** (ss=2 vs F3's 1); the 771 s and 529 s rows
 are ss=1. It changes nothing either way — all the pixel work together was 0.58 s of 831 s. This is
 a reference-BUILD comparison, not a renderer comparison.
