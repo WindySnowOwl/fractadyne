@@ -570,6 +570,16 @@ impl FractadyneApp {
                             self.open_goto();
                             ui.close_menu();
                         }
+                        if ui
+                            .button("Misiurewicz explorer…")
+                            .on_hover_text(
+                                "Browse what the small Misiurewicz types look like — thumbnails                                  with each point's zoom period and twist — and Newton-solve any                                  of them to an arbitrary depth. (Mandelbrot.)",
+                            )
+                            .clicked()
+                        {
+                            self.open_misiurewicz_explorer();
+                            ui.close_menu();
+                        }
                         ui.separator();
                         for (name, cx, cy, mag) in FAMOUS {
                             if ui.button(*name).clicked() {

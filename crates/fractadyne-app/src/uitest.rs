@@ -31,6 +31,10 @@ enum Screen {
     BenchResults,  // seeded with a synthetic report so the populated layout renders
     Gallery,
     Goto,
+    MisiurewiczExplorer,
+    /// Drive the explorer's REAL jump path: select the antenna tip, solve it to 1e6×, land.
+    /// The capture waits for the landing; the check pins where the viewport ended up.
+    MisiurewiczJump,
     Share,
     Report,
     Diagnostics,
@@ -485,6 +489,8 @@ fn build_steps() -> Vec<Step> {
         screen("benchmark-results", Screen::BenchResults),
         screen("gallery", Screen::Gallery),
         screen("goto", Screen::Goto),
+        screen("misiurewicz-explorer", Screen::MisiurewiczExplorer),
+        screen("misiurewicz-jump", Screen::MisiurewiczJump),
         screen("share", Screen::Share),
         screen("report-issue", Screen::Report),
         screen("diagnostics", Screen::Diagnostics),
@@ -582,6 +588,12 @@ impl FractadyneApp {
                     StepKind::Screen(
                         Screen::MinimapBase | Screen::MinimapPan | Screen::MinimapPanVerify,
                     ) => (500u64, 30_000u64),
+                    // The explorer generates its gallery (a threaded Newton sweep) and then
+                    // renders one thumbnail per frame; the capture waits for the populated
+                    // gallery (`misi_gallery_ready` joins the busy condition below).
+                    StepKind::Screen(Screen::MisiurewiczExplorer | Screen::MisiurewiczJump) => {
+                        (1_000u64, 60_000u64)
+                    }
                     StepKind::Screen(_) => (250u64, 3_000u64),
                     // Live: a generous hard cap so even a slow box's progressive reference build can
                     // finish (ref-settled gate) before the cap forces a capture.
@@ -689,7 +701,9 @@ impl FractadyneApp {
                     || self.perf.tile_pending[1]
                     || self.perf.chunk_pending[1]
                     || !ramp_done(0)
-                    || (self.dual && !ramp_done(1));
+                    || (self.dual && !ramp_done(1))
+                    || !self.misi_gallery_ready()
+                    || self.misi_jump_busy();
                 if busy {
                     ut.quiet_since = now;
                 }
@@ -831,6 +845,11 @@ impl FractadyneApp {
             }
             Screen::Gallery => self.gallery.open = true,
             Screen::Goto => self.goto.open = true,
+            Screen::MisiurewiczExplorer => self.open_misiurewicz_explorer(),
+            Screen::MisiurewiczJump => {
+                self.open_misiurewicz_explorer();
+                self.misi.uitest_jump = true;
+            }
             Screen::Share => self.share.open = true,
             Screen::Report => self.report.open = true,
             // Opened only — the walk must NOT start a test. A self-test child inside the UI walk
@@ -1226,6 +1245,34 @@ impl FractadyneApp {
                     verdict: Verdict::Warn,
                     detail: "no preceding dual-formula-a step to compare against".into(),
                 }),
+            }
+        }
+
+        // ---- the explorer's solve-and-jump actually lands on the point (user feature) ----
+        //
+        // The step drove the REAL path: gallery generation, selecting the first entry (the
+        // antenna tip, c = −2 — the one Misiurewicz point with an exact closed form), a
+        // Newton solve at the asked depth, and the navigation. The check pins the viewport
+        // the walk ended on: centre at −2+0i to a millionth of the view width, depth 1e6×.
+        if matches!(step.kind, StepKind::Screen(Screen::MisiurewiczJump)) {
+            let (cx, cy) = self.viewport.center_f64();
+            let l2 = self.viewport.log2_magnification();
+            let want_l2 = 1.0e6f64.log2();
+            let pos_ok = (cx + 2.0).abs() < 1.0e-6 && cy.abs() < 1.0e-6;
+            let depth_ok = (l2 - want_l2).abs() < 0.01;
+            if pos_ok && depth_ok {
+                checks.push(pass(
+                    "misiurewicz-jump-lands",
+                    format!("landed on the antenna tip: centre ({cx:.9}, {cy:.9}), {l2:.2} oct"),
+                ));
+            } else {
+                checks.push(Check {
+                    name: "misiurewicz-jump-lands".into(),
+                    verdict: Verdict::Fail,
+                    detail: format!(
+                        "expected the antenna tip (−2, 0) at 1e6× — got ({cx:.9}, {cy:.9}) at                          {l2:.2} oct (want {want_l2:.2})"
+                    ),
+                });
             }
         }
 

@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **New: the Misiurewicz explorer** (beta.14, Navigate menu). A gallery of Misiurewicz
+  points - the curated points-of-interest plus dozens found by a seeded Newton sweep of the
+  small preperiod/period types - each with a live-rendered thumbnail and its multiplier
+  readout: how many octaves of zoom before the view repeats itself, and how many degrees it
+  twists per repeat (the two numbers that say what diving there will look like, before you
+  go). Pick a point, name a depth, and Solve & jump Newton-solves that exact point to the
+  precision the depth needs and takes you straight there - any depth the solver reaches,
+  the same machinery as the Go-to feature finder. Points are stored as exact coordinates,
+  not (k,p) labels: the pair names an equation with exponentially many roots, and the
+  coordinate is what picks yours. Roots whose cycle is attracting (hyperbolic centers -
+  they satisfy the same equation) are filtered out; a Misiurewicz point repels.
+
 - **The UI validation harness no longer captures mid-refinement frames under machine load**
   (beta.13, developer-facing). A capture could land in the one-frame gap between
   supersampling stages - both grid-pending flags read false there - and score a sharp frame

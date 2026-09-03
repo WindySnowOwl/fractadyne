@@ -10,4 +10,5 @@ mod dialogs;
 mod menus;
 mod panels;
 pub(crate) mod diagnostics;
+pub(crate) mod misiurewicz_explorer;
 pub(crate) mod tour_render;

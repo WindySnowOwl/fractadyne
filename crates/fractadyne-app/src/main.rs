@@ -3415,6 +3415,9 @@ struct FractadyneApp {
     nav: NavHistory,
     /// "Go to location" dialog state.
     goto: GotoDialog,
+    /// The Misiurewicz point explorer (gallery + deep solve-and-jump); see
+    /// `ui/misiurewicz_explorer.rs`.
+    misi: ui::misiurewicz_explorer::MisiExplorer,
     /// Share-location (`.fdn`) dialog: open flag, editable location text, and an error line.
     share: ShareDialog,
     /// Transient status toast (message, time set) — e.g. minibrot-finder result.
@@ -4145,6 +4148,7 @@ impl FractadyneApp {
             bookmark_name: String::new(),
             nav: NavHistory::default(),
             goto: GotoDialog::default(),
+            misi: ui::misiurewicz_explorer::MisiExplorer::default(),
             share: ShareDialog::default(),
             toast: None,
             // Booted by the device-loss handler's relaunch? Tell the user why the window blinked
@@ -7720,6 +7724,7 @@ impl eframe::App for FractadyneApp {
         self.update_minimap(ctx, &gpu);
         // Collect a finished off-thread feature solve (Go-to ▸ nearest minibrot / Misiurewicz).
         self.poll_feature_solve(ctx);
+        self.poll_misiurewicz_explorer(ctx, gpu.as_ref());
 
         self.harness_frame_hooks(ctx, &gpu, &gpu_name);
 
@@ -7979,6 +7984,7 @@ impl eframe::App for FractadyneApp {
         self.poll_update_check(ctx);
         self.draw_update_dialog(ctx);
         self.draw_goto_dialog(ctx);
+        self.draw_misiurewicz_explorer(ctx);
         self.draw_share_dialog(ctx);
         // Polled unconditionally (like the tour render): a test keeps running and stays reapable
         // even if the user closes the dialog while it works.
