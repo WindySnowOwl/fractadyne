@@ -10,8 +10,10 @@ renders/<slug>-fraktaler.png, produced by generate_fraktaler.py or manually).
 Run from the repo root:  python validation/corpus/generate_corpus.py [--skip-renders]
 
 REGRESSION GATE (run after a major change):
-    python validation/corpus/generate_corpus.py --check           # all 20 locations
+    python validation/corpus/generate_corpus.py --check           # every non-extreme location
     python validation/corpus/generate_corpus.py --check --only 14,15
+    python validation/corpus/generate_corpus.py --check --extreme  # include EXTREME-tier rows
+    python validation/corpus/generate_corpus.py --only 39          # (re)generate just row 39
   Re-renders each location to a temp file and compares it pixel-for-pixel against the committed
   renders/<slug>-fractadyne.png (the F3-confirmed baselines). Renders are deterministic, so an
   unchanged renderer prints "20/20 MATCH"; any CHANGED location must get a fresh visual F3
@@ -69,6 +71,11 @@ def read_locations():
         # palette cycle aliases a correct escape field into speckle (14/15). `--normalize` maps the
         # frame's escape range to the palette instead. See the corpus README / TODO.
         loc["normalize"] = bool(re.search(r"^normalize = true", block, re.M))
+        # EXTREME tier: a row whose reference build takes tens of minutes (e18003-class). Kept
+        # out of the routine --check gate and out of a full regeneration unless asked for by
+        # name (--only) or with --extreme, so adding an extreme row does not turn a 3-minute
+        # gate into an hour. The row is still a full corpus citizen: same files, same catalog.
+        loc["extreme"] = bool(re.search(r"^extreme = true", block, re.M))
         locs.append(loc)
     return locs
 
@@ -119,7 +126,9 @@ def write_fdn(loc):
         if key in drop:
             continue
         if key == "notes":  # <=120 ASCII, single line (the app's tEXt constraint)
-            line = "notes=Fractadyne reference corpus %s: %s (matches Fraktaler-3; see catalog.html)" % (num, loc["title"])
+            tail = ("EXTREME tier; see catalog.html" if loc.get("extreme")
+                    else "matches Fraktaler-3; see catalog.html")
+            line = "notes=Fractadyne reference corpus %s: %s (%s)" % (num, loc["title"], tail)
         out.append(line)
     text = "\n".join(out) + "\n"
     path = os.path.join(CORPUS, "locations", loc["slug"] + ".fdn")
@@ -177,8 +186,8 @@ def render_location(loc, out_png=None, config_dir=None):
     own_dir = config_dir is None
     if own_dir:
         config_dir = stage_config_dir()
-    cmd = [
-        EXE, "--render", "--out", out_png, "--size", "%dx%d" % (WIDTH, HEIGHT),
+    args = [
+        "--render", "--out", out_png, "--size", "%dx%d" % (WIDTH, HEIGHT),
         "--center", loc["center_x"], loc["center_y"],
         "--zoom-log2", "%.10f" % (loc["mag_log10"] * math.log2(10.0)),
         "--iter", str(loc["iterations"]),
@@ -186,10 +195,23 @@ def render_location(loc, out_png=None, config_dir=None):
         "--palette", "0",  # Ember
     ]
     if loc.get("normalize"):
-        cmd.append("--normalize")  # escape-range -> palette (deep dense fields; see read_locations)
+        args.append("--normalize")  # escape-range -> palette (deep dense fields; see read_locations)
+    if sum(len(a) for a in args) > 30000:
+        # An e18000-class centre is ~18k digits per ordinate — two of them overflow the Windows
+        # 32,767-char command-line ceiling (CreateProcess fails with WinError 206 before the app
+        # even starts). The app expands @response-file arguments itself (main.rs), so route the
+        # whole argument list through one; the parsed values are identical either way.
+        rf = os.path.join(config_dir, loc["slug"] + ".args")
+        open(rf, "w", encoding="ascii", newline="\n").write("\n".join(args) + "\n")
+        cmd = [EXE, "@" + rf]
+    else:
+        cmd = [EXE] + args
     env = dict(os.environ, FRACTADYNE_CONFIG_DIR=config_dir)
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=3600, env=env)
+        # Extreme-tier rows (e18000-class) hold a ~2 h reference build on the standard exe;
+        # the ordinary 1 h ceiling exists for the 38 routine rows and must not kill them.
+        cap = 14400 if loc.get("extreme") else 3600
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=cap, env=env)
         if not os.path.exists(out_png):
             sys.exit("no render for %s\nstdout: %s\nstderr: %s"
                      % (loc["slug"], r.stdout[-2000:], r.stderr[-2000:]))
@@ -391,6 +413,13 @@ def check_corpus(locs, only=None):
         locs = [l for l in locs if any(l["slug"].startswith(o) for o in only)]
         if not locs:
             sys.exit("no locations match --only %s" % only)
+    elif "--extreme" not in sys.argv:
+        skipped = [l["slug"] for l in locs if l["extreme"]]
+        locs = [l for l in locs if not l["extreme"]]
+        if skipped:
+            print("skipping %d EXTREME location(s) (%s) -- their reference builds take tens of "
+                  "minutes; pass --extreme, or name them with --only, to check them too"
+                  % (len(skipped), ", ".join(skipped)))
     if not os.path.exists(EXE):
         sys.exit("build first: cargo build --release -p fractadyne-app")
     cfg = stage_config_dir()
@@ -437,23 +466,38 @@ def main():
         sys.exit(0 if check_corpus(read_locations(), only) else 1)
     skip_renders = "--skip-renders" in sys.argv
     locs = read_locations()
-    for loc in locs:
+    # --only N[,M]: regenerate just the named row(s) — the way to ADD a location without
+    # re-rendering (and re-timestamping) every blessed render. The catalog always rebuilds
+    # from the full list, so it never loses rows.
+    work = locs
+    if "--only" in sys.argv:
+        only = sys.argv[sys.argv.index("--only") + 1].split(",")
+        work = [l for l in locs if any(l["slug"].startswith(o) for o in only)]
+        if not work:
+            sys.exit("no locations match --only %s" % only)
+    elif "--extreme" not in sys.argv:
+        skipped = [l["slug"] for l in work if l["extreme"]]
+        work = [l for l in work if not l["extreme"]]
+        if skipped:
+            print("skipping %d EXTREME location(s) (%s) -- pass --extreme, or name them with "
+                  "--only, to regenerate them" % (len(skipped), ", ".join(skipped)))
+    for loc in work:
         write_kfr(loc)
-    print("wrote %d .kfr files" % len(locs))
+    print("wrote %d .kfr files" % len(work))
     if not skip_renders:
         if not os.path.exists(EXE):
             sys.exit("build first: cargo build --release -p fractadyne-app")
         cfg = stage_config_dir()
         try:
-            for loc in locs:
+            for loc in work:
                 print("rendering %s ..." % loc["slug"], flush=True)
                 out = render_location(loc, config_dir=cfg)
                 print("  -> %s (%.1f MB)" % (os.path.basename(out), os.path.getsize(out) / 1e6))
         finally:
             shutil.rmtree(cfg, ignore_errors=True)
     # .fdn reload files (extracted from each render's embedded metadata — needs the renders to exist)
-    n_fdn = sum(1 for loc in locs if write_fdn(loc))
-    print("wrote %d .fdn files (of %d)" % (n_fdn, len(locs)))
+    n_fdn = sum(1 for loc in work if write_fdn(loc))
+    print("wrote %d .fdn files (of %d)" % (n_fdn, len(work)))
     write_catalog(locs)
     print("catalog.html written")
 

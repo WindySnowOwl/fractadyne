@@ -134,8 +134,11 @@ def main():
         print("rendering %s (f3_zoom %s) ..." % (loc["slug"], f3_zoom(loc["mag_log10"])), flush=True)
         try:
             # cwd=PARAMS so the relative `filename` in the param resolves beside the param file.
+            # Extreme-depth rows (e18000-class) need far more than the 30-minute cap the
+            # ordinary corpus fits in; scale the ceiling rather than lose the render to it.
+            cap = 1800 if loc["mag_log10"] < 2000 else 14400
             subprocess.run([F3, "-b", os.path.basename(param)], capture_output=True, text=True,
-                           cwd=PARAMS, timeout=1800)
+                           cwd=PARAMS, timeout=cap)
         except subprocess.TimeoutExpired:
             print("  timed out")
         if not os.path.exists(raw):

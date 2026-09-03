@@ -1,10 +1,15 @@
 # Fractadyne ↔ Kalles Fraktaler comparison corpus
 
-Thirty-eight reference locations — from the full-set overview down to the deepest matched
-pair at **6.13e1105×** — rendered by both apps from the **exact same center, magnification, and
-iteration count**, for side-by-side structural comparison. Locations 11–20 are user-saved
-Fraktaler-3 finds (2.27e124× → 1.58e1008×), imported verbatim from their `.exr` headers; later
-additions (21–38) extend the corpus into the extreme-depth regime. Open **[catalog.html](catalog.html)** to view the pairs with each
+Thirty-nine reference locations — from the full-set overview down to the deepest matched
+pair at **6.13e1105×**, plus one EXTREME-tier row at **5.63e18003×** — rendered from the
+**exact same center, magnification, and iteration count**, for side-by-side structural
+comparison. Locations 11–20 are user-saved Fraktaler-3 finds (2.27e124× → 1.58e1008×), imported
+verbatim from their `.exr` headers; later additions (21–38) extend the corpus into the
+extreme-depth regime, and 39 (a user location reached with the log-space Misiurewicz solver)
+pins the e18000-class regime. Rows marked `extreme = true` in `locations.toml` take a long time to build a reference
+(row 39: ~24 min accelerated, ~2 h standard), so `--check` and full regeneration skip them
+unless asked (`--extreme`, or name them with `--only`). Row 39 has a Fraktaler-3 cross-render
+(`generate_fraktaler.py --only 39`, 592 s) and matches arm-for-arm. Open **[catalog.html](catalog.html)** to view the pairs with each
 location's full compute details.
 
 ## Layout
@@ -52,7 +57,9 @@ Run this after any change that could affect the renderer (a major update, a shad
 the corpus still matches the committed, F3-confirmed renders:
 
 ```
-python validation/corpus/generate_corpus.py --check            # all 20 locations
+python validation/corpus/generate_corpus.py --check            # every non-extreme location
+python validation/corpus/generate_corpus.py --check --extreme  # include EXTREME-tier rows
+python validation/corpus/generate_corpus.py --only 39          # (re)generate one row only
 python validation/corpus/generate_corpus.py --check --only 14,15
 ```
 
