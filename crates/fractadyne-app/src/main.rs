@@ -6993,6 +6993,46 @@ impl FractadyneApp {
         inner.on_hover_text(tip)
     }
 
+    /// Is anything on a clock — i.e. driven by the passage of frames rather than by a change the
+    /// renderer would report? Palette cycling, the orbit racing dot, and the DE-glow / relief
+    /// light sweeps (both of which share the palette Speed slider and run independently of the
+    /// palette mode itself — reading only `palette_anim` here would have called an animating view
+    /// idle), plus scripted playback and the autopilot.
+    ///
+    /// ⚠Playback and the autopilot are listed even though a moving camera re-dispatches every
+    /// frame anyway: a tour HOLD sits on a settled view and still has to advance its clock to
+    /// reach the next keyframe, which is precisely a state that looks quiescent from the
+    /// renderer's side. Naming them here is what keeps a hold from stalling.
+    fn on_a_clock(&self) -> bool {
+        let speed = self.anim.palette_anim_speed > 0.0;
+        self.anim.palette_anim != PaletteAnim::Off
+            || (self.anim.show_orbits && self.anim.orbit_anim)
+            || (self.effects.de && self.effects.de_anim && speed)
+            || (self.effects.light && self.effects.light_anim && speed)
+            || self.playback.is_some()
+            || self.autopilot.active
+            || self.tour_render.child.is_some()
+    }
+
+    /// Nothing rendering, refining, building or animating in EITHER view — see
+    /// [`render::render_quiescent`] for why this is one predicate with two readers.
+    fn render_quiescent(&self) -> bool {
+        let p = &self.perf;
+        let views = [0usize, 1].map(|v| render::ViewActivity {
+            tile_pending: p.tile_pending[v],
+            chunk_pending: p.chunk_pending[v],
+            building: self.recompute_rx[v].is_some(),
+            frames_since_dispatch: p.frame_idx.saturating_sub(p.fe_dispatch_frame[v]),
+        });
+        // The panel's per-second readouts have finished decaying to zero, so freezing the frame
+        // cannot leave a stale rate on screen.
+        let rates_clear = p.rate_count == 0
+            && p.build_count == 0
+            && p.recompute_per_s == 0.0
+            && p.builds_per_s == 0.0;
+        render::render_quiescent(views, self.on_a_clock(), rates_clear)
+    }
+
     fn perf_section(&self, ui: &mut egui::Ui) {
         let p = &self.perf;
         let fps = if p.frame_ms > 0.0 { 1000.0 / p.frame_ms } else { 0.0 };
@@ -7015,8 +7055,6 @@ impl FractadyneApp {
             let s = secs.max(0.0) as u64;
             format!("{}:{:02}", s / 60, s % 60)
         };
-        let animating = self.anim.palette_anim != PaletteAnim::Off
-            || (self.anim.show_orbits && self.anim.orbit_anim);
         let grid = p.tile_state[0].as_ref().filter(|_| p.tile_pending[0]);
         let line = if let Some(g) = grid {
             match g.geo {
@@ -7034,9 +7072,11 @@ impl FractadyneApp {
             format!("refining {pct:.1}%")
         } else if self.recompute_rx[0].is_some() {
             "building reference".to_string()
-        } else if !animating && p.frame_idx.saturating_sub(p.fe_dispatch_frame[0]) > 8 {
-            // Nothing dispatched for a while and nothing animating: the repaint cadence is just
-            // the idle heartbeat — don't dress it up as a framerate.
+        } else if self.render_quiescent() {
+            // Nothing left that could change the picture — and this is the SAME test that stands
+            // the heartbeat down below, so "idle" now means the GPU is idle too, not that the
+            // overlay is busy redrawing the word. Note it reads BOTH views: with the second panel
+            // still walking its chunks, this falls through to a real framerate.
             "idle".to_string()
         } else {
             format!("{fps:.1}")
@@ -8106,8 +8146,44 @@ impl eframe::App for FractadyneApp {
             // 1000 ms cap breaks the loop: the heartbeat settles at ~1 Hz on an expensive static
             // view (≈20–25% GPU duty at a 234 ms frame) and never drifts past it, while cheap
             // frames keep the full ~4 Hz.
-            let refresh_ms = (self.perf.frame_ms * 4.0).clamp(250.0, 1000.0);
-            ctx.request_repaint_after(std::time::Duration::from_millis(refresh_ms as u64));
+            // ⭐**AND IT STOPS ENTIRELY ONCE THERE IS NOTHING LEFT TO SHOW.** Throttling the beat
+            // bounded the waste but never ended it: a settled view still repainted 1–4 times a
+            // second forever, re-running the un-cached colour pass to redraw a picture already on
+            // screen — measured on a fresh default session at 3.7 fps / 2.8% CPU at the home view
+            // (0.3% with `--no-perf`), and the panel was printing the word "idle" on every one of
+            // those frames. `render_quiescent` is that same "idle" test, so the readout and the
+            // GPU now agree by construction; any activity — input, animation, a settle walk, a
+            // reference build — restarts the beat through its own repaint request.
+            // `FRACTADYNE_TRACE=idle` answers the one question this state raises — "why is a
+            // settled app still drawing?" — by naming the component that is holding it awake.
+            // Worth a channel: the 2026-09-04 climb-probe loop was invisible from every other
+            // trace (the tile line reads `iterates=false`, because the key IS deduped — the
+            // dispatch came from the probe, which re-keys by nonce).
+            if diag::trace_on("idle") {
+                let p = &self.perf;
+                diag::trace(
+                    "idle",
+                    format!(
+                        "quiescent={} clock={} tile={:?} chunk={:?} building={:?} \
+                         frames_since_dispatch={:?} rate_count={} build_count={}",
+                        self.render_quiescent(),
+                        self.on_a_clock(),
+                        p.tile_pending,
+                        p.chunk_pending,
+                        [self.recompute_rx[0].is_some(), self.recompute_rx[1].is_some()],
+                        [
+                            p.frame_idx.saturating_sub(p.fe_dispatch_frame[0]),
+                            p.frame_idx.saturating_sub(p.fe_dispatch_frame[1])
+                        ],
+                        p.rate_count,
+                        p.build_count,
+                    ),
+                );
+            }
+            if !self.render_quiescent() {
+                let refresh_ms = (self.perf.frame_ms * 4.0).clamp(250.0, 1000.0);
+                ctx.request_repaint_after(std::time::Duration::from_millis(refresh_ms as u64));
+            }
         }
         // Keep repainting while an off-thread reference recompute is in flight, so its result is
         // polled and installed (and the view sharpens) as soon as it lands. Repaint immediately while

@@ -17,7 +17,7 @@
 //! - **Watchdog** — a thread that logs `possible hang` (with the breadcrumb) when nothing
 //!   has stamped liveness for >10 s. The GUI stamps every `update()`; long CLI phases stamp
 //!   via breadcrumbs and the export progress pump.
-//! - **Trace categories** — `FRACTADYNE_TRACE=req,ref,gpu,tile` selects categories
+//! - **Trace categories** — `FRACTADYNE_TRACE=req,ref,gpu,tile,idle` selects categories
 //!   (`1`/empty = all); each line is stamped `[+12.345s]` and teed to the log file.
 //!
 //! The wgpu error/device-lost callbacks (installed in `FractadyneApp::new`) also report

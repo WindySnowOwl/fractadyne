@@ -3832,6 +3832,16 @@ impl FractadyneApp {
             // at f=68 of the first climb soak. The gap leaves present-able frames between
             // dispatches (~⅓ duty), which is the profile the converged controller already runs.
             && self.perf.frame_idx.saturating_sub(self.perf.fe_dispatch_frame[vs]) >= 3
+            // ⭐AND ONLY IF THE READING WOULD BE PRICED. A frame far under budget cannot converge
+            // it — the pricing rule discards exactly that reading — so probing for one is an
+            // infinite loop of real GPU dispatches on a static view. See `probe_would_price`;
+            // this is the same threshold, read from the same constant, so the rule that spends
+            // the dispatch and the rule that spends the reading can never disagree.
+            && probe_would_price(
+                spx.saturating_mul((ss as u64).saturating_mul(ss as u64))
+                    .saturating_mul(gpu_iter.max(1) as u64),
+                budget_base(self.perf.fe_budget[vidx], self.perf.bootstrap_steps(vidx)),
+            )
             // CEILINGED: the probe stops growing the budget at ~2e10 nominal (~60–90 ms real in
             // the no-skip regime) instead of riding the controller to its target. The
             // second climb soak PROVED the target is lethal in this regime even paced: at a
@@ -6542,6 +6552,37 @@ pub(crate) fn install_collapse(old_len: u32, new_len: u32, new_partial: bool) ->
     old_len > 0 && !new_partial && (new_len as u64) * 3 < (old_len as u64) * 2
 }
 
+/// A dispatch prices the budget only if it is REPRESENTATIVE of it — at least this fraction of
+/// `cur`. A smaller one finished quickly because it is small, and reading a budget off it would
+/// calibrate against a per-step rate the full frame never runs at.
+///
+/// ⚠The VALUE is beta.11 determinism-critical and must not move without that lens; it is named
+/// here only so the two readers cannot drift. Both are below: [`budget_step`], which discards a
+/// reading under it, and [`probe_would_price`], which declines to MANUFACTURE one.
+pub(crate) const PRICE_REPRESENTATIVE_FRAC: f64 = 0.7;
+
+/// Would a forced budget-climb probe of `steps` against budget `cur` yield a reading the pricing
+/// rule can actually use?
+///
+/// ⭐**A probe whose reading is pre-destined for the discard pile is pure waste, and it never
+/// terminates.** The climb probe fires while the budget has not converged, and a frame smaller
+/// than [`PRICE_REPRESENTATIVE_FRAC`] of the budget cannot converge it — [`budget_step`] drops
+/// exactly that reading — so the two rules chase each other forever: probe, discard, still
+/// unconverged, probe again. Measured on the DEFAULT home view (2026-09-04): `steps=4.288e8`
+/// against `budget=9.000e8` (the bootstrap) = 0.48 of it, a real 36.9 ms GPU dispatch every 3
+/// frames for as long as the app is left open, on a static picture already at native resolution.
+///
+/// Declining is safe because the deadlock this probe exists to break is the OPPOSITE regime: a
+/// view floored to 16×16 by a budget too small to render it, where the frame is budget-SIZED by
+/// construction and so passes this test comfortably. A frame far under budget is not floored —
+/// nothing is waiting on a bigger budget, and there is nothing to climb toward.
+pub(crate) fn probe_would_price(steps: u64, cur: u64) -> bool {
+    (steps as f64) >= cur as f64 * PRICE_REPRESENTATIVE_FRAC
+}
+
+#[cfg(test)]
+mod probe_price_tests;
+
 pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Option<(u64, bool)> {
     // Two regimes, one arithmetic. Since 2026-08-16 both converge on the SAME real target (400 ms);
     // `explicit` still differs in carrying a hard nominal ceiling, because skip effectiveness is
@@ -6558,7 +6599,7 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     let slow = ms > target_ms;
     // A fast dispatch far under budget size finished quickly because it is SMALL. One-sided: a
     // SLOW undersized dispatch is the strongest evidence the budget is too high.
-    if (steps as f64) < cur as f64 * 0.7 && !slow {
+    if !probe_would_price(steps, cur) && !slow {
         return None;
     }
     // ⭐LATENCY-FLOOR GUARD. A dispatch that is already SMALL (sub-bootstrap nominal) and still
@@ -6596,7 +6637,7 @@ pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Opti
     if slow
         && steps <= crate::tunables::cost().tdr_bootstrap_steps
         && ms <= crate::tunables::cost().tdr_latency_accept_ms
-        && (steps as f64) >= cur as f64 * 0.7
+        && probe_would_price(steps, cur)
     {
         return Some((cur, true));
     }
@@ -6733,6 +6774,67 @@ pub(crate) const PRESENT_THROTTLE_FRAMES: u32 = 5;
 
 #[cfg(test)]
 mod present_throttle_tests;
+
+/// One view's activity, as the quiescence test reads it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ViewActivity {
+    /// A tiled settle grid is mid-refinement.
+    pub tile_pending: bool,
+    /// A chunked iteration walk is mid-progression.
+    pub chunk_pending: bool,
+    /// A reference-orbit build is in flight for this view.
+    pub building: bool,
+    /// Frames since this view last ENCODED an iterate pass (`fe_dispatch_frame`).
+    pub frames_since_dispatch: u64,
+}
+
+/// Quiet frames after the last dispatch before a view counts as settled. The tail exists because
+/// a dispatch is not the end of the work: the timestamp that prices it comes back up to two
+/// frames later, and a settle ramp re-arms on the frame after that. Eight frames is ~2 s at the
+/// overlay's own 4 Hz floor — long enough for the per-second rate counters to flush to zero, so
+/// standing down cannot freeze a stale non-zero readout on screen.
+pub(crate) const IDLE_DISPATCH_FRAMES: u64 = 8;
+
+/// Is the app QUIESCENT — is there nothing left that could change the picture?
+///
+/// True only when neither view is refining (settle grid or chunk walk), no reference is
+/// building, nothing is on a clock (`animating` — animation, scripted playback, the autopilot),
+/// and neither view has dispatched an iterate pass for [`IDLE_DISPATCH_FRAMES`]. `rates_clear`
+/// additionally says the overlay's per-second counters have already reached zero, so nothing is
+/// left mid-decay.
+///
+/// ⭐**ONE predicate, two readers**, deliberately: the performance panel prints this state as
+/// "idle", and it is the same test that stands the overlay's repaint heartbeat down — so the
+/// word on screen and the GPU's actual state agree BY CONSTRUCTION rather than by two
+/// hand-maintained conditions that drift (the `live_iter_budget` lesson). Before this, the panel
+/// said "idle" while the heartbeat kept re-rendering the frame that said it: a fresh default
+/// session ticked 3.7 fps and 2.8% CPU forever at the home view, and ~25% GPU duty at a deep
+/// view whose colour pass costs ~234 ms, redrawing a picture already on screen.
+///
+/// ⚠**Every mistake here must bias toward BEATING.** A false "busy" costs one cosmetic
+/// heartbeat (today's behaviour); a false "idle" would stop refreshing the readouts. It can
+/// never stall the RENDERER: egui takes the earliest of all requested repaints, so withholding
+/// this one cannot suppress another source's, and every real activity source — settle walks,
+/// in-flight recomputes, palette/DE/light/orbit animation, tours, autopilot, toasts — already
+/// requests its own repaint. `--no-perf` has always run with no heartbeat at all, which is the
+/// standing proof that nothing depends on it.
+pub(crate) fn render_quiescent(
+    views: [ViewActivity; 2],
+    animating: bool,
+    rates_clear: bool,
+) -> bool {
+    !animating
+        && rates_clear
+        && views.iter().all(|v| {
+            !v.tile_pending
+                && !v.chunk_pending
+                && !v.building
+                && v.frames_since_dispatch > IDLE_DISPATCH_FRAMES
+        })
+}
+
+#[cfg(test)]
+mod render_quiescent_tests;
 
 /// Has measurement STARVED for this view? True when a real dispatch has gone out since the last
 /// timing came back and nothing has arrived for `limit` frames. An idle view (no dispatch since

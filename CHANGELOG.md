@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Fractadyne now actually goes idle when you leave it alone** (beta.18). A settled view kept
+  the GPU working forever: the frame-budget controller has a probe that forces a render when it
+  cannot otherwise measure how long a frame takes, and on any view that comfortably fits its
+  budget - the default opening view among them - the measurement it produced was one the
+  controller's own rules discard as too small to be representative. So it stayed unmeasured, and
+  probed again, every third frame, indefinitely: a real 37 ms GPU render of a picture that was
+  already finished and on screen. The probe now runs only when its result could actually be
+  used, and the performance panel's refresh - which was redrawing the word "idle" once a second
+  forever - stands down on the same condition it uses to print that word. A fresh session used to
+  still be rendering 25 seconds after launch; it now falls silent 1.4 seconds after boot and
+  stays that way until you touch it. Anything genuinely happening - a settling view, an
+  animation, a tour, a reference build - keeps drawing exactly as before.
+  `FRACTADYNE_TRACE=idle` reports what is holding the app awake, if it ever happens again.
+
 - **Coordinates now accept expressions with functions, constants, and powers** (beta.17;
   user-requested). Everywhere a coordinate is typed - the Go-to dialog, tour scripts,
   location files, `--center` - the evaluator now understands `sqrt`, `cbrt`, `root(x,n)`,
