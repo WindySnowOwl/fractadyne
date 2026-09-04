@@ -60,16 +60,34 @@ if [ -z "$tag" ]; then
 fi
 [ "$tag" != "v" ] || fail "could not read the version from Cargo.toml"
 
-# The libraries must be present to link against. Failing here with the install line is far kinder
-# than a screen of linker errors.
+# The libraries must be present AND new enough to link against.
+#
+# ⚠**The VERSION check is the load-bearing half.** `gmp-mpfr-sys` requires GMP 6.3.0 and MPFR
+# 4.2.2, and under `use-system-libs` its rule (build.rs `compatible_version`) is
+# `major == expected && minor >= expected`, with the PATCH level waived. So MPFR 4.2.1 is fine and
+# GMP 6.2.1 is NOT — its minor is 2. Ubuntu 22.04 ships exactly that 6.2.1, which is why the CI
+# job for this script runs on 24.04 while the standard Linux job stays on 22.04. Without this
+# check the failure is a build-script panic 200 crates into a release build; with it, it is the
+# first thing the script says.
+need_ver() { # name, found, want_major, want_minor
+    local n="$1" v="$2" M="$3" m="$4"
+    local fm="${v%%.*}" fr="${v#*.}"; fr="${fm:+${fr%%.*}}"
+    [ "$fm" = "$M" ] && [ "${fr:-0}" -ge "$m" ] && return 0
+    fail "lib$n $v is too old: gmp-mpfr-sys needs $n $M.$m or newer (patch level does not matter
+under use-system-libs). Ubuntu 22.04 ships GMP 6.2.1 and cannot build this; use 24.04 or newer,
+or a distro with $n >= $M.$m."
+}
 for lib in gmp mpfr; do
-    pkg-config --exists "$lib" 2>/dev/null && continue
-    ldconfig -p 2>/dev/null | grep -q "lib${lib}\.so" && continue
-    fail "lib${lib} not found. Install the development packages:
+    if ! pkg-config --exists "$lib" 2>/dev/null; then
+        ldconfig -p 2>/dev/null | grep -q "lib${lib}\.so" && continue
+        fail "lib${lib} not found. Install the development packages:
     Debian/Ubuntu:  sudo apt-get install -y libgmp-dev libmpfr-dev
     Fedora:         sudo dnf install gmp-devel mpfr-devel
     Arch:           sudo pacman -S gmp mpfr"
+    fi
 done
+pkg-config --exists gmp 2>/dev/null && need_ver gmp "$(pkg-config --modversion gmp)" 6 3
+pkg-config --exists mpfr 2>/dev/null && need_ver mpfr "$(pkg-config --modversion mpfr)" 4 2
 
 step "Building (rug + system GMP/MPFR)"
 # `use-system-libs` is the LGPL section 4(d)(1) shape. See the header.
@@ -124,7 +142,7 @@ faster at that step. Output is BYTE-IDENTICAL to the standard build - the differ
 speed only. Settings, saved sessions and locations are shared, so you can move between the
 two builds freely. Confirm which one you are running under Help -> About.
 
-RUNTIME REQUIREMENT
+RUNTIME REQUIREMENTS
   This build links GMP and MPFR dynamically and does NOT bundle them. They are stock
   packages present on essentially every Linux desktop; if the binary reports a missing
   library, install them:
@@ -132,6 +150,13 @@ RUNTIME REQUIREMENT
     Fedora:         sudo dnf install gmp mpfr
     Arch:           sudo pacman -S gmp mpfr
   Built against GMP $gmp_ver and MPFR $mpfr_ver.
+
+  NEWER DISTRO THAN THE STANDARD BUILD. This package is built on Ubuntu 24.04 and needs
+  glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+, Fedora 40+). The standard Linux download
+  is built on 22.04 and runs on glibc 2.35+. The reason is not arbitrary: gmp-mpfr-sys
+  requires GMP 6.3.0 or newer, and 22.04 ships 6.2.1. If this binary will not start on your
+  system with a glibc message, use the standard download - it is the same program, just
+  slower at building deep-zoom reference orbits.
 
 LICENSING
   Fractadyne's own code: MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE).

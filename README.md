@@ -104,7 +104,10 @@ locations are shared with the standard build, so you can switch freely. In the a
   beside it; GMP and MPFR ship inside the package.
 - **Linux** — extract and run `./fractadyne`. It links your system's GMP and MPFR
   (`libgmp10`, `libmpfr6` — present on essentially every desktop; `sudo apt-get install libgmp10
-  libmpfr6` if not), which is why the tarball does not bundle them.
+  libmpfr6` if not), which is why the tarball does not bundle them. ⚠It needs a **newer distro
+  than the standard download**: glibc 2.39+ (Ubuntu 24.04+, Debian 13+, Fedora 40+) against the
+  standard build's 2.35+, because `gmp-mpfr-sys` requires GMP 6.3.0 and Ubuntu 22.04 ships 6.2.1.
+  On an older system use the standard download — same program, just slower at reference orbits.
 
 The two produce **byte-identical images** — verified across every formula at arithmetic
 widths from 64 bits to 132,000 bits, plus the full 38-location deep-zoom corpus, and CI re-checks

@@ -342,13 +342,24 @@ jobs:
   # verification; read its header before changing anything here.
   #
   # ⚠The `-dev` packages are what `use-system-libs` links against, and `m4` is only insurance for
-  # the case where gmp-mpfr-sys falls back to building from source. ubuntu-22.04 matches the
-  # standard `linux` job so both tarballs carry the same glibc floor.
+  # the case where gmp-mpfr-sys falls back to building from source.
+  #
+  # ⭐**24.04, NOT the 22.04 the standard `linux` job uses — measured, not preference.** The first
+  # attempt (v0.2.41-beta.19) ran on 22.04 and died 200 crates into the build with
+  # "This version of gmp-mpfr-sys supports GMP 6.3.0, but 6.2.1 was found": 22.04 ships GMP 6.2.1,
+  # and gmp-mpfr-sys requires minor >= 3 (its `compatible_version` waives the PATCH level under
+  # use-system-libs, which is why MPFR 4.2.1 is fine but GMP 6.2.1 is not). 24.04 ships GMP 6.3.0.
+  # ⚠The cost is a HIGHER GLIBC FLOOR for this tarball than for the standard one — glibc 2.39
+  # (Ubuntu 24.04+, Debian 13+) versus 2.35. That is stated in the package's README-ACCELERATED.txt
+  # and in the README's download section, because "the optional build won't start" is otherwise a
+  # baffling report. The alternative that keeps the 22.04 floor is building GMP 6.3 from source as
+  # a shared library and shipping it in the tarball the way the Windows package ships its DLLs;
+  # that is a larger change and was not worth making before this job had ever run green.
   linux-accelerated:
     name: Linux x64 (accelerated, MPFR)
     needs: create-release
     if: ${{ !cancelled() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
