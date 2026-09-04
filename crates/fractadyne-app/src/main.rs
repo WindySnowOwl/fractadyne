@@ -587,12 +587,32 @@ mod session_zoom;
 /// one shared session without being told.
 ///
 /// `version` is `sysinfo::version_string()`, which carries a "(build N)" suffix that is not part
-/// of the tag. Pinned by test against the name `scripts/build-accelerated.ps1` actually produces:
-/// if either side is renamed, the link dies silently, and a dead download link in a menu is worse
-/// than no menu entry.
+/// of the tag. Pinned by test against the names `scripts/build-accelerated.ps1` and
+/// `scripts/build-accelerated.sh` actually produce: if either side is renamed, the link dies
+/// silently, and a dead download link in a menu is worse than no menu entry.
+///
+/// ⚠**Platform-matched as well as version-matched.** Handing a Linux user the Windows `.zip` is
+/// the same class of failure as handing them the wrong version — the link resolves, the download
+/// works, and the file is useless. The two packages are built by the `windows-accelerated` and
+/// `linux-accelerated` jobs in `release.yml`, which the publish step both waits on, so a
+/// published release always has the asset this returns.
 fn accelerated_asset_url(version: &str) -> String {
     let tag = format!("v{}", version.split_whitespace().next().unwrap_or(version));
-    format!("https://github.com/WindySnowOwl/fractadyne/releases/download/{tag}/fractadyne-{tag}-windows-x64-accelerated.zip")
+    // Only these two are built. Anything else (macOS, a BSD) has no accelerated package at all,
+    // and the dialog says so rather than offering a link that 404s — see `accelerated_window`.
+    let suffix = if cfg!(target_os = "windows") {
+        "windows-x64-accelerated.zip"
+    } else {
+        "linux-x64-accelerated.tar.gz"
+    };
+    format!("https://github.com/WindySnowOwl/fractadyne/releases/download/{tag}/fractadyne-{tag}-{suffix}")
+}
+
+/// Is there an accelerated package for the platform this build is running on? Only Windows and
+/// Linux x64 are built (`release.yml`), so on anything else the "Faster deep zoom" dialog must
+/// not offer a download link.
+fn accelerated_package_exists_for_platform() -> bool {
+    cfg!(any(target_os = "windows", target_os = "linux"))
 }
 
 #[cfg(test)]
@@ -6710,20 +6730,30 @@ impl FractadyneApp {
                         "Your settings, saved session and locations are shared between the two, \
                          so you can switch freely and nothing needs importing.",
                     );
+                    // The REASON it is separate differs by platform, and only one half travels:
+                    // the toolchain obstacle is Windows-only (MSVC cannot build MPFR), while the
+                    // licence difference applies everywhere. Saying "the compiler the standard
+                    // Windows build uses" to a Linux user is simply false there.
                     ui.label(
-                        egui::RichText::new(
+                        egui::RichText::new(if cfg!(target_os = "windows") {
                             "It is a separate download because the libraries it uses cannot be \
                              built with the compiler the standard Windows build uses, and they \
-                             carry a different licence (GNU LGPL v3) from Fractadyne's own.",
-                        )
+                             carry a different licence (GNU LGPL v3) from Fractadyne's own."
+                        } else {
+                            "It is a separate download because the libraries it uses carry a \
+                             different licence (GNU LGPL v3) from Fractadyne's own."
+                        })
                         .small(),
                     );
                     ui.separator();
                     ui.horizontal(|ui| {
-                        if ui
-                            .button("Download for this version")
-                            .on_hover_text(&asset)
-                            .clicked()
+                        // No package is built for other platforms, so offering the button there
+                        // would hand the user a link that 404s by construction.
+                        if accelerated_package_exists_for_platform()
+                            && ui
+                                .button("Download for this version")
+                                .on_hover_text(&asset)
+                                .clicked()
                         {
                             ctx.open_url(egui::OpenUrl::new_tab(&asset));
                         }
@@ -6739,10 +6769,17 @@ impl FractadyneApp {
                         }
                     });
                     ui.label(
-                        egui::RichText::new(
+                        egui::RichText::new(if cfg!(target_os = "windows") {
                             "Extract it and run fractadyne.exe from that folder, keeping the .dll \
-                             files beside it.",
-                        )
+                             files beside it."
+                        } else if cfg!(target_os = "linux") {
+                            "Extract it and run ./fractadyne from that folder. It uses your \
+                             system's GMP and MPFR (libgmp10 / libmpfr6), which nearly every \
+                             desktop already has - see README-ACCELERATED.txt in the package."
+                        } else {
+                            "No accelerated package is built for this platform yet; it can be \
+                             built from source with --features fractadyne-core/rug."
+                        })
                         .small(),
                     );
                 }

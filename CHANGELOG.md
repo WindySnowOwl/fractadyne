@@ -12,6 +12,17 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The accelerated (MPFR) build is now available for Linux too** (beta.19). Deep-zoom
+  reference orbits computed with MPFR/GMP are 2.5-6.4x faster than the pure-Rust library at
+  that step, and until now that build was packaged for Windows only - even though CI has
+  been compiling, testing and byte-identity-checking the MPFR backend on Linux all along.
+  Releases now carry `fractadyne-vX.Y.Z-linux-x64-accelerated.tar.gz` beside the Windows
+  zip, and Help -> Faster deep zoom offers the package for the platform you are actually
+  running rather than always the Windows one. The Linux package links your system's GMP and
+  MPFR (`libgmp10` / `libmpfr6`) instead of bundling them, which is the platform convention;
+  everything else - byte-identical output, shared settings and sessions, the LGPL notices -
+  matches the Windows package.
+
 - **Fractadyne now actually goes idle when you leave it alone** (beta.18). A settled view kept
   the GPU working forever: the frame-budget controller has a probe that forces a render when it
   cannot otherwise measure how long a frame takes, and on any view that comfortably fits its

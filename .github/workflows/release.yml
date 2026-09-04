@@ -329,13 +329,81 @@ jobs:
   # them failed, which leaves the draft in place with whatever assets made it — inspectable and
   # deletable, and never visible to `--check-updates` as a release missing a platform.
   #
-  # `windows-accelerated` is included deliberately, even though it is an OPTIONAL download: the
-  # in-app "Faster deep zoom" link points at the asset for the running version, so a published
-  # release without it is a dead link in a menu. Blocking the publish keeps that impossible; the
-  # cost is that a broken accelerated build holds the release as a draft until someone looks.
+  # OPTIONAL accelerated LINUX build. Same program, MPFR/GMP reference orbits, byte-identical
+  # output — the Linux half of `windows-accelerated` above.
+  #
+  # ⭐Only ONE of that job's two reasons for existing survives here, and the difference is the
+  # whole reason this job is short: the TOOLCHAIN obstacle is Windows-only (MSVC cannot build
+  # MPFR, hence the separate GNU toolchain + MSYS2 dance), while the standard Linux binary is
+  # already built with gcc. What survives is the LICENSING: rug/gmp-mpfr-sys/GMP/MPFR are
+  # LGPL-3.0-or-later against this project's MIT OR Apache-2.0, and those obligations attach to
+  # conveying a binary — so this stays a separate, clearly-labelled download rather than becoming
+  # the default one. `scripts/build-accelerated.sh` owns the build, the notices and the
+  # verification; read its header before changing anything here.
+  #
+  # ⚠The `-dev` packages are what `use-system-libs` links against, and `m4` is only insurance for
+  # the case where gmp-mpfr-sys falls back to building from source. ubuntu-22.04 matches the
+  # standard `linux` job so both tarballs carry the same glibc floor.
+  linux-accelerated:
+    name: Linux x64 (accelerated, MPFR)
+    needs: create-release
+    if: ${{ !cancelled() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Use stable Rust
+        run: rustup default stable
+
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            m4 libgmp-dev libmpfr-dev \
+            libgtk-3-dev libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+
+      - name: Build and package
+        run: |
+          tag="${{ github.ref_name }}"
+          if [ "$tag" = "main" ] || [ -z "$tag" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          fi
+          [ -z "$tag" ] && tag="dev"
+          # The in-app "Faster deep zoom" link builds its URL from the RUNNING version, so a git
+          # tag that diverges from the Cargo version 404s for every user of this release. The app
+          # side is pinned by a unit test; this is the other half. (Same guard as the Windows job.)
+          chmod +x scripts/build-accelerated.sh
+          ./scripts/build-accelerated.sh --tag "$tag" --out dist
+          asset="$(ls dist/*-linux-x64-accelerated.tar.gz | head -1)"
+          [ -n "$asset" ] || { echo "::error::no accelerated tarball produced"; exit 1; }
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Upload to draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_name }}"
+          gh release upload "$tag" "$ASSET" "$ASSET.sha256" --clobber
+
+      - name: Upload artifact (manual/test runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: fractadyne-linux-x64-accelerated
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+
+  # BOTH accelerated jobs are included deliberately, even though they are OPTIONAL downloads: the
+  # in-app "Faster deep zoom" link points at the asset for the running version AND PLATFORM, so a
+  # published release missing either one is a dead link in a menu for half the users. Blocking the
+  # publish keeps that impossible; the cost is that a broken accelerated build holds the release as
+  # a draft until someone looks.
   publish:
     name: Publish release
-    needs: [create-release, windows, linux, windows-accelerated]
+    needs: [create-release, windows, linux, windows-accelerated, linux-accelerated]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:

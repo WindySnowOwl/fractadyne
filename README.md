@@ -92,19 +92,27 @@ no toolchain needed). Releases are built automatically from a tagged commit by
 
 ### Optional: the accelerated build
 
-Each release also carries `fractadyne-vX.Y.Z-windows-x64-accelerated.zip`. It is the **same
-program** computing deep-zoom reference orbits with MPFR/GMP instead of the pure-Rust library,
-which is **2.5–6.4× faster** at that step — the CPU pause before a deep view starts
-resolving. Extract it and run `fractadyne.exe` from that folder, keeping the `.dll` files beside
-it; settings, saved session and locations are shared with the standard build, so you can switch
-freely. In the app: **Help → Faster deep zoom**.
+Each release also carries an accelerated package for **both platforms**:
+`fractadyne-vX.Y.Z-windows-x64-accelerated.zip` and
+`fractadyne-vX.Y.Z-linux-x64-accelerated.tar.gz`. It is the **same program** computing deep-zoom
+reference orbits with MPFR/GMP instead of the pure-Rust library, which is **2.5–6.4× faster** at
+that step — the CPU pause before a deep view starts resolving. Settings, saved session and
+locations are shared with the standard build, so you can switch freely. In the app:
+**Help → Faster deep zoom**, which offers the package for the platform you are running.
+
+- **Windows** — extract and run `fractadyne.exe` from that folder, keeping the `.dll` files
+  beside it; GMP and MPFR ship inside the package.
+- **Linux** — extract and run `./fractadyne`. It links your system's GMP and MPFR
+  (`libgmp10`, `libmpfr6` — present on essentially every desktop; `sudo apt-get install libgmp10
+  libmpfr6` if not), which is why the tarball does not bundle them.
 
 The two produce **byte-identical images** — verified across every formula at arithmetic
-widths from 64 bits to 132,000 bits, plus the full 38-location deep-zoom corpus. It is a
-separate download because MPFR cannot be built with the MSVC toolchain the standard Windows
-binary uses, and because GMP/MPFR are **LGPL-3.0-or-later** while Fractadyne is MIT OR
-Apache-2.0; keeping them apart leaves the standard build free of those terms. The package ships
-both licence texts and links the libraries dynamically so you can replace them.
+widths from 64 bits to 132,000 bits, plus the full 38-location deep-zoom corpus, and CI re-checks
+that identity on Linux on every run. It is a separate download because GMP/MPFR are
+**LGPL-3.0-or-later** while Fractadyne is MIT OR Apache-2.0, and keeping them apart leaves the
+standard build free of those terms; on Windows there is a second reason, that MPFR cannot be
+built with the MSVC toolchain the standard binary uses. Both packages ship the LGPL and GPL texts
+and link the libraries dynamically so you can replace them.
 
 ## Build & run
 
@@ -303,9 +311,10 @@ Toolbar and menu icons are [Lucide](https://lucide.dev/) (ISC), bundled as a sub
 only the icons the UI uses — regenerate with `scripts/subset_lucide.py`.
 
 The optional [accelerated build](#optional-the-accelerated-build) is the one exception: it
-additionally ships GMP and MPFR, which are **LGPL-3.0-or-later**. That package carries its own
-licence texts and links those libraries dynamically so they can be replaced. The standard
-download contains none of it.
+contains `rug`/`gmp-mpfr-sys` and links GMP and MPFR, all **LGPL-3.0-or-later** (the Windows
+package also ships the GMP/MPFR libraries themselves; the Linux one links the system's). Those
+packages carry their own licence texts and link the libraries dynamically so they can be
+replaced. The standard downloads contain none of it.
 
 ### Contribution
 
