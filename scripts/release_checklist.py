@@ -40,8 +40,9 @@ PALETTES = ["Ember", "Ice", "Nebula", "Grayscale"]
 STEPS = [
     # ---------------------------------------------------------------- launch
     ("Launch",
-     "Launch the release build with a CLEAN profile: rename %APPDATA%\\Fractadyne\\Fractadyne\\config "
-     "to config.bak first, so this is a true first run.",
+     "Launch the release build with a CLEAN profile: move the profile aside first, so this is a "
+     "true first run. Windows: rename %APPDATA%\\Fractadyne\\Fractadyne\\config to config.bak. "
+     "Linux: move ~/.config/Fractadyne aside.",
      "Window opens within a few seconds. No console errors. No crash dialog."),
     ("Launch",
      "Read the title bar.",
@@ -353,6 +354,68 @@ STEPS = [
      "File > Settings - change a setting, close and reopen the menu.",
      "Setting persists and takes effect."),
 
+    # ---------------------------------------------------------------- linux
+    # Mark this whole block N-A on a Windows review. Linux is a shipped platform as of 0.2.40 and
+    # a second SHIPPED PACKAGE as of beta.20, but the rest of this checklist is written for
+    # Windows, and several things here have never been exercised on real Linux hardware at all —
+    # the four diagnostics below were implemented against /proc and sysfs and verified only to
+    # COMPILE. Run this block on the Linux rig, on each GPU you can put in it.
+    ("Linux",
+     "Move ~/.config/Fractadyne aside (that is where `directories::ProjectDirs` puts the profile; "
+     "$XDG_CONFIG_HOME overrides it) and launch the extracted tarball's ./fractadyne.",
+     "True first run: welcome dialog, home view, no console errors. On exit a new "
+     "~/.config/Fractadyne/session.toml exists — state belongs in the user profile, never beside "
+     "the binary, so an extracted folder stays disposable."),
+    ("Linux",
+     "From the extracted tarball run ./fractadyne --selftest and read the goldens section.",
+     "It runs to a verdict. Goldens are compared with the CROSS-GPU tolerance, not the strict one, "
+     "because validation/golden/BLESSED-GPU.txt ships in the tarball — if the run reports strict "
+     "failures on a non-3080 card, that file is missing from the package and every Linux tester "
+     "will see expected vendor variance as a failure."),
+    ("Linux",
+     "Run ./fractadyne --selftest --selftest-filter live-res, then read the adapter line in the "
+     "log: 'capability: TIMESTAMP_QUERY=true|false'.",
+     "The settled-resolution invariant passes WHATEVER that capability says. This is the point of "
+     "running it here: TIMESTAMP_QUERY is genuinely absent on the GL backend and on several "
+     "Mesa/RADV/ANV combinations, and until now that path had only ever been faked on an NVIDIA "
+     "card with FRACTADYNE_NO_TIMESTAMPS=1. A view stuck at ~1/3 resolution forever is the failure."),
+    ("Linux",
+     "Repeat the launch on each GPU the rig can take (NVIDIA / AMD / Intel), recording for each: "
+     "the adapter line, the chosen backend, and whether deep views render correctly.",
+     "Every card opens a window and renders. Record the adapter + backend per card — cross-vendor "
+     "differences in the deep floatexp path are a known open bug (3080 all-black vs 3070 rich), "
+     "so this is evidence-gathering as much as pass/fail."),
+    ("Linux",
+     "Run once under Wayland and once under X11 (log into an X11 session, or unset WAYLAND_DISPLAY "
+     "so winit falls back).",
+     "Window opens, resizes, and scales sensibly under both. Note any difference in DPI handling, "
+     "cursor behaviour or window decorations."),
+    ("Linux",
+     "Help > Diagnostics — check the four readings that have platform-specific implementations: "
+     "process memory (/proc/self/status), free disk (statvfs), CPU topology (/proc/cpuinfo), and "
+     "GPU VRAM (amdgpu sysfs, else nvidia-smi).",
+     "All four report PLAUSIBLE, non-zero values that match what the system tools say. These were "
+     "written for Linux and verified only to compile, so a zero or an absurd figure here is a real "
+     "defect, not a cosmetic one."),
+    ("Linux",
+     "Exercise the native file dialogs: File > Open view or location…, and an export that asks for "
+     "a path.",
+     "The GTK dialogs open, are navigable, and the chosen path is honoured. A missing GTK runtime "
+     "shows up here first."),
+    ("Linux",
+     "Run on a box with no audio server (or with FRACTADYNE_NO_SOUND=1) and let a long render "
+     "finish.",
+     "No crash, no hang, and no error spew when the finish tone cannot play — audio is a nicety "
+     "and must never be able to take the app down."),
+    ("Linux",
+     "Run ./fractadyne --version over SSH with no DISPLAY set.",
+     "Prints 'fractadyne <version> (build N)' and exits cleanly without trying to open a window. "
+     "The version must match the tag being reviewed."),
+    ("Linux",
+     "After the session above, check ~/.config/Fractadyne/logs/ for crash-*.txt.",
+     "No new crash reports. (If any exist this run FAILS and the file must be attached — the log "
+     "directory is the Linux equivalent of the Windows config\\logs folder checked earlier.)"),
+
     # ------------------------------------------------------- accelerated build (optional artifact)
     # Mark this whole block N-A if you are only reviewing the standard download. Since
     # v0.2.41-beta.20 there are TWO accelerated packages, and they are packaged differently on
@@ -420,7 +483,8 @@ STEPS = [
      "Relaunch the app.",
      "It reopens on the SAME view you left, with the same fractal, palette and settings."),
     ("Persistence",
-     "Check config\\logs for crash-*.txt files created during this run.",
+     "Check the profile's logs folder for crash-*.txt files created during this run "
+     "(Windows: %APPDATA%\\Fractadyne\\Fractadyne\\config\\logs; Linux: ~/.config/Fractadyne/logs).",
      "No new crash reports. (If any exist, this run FAILS and the file must be attached.)"),
 
     # ---------------------------------------------------------------- stability
@@ -562,6 +626,19 @@ ENFORCERS = [
     ("Help & settings", "test:issue_url_is_well_formed"),
     ("Help & settings", "test:update_check_reaches_a_verdict"),
     ("Help & settings", "test:a_setting_survives_save_and_reload"),
+    ("Linux", "test:config_lives_in_the_user_profile"),
+    ("Linux", "harness:--selftest"),
+    ("Linux", "selftest:live-res"),
+    # Swappable cards, two session types, and native GTK dialogs: a person with the hardware in
+    # front of them. Nothing in this repo can stand in for any of the three.
+    ("Linux", "manual"),
+    ("Linux", "manual"),
+    ("Linux", "uitest:diagnostics-populated"),
+    ("Linux", "manual"),
+    ("Linux", "harness:--no-sound"),
+    # The version STRING is pinned by a test; that it prints without a display is the untested half.
+    ("Linux", "partial:test:title_string_matches_version"),
+    ("Linux", "uitest:no-crash-files"),
     ("Accelerated build", "script:scripts/build-accelerated.ps1"),
     ("Accelerated build", "script:scripts/build-accelerated.sh"),
     # No CI runs the tarball on an OLD distro, and no test can: it needs a second machine with a
