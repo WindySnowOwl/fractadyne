@@ -246,6 +246,23 @@ STEPS = [
      "Navigate > Go to location… and enter a known deep coordinate.",
      "Dialog accepts full-precision input and the view jumps exactly there (status bar matches)."),
     ("Locations",
+     "In the same dialog, enter an EXPRESSION rather than a decimal: put "
+     "'-0.5 + 0.25*cos(pi/4)' in the real field and 'sqrt(2)/4' in the imaginary one, and go. "
+     "Then try three that must be REFUSED: '2^i', 'sin(i)', and 'bogus(1)'.",
+     "The valid expressions evaluate and the view lands there; the coordinate readout shows the "
+     "evaluated decimal, not the text you typed. Each invalid one is rejected with a visible "
+     "message and the view does NOT move - a coordinate must never be silently half-read."),
+    ("Locations",
+     "Navigate > Misiurewicz explorer… - let the gallery populate.",
+     "A grid of Misiurewicz points appears, each with a live-rendered thumbnail that resolves "
+     "(no permanently blank tiles) and its multiplier readouts: octaves of zoom per repeat and "
+     "degrees of twist."),
+    ("Locations",
+     "In the explorer, pick a point and use it to jump (select, then solve and go).",
+     "The solve reports progress rather than freezing the window, and the view lands on that "
+     "point at depth - the landed view shows the expected shape, not a blank or interior-filled "
+     "frame."),
+    ("Locations",
      "Navigate > Random location, several times.",
      "Each jump lands somewhere valid and renders real structure - not a blank or all-interior frame."),
     ("Locations",
@@ -337,12 +354,34 @@ STEPS = [
      "Setting persists and takes effect."),
 
     # ------------------------------------------------------- accelerated build (optional artifact)
-    # Mark this whole block N-A if you are only reviewing the standard download.
+    # Mark this whole block N-A if you are only reviewing the standard download. Since
+    # v0.2.41-beta.20 there are TWO accelerated packages, and they are packaged differently on
+    # purpose (Windows ships the GMP/MPFR DLLs; Linux links the system libraries), so the
+    # platform-specific rows below are not interchangeable - run the pair for the platform in hand.
     ("Accelerated build",
-     "Extract fractadyne-<tag>-windows-x64-accelerated.zip to a NEW folder and run fractadyne.exe "
-     "from it. Do this on a machine (or account) with no MSYS2 and no MinGW on PATH.",
+     "WINDOWS: extract fractadyne-<tag>-windows-x64-accelerated.zip to a NEW folder and run "
+     "fractadyne.exe from it. Do this on a machine (or account) with no MSYS2 and no MinGW on PATH.",
      "Window opens normally. NO 'the code execution cannot proceed' or missing-DLL dialog - the "
      "package must be self-contained apart from the .dll files beside the executable."),
+    ("Accelerated build",
+     "LINUX: extract fractadyne-<tag>-linux-x64-accelerated.tar.gz to a new folder on a distro "
+     "with glibc 2.39+ (Ubuntu 24.04+, Debian 13+) and run ./fractadyne from it. Use a machine "
+     "with only the RUNTIME libraries (libgmp10, libmpfr6) - no -dev packages, no build tools.",
+     "Window opens normally. This package deliberately does NOT bundle GMP/MPFR, so it must find "
+     "the system ones; a missing-library error here means the packaging assumed something the "
+     "target does not have."),
+    ("Accelerated build",
+     "LINUX: run the same tarball on an OLDER distro (Ubuntu 22.04 / Debian 12).",
+     "It refuses to start with a clear glibc / missing-symbol message - and the STANDARD "
+     "linux-x64.tar.gz still runs there. The accelerated package has a higher floor by "
+     "construction (its GMP requirement forces a newer build host); what must not happen is a "
+     "confusing failure with no standard build to fall back to."),
+    ("Accelerated build",
+     "On the accelerated build, open Help > Faster deep zoom and read the download link it offers "
+     "(hover it if the text is elided).",
+     "It names the package for the platform you are running - .zip on Windows, .tar.gz on Linux - "
+     "and the version matches the running build. Offering the other platform's file is a dead "
+     "download even though the link resolves."),
     ("Accelerated build",
      "Help > About on that build.",
      "'Deep-zoom arithmetic' names rug and reports the MPFR and GMP versions."),
@@ -361,9 +400,17 @@ STEPS = [
      "Noticeably shorter on the accelerated build. This is the only user-visible difference there "
      "should be. Note both timings."),
     ("Accelerated build",
-     "Delete libmpfr-6.dll from the accelerated folder and try to launch it. Restore it after.",
-     "Fails to start with a missing-DLL error rather than silently falling back to the slow "
+     "WINDOWS: delete libmpfr-6.dll from the accelerated folder and try to launch it. Restore it "
+     "after. (LINUX equivalent: temporarily move the tarball to a machine without libmpfr6.)",
+     "Fails to start with a missing-library error rather than silently falling back to the slow "
      "arithmetic. Restoring the file makes it work again."),
+    ("Accelerated build",
+     "On the PUBLISHED release page, compare the 'Which download?' table against the Assets list "
+     "at the foot of the page.",
+     "Every attached asset has a row, and every row names an attached asset. The table is written "
+     "by hand and the asset list is produced by the build jobs, so they drift silently: "
+     "v0.2.41-beta.20 shipped the Linux accelerated tarball attached but unlisted, which reads to "
+     "a visitor exactly like a build that failed."),
 
     # ---------------------------------------------------------------- persistence
     ("Persistence",
@@ -380,6 +427,14 @@ STEPS = [
     ("Stability",
      "Leave the app running idle at a deep view for 5 minutes.",
      "No creeping memory growth to the point of instability, no watchdog restart, view still correct."),
+    ("Stability",
+     "With the view fully settled and the mouse OFF the window, watch the performance panel's "
+     "activity line and your GPU/fan (Task Manager's GPU column, or nvidia-smi / radeontop) for a "
+     "minute.",
+     "The activity line reads 'idle' AND the app stops drawing: GPU usage falls to ~0 and STAYS "
+     "there. A steady 1-4 fps trickle on a static picture is the defect fixed in beta.18 - the "
+     "app was re-rendering a finished frame forever. Touch the window and it must wake instantly. "
+     "FRACTADYNE_TRACE=idle names whatever is holding it awake if this fails."),
     ("Stability",
      "Do a fast, sustained zoom-in / zoom-out / pan session for ~2 minutes.",
      "No freeze, no device-loss restart, no crash. The app keeps up or degrades gracefully."),
@@ -479,6 +534,9 @@ ENFORCERS = [
     ("Quality", "selftest:supersampling softens edges"),
     ("Quality", "partial:uitest:perf-fields-populated"),
     ("Locations", "test:go_to_round_trips_a_deep_coordinate"),
+    ("Locations", "selftest:expression functions & constants"),
+    ("Locations", "uitest:misiurewicz-explorer"),
+    ("Locations", "uitest:misiurewicz-jump-lands"),
     ("Locations", "selftest:random-locations-coherent"),
     ("Locations", "test:bookmark_round_trip"),
     ("Locations", "test:bookmark_delete_keeps_the_list_consistent"),
@@ -505,15 +563,24 @@ ENFORCERS = [
     ("Help & settings", "test:update_check_reaches_a_verdict"),
     ("Help & settings", "test:a_setting_survives_save_and_reload"),
     ("Accelerated build", "script:scripts/build-accelerated.ps1"),
+    ("Accelerated build", "script:scripts/build-accelerated.sh"),
+    # No CI runs the tarball on an OLD distro, and no test can: it needs a second machine with a
+    # different glibc. This is one of the rows that genuinely cannot be automated here.
+    ("Accelerated build", "manual"),
+    ("Accelerated build", "test:the_url_names_this_platforms_package"),
     ("Accelerated build", "test:about_names_the_running_backend"),
     ("Accelerated build", "test:config_lives_in_the_user_profile"),
     ("Accelerated build", "partial:test:identity_holds_where_the_multiply_algorithms_diverge"),
     ("Accelerated build", "harness:--bench-bignum"),
     ("Accelerated build", "manual"),
+    # The release page's guide is hand-written and its asset list is generated; nothing in this
+    # repo can compare the two, because the comparison only exists after the workflow publishes.
+    ("Accelerated build", "process"),
     ("Persistence", "partial:uitest:clean-exit-marker"),
     ("Persistence", "test:a_deep_view_and_its_colouring_survive_a_restart"),
     ("Persistence", "uitest:no-crash-files"),
     ("Stability", "harness:--soak"),
+    ("Stability", "partial:test:both_views_quiet_and_nothing_animating_is_quiescent"),
     ("Stability", "harness:--torture"),
     ("Stability", "partial:selftest:rapid-switching-settles-on-the-final-choice"),
     ("Sign-off", "process"),
