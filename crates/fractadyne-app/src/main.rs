@@ -511,7 +511,8 @@ fn expand_arg_files(raw: &[String]) -> Result<Vec<String>, String> {
 /// and offline-job flags here.
 pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
     const TASK_FLAGS: &[&str] = &[
-        "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--play-tour",
+        "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--dualsettle",
+        "--play-tour",
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
         "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
@@ -3848,6 +3849,13 @@ impl FractadyneApp {
         } else {
             None
         };
+        let dualsettle = if args.iter().any(|a| a == "--dualsettle") {
+            let out =
+                val("--dualsettle").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
+            Some(uitest::DualSettle::new(out))
+        } else {
+            None
+        };
         let chunk_sweep = chunksweep::ChunkSweep::from_args(args);
         let play_tour = val("--play").map(std::path::PathBuf::from);
         // Was the app launched to DO something specific, rather than to be explored? If so, no
@@ -3866,6 +3874,7 @@ impl FractadyneApp {
             || divetest.is_some()
             || uitest.is_some()
             || juliadive.is_some()
+            || dualsettle.is_some()
             || autodive.is_some()
             || motiontest.is_some()
             || chunk_sweep.is_some()
@@ -4066,6 +4075,7 @@ impl FractadyneApp {
                 uitest_panel_w: None,
                 soak,
                 juliadive,
+                dualsettle,
                 chunk_sweep,
                 autodive,
                 motiontest,

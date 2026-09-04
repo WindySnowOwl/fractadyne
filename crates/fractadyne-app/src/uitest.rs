@@ -366,7 +366,150 @@ impl JuliaDive {
     }
 }
 
+/// `--dualsettle [DIR]` — dev harness for the field report of 2026-09-04: in dual view,
+/// after moving the cursor over the Mandelbrot pane (which drives the Julia `c` live), the
+/// Julia pane sometimes stays BLURRY (a reduced-resolution stage, upscaled) or lands on a
+/// flat plane instead of settling to full quality. This drives the EXACT live path — the
+/// same `julia_c` assignment, `settle_t[1]` stamp, `ref_cache[1]` clear and repaint the
+/// cursor hover performs (`ui/central.rs`) — through a few seconds of c-motion shaped like
+/// a user tracing the boundary, then goes idle and screenshots the settled state at fixed
+/// times, so the capture can be compared against what "settled" should mean.
+pub(crate) struct DualSettle {
+    out_dir: PathBuf,
+    frame: u64,
+    started: Option<Instant>,
+    /// Set when the c-motion phase ends: the settle clock for the timed shots.
+    stopped_at: Option<Instant>,
+    /// Which timed settled shots (seconds after stop) have been taken.
+    shots_done: u32,
+    pending: Option<String>,
+}
+
+impl DualSettle {
+    pub(crate) fn new(out_base: Option<PathBuf>) -> Self {
+        let base = out_base.unwrap_or_else(|| PathBuf::from("logs"));
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let out_dir = base.join(format!("dualsettle-{}", crate::FractadyneApp::file_stamp(secs)));
+        if let Err(e) = std::fs::create_dir_all(&out_dir) {
+            eprintln!("--dualsettle: could not create {}: {e}", out_dir.display());
+        }
+        Self { out_dir, frame: 0, started: None, stopped_at: None, shots_done: 0, pending: None }
+    }
+}
+
 impl FractadyneApp {
+    pub(crate) fn dualsettle_frame(&mut self, ctx: &egui::Context) {
+        const MOTION_S: f64 = 3.0; // c-motion phase length
+        const SHOT_AT_S: [f64; 3] = [1.0, 4.0, 10.0]; // settled shots, seconds after stop
+        let Some(ds) = self.harness.dualsettle.as_mut() else { return };
+        ds.frame += 1;
+        let first = ds.frame == 1;
+        if first {
+            // The reporter's shape (2026-09-04 screenshot): dual view, UNPINNED c (the cursor
+            // drives it), auto-iter with a high base, 2x AA, the Mandelbrot pane at ~82x on a
+            // boundary region so the driven c values cross dense structure.
+            self.dual = true;
+            self.julia_pin = None;
+            self.render_cfg.auto_iter = true;
+            self.render_cfg.max_iter = 1_500_000;
+            self.render_cfg.aa = 2;
+            // Start SHALLOW; the motion phase performs the reporter's 100x click-zoom jump
+            // onto this centre (their panel: click-to-zoom on, factor 100x, M ~82x).
+            self.viewport.set_center_mag(
+                fractadyne_core::BigFloat::from_f64(-0.032_98, 64),
+                fractadyne_core::BigFloat::from_f64(0.772_92, 64),
+                1.0,
+            );
+            self.julia_viewport.reset();
+            self.invalidate_refs();
+            self.harness.dualsettle.as_mut().unwrap().started = Some(Instant::now());
+            ctx.request_repaint();
+            return;
+        }
+        // Harvest a pending screenshot reply (same shape as --juliadive).
+        if let Some(name) = self.harness.dualsettle.as_ref().and_then(|d| d.pending.clone()) {
+            let shot = ctx.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(image) = shot {
+                let (w, h) = (image.size[0] as u32, image.size[1] as u32);
+                let mut bytes = Vec::with_capacity(image.pixels.len() * 4);
+                for px in &image.pixels {
+                    bytes.extend_from_slice(&[px.r(), px.g(), px.b(), px.a()]);
+                }
+                let ds = self.harness.dualsettle.as_mut().unwrap();
+                let path = ds.out_dir.join(&name);
+                if let Err(e) = fractadyne_export::write_png_rgba8(&path, w, h, &bytes, None) {
+                    eprintln!("--dualsettle: write {name}: {e}");
+                } else {
+                    println!("--dualsettle: {name}");
+                }
+                let last = ds.shots_done as usize >= SHOT_AT_S.len();
+                ds.pending = None;
+                if last {
+                    println!("--dualsettle: done -> {}", ds.out_dir.display());
+                    crate::exit(0);
+                }
+            } else {
+                ctx.request_repaint();
+                return;
+            }
+        }
+        let ds = self.harness.dualsettle.as_ref().unwrap();
+        let t = ds.started.map_or(0.0, |s| s.elapsed().as_secs_f64());
+        if ds.stopped_at.is_none() {
+            if t < MOTION_S {
+                // Trace an arc across the M pane's complex plane — the live-hover path,
+                // VERBATIM (ui/central.rs): assign c, stamp view 1's interaction, drop the
+                // Julia reference point, schedule the repaint. This is the real actuator,
+                // not a copy of it.
+                let ph = t * 2.2;
+                let coord = egui::vec2(
+                    (-0.032_98 + 0.012 * ph.cos()) as f32,
+                    (0.772_92 + 0.012 * ph.sin()) as f32,
+                );
+                self.julia_c = (coord.x as f64, coord.y as f64);
+                self.pointer.settle_t[1] = ctx.input(|i| i.time);
+                self.ref_cache[1].ref_pt = None;
+                // The reporter's other gesture (their panel: click-to-zoom, factor 100x): one
+                // big M-pane jump mid-motion — a drastic simultaneous view change on BOTH
+                // panes (new M frame AND new c), which is the heavy case a gentle c-arc
+                // never exercises. Same actuator the click path uses: zoom_at + the view-0
+                // interaction stamp.
+                if t >= 1.0 && self.viewport.log2_magnification() < 3.0 {
+                    let (w, h) = (self.viewport.width_px, self.viewport.height_px);
+                    self.viewport.zoom_at(w * 0.5, h * 0.5, 0.01);
+                    self.pointer.settle_t[0] = ctx.input(|i| i.time);
+                }
+                self.schedule_repaint(ctx);
+            } else {
+                self.harness.dualsettle.as_mut().unwrap().stopped_at = Some(Instant::now());
+                println!("--dualsettle: motion stopped, watching the settle");
+            }
+            ctx.request_repaint();
+            return;
+        }
+        let since = ds.stopped_at.map_or(0.0, |s| s.elapsed().as_secs_f64());
+        let n = ds.shots_done as usize;
+        if n < SHOT_AT_S.len() && since >= SHOT_AT_S[n] && ds.pending.is_none() {
+            let name = format!("settled-{:04.1}s.png", SHOT_AT_S[n]);
+            let ds = self.harness.dualsettle.as_mut().unwrap();
+            ds.pending = Some(name.clone());
+            ds.shots_done += 1;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        // Keep the clock observable even if nothing else repaints — the defect under test is
+        // precisely "the settle stops being driven", so the harness must not mask it by
+        // repainting every frame: request only at shot boundaries plus a slow heartbeat.
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
+
     pub(crate) fn juliadive_frame(&mut self, ctx: &egui::Context) {
         const TARGET_L2: f64 = 15.0; // ≈ 32,000× — crosses PERT_JULIA_THRESHOLD (1e2) and 1e4
         const OCTAVES_PER_S: f64 = 2.0;

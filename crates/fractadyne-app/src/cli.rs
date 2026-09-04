@@ -1175,6 +1175,9 @@ pub(crate) struct HarnessModes {
     /// with periodic screenshots (see `uitest::JuliaDive`). Reproduces the dual-view Julia motion
     /// path deterministically (synthetic OS input proved unreliable for wheel/focus).
     pub(crate) juliadive: Option<crate::uitest::JuliaDive>,
+    /// CLI `--dualsettle [DIR]`: dev harness — dual view, live-hover c motion then idle, timed
+    /// settled screenshots (the 2026-09-04 blurry-Julia field report).
+    pub(crate) dualsettle: Option<crate::uitest::DualSettle>,
     /// CLI `--autodive [LOG10]`: unpaced autopilot dive that hammers the frame-cost controller and
     /// reports whether the lethal regime was reached. See `autopilot::AutoDive`.
     pub(crate) autodive: Option<crate::autopilot::AutoDive>,
@@ -1229,6 +1232,10 @@ impl crate::FractadyneApp {
         // --soak: sit at a deep view and assert the app keeps producing frames.
         if self.harness.soak.is_some() && gpu.is_some() {
             self.soak_frame(ctx);
+        }
+        // --dualsettle: dev harness for the dual-view Julia SETTLE path (same in-loop pattern).
+        if self.harness.dualsettle.is_some() && gpu.is_some() {
+            self.dualsettle_frame(ctx);
         }
         // --juliadive: dev harness for the dual-view Julia motion path (same in-loop pattern).
         if self.harness.juliadive.is_some() && gpu.is_some() {
