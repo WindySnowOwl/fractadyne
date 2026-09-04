@@ -12,6 +12,17 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The dual-view Julia no longer goes blurry (or flat) after the app sits in the
+  background** (beta.16; user-reported). Windows throttles an occluded window's frame
+  presentation to about once a second, and the renderer's wall-clock cost tracking read
+  those waits as GPU cost: overnight it squeezed the frame budget and the chunked-render
+  allowances down to their floors, so the next interaction rendered the Julia pane through
+  a crawl of tiny passes at reduced resolution - the blur - while the log filled with
+  lethal-band warnings for an idle GPU. The controller now detects presentation throttling
+  (frames that submitted no new work yet still took long measured the compositor, not the
+  queue) and freezes its wall-clock judgments while it lasts, instead of acting on them.
+  Budgets stay healthy in the background and the pane renders sharp immediately on return.
+
 - **A wrongly held palette mapping now heals itself** (beta.15; user-reported at an e10000
   Misiurewicz jump). "Normalize deep colors" decides its mapping once per view and holds it
   while the view refines - but a reading drained at the moment of a jump can belong to the

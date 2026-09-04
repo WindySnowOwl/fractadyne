@@ -3567,7 +3567,15 @@ impl FractadyneApp {
                     // untouched. This only updates what the NEXT pass would be allowed to ask for.
                     // ⚠LATCHED (`shed`) so a pass sitting in the band for many frames sheds once
                     // rather than re-shedding every frame — the ledger is already at the floor.
-                    let shed = if !shed && acc >= crate::tunables::cost().tdr_lethal_ms {
+                    // Under present throttling the wall accumulator measures the
+                    // COMPOSITOR (see `present_throttle_step`): a shed on it would floor the
+                    // licences off an idle GPU — the 2026-09-04 field log's exact lines.
+                    let throttled =
+                        self.perf.present_throttle >= crate::render::PRESENT_THROTTLE_FRAMES;
+                    let shed = if !shed
+                        && !throttled
+                        && acc >= crate::tunables::cost().tdr_lethal_ms
+                    {
                         chunk_band_retreat(&mut self.perf.chunk_bands[vs]);
                         crate::diag::log_line(
                             "render",
@@ -3584,7 +3592,15 @@ impl FractadyneApp {
                     // idle), far beyond any survivable pass — releasing the next dispatch onto
                     // a pass that is merely SLOW is how a 10 s single got company on its way
                     // to the TDR. The genuine release is the quick frame.
-                    if self.perf.last_dt_ms < crate::tunables::CHUNK_DRAIN_DT_MS
+                    if throttled && acc > target_ms * 6.0 {
+                        // Present-throttled: the quick present this gate waits for CANNOT
+                        // arrive, and `acc` is present-wait, not cost. Release on a short
+                        // backstop WITHOUT feeding either ledger — a poisoned price would
+                        // floor the very licences the shed above is protected from. Still
+                        // serialized-in-effect: at most one pass per backstop interval, so
+                        // passes cannot stack toward a TDR while throttled.
+                        self.perf.chunk_inflight[vs] = None;
+                    } else if self.perf.last_dt_ms < crate::tunables::CHUNK_DRAIN_DT_MS
                         || acc > target_ms * 60.0
                     {
                         // Drained (or the absolute backstop, so a machine whose presents never
@@ -6682,6 +6698,41 @@ pub(crate) fn budget_after_build_gate(cur: u64, next: u64, ok: bool, building: b
         (next, ok && !building)
     }
 }
+
+/// PRESENT-THROTTLE detector step. A frame that submitted NO new GPU work yet still took
+/// `thresh_ms` or longer measured the PRESENT PATH, not the queue: with nothing newly
+/// dispatched, the interval is acquire/present/idle by construction. A run of such frames is
+/// a compositor throttling this window (occluded/background windows present at ~1 Hz on
+/// Windows), and under it every wall-clock premise in the controller inverts:
+///   * the chunk drain's "a quick present proves the queue drained" can NEVER pass, so a
+///     serialized pass wedges, its wall accumulator inflates on pure present-wait, and the
+///     band licences get lethal-shed with the GPU idle;
+///   * the wedged (held, deduped) pass produces no new timestamps, so the measurement-
+///     starvation latch fires and hands pricing to the wall clock;
+///   * the wall clock then prices real dispatches at the throttle interval (~1 s) and
+///     crushes the frame budget to its floor.
+/// Measured end to end in the 2026-09-04 field log (6 h at ~1.26 fps, budget pinned at
+/// bootstrap, `IN-FLIGHT PASS IN THE LETHAL BAND: acc=949–1117ms (no drain yet)`, dozens of
+/// starvation latch/unlatch cycles) and reproduced from a copy of the session at idle. The
+/// counter resets on any frame that dispatched or presented quickly; `present_throttled`
+/// (>= [`PRESENT_THROTTLE_FRAMES`]) gates all three mechanisms — they FREEZE rather than
+/// walk on poisoned readings, and the drain releases on a short un-priced backstop so the
+/// walk still completes (bounded to one pass per backstop, so passes cannot stack).
+pub(crate) fn present_throttle_step(count: u32, dispatched: bool, dt_ms: f64, thresh_ms: f64) -> u32 {
+    if !dispatched && dt_ms >= thresh_ms {
+        count.saturating_add(1)
+    } else {
+        0
+    }
+}
+
+/// Consecutive no-work slow frames that establish "this window's presents are throttled".
+/// Five ≥100 ms present-only intervals is half a second of proof; a genuinely busy queue
+/// cannot produce them (busy queues stall frames that DID dispatch, which reset the count).
+pub(crate) const PRESENT_THROTTLE_FRAMES: u32 = 5;
+
+#[cfg(test)]
+mod present_throttle_tests;
 
 /// Has measurement STARVED for this view? True when a real dispatch has gone out since the last
 /// timing came back and nothing has arrived for `limit` frames. An idle view (no dispatch since

@@ -1000,6 +1000,10 @@ struct Perf {
     /// Raw (un-smoothed) last frame interval in ms — the motion-res controller needs the actual
     /// spike a real re-iterate frame caused, which the EMA `frame_ms` smooths away.
     last_dt_ms: f64,
+    /// Consecutive frames that submitted no new GPU work yet took ≥ the chunk-drain threshold —
+    /// the present-throttle detector (see `render::present_throttle_step`). Window-wide, not
+    /// per-view: presents belong to the window.
+    present_throttle: u32,
     /// Whether each view's LAST built frame really re-iterated (vs reprojected a held frame) —
     /// stamped at the end of `build_params`; the motion-res controller adapts only on the
     /// interval that follows a real frame.
@@ -1232,6 +1236,7 @@ impl Default for Perf {
             view_gen: [0, 0],
             frozen_budget: [0, 0],
             last_dt_ms: 0.0,
+            present_throttle: 0,
             prev_real: [false, false],
             maxiter_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
@@ -7463,6 +7468,12 @@ impl FractadyneApp {
         if !self.perf.wall_fallback || !(dt_ms > 0.01) {
             return;
         }
+        // Present-throttled: the interval measures the compositor, and pricing by it walks the
+        // budget on a clock the GPU never saw. FREEZE — no growth (the beta.48 lesson stands),
+        // no shrink (the 2026-09-04 crush) — until presents behave again.
+        if self.perf.present_throttle >= render::PRESENT_THROTTLE_FRAMES {
+            return;
+        }
         for v in 0..2 {
             // ⭐**A DISPATCH IS NOT PRICED BY THE INTERVAL IT WAS SUBMITTED IN.** Submission is
             // asynchronous: the frame that queues 2 s of GPU work returns from `update` in a
@@ -7690,6 +7701,7 @@ impl eframe::App for FractadyneApp {
                 // dispatches at all, so nothing to price) from tripping it.
                 const TS_STARVE_FRAMES: u64 = 30;
                 if !self.perf.wall_fallback
+                    && self.perf.present_throttle < render::PRESENT_THROTTLE_FRAMES
                     && render::measurement_starved(
                         self.perf.fe_dispatch_frame[v],
                         self.perf.ts_reading_frame[v],
@@ -7697,6 +7709,10 @@ impl eframe::App for FractadyneApp {
                         TS_STARVE_FRAMES,
                     )
                 {
+                    // (The throttle guard above: a held pass under a throttled present produces
+                    // no timestamps by CONSTRUCTION — swapping to wall pricing there hands the
+                    // budget to the compositor's 1 Hz clock, which is how the 2026-09-04 session
+                    // got its budget crushed to bootstrap overnight.)
                     self.perf.wall_fallback = true;
                     diag::log_line(
                         "wgpu",
@@ -7918,6 +7934,15 @@ impl eframe::App for FractadyneApp {
                 - std::mem::take(&mut self.perf.cap_sleep_ms))
                 .max(0.0);
             self.perf.last_dt_ms = dt; // the actual spike, with cap sleep removed
+            // Present-throttle detector: a no-work frame this slow measured the compositor.
+            let any_dispatch = self.perf.fe_dispatch_frame[0] == self.perf.frame_idx
+                || self.perf.fe_dispatch_frame[1] == self.perf.frame_idx;
+            self.perf.present_throttle = render::present_throttle_step(
+                self.perf.present_throttle,
+                any_dispatch,
+                dt,
+                tunables::CHUNK_DRAIN_DT_MS,
+            );
             self.perf.frame_ms = ema(self.perf.frame_ms, dt);
             // Same interval, second consumer: with no GPU timestamps this is the ONLY cost signal
             // the frame budget can have. Here `dt`, `fe_iter_frame`, and `fe_steps_last` all still
