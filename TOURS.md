@@ -65,7 +65,7 @@ A named coordinate. Referenced by keyframes and annotations via `location = "id"
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `id` | string | (required) | Unique name used to reference this location. |
-| `re` | string | (required) | Real part — full-precision decimal or an exact rational expression like (37+16i)/100. |
+| `re` | string | (required) | Real part — full-precision decimal or an expression: exact rationals like (37+16i)/100, functions/constants/powers like -0.5 + 0.25*cos(pi/4) (radians). |
 | `im` | string | (required) | Imaginary part. |
 | `zoom` | float | string | (unset) | Default magnification for keyframes that name this location without their own `zoom`. |
 | `thumb` | string | (unset) | Preview image path relative to the script (reserved for editors; not read by the player). |
@@ -105,7 +105,7 @@ A camera waypoint. The view eases from the previous keyframe to this one, ARRIVI
 | `transition_secs` | float | 0.6 | How long the arrival transition takes. Clamped to this keyframe's hold — a transition still ramping when the next keyframe arrives would never complete. Ignored for cut. |
 | `fade_out_secs` | float | 0 | Fade to black over the LAST this-many seconds of this keyframe's hold. Independent of transition, so one keyframe can rise from black and a later one sink back into it. When a short hold makes the two windows overlap, sinking wins. |
 | `location` | string | (inherit) | Named coordinate to sit on (see [[location]]), instead of inline re/im. |
-| `re` | string | (inherit) | Center, real part: full-precision decimal or an exact rational. Omit to inherit (pure zoom). |
+| `re` | string | (inherit) | Center, real part: full-precision decimal or an expression (rationals, functions, constants, ^). Omit to inherit (pure zoom). |
 | `im` | string | (inherit) | Center, imaginary part. |
 | `zoom` | float | string | (inherit, else 1) | Magnification here, e.g. 2667 or "6.5e94". Strings carry depths past f64's ~1e308 ceiling. |
 | `max_iter` | int | (inherit, else [render]) | Exact iteration budget at this keyframe, interpolated geometrically along the glide. One script-wide number cannot serve both a 1.33x home view and a 1e94x dive. |

@@ -3378,6 +3378,50 @@ impl FractadyneApp {
                 pass: leaked.is_empty(),
             });
 
+            // Functions, constants and powers (beta.17). Identities evaluated at the same
+            // 1e60×-class floor must agree far past f64 — an expression typed at depth is
+            // only useful if it carries the digits for that depth — and the refusal set
+            // (branch-ambiguous powers, complex args to real functions, DoS-scale trig
+            // arguments) must stay refused.
+            let idents: &[(&str, &str)] = &[
+                ("cos(pi/3)", "1/2"),
+                ("sqrt(2)^2", "2"),
+                ("root(-8,3)", "-2"),
+                ("ln(e)", "1"),
+                ("-1/2 + (1/4)*cos(pi/4)", "(sqrt(2)-4)/8"), // polar composition x0 + r·cos(θ)
+            ];
+            let mut bad = Vec::new();
+            for (a, b) in idents {
+                let d = match (
+                    fractadyne_core::parse_bf_prec(a, prec),
+                    fractadyne_core::parse_bf_prec(b, prec),
+                ) {
+                    (Some(x), Some(y)) => fractadyne_core::sub_f64(&x, &y, prec).abs(),
+                    _ => 1.0,
+                };
+                if !(d < 1.0e-50) {
+                    bad.push(format!("{a} vs {b}: Δ={d:.1e}"));
+                }
+            }
+            let refuse = ["2^i", "sin(i)", "root(-4,2)", "bogus(1)", "sin(1e999)"];
+            let leaked: Vec<&str> = refuse
+                .iter()
+                .copied()
+                .filter(|s| fractadyne_core::parse_complex_prec(s, 64).is_some())
+                .collect();
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Coords",
+                name: "expression functions & constants".into(),
+                params: format!("{} identities, {} refusals, {prec}-bit floor", idents.len(), refuse.len()),
+                result: if bad.is_empty() && leaked.is_empty() {
+                    "identities exact, all refused".into()
+                } else {
+                    format!("{}{}", bad.join("; "), if leaked.is_empty() { String::new() } else { format!(" ACCEPTED: {leaked:?}") })
+                },
+                threshold: "Δ<1e-50, all refused",
+                pass: bad.is_empty() && leaked.is_empty(),
+            });
+
             // Full-precision decimal round-trip must be untouched by the expression path.
             let deep = fractadyne_core::deep_roundtrip_bits(4096);
             push_check(&mut checks, &mut last_check_t, SelfCheck {

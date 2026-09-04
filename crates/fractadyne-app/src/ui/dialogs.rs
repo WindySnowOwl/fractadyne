@@ -340,8 +340,10 @@ impl FractadyneApp {
                 ui.label(
                     egui::RichText::new(
                         "Paste a center/zoom from someone else, or Copy to share. Coordinates \
-                         accept exact fractions (-3/4) and the real field accepts a whole \
-                         complex value ((37+16i)/100), which fills both.",
+                         accept expressions: exact fractions (-3/4), functions and constants \
+                         (-0.5 + 0.25*cos(pi/4), sqrt, root(x,n), ^; angles in radians), and \
+                         the real field accepts a whole complex value ((37+16i)/100), which \
+                         fills both.",
                     )
                     .weak()
                     .small(),

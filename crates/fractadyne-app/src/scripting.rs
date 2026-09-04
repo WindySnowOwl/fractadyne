@@ -493,7 +493,8 @@ struct KeyframeFile {
     /// Named coordinate to sit on (see `[[location]]`), instead of inline `re`/`im`.
     #[serde(default)]
     location: Option<String>,
-    /// Center, full-precision decimal or an exact rational (`-3/4`). Omit to inherit.
+    /// Center, full-precision decimal or an expression (`-3/4`, `-0.5 + 0.25*cos(pi/4)`).
+    /// Omit to inherit.
     #[serde(default)]
     re: Option<String>,
     #[serde(default)]
@@ -645,7 +646,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
         summary: "A named coordinate. Referenced by keyframes and annotations via `location = \"id\"`, so a 120-digit dive center is written once.",
         fields: &[
             SchemaField { name: "id", ty: "string", default: "(required)", doc: "Unique name used to reference this location." },
-            SchemaField { name: "re", ty: "string", default: "(required)", doc: "Real part — full-precision decimal or an exact rational expression like (37+16i)/100." },
+            SchemaField { name: "re", ty: "string", default: "(required)", doc: "Real part — full-precision decimal or an expression: exact rationals like (37+16i)/100, functions/constants/powers like -0.5 + 0.25*cos(pi/4) (radians)." },
             SchemaField { name: "im", ty: "string", default: "(required)", doc: "Imaginary part." },
             SchemaField { name: "zoom", ty: "float | string", default: "(unset)", doc: "Default magnification for keyframes that name this location without their own `zoom`." },
             SchemaField { name: "thumb", ty: "string", default: "(unset)", doc: "Preview image path relative to the script (reserved for editors; not read by the player)." },
@@ -685,7 +686,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "transition_secs", ty: "float", default: "0.6", doc: "How long the arrival transition takes. Clamped to this keyframe's hold — a transition still ramping when the next keyframe arrives would never complete. Ignored for cut." },
             SchemaField { name: "fade_out_secs", ty: "float", default: "0", doc: "Fade to black over the LAST this-many seconds of this keyframe's hold. Independent of transition, so one keyframe can rise from black and a later one sink back into it. When a short hold makes the two windows overlap, sinking wins." },
             SchemaField { name: "location", ty: "string", default: "(inherit)", doc: "Named coordinate to sit on (see [[location]]), instead of inline re/im." },
-            SchemaField { name: "re", ty: "string", default: "(inherit)", doc: "Center, real part: full-precision decimal or an exact rational. Omit to inherit (pure zoom)." },
+            SchemaField { name: "re", ty: "string", default: "(inherit)", doc: "Center, real part: full-precision decimal or an expression (rationals, functions, constants, ^). Omit to inherit (pure zoom)." },
             SchemaField { name: "im", ty: "string", default: "(inherit)", doc: "Center, imaginary part." },
             SchemaField { name: "zoom", ty: "float | string", default: "(inherit, else 1)", doc: "Magnification here, e.g. 2667 or \"6.5e94\". Strings carry depths past f64's ~1e308 ceiling." },
             SchemaField { name: "max_iter", ty: "int", default: "(inherit, else [render])", doc: "Exact iteration budget at this keyframe, interpolated geometrically along the glide. One script-wide number cannot serve both a 1.33x home view and a 1e94x dive." },

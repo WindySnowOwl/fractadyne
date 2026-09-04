@@ -206,13 +206,25 @@ pub fn parse_bf_prec(s: &str, min_prec: usize) -> Option<BigFloat> {
 }
 
 /// Parse a **complex** coordinate expression into `(re, im)`: decimals, an `i` suffix, the four
-/// arithmetic operators and parentheses. Written for exact-rational landmark entry — the
-/// canonical case is `(37+16i)/100`, a point that is *exactly* on ∂M and cannot be typed as a
-/// terminating decimal. Arithmetic runs at `min_prec` bits or higher.
+/// arithmetic operators, powers, parentheses, functions and constants. Written for exact landmark
+/// entry — the canonical cases are `(37+16i)/100`, a point *exactly* on ∂M that cannot be typed
+/// as a terminating decimal, and the polar form `x0 + r*cos(theta)` typed with literal values.
+/// Arithmetic runs at `min_prec` bits or higher, so an inexact result (e.g. `cos(pi/3)` composed
+/// at depth) carries enough digits for the zoom it's about to be viewed at.
 ///
-/// Grammar (total, no recursion depth beyond the input's own nesting):
+/// Grammar (total; nesting, `^` chains and function calls all bounded by [`EXPR_MAX_DEPTH`]):
 /// `sum := product (('+'|'-') product)*` · `product := unary (('*'|'/') unary)*` ·
-/// `unary := ('+'|'-')* atom` · `atom := '(' sum ')' | 'i' | number ['i']`
+/// `unary := ('+'|'-')* power` · `power := atom ['^' unary]` (right-assoc, so `2^-3` works and
+/// `-2^2 = -4`) · `atom := '(' sum ')' | name '(' sum [',' sum] ')' | constant | 'i' | number ['i']`
+///
+/// **Functions** (angles in radians): `sqrt` (complex-capable, principal branch), `cbrt` (real,
+/// odd — `cbrt(-8) = -2`), `root(x,n)` (real x, integer n ≥ 1; odd roots of negatives allowed),
+/// `sin cos tan asin acos atan`, `ln` (natural), `log` (base 10), `exp`, `abs` (complex → |z|).
+/// All others take REAL arguments and reject a nonzero imaginary part rather than guess a branch.
+/// **Constants**: `pi`, `e`, `tau`, `phi`. Names are case-insensitive.
+/// **`^`**: real base — any real exponent if the base is positive, integer exponents if negative
+/// (fractional powers of a negative are complex and branch-ambiguous — use `root`); complex base —
+/// integer exponents to ±4096. `0^0 = 1`.
 pub fn parse_complex_prec(s: &str, min_prec: usize) -> Option<(BigFloat, BigFloat)> {
     let t = s.trim();
     if t.is_empty() {
@@ -259,6 +271,50 @@ fn cx_div(a: &Cx, b: &Cx, p: usize) -> Option<Cx> {
     let re = a.0.mul(&b.0, p, RM).add(&a.1.mul(&b.1, p, RM), p, RM);
     let im = a.1.mul(&b.0, p, RM).sub(&a.0.mul(&b.1, p, RM), p, RM);
     Some((re.div(&den, p, RM), im.div(&den, p, RM)))
+}
+fn neg_bf(x: &BigFloat, p: usize) -> BigFloat {
+    cx_zero(p).sub(x, p, RM)
+}
+fn abs_bf(x: &BigFloat, p: usize) -> BigFloat {
+    if matches!(x.sign(), Some(Sign::Neg)) { neg_bf(x, p) } else { x.clone() }
+}
+/// `|z| = √(re²+im²)`. Expression values are coordinate-scale, so the squares can't meaningfully
+/// overflow — and if they do, the resulting `inf` is rejected by the caller's finiteness check.
+fn cx_abs(a: &Cx, p: usize) -> BigFloat {
+    a.0.mul(&a.0, p, RM).add(&a.1.mul(&a.1, p, RM), p, RM).sqrt(p, RM)
+}
+/// Principal complex square root: real input stays on the real/imaginary axes exactly
+/// (`sqrt(-1) = i`); otherwise `u = √((|z|+re)/2)`, `v = sign(im)·√((|z|−re)/2)`.
+fn cx_sqrt(a: &Cx, p: usize) -> Cx {
+    if a.1.is_zero() {
+        return if matches!(a.0.sign(), Some(Sign::Neg)) {
+            (cx_zero(p), neg_bf(&a.0, p).sqrt(p, RM))
+        } else {
+            (a.0.sqrt(p, RM), cx_zero(p))
+        };
+    }
+    let half = BigFloat::from_f64(0.5, p);
+    let m = cx_abs(a, p);
+    let u = m.add(&a.0, p, RM).mul(&half, p, RM).sqrt(p, RM);
+    let v = m.sub(&a.0, p, RM).mul(&half, p, RM).sqrt(p, RM);
+    let v = if matches!(a.1.sign(), Some(Sign::Neg)) { neg_bf(&v, p) } else { v };
+    (u, v)
+}
+/// Is `x` small enough to hand to a transcendental? Argument reduction for `sin(1e99999)` costs
+/// time proportional to the EXPONENT, and no coordinate legitimately feeds a trig/exp argument
+/// past ±2^32 — this is untrusted input (the `.kfr` threat model), so refuse rather than pay.
+fn small_enough(x: &BigFloat) -> bool {
+    x.exponent().is_none_or(|e| e <= 32)
+}
+/// The exponent as an exact `i64`, or `None` if it isn't an integer (or is absurdly large).
+/// Exactness is checked against the bignum itself, not just the `f64` image, so `2.0000…1`
+/// at deep precision can't masquerade as `2`.
+fn int_exponent(ex: &BigFloat, p: usize) -> Option<i64> {
+    let f = to_f64(ex);
+    if !f.is_finite() || f.fract() != 0.0 || f.abs() > 9.0e15 {
+        return None;
+    }
+    ex.sub(&BigFloat::from_f64(f, p), p, RM).is_zero().then_some(f as i64)
 }
 
 /// Parse one decimal literal at **at least** `min_prec` bits.
@@ -340,19 +396,41 @@ impl Expr<'_> {
         }
     }
 
+    /// Signs are consumed iteratively, not by self-recursion — a pasted `-----…` must not be
+    /// able to blow the stack (untrusted input, same threat model as the depth cap).
     fn unary(&mut self) -> Option<Cx> {
-        match self.peek() {
-            Some(b'-') => {
-                self.i += 1;
-                let v = self.unary()?;
-                Some(cx_neg(&v, self.p))
+        let mut neg = false;
+        loop {
+            match self.peek() {
+                Some(b'-') => {
+                    self.i += 1;
+                    neg = !neg;
+                }
+                Some(b'+') => {
+                    self.i += 1;
+                }
+                _ => break,
             }
-            Some(b'+') => {
-                self.i += 1;
-                self.unary()
-            }
-            _ => self.atom(),
         }
+        let v = self.power()?;
+        Some(if neg { cx_neg(&v, self.p) } else { v })
+    }
+
+    /// `atom ['^' unary]` — right-associative (`2^3^2 = 2^(3^2) = 512`), and the exponent
+    /// re-enters `unary` so `2^-3` parses. Unary minus binds looser: `-2^2 = -4`.
+    fn power(&mut self) -> Option<Cx> {
+        let base = self.atom()?;
+        if self.peek() != Some(b'^') {
+            return Some(base);
+        }
+        if self.depth >= EXPR_MAX_DEPTH {
+            return None;
+        }
+        self.i += 1;
+        self.depth += 1;
+        let e = self.unary()?;
+        self.depth -= 1;
+        self.pow_value(&base, &e)
     }
 
     fn atom(&mut self) -> Option<Cx> {
@@ -372,11 +450,198 @@ impl Expr<'_> {
                 self.i += 1;
                 Some(v)
             }
-            b'i' | b'I' => {
-                self.i += 1;
-                Some((cx_zero(self.p), BigFloat::from_f64(1.0, self.p)))
-            }
+            c if c.is_ascii_alphabetic() => self.word(),
             _ => self.number(),
+        }
+    }
+
+    /// An alphanumeric name: the imaginary unit, a constant, or a function call. Lexed as a
+    /// whole word so `pi` can never half-read as `p·i`, and unknown names are a parse error —
+    /// a coordinate must never be silently misread.
+    fn word(&mut self) -> Option<Cx> {
+        let start = self.i;
+        while matches!(self.b.get(self.i), Some(c) if c.is_ascii_alphanumeric()) {
+            self.i += 1;
+        }
+        let name = std::str::from_utf8(&self.b[start..self.i]).ok()?;
+        let p = self.p;
+        let eq = |n: &str| name.eq_ignore_ascii_case(n);
+        if eq("i") {
+            return Some((cx_zero(p), BigFloat::from_f64(1.0, p)));
+        }
+        if eq("pi") {
+            return Some((self.cc.pi(p, RM), cx_zero(p)));
+        }
+        if eq("e") {
+            return Some((self.cc.e(p, RM), cx_zero(p)));
+        }
+        if eq("tau") {
+            return Some((double_bf(&self.cc.pi(p, RM)), cx_zero(p)));
+        }
+        if eq("phi") {
+            let v = BigFloat::from_f64(5.0, p)
+                .sqrt(p, RM)
+                .add(&BigFloat::from_f64(1.0, p), p, RM)
+                .mul(&BigFloat::from_f64(0.5, p), p, RM);
+            return Some((v, cx_zero(p)));
+        }
+        self.call(name)
+    }
+
+    /// `name '(' sum [',' sum] ')'` — `root` is the only two-argument function.
+    fn call(&mut self, name: &str) -> Option<Cx> {
+        self.ws();
+        if self.b.get(self.i) != Some(&b'(') || self.depth >= EXPR_MAX_DEPTH {
+            return None;
+        }
+        self.i += 1;
+        self.depth += 1;
+        let a = self.sum()?;
+        let second = if self.peek() == Some(b',') {
+            self.i += 1;
+            Some(self.sum()?)
+        } else {
+            None
+        };
+        self.depth -= 1;
+        self.ws();
+        if self.b.get(self.i) != Some(&b')') {
+            return None;
+        }
+        self.i += 1;
+        self.apply(name, &a, second.as_ref())
+    }
+
+    fn apply(&mut self, name: &str, a: &Cx, second: Option<&Cx>) -> Option<Cx> {
+        let p = self.p;
+        let eq = |n: &str| name.eq_ignore_ascii_case(n);
+        // The real-argument gate: reject a nonzero imaginary part instead of guessing a branch.
+        let real = |v: &Cx| v.1.is_zero().then(|| v.0.clone());
+        if eq("root") {
+            // n-th root: real x, integer n ≥ 1; odd roots of negatives are real and allowed.
+            let x = real(a)?;
+            let n = int_exponent(&real(second?)?, p)?;
+            if !(1..=1_000_000).contains(&n) {
+                return None;
+            }
+            if x.is_zero() {
+                return Some((cx_zero(p), cx_zero(p)));
+            }
+            let neg = matches!(x.sign(), Some(Sign::Neg));
+            if neg && n % 2 == 0 {
+                return None; // even root of a negative — complex; use sqrt for n=2
+            }
+            let inv_n = BigFloat::from_f64(1.0, p).div(&BigFloat::from_f64(n as f64, p), p, RM);
+            let v = abs_bf(&x, p).pow(&inv_n, p, RM, &mut self.cc);
+            return Some((if neg { neg_bf(&v, p) } else { v }, cx_zero(p)));
+        }
+        if second.is_some() {
+            return None; // every other function takes exactly one argument
+        }
+        if eq("sqrt") {
+            return Some(cx_sqrt(a, p));
+        }
+        if eq("abs") {
+            return Some(if a.1.is_zero() {
+                (abs_bf(&a.0, p), cx_zero(p))
+            } else {
+                (cx_abs(a, p), cx_zero(p))
+            });
+        }
+        if eq("cbrt") {
+            let x = real(a)?;
+            let neg = matches!(x.sign(), Some(Sign::Neg));
+            let v = abs_bf(&x, p).cbrt(p, RM);
+            return Some((if neg { neg_bf(&v, p) } else { v }, cx_zero(p)));
+        }
+        let x = real(a)?;
+        let v = if eq("sin") || eq("cos") || eq("tan") || eq("exp") {
+            if !small_enough(&x) {
+                return None; // argument reduction at absurd magnitude — see `small_enough`
+            }
+            if eq("sin") {
+                x.sin(p, RM, &mut self.cc)
+            } else if eq("cos") {
+                x.cos(p, RM, &mut self.cc)
+            } else if eq("tan") {
+                x.tan(p, RM, &mut self.cc)
+            } else {
+                x.exp(p, RM, &mut self.cc)
+            }
+        } else if eq("asin") {
+            x.asin(p, RM, &mut self.cc)
+        } else if eq("acos") {
+            x.acos(p, RM, &mut self.cc)
+        } else if eq("atan") {
+            x.atan(p, RM, &mut self.cc)
+        } else if eq("ln") {
+            x.ln(p, RM, &mut self.cc)
+        } else if eq("log") {
+            x.log10(p, RM, &mut self.cc)
+        } else {
+            return None; // unknown function name
+        };
+        // A domain error (ln of a negative, asin(2)) comes back NaN and is rejected here, so it
+        // can't hide inside a larger expression that happens to survive the top-level check.
+        (!v.is_nan()).then_some((v, cx_zero(p)))
+    }
+
+    /// `base ^ exponent`. The exponent must be real; see the grammar doc for the base cases.
+    fn pow_value(&mut self, base: &Cx, e: &Cx) -> Option<Cx> {
+        let p = self.p;
+        if !e.1.is_zero() {
+            return None;
+        }
+        let ex = &e.0;
+        if !small_enough(ex) {
+            return None;
+        }
+        if base.1.is_zero() {
+            let b = &base.0;
+            if b.is_zero() {
+                // 0^0 = 1 (the parser convention), 0^positive = 0, 0^negative undefined.
+                if ex.is_zero() {
+                    return Some((BigFloat::from_f64(1.0, p), cx_zero(p)));
+                }
+                return if matches!(ex.sign(), Some(Sign::Neg)) {
+                    None
+                } else {
+                    Some((cx_zero(p), cx_zero(p)))
+                };
+            }
+            if !matches!(b.sign(), Some(Sign::Neg)) {
+                let v = b.pow(ex, p, RM, &mut self.cc);
+                return (!v.is_nan()).then_some((v, cx_zero(p)));
+            }
+            // Negative real base: integer exponents only (odd roots go through `root`/`cbrt`).
+            let n = int_exponent(ex, p)?;
+            let v = abs_bf(b, p).pow(ex, p, RM, &mut self.cc);
+            if v.is_nan() {
+                return None;
+            }
+            return Some((if n & 1 == 1 { neg_bf(&v, p) } else { v }, cx_zero(p)));
+        }
+        // Complex base: small integer exponents by binary powering.
+        let n = int_exponent(ex, p)?;
+        if n.unsigned_abs() > 4096 {
+            return None;
+        }
+        let mut acc = (BigFloat::from_f64(1.0, p), cx_zero(p));
+        let mut sq = base.clone();
+        let mut k = n.unsigned_abs();
+        while k > 0 {
+            if k & 1 == 1 {
+                acc = cx_mul(&acc, &sq, p);
+            }
+            k >>= 1;
+            if k > 0 {
+                sq = cx_mul(&sq, &sq, p);
+            }
+        }
+        if n < 0 {
+            cx_div(&(BigFloat::from_f64(1.0, p), cx_zero(p)), &acc, p)
+        } else {
+            Some(acc)
         }
     }
 

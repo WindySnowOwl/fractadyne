@@ -12,6 +12,17 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Coordinates now accept expressions with functions, constants, and powers** (beta.17;
+  user-requested). Everywhere a coordinate is typed - the Go-to dialog, tour scripts,
+  location files, `--center` - the evaluator now understands `sqrt`, `cbrt`, `root(x,n)`,
+  the trig functions and their inverses (radians), `ln`/`log`/`exp`, `abs`, powers (`^`),
+  and the constants `pi`, `e`, `tau`, `phi`, alongside the existing exact rationals. This
+  covers polar-form entry directly: `-0.5 + 0.25*cos(pi/4)`. Everything evaluates in
+  arbitrary precision matched to the target zoom, so an expression typed at 1e50x carries
+  the digits that depth needs. Ambiguous or hostile input stays refused rather than
+  guessed at: fractional powers of negatives, complex arguments to real functions, and
+  absurd-magnitude trig arguments are parse errors.
+
 - **The dual-view Julia no longer goes blurry (or flat) after the app sits in the
   background** (beta.16; user-reported). Windows throttles an occluded window's frame
   presentation to about once a second, and the renderer's wall-clock cost tracking read

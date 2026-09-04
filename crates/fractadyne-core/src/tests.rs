@@ -1267,6 +1267,103 @@ fn parse_bf_rejects_malformed() {
     assert!(parse_bf(&deep).is_none(), "unbounded nesting accepted");
 }
 
+/// The expression language beyond rationals: functions, constants and powers evaluate exactly
+/// where an exact value exists, and complex-capable cases stay on the right axes.
+#[test]
+fn parse_bf_functions_and_powers() {
+    for (src, want) in [
+        ("2^10", 1024.0),
+        ("2^-2", 0.25),
+        ("-2^2", -4.0), // unary minus binds looser than ^
+        ("(-2)^3", -8.0),
+        ("2^3^2", 512.0), // right-associative
+        ("sqrt(4)", 2.0),
+        ("cbrt(-8)", -2.0),
+        ("root(-32, 5)", -2.0),
+        ("abs(-3/4)", 0.75),
+        ("abs(3-4i)", 5.0),
+        ("cos(0)", 1.0),
+        ("ln(1)", 0.0),
+        ("log(100)", 2.0),
+        ("exp(0)", 1.0),
+        ("0^0", 1.0),
+        ("SQRT(4)", 2.0), // names are case-insensitive
+    ] {
+        let v = parse_bf(src).unwrap_or_else(|| panic!("rejected {src:?}"));
+        assert!((to_f64(&v) - want).abs() < 1e-12, "{src:?} → {}", to_f64(&v));
+    }
+    // Complex results: sqrt(-1) = i exactly, (1+i)^4 = −4, and a negative integer power of a
+    // complex base goes through the reciprocal.
+    let (r, i) = parse_complex_prec("sqrt(-1)", 64).unwrap();
+    assert_eq!((to_f64(&r), to_f64(&i)), (0.0, 1.0));
+    let (r, i) = parse_complex_prec("(1+i)^4", 64).unwrap();
+    assert!((to_f64(&r) + 4.0).abs() < 1e-12 && to_f64(&i).abs() < 1e-12);
+    let (r, i) = parse_complex_prec("(1+i)^-2", 64).unwrap();
+    assert!(to_f64(&r).abs() < 1e-12 && (to_f64(&i) + 0.5).abs() < 1e-12);
+}
+
+/// Identities must hold far past f64 when a precision floor is supplied — the whole point of
+/// evaluating at target-depth precision is that `cos(pi/3)` typed at 1e50× is usable there.
+#[test]
+fn parse_bf_function_identities_at_depth() {
+    let prec = precision_for_octaves(200);
+    let close = |a: &str, b: &str| {
+        let x = parse_bf_prec(a, prec).unwrap_or_else(|| panic!("rejected {a:?}"));
+        let y = parse_bf_prec(b, prec).unwrap_or_else(|| panic!("rejected {b:?}"));
+        let d = x.sub(&y, prec, astro_float::RoundingMode::None);
+        let ok = d.is_zero() || d.exponent().map(|e| (e as i64) < -180).unwrap_or(true);
+        assert!(ok, "{a} != {b} (diff exponent {:?})", d.exponent());
+    };
+    close("cos(pi/3)", "1/2");
+    close("sqrt(2)^2", "2");
+    close("ln(e)", "1");
+    close("tan(pi/4)", "1");
+    close("atan(1)*4", "pi");
+    close("root(2,10)", "2^(1/10)");
+    close("phi^2", "phi+1");
+    close("tau", "2*pi");
+    // The polar-entry composition: x0 + r·cos(θ), all literal values.
+    close("-1/2 + (1/4)*cos(pi/4)", "(sqrt(2)-4)/8");
+}
+
+/// Function/power inputs that must be refused: wrong arity, unknown names, complex arguments
+/// to real functions, branch-ambiguous powers, domain errors, and DoS-scale arguments.
+#[test]
+fn parse_bf_functions_reject_malformed() {
+    for bad in [
+        "sin()",       // no argument
+        "sin(1,2)",    // wrong arity
+        "root(2)",     // root needs n
+        "root(2,0)",   // n ≥ 1
+        "root(-4,2)",  // even root of a negative
+        "root(2,1/2)", // n must be an integer
+        "bogus(1)",    // unknown function
+        "pi(1)",       // a constant is not a function
+        "sin(i)",      // complex argument to a real function
+        "2^i",         // complex exponent
+        "(-2)^(1/2)",  // fractional power of a negative — branch-ambiguous
+        "(1+i)^(1/2)", // fractional power of a complex base
+        "(1+i)^99999", // complex integer-exponent cap
+        "sin(1e999)",  // transcendental argument-magnitude cap
+        "2^(1e999)",
+        "ln(-1)", // domain error must not leak NaN into a coordinate
+        "asin(2)",
+        "0^-1",
+        "sqrt 4", // parens required
+        "sin(1",  // unbalanced
+        "cos",    // bare function name
+    ] {
+        assert!(parse_complex_prec(bad, 64).is_none(), "accepted {bad:?}");
+    }
+    // A sign flood parses in constant stack (iterative unary), never by recursion.
+    let mut flood = "-".repeat(100_000);
+    flood.push('1');
+    assert_eq!(to_f64(&parse_bf(&flood).unwrap()), 1.0); // even count of '-'
+    // A ^ chain is depth-bounded like parentheses.
+    let chain = format!("2{}", "^2".repeat(5_000));
+    assert!(parse_bf(&chain).is_none(), "unbounded ^ chain accepted");
+}
+
 #[test]
 fn fuzz_parse_complex_panic_free() {
     let mut s = 0x0bad_f00d_dead_beefu64;
@@ -1276,7 +1373,7 @@ fn fuzz_parse_complex_panic_free() {
         s ^= s << 17;
         s
     };
-    let charset = b"0123456789.eE+-*/()iI \t\0xyz";
+    let charset = b"0123456789.eE+-*/()iI \t\0xyz^,sqrtcbnlogaphu";
     for _ in 0..20_000 {
         let len = (next() % 64) as usize;
         let mut buf = String::with_capacity(len);
