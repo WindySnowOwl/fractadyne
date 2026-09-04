@@ -62,10 +62,15 @@ jobs:
           esac
           gh release create "$@"
 
-      # The assets are three zips and a tarball with near-identical names, and which one a visitor
-      # wants — especially whether they want `-accelerated.zip` — is not readable from the file
+      # The assets are two zips and two tarballs with near-identical names, and which one a visitor
+      # wants — especially whether they want an `-accelerated` one — is not readable from the file
       # list. Prepend a short guide to the generated notes so the answer is on the page they land
       # on, not only in a README inside the download.
+      #
+      # ⚠**The guide is hand-maintained and the asset list is not** — adding a build job does NOT
+      # add its row here. v0.2.41-beta.20 shipped with the linux-accelerated tarball attached and
+      # absent from this table, which reads to a visitor exactly like a build that failed. If you
+      # add or rename an artifact, edit `.github/release-notes-preamble.md` in the same commit.
       #
       # A SEPARATE step, and idempotent, deliberately: it edits a release that already exists, so
       # if this fails the release is still there with its generated notes (degraded, not blocked),
