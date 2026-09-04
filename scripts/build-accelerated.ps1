@@ -39,15 +39,38 @@
   Skip the clean-room verification. NOT recommended - read the comment above the verify step
   before you reach for this.
 
+.PARAMETER Run
+  Launch the freshly PACKAGED fractadyne.exe (from the dist folder, with its DLLs beside it -
+  the exact bytes a user would run) once the build, packaging and verification have finished.
+  The app starts detached in your normal environment (your real config dir and session), so
+  this is "build it, then hand it to me", not another test harness.
+
+.PARAMETER RunArgs
+  Extra command-line arguments for the -Run launch, as one string (e.g. -RunArgs "--bignum rug"
+  or -RunArgs "--selftest"). Ignored without -Run.
+
 .EXAMPLE
   .\scripts\build-accelerated.ps1
+
+.EXAMPLE
+  .\scripts\build-accelerated.ps1 -Run
+
+.EXAMPLE
+  .\scripts\build-accelerated.ps1 -Run -RunArgs "--bignum rug"
 #>
+#Requires -Version 7.0
+# (PowerShell 7+, not Windows PowerShell 5.1: under 5.1, `2>&1` wraps a native command's
+# stderr in ErrorRecords, and this script's ErrorActionPreference = Stop then turns the
+# app's ordinary startup banner into a terminating error at the verify step. Measured,
+# not theoretical - the failure is confusing enough to deserve this one-line refusal.)
 [CmdletBinding()]
 param(
     [string]$Tag,
     [string]$OutDir = "dist",
     [switch]$Deps,
-    [switch]$SkipVerify
+    [switch]$SkipVerify,
+    [switch]$Run,
+    [string]$RunArgs = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -283,3 +306,18 @@ $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 Write-Host ""
 Write-Host "Packaged: $zip ($mb MB)" -ForegroundColor Green
 Get-ChildItem $dir | ForEach-Object { Write-Host ("  " + $_.Name) }
+
+# ---------------------------------------------------------------- run (optional)
+# Launches the PACKAGED exe from the dist folder - its DLLs sit beside it, so this runs the
+# exact bytes a user would, with no PATH additions (the same discipline as the verify step).
+# Detached: the script's job is done; the app is yours.
+if ($Run) {
+    $runExe = Join-Path $dir "fractadyne.exe"
+    Step "Launching $runExe"
+    if ($RunArgs) {
+        Write-Host "  args: $RunArgs"
+        Start-Process -FilePath $runExe -WorkingDirectory $dir -ArgumentList $RunArgs
+    } else {
+        Start-Process -FilePath $runExe -WorkingDirectory $dir
+    }
+}
