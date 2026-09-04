@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A wrongly held palette mapping now heals itself** (beta.15; user-reported at an e10000
+  Misiurewicz jump). "Normalize deep colors" decides its mapping once per view and holds it
+  while the view refines - but a reading drained at the moment of a jump can belong to the
+  previous view, and a wrong adopted range was held forever. Under the log color scale that
+  rendered the whole frame one flat colour (a shallow range's logarithm is constant across a
+  deep view's narrow escape band); without log it merely aliased, which is why unchecking
+  the box seemed to fix it. A held mapping is now defeasible: a whole-frame reading disjoint
+  from the held window re-adopts immediately, so the palette recovers within one frame
+  instead of freezing until the next view change.
+
 - **New: the Misiurewicz explorer** (beta.14, Navigate menu). A gallery of Misiurewicz
   points - the curated points-of-interest plus dozens found by a seeded Newton sweep of the
   small preperiod/period types - each with a live-rendered thumbnail and its multiplier

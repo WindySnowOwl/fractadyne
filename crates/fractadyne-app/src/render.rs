@@ -3277,7 +3277,23 @@ impl FractadyneApp {
                         // frames read [46422,54614] then [54614,63736] — adjacent windows, never a
                         // frame range. After: [45075,63736] on the first reading.
                         match nfeed {
-                            NormFeed::Hold => {} // decided for this view — held while it refines
+                            NormFeed::Hold => {
+                                // Held — unless the reading proves the hold wrong (see
+                                // `norm_hold_break`): then re-adopt instead of freezing a
+                                // mapping for a picture that is not on screen.
+                                if let Some(held) = self.perf.norm_range[vb] {
+                                    if norm_hold_break(held, (mn, mx)) {
+                                        crate::diag::trace(
+                                            "gpu",
+                                            format!(
+                                                "norm hold BROKEN: held [{:.0},{:.0}] vs frame [{mn:.0},{mx:.0}] — re-adopting",
+                                                held.0, held.1
+                                            ),
+                                        );
+                                        self.perf.norm_range[vb] = Some((mn, mx));
+                                    }
+                                }
+                            }
                             NormFeed::Adopt => {
                                 self.perf.norm_range[vb] = Some((mn, mx));
                                 self.perf.norm_locked[vb] = true;
@@ -6261,6 +6277,25 @@ pub(crate) fn norm_feed_decision(sig: u64, prev_sig: u64, locked: bool, interact
         return NormFeed::Hold;
     }
     NormFeed::Adopt
+}
+
+/// A held mapping is DEFEASIBLE. Refinement readings (supersampling stages, settle tiles,
+/// chunk refreshes) always share the held frame's escape range — that is what makes holding
+/// sound. A whole-frame reading DISJOINT from the held window, beyond a generous slack, is
+/// therefore not refinement: it is evidence the hold is mapping a DIFFERENT PICTURE than the
+/// one on screen, and holding on would freeze a wrong palette until the next signature
+/// change. The field case (2026-09-04, an e10000 Misiurewicz jump): a stale in-flight
+/// reading can be drained under the NEW view's signature — `nsig` is computed at drain time,
+/// the reading belongs to a render submitted frames earlier — so a shallow range like
+/// [6, 191] gets adopted and LOCKED for a view whose real escapes sit at [181573, 182297].
+/// Under the log mapping that is ln(v−6) over a 0.4% band — ONE FLAT COLOUR (linear merely
+/// aliases, which is why "without log it works" was the report). The break re-adopts within
+/// one reading, healing every variant of the wrong-adopt race; the structural fix (tagging
+/// readings with the SUBMITTING frame's signature) is filed in TODO.md.
+pub(crate) fn norm_hold_break(held: (f32, f32), reading: (f32, f32)) -> bool {
+    let (hlo, hhi) = held;
+    let slack = (hhi - hlo).max(1.0) * 4.0;
+    reading.1 < hlo - slack || reading.0 > hhi + slack
 }
 
 #[cfg(test)]

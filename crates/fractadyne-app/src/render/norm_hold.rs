@@ -36,3 +36,41 @@ fn touching_a_decided_view_does_not_remap_it() {
     // after release: sig unchanged, still locked
     assert_eq!(norm_feed_decision(42, 42, true, false), NormFeed::Hold);
 }
+
+/// A held mapping is defeasible (`norm_hold_break`): a whole-frame reading DISJOINT from the
+/// held window beyond the 4x-width slack proves the hold maps a different picture. The field
+/// case shaped these numbers: a stale [6, 191] adopted for a view whose escapes sit at
+/// [181573, 182297] — under the log mapping, one flat colour until the next signature change.
+#[test]
+fn a_disjoint_reading_breaks_the_hold() {
+    use super::norm_hold_break;
+    // The 2026-09-04 e10000 field case: reading five orders above the held window.
+    assert!(norm_hold_break((6.0, 191.0), (181_573.0, 181_752.0)));
+    // And the mirror image (held deep, shallow frame arrives — e.g. after a Home jump).
+    assert!(norm_hold_break((181_573.0, 182_297.0), (6.0, 191.0)));
+}
+
+/// Refinement readings — subsets, near-misses, modest extensions — must NOT break the hold:
+/// that stability is the entire point of holding (the settle re-mapping report).
+#[test]
+fn refinement_readings_keep_the_hold() {
+    use super::norm_hold_break;
+    let held = (181_573.0, 182_297.0);
+    assert!(!norm_hold_break(held, (181_573.0, 181_752.0)), "subset");
+    assert!(!norm_hold_break(held, (181_400.0, 182_400.0)), "modest extension");
+    assert!(!norm_hold_break(held, (182_300.0, 183_000.0)), "adjacent above, inside slack");
+    // Slack is 4x the held width (724 -> 2896): a reading starting just inside survives...
+    assert!(!norm_hold_break(held, (185_100.0, 185_200.0)));
+    // ...and one clearly beyond it does not.
+    assert!(norm_hold_break(held, (185_300.0, 185_400.0)));
+}
+
+/// A degenerate held window (width ~0) still gets a usable slack (the max(1.0) floor), so a
+/// hold on a single-value range is breakable by genuinely different content but not by
+/// jitter around the same value.
+#[test]
+fn degenerate_held_windows_use_the_slack_floor() {
+    use super::norm_hold_break;
+    assert!(!norm_hold_break((100.0, 100.0), (99.0, 103.0)));
+    assert!(norm_hold_break((100.0, 100.0), (105.0, 110.0)));
+}
