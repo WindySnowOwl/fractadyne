@@ -470,9 +470,13 @@ impl FractadyneApp {
                 // Julia reference point, schedule the repaint. This is the real actuator,
                 // not a copy of it.
                 let ph = t * 2.2;
+                // ⚠The c-arc crosses INTERIOR c values on purpose (the 2026-09-04 log: the
+                // lethal band fired with c ≈ −0.050+0.631i, where the Julia set has large
+                // interior basins — every interior pixel runs the FULL iteration ask, which
+                // is what makes a shallow Julia frame cost seconds under a 1.5M base).
                 let coord = egui::vec2(
-                    (-0.032_98 + 0.012 * ph.cos()) as f32,
-                    (0.772_92 + 0.012 * ph.sin()) as f32,
+                    (-0.050_25 + 0.012 * ph.cos()) as f32,
+                    (0.630_56 + 0.012 * ph.sin()) as f32,
                 );
                 self.julia_c = (coord.x as f64, coord.y as f64);
                 self.pointer.settle_t[1] = ctx.input(|i| i.time);
