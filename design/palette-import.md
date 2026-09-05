@@ -134,6 +134,42 @@ inside a uniform buffer) or add a 1-D palette texture at binding 3; the texture 
 uniform is a smaller diff. **Both `ColorU` definitions must change together** — the live one and
 the export one — or offline renders silently keep the old palette.
 
+### ⭐DECIDED (user, 2026-09-05): ONE path — everything goes through the LUT
+
+The alternative was to keep the existing ≤8-stop shader path untouched and add the LUT only for
+palettes needing more, which would have held every current render byte-identical and kept the
+goldens and corpus green by construction. **That is explicitly NOT the plan.** Presets, the custom
+gradient editor and every import all bake to the same LUT, and the old stop-walking path goes
+away. One code path, one set of semantics, no "which palette am I on" branch to reason about.
+
+⚠**This moves pixels, and that is accepted in advance.** Baking a piecewise-linear stop list into
+N entries and interpolating between them reproduces the original exactly *except* near stop
+positions that fall between LUT entries, where the kink is rounded. So:
+
+- `--selftest` goldens (**18/18**) will drift.
+- The F3 corpus (**38/38 at maxD 0**) will drift — every row, since the colour mapping changed.
+
+**Both get a deliberate re-bless, AFTER the change is shown correct — never before.** The order
+matters: re-blessing first turns the gate into a rubber stamp and destroys the only record of the
+old output.
+
+⭐**Acceptance criteria for the re-bless** (so "it changed" is not confused with "it broke"):
+
+1. The delta must be **small and explainable** — bounded by LUT quantisation, concentrated at stop
+   boundaries. Measure it (decoded-RGB maxD / meanΔ per corpus row), do not eyeball it. A large or
+   widely-spread delta means the bake is wrong, not that the gate is stale.
+2. **Raising the LUT size must shrink the delta.** Bake at 1024 and at 4096 and compare against the
+   pre-change render: if the error does not fall, the difference is not quantisation and the bake
+   has a real bug.
+3. A **flat-segment `.map`** must come back with its bands intact — that is the case the whole
+   design exists for, and it is the one an interpolating bake would quietly smooth.
+4. `validation/golden/BLESSED-GPU.txt` must survive the re-bless (it is what gives non-3080
+   testers the cross-GPU tolerance instead of strict comparison).
+
+⚠**Budget the corpus re-bless deliberately**: blessing is far more expensive than checking, and
+row 39 alone took ~6,600 s. Re-bless the routine 38 first, and treat the extreme row as its own
+scheduled job.
+
 ## 5. The three fidelity traps
 
 Ranked by how quietly they produce a wrong picture that survives review:
