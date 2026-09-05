@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The ring view gets its own add and remove controls** (beta.32). Adding and removing stops in the
+  ring was possible but invisible — a double-click and a right-click, with nothing on screen to
+  suggest either, so the ring was a view you could rearrange but not build in. It now has the same
+  affordances as the bar: an **outer track** you click at whatever point you want the new stop, and
+  a **⊕ / ⊖ pair in the middle of the ring** for "add one in the widest gap" and "remove the
+  selected stop". The middle of a ring is the one place on it that isn't a position, which is why
+  the buttons live there.
+
 - **A ring view, an add line, and a saved gradient library** (beta.31). The gradient editor gains a
   **Ring** view: a palette is *cycled*, so it is really a circle, and the ring is the only place the
   **seam** — the join the renderer crosses on every sweep — can be seen at all. A gradient that

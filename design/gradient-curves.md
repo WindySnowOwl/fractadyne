@@ -448,6 +448,18 @@ the widget rather than a reason to skip tests:
   - **An add lane above the bar** whose *line* is the click target ("click where you want it"),
     with a `⊕` at the end for the widest gap — the one thing a button can decide. The old
     double-click-on-bare-strip stays as the fast route.
+    ⚠**And the ring needed the same, which the first pass missed** (beta.32, author-reported). The
+    ring shipped with add and remove reachable only by double-click and right-click — gestures with
+    nothing on screen to suggest them, so the ring was a view you could *rearrange* but not *build
+    in*. It now has an **outer track** (click it at the position you want) and a **`⊕`/`⊖` pair in
+    the hole**. ⭐The hole is the one part of a ring that is **not a position**, so a button there
+    cannot be mistaken for one — which is why they are not out on the rim beside the markers.
+    ⚠The track must be a **band test, not a disc test**: `d <= r` would swallow the whole colour
+    wheel and both buttons, so every click would insert. Pinned by `the_ring_add_track_is_a_band…`.
+    ⇒ ⭐**Porting a view is not porting its affordances.** The ring inherited the *gestures*
+    (drag/double-click/right-click) because they were geometry-independent, and silently dropped
+    the two *visible controls* because those were drawn in bar coordinates. Nothing failed; the
+    feature was simply half there, and only using it showed which half.
   - **A `⊖` under the selected marker**, tracking it. ⚠Interior stops only: the two ends are pinned
     by contract, so a `⊖` there would be an offer the editor cannot honour.
   - **Save / Cancel over a named library** (`gradients.toml`, beside `bookmarks.toml`).

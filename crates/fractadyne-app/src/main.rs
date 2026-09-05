@@ -1709,6 +1709,17 @@ fn ring_point(cx: f32, cy: f32, r: f32, pos: f32) -> (f32, f32) {
     (cx + r * a.sin(), cy - r * a.cos())
 }
 
+/// Is the pointer ON a guide circle of radius `r` — within `tol` pixels of the line itself?
+///
+/// ⭐**The ring's answer to the bar's add LINE**, and it has to be an annulus test rather than a
+/// disc test: a disc would swallow every click inside it, which on this layout is the whole
+/// gradient wheel and both hole buttons. The track is a line you click ON, not an area you click
+/// IN.
+fn on_ring_track(cx: f32, cy: f32, r: f32, x: f32, y: f32, tol: f32) -> bool {
+    let d = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt();
+    (d - r).abs() <= tol
+}
+
 /// The stop nearest the pointer on the ring, if one is within `radius` pixels of arc.
 ///
 /// ⚠Measured as ARC LENGTH at the marker radius, not as an angle, so the catch zone is the same
@@ -7410,7 +7421,17 @@ impl FractadyneApp {
                 const REM_H: f32 = 15.0;
                 const RIBBON_H: f32 = 34.0;
                 const CANVAS: f32 = 168.0;
-                const RING_H: f32 = 216.0;
+                const RING_H: f32 = 230.0;
+                // The ring's furniture, all measured out from the annulus's outer edge: markers
+                // sit in `outer+1 .. outer+11` pointing inward, and the ADD TRACK is the circle
+                // beyond them. ⚠They must not overlap, or grabbing a marker would add a stop.
+                const RING_TRACK_GAP: f32 = 19.0;
+                const RING_TRACK_TOL: f32 = 8.0;
+                // ⊕ and ⊖ live in the HOLE, which is otherwise dead space — and it is the one
+                // place on a ring that is not a position, so a button there cannot be mistaken for
+                // one. `RING_BTN_DX` is their offset either side of centre.
+                const RING_BTN_DX: f32 = 17.0;
+                const RING_BTN_HIT: f32 = 12.0;
                 // How near a marker the pointer must be to grab it. ⚠At the 32-stop cap the
                 // markers are ~15 px apart, so these ranges OVERLAP — which is exactly why
                 // `pick_stop` takes the nearest rather than the first in range.
@@ -7501,9 +7522,14 @@ impl FractadyneApp {
                     None => (ui.min_rect().min.x, full_w),
                 };
                 // The ring's geometry, shared by its interaction and its painting.
+                // ⚠The margin has to clear the ADD TRACK, not just the annulus — the track sits
+                // `RING_TRACK_GAP` beyond `outer` and its click band another `RING_TRACK_TOL`
+                // past that, so a margin sized for the annulus alone would put half the track
+                // outside the widget and make it unclickable from above and below.
                 let ring_geo = ring_area.as_ref().map(|(r, _)| {
                     let c = r.center();
-                    let outer = (r.height() * 0.5 - 14.0).max(20.0);
+                    let outer =
+                        (r.height() * 0.5 - RING_TRACK_GAP - RING_TRACK_TOL - 3.0).max(20.0);
                     (c.x, c.y, outer)
                 });
 
@@ -7674,12 +7700,81 @@ impl FractadyneApp {
                     }
                     if let Some(p) = resp.interact_pointer_pos() {
                         let at = ring_pos(cx, cy, p.x, p.y);
-                        if resp.clicked() && hit.is_none() {
+                        // ⭐**The ring's add/remove controls.** Before these the only way to add or
+                        // remove a stop here was a double-click or a right-click — gestures with
+                        // nothing on screen to suggest them, so the ring was a view you could
+                        // only rearrange, never build. These mirror the bar exactly: a TRACK you
+                        // click at the position you want, and a ⊕/⊖ pair for "somewhere sensible"
+                        // and "this one".
+                        //
+                        // ⚠**Order matters.** The buttons sit inside the hole and the track
+                        // outside the markers, so they cannot overlap — but a marker grab must
+                        // still be tested before the track, or a marker drawn near it would insert
+                        // instead of moving.
+                        let btn_plus = egui::pos2(cx - RING_BTN_DX, cy);
+                        let btn_minus = egui::pos2(cx + RING_BTN_DX, cy);
+                        let on_plus = p.distance(btn_plus) <= RING_BTN_HIT;
+                        let on_minus = p.distance(btn_minus) <= RING_BTN_HIT;
+                        let on_track = on_ring_track(
+                            cx,
+                            cy,
+                            r + RING_TRACK_GAP,
+                            p.x,
+                            p.y,
+                            RING_TRACK_TOL,
+                        );
+                        if resp.clicked() && (on_plus || on_track) && count < EDITOR_MAX_STOPS {
+                            let mut g = g0.clone();
+                            // ⚠The ⊕ has no position of its own — it is a button, not a place —
+                            // so it splits the widest segment, the same rule `Add stop` uses.
+                            let where_ = if on_plus {
+                                g.segments
+                                    .iter()
+                                    .max_by(|a, b| {
+                                        (a.right - a.left).total_cmp(&(b.right - b.left))
+                                    })
+                                    .map(|s| 0.5 * (s.left + s.right))
+                                    .unwrap_or(0.5)
+                            } else {
+                                at
+                            };
+                            if let Some(i) = g.insert_stop(where_) {
+                                self.store_segments(&g);
+                                self.coloring.sel_stop = i;
+                                self.coloring.sel_segment =
+                                    segment_for_stop(i, g.segments.len());
+                                grad = self.editable_gradient();
+                                changed = true;
+                            }
+                        }
+                        if resp.clicked() && on_minus {
+                            let i = self.coloring.sel_stop;
+                            let mut g = g0.clone();
+                            g.remove_stop(i); // a no-op on an end stop, by contract
+                            if g.stop_count() < count {
+                                self.store_segments(&g);
+                                self.coloring.sel_stop = sel_after_remove(i, i, g.stop_count());
+                                self.coloring.sel_segment =
+                                    segment_for_stop(self.coloring.sel_stop, g.segments.len());
+                                grad = self.editable_gradient();
+                                changed = true;
+                            }
+                        }
+                        if resp.clicked() && hit.is_none() && !on_plus && !on_minus && !on_track {
                             if let Some(i) = pick_segment(&positions, at) {
                                 self.coloring.sel_segment = i;
                             }
                         }
-                        if resp.double_clicked() && hit.is_none() && count < EDITOR_MAX_STOPS {
+                        // ⚠Guarded against the track and the buttons too: a double-click on
+                        // the track already inserted once via `clicked()`, and firing again
+                        // here would silently add TWO stops for one gesture.
+                        if resp.double_clicked()
+                            && hit.is_none()
+                            && !on_plus
+                            && !on_minus
+                            && !on_track
+                            && count < EDITOR_MAX_STOPS
+                        {
                             let mut g = g0.clone();
                             if let Some(i) = g.insert_stop(at) {
                                 self.store_segments(&g);
@@ -7715,7 +7810,7 @@ impl FractadyneApp {
                         self.coloring.drag_stop = None;
                     }
                     resp.clone().on_hover_text(
-                        "Drag a marker round the ring to move its stop · double-click open ring to add one · right-click a marker to remove it. The join at the top is the palette's seam.",
+                        "Click the outer track to add a stop at that point, or ⊕ in the middle to add one in the widest gap · ⊖ removes the selected stop · drag a marker round the ring to move its stop. The mark at the top is the palette's seam, where a cycled palette wraps.",
                     );
                 }
 
@@ -7854,10 +7949,60 @@ impl FractadyneApp {
                     pr.line_segment(
                         [
                             egui::pos2(cx, cy - inner + 1.0),
-                            egui::pos2(cx, cy - outer - 8.0),
+                            egui::pos2(cx, cy - outer - RING_TRACK_GAP - 4.0),
                         ],
                         egui::Stroke::new(1.5_f32, ui.visuals().warn_fg_color),
                     );
+                    // ⭐**The add track** — the ring's answer to the bar's add line. Drawn as a
+                    // dotted circle so it reads as a rail rather than as part of the gradient,
+                    // with a tick under every existing stop for the same reason the bar's lane
+                    // has them: it has to look like it belongs to the ring below it.
+                    let track = outer + RING_TRACK_GAP;
+                    const TICKS: usize = 96;
+                    for k in 0..TICKS {
+                        let t = k as f32 / TICKS as f32;
+                        let (ax, ay) = ring_point(cx, cy, track, t);
+                        let (bx, by) = ring_point(cx, cy, track, t + 0.5 / TICKS as f32);
+                        pr.line_segment(
+                            [egui::pos2(ax, ay), egui::pos2(bx, by)],
+                            egui::Stroke::new(1.0_f32, weak),
+                        );
+                    }
+                    for i in 0..g.stop_count() {
+                        if let Some((p, _)) = g.stop(i) {
+                            let (ax, ay) = ring_point(cx, cy, track - 3.0, p);
+                            let (bx, by) = ring_point(cx, cy, track + 3.0, p);
+                            pr.line_segment(
+                                [egui::pos2(ax, ay), egui::pos2(bx, by)],
+                                egui::Stroke::new(1.0_f32, weak.linear_multiply(0.7)),
+                            );
+                        }
+                    }
+                    // ⊕ and ⊖ in the hole. ⚠The hole is the ONE part of a ring that is not a
+                    // position, so a button there cannot be mistaken for one — which is why they
+                    // are not out on the rim beside the markers.
+                    let removable = {
+                        let i = self.coloring.sel_stop;
+                        i > 0 && i + 1 < count
+                    };
+                    for (dx, minus, on) in [
+                        (-RING_BTN_DX, false, count < EDITOR_MAX_STOPS),
+                        (RING_BTN_DX, true, removable),
+                    ] {
+                        let c = egui::pos2(cx + dx, cy);
+                        let col = if on { accent } else { weak.linear_multiply(0.5) };
+                        pr.circle_stroke(c, 9.0, egui::Stroke::new(1.4_f32, col));
+                        pr.line_segment(
+                            [egui::pos2(c.x - 4.5, c.y), egui::pos2(c.x + 4.5, c.y)],
+                            egui::Stroke::new(1.4_f32, col),
+                        );
+                        if !minus {
+                            pr.line_segment(
+                                [egui::pos2(c.x, c.y - 4.5), egui::pos2(c.x, c.y + 4.5)],
+                                egui::Stroke::new(1.4_f32, col),
+                            );
+                        }
+                    }
                     let sel = self.coloring.sel_stop;
                     for i in 0..g.stop_count() {
                         let Some((p, rgb)) = g.stop(i) else { continue };
@@ -8563,7 +8708,7 @@ impl FractadyneApp {
                         // and those differ between the two views, so the hint has to as well
                         // rather than telling a ring user to click a strip that is not there.
                         if self.coloring.ring_view {
-                            format!("{n} stops · drag a marker round the ring to move its stop · double-click open ring to add one · right-click a marker to remove it · the mark at the top is the seam")
+                            format!("{n} stops · click the outer track to add one there · ⊕ adds in the widest gap, ⊖ removes the selected stop · drag a marker to move it · the mark at the top is the seam")
                         } else {
                             format!("{n} stops · click the line above the gradient to add one there · drag a marker to move it · ⊖ or right-click removes")
                         }

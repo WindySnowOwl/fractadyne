@@ -7,7 +7,7 @@
 
 use super::{
     nudge_step, pick_segment, pick_stop, pick_stop_ring, ring_point, ring_pos, sel_after_remove,
-    segment_for_stop, strip_pos, strip_x, wrapped_distance, EDITOR_MAX_STOPS,
+    on_ring_track, segment_for_stop, strip_pos, strip_x, wrapped_distance, EDITOR_MAX_STOPS,
 };
 
 /// The strip the editor actually draws: a ~490 px content width inside the 520 px window.
@@ -292,4 +292,37 @@ fn ring_hit_testing_wraps_across_the_seam() {
         None,
         "the SAME angle on the big ring is ~30 px of arc — a miss. Angle alone cannot decide this."
     );
+}
+
+/// ⭐⭐**The ring's add track has to be a LINE, not a disc.** A radius test (`d <= r`) reads as
+/// "anywhere inside the track", which on this layout means the entire colour wheel *and* both
+/// buttons in the hole — so every click on the gradient would insert a stop. The band test is what
+/// makes "click the track to add here" mean only the track.
+#[test]
+fn the_ring_add_track_is_a_band_not_a_disc() {
+    let (cx, cy, track) = (200.0_f32, 150.0_f32, 100.0_f32);
+    let tol = 8.0_f32;
+    // On the line, from several angles — a click anywhere round it must add a stop there.
+    for i in 0..8 {
+        let (x, y) = ring_point(cx, cy, track, i as f32 / 8.0);
+        assert!(on_ring_track(cx, cy, track, x, y, tol), "dead on the track at turn {i}/8");
+    }
+    // Just inside and just outside are still the track — it is a click target, not a hairline.
+    let (x, y) = ring_point(cx, cy, track - tol + 0.5, 0.3);
+    assert!(on_ring_track(cx, cy, track, x, y, tol));
+    let (x, y) = ring_point(cx, cy, track + tol - 0.5, 0.3);
+    assert!(on_ring_track(cx, cy, track, x, y, tol));
+
+    // ⚠The cases a disc test gets wrong. The annulus the gradient is painted in, the empty hole
+    // where the ⊕/⊖ buttons live, and the centre itself are all INSIDE the track radius and must
+    // not count as clicks on it.
+    let (x, y) = ring_point(cx, cy, 82.0, 0.4);
+    assert!(!on_ring_track(cx, cy, track, x, y, tol), "the gradient annulus is not the track");
+    let (x, y) = ring_point(cx, cy, 40.0, 0.4);
+    assert!(!on_ring_track(cx, cy, track, x, y, tol), "the hole is not the track");
+    assert!(!on_ring_track(cx, cy, track, cx, cy, tol), "the centre is not the track");
+    assert!(!on_ring_track(cx, cy, track, cx + 16.0, cy, tol), "the ⊕ button is not the track");
+    // And well outside is a miss, so a click in the window's margin does nothing.
+    let (x, y) = ring_point(cx, cy, track + 30.0, 0.4);
+    assert!(!on_ring_track(cx, cy, track, x, y, tol));
 }
