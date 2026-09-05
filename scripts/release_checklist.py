@@ -211,6 +211,47 @@ STEPS = [
      "Open 'Edit gradient…', change a colour stop, and apply.",
      "Editor opens, the edit is reflected in the live image, and the dialog closes cleanly."),
     ("Coloring",
+     "In the gradient editor, compare the preview bar against the rendered image: pick a stop, "
+     "note its colour in the bar, and find that colour in the fractal.",
+     "The preview bar shows the SAME colours the image is painted with - not lighter, not darker. "
+     "(Before beta.23 the bar gamma-encoded its swatches, so every one read markedly lighter than "
+     "the pixels it stood for. No machine check compares the two.)"),
+    ("Coloring",
+     "In the gradient editor, click 'Import .map…' and load a Fractint or Kalles Fraktaler .map "
+     "palette file (e.g. Fractint's default.map).",
+     "The palette applies immediately as HARD BANDS - flat steps of colour, not a smooth ramp - "
+     "and the message reports how many entries were read. For a Fractint file it also says the "
+     "table is 6-bit VGA (white is 252, not 255)."),
+    ("Coloring",
+     "With that .map still loaded, untick 'Hard bands (no blending between entries)'.",
+     "The same colours blend into a smooth gradient. Ticking it again restores the hard steps."),
+    ("Coloring",
+     "⭐Render a view through the imported .map, then render the SAME location and palette in "
+     "Fractint (or Kalles Fraktaler) and compare the two side by side. Mark BLOCKED if that "
+     "application is not available.",
+     "The band structure and the ORDER of colours match. This is the one claim no automated check "
+     "can make: our checks prove the file's values reach the framebuffer unaltered, not that our "
+     "iteration→palette-index mapping is the same as theirs. See design/palette-import.md §7."),
+    ("Coloring",
+     "Click 'Import .ugr…' and load an Ultra Fractal gradient file (these normally hold many "
+     "gradients). Pick one from the list that appears.",
+     "A scrollable list appears, each row showing the gradient's name AND a preview swatch of it. "
+     "Clicking a row applies that gradient immediately. Reds look red and blues look blue - the "
+     "format stores colour with red in the LOW byte, so a mistake here swaps them while still "
+     "looking like a plausible palette."),
+    ("Coloring",
+     "Click 'Import .ggr…' and load a GIMP gradient, then read the note in the editor and press "
+     "'Convert to editable stops'.",
+     "The editor says how many segments were imported, and that they carry midpoints, blend curves "
+     "and colour spaces. 'Convert to editable stops' warns that it DISCARDS those, and after it "
+     "the per-stop rows appear."),
+    ("Coloring",
+     "⭐Click 'Import .ase…' and load a real Adobe swatch file.",
+     "It loads as an evenly spaced gradient, OR is rejected with a specific reason. Either outcome "
+     "is information: this is the ONE importer written from the published format rather than "
+     "against a real file, so the first real .ase is its actual test. A rejection is worth "
+     "reporting, not working around."),
+    ("Coloring",
      "Set Animate to on and watch for a few seconds, then set it back to Off.",
      "Palette animates smoothly at the set speed and stops cleanly when disabled."),
     ("Coloring",
@@ -588,6 +629,13 @@ ENFORCERS = [
     ("Coloring", "selftest:control changes the image"),
     ("Coloring", "selftest:log-scale-changes-the-image"),
     ("Coloring", "partial:selftest:gradient-edit-changes-the-image"),
+    ("Coloring", "manual"),
+    ("Coloring", "partial:selftest:map-bands-are-exact"),
+    ("Coloring", "partial:selftest:map-bands-are-exact"),
+    ("Coloring", "manual"),
+    ("Coloring", "partial:selftest:ugr-color-is-bgr"),
+    ("Coloring", "partial:selftest:ggr-colour-space-is-per-segment"),
+    ("Coloring", "manual"),
     ("Coloring", "partial:test:palette_animation_advances_and_stops"),
     ("Coloring", "selftest:control changes the image"),
     ("Coloring", "partial:selftest:control changes the image"),

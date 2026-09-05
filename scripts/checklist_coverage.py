@@ -66,6 +66,89 @@ def cargo_test_names():
     return {m.group(1) for m in re.finditer(r"^(\S+): test$", r.stdout, re.M)}
 
 
+def stale_doc_headings(m):
+    """Area headings in the plan document whose step range no longer matches the checklist.
+
+    ⛔**This drifted silently for NINE of seventeen areas before anyone noticed** (2026-09-05):
+    steps were appended to Locations, Tools, Help & settings and the rest without widening the
+    `### Area (a–b)` heading above them, and a whole `Linux` area appeared with no heading at all.
+    The per-row numbers stayed right — they are keyed to real step numbers — so the damage was
+    invisible from inside the document: every heading looked plausible and told the reader to look
+    at the wrong steps.
+
+    A document that says which step it is explaining is worthless if the number is wrong, and
+    nothing checked it. Now something does. Returns `(area, what the doc says, what it is)`.
+    """
+    doc = read("design/checklist-automation.md")
+    if doc is None:
+        return []
+    real = {}
+    for i, (area, _a, _e) in enumerate(m.STEPS, start=1):
+        lo, hi = real.get(area, (i, i))
+        real[area] = (min(lo, i), max(hi, i))
+    out = []
+    for mo in re.finditer(r"^### (.+?) \((\d+)(?:[–-](\d+))?\)\s*$", doc, re.M):
+        area = mo.group(1)
+        if area not in real:
+            continue  # a section about something other than a checklist area
+        lo = int(mo.group(2))
+        hi = int(mo.group(3)) if mo.group(3) else lo
+        if (lo, hi) != real[area]:
+            shown = "%d" % lo if lo == hi else "%d-%d" % (lo, hi)
+            r = real[area]
+            out.append((area, shown, "%d" % r[0] if r[0] == r[1] else "%d-%d" % r))
+            continue
+        # ⭐The heading being right is not enough: the ROWS under it carry step numbers too, and
+        # theirs were stale by up to 17 while every heading still looked plausible. A section's
+        # rows run contiguously from its first step, so the first row must BE that step and no row
+        # may run past the area's end. Trailing steps with no row at all are a documentation gap,
+        # counted separately by `undocumented_steps` - not silent, but not a failure either.
+        rows = doc_rows(doc, mo.end())
+        if not rows:
+            continue
+        if rows[0][0] != lo:
+            out.append((area + " (first row)", "%d" % rows[0][0], "%d" % lo))
+        elif rows[-1][1] > hi:
+            out.append((area + " (last row)", "%d" % rows[-1][1], "<= %d" % hi))
+        else:
+            for (_a1, b1), (a2, _b2) in zip(rows, rows[1:]):
+                if a2 != b1 + 1:
+                    out.append((area + " (row gap)", "%d then %d" % (b1, a2), "consecutive"))
+                    break
+    return out
+
+
+def doc_rows(doc, start):
+    """`(from, to)` of each `| N |` / `| N–M |` table row in the section beginning at `start`."""
+    end = len(doc)
+    for nxt in re.finditer(r"^#{2,3} ", doc[start:], re.M):
+        end = start + nxt.start()
+        break
+    rows = []
+    for mo in re.finditer(r"^\| (\d+)(?:[–-](\d+))? \|", doc[start:end], re.M):
+        a = int(mo.group(1))
+        rows.append((a, int(mo.group(2)) if mo.group(2) else a))
+    return rows
+
+
+def undocumented_steps(m):
+    """Steps inside an area whose plan section has no row for them. A visible gap, not a break."""
+    doc = read("design/checklist-automation.md")
+    if doc is None:
+        return 0
+    real = {}
+    for i, (area, _a, _e) in enumerate(m.STEPS, start=1):
+        lo, hi = real.get(area, (i, i))
+        real[area] = (min(lo, i), max(hi, i))
+    seen = 0
+    for mo in re.finditer(r"^### (.+?) \((\d+)(?:[–-](\d+))?\)\s*$", doc, re.M):
+        if mo.group(1) not in real:
+            continue
+        rows = doc_rows(doc, mo.end())
+        seen += sum(b - a + 1 for a, b in rows)
+    return len(m.STEPS) - seen
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cargo", action="store_true",
@@ -130,10 +213,22 @@ def main():
     print("  %3d outstanding         (declared in the plan, not yet implemented)" % len(planned))
     print("  %3d cannot be automated (needs a person, a second machine, or a second display)"
           % len(none_possible))
+    gap = undocumented_steps(m)
+    if gap:
+        print("  %3d with no row in design/checklist-automation.md (documentation gap)" % gap)
+    stale = stale_doc_headings(m)
+
     if broken:
         print("\n%d BROKEN CLAIM(S) - a row promises coverage that does not exist:" % len(broken))
         for i, area, enf, why in broken:
             print("  step %-3d %-18s %-52s %s" % (i, area, enf, why))
+        return 1
+    if stale:
+        print("\n%d STALE HEADING(S) in design/checklist-automation.md - its step numbers no"
+              % len(stale))
+        print("longer describe the steps they name:")
+        for area, doc_range, real in stale:
+            print("  %-20s doc says %-10s checklist is %s" % (area, doc_range, real))
         return 1
     if planned:
         print("\nOutstanding, in step order:")
