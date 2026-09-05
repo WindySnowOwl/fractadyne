@@ -444,6 +444,35 @@ it (presets, paste, `.map`, `.ugr`, add-stop) or those edits appear to do nothin
 responds and the picture does not, which is the most confusing failure available. The editor
 refuses to pretend it can edit what it cannot — a "Convert to editable stops" button says what it
 discards, instead of flattening the gradient on the first click.
+### `.ase` import (beta.27) — and why `.cs` was NOT written
+
+Adobe swatch exchange: big-endian binary, `"ASEF"` + a block walk, group markers flattened (a
+gradient keeps the file's ORDER and nothing else), RGB / Gray / naive CMYK. A swatch list carries
+no positions and no interpolation semantics, so "evenly spaced, linearly blended" is a choice
+**we** make — stated, not implied.
+
+⚠⚠**This is the one importer NOT verified against a real file.** Every other one here was written
+against a real file or a working parser; no `.ase` was to hand, so this came from the published
+layout alone. Two consequences worth being explicit about:
+
+1. It is deliberately **STRICT** — signature, block lengths and colour model must all agree — so a
+   file that disagrees with this understanding is REJECTED with a reason rather than importing
+   plausible-looking wrong colours. ⭐**The first real `.ase` anyone imports is the actual test.**
+2. ⚠**The unit-test fixtures are built from the same understanding as the parser**, so them
+   agreeing proves consistency, not correctness. That is written at the top of the fixture builder
+   so nobody later mistakes green tests for a verified format.
+
+⚠**LAB swatches are REFUSED by name, not converted.** LAB → sRGB needs a white point (Adobe uses
+D50) and a chromatic adaptation, and writing that from memory is the kind of guess that produces
+colours which look fine and are wrong. A file MIXING LAB with other models is refused too —
+importing "the rest" would silently drop swatches, which is worse than refusing. Same call as the
+`.ggr` `+` continuation.
+
+⛔**`.cs` (ColorSchemer) is deliberately NOT implemented.** It is binary and I have no verified
+layout for it. Writing one from a guess would contradict the two decisions immediately above, made
+in the same session. gnofract4d's `fract4d/gradient.py` is the reference if it is ever wanted — but
+the product is long dead, and the paste box already handles text swatch lists, which is what most
+people actually have.
 ⚠**Still outstanding for §7's bar**: an actual Fractint render of `default.map` to compare
 against. What is proven today is that the bands are exact and that the file's values reach the
 framebuffer unaltered; what is NOT proven is that our iteration→palette-index mapping matches

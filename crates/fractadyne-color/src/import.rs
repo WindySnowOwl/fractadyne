@@ -426,5 +426,129 @@ pub fn parse_ggr(text: &str) -> Result<Gradient, String> {
     Ok(Gradient { name, segments })
 }
 
+// ================================================================================================
+// Adobe `.ase` swatch lists
+// ================================================================================================
+
+/// Parse an Adobe Swatch Exchange (`.ase`) file into its colours, in file order.
+///
+/// A swatch list has **no positions and no interpolation semantics** — it is an ordered set of
+/// colours, so importing one means choosing a spacing (even) and a blend (linear). That choice is
+/// the caller's: this returns colours, and [`Gradient::from_colors`] makes the gradient.
+///
+/// The format is big-endian binary:
+///
+/// ```text
+/// "ASEF"  u16 major  u16 minor  u32 block_count
+/// per block:  u16 type  u32 body_len  body
+///   type 0x0001 = colour:  u16 name_len (UTF-16 units, incl. NUL)  name  4-byte model  f32 values  u16 kind
+///   type 0xC001 / 0xC002 = group start / end, skipped
+/// ```
+///
+/// ⚠⚠**UNVERIFIED AGAINST A REAL FILE.** Every other importer here was written against a real file
+/// or a working parser (`design/palette-import.md` marks those ✅); this one is written from the
+/// published layout alone, because no `.ase` was to hand. It is therefore deliberately **strict** —
+/// the signature, the block lengths and the colour model must all agree — so a file that does not
+/// match this understanding FAILS LOUDLY instead of importing plausible-looking wrong colours.
+/// ⭐The first real `.ase` anyone imports is the actual test; if it is rejected, this is why.
+///
+/// ⚠**LAB swatches are refused by name, not converted.** LAB → sRGB needs a white point (Adobe uses
+/// D50) and a chromatic adaptation, and writing that from memory is exactly the kind of guess that
+/// produces colours which look fine and are wrong. Same call as the `.ggr` `+` continuation.
+pub fn parse_ase(bytes: &[u8]) -> Result<Vec<[f32; 3]>, String> {
+    let need = |at: usize, n: usize| -> Result<(), String> {
+        if at + n > bytes.len() {
+            Err(format!("file ends early at byte {at} (wanted {n} more)"))
+        } else {
+            Ok(())
+        }
+    };
+    need(0, 12)?;
+    if &bytes[0..4] != b"ASEF" {
+        return Err("not an Adobe .ase file (no \"ASEF\" signature)".to_string());
+    }
+    let u16at = |at: usize| u16::from_be_bytes([bytes[at], bytes[at + 1]]);
+    let u32at = |at: usize| {
+        u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+    };
+    let f32at = |at: usize| {
+        f32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+    };
+    let blocks = u32at(8) as usize;
+    let mut at = 12usize;
+
+    let mut out: Vec<[f32; 3]> = Vec::new();
+    let mut lab = 0usize;
+    for b in 0..blocks {
+        need(at, 6)?;
+        let kind = u16at(at);
+        let len = u32at(at + 2) as usize;
+        let body = at + 6;
+        need(body, len)?;
+        at = body + len;
+        // 0xC001/0xC002 are group start/end. A group carries no colour of its own, and flattening
+        // groups is right for a gradient: the file's ORDER is the only structure that survives.
+        if kind != 0x0001 {
+            continue;
+        }
+        if len < 2 {
+            return Err(format!("block {}: colour block is too short", b + 1));
+        }
+        // Name length counts UTF-16 code units including the terminating NUL.
+        let name_units = u16at(body) as usize;
+        let model_at = body + 2 + name_units * 2;
+        if model_at + 4 > body + len {
+            return Err(format!("block {}: name length {name_units} overruns the block", b + 1));
+        }
+        let model = &bytes[model_at..model_at + 4];
+        let v = model_at + 4;
+        let values = match model {
+            b"RGB " => 3,
+            b"CMYK" => 4,
+            b"Gray" => 1,
+            b"LAB " => {
+                lab += 1;
+                continue;
+            }
+            other => {
+                return Err(format!(
+                    "block {}: unknown colour model {:?}",
+                    b + 1,
+                    String::from_utf8_lossy(other)
+                ))
+            }
+        };
+        if v + values * 4 > body + len {
+            return Err(format!("block {}: colour values overrun the block", b + 1));
+        }
+        let f = |i: usize| f32at(v + i * 4).clamp(0.0, 1.0);
+        out.push(match values {
+            3 => [f(0), f(1), f(2)],
+            1 => [f(0), f(0), f(0)],
+            // Naive CMYK, stated as such: no ICC profile, no black generation. An .ase carries no
+            // profile, so anything cleverer would be inventing one.
+            _ => {
+                let k = f(3);
+                [(1.0 - f(0)) * (1.0 - k), (1.0 - f(1)) * (1.0 - k), (1.0 - f(2)) * (1.0 - k)]
+            }
+        });
+    }
+    if lab > 0 && out.is_empty() {
+        return Err(format!(
+            "every swatch ({lab}) is LAB, which needs a colour profile this importer will not guess at"
+        ));
+    }
+    if lab > 0 {
+        return Err(format!(
+            "{lab} of {} swatches are LAB, which needs a colour profile this importer will not guess at - importing the rest would silently drop them",
+            out.len() + lab
+        ));
+    }
+    if out.len() < 2 {
+        return Err(format!("found {} colours - a swatch list needs at least two", out.len()));
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod import_tests;

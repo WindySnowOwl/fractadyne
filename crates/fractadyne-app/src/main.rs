@@ -4603,6 +4603,33 @@ impl FractadyneApp {
             self.coloring.use_binary = false;
             self.coloring.use_duotone = false;
         }
+        // A swatch list: no positions, no interpolation semantics, so evenly spaced and linear.
+        // ⚠BINARY — read as bytes; `read_to_string` would reject it as invalid UTF-8.
+        if let Some(path) = val("--palette-ase") {
+            let bytes = std::fs::read(path).unwrap_or_else(|e| {
+                eprintln!("fractadyne: --palette-ase: cannot read \"{path}\": {e}");
+                crate::exit(2)
+            });
+            let colors = fractadyne_color::import::parse_ase(&bytes).unwrap_or_else(|e| {
+                eprintln!("fractadyne: --palette-ase: \"{path}\" is not a .ase swatch list — {e}");
+                crate::exit(2)
+            });
+            let used = fractadyne_color::resample_colors(&colors, PASTE_MAX_COLORS);
+            let n = used.len();
+            self.coloring.custom_palette = used
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let pos = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
+                    [pos, c[0], c[1], c[2]]
+                })
+                .collect();
+            self.coloring.custom_palette_flat = false;
+            self.coloring.custom_segments.clear();
+            self.coloring.use_custom_palette = true;
+            self.coloring.use_binary = false;
+            self.coloring.use_duotone = false;
+        }
         if args.iter().any(|a| a == "--binary") {
             self.coloring.use_binary = true;
             self.coloring.use_duotone = false;
@@ -6631,6 +6658,66 @@ impl FractadyneApp {
         self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
     }
 
+    /// Import an Adobe `.ase` swatch list. Returns whether it applied.
+    ///
+    /// A swatch list carries no positions and no interpolation semantics, so it lands as evenly
+    /// spaced stops with linear blending — a choice made here, not in the file.
+    ///
+    /// ⚠Binary, and read as bytes: `read_to_string` would reject it as invalid UTF-8.
+    fn import_ase_palette(&mut self) -> bool {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Adobe swatch exchange", &["ase"])
+            .add_filter("All files", &["*"])
+            .set_directory(self.dialog_dir_default())
+            .pick_file()
+        else {
+            return false;
+        };
+        self.remember_dir(&path);
+        const ASE_MAX: u64 = 4 * 1024 * 1024;
+        let read = match std::fs::metadata(&path) {
+            Ok(m) if m.len() <= ASE_MAX => std::fs::read(&path),
+            Ok(_) => Err(std::io::Error::other("far too large to be a .ase swatch list")),
+            Err(e) => Err(e),
+        };
+        self.coloring.paste_open = true;
+        let bytes = match read {
+            Ok(b) => b,
+            Err(e) => {
+                self.coloring.paste_msg = Some(format!("Read failed: {e}"));
+                return false;
+            }
+        };
+        match fractadyne_color::import::parse_ase(&bytes) {
+            Ok(colors) => {
+                let n = colors.len();
+                let used = fractadyne_color::resample_colors(&colors, PASTE_MAX_COLORS);
+                let m = used.len();
+                self.coloring.custom_palette = used
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        let pos = if m > 1 { i as f32 / (m - 1) as f32 } else { 0.0 };
+                        [pos, c[0], c[1], c[2]]
+                    })
+                    .collect();
+                self.coloring.custom_palette_flat = false;
+                self.coloring.custom_segments.clear();
+                self.coloring.use_custom_palette = true;
+                self.coloring.paste_msg = Some(if n > m {
+                    format!("Imported {m} of {n} swatches, evenly spaced.")
+                } else {
+                    format!("Imported {n} swatches, evenly spaced and blended.")
+                });
+                true
+            }
+            Err(e) => {
+                self.coloring.paste_msg = Some(format!("Not a .ase swatch list: {e}"));
+                false
+            }
+        }
+    }
+
     /// Import a GIMP `.ggr` gradient. Returns whether it applied.
     ///
     /// ⭐**The only importer that loses nothing**: `.ggr` is the format the segment model was taken
@@ -6928,6 +7015,14 @@ impl FractadyneApp {
                         .on_hover_text("Load a GIMP .ggr gradient, with its midpoints, blend curves and colour spaces intact")
                         .clicked()
                         && self.import_ggr_palette()
+                    {
+                        changed = true;
+                    }
+                    if ui
+                        .button("Import .ase…")
+                        .on_hover_text("Load an Adobe swatch list (.ase). Swatches have no positions, so they arrive evenly spaced and blended.")
+                        .clicked()
+                        && self.import_ase_palette()
                     {
                         changed = true;
                     }

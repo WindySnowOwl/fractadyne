@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Adobe `.ase` swatch lists now import** (beta.27). Gradient editor -> **Import .ase...**, or
+  `--palette-ase FILE`. A swatch list is just an ordered set of colours with no positions and no
+  blending rules of its own, so they arrive evenly spaced and linearly blended - that spacing is a
+  choice Fractadyne makes, not something the file says. RGB, grayscale and CMYK swatches are read.
+
+  Two things it deliberately will not do. **LAB swatches are refused rather than converted**:
+  turning LAB into screen colours needs a colour profile the file does not carry, and a guessed
+  one produces colours that look fine and are wrong. And a file mixing LAB with other swatches is
+  refused too, rather than importing "the rest" and quietly leaving colours out.
+
+  Worth flagging honestly: unlike the other importers, this one was written from the published
+  format description rather than against a real file, because none was available. It is
+  deliberately strict as a result - a file that disagrees with that understanding is rejected with
+  a reason instead of loading plausible-looking wrong colours. If you have an .ase that Fractadyne
+  refuses, that is worth reporting.
+
 - **GIMP `.ggr` gradients now import, without losing anything** (beta.26). Gradient editor ->
   **Import .ggr...**, or `--palette-ggr FILE`. This is the richest of the palette formats and the
   one Fractadyne's own gradient model was designed around, so nothing is approximated on the way

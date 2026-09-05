@@ -432,3 +432,159 @@ fn blend_and_space_numbers_round_trip() {
     assert_eq!(Blend::from_u8(99), Blend::Linear);
     assert_eq!(Space::from_u8(99), Space::Rgb);
 }
+
+// ================================================================================================
+// Adobe `.ase`
+// ================================================================================================
+
+/// Build an `.ase` byte stream from the published layout, so the tests exercise real parsing
+/// rather than a stub.
+///
+/// ⚠**This fixture and the parser share one author's understanding of the format**, so agreeing
+/// proves consistency, not correctness — see the ⚠⚠ on `parse_ase`. What the tests below CAN show
+/// is that the endianness, the block walk and the colour models behave as the layout says, and
+/// that a file which disagrees is rejected rather than half-read.
+fn ase_bytes(blocks: &[(u16, Vec<u8>)]) -> Vec<u8> {
+    let mut v = b"ASEF".to_vec();
+    v.extend_from_slice(&1u16.to_be_bytes());
+    v.extend_from_slice(&0u16.to_be_bytes());
+    v.extend_from_slice(&(blocks.len() as u32).to_be_bytes());
+    for (kind, body) in blocks {
+        v.extend_from_slice(&kind.to_be_bytes());
+        v.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        v.extend_from_slice(body);
+    }
+    v
+}
+
+/// One colour block body: a UTF-16BE name, a 4-byte model tag, big-endian f32 values, a kind word.
+fn ase_color(name: &str, model: &[u8; 4], values: &[f32]) -> (u16, Vec<u8>) {
+    let mut b = Vec::new();
+    let units: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    b.extend_from_slice(&(units.len() as u16).to_be_bytes());
+    for u in units {
+        b.extend_from_slice(&u.to_be_bytes());
+    }
+    b.extend_from_slice(model);
+    for f in values {
+        b.extend_from_slice(&f.to_be_bytes());
+    }
+    b.extend_from_slice(&2u16.to_be_bytes()); // "normal"
+    (0x0001, b)
+}
+
+/// RGB swatches read in file order, big-endian, values straight through as display space.
+#[test]
+fn ase_reads_rgb_swatches_in_order() {
+    let data = ase_bytes(&[
+        ase_color("red", b"RGB ", &[1.0, 0.0, 0.0]),
+        ase_color("mid grey", b"RGB ", &[0.501961, 0.501961, 0.501961]),
+        ase_color("blue", b"RGB ", &[0.0, 0.0, 1.0]),
+    ]);
+    let c = parse_ase(&data).unwrap();
+    assert_eq!(c.len(), 3);
+    assert_eq!(c[0], [1.0, 0.0, 0.0]);
+    assert_eq!(c[2], [0.0, 0.0, 1.0]);
+    // Display space, like every other colour in this crate — not an sRGB decode.
+    assert!((c[1][0] - 0.501961).abs() < 1e-5, "mid grey was transformed: {:?}", c[1]);
+    assert!((c[1][0] - 0.2159).abs() > 0.2, "regressed to a linear decode");
+}
+
+/// Group markers carry no colour; flattening them is right for a gradient, where the file's ORDER
+/// is the only structure that survives.
+#[test]
+fn ase_flattens_groups() {
+    let mut group_start = Vec::new();
+    group_start.extend_from_slice(&1u16.to_be_bytes()); // just a NUL name
+    group_start.extend_from_slice(&0u16.to_be_bytes());
+    let data = ase_bytes(&[
+        (0xC001, group_start),
+        ase_color("a", b"RGB ", &[1.0, 0.0, 0.0]),
+        ase_color("b", b"RGB ", &[0.0, 1.0, 0.0]),
+        (0xC002, Vec::new()),
+        ase_color("c", b"RGB ", &[0.0, 0.0, 1.0]),
+    ]);
+    let c = parse_ase(&data).unwrap();
+    assert_eq!(c.len(), 3, "group markers should contribute no colours");
+    assert_eq!(c[2], [0.0, 0.0, 1.0]);
+}
+
+/// Gray is one value; CMYK is converted naively and says so — an .ase carries no colour profile,
+/// so anything cleverer would be inventing one.
+#[test]
+fn ase_handles_gray_and_cmyk() {
+    let data = ase_bytes(&[
+        ase_color("grey", b"Gray", &[0.25]),
+        ase_color("cyan", b"CMYK", &[1.0, 0.0, 0.0, 0.0]),
+        ase_color("black", b"CMYK", &[0.0, 0.0, 0.0, 1.0]),
+    ]);
+    let c = parse_ase(&data).unwrap();
+    assert_eq!(c[0], [0.25, 0.25, 0.25]);
+    assert_eq!(c[1], [0.0, 1.0, 1.0], "naive CMYK: pure cyan has no red");
+    assert_eq!(c[2], [0.0, 0.0, 0.0], "K=1 is black");
+}
+
+/// ⚠LAB is REFUSED by name rather than converted with a guessed white point — the same call as the
+/// `.ggr` `+` continuation. Silently dropping the LAB swatches would change the palette without
+/// saying so, which is worse than refusing.
+#[test]
+fn ase_refuses_lab_rather_than_guessing() {
+    let all_lab = ase_bytes(&[
+        ase_color("l1", b"LAB ", &[50.0, 0.0, 0.0]),
+        ase_color("l2", b"LAB ", &[80.0, 0.0, 0.0]),
+    ]);
+    let e = parse_ase(&all_lab).unwrap_err();
+    assert!(e.contains("LAB"), "got {e:?}");
+
+    // A mixed file is refused too: importing "the rest" would silently drop swatches.
+    let mixed = ase_bytes(&[
+        ase_color("r", b"RGB ", &[1.0, 0.0, 0.0]),
+        ase_color("g", b"RGB ", &[0.0, 1.0, 0.0]),
+        ase_color("l", b"LAB ", &[50.0, 0.0, 0.0]),
+    ]);
+    let e = parse_ase(&mixed).unwrap_err();
+    assert!(e.contains("LAB") && e.contains("silently drop"), "got {e:?}");
+}
+
+/// ⭐The parser is deliberately STRICT, because it was written from the published layout rather
+/// than from a real file: anything that disagrees with that understanding must fail loudly instead
+/// of importing plausible-looking wrong colours.
+#[test]
+fn ase_rejects_what_it_cannot_read() {
+    assert!(parse_ase(b"").is_err());
+    assert!(parse_ase(b"not an ase file at all").unwrap_err().contains("ASEF"));
+    // A truncated file.
+    let good = ase_bytes(&[
+        ase_color("a", b"RGB ", &[1.0, 0.0, 0.0]),
+        ase_color("b", b"RGB ", &[0.0, 0.0, 1.0]),
+    ]);
+    assert!(parse_ase(&good[..good.len() - 4]).is_err(), "a truncated file must not parse");
+    // An unknown colour model is named, not skipped.
+    let weird = ase_bytes(&[ase_color("x", b"XYZ!", &[1.0, 0.0, 0.0])]);
+    assert!(parse_ase(&weird).unwrap_err().contains("XYZ!"));
+    // A name length that overruns its block.
+    let mut body = Vec::new();
+    body.extend_from_slice(&999u16.to_be_bytes());
+    body.extend_from_slice(b"RGB ");
+    let bad = ase_bytes(&[(0x0001, body)]);
+    assert!(parse_ase(&bad).unwrap_err().contains("overruns"));
+    // One colour is not a gradient.
+    let one = ase_bytes(&[ase_color("a", b"RGB ", &[1.0, 0.0, 0.0])]);
+    assert!(parse_ase(&one).unwrap_err().contains("at least two"));
+}
+
+/// A swatch list has no positions, so importing one means choosing a spacing — evenly — and a
+/// blend — linear. Both are the caller's choice, and `Gradient::from_colors` is where they live.
+#[test]
+fn ase_swatches_become_an_evenly_spaced_gradient() {
+    let data = ase_bytes(&[
+        ase_color("a", b"RGB ", &[0.0, 0.0, 0.0]),
+        ase_color("b", b"RGB ", &[1.0, 1.0, 1.0]),
+        ase_color("c", b"RGB ", &[0.0, 0.0, 0.0]),
+    ]);
+    let g = Gradient::from_colors("swatches", &parse_ase(&data).unwrap());
+    assert_eq!(g.eval(0.0)[0], 0.0);
+    assert!((g.eval(0.5)[0] - 1.0).abs() < 1e-6, "the middle swatch lands at the middle");
+    assert_eq!(g.eval(1.0)[0], 0.0);
+    assert!(!g.is_flat(), "a swatch list blends; it is not a .map");
+}
