@@ -286,6 +286,38 @@ struct Baseline {
     segments: std::collections::BTreeMap<String, BaseSeg>,
 }
 
+/// Least-squares fit of `now = scale x baseline + fixed` over `(baseline_ms, now_ms)` pairs.
+///
+/// ⭐⭐**The two numbers a list of percentages cannot separate.** A FIXED cost added to every
+/// segment reads as +59% on a 16 ms one and +1.8% on a 500 ms one — one cause, printed as a
+/// scattered set of regressions of wildly different sizes. A SCALE change is proportional and
+/// really is "everything got slower". Splitting them is the difference between "eleven regressions"
+/// and "one fixed cost, and the renderer is 7% FASTER per unit of work".
+///
+/// Measured 2026-09-05: scale 0.93–0.99, fixed **+9.4 to +10.2 ms**, cause = the per-call WGSL
+/// compile (`shader_module` is rebuilt by every `render_export`, timed 8.9–9.8 ms) against a
+/// baseline blessed before the shader grew to ~134 KB.
+///
+/// `None` when there are too few points to fit, or the baselines are all equal (a vertical fit).
+fn scale_and_fixed(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
+    if pts.len() < 6 {
+        return None;
+    }
+    let n = pts.len() as f64;
+    let (sx, sy) = (pts.iter().map(|p| p.0).sum::<f64>(), pts.iter().map(|p| p.1).sum::<f64>());
+    let sxx = pts.iter().map(|p| p.0 * p.0).sum::<f64>();
+    let sxy = pts.iter().map(|p| p.0 * p.1).sum::<f64>();
+    let denom = n * sxx - sx * sx;
+    if denom.abs() < 1e-9 {
+        return None;
+    }
+    let scale = (n * sxy - sx * sy) / denom;
+    Some((scale, (sy - scale * sx) / n))
+}
+
+#[cfg(test)]
+mod fit_tests;
+
 fn median(v: &mut [f64]) -> f64 {
     if v.is_empty() {
         return 0.0;
@@ -540,6 +572,52 @@ impl crate::FractadyneApp {
                             base,
                             cur,
                             (cur / base - 1.0) * 100.0
+                        );
+                    }
+                }
+            }
+        }
+
+        // ⭐⭐**Say whether the slow segments share a FIXED cost, because that is not a regression
+        // and it is what made this half get read past.** Fitting `now = a·base + k` separates the
+        // two things a reader cannot tell apart from a list of percentages:
+        //   * `a` away from 1 — everything scaled: a genuinely slower (or faster) renderer or box.
+        //   * `k` away from 0 — a constant added per segment, which swamps a 16 ms segment (+59%)
+        //     and vanishes on a 500 ms one (+1.8%). The SAME k produces both, so a per-segment
+        //     percentage list looks like a scattered regression when it is one number.
+        // Measured 2026-09-05: a = 0.99, k = +9.4 ms, and the cause is the per-call WGSL compile
+        // (`shader_module` is rebuilt by every `render_export`; timed at 8.9–9.8 ms). The baseline
+        // predates the shader's growth to ~134 KB. See TODO.md.
+        // ⚠This REPORTS, it does not subtract: masking a fixed cost would hide a real one appearing.
+        if same_gpu {
+            let pts: Vec<(f64, f64)> = results
+                .iter()
+                .filter_map(|r| {
+                    baseline.segments.get(&r.name).and_then(|b| {
+                        (b.gpu_ms > 0.0).then_some((b.gpu_ms, r.render_ms))
+                    })
+                })
+                .collect();
+            if let Some((a, k)) = scale_and_fixed(&pts) {
+                {
+                    println!(
+                        "\n  shape: now ≈ {a:.2}× baseline {} {:.1} ms fixed, over {} segments",
+                        if k >= 0.0 { "+" } else { "−" },
+                        k.abs(),
+                        pts.len()
+                    );
+                    if k.abs() > 3.0 {
+                        println!(
+                            "         a FIXED {:.0} ms/segment dominates the cheap segments and vanishes on the dear \
+                             ones — read the warnings above as that one cost, not as N regressions.",
+                            k.abs()
+                        );
+                    }
+                    if (a - 1.0).abs() > 0.10 {
+                        println!(
+                            "         and a {:.0}% SCALE change, which IS proportional — that part is a real \
+                             speed difference.",
+                            (a - 1.0) * 100.0
                         );
                     }
                 }
