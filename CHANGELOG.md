@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The palette importers are now covered by the release self-test** (beta.28). `--selftest` grew
+  three checks that render through an imported palette and measure the result, so the three ways
+  an importer can be wrong while still looking plausible are caught automatically instead of by
+  hand: a Fractint .map keeps its hard bands exactly, an Ultra Fractal .ugr gets red and blue the
+  right way round, and a GIMP .ggr segment's colour space really does sweep the hue wheel. Each
+  one renders the same file twice with a single field changed, so a passing result cannot come
+  from the picture happening to look right.
+
 - **Adobe `.ase` swatch lists now import** (beta.27). Gradient editor -> **Import .ase...**, or
   `--palette-ase FILE`. A swatch list is just an ordered set of colours with no positions and no
   blending rules of its own, so they arrive evenly spaced and linearly blended - that spacing is a

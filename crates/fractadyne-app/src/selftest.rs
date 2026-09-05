@@ -4444,6 +4444,173 @@ zoom = \"1e94\"
                 pass,
             });
 
+            // --- palette import: the three traps that look PLAUSIBLE when they are wrong ---
+            //
+            // Each importer was checked end to end by hand when it shipped (beta.24-27), and a
+            // manual check is not a gate: it does not run again. These put the same three
+            // measurements in the release suite.
+            //
+            // ⭐⭐Every one is a CONTROL PAIR — the same file with ONE field changed — because the
+            // naive form of each check cannot fail. "The .map render has few colours" is also true
+            // of a smoothed import of a dark palette; "the .ugr render is red" is also true if red
+            // and blue were swapped and the file happened to be red. Changing one field and
+            // requiring the OPPOSITE answer is what makes them able to go red.
+            //
+            // The palette state is restored at the end of the block; later checks share this app.
+            const IMPORT_MAP: &str = "0 0 0\n64 64 64\n128 128 128\n192 192 192\n252 252 252\n";
+            // color=255 is 0x0000FF and color=16711680 is 0xFF0000. Ultra Fractal packs BGR, so
+            // the first is RED and the second is BLUE; under an RGB reading they swap.
+            const IMPORT_UGR: &str = "r {\ngradient:\ntitle=\"r\" index=0 color=255 index=399 color=255\n}\nb {\ngradient:\ntitle=\"b\" index=0 color=16711680 index=399 color=16711680\n}\n";
+            // One segment, red at BOTH ends. In RGB that is flat red; swept round the hue wheel it
+            // is the whole spectrum. The two files differ only in the final column.
+            const IMPORT_GGR_RGB: &str = "GIMP Gradient\nName: rgb\n1\n0 0.5 1 1 0 0 1 1 0 0 1 0 0\n";
+            const IMPORT_GGR_HSV: &str = "GIMP Gradient\nName: hsv\n1\n0 0.5 1 1 0 0 1 1 0 0 1 0 1\n";
+
+            let distinct = |px: &[u8]| -> usize {
+                let mut v: Vec<[u8; 3]> = px.chunks_exact(4).map(|p| [p[0], p[1], p[2]]).collect();
+                v.sort_unstable();
+                v.dedup();
+                v.len()
+            };
+
+            goto(self, SEA_X, SEA_Y, 6.125, 3_000);
+            self.coloring.use_custom_palette = true;
+
+            // (1) A `.map` imported as BANDS must render ONLY the levels the file declares.
+            let m = fractadyne_color::import::parse_map(IMPORT_MAP).expect("selftest .map fixture");
+            let n = m.colors.len();
+            self.coloring.custom_palette = m
+                .colors
+                .iter()
+                .enumerate()
+                .map(|(i, c)| [i as f32 / (n - 1) as f32, c[0], c[1], c[2]])
+                .collect();
+            self.coloring.custom_segments.clear();
+            self.coloring.custom_palette_flat = true;
+            let banded = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            self.coloring.custom_palette_flat = false; // the control: same colours, blended
+            let smoothed = shoot(self, device, queue, cw, ch).map(|(px, _)| px);
+            let (res, pass) = match (&banded, &smoothed) {
+                (Some(b), Some(sm)) => {
+                    // Declared levels, as bytes. The in-set colour is not grey, so filtering to
+                    // r == g == b isolates the palette without needing to know the interior.
+                    let want: Vec<u8> = m.colors.iter().map(|c| (c[0] * 255.0).round() as u8).collect();
+                    let greys = |px: &[u8]| -> Vec<u8> {
+                        px.chunks_exact(4)
+                            .filter(|p| p[0] == p[1] && p[1] == p[2])
+                            .map(|p| p[0])
+                            .collect()
+                    };
+                    let bg = greys(b);
+                    let stray = bg.iter().filter(|v| !want.contains(v)).count();
+                    let band_levels = {
+                        let mut v = bg.clone();
+                        v.sort_unstable();
+                        v.dedup();
+                        v.len()
+                    };
+                    let smooth_levels = {
+                        let mut v = greys(sm);
+                        v.sort_unstable();
+                        v.dedup();
+                        v.len()
+                    };
+                    (
+                        format!(
+                            "banded: {band_levels} levels over {} grey px, {stray} off-palette; \
+                             smoothed control: {smooth_levels} levels",
+                            bg.len()
+                        ),
+                        // The bands must be EXACT, and the control must prove the exactness is the
+                        // banding rather than a dark palette with few colours in it anyway.
+                        !bg.is_empty()
+                            && stray == 0
+                            && band_levels <= want.len()
+                            && smooth_levels > band_levels * 3
+                            && frame::coherent(b),
+                    )
+                }
+                _ => ("render failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "map-bands-are-exact".into(),
+                params: format!("{cw}x{ch}, {n}-entry .map as bands, then the same file smoothed"),
+                result: res,
+                threshold: "zero off-palette pixels; the smoothed control has >3x the levels",
+                pass,
+            });
+
+            // (2) `.ugr` packs colour BGR. Reading it as RGB swaps red and blue on every gradient
+            // and still looks like a plausible palette — so the check renders BOTH and requires
+            // them to come out opposite ways round.
+            let ugr = fractadyne_color::import::parse_ugr(IMPORT_UGR).expect("selftest .ugr fixture");
+            let mut shots = Vec::new();
+            for g in &ugr {
+                let st = g.to_gradient().to_stops();
+                self.coloring.custom_palette =
+                    st.into_iter().map(|(p, c)| [p, c[0], c[1], c[2]]).collect();
+                self.coloring.custom_palette_flat = false;
+                shots.push(shoot(self, device, queue, cw, ch).map(|(px, _)| px));
+            }
+            let (res, pass) = match (shots.first().and_then(|s| s.as_ref()), shots.get(1).and_then(|s| s.as_ref())) {
+                (Some(red), Some(blue)) => {
+                    // Mean red and blue over the exterior, as whole-frame channel means.
+                    let chan = |px: &[u8], i: usize| -> f64 {
+                        px.chunks_exact(4).map(|p| p[i] as f64).sum::<f64>()
+                            / (px.len() / 4).max(1) as f64
+                    };
+                    let (rr, rb) = (chan(red, 0), chan(red, 2));
+                    let (br, bb) = (chan(blue, 0), chan(blue, 2));
+                    (
+                        format!("color=255 -> r {rr:.1} b {rb:.1}; color=16711680 -> r {br:.1} b {bb:.1}"),
+                        rr > rb * 2.0 && bb > br * 2.0 && frame::coherent(red),
+                    )
+                }
+                _ => ("render failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "ugr-color-is-bgr".into(),
+                params: "color=255 must render RED and color=16711680 BLUE (red is the LOW byte)".into(),
+                result: res,
+                threshold: "each render's own channel leads the other by 2x, both ways round",
+                pass,
+            });
+
+            // (3) A `.ggr` segment carries its own colour SPACE, so identical endpoints swept round
+            // the hue wheel are a whole spectrum while in RGB they are one flat colour. The two
+            // fixtures differ in exactly one integer.
+            let mut ggr_shots = Vec::new();
+            for text in [IMPORT_GGR_RGB, IMPORT_GGR_HSV] {
+                let g = fractadyne_color::import::parse_ggr(text).expect("selftest .ggr fixture");
+                self.set_custom_segments(&g);
+                ggr_shots.push(shoot(self, device, queue, cw, ch).map(|(px, _)| px));
+            }
+            let (res, pass) = match (&ggr_shots[0], &ggr_shots[1]) {
+                (Some(rgb), Some(hsv)) => {
+                    let (dr, dh) = (distinct(rgb), distinct(hsv));
+                    (
+                        format!("RGB space: {dr} distinct colours; HSV sweep: {dh}"),
+                        dh > dr * 10 && frame::coherent(hsv),
+                    )
+                }
+                _ => ("render failed".to_string(), false),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "checklist",
+                name: "ggr-colour-space-is-per-segment".into(),
+                params: "one segment, red at both ends, colouring column 0 vs 1".into(),
+                result: res,
+                threshold: "the hue sweep yields >10x the distinct colours of the RGB reading",
+                pass,
+            });
+
+            self.coloring.custom_segments.clear();
+            self.coloring.custom_palette.clear();
+            self.coloring.custom_palette_flat = false;
+            self.coloring.use_custom_palette = false;
+
             // --- step 44: Julia mode ---
             self.viewport.reset_to(0.0, 0.0);
             self.viewport.set_size(cw as f64, ch as f64);

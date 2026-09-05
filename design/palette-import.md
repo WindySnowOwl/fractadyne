@@ -473,6 +473,41 @@ layout for it. Writing one from a guess would contradict the two decisions immed
 in the same session. gnofract4d's `fract4d/gradient.py` is the reference if it is ever wanted — but
 the product is long dead, and the paste box already handles text swatch lists, which is what most
 people actually have.
+### Selftest coverage (beta.28) — the manual checks became gates
+
+Every end-to-end check above was run BY HAND when its importer shipped, and a manual check is not
+a gate: it does not run again. `--selftest` is now **170 → 173**:
+
+| check | threshold |
+|---|---|
+| `map-bands-are-exact` | zero off-palette pixels, and the smoothed control has >3× the levels |
+| `ugr-color-is-bgr` | each render's own channel leads the other by 2×, **both ways round** |
+| `ggr-colour-space-is-per-segment` | the hue sweep yields >10× the distinct colours of the RGB reading |
+
+⭐⭐**Each is a CONTROL PAIR — the same file with ONE field changed — because the naive form of each
+cannot fail.** "The `.map` render has few colours" is also true of a smoothed import of a dark
+palette; "the `.ugr` render is red" is also true if red and blue were swapped and the file happened
+to be red. Requiring the OPPOSITE answer from the altered file is what gives them the ability to
+go red at all — the same reasoning as §5b's "a saturating metric cannot show a trend".
+
+⭐**And they were VERIFIED RED**, by breaking the three mechanisms they test (the flat flag off, the
+BGR decode read as RGB, the colour space forced to `Rgb`):
+
+| check | healthy | mutated |
+|---|---|---|
+| `map-bands-are-exact` | 5 levels, **0** off-palette | 253 levels, **32,854** off-palette |
+| `ugr-color-is-bgr` | r 149.7 / b 3.2, then r 2.1 / b 150.7 | exactly swapped |
+| `ggr-colour-space-is-per-segment` | 4 vs **1533** colours | 4 vs **4** |
+
+⚠`.ase` is deliberately NOT covered: its own format is unverified, so a render check would only
+confirm that our parser agrees with itself — which the unit fixtures already do, and which is not
+the same as being right.
+
+⚠⚠**A trap worth recording from doing this**: restoring the pre-mutation sources with `mv` gave
+them the BACKUP's older mtime, so cargo saw the sources as older than the artifacts and skipped
+recompiling — `Finished` was printed and the binary was still the MUTATED one, so the "reverted"
+run reproduced the failures exactly. `touch` the files after restoring. Same family as the
+already-recorded "`cargo test` does not rebuild the exe".
 ⚠**Still outstanding for §7's bar**: an actual Fractint render of `default.map` to compare
 against. What is proven today is that the bands are exact and that the file's values reach the
 framebuffer unaltered; what is NOT proven is that our iteration→palette-index mapping matches
