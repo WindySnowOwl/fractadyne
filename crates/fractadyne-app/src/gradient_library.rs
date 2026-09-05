@@ -64,6 +64,7 @@ fn as_saved(g: &Gradient, name: &str) -> SavedGradient {
                 right_color: s.right_color,
                 blend: s.blend.as_u8(),
                 space: s.space.as_u8(),
+                blend_params: s.blend.params(),
             })
             .collect(),
     }

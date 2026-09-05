@@ -358,6 +358,7 @@ fn an_imported_segment_gradient_survives_a_restart() {
             right_color: [0.0, 0.0, 1.0, 0.5],
             blend: 2,            // sine
             space: 1,            // HSV counter-clockwise
+            blend_params: [0.0; 4],
         },
         PaletteSegment {
             left: 0.5,
@@ -367,6 +368,15 @@ fn an_imported_segment_gradient_survives_a_restart() {
             right_color: [1.0, 1.0, 0.0, 1.0],
             blend: 4,            // spherical decreasing
             space: 0,
+            // ⭐**Kind 5's parameters, written on a kind-4 segment on purpose.** The field is
+            // independent of the kind beside it, so the file format has to carry it either way —
+            // a serde `default` that silently dropped a value present in the file would be
+            // invisible until someone's saved Bézier came back as a straight line.
+            // ⚠This pins the FORMAT, not the editor: in the app the parameters live in the
+            // `Blend::Bezier` variant, so a kind 0–4 segment has none to write and switching a
+            // segment away from Bézier and back re-fits rather than restoring. Stated in
+            // `design/gradient-curves.md` §9.6.
+            blend_params: [0.25, 0.9, 0.75, 0.1],
         },
     ];
     let s = SessionState {
@@ -379,6 +389,12 @@ fn an_imported_segment_gradient_survives_a_restart() {
     // The three things a stop list cannot hold, named individually so a partial loss is obvious.
     assert_eq!(r.custom_segments[0].mid, 0.17, "the off-centre midpoint was lost");
     assert_eq!(r.custom_segments[0].blend, 2, "the blend curve was lost");
+    assert_eq!(
+        r.custom_segments[1].blend_params,
+        [0.25, 0.9, 0.75, 0.1],
+        "the Bezier control points were lost - a segment switched to kind 5 and back would come \
+         back as a straight line"
+    );
     assert_eq!(r.custom_segments[0].space, 1, "the colour space was lost");
     assert_eq!(r.custom_segments[0].right_color[3], 0.5, "alpha was lost");
 }

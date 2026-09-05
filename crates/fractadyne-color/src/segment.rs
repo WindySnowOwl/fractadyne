@@ -26,8 +26,12 @@
 /// across a narrow band of escape values. 1024 × 16 B = 16 KB, comfortably inside a uniform buffer.
 pub const LUT_SIZE: usize = 1024;
 
-/// How a segment interpolates between its endpoints — GIMP's five blend functions.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+/// How a segment interpolates between its endpoints — GIMP's five blend functions, plus ours.
+///
+/// ⭐**Kinds 0–4 are GIMP's and are FROZEN**; kind 5 is a cubic-Bézier ease, the parametric one
+/// (`design/gradient-curves.md` §8). 6–31 are reserved and deliberately empty: flexibility comes
+/// from a continuous PARAMETER, not from a longer list of names nobody can tell apart.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum Blend {
     #[default]
     Linear,
@@ -35,7 +39,21 @@ pub enum Blend {
     Sine,
     SphereIncreasing,
     SphereDecreasing,
+    /// A CSS-style cubic-Bézier ease: the two interior control points `[x1, y1, x2, y2]` of a
+    /// curve from `(0,0)` to `(1,1)`.
+    ///
+    /// ⭐**The payload rides in the enum rather than in [`Segment`]** so that `from_u8`/`as_u8`
+    /// keep carrying the KIND alone — the file-format number stays exactly what it was, and the
+    /// four floats travel beside it in `PaletteSegment::blend_params`.
+    Bezier([f32; 4]),
 }
+
+/// A cubic-Bézier ease that is exactly the identity, `y = x`, with both handles visible and
+/// grabbable at the thirds — what "convert this to an editable curve" starts from.
+///
+/// ⚠With `x1 = 1/3` and `x2 = 2/3` the parameterisation is exact: `x(u) = u`. That is what makes
+/// the fit in `Blend::fit_to` a closed form rather than an optimisation.
+pub const BEZIER_IDENTITY: [f32; 4] = [1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0];
 
 impl Blend {
     /// GIMP's `.ggr` blend-type number, which is also what a session file stores.
@@ -43,12 +61,23 @@ impl Blend {
     /// ⚠These numbers are a FILE FORMAT, not an internal detail — they appear in `.ggr` files
     /// written by other applications and in our own saved sessions. Reordering the enum without
     /// changing this mapping would silently re-interpret every stored gradient.
+    /// ⚠**Append only.** A `.ggr` never contains 5, so import is unaffected; our own sessions may.
     pub fn from_u8(v: u8) -> Self {
+        Self::from_u8_params(v, BEZIER_IDENTITY)
+    }
+
+    /// The kind number plus the parameters that travel beside it.
+    ///
+    /// ⚠An all-zero `params` — what `#[serde(default)]` produces for a session written before
+    /// kind 5 existed — is *also* the identity (`x(u) = y(u) = u³`, so `y = x`), so a stored
+    /// kind 5 with no parameters degrades to a straight line rather than to something arbitrary.
+    pub fn from_u8_params(v: u8, params: [f32; 4]) -> Self {
         match v {
             1 => Blend::Curved,
             2 => Blend::Sine,
             3 => Blend::SphereIncreasing,
             4 => Blend::SphereDecreasing,
+            5 => Blend::Bezier(params),
             _ => Blend::Linear,
         }
     }
@@ -60,8 +89,146 @@ impl Blend {
             Blend::Sine => 2,
             Blend::SphereIncreasing => 3,
             Blend::SphereDecreasing => 4,
+            Blend::Bezier(_) => 5,
         }
     }
+
+    /// The four control-point coordinates to store beside the kind. Kinds 0–4 have none, and
+    /// report the identity so a round trip through storage never invents a curve.
+    pub fn params(self) -> [f32; 4] {
+        match self {
+            Blend::Bezier(p) => p,
+            _ => BEZIER_IDENTITY,
+        }
+    }
+
+    /// Approximate any blend as a cubic-Bézier ease — what the editor's "make this editable" does.
+    ///
+    /// ⚠**Approximate, and the editor must say so.** Sine and the two spheres are not cubics, so
+    /// no choice of control points reproduces them. ⭐⭐**The spheres are the bad case and it is
+    /// worth knowing why**: `sqrt(1 - (p-1)²)` has a VERTICAL TANGENT at one end, and no cubic
+    /// with finite control points has infinite slope — so the error there is structural, not a
+    /// matter of fitting harder. Measured worst-case error is pinned by
+    /// `fitting_a_bezier_is_exact_for_linear_and_close_for_the_rest`.
+    ///
+    /// Pinning `x1 = 1/3`, `x2 = 2/3` makes `x(u) = u` exactly, so the curve is LINEAR in
+    /// `(y1, y2)` and the best fit is a 2×2 normal-equation solve — a closed form, not a search.
+    /// ⚠**Least squares over the whole span, not interpolation at two points.** Interpolating
+    /// `t = 1/3` and `t = 2/3` is a one-liner and was the first version; it nails those two
+    /// samples and lets the error between them run to 0.15 on a sphere blend. Fitting all of it
+    /// halves that, for the same closed form.
+    /// ⭐For a blend that IS a cubic in this family — `Linear`, and `Curved` at a centred midpoint —
+    /// the model contains the answer, so the fit is exact and converting moves no pixels.
+    pub fn fit_to(sample: impl Fn(f32) -> f32) -> [f32; 4] {
+        const N: usize = 64;
+        let (mut saa, mut sab, mut sbb, mut sa, mut sb) = (0.0_f64, 0.0, 0.0, 0.0, 0.0);
+        for k in 1..N {
+            let t = k as f32 / N as f32;
+            let m = 1.0 - t;
+            // The two free Bernstein weights, and the fixed cubic term the endpoints contribute.
+            let (a, b, c) = (3.0 * m * m * t, 3.0 * m * t * t, t * t * t);
+            let r = f64::from(sample(t) - c);
+            saa += f64::from(a) * f64::from(a);
+            sab += f64::from(a) * f64::from(b);
+            sbb += f64::from(b) * f64::from(b);
+            sa += f64::from(a) * r;
+            sb += f64::from(b) * r;
+        }
+        let det = saa * sbb - sab * sab;
+        if det.abs() < 1.0e-12 {
+            return BEZIER_IDENTITY;
+        }
+        let y1 = ((sa * sbb - sb * sab) / det) as f32;
+        let y2 = ((sb * saa - sa * sab) / det) as f32;
+        [1.0 / 3.0, y1, 2.0 / 3.0, y2]
+    }
+
+    /// [`Self::fit_to`] plus the worst-case error of the result, so the editor can say **how**
+    /// approximate a conversion is before the user commits to it.
+    ///
+    /// ⭐⭐**The number is not decoration — it varies by an order of magnitude across the five
+    /// kinds.** Measured: `Linear` 0, `Curved` and `Sine` under 0.01, and the two SPHERE blends
+    /// **~0.14** — because `sqrt(1 - (p-1)²)` has a vertical tangent that no cubic can have. A
+    /// single "this is approximate" warning would put those two in the same sentence as a
+    /// conversion that is exact, which is the kind of hedge that trains people to ignore warnings.
+    pub fn fit_with_error(sample: impl Fn(f32) -> f32) -> ([f32; 4], f32) {
+        let p = Self::fit_to(&sample);
+        let worst = (0..=64)
+            .map(|k| {
+                let t = k as f32 / 64.0;
+                (bezier_ease(p, t) - sample(t)).abs()
+            })
+            .fold(0.0_f32, f32::max);
+        (p, worst)
+    }
+}
+
+/// One coordinate of a cubic Bézier from 0 to 1 with interior control values `a`, `b`, at `u`.
+fn bez(a: f32, b: f32, u: f32) -> f32 {
+    let m = 1.0 - u;
+    3.0 * m * m * u * a + 3.0 * m * u * u * b + u * u * u
+}
+
+/// Its derivative with respect to `u` — Newton's step needs it.
+fn bez_slope(a: f32, b: f32, u: f32) -> f32 {
+    let m = 1.0 - u;
+    3.0 * m * m * a + 6.0 * m * u * (b - a) + 3.0 * u * u * (1.0 - b)
+}
+
+/// The cubic-Bézier ease `y` at `t`, the CSS `cubic-bezier(x1, y1, x2, y2)` function.
+///
+/// ⭐⭐**The `x(u) = t` solve costs nothing at render time.** It runs once per LUT entry — 1024
+/// times per bake — and zero times per pixel, which is the same argument that made every other
+/// feature in this model free. ⛔A solver in the shader would be the wrong shape entirely.
+///
+/// ⚠`x1` and `x2` are clamped into `0..1`, which is what guarantees `x(u)` is monotone and the
+/// solve therefore has exactly one answer. `y1`/`y2` are deliberately NOT clamped: a curve that
+/// overshoots is a legitimate effect, and it is the COLOUR that gets clamped, not the factor —
+/// clamping here would silently flatten the handle the user is dragging.
+pub fn bezier_ease(p: [f32; 4], t: f32) -> f32 {
+    let (x1, x2) = (p[0].clamp(0.0, 1.0), p[2].clamp(0.0, 1.0));
+    let (y1, y2) = (p[1], p[3]);
+    let t = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
+    if t <= 0.0 {
+        return 0.0;
+    }
+    if t >= 1.0 {
+        return 1.0;
+    }
+    // Newton from u = t, which is the exact answer whenever x is the identity — the common case.
+    let mut u = t;
+    for _ in 0..8 {
+        let dx = bez(x1, x2, u) - t;
+        if dx.abs() < 1.0e-6 {
+            return bez(y1, y2, u);
+        }
+        let slope = bez_slope(x1, x2, u);
+        if slope.abs() < 1.0e-6 {
+            break;
+        }
+        let next = u - dx / slope;
+        if !(0.0..=1.0).contains(&next) {
+            break;
+        }
+        u = next;
+    }
+    // Bisection is the fallback rather than the primary because Newton converges in two or three
+    // steps here; it is what makes a flat or near-flat region terminate at all.
+    let (mut lo, mut hi) = (0.0_f32, 1.0_f32);
+    let mut u = t;
+    for _ in 0..40 {
+        let x = bez(x1, x2, u);
+        if (x - t).abs() < 1.0e-6 {
+            break;
+        }
+        if x < t {
+            lo = u;
+        } else {
+            hi = u;
+        }
+        u = 0.5 * (lo + hi);
+    }
+    bez(y1, y2, u)
 }
 
 /// The space a segment blends in. HSV lets one segment sweep the long way round the hue wheel,
@@ -172,6 +339,13 @@ impl Segment {
                 let p = linear_factor(mid, pos);
                 1.0 - (1.0 - p * p).max(0.0).sqrt()
             }
+            // ⭐⭐**Kind 5 IGNORES the midpoint, deliberately** — note `pos`, not
+            // `linear_factor(mid, pos)`. `mid` pre-warps the input of every GIMP blend, and a
+            // Bézier's own handles already say where the curve reaches halfway; composing the two
+            // would give two knobs for one shape and make the handles lie about where the curve
+            // goes. The stored `mid` is preserved untouched, so switching back to kinds 0–4
+            // restores it. `bezier_ignores_the_midpoint` pins this.
+            Blend::Bezier(p) => bezier_ease(p, pos),
         }
     }
 
@@ -222,7 +396,14 @@ impl Segment {
                 hsv_to_rgb(h, ls + (rs - ls) * f, lv + (rv - lv) * f)
             }
         };
-        [rgb[0], rgb[1], rgb[2], alpha]
+        // ⭐**The clamp that lets a Bézier overshoot safely.** `factor` may return outside `0..1`
+        // for kind 5 — that is the point of allowing the handles out of the box, and it
+        // extrapolates past an endpoint colour. Clamping HERE rather than in `factor` keeps the
+        // curve the user drew intact while guaranteeing an in-gamut colour.
+        // ⚠**A no-op for kinds 0–4**, whose factor is always in `0..1` between in-range endpoints —
+        // which is what keeps this change at zero drift for every existing gradient.
+        let c = |v: f32| v.clamp(0.0, 1.0);
+        [c(rgb[0]), c(rgb[1]), c(rgb[2]), c(alpha)]
     }
 }
 

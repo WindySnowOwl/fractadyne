@@ -215,11 +215,27 @@ impl FractadyneApp {
                     } else {
                         ("Shadow", "Highlight")
                     };
+                    // ⭐The hex sits under each swatch rather than beside it: the panel is 298 px
+                    // and two swatches with their labels already fill the row, so an inline value
+                    // would wrap. It is a readout here, not a field — the gradient editor is where
+                    // a colour gets typed, and duplicating an editable field in two places would
+                    // duplicate the "which one wins" question with it.
                     ui.horizontal(|ui| {
                         ui.color_edit_button_rgb(&mut self.coloring.duotone_lo);
                         ui.label(lo_lbl);
                         ui.color_edit_button_rgb(&mut self.coloring.duotone_hi);
                         ui.label(hi_lbl);
+                    });
+                    ui.horizontal(|ui| {
+                        for c in [self.coloring.duotone_lo, self.coloring.duotone_hi] {
+                            let [r, g, b] = crate::rgb_bytes(c);
+                            ui.label(
+                                egui::RichText::new(format!("{}  {r} {g} {b}", crate::hex_of(c)))
+                                    .monospace()
+                                    .weak()
+                                    .small(),
+                            );
+                        }
                     });
                 } else if ui.button("Edit gradient…").clicked() {
                     if self.coloring.custom_palette.is_empty() {

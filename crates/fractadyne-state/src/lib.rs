@@ -41,6 +41,17 @@ pub struct PaletteSegment {
     pub blend: u8,
     #[serde(default)]
     pub space: u8,
+    /// Control points for blend kind 5 (cubic-Bézier ease): `[x1, y1, x2, y2]`. Ignored by kinds
+    /// 0–4, which have no parameters.
+    ///
+    /// ⭐**The kind stays a bare number and the parameters travel BESIDE it**, so the `.ggr`
+    /// numbering — which is what `blend` is — keeps meaning exactly what it always did, and the
+    /// round-trip test that pins it stays honest.
+    /// ⚠A session written before kind 5 existed defaults this to `[0.0; 4]`, which happens to be
+    /// the IDENTITY curve (`x(u) = y(u) = u³`, so `y = x`) rather than something arbitrary — so a
+    /// file that somehow carries kind 5 with no parameters renders as a straight line.
+    #[serde(default)]
+    pub blend_params: [f32; 4],
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]

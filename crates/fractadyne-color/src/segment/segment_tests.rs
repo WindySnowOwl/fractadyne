@@ -523,3 +523,229 @@ fn the_hue_undefined_warning_fires_only_where_it_applies() {
     let c = g.eval(0.25);
     assert!(c[1] > c[0] && c[1] > c[2], "expected green-dominant at t=0.25, got {c:?}");
 }
+
+// ── Blend kind 5: the cubic-Bézier ease ─────────────────────────────────────────────────────
+
+/// The solver has to be a FUNCTION on `0..1` before it can be an ease: pinned endpoints and no
+/// NaN anywhere — including for the degenerate handles a user can drag it into.
+#[test]
+fn the_bezier_ease_is_a_well_behaved_function() {
+    let cases: [[f32; 4]; 7] = [
+        BEZIER_IDENTITY,
+        [0.0; 4],               // the serde default — also the identity
+        [0.42, 0.0, 0.58, 1.0], // ease-in-out
+        [0.25, 0.1, 0.25, 1.0], // CSS "ease"
+        [0.0, 0.0, 1.0, 1.0],   // handles pinned to the ends
+        [1.0, 0.0, 0.0, 1.0],   // reversed handles — a legal, very steep S
+        [-3.0, 0.5, 4.0, 0.5],  // x out of range: must be clamped, not explode
+    ];
+    for p in cases {
+        assert_eq!(bezier_ease(p, 0.0), 0.0, "{p:?} must start at 0");
+        assert_eq!(bezier_ease(p, 1.0), 1.0, "{p:?} must end at 1");
+        for k in 0..=200 {
+            let t = k as f32 / 200.0;
+            let y = bezier_ease(p, t);
+            assert!(y.is_finite(), "{p:?} at t={t} produced {y}");
+        }
+        // Out-of-range and non-finite inputs resolve rather than propagate.
+        assert!(bezier_ease(p, -1.0).is_finite());
+        assert!(bezier_ease(p, 2.0).is_finite());
+        assert!(bezier_ease(p, f32::NAN).is_finite());
+    }
+}
+
+/// ⭐**The identity has to be EXACT**, in both parameterisations, or "convert this linear segment
+/// to an editable curve" would move pixels the moment it was pressed — and this phase is supposed
+/// to be zero-drift until a user deliberately bends something.
+#[test]
+fn the_identity_bezier_is_exactly_linear() {
+    for p in [BEZIER_IDENTITY, [0.0; 4]] {
+        for k in 0..=100 {
+            let t = k as f32 / 100.0;
+            let y = bezier_ease(p, t);
+            assert!((y - t).abs() < 1.0e-4, "{p:?}: y({t}) = {y}, expected {t}");
+        }
+    }
+}
+
+/// ⚠**`y` is deliberately NOT clamped by the ease** — an overshooting curve is the point of
+/// letting the handles leave the box — but the COLOUR must still be in gamut. The clamp lives in
+/// `Segment::eval`, and this pins both halves of that split.
+#[test]
+fn overshoot_survives_the_factor_and_is_clamped_at_the_colour() {
+    let over = [0.3, 4.0, 0.7, -3.0]; // swings well outside 0..1 on both sides
+    let mut saw_above = false;
+    let mut saw_below = false;
+    for k in 0..=100 {
+        let y = bezier_ease(over, k as f32 / 100.0);
+        saw_above |= y > 1.01;
+        saw_below |= y < -0.01;
+    }
+    assert!(
+        saw_above && saw_below,
+        "the probe curve must actually overshoot, or this proves nothing"
+    );
+
+    let seg = Segment {
+        left: 0.0,
+        mid: 0.5,
+        right: 1.0,
+        left_color: [0.2, 0.4, 0.6, 1.0],
+        right_color: [0.8, 0.5, 0.1, 1.0],
+        blend: Blend::Bezier(over),
+        space: Space::Rgb,
+    };
+    let g = Gradient { name: "t".into(), segments: vec![seg] };
+    for k in 0..=200 {
+        let c = g.eval(k as f32 / 200.0);
+        for (ch, v) in c.iter().enumerate() {
+            assert!((0.0..=1.0).contains(v), "channel {ch} left gamut at {v}");
+        }
+    }
+}
+
+/// ⭐⭐**Kind 5 IGNORES the midpoint** (`design/gradient-curves.md` §9.4 decision 1): the handles
+/// already say where the curve reaches halfway, so composing GIMP's midpoint warp on top would be
+/// two knobs for one shape and the handles would lie about where the curve goes.
+///
+/// ⚠"Ignored" is a claim about the EVALUATOR, not about storage — `mid` still persists, which is
+/// what lets switching to Bézier and back restore the original curve exactly.
+#[test]
+fn bezier_ignores_the_midpoint() {
+    let base = Segment {
+        left: 0.0,
+        mid: 0.5,
+        right: 1.0,
+        left_color: [0.0, 0.0, 0.0, 1.0],
+        right_color: [1.0, 1.0, 1.0, 1.0],
+        blend: Blend::Bezier([0.42, 0.0, 0.58, 1.0]),
+        space: Space::Rgb,
+    };
+    let mut shifted = base;
+    shifted.mid = 0.15;
+    for k in 0..=100 {
+        let t = k as f32 / 100.0;
+        assert_eq!(base.factor(t), shifted.factor(t), "the midpoint changed a Bézier at t={t}");
+    }
+    // The control: on a kind 0–4 segment the very same midpoint move DOES change the curve, so
+    // the equality above is a property of kind 5 and not of the inputs this test happened to use.
+    let mut lin = base;
+    lin.blend = Blend::Linear;
+    let mut lin_shifted = lin;
+    lin_shifted.mid = 0.15;
+    assert_ne!(lin.factor(0.3), lin_shifted.factor(0.3), "the control must be sensitive to mid");
+}
+
+/// ⭐A `Linear` segment converted to an editable Bézier must render IDENTICALLY — the button is
+/// "make this editable", not "change this". The fit is exact for anything already in the cubic
+/// family and merely close for the sine and sphere blends, which are not cubics at all.
+#[test]
+fn fitting_a_bezier_is_exact_for_linear_and_close_for_the_rest() {
+    let seg = |b: Blend| Segment {
+        left: 0.0,
+        mid: 0.5,
+        right: 1.0,
+        left_color: [0.0; 4],
+        right_color: [1.0; 4],
+        blend: b,
+        space: Space::Rgb,
+    };
+    let lin = seg(Blend::Linear);
+    let fitted = Blend::fit_to(|t| lin.factor(t));
+    for k in 0..=100 {
+        let t = k as f32 / 100.0;
+        assert!(
+            (bezier_ease(fitted, t) - lin.factor(t)).abs() < 1.0e-4,
+            "a fitted LINEAR segment must be exact at t={t}"
+        );
+    }
+    // ⚠⚠**The others are approximations, and HOW approximate differs by an order of magnitude.**
+    // A single tolerance covering all four would hide that, so each kind is pinned against what it
+    // actually achieves — and the spheres are asserted to be the BAD case, not merely tolerated.
+    // Measured 2026-09-05: Curved 0 (it is a cubic), Sine 0.003, both spheres 0.136.
+    let worst_of = |b: Blend| {
+        let s = seg(b);
+        let (f, worst) = Blend::fit_with_error(|t| s.factor(t));
+        // `fit_with_error` must agree with an independent sweep, or the number the editor shows
+        // the user is its own opinion rather than a measurement.
+        let swept = (0..=400)
+            .map(|k| {
+                let t = k as f32 / 400.0;
+                (bezier_ease(f, t) - s.factor(t)).abs()
+            })
+            .fold(0.0_f32, f32::max);
+        assert!((swept - worst).abs() < 0.01, "{b:?}: reported {worst}, swept {swept}");
+        worst
+    };
+    assert!(worst_of(Blend::Curved) < 1.0e-4, "Curved at a centred midpoint IS a cubic - exact");
+    assert!(worst_of(Blend::Sine) < 0.01, "Sine is very close to a cubic");
+    // ⭐The spheres have a VERTICAL TANGENT at one end and no cubic with finite control points
+    // does, so this error is structural. Bounded from BOTH sides: too small would mean the fit
+    // silently changed and the editor's warning is now overstated.
+    for b in [Blend::SphereIncreasing, Blend::SphereDecreasing] {
+        let w = worst_of(b);
+        assert!((0.10..0.18).contains(&w), "{b:?} fitted with worst error {w}, outside 0.10..0.18");
+    }
+}
+
+/// ⚠⚠**§4 trap 5, re-measured on a CURVE-HEAVY gradient.** The LUT's acceptance criterion — error
+/// must SHRINK as the table grows — was established on piecewise-LINEAR gradients, and a curve has
+/// more curvature between samples, so that evidence did not carry over on its own. This is the
+/// measurement, and it is the gate saying 1024 entries are still enough now that a segment can be
+/// an arbitrary cubic.
+///
+/// ⭐Counting DIFFERING ENTRIES rather than max error, for the reason the palette-LUT work
+/// recorded: max error saturates at the output quantum and reads the same at every table size,
+/// which is how a metric can look flat while the thing it measures improves tenfold.
+#[test]
+fn lut_error_still_shrinks_as_the_table_grows_on_a_curve_heavy_gradient() {
+    // Every segment a different steep cubic, so between-sample curvature is as bad as the model
+    // allows — a gentler gradient would make this pass without testing anything.
+    let params: [[f32; 4]; 4] = [
+        [0.9, 0.0, 0.1, 1.0],
+        [0.0, 1.0, 1.0, 0.0],
+        [0.8, 0.05, 0.2, 0.95],
+        [0.05, 0.9, 0.95, 0.1],
+    ];
+    let colors = [[0.0, 0.0, 0.0], [1.0, 0.1, 0.0], [0.1, 0.9, 0.2], [0.0, 0.2, 1.0], [1.0; 3]];
+    let segments: Vec<Segment> = (0..4)
+        .map(|i| {
+            let (l, r) = (i as f32 / 4.0, (i + 1) as f32 / 4.0);
+            Segment {
+                left: l,
+                mid: 0.5 * (l + r),
+                right: r,
+                left_color: [colors[i][0], colors[i][1], colors[i][2], 1.0],
+                right_color: [colors[i + 1][0], colors[i + 1][1], colors[i + 1][2], 1.0],
+                blend: Blend::Bezier(params[i]),
+                space: Space::Rgb,
+            }
+        })
+        .collect();
+    let g = Gradient { name: "curvy".into(), segments };
+
+    // Each table against the gradient itself, probed at a fixed dense set of positions.
+    let differing = |n: usize| {
+        let lut = g.bake(n);
+        let quantum = 1.0 / 255.0; // the output is 8-bit; finer than this is not a visible error
+        (0..4096)
+            .filter(|&k| {
+                let t = (k as f32 + 0.5) / 4096.0;
+                let (a, b) = (lut.sample(t), g.eval(t));
+                (0..3).any(|c| (a[c] - b[c]).abs() > quantum)
+            })
+            .count()
+    };
+    let (at_1024, at_4096) = (differing(1024), differing(4096));
+    assert!(
+        at_4096 < at_1024,
+        "LUT error did not shrink with table size on a curved gradient: {at_1024} -> {at_4096}"
+    );
+    // ⭐The number that matters for shipping: at the size the renderer actually uses, a curved
+    // gradient must already be visually exact almost everywhere.
+    assert!(
+        at_1024 * 20 < 4096,
+        "1024 entries left {at_1024} of 4096 probes visibly wrong on a curve-heavy gradient - the \
+         table may no longer be big enough now that segments can be arbitrary cubics"
+    );
+}

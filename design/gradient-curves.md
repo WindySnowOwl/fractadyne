@@ -473,7 +473,39 @@ the widget rather than a reason to skip tests:
 
   ⭐Zero drift again: selftest 173/173 + 18/18, corpus 38/38 maxD 0. Tests app 254 → 260.
 
-- **P4′ — kind 5.** `blend_params: [f32; 4]` on `PaletteSegment` (`#[serde(default)]`), the
+- ✅**P4′ — kind 5, the Bézier. SHIPPED beta.33**, and it shipped because the author asked for the
+  thing it *is*: *"you should be able to move the point along the x and y, it seems to only move
+  horizontally"*, plus "the drag point still gets stuck". ⭐⭐**Both are one fact about a midpoint:
+  it is a ONE-DIMENSIONAL quantity by construction** — it says *when* the blend reaches halfway, so
+  there is nothing for a vertical drag to mean, and it is clamped to 0.02–0.98 so it stops dead at
+  the ends. A control point that moves in x *and* y is a curve with two degrees of freedom, i.e.
+  exactly kind 5. ⇒ *a UI complaint can be a request for a model that does not exist yet; "the
+  control only moves one way" was the user reporting a missing degree of freedom, not a bug.*
+
+  All five §9.4 decisions honoured: **kind 5 ignores `mid`** (pinned, with a control proving the
+  same midpoint move *does* change a kind 0–4 segment); handles hidden for kinds 0–4; **two handles,
+  no more**; **x clamped, y free, the COLOUR clamped in `eval`** (a no-op for kinds 0–4, which is
+  what keeps this at zero drift); and the `x(u) = t` solve stays at **bake time — 1024×, never
+  per-pixel**.
+
+  ⭐⭐**Two guard assertions failed and both were load-bearing.** (a) The first fit interpolated
+  `t = 1/3, 2/3` — a one-liner that nails two points and lets the error between them reach **0.15**
+  on a sphere. Least squares over the span (still a closed form, since `x1 = 1/3, x2 = 2/3` makes
+  `x(u) = u` exactly) brought it to 0.136. (b) The first overshoot probe **did not overshoot**: the
+  Bernstein weight caps the first term at 4/9, so `y1 = 1.6` never reaches 1. ⇒ *a test that asserts
+  "this input is extreme" must assert it, not assume it.*
+  ⚠**The sphere error is STRUCTURAL** — `sqrt(1 - (p-1)²)` has a vertical tangent and no cubic with
+  finite control points does — so the editor reports the measured error per kind rather than one
+  flat "this is approximate", which would put a 0.14 conversion in the same sentence as an exact one.
+  ✅⚠⚠**§4 trap 5 discharged**: the LUT "error must shrink as the table grows" evidence was taken on
+  piecewise-LINEAR gradients and did not carry over on its own. Re-measured on four steep cubics —
+  it still shrinks, and 1024 entries are still enough.
+  ⚠**Known**: the parameters ride in the `Blend::Bezier` variant, so a kind 0–4 segment has nowhere
+  to keep them — switching a segment away from Bézier and back **re-fits** rather than restoring
+  hand-dragged handles. Deterministic, and the alternative is a `blend_params` field on every
+  `Segment`, which is a wider change than the gain justifies.
+
+- **P4′ (original text) — kind 5.** `blend_params: [f32; 4]` on `PaletteSegment` (`#[serde(default)]`), the
   `Blend::Bezier([f32;4])` payload variant, the handles going live, the bias slider and presets.
   ⚠First phase that may move pixels, and only where a user sets a curve.
   ⚠**Re-run the LUT acceptance measurement on a curve-heavy gradient** (§4 trap 5) — the "error must

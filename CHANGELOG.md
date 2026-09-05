@@ -12,6 +12,24 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Curve control points you can drag in both directions, and colour values beside every swatch**
+  (beta.33). A segment's blend can now be a **Bézier** curve with **two control points that move in
+  x and y**, so you shape the curve directly instead of nudging a midpoint along one axis. Presets
+  (Linear / In / Out / In-out) write the control points, and the curve may swing outside the 0–1
+  band — the colour is clamped, not the curve. Picking Bézier **fits the curve that is already
+  there** rather than resetting it, and the picker says how close the fit is: exact for Linear and
+  Curved, within 0.003 for Sine, and about 0.14 for the two spherical blends, whose vertical
+  tangent no curve of this kind can reproduce.
+
+  A midpoint is a one-dimensional thing by definition — it says *when* the blend reaches halfway —
+  which is why it only ever moved horizontally, and why it stopped dead at the ends of its range.
+  Bézier segments have no midpoint control at all, since their handles already say the same thing.
+
+  **Colour swatches now show their values.** The selected stop has an editable `#rrggbb` field and
+  its 0–255 triple beside it, so you can read a colour out of a gradient and type an exact one back
+  in; the duotone/binary swatches show theirs underneath. Existing gradients are untouched — every
+  preset, import and saved session renders exactly as before.
+
 - **The ring view gets its own add and remove controls** (beta.32). Adding and removing stops in the
   ring was possible but invisible — a double-click and a right-click, with nothing on screen to
   suggest either, so the ring was a view you could rearrange but not build in. It now has the same

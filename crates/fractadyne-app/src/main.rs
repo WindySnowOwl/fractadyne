@@ -1580,6 +1580,7 @@ fn blend_label(k: u8) -> &'static str {
         2 => "Sine",
         3 => "Sphere ↑",
         4 => "Sphere ↓",
+        5 => "Bézier",
         _ => "Linear",
     }
 }
@@ -1789,12 +1790,50 @@ fn segments_to_gradient(
                 right: s.right,
                 left_color: s.left_color,
                 right_color: s.right_color,
-                blend: fractadyne_color::segment::Blend::from_u8(s.blend),
+                blend: fractadyne_color::segment::Blend::from_u8_params(s.blend, s.blend_params),
                 space: fractadyne_color::segment::Space::from_u8(s.space),
             })
             .collect(),
     }
 }
+
+/// A stop colour's 0–255 bytes — the numbers a user recognises, and the ones the renderer writes.
+///
+/// ⚠**Rounded, not truncated.** `(v * 255.0) as u8` turns 0.5 into 127 and makes the hex a user
+/// types differ from the hex the editor shows back, which reads as the field losing their input.
+fn rgb_bytes(rgb: [f32; 3]) -> [u8; 3] {
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    [b(rgb[0]), b(rgb[1]), b(rgb[2])]
+}
+
+/// `#rrggbb`, upper-case-free and always six digits.
+fn hex_of(rgb: [f32; 3]) -> String {
+    let [r, g, b] = rgb_bytes(rgb);
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// Parse `#rrggbb`, `rrggbb`, `#rgb` or `rgb` into a display-referred triple.
+///
+/// ⭐**Three-digit shorthand expands by DUPLICATION (`f80` → `ff8800`), not by padding**, which is
+/// the CSS rule and the only one that keeps `#fff` white. Padding with zeros would give `f0 80 00`
+/// — a different colour that still looks plausible, which is the worst kind of wrong.
+fn parse_hex_rgb(s: &str) -> Option<[f32; 3]> {
+    let h = s.trim().trim_start_matches('#');
+    if !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let v = |a: u8, b: u8| f32::from(a * 16 + b) / 255.0;
+    let d = |c: char| c.to_digit(16).map(|x| x as u8);
+    let c: Vec<u8> = h.chars().filter_map(d).collect();
+    match c.len() {
+        3 => Some([v(c[0], c[0]), v(c[1], c[1]), v(c[2], c[2])]),
+        6 => Some([v(c[0], c[1]), v(c[2], c[3]), v(c[4], c[5])]),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod color_values;
 
 /// A DISPLAY-referred stop colour as an egui colour.
 ///
@@ -1818,17 +1857,46 @@ fn paint_factor_curve(
     seg: &fractadyne_color::segment::Segment,
     color: egui::Color32,
     width: f32,
+    y_range: (f32, f32),
 ) {
-    let n = (rect.width().ceil() as usize).clamp(8, 96);
+    let n = (rect.width().ceil() as usize).clamp(8, 128);
     let span = seg.right - seg.left;
     let pts: Vec<egui::Pos2> = (0..=n)
         .map(|k| {
             let u = k as f32 / n as f32;
-            let f = seg.factor(seg.left + u * span).clamp(0.0, 1.0);
-            egui::pos2(rect.min.x + u * rect.width(), rect.max.y - f * rect.height())
+            let f = seg.factor(seg.left + u * span);
+            egui::pos2(rect.min.x + u * rect.width(), curve_y(rect, y_range, f))
         })
         .collect();
     painter.add(egui::Shape::line(pts, egui::Stroke::new(width, color)));
+}
+
+/// Where a blend factor sits vertically in a curve box showing `y_range`.
+///
+/// ⚠**Clamped to the BOX, not to `0..1`.** A Bézier is allowed to overshoot, and the canvas widens
+/// its range to show that; clamping the value instead would draw a curve flatter than the one the
+/// handles describe — the preview lying about the model, which is the failure `Segment::factor`
+/// being public exists to prevent.
+fn curve_y(rect: egui::Rect, (lo, hi): (f32, f32), v: f32) -> f32 {
+    let t = ((v - lo) / (hi - lo).max(1.0e-6)).clamp(0.0, 1.0);
+    rect.max.y - t * rect.height()
+}
+
+/// The inverse of [`curve_y`] — what value a pointer at `y` names.
+fn curve_value(rect: egui::Rect, (lo, hi): (f32, f32), y: f32) -> f32 {
+    let t = ((rect.max.y - y) / rect.height().max(1.0)).clamp(0.0, 1.0);
+    lo + t * (hi - lo)
+}
+
+/// The vertical span the curve canvas shows for a given blend.
+///
+/// ⭐A Bézier gets headroom above and below so an overshooting handle is VISIBLE; kinds 0–4 cannot
+/// leave `0..1`, so giving them the same headroom would only shrink the curve for no reason.
+fn curve_y_range(blend: fractadyne_color::segment::Blend) -> (f32, f32) {
+    match blend {
+        fractadyne_color::segment::Blend::Bezier(_) => (-0.3, 1.3),
+        _ => (0.0, 1.0),
+    }
 }
 
 impl RandomPalette {
@@ -3532,6 +3600,10 @@ struct ColoringConfig {
     /// few widely-spaced stops, nothing at all, which cancels the drag silently. That was the
     /// reported "drag points sometimes hang up where they stop moving".
     drag_stop: Option<usize>,
+    /// Which Bézier control point the pointer grabbed on the curve canvas (0 or 1), for the
+    /// length of one drag. Latched from the press origin like `drag_stop`, and for the same
+    /// reason.
+    drag_handle: Option<u8>,
     /// Show the gradient as a RING rather than a bar.
     ///
     /// ⭐A palette is *cycled*, so it is topologically a circle: the ring is the only view in which
@@ -4583,6 +4655,7 @@ impl FractadyneApp {
                 sel_stop: 0,
                 sel_segment: 0,
                 drag_stop: None,
+                drag_handle: None,
                 ring_view: false,
                 gradient_name: String::new(),
                 editor_baseline: None,
@@ -7247,6 +7320,7 @@ impl FractadyneApp {
                 right_color: s.right_color,
                 blend: s.blend.as_u8(),
                 space: s.space.as_u8(),
+                blend_params: s.blend.params(),
             })
             .collect();
         self.coloring.custom_palette =
@@ -7265,6 +7339,7 @@ impl FractadyneApp {
                 right_color: s.right_color,
                 blend: s.blend.as_u8(),
                 space: s.space.as_u8(),
+                blend_params: s.blend.params(),
             })
             .collect();
         self.coloring.custom_palette =
@@ -8053,6 +8128,10 @@ impl FractadyneApp {
                                 seg,
                                 if selected { accent } else { weak },
                                 if selected { 1.6 } else { 1.0 },
+                                // ⚠A 15 px cell has no room for overshoot headroom, so the
+                                // ribbon clamps to 0..1 and the big canvas is where an
+                                // overshooting Bézier is actually legible.
+                                (0.0, 1.0),
                             );
                         }
                     }
@@ -8108,16 +8187,32 @@ impl FractadyneApp {
                             egui::Stroke::new(1.0_f32, weak),
                             egui::StrokeKind::Inside,
                         );
+                        let yr = curve_y_range(seg.blend);
+                        let bez = match seg.blend {
+                            fractadyne_color::segment::Blend::Bezier(p) => Some(p),
+                            _ => None,
+                        };
                         // The identity line: without it "Curved" and "Sine" are two arcs with
                         // nothing to be curved AGAINST.
                         pr.line_segment(
                             [
-                                egui::pos2(curve.min.x, curve.max.y),
-                                egui::pos2(curve.max.x, curve.min.y),
+                                egui::pos2(curve.min.x, curve_y(curve, yr, 0.0)),
+                                egui::pos2(curve.max.x, curve_y(curve, yr, 1.0)),
                             ],
                             egui::Stroke::new(1.0_f32, weak.linear_multiply(0.45)),
                         );
-                        paint_factor_curve(&pr, curve, &seg, accent, 2.0);
+                        // ⚠With headroom on, 0 and 1 are no longer the box edges — so they need
+                        // drawing, or an overshooting curve has nothing to be over.
+                        if bez.is_some() {
+                            for v in [0.0_f32, 1.0] {
+                                let y = curve_y(curve, yr, v);
+                                pr.line_segment(
+                                    [egui::pos2(curve.min.x, y), egui::pos2(curve.max.x, y)],
+                                    egui::Stroke::new(1.0_f32, weak.linear_multiply(0.35)),
+                                );
+                            }
+                        }
+                        paint_factor_curve(&pr, curve, &seg, accent, 2.0, yr);
                         // ⭐**The consequence, not only the shape**: this segment's own colours
                         // under its own curve. It is where the HSV-from-a-grey sweep stops being
                         // a warning and becomes something the user can see — a black → red
@@ -8136,28 +8231,91 @@ impl FractadyneApp {
                                 egui::Stroke::new(1.5_f32, stop_color32([c[0], c[1], c[2]])),
                             );
                         }
-                        // The midpoint, as a ring ON the curve. ⚠It rides at `factor(mid)`, not
-                        // at 0.5 — a sphere-increasing segment reads 0.866 there, and putting the
-                        // ring at the halfway height would draw it off its own curve.
-                        let frac = ((seg.mid - seg.left) / span).clamp(0.0, 1.0);
-                        pr.circle(
+                        // ⭐⭐**P4′: for kind 5 the canvas carries two control points that move in
+                        // X AND Y.** That is the whole difference from a midpoint, which is a
+                        // one-dimensional quantity by construction — it says *when* the blend
+                        // reaches halfway, and no amount of dragging it up or down can mean
+                        // anything. A handle with two degrees of freedom changes the SHAPE.
+                        let handle_pos = |p: [f32; 4], k: usize| {
                             egui::pos2(
-                                curve.min.x + frac * curve.width(),
-                                curve.max.y - seg.factor(seg.mid).clamp(0.0, 1.0) * curve.height(),
-                            ),
-                            5.0,
-                            sunken,
-                            egui::Stroke::new(2.0_f32, accent),
-                        );
-                        if let (true, Some(p)) = (cresp.dragged(), cresp.interact_pointer_pos()) {
-                            let f = ((p.x - curve.min.x) / curve.width().max(1.0)).clamp(0.02, 0.98);
-                            let mut g2 = g.clone();
-                            g2.segments[si].mid = seg.left + f * span;
-                            edit = Some(g2);
+                                curve.min.x + p[k * 2].clamp(0.0, 1.0) * curve.width(),
+                                curve_y(curve, yr, p[k * 2 + 1]),
+                            )
+                        };
+                        if let Some(p) = bez {
+                            // Each handle tethered to the endpoint it belongs to, the way every
+                            // curve editor draws them — without the tether the two dots are
+                            // unattributed and the curve looks like it has four control points.
+                            for (k, anchor) in [(0usize, 0.0_f32), (1, 1.0)] {
+                                let a = egui::pos2(
+                                    curve.min.x + anchor * curve.width(),
+                                    curve_y(curve, yr, anchor),
+                                );
+                                let h = handle_pos(p, k);
+                                pr.line_segment([a, h], egui::Stroke::new(1.0_f32, weak));
+                                pr.circle(h, 5.0, sunken, egui::Stroke::new(2.0_f32, accent));
+                            }
+                        } else {
+                            // The midpoint, as a ring ON the curve. ⚠It rides at `factor(mid)`,
+                            // not at 0.5 — a sphere-increasing segment reads 0.866 there, and
+                            // putting the ring at the halfway height would draw it off its own
+                            // curve.
+                            let frac = ((seg.mid - seg.left) / span).clamp(0.0, 1.0);
+                            pr.circle(
+                                egui::pos2(
+                                    curve.min.x + frac * curve.width(),
+                                    curve_y(curve, yr, seg.factor(seg.mid)),
+                                ),
+                                5.0,
+                                sunken,
+                                egui::Stroke::new(2.0_f32, accent),
+                            );
                         }
-                        cresp.on_hover_text(
-                            "The blend curve for the selected segment: how fast the colour travels from the left stop to the right one. Drag the ring to move the midpoint.",
-                        );
+                        // ⚠**Latched on the PRESS ORIGIN**, for the same reason the stop markers
+                        // are: `drag_started` fires only after the pointer has already moved, so
+                        // hit-testing where it currently is grabs the other handle — or neither,
+                        // which is what "the drag point gets stuck" looked like.
+                        if cresp.drag_started() {
+                            self.coloring.drag_handle = bez.and_then(|p| {
+                                let at = press.or_else(|| cresp.interact_pointer_pos())?;
+                                let (d0, d1) =
+                                    (at.distance(handle_pos(p, 0)), at.distance(handle_pos(p, 1)));
+                                let k = usize::from(d1 < d0);
+                                (d0.min(d1) <= 14.0).then_some(k as u8)
+                            });
+                        }
+                        if cresp.drag_stopped() {
+                            self.coloring.drag_handle = None;
+                        }
+                        if let (true, Some(at)) = (cresp.dragged(), cresp.interact_pointer_pos()) {
+                            let mut g2 = g.clone();
+                            match (bez, self.coloring.drag_handle) {
+                                (Some(mut p), Some(k)) => {
+                                    let k = usize::from(k);
+                                    // ⚠x is clamped to 0..1 because x(u) must stay monotone for
+                                    // the ease to be a function at all; y is deliberately free
+                                    // within the box, and the COLOUR is what gets clamped.
+                                    p[k * 2] = ((at.x - curve.min.x) / curve.width().max(1.0))
+                                        .clamp(0.0, 1.0);
+                                    p[k * 2 + 1] = curve_value(curve, yr, at.y);
+                                    g2.segments[si].blend =
+                                        fractadyne_color::segment::Blend::Bezier(p);
+                                    edit = Some(g2);
+                                }
+                                (None, _) => {
+                                    let f = ((at.x - curve.min.x) / curve.width().max(1.0))
+                                        .clamp(0.02, 0.98);
+                                    g2.segments[si].mid = seg.left + f * span;
+                                    edit = Some(g2);
+                                }
+                                _ => {}
+                            }
+                        }
+                        cresp.on_hover_text(if bez.is_some() {
+                            "The blend curve for the selected segment. Drag either control point — in x AND y — to reshape it. The faint lines are 0 and 1; a curve may pass outside them, and the colour is clamped rather than the curve."
+                        } else {
+                            "The blend curve for the selected segment: how fast the colour travels from the left stop to the right one. Drag the ring to move the midpoint, or switch the curve to Bézier for a control point that moves in both directions."
+                        });
 
                         ui.add_space(8.0);
                         ui.vertical(|ui| {
@@ -8181,18 +8339,48 @@ impl FractadyneApp {
                                     "How fast the colour travels across this segment. \"Curved\" is shaped by the midpoint — at midpoint 0.50 it is exactly linear.",
                                 );
                                 let mut blend = seg.blend.as_u8();
+                                // The segment's curve as a function of `0..1`, which is the shape
+                                // `fit_to` samples.
+                                let shape = |t: f32| seg.factor(seg.left + t * span);
                                 egui::ComboBox::from_id_salt("seg_blend")
                                     .width(120.0)
                                     .selected_text(blend_label(blend))
                                     .show_ui(ui, |ui| {
-                                        for k in 0..5u8 {
-                                            ui.selectable_value(&mut blend, k, blend_label(k));
+                                        for k in 0..=5u8 {
+                                            let r =
+                                                ui.selectable_value(&mut blend, k, blend_label(k));
+                                            // ⭐⭐**Say HOW approximate before they commit.** The
+                                            // fit error runs from 0 (Linear, Curved — they are
+                                            // cubics) to ~0.14 (either sphere, whose vertical
+                                            // tangent no cubic has). One flat "this is
+                                            // approximate" would put those in the same sentence.
+                                            if k == 5 && seg.blend.as_u8() != 5 {
+                                                let (_, err) =
+                                                    fractadyne_color::segment::Blend::fit_with_error(shape);
+                                                r.on_hover_text(if err < 0.005 {
+                                                    "Two control points you can drag in both directions. This curve is already a cubic, so converting it changes nothing.".to_string()
+                                                } else {
+                                                    format!("Two control points you can drag in both directions. Converting APPROXIMATES the current curve — this one to within {err:.2}, which is {}.", if err > 0.05 { "clearly visible" } else { "barely visible" })
+                                                });
+                                            }
                                         }
                                     });
                                 if blend != seg.blend.as_u8() {
                                     let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
-                                    g2.segments[si].blend =
-                                        fractadyne_color::segment::Blend::from_u8(blend);
+                                    // ⭐Switching TO Bézier FITS the curve that is there rather
+                                    // than resetting to a straight line: "make this editable" must
+                                    // not also mean "and throw it away".
+                                    // ⚠Switching AWAY and back re-fits, so hand-dragged handles do
+                                    // not survive a detour through another kind — the parameters
+                                    // ride in the `Blend` variant, which a kind 0–4 segment does
+                                    // not have. Deterministic, and stated in the doc.
+                                    g2.segments[si].blend = if blend == 5 {
+                                        fractadyne_color::segment::Blend::Bezier(
+                                            fractadyne_color::segment::Blend::fit_to(shape),
+                                        )
+                                    } else {
+                                        fractadyne_color::segment::Blend::from_u8(blend)
+                                    };
                                     edit = Some(g2);
                                 }
                             });
@@ -8214,7 +8402,40 @@ impl FractadyneApp {
                                     edit = Some(g2);
                                 }
                             });
+                            // ⭐⭐**Kind 5 has no midpoint row, because kind 5 IGNORES `mid`**
+                            // (§9.4 decision 1) — the handles already say where the curve reaches
+                            // halfway. Leaving a live-looking control that changed nothing would
+                            // be the "UI responds, picture does not" failure this codebase has
+                            // already been bitten by twice. The stored value is untouched, so
+                            // switching back to kinds 0–4 restores it.
+                            if let fractadyne_color::segment::Blend::Bezier(p) = seg.blend {
+                                ui.horizontal(|ui| {
+                                    ui.label("Ease").on_hover_text(
+                                        "Presets write the two control points; drag them on the curve for anything else. A Bézier has no midpoint — its handles say where it reaches halfway.",
+                                    );
+                                    for (name, np) in [
+                                        ("Linear", fractadyne_color::segment::BEZIER_IDENTITY),
+                                        ("In", [0.42, 0.0, 1.0, 1.0]),
+                                        ("Out", [0.0, 0.0, 0.58, 1.0]),
+                                        ("In-out", [0.42, 0.0, 0.58, 1.0]),
+                                    ] {
+                                        if ui.selectable_label(p == np, name).clicked() {
+                                            let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                                            g2.segments[si].blend =
+                                                fractadyne_color::segment::Blend::Bezier(np);
+                                            edit = Some(g2);
+                                        }
+                                    }
+                                });
+                            }
                             ui.horizontal(|ui| {
+                                let is_bez = matches!(
+                                    seg.blend,
+                                    fractadyne_color::segment::Blend::Bezier(_)
+                                );
+                                if is_bez {
+                                    return;
+                                }
                                 ui.label("Midpoint");
                                 // ⚠A FRACTION of the segment (GIMP semantics), not an absolute
                                 // position — the same number the ring on the canvas moves.
@@ -8267,13 +8488,49 @@ impl FractadyneApp {
                         let mut rgb = rgb0;
                         if ui
                             .color_edit_button_rgb(&mut rgb)
-                            .on_hover_text("The colour at this stop")
+                            .on_hover_text("The colour at this stop — click to pick, or type a hex value beside it")
                             .changed()
                         {
                             let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
                             g2.set_stop_color(i, rgb);
                             edit = Some(g2);
                         }
+                        // ⭐**The numbers beside the swatch.** A swatch says which colour, never
+                        // WHICH colour — and every other tool in this space (Fractint `.map`, a
+                        // `.ugr`, a palette off the web) speaks in hex or 0–255 triples, so the
+                        // editor has to as well or the user has to leave it to find out what they
+                        // have. The field is editable, which is also the only way to enter an
+                        // exact colour: a picker cannot be aimed at #8b1a1a.
+                        // ⚠**Only overwritten when it is not being edited**, or the field would
+                        // fight the user's keystrokes: typing "#f" would be re-rendered as the
+                        // current colour's full hex on the very next frame.
+                        let hex_id = ui.id().with(("stop_hex", i));
+                        let mut hex = ui.data_mut(|d| {
+                            d.get_temp::<String>(hex_id).unwrap_or_else(|| hex_of(rgb0))
+                        });
+                        let hex_resp = ui.add(
+                            egui::TextEdit::singleline(&mut hex)
+                                .desired_width(72.0)
+                                .font(egui::TextStyle::Monospace)
+                                .hint_text("#rrggbb"),
+                        );
+                        if hex_resp.has_focus() || hex_resp.changed() {
+                            ui.data_mut(|d| d.insert_temp(hex_id, hex.clone()));
+                        } else {
+                            ui.data_mut(|d| d.remove_temp::<String>(hex_id));
+                        }
+                        if hex_resp.changed() {
+                            if let Some(c) = parse_hex_rgb(&hex) {
+                                let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                                g2.set_stop_color(i, c);
+                                edit = Some(g2);
+                            }
+                        }
+                        let [r8, g8, b8] = rgb_bytes(rgb0);
+                        ui.label(
+                            egui::RichText::new(format!("{r8:>3} {g8:>3} {b8:>3}")).monospace(),
+                        )
+                        .on_hover_text("Red, green and blue as 0–255 — the bytes this colour is written as");
                         // ⚠The end stops are pinned: a gradient covers 0..1 by contract, and one
                         // that stopped short would render a flat clamp instead of the colour the
                         // user put there. Shown disabled rather than hidden so the row still reads.
@@ -8746,6 +9003,7 @@ impl FractadyneApp {
         if !open {
             self.coloring.editor_baseline = None;
             self.coloring.drag_stop = None;
+            self.coloring.drag_handle = None;
         }
         self.coloring.palette_editor_open = open;
     }

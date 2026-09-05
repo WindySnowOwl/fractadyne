@@ -1112,14 +1112,28 @@ impl FractadyneApp {
                 // Non-default curves on a few segments, so the ribbon shows VARIETY rather than a
                 // row of identical diagonals — a ribbon of linear cells cannot show whether the
                 // per-segment curve is being drawn at all.
-                for (i, (blend, space)) in
-                    [(2u8, 0u8), (3, 0), (1, 1), (4, 0)].into_iter().enumerate()
+                // ⚠Segment 2 is kind 5 (Bézier) with hand-set control points, so the walk
+                // screenshots the CONTROL POINTS and not only the five named curves — the two
+                // handles are a different widget, and a canvas showing a midpoint ring says
+                // nothing about whether they draw or where they sit.
+                for (i, (blend, space, params)) in [
+                    (2u8, 0u8, [0.0; 4]),
+                    (5, 0, [0.15, 0.95, 0.7, 0.25]),
+                    (1, 1, [0.0; 4]),
+                    (4, 0, [0.0; 4]),
+                ]
+                .into_iter()
+                .enumerate()
                 {
                     if let Some(s) = self.coloring.custom_segments.get_mut(i) {
                         s.blend = blend;
                         s.space = space;
+                        s.blend_params = params;
                     }
                 }
+                // Select the Bézier segment, so the detail panel below the strip is showing the
+                // thing this step was extended to cover.
+                self.coloring.sel_segment = 1;
                 // Expand the paste-import section and seed it, so the walk covers that UI too
                 // rather than only the stop rows it shares with every other run.
                 self.coloring.paste_open = true;
