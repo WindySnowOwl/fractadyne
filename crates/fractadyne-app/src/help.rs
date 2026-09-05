@@ -464,6 +464,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--palette-map-smooth", "With --palette-map: blend between the file's entries instead of banding them."),
         Flag("--palette-ugr FILE", "Colour through an Ultra Fractal .ugr gradient file. A .ugr usually holds MANY named gradients; without --palette-ugr-name the first is used and the run says which. Colours are interpolated (unlike .map), indices run 0-399, and the file's rotation is applied."),
         Flag("--palette-ugr-name NAME", "With --palette-ugr: which gradient to use, by block name or title. An unknown name lists what the file actually contains."),
+        Flag("--palette-ggr FILE", "Colour through a GIMP .ggr gradient. This is the richest of the palette formats and the only one imported without loss: each segment keeps its own midpoint, blend curve (linear / curved / sine / spherical) and colour space (RGB, or either way round the hue wheel)."),
         Flag("--method NAME", "smooth | stripe | triangle | trap | distance | decomposition."),
         Flag("--stripe-freq N", "Stripe density (stripe method)."),
         Flag("--trap SHAPE", "point | cross | circle (orbit-trap method)."),

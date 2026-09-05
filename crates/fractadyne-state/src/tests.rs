@@ -342,3 +342,57 @@ fn reset_all_removes_config_dir_via_override() {
     std::env::remove_var("FRACTADYNE_CONFIG_DIR");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// ⭐⭐**An imported `.ggr` is RICHER than a stop list, and the session must hold all of it.** The
+/// midpoint, the blend curve and the colour space are exactly what a `[pos, r, g, b]` list cannot
+/// express, so persisting one as stops would have flattened every curve and every hue sweep on the
+/// first restart — silently, and visible only as "it looks different than when I imported it".
+#[test]
+fn an_imported_segment_gradient_survives_a_restart() {
+    let segs = vec![
+        PaletteSegment {
+            left: 0.0,
+            mid: 0.17,           // deliberately NOT centred
+            right: 0.5,
+            left_color: [1.0, 0.0, 0.0, 1.0],
+            right_color: [0.0, 0.0, 1.0, 0.5],
+            blend: 2,            // sine
+            space: 1,            // HSV counter-clockwise
+        },
+        PaletteSegment {
+            left: 0.5,
+            mid: 0.75,
+            right: 1.0,
+            left_color: [0.0, 0.0, 1.0, 0.5],
+            right_color: [1.0, 1.0, 0.0, 1.0],
+            blend: 4,            // spherical decreasing
+            space: 0,
+        },
+    ];
+    let s = SessionState {
+        custom_segments: segs.clone(),
+        use_custom_palette: true,
+        ..SessionState::default()
+    };
+    let r = roundtrip(&s);
+    assert_eq!(r.custom_segments, segs, "the segment gradient did not round-trip");
+    // The three things a stop list cannot hold, named individually so a partial loss is obvious.
+    assert_eq!(r.custom_segments[0].mid, 0.17, "the off-centre midpoint was lost");
+    assert_eq!(r.custom_segments[0].blend, 2, "the blend curve was lost");
+    assert_eq!(r.custom_segments[0].space, 1, "the colour space was lost");
+    assert_eq!(r.custom_segments[0].right_color[3], 0.5, "alpha was lost");
+}
+
+/// A session written before `.ggr` import existed has no segments, and must read as a plain stop
+/// list rather than as an empty gradient.
+#[test]
+fn a_session_without_segments_still_uses_its_stops() {
+    let s = SessionState {
+        custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
+        use_custom_palette: true,
+        ..SessionState::default()
+    };
+    let r = roundtrip(&s);
+    assert!(r.custom_segments.is_empty());
+    assert_eq!(r.custom_palette.len(), 2);
+}

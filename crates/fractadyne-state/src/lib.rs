@@ -22,6 +22,27 @@ fn default_state_version() -> u32 {
 /// (`center_x_str`/`center_y_str`) so deep-zoom locations survive quit/restart; the
 /// `f64` `center_x`/`center_y` remain for display and backward compatibility with
 /// older session files (used as a fallback when the strings are absent).
+/// One segment of a custom gradient, mirroring `fractadyne_color::segment::Segment`.
+///
+/// ⚠**`blend` and `space` are a FILE FORMAT**: they are GIMP's `.ggr` numbering (blend 0 linear,
+/// 1 curved, 2 sine, 3 sphere-increasing, 4 sphere-decreasing; space 0 RGB, 1 HSV counter-
+/// clockwise, 2 HSV clockwise), and they are written into the user's session file. Renumbering
+/// them would silently re-interpret every saved gradient, so the mapping lives in
+/// `fractadyne-color` next to a test that pins it in both directions.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct PaletteSegment {
+    pub left: f32,
+    pub mid: f32,
+    pub right: f32,
+    /// DISPLAY-space RGBA, `0..1` — the space the renderer writes straight to the framebuffer.
+    pub left_color: [f32; 4],
+    pub right_color: [f32; 4],
+    #[serde(default)]
+    pub blend: u8,
+    #[serde(default)]
+    pub space: u8,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct SessionState {
     /// Schema version this file was written with (see [`STATE_FORMAT_VERSION`]). Missing ⇒ v1.
@@ -174,6 +195,15 @@ pub struct SessionState {
     /// editor-authored gradient.
     #[serde(default)]
     pub custom_palette_flat: bool,
+    /// A full SEGMENT gradient, when the palette is one a stop list cannot express.
+    ///
+    /// ⭐**This exists because `.ggr` is a superset of `custom_palette`.** A GIMP gradient carries a
+    /// per-segment midpoint, one of five blend curves and a colour space (RGB or either way round
+    /// the hue wheel); a `[pos, r, g, b]` list holds none of those, so persisting an imported
+    /// `.ggr` as stops would have quietly flattened every curve and every hue sweep on the first
+    /// restart. When this is non-empty it WINS over `custom_palette`.
+    #[serde(default)]
+    pub custom_segments: Vec<PaletteSegment>,
     /// Use the custom gradient instead of the selected preset.
     #[serde(default)]
     pub use_custom_palette: bool,
@@ -439,6 +469,7 @@ impl Default for SessionState {
             minimap: false,
             custom_palette: Vec::new(),
             custom_palette_flat: false,
+            custom_segments: Vec::new(),
             use_custom_palette: false,
             use_duotone: false,
             use_binary: false,

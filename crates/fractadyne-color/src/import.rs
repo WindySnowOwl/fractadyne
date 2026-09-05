@@ -301,5 +301,130 @@ fn ugr_u32(v: &str, what: &str) -> Result<u32, String> {
         .map_err(|_| format!("{what}={v:?} is not a whole number"))
 }
 
+// ================================================================================================
+// GIMP `.ggr`
+// ================================================================================================
+
+/// Parse a GIMP `.ggr` gradient.
+///
+/// ⭐**This is the format the whole segment model was taken from**, so unlike `.map` and `.ugr` it
+/// needs no lowering: a `.ggr` segment IS a [`Segment`](crate::segment::Segment), midpoint, blend
+/// function, colour space and all. Nothing is approximated here.
+///
+/// ```text
+/// GIMP Gradient
+/// Name: Full saturation spectrum CCW
+/// 7
+/// left mid right   lr lg lb la   rr rg rb ra   blend colour [left_type right_type]
+/// ```
+///
+/// Thirteen numbers per segment, or fifteen in GIMP 2.x files that record where each endpoint's
+/// colour comes from (fixed, foreground, background); the two extra are read and ignored, because
+/// "the current foreground colour" is not a thing a fractal renderer has.
+///
+/// ⚠**Colours are DISPLAY-space `0..1` and pass straight through.** GIMP writes what the screen
+/// shows, and so does this renderer (see `srgb8_to_stop`), so a conversion here would be the same
+/// mistake that made pasted palettes too dark before beta.21.
+///
+/// ⚠**A `+`-prefixed compressed continuation line is NOT supported.** `design/palette-import.md` §2
+/// records that such a thing exists; it was not confirmed against a real file or a working parser,
+/// and guessing at a compression scheme is how a palette gets silently mis-imported. A file using
+/// one is REJECTED by name rather than half-read.
+pub fn parse_ggr(text: &str) -> Result<Gradient, String> {
+    use crate::segment::{Blend, Segment, Space};
+
+    let mut lines = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'));
+
+    let head = lines.next().unwrap_or_default();
+    if !head.eq_ignore_ascii_case("GIMP Gradient") {
+        return Err(format!("expected a \"GIMP Gradient\" header, found {head:?}"));
+    }
+    // `Name:` arrived in GIMP 1.2; a file without one is still valid, and its next line is the
+    // segment count. Peeking rather than assuming is what lets both load.
+    let mut name = String::new();
+    let mut next = lines.next().unwrap_or_default().to_string();
+    if let Some(n) = next.strip_prefix("Name:") {
+        name = n.trim().to_string();
+        next = lines.next().unwrap_or_default().to_string();
+    }
+    let count: usize = next
+        .parse()
+        .map_err(|_| format!("expected a segment count, found {next:?}"))?;
+    if count == 0 {
+        return Err("the file declares 0 segments".to_string());
+    }
+
+    let mut segments: Vec<Segment> = Vec::with_capacity(count);
+    for (n, line) in lines.enumerate() {
+        if line.starts_with('+') {
+            return Err(format!(
+                "segment {}: compressed \"+\" continuation lines are not supported",
+                n + 1
+            ));
+        }
+        let f: Vec<&str> = line.split_whitespace().collect();
+        // 13 fields, or 15 with GIMP 2.x's per-endpoint colour types.
+        if f.len() != 13 && f.len() != 15 {
+            return Err(format!(
+                "segment {}: expected 13 or 15 values, found {}",
+                n + 1,
+                f.len()
+            ));
+        }
+        let num = |i: usize| -> Result<f32, String> {
+            f[i].parse::<f32>()
+                .map_err(|_| format!("segment {}: {:?} is not a number", n + 1, f[i]))
+        };
+        let int = |i: usize| -> Result<u8, String> {
+            f[i].parse::<i64>()
+                .map(|v| v.clamp(0, 255) as u8)
+                .map_err(|_| format!("segment {}: {:?} is not a whole number", n + 1, f[i]))
+        };
+        let (left, mid, right) = (num(0)?, num(1)?, num(2)?);
+        if !(left <= mid && mid <= right) || !(0.0..=1.0).contains(&left) || right > 1.0 {
+            return Err(format!(
+                "segment {}: positions {left} / {mid} / {right} are not an ascending span inside 0..1",
+                n + 1
+            ));
+        }
+        let col = |i: usize| -> Result<[f32; 4], String> {
+            Ok([
+                num(i)?.clamp(0.0, 1.0),
+                num(i + 1)?.clamp(0.0, 1.0),
+                num(i + 2)?.clamp(0.0, 1.0),
+                num(i + 3)?.clamp(0.0, 1.0),
+            ])
+        };
+        segments.push(Segment {
+            left,
+            mid,
+            right,
+            left_color: col(3)?,
+            right_color: col(7)?,
+            blend: Blend::from_u8(int(11)?),
+            space: Space::from_u8(int(12)?),
+        });
+        if segments.len() == count {
+            break;
+        }
+    }
+    if segments.len() != count {
+        return Err(format!(
+            "the file declares {count} segments but carries {}",
+            segments.len()
+        ));
+    }
+    // Zero-width segments are legal to write and impossible to render; dropping them here keeps
+    // `eval`'s divide-by-span guard from being load-bearing.
+    segments.retain(|s| s.right > s.left);
+    if segments.is_empty() {
+        return Err("every segment is zero-width".to_string());
+    }
+    Ok(Gradient { name, segments })
+}
+
 #[cfg(test)]
 mod import_tests;

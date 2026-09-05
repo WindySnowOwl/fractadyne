@@ -37,6 +37,33 @@ pub enum Blend {
     SphereDecreasing,
 }
 
+impl Blend {
+    /// GIMP's `.ggr` blend-type number, which is also what a session file stores.
+    ///
+    /// ⚠These numbers are a FILE FORMAT, not an internal detail — they appear in `.ggr` files
+    /// written by other applications and in our own saved sessions. Reordering the enum without
+    /// changing this mapping would silently re-interpret every stored gradient.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Blend::Curved,
+            2 => Blend::Sine,
+            3 => Blend::SphereIncreasing,
+            4 => Blend::SphereDecreasing,
+            _ => Blend::Linear,
+        }
+    }
+
+    pub fn as_u8(self) -> u8 {
+        match self {
+            Blend::Linear => 0,
+            Blend::Curved => 1,
+            Blend::Sine => 2,
+            Blend::SphereIncreasing => 3,
+            Blend::SphereDecreasing => 4,
+        }
+    }
+}
+
 /// The space a segment blends in. HSV lets one segment sweep the long way round the hue wheel,
 /// which is a thing `.ggr` files do and a thing RGB interpolation cannot express.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -47,6 +74,25 @@ pub enum Space {
     HsvCcw,
     /// Hue decreasing (clockwise).
     HsvCw,
+}
+
+impl Space {
+    /// GIMP's `.ggr` colouring-type number — a file format, like [`Blend::from_u8`].
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Space::HsvCcw,
+            2 => Space::HsvCw,
+            _ => Space::Rgb,
+        }
+    }
+
+    pub fn as_u8(self) -> u8 {
+        match self {
+            Space::Rgb => 0,
+            Space::HsvCcw => 1,
+            Space::HsvCw => 2,
+        }
+    }
 }
 
 /// One span of a gradient: `left..right` in `0..1`, RGBA endpoints, a blend function and a space.

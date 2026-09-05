@@ -3187,6 +3187,15 @@ struct ColoringConfig {
     /// Read `custom_palette` as BANDS (flat, no interpolation) instead of gradient stops — what a
     /// Fractint `.map` import sets. See `fractadyne_color::import::MapPalette::bands`.
     custom_palette_flat: bool,
+    /// A full segment gradient (a `.ggr` import), which WINS over `custom_palette` when non-empty.
+    /// See `fractadyne_state::PaletteSegment` for why a stop list is not enough.
+    ///
+    /// ⚠**Every path that sets stops must `.clear()` this** — presets, paste, `.map`, `.ugr`,
+    /// adding a stop. Leave it set and the `.ggr` keeps winning, so those edits appear to do
+    /// nothing: the UI responds and the picture does not, which is the most confusing failure
+    /// available. The editor also refuses to pretend, showing a "Convert to editable stops" button
+    /// that says what it discards instead of silently flattening the gradient on the first click.
+    custom_segments: Vec<fractadyne_state::PaletteSegment>,
     use_custom_palette: bool,
     /// Palette editor window open (transient UI).
     palette_editor_open: bool,
@@ -4219,6 +4228,7 @@ impl FractadyneApp {
                 offset: s.offset,
                 custom_palette: s.custom_palette.clone(),
                 custom_palette_flat: s.custom_palette_flat,
+                custom_segments: s.custom_segments.clone(),
                 use_custom_palette: s.use_custom_palette,
                 palette_editor_open: false,
                 paste_open: false,
@@ -4578,6 +4588,21 @@ impl FractadyneApp {
             self.coloring.use_binary = false;
             self.coloring.use_duotone = false;
         }
+        // ⭐The lossless one: a `.ggr` segment IS a model segment, so this stores segments rather
+        // than stops and no midpoint, blend curve or hue sweep is approximated on the way in.
+        if let Some(path) = val("--palette-ggr") {
+            let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
+                eprintln!("fractadyne: --palette-ggr: cannot read \"{path}\": {e}");
+                crate::exit(2)
+            });
+            let g = fractadyne_color::import::parse_ggr(&text).unwrap_or_else(|e| {
+                eprintln!("fractadyne: --palette-ggr: \"{path}\" is not a .ggr gradient — {e}");
+                crate::exit(2)
+            });
+            self.set_custom_segments(&g);
+            self.coloring.use_binary = false;
+            self.coloring.use_duotone = false;
+        }
         if args.iter().any(|a| a == "--binary") {
             self.coloring.use_binary = true;
             self.coloring.use_duotone = false;
@@ -4732,6 +4757,7 @@ impl FractadyneApp {
             minimap: self.dialogs.minimap,
             custom_palette: self.coloring.custom_palette.clone(),
             custom_palette_flat: self.coloring.custom_palette_flat,
+            custom_segments: self.coloring.custom_segments.clone(),
             use_custom_palette: self.coloring.use_custom_palette,
             use_duotone: self.coloring.use_duotone,
             use_binary: self.coloring.use_binary,
@@ -6511,6 +6537,7 @@ impl FractadyneApp {
                     })
                     .collect();
                 self.coloring.custom_palette_flat = true;
+                self.coloring.custom_segments.clear();
                 let name =
                     path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
                 self.coloring.paste_msg = Some(if m.vga_6bit {
@@ -6599,12 +6626,107 @@ impl FractadyneApp {
             .map(|(pos, c)| [pos, c[0], c[1], c[2]])
             .collect();
         self.coloring.custom_palette_flat = false;
+        self.coloring.custom_segments.clear();
+        self.coloring.use_custom_palette = true;
+        self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
+    }
+
+    /// Import a GIMP `.ggr` gradient. Returns whether it applied.
+    ///
+    /// ⭐**The only importer that loses nothing**: `.ggr` is the format the segment model was taken
+    /// from, so its midpoints, blend curves and HSV sweeps arrive verbatim. That is also why it
+    /// stores into `custom_segments` rather than `custom_palette` — a stop list cannot hold any of
+    /// the three, and persisting it as stops would flatten every one on the first restart.
+    fn import_ggr_palette(&mut self) -> bool {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("GIMP gradient", &["ggr"])
+            .add_filter("All files", &["*"])
+            .set_directory(self.dialog_dir_default())
+            .pick_file()
+        else {
+            return false;
+        };
+        self.remember_dir(&path);
+        const GGR_MAX: u64 = 1024 * 1024;
+        let read = match std::fs::metadata(&path) {
+            Ok(m) if m.len() <= GGR_MAX => std::fs::read_to_string(&path),
+            Ok(_) => Err(std::io::Error::other("far too large to be a .ggr gradient")),
+            Err(e) => Err(e),
+        };
+        self.coloring.paste_open = true;
+        let text = match read {
+            Ok(t) => t,
+            Err(e) => {
+                self.coloring.paste_msg = Some(format!("Read failed: {e}"));
+                return false;
+            }
+        };
+        match fractadyne_color::import::parse_ggr(&text) {
+            Ok(g) => {
+                let n = g.segments.len();
+                let name = if g.name.is_empty() {
+                    path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned())
+                } else {
+                    g.name.clone()
+                };
+                self.set_custom_segments(&g);
+                self.coloring.paste_msg =
+                    Some(format!("Imported \"{name}\" - {n} segments, with their midpoints, blend curves and colour spaces."));
+                true
+            }
+            Err(e) => {
+                self.coloring.paste_msg = Some(format!("Not a .ggr gradient: {e}"));
+                false
+            }
+        }
+    }
+
+    /// Store a gradient as segments (the lossless path), and keep a stop-list approximation beside
+    /// it so "Convert to editable stops" has something to hand the editor.
+    fn set_custom_segments(&mut self, g: &fractadyne_color::segment::Gradient) {
+        self.coloring.custom_segments = g
+            .segments
+            .iter()
+            .map(|s| fractadyne_state::PaletteSegment {
+                left: s.left,
+                mid: s.mid,
+                right: s.right,
+                left_color: s.left_color,
+                right_color: s.right_color,
+                blend: s.blend.as_u8(),
+                space: s.space.as_u8(),
+            })
+            .collect();
+        self.coloring.custom_palette =
+            g.to_stops().into_iter().map(|(pos, c)| [pos, c[0], c[1], c[2]]).collect();
+        self.coloring.custom_palette_flat = false;
         self.coloring.use_custom_palette = true;
         self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
     }
 
     fn custom_gradient(&self) -> fractadyne_color::segment::Gradient {
         use fractadyne_color::segment::Gradient;
+        // A `.ggr` import wins: it carries midpoints, blend curves and hue sweeps that the stop
+        // list beside it (kept only as an editable approximation) cannot express.
+        if !self.coloring.custom_segments.is_empty() {
+            return Gradient {
+                name: "Imported".into(),
+                segments: self
+                    .coloring
+                    .custom_segments
+                    .iter()
+                    .map(|s| fractadyne_color::segment::Segment {
+                        left: s.left,
+                        mid: s.mid,
+                        right: s.right,
+                        left_color: s.left_color,
+                        right_color: s.right_color,
+                        blend: fractadyne_color::segment::Blend::from_u8(s.blend),
+                        space: fractadyne_color::segment::Space::from_u8(s.space),
+                    })
+                    .collect(),
+            };
+        }
         if self.coloring.custom_palette.is_empty() {
             let p = &fractadyne_color::PRESETS[self.coloring.palette_idx];
             return Gradient::from_stops(p.name, p.stops);
@@ -6769,6 +6891,7 @@ impl FractadyneApp {
                         && ui.button(format!("{} Add stop", crate::icons::ADD)).clicked()
                     {
                         self.coloring.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
+                        self.coloring.custom_segments.clear();
                         changed = true;
                     }
                     ui.menu_button("Copy preset…", |ui| {
@@ -6776,6 +6899,7 @@ impl FractadyneApp {
                             if ui.button(p.name).clicked() {
                                 self.coloring.custom_palette = self.preset_as_stops(i);
                                 self.coloring.custom_palette_flat = false;
+                                self.coloring.custom_segments.clear();
                                 changed = true;
                                 ui.close_menu();
                             }
@@ -6799,7 +6923,40 @@ impl FractadyneApp {
                     {
                         changed = true;
                     }
+                    if ui
+                        .button("Import .ggr…")
+                        .on_hover_text("Load a GIMP .ggr gradient, with its midpoints, blend curves and colour spaces intact")
+                        .clicked()
+                        && self.import_ggr_palette()
+                    {
+                        changed = true;
+                    }
                 });
+
+                // ⭐An imported `.ggr` is RICHER than the stop list the editor edits, so editing
+                // stops cannot mean "edit this gradient" — it means replacing it. Say so, and make
+                // the conversion an explicit button rather than a surprise on the first click.
+                if !self.coloring.custom_segments.is_empty() {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Imported gradient: {} segments with midpoints / blend curves / colour spaces.",
+                                self.coloring.custom_segments.len()
+                            ))
+                            .weak()
+                            .small(),
+                        );
+                    });
+                    if ui
+                        .button("Convert to editable stops")
+                        .on_hover_text("Replace it with a plain stop list. This DISCARDS the midpoints, blend curves and hue sweeps a stop list cannot hold.")
+                        .clicked()
+                    {
+                        self.coloring.custom_segments.clear();
+                        changed = true;
+                    }
+                }
 
                 // ⭐The `.ugr` picker. A .ugr holds MANY named gradients, so import shows a list
                 // rather than choosing for the user. Each row previews itself, because a name like
@@ -6919,6 +7076,7 @@ impl FractadyneApp {
                                         })
                                         .collect();
                                     self.coloring.custom_palette_flat = false;
+                                    self.coloring.custom_segments.clear();
                                     self.coloring.paste_msg = Some(if got > n {
                                         format!("Imported {n} of {got} colours, sampled evenly across your list ({PASTE_MAX_COLORS} is the limit).")
                                     } else {

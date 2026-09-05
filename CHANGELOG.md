@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **GIMP `.ggr` gradients now import, without losing anything** (beta.26). Gradient editor ->
+  **Import .ggr...**, or `--palette-ggr FILE`. This is the richest of the palette formats and the
+  one Fractadyne's own gradient model was designed around, so nothing is approximated on the way
+  in: each segment keeps its own midpoint (where the blend reaches halfway, which is not
+  necessarily the middle), its own blend curve (linear, curved, sine, or either spherical), and
+  its own colour space - RGB, or a sweep round the hue wheel in either direction.
+
+  That last one is worth seeing: a segment that starts and ends on the same red, blended the long
+  way round the hue wheel, becomes a full spectrum. Rendered side by side with the same file and
+  only the colour-space column changed, it is 810 distinct colours against 4.
+
+  Because a .ggr holds more than a list of colour stops can, an imported one is stored in full
+  and the gradient editor says so rather than pretending to edit it: there is a "Convert to
+  editable stops" button that tells you what it will discard first.
+
 - **Ultra Fractal `.ugr` gradients now import** (beta.25). Gradient editor -> **Import .ugr...**,
   or `--palette-ugr FILE` on a command-line render. A .ugr file usually holds many named
   gradients rather than one, so importing shows you the list with a preview swatch beside each

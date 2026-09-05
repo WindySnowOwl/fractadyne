@@ -409,6 +409,41 @@ smoothing it into a ramp on the way into the session file. A hard edge is now ca
 DUPLICATE POSITION — which is how every gradient editor expresses one, and which `from_stops`
 already read back correctly. `Gradient::rotated` also SPLITS the segment that straddles the seam
 rather than sorting and losing its far half.
+### `.ggr` import (beta.26) — the one that loses nothing
+
+§3 said GIMP's segment model is a superset of every other format here and that we should steal it.
+We did, in beta.23 — so `.ggr` import needs no lowering at all: a file segment IS a
+`segment::Segment`, midpoint, blend function and colour space included. `parse_ggr` → `Gradient`,
+and that is the whole conversion.
+
+⭐⭐**The HSV sweep is verified AT THE PIXEL, with a one-integer control.** The same one-segment
+file, red endpoints at both ends, rendered twice with only the colouring column changed:
+
+| colouring column | distinct colours in the render |
+|---|---|
+| `0` (RGB) | **4** — flat red, as RGB interpolation between identical endpoints must be |
+| `1` (HSV counter-clockwise) | **810** — a full circuit of the hue wheel, green and blue both reaching 255 |
+
+That is the case §2 called "a single segment can sweep the long way round the hue wheel", and it is
+the reason the model carries a colour space per segment rather than a global one.
+
+Both the 13-column and the GIMP 2.x 15-column forms load (the two extra record where each
+endpoint's colour comes from — foreground, background, fixed — which is not a thing a fractal
+renderer has). The `Name:` line is optional, because GIMP 1.x files predate it.
+
+⚠**§2's `+` compressed continuation is REJECTED BY NAME, not implemented.** That claim was never
+confirmed against a real file or a working parser, and guessing at a compression scheme is how a
+palette gets silently mis-imported. A file using one fails loudly and says why.
+
+⭐⭐**This forced a new session field, and the reason is worth keeping.** The app persisted a custom
+palette as `[pos, r, g, b]` stops, which cannot hold a midpoint, a blend curve OR a hue sweep — so
+storing a `.ggr` that way would have flattened all three on the **first restart**, silently, and
+the only symptom would have been "it looks different from when I imported it". `custom_segments`
+holds the real thing and WINS over the stop list when set. ⚠Every path that sets stops must clear
+it (presets, paste, `.map`, `.ugr`, add-stop) or those edits appear to do nothing at all: the UI
+responds and the picture does not, which is the most confusing failure available. The editor
+refuses to pretend it can edit what it cannot — a "Convert to editable stops" button says what it
+discards, instead of flattening the gradient on the first click.
 ⚠**Still outstanding for §7's bar**: an actual Fractint render of `default.map` to compare
 against. What is proven today is that the bands are exact and that the file's values reach the
 framebuffer unaltered; what is NOT proven is that our iteration→palette-index mapping matches

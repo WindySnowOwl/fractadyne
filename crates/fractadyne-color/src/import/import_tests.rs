@@ -287,3 +287,148 @@ fn ugr_rejects_a_file_with_no_gradients() {
     let e = parse_ugr("b {\ngradient:\ncolor=255 index=0 color=0\n}\n").unwrap_err();
     assert!(e.contains("no index="), "got {e:?}");
 }
+
+// ================================================================================================
+// GIMP `.ggr`
+// ================================================================================================
+
+/// Shaped like a real GIMP gradient file, with the three things `.ggr` can express and the other
+/// formats cannot: a shifted midpoint, a non-linear blend, and an HSV sweep.
+const GGR_SAMPLE: &str = "\
+GIMP Gradient
+Name: test gradient
+3
+0.000000 0.250000 0.500000 1.000000 0.000000 0.000000 1.000000 0.000000 0.000000 1.000000 1.000000 0 0
+0.500000 0.750000 0.800000 0.000000 0.000000 1.000000 1.000000 0.000000 1.000000 0.000000 1.000000 2 0
+0.800000 0.900000 1.000000 1.000000 0.000000 0.000000 1.000000 1.000000 0.000000 0.000000 0.500000 0 1
+";
+
+/// The header, the optional `Name:`, the count and the segment lines all read.
+#[test]
+fn ggr_reads_the_gimp_format() {
+    let g = parse_ggr(GGR_SAMPLE).unwrap();
+    assert_eq!(g.name, "test gradient");
+    assert_eq!(g.segments.len(), 3);
+    assert_eq!(g.segments[0].left, 0.0);
+    assert_eq!(g.segments[0].right, 0.5);
+    assert_eq!(g.segments[2].right, 1.0);
+    // Contiguous, so the gradient covers 0..1 with no invented clamps.
+    for w in g.segments.windows(2) {
+        assert_eq!(w[0].right, w[1].left);
+    }
+}
+
+/// ⭐⭐**`.ggr` needs no lowering — a file segment IS a model segment.** The three things only this
+/// format carries must survive verbatim: the shifted midpoint, the blend function, and the colour
+/// space. Approximating any of them is the whole failure mode the segment model exists to avoid.
+#[test]
+fn ggr_carries_midpoint_blend_and_space_verbatim() {
+    use crate::segment::{Blend, Space};
+    let g = parse_ggr(GGR_SAMPLE).unwrap();
+
+    // Midpoint 0.25 inside a 0.0-0.5 span is CENTRED; segment 2's 0.75 inside 0.5-0.8 is not.
+    assert_eq!(g.segments[0].mid, 0.25);
+    assert_eq!(g.segments[1].mid, 0.75);
+    assert!(
+        (g.segments[1].mid - 0.5 * (g.segments[1].left + g.segments[1].right)).abs() > 1e-3,
+        "segment 2's midpoint is off-centre and must not be re-centred on import",
+    );
+
+    // blend / colour columns, in GIMP's numbering.
+    assert_eq!(g.segments[0].blend, Blend::Linear);
+    assert_eq!(g.segments[1].blend, Blend::Sine);
+    assert_eq!(g.segments[0].space, Space::Rgb);
+    assert_eq!(g.segments[2].space, Space::HsvCcw);
+
+    // Alpha is read, not dropped, even though the renderer has no use for it yet.
+    assert_eq!(g.segments[2].right_color[3], 0.5);
+
+    // The sine segment is genuinely not a lerp: at its own midpoint it is halfway, but a quarter
+    // of the way in it lags the straight line.
+    let s = &g.segments[1];
+    let quarter = s.left + 0.25 * (s.right - s.left);
+    let sine_val = g.eval(quarter);
+    let as_linear = crate::segment::Gradient {
+        name: String::new(),
+        segments: vec![crate::segment::Segment { blend: Blend::Linear, ..*s }],
+    };
+    assert!(
+        (sine_val[1] - as_linear.eval(quarter)[1]).abs() > 0.02,
+        "the sine blend was flattened into a lerp",
+    );
+}
+
+/// ⚠Colours are DISPLAY-space 0..1 and pass straight through — converting them here is the same
+/// mistake that made every pasted palette one sRGB decode too dark before beta.21.
+#[test]
+fn ggr_colors_are_display_space_and_pass_through() {
+    let g = parse_ggr(
+        "GIMP Gradient\nName: half\n1\n0 0.5 1 0.501961 0.501961 0.501961 1 1 1 1 1 0 0\n",
+    )
+    .unwrap();
+    let c = g.segments[0].left_color;
+    assert!((c[0] - 0.501961).abs() < 1e-5, "mid grey was transformed: {c:?}");
+    // The value that an sRGB->linear decode would have produced, named so a regression is obvious.
+    assert!((c[0] - 0.2159).abs() > 0.2, "regressed to a linear decode: {}", c[0]);
+}
+
+/// A file with no `Name:` line is a valid GIMP 1.x gradient and must still load.
+#[test]
+fn ggr_name_line_is_optional() {
+    let g = parse_ggr("GIMP Gradient\n1\n0 0.5 1 0 0 0 1 1 1 1 1 0 0\n").unwrap();
+    assert_eq!(g.name, "");
+    assert_eq!(g.segments.len(), 1);
+}
+
+/// GIMP 2.x writes two extra columns recording where each endpoint's colour comes from; they are
+/// read and ignored, because "the current foreground colour" is not a thing a renderer has.
+#[test]
+fn ggr_accepts_the_fifteen_column_form() {
+    let g = parse_ggr("GIMP Gradient\nName: x\n1\n0 0.5 1 0 0 0 1 1 1 1 1 0 0 0 0\n").unwrap();
+    assert_eq!(g.segments.len(), 1);
+    assert_eq!(g.segments[0].right_color, [1.0, 1.0, 1.0, 1.0]);
+}
+
+/// Malformed files are rejected by name, not half-read — including the `+` continuation the design
+/// survey mentions but never confirmed, which is guessed at by nobody.
+#[test]
+fn ggr_rejects_what_it_cannot_read() {
+    for (text, want) in [
+        ("", "GIMP Gradient"),
+        ("not a gradient\n", "GIMP Gradient"),
+        ("GIMP Gradient\nName: x\nnotanumber\n", "segment count"),
+        ("GIMP Gradient\nName: x\n0\n", "0 segments"),
+        ("GIMP Gradient\nName: x\n1\n0 0.5 1 0 0 0 1\n", "13 or 15"),
+        ("GIMP Gradient\nName: x\n2\n0 0.5 1 0 0 0 1 1 1 1 1 0 0\n", "carries 1"),
+        ("GIMP Gradient\nName: x\n1\n0.5 0.2 1 0 0 0 1 1 1 1 1 0 0\n", "ascending span"),
+        ("GIMP Gradient\nName: x\n1\n+ 0.5 1 0 0 0 1 1 1 1 1 0 0\n", "continuation"),
+    ] {
+        let e = parse_ggr(text).unwrap_err();
+        assert!(e.contains(want), "{text:?} gave {e:?}, expected it to mention {want:?}");
+    }
+}
+
+/// The blend and colour-space numbers are a FILE FORMAT, in both directions — a session stores
+/// them too, so a reordering of the enums without updating the mapping would re-interpret every
+/// saved gradient.
+#[test]
+fn blend_and_space_numbers_round_trip() {
+    use crate::segment::{Blend, Space};
+    for (n, b) in [
+        (0, Blend::Linear),
+        (1, Blend::Curved),
+        (2, Blend::Sine),
+        (3, Blend::SphereIncreasing),
+        (4, Blend::SphereDecreasing),
+    ] {
+        assert_eq!(Blend::from_u8(n), b, "GIMP blend {n}");
+        assert_eq!(b.as_u8(), n);
+    }
+    for (n, s) in [(0, Space::Rgb), (1, Space::HsvCcw), (2, Space::HsvCw)] {
+        assert_eq!(Space::from_u8(n), s, "GIMP colouring {n}");
+        assert_eq!(s.as_u8(), n);
+    }
+    // An out-of-range number falls back to the safe default rather than panicking on a bad file.
+    assert_eq!(Blend::from_u8(99), Blend::Linear);
+    assert_eq!(Space::from_u8(99), Space::Rgb);
+}
