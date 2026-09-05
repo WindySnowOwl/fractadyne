@@ -252,3 +252,42 @@ fn a_single_segment_gradient_survives_editing() {
     g.set_stop_color(0, [0.2, 0.4, 0.6]);
     assert_eq!(g.eval(0.0)[..3], [0.2, 0.4, 0.6]);
 }
+
+/// ⭐⭐**Every gradient the editor produces must report as stop-expressible until a user actually
+/// sets a curve.** The bug this pins was live and visible in a screenshot: after P1 made the
+/// editor segment-native, the "Imported gradient … Convert to editable stops" notice keyed off
+/// "has segments", which every custom gradient now does — so a gradient copied from a preset
+/// advertised midpoints and blend curves it did not have, and offered to convert it into itself.
+///
+/// ⚠The three "rich" cases are asserted one at a time. A predicate that only tested `blend` would
+/// pass a test that changed all three at once.
+#[test]
+fn stop_expressible_tracks_content_not_the_mere_presence_of_segments() {
+    let plain = Gradient::from_stops("t", &stops());
+    assert!(plain.is_stop_expressible(), "from_stops IS the stop-expressible shape");
+    assert!(
+        Gradient::from_bands("t", &[[0.0; 3], [1.0; 3], [0.5; 3]]).is_stop_expressible(),
+        "flat bands are Linear/Rgb/centred too — a .map is a colour list, not a rich gradient"
+    );
+    // Surviving the editor's own operations must not turn a plain gradient rich: `set_span` keeps
+    // the midpoint FRACTION, which is exactly what the tolerance here exists to accept.
+    let mut dragged = plain.clone();
+    dragged.set_stop_position(1, 0.61);
+    dragged.set_stop_position(2, 0.62);
+    let i = dragged.insert_stop(0.8).expect("split");
+    dragged.set_stop_color(i, [0.1, 0.2, 0.3]);
+    dragged.remove_stop(1);
+    assert!(dragged.is_stop_expressible(), "dragging, splitting and merging keep it plain");
+
+    // One field at a time, each on its own copy.
+    let mut curved = plain.clone();
+    curved.segments[1].blend = Blend::Sine;
+    assert!(!curved.is_stop_expressible(), "a blend curve is not expressible as stops");
+    let mut swept = plain.clone();
+    swept.segments[0].space = Space::HsvCcw;
+    assert!(!swept.is_stop_expressible(), "a hue sweep is not expressible as stops");
+    let mut shifted = plain.clone();
+    let s = shifted.segments[2];
+    shifted.segments[2].mid = s.left + 0.8 * (s.right - s.left);
+    assert!(!shifted.is_stop_expressible(), "an off-centre midpoint is not expressible as stops");
+}

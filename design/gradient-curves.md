@@ -266,3 +266,170 @@ and must say so** — a silent flatten is the failure this whole design exists t
   Its own decision, not a quiet fourth entry in a dropdown.
 - **Per-channel curves**: declined (§6) — 3× the parameters and UI for a gain that `cycle` erases.
 - **Alpha**: parsed and stored already; the renderer has no alpha channel. Out of scope.
+
+---
+
+## 9. The editor redesign (user, 2026-09-05): "the current UI is difficult to use"
+
+Written after the user reviewed the shipped P2 editor and asked for *"a spline-like editor with
+control points and handles to adjust the curve continuously"*. ✅The findings below were read out of
+`main.rs:7018-7326` against a screenshot of the running beta.29 editor.
+
+### 9.1 What is actually wrong — five structural faults, not cosmetics
+
+1. ⭐⭐**Two lists the user has to align by counting.** N stop rows, then N−1 curve rows, with
+   nothing connecting row *i* of the curves to the pair of stops it sits between: no shared axis, no
+   label, no highlight. At the current `EDITOR_MAX_STOPS = 24` this is not readable at all, and P3
+   was about to raise it to 32.
+2. ⭐**The gradient bar is inert.** It is the only surface where position is spatially true, and it
+   is the one thing that cannot be touched. Position is instead edited by full-width `0..1` sliders
+   whose handles do **not** line up with the bar 40 px above them — 0.620 and 0.820 are adjacent in
+   the strip and ~150 px apart in the slider column. That is a 1-D control for a thing the user is
+   already looking at in 2-D, and it consumes the window's whole width per row.
+3. ⭐**The curve preview is 30×16 px.** It exists precisely to compensate for names nobody can
+   decode ("Sine" vs "Sphere ↑"). At that size it cannot — so *neither* the name nor the picture
+   communicates, and the control that carries the feature is the least legible thing in the window.
+4. **No selection concept**, so every parameter of every segment is resident: 6 segments × 3 widgets
+   = 18 controls competing at once, growing linearly with stop count.
+5. **Nothing is direct manipulation.** Every edit in the window is a dropdown or a drag-value.
+
+⭐**The unifying diagnosis: there is no selection, and because there is no selection everything must
+be on screen, and because everything is on screen nothing can be big enough to read.** P3 (the stop
+strip) and P4 (the Bézier curve) were planned as separate phases, but both need selection and both
+would otherwise invent their own. **They share one layout decision, so §8's P3/P4 split is revised
+below.**
+
+### 9.2 Three readings of "spline editor" — they are genuinely different features
+
+| | what x/y mean | changes | interchange |
+|---|---|---|---|
+| **A. Per-segment ease** (CSS `cubic-bezier`) | x = position *within* the selected segment, y = blend factor 0→1 | the **timing** along a segment | `.ggr` approximates (§8 kind 5) |
+| **B. Whole-gradient graph editor** | x = position `0..1` across the gradient, each segment a cell rising 0→1 | same data as A, all segments at once | same as A |
+| **C. Per-channel R/G/B splines** (Photoshop *Curves*) | x = position, y = channel value | the **colour path** itself | ⛔breaks everything |
+
+⭐**A and B are the same model with two viewports**, which is why the answer is not to choose. A is
+the only one big enough to grab a handle in; B is the only one that shows the gradient as one
+picture and shares the strip's x-axis. B alone fails on arithmetic: 32 segments across the planned
+520 px window is **16 px per cell**, and a 16 px cell cannot host two draggable handles.
+
+⛔**C is declined, again and for a new reason.** §6(d) declined per-channel curves because `cycle`
+erases the gain. The stronger objection is structural: C makes free control points the primary
+object and **stops stop being the model**, so `.ggr` / `.map` / `.ugr` / `.ase` import → edit →
+export round-trips all break, and every importer in the tree targets the segment model. ⭐It survives
+as a **read-only feedback plot** ("what did my ease do to R/G/B?"), which costs nothing because it
+reads the same bake the preview already builds.
+
+### 9.3 DECIDED — the A+B hybrid layout
+
+```
+┌────────────────────────────────────────────┐
+│ ███████████ gradient preview ██████████████ │  the bake, unchanged
+│  ●    ●   ●    ●     ●      ●         ●    │  P3: draggable stop markers
+├────────────────────────────────────────────┤
+│ ╱ │ ╭─ │ ╱ │ ╭─│ ╱  │  ╱   │   ← B: ribbon │  one cell per segment,
+│   │[==selected==]│    │      │     click    │  real factor curve, click-select
+├────────────────────────────────────────────┤
+│  segment 3 · 0.275 → 0.400                 │
+│  ┌──────────────────┐  ■ colour            │  A: the editing surface
+│  │             ○──╮ │  pos  0.275          │  ~200 px square,
+│  │          ╭──╯   │  space  RGB     ▾     │  two handles off pinned
+│  │      ╭──╯       │                       │  (0,0) and (1,1)
+│  │  ╭──╯   ○       │  bias ──●───          │
+│  │╭─╯               │  ease-in-out    ▾    │
+│  └──────────────────┘                      │
+└────────────────────────────────────────────┘
+```
+
+⭐**The three rows share one x-axis** (rows 1 and 2 exactly; row 3 is the selected cell magnified),
+which is fault 2 and fault 1 fixed by construction rather than by a label. Selection replaces the
+18-widget wall with one segment's controls at a legible size — fault 3 and 4. The strip, the ribbon
+and the canvas are all drag surfaces — fault 5.
+
+The stop list collapses from N rows to **the selected stop's** colour swatch + numeric position +
+delete. ⚠Keep the numeric field: 32 stops on a 520 px strip is ~16 px apart, so click-to-select plus
+a typed position and arrow-key nudge is what makes the strip usable, not the drag alone (§8 P3
+already said this).
+
+⚠The import buttons (`.map` / `.ugr` / `.ggr` / `.ase`) currently force the window's width with six
+buttons in one row. They are file tasks, not editing tasks — collapse them behind a single
+**Import ▾** menu button, as `Copy preset…` already is.
+
+### 9.4 Five decisions this forces, each with a wrong answer
+
+1. ⭐⭐**Midpoint and Bézier are redundant, and must not compose.** `mid` pre-warps `linear_factor`
+   *before* every blend (`Segment::factor`). If kind 5 applied on top of that warp there would be two
+   knobs for one shape and the handles would lie about where the curve goes. **DECIDED: kind 5
+   ignores `mid`**, the canvas hides the midpoint marker for it, and the segment's stored `mid` is
+   preserved untouched so switching back to kinds 0–4 restores it. ⚠**Pin this with a test** — `mid`
+   still persists in `PaletteSegment`, so "ignored" is a claim about the evaluator, not the file.
+2. ⭐**Kinds 0–4 are not Béziers.** Sine and the two spheres cannot be expressed exactly by a cubic
+   ease (the spheres read 0.866 at halfway — there is a test). So on a kind 0–4 segment the canvas
+   draws the **real** curve via `Segment::factor` with **handles hidden**, plus a *"Convert to
+   editable curve"* button that fits handles approximately and says so. ⭐This is deliberately the
+   same idiom as the existing "Convert to editable stops": a lossy conversion is a button the user
+   presses, never a surprise on first drag.
+3. ⭐**An interior control point on the ease curve is NOT a stop, and two handles is the cap.** An
+   ease point re-times travel along the segment; a stop bends the colour path. They are different
+   operations and both are wanted — but a 2-handle cubic already covers arbitrary monotone
+   re-timing, so adding interior ease points would create a second way to express something the
+   split-segment button already does better. **Two handles, endpoints pinned at (0,0) and (1,1).**
+4. ⚠**Overshoot.** x must stay in `[0,1]` or the curve is not a function — clamp it. y outside
+   `[0,1]` extrapolates past the endpoint colours, which is often exactly the wanted effect
+   (anticipation / overshoot) and can go out of gamut. **Allow y overshoot, clamp at the COLOUR, not
+   at the factor** — clamping the factor would silently flatten the handle the user is dragging.
+5. ⚠**Evaluation cost is a bake-time question only.** A cubic-Bézier ease needs `x(u) = t` solved
+   per sample (Newton with a bisection fallback, as CSS does). That runs 1024 times per bake and
+   **zero times per pixel** — the same argument that made every other feature here free. ⛔Do not
+   put a solver in the shader.
+
+### 9.5 What is testable and what rests on the author's eye
+
+⚠⚠**No harness drives hover, drag or scroll** — recorded repeatedly, and it is the reason to split
+the widget rather than a reason to skip tests:
+
+- **Pure, tested:** hit-testing (which stop / which segment is under x), clamping and ordering on
+  drag, insert/delete, the stops↔segments round trip, the Bézier solver (monotonicity, endpoints,
+  `x(0)=0`, `x(1)=1`, agreement with a reference at sampled points), the kind-0–4 → Bézier fit's
+  reported error, and decision 1's "kind 5 ignores `mid`".
+- **Eye only:** pointer plumbing and layout. ⭐The ribbon and the canvas both draw through
+  `Segment::factor`, so a drift between preview and render is impossible by construction — that is
+  one class of bug that needs no test because it has no code path.
+
+### 9.6 Revised phases
+
+§8's P3 and P4 **merge at the layout level and stay separate at the model level**:
+
+- ✅**P3′ — the layout, no new model. SHIPPED beta.30.** Draggable stop strip, the segment ribbon,
+  selection, the selected-segment canvas drawing kinds 0–4 read-only with a draggable midpoint ring
+  and a strip of the segment's own colours, the collapsed stop row (swatch + typed position + nudge
+  + remove), `Import ▾`, cap 32, width capped at 496 pt. ⭐**Zero drift measured**: `--selftest`
+  **173/173 + 18/18**, corpus **38/38 maxD 0**, no re-bless. Pure geometry in `gradient_strip.rs`
+  (8 tests, **all five helpers verified RED by mutation**).
+
+  ⭐⭐**Three things only the screenshot found**, and all three had been live since P1:
+  1. The **"Imported gradient … Convert to editable stops"** notice keyed off *has segments*, which
+     meant "came from a `.ggr`" only until P1 made every custom gradient have segments. It was
+     offering to convert a preset copy into what it already was. Now gated on
+     `Gradient::is_stop_expressible`, which asks the question that matters — does any segment carry
+     a non-linear blend, a hue sweep or an off-centre midpoint.
+  2. The stop-count line still said positions "may overlap; they're sorted automatically" —
+     true of the flat list the editor owned before P1, false of segment boundaries.
+  3. The **window's width was set by whichever label was longest**, because a label inside
+     `ui.horizontal` never wraps. Every copy edit silently resized the editor.
+
+  ⚠**And the harness was lying by omission.** `--uitest` has a `Screen::PaletteEditor` step, so the
+  repeated note that "no harness opens the gradient editor" was wrong — but it seeded **no custom
+  gradient**, so it screenshotted the *empty state* and passed. The one screenshot meant to review
+  this surface never contained it. It now seeds a preset with varied per-segment curves.
+  ⚠It also found a **stowaway**: `uitest_close_all` never closed the Diagnostics window, which had
+  been standing behind every screenshot from step 15 on, invisible only because the window in front
+  happened to be wide enough to cover it.
+- **P4′ — kind 5.** `blend_params: [f32; 4]` on `PaletteSegment` (`#[serde(default)]`), the
+  `Blend::Bezier([f32;4])` payload variant, the handles going live, the bias slider and presets.
+  ⚠First phase that may move pixels, and only where a user sets a curve.
+  ⚠**Re-run the LUT acceptance measurement on a curve-heavy gradient** (§4 trap 5) — the "error must
+  shrink as the LUT grows" evidence was taken on piecewise-**linear** gradients.
+- **P5 — `.ggr` export**, unchanged, with kinds ≥ 5 marked approximated.
+
+⭐The read-only per-channel plot from §9.2 is a **P6 candidate, not scope** — it is the honest
+version of option C and costs one extra canvas over the existing bake.

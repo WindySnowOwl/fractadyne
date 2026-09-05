@@ -962,6 +962,14 @@ impl FractadyneApp {
         self.tour_render.open = false;
         self.update_prompt_open = false;
         self.coloring.palette_editor_open = false;
+        // ⚠**Three windows this list had missed**, found by narrowing the gradient editor in P3′:
+        // the Diagnostics window opened at step 14 was still standing behind every screenshot from
+        // 15 onward, and simply happened to be covered. "Each screenshot shows one screen only" is
+        // the contract this function exists to keep, and nothing was checking it — a stowaway
+        // window is invisible in review precisely when the window in front is wide enough.
+        self.diagnostics.open = false;
+        self.misi.open = false;
+        self.dialogs.minimap = false;
     }
 
     fn uitest_open_screen(&mut self, ctx: &egui::Context, s: Screen) {
@@ -1085,6 +1093,28 @@ impl FractadyneApp {
             }
             Screen::PaletteEditor => {
                 self.coloring.palette_editor_open = true;
+                // ⭐⭐**Seed a real custom gradient, or this step screenshots the EMPTY STATE.**
+                // It did exactly that until P3′: with no custom palette the editor has nothing to
+                // select, so the strip, the segment ribbon and the selected-segment canvas — the
+                // whole surface this screen exists to review — were all absent from the one
+                // screenshot that was supposed to show them, and the walk still passed.
+                self.coloring.custom_palette = self.preset_as_stops(0);
+                self.coloring.custom_palette_flat = false;
+                self.rebuild_segments_from_palette();
+                self.coloring.use_custom_palette = true;
+                self.coloring.sel_stop = 2;
+                self.coloring.sel_segment = 2;
+                // Non-default curves on a few segments, so the ribbon shows VARIETY rather than a
+                // row of identical diagonals — a ribbon of linear cells cannot show whether the
+                // per-segment curve is being drawn at all.
+                for (i, (blend, space)) in
+                    [(2u8, 0u8), (3, 0), (1, 1), (4, 0)].into_iter().enumerate()
+                {
+                    if let Some(s) = self.coloring.custom_segments.get_mut(i) {
+                        s.blend = blend;
+                        s.space = space;
+                    }
+                }
                 // Expand the paste-import section and seed it, so the walk covers that UI too
                 // rather than only the stop rows it shares with every other run.
                 self.coloring.paste_open = true;

@@ -1559,12 +1559,15 @@ struct RandomPalette {
 
 const RAND_STOPS: usize = 6;
 
-/// Most stops the gradient editor draws a per-stop row for.
+/// Most stops the gradient editor puts markers on the strip for.
 ///
 /// ⚠A UI limit, **not** a palette limit — the eight-stop ceiling that used to be both went away
-/// with the LUT bake. An imported `.map` is 256 entries and rendering 256 colour pickers is a hang,
-/// so above this the editor shows the preview and a summary instead of rows.
-const EDITOR_MAX_STOPS: usize = 24;
+/// with the LUT bake. An imported `.map` is 256 entries and rendering 256 markers is not an editor,
+/// so above this the editor shows the preview and a summary instead.
+/// ⭐32 since P3′ (was 24): the strip is ~490 px wide, so 32 stops sit ~15 px apart — tight but
+/// reachable, because `pick_stop` picks the NEAREST marker rather than the first one in range, and
+/// the selected stop always has a numeric position field beside it.
+const EDITOR_MAX_STOPS: usize = 32;
 
 /// Most colours the paste box keeps from one paste (a `.map` body is 256).
 const PASTE_MAX_COLORS: usize = 256;
@@ -1588,6 +1591,149 @@ fn space_label(k: u8) -> &'static str {
         2 => "HSV ↻",
         _ => "RGB",
     }
+}
+
+// ── Gradient-strip geometry (P3′) ──────────────────────────────────────────────────────────────
+//
+// ⭐⭐**Pure on purpose.** No harness in this repo drives hover, drag or scroll, so a drag-based
+// stop strip cannot be tested as a whole. Splitting it here puts the part that can actually be
+// wrong under test — which marker is under the pointer, which segment a click names, where the
+// selection lands after a delete — and leaves only the pointer plumbing resting on the author's
+// eye. `design/gradient-curves.md` §9.5.
+//
+// ⚠These do **no clamping of their own** beyond the strip's own 0..1: ordering and neighbour
+// clamping belong to `Gradient::set_stop_position`, which already owns them and preserves midpoint
+// fractions while doing it. A second clamp here would be a second answer to the same question.
+
+/// Where position `pos` (`0..1`) sits on a strip spanning `x0 .. x0 + w`.
+fn strip_x(pos: f32, x0: f32, w: f32) -> f32 {
+    x0 + pos.clamp(0.0, 1.0) * w.max(0.0)
+}
+
+/// The position a pointer at `x` names, clamped into `0..1`. A degenerate strip reports `0` rather
+/// than dividing by zero.
+fn strip_pos(x: f32, x0: f32, w: f32) -> f32 {
+    if w <= 0.0 { 0.0 } else { ((x - x0) / w).clamp(0.0, 1.0) }
+}
+
+/// The stop nearest `x`, if one lies within `radius` pixels.
+///
+/// ⭐**Nearest, not first-in-range.** At the 32-stop cap the markers sit ~15 px apart on a ~490 px
+/// strip, so their catch radii overlap; "the first one close enough" would make the left-hand
+/// marker of every close pair unreachable. Ties keep the LOWER index, which is stable as stops are
+/// added around them.
+fn pick_stop(positions: &[f32], x: f32, x0: f32, w: f32, radius: f32) -> Option<usize> {
+    positions
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (i, (strip_x(p, x0, w) - x).abs()))
+        .filter(|&(_, d)| d <= radius)
+        .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+        .map(|(i, _)| i)
+}
+
+/// Which segment a position names, given the `N + 1` sorted segment boundaries.
+///
+/// ⚠A position outside the covered range resolves to the nearest END segment rather than to
+/// nothing: a click a pixel past the right edge of the ribbon plainly means the last segment, and
+/// returning `None` there would make the last cell's own edge dead.
+fn pick_segment(boundaries: &[f32], pos: f32) -> Option<usize> {
+    let n = boundaries.len().checked_sub(1)?;
+    if n == 0 {
+        return None;
+    }
+    let mut idx = 0usize;
+    for i in 0..n {
+        if pos >= boundaries[i] {
+            idx = i;
+        }
+    }
+    Some(idx.min(n - 1))
+}
+
+/// Where the stop selection lands after stop `removed` is deleted, leaving `new_count` stops.
+///
+/// ⚠Deleting a stop BELOW the selection shifts it down by one, or the selection silently jumps to
+/// a different stop; deleting at or above it leaves it alone. Either way it must end up inside the
+/// shortened list, which is the clamp that stops a stale index from reading a stop that is gone.
+fn sel_after_remove(sel: usize, removed: usize, new_count: usize) -> usize {
+    if new_count == 0 {
+        return 0;
+    }
+    let s = if sel > removed { sel - 1 } else { sel };
+    s.min(new_count - 1)
+}
+
+/// The segment a stop selection lights up: the one to its RIGHT, except for the last stop, which
+/// has no segment to its right and takes the one to its left.
+fn segment_for_stop(stop: usize, n_segments: usize) -> usize {
+    stop.min(n_segments.saturating_sub(1))
+}
+
+/// Arrow-key nudge for the selected stop's position; Shift gives the fine step.
+///
+/// ⭐The coarse step is ~5 px on the strip and the fine one is sub-pixel — the reason the numeric
+/// route exists is that a 15 px marker spacing makes the last few thousandths undraggable.
+fn nudge_step(fine: bool) -> f32 {
+    if fine { 0.001 } else { 0.01 }
+}
+
+#[cfg(test)]
+mod gradient_strip;
+
+/// Paint a baked gradient across `rect`, one column per pixel.
+///
+/// ⭐Shared so the strip, the selected-segment detail and the `.ugr` picker cannot drift from the
+/// bake the GPU actually fetches from — the same reason `Segment::factor` is public.
+fn paint_gradient(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    lut: &fractadyne_color::segment::Lut,
+) {
+    let steps = rect.width().ceil().max(1.0) as usize;
+    for s in 0..steps {
+        let t = s as f32 / steps as f32;
+        let x = rect.min.x + t * rect.width();
+        painter.line_segment(
+            [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
+            egui::Stroke::new(1.5_f32, gradient_preview_color(lut, t)),
+        );
+    }
+}
+
+/// A DISPLAY-referred stop colour as an egui colour.
+///
+/// ⚠**No gamma transform**, for the reason [`gradient_preview_color`] spells out: the renderer
+/// writes these values straight into a non-sRGB framebuffer, so the channel value already IS the
+/// byte the monitor shows.
+fn stop_color32(rgb: [f32; 3]) -> egui::Color32 {
+    let g = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    egui::Color32::from_rgb(g(rgb[0]), g(rgb[1]), g(rgb[2]))
+}
+
+/// Draw one segment's blend function into `rect` — `0` at the bottom-left, `1` at the top-right.
+///
+/// ⚠**The REAL function, via `Segment::factor`, never an idealised S.** Two of GIMP's five are
+/// deliberately not midpoint-symmetric (sphere-increasing reads 0.866 at halfway, pinned by a
+/// test), so a prettified curve would misrepresent them. Sharing the evaluator with the renderer is
+/// also why a preview/render drift here has no code path to occur in.
+fn paint_factor_curve(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    seg: &fractadyne_color::segment::Segment,
+    color: egui::Color32,
+    width: f32,
+) {
+    let n = (rect.width().ceil() as usize).clamp(8, 96);
+    let span = seg.right - seg.left;
+    let pts: Vec<egui::Pos2> = (0..=n)
+        .map(|k| {
+            let u = k as f32 / n as f32;
+            let f = seg.factor(seg.left + u * span).clamp(0.0, 1.0);
+            egui::pos2(rect.min.x + u * rect.width(), rect.max.y - f * rect.height())
+        })
+        .collect();
+    painter.add(egui::Shape::line(pts, egui::Stroke::new(width, color)));
 }
 
 impl RandomPalette {
@@ -3237,6 +3383,20 @@ struct ColoringConfig {
     use_custom_palette: bool,
     /// Palette editor window open (transient UI).
     palette_editor_open: bool,
+    /// ⭐⭐**P3′: the selection the whole editor is organised around.** Before it, every parameter
+    /// of every segment was resident at once — 6 segments × 3 widgets — so nothing could be drawn
+    /// large enough to read, which is what made the editor hard to use. The stop and the segment
+    /// are selected separately because they are separately editable (a stop carries a colour and a
+    /// position; a segment carries a curve, a space and a midpoint), and clicking either one moves
+    /// the other to match via `segment_for_stop`.
+    /// ⚠Transient, and clamped against the live stop count on every frame — an import can shorten
+    /// the gradient under a stale index.
+    sel_stop: usize,
+    sel_segment: usize,
+    /// Which marker the pointer grabbed, for the length of one drag. `None` between drags, and set
+    /// only on `drag_started` — re-hit-testing every frame would let a fast drag hand the pointer
+    /// to whichever marker it swept past.
+    drag_stop: Option<usize>,
     /// Gradient editor's "Paste…" section: expanded, the pasted text, and the last result
     /// message. Session-transient by design — a half-typed import is not worth persisting.
     paste_open: bool,
@@ -4271,6 +4431,9 @@ impl FractadyneApp {
                 custom_segments: s.custom_segments.clone(),
                 use_custom_palette: s.use_custom_palette,
                 palette_editor_open: false,
+                sel_stop: 0,
+                sel_segment: 0,
+                drag_stop: None,
                 paste_open: false,
                 paste_text: String::new(),
                 paste_msg: None,
@@ -7013,8 +7176,18 @@ impl FractadyneApp {
         self.schedule_repaint(ctx);
     }
 
-    /// The custom-gradient editor window: live gradient preview, per-stop color + position
-    /// controls, add/remove, and seed-from-preset. Edits bump `palette_rev`.
+    /// The custom-gradient editor window.
+    ///
+    /// ⭐⭐**P3′ — the editor is organised around a SELECTION** (`design/gradient-curves.md` §9).
+    /// Before this it drew one row per stop and one row per segment, so every parameter of every
+    /// segment was resident at once and nothing could be drawn large enough to read — the curve
+    /// preview that exists to compensate for undecodable blend names was **30×16 px**, and the two
+    /// lists could only be aligned by counting. Now three surfaces share **one x-axis**: the baked
+    /// gradient, the markers that sit on it, and a ribbon of per-segment curves; clicking either a
+    /// marker or a cell selects, and the selection alone gets full-size controls.
+    ///
+    /// ⚠**No model change lives here.** Every edit goes through the same `Gradient` operations P1
+    /// introduced, so P3′ must not move a pixel of any existing gradient.
     fn palette_editor_window(&mut self, ctx: &egui::Context) {
         if !self.coloring.palette_editor_open {
             return;
@@ -7024,153 +7197,345 @@ impl FractadyneApp {
         egui::Window::new("Gradient editor")
             .open(&mut open)
             .resizable(false)
-            .default_width(340.0)
+            .default_width(520.0)
             .show(ctx, |ui| {
-                // Live gradient preview bar.
-                // Preview through the same bake the GPU fetches from — see
-                // `gradient_preview_color`; a preview computed any other way is free to drift.
-                let lut = self.custom_gradient().bake(fractadyne_color::segment::LUT_SIZE);
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
-                let pr = ui.painter_at(rect);
-                let steps = rect.width().ceil().max(1.0) as usize;
-                for s in 0..steps {
-                    let t = s as f32 / steps as f32;
-                    let x = rect.min.x + t * rect.width();
-                    let col = gradient_preview_color(&lut, t);
-                    pr.line_segment(
-                        [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
-                        egui::Stroke::new(1.5_f32, col),
-                    );
+                // ⚠**The width is CAPPED here, not left to `default_width`.** A non-resizable egui
+                // window sizes to its widest child, so the editor's width was being set by
+                // whichever label happened to be longest — the paste hint, then the rich-gradient
+                // notice — and every copy edit silently resized it. Capping makes long labels WRAP
+                // instead, and makes the strip a KNOWN width, which is what the ~15 px marker
+                // spacing at the 32-stop cap is calculated against.
+                ui.set_max_width(496.0);
+                // Strip height, marker lane, segment ribbon, and the selected segment's canvas.
+                const BAR_H: f32 = 30.0;
+                const LANE_H: f32 = 17.0;
+                const RIBBON_H: f32 = 34.0;
+                const CANVAS: f32 = 168.0;
+                // How near a marker the pointer must be to grab it. ⚠At the 32-stop cap the
+                // markers are ~15 px apart, so these ranges OVERLAP — which is exactly why
+                // `pick_stop` takes the nearest rather than the first in range.
+                const CATCH_PX: f32 = 9.0;
+
+                let accent = crate::theme::ui_accent(ui.ctx());
+                let weak = ui.visuals().weak_text_color();
+                let sunken = ui.visuals().extreme_bg_color;
+                let full_w = ui.available_width();
+
+                let mut grad = self.editable_gradient();
+                let count = grad.as_ref().map_or(0, |g| g.stop_count());
+                let editable = count > 0 && count <= EDITOR_MAX_STOPS;
+                let stop_positions = |g: &fractadyne_color::segment::Gradient| -> Vec<f32> {
+                    (0..g.stop_count()).filter_map(|i| g.stop(i).map(|(p, _)| p)).collect()
+                };
+
+                // ⚠An import can shorten the gradient under a stale selection, so clamp before
+                // anything indexes with it.
+                self.coloring.sel_stop = self.coloring.sel_stop.min(count.saturating_sub(1));
+                if let Some(g) = grad.as_ref() {
+                    self.coloring.sel_segment =
+                        self.coloring.sel_segment.min(g.segments.len().saturating_sub(1));
                 }
+
+                // ── Allocate the three aligned surfaces ──────────────────────────────────────
+                //
+                // Allocated first, interacted with second, painted third. A drag therefore edits
+                // and REDRAWS in the same frame; painting as we allocate would leave every marker
+                // trailing the pointer by one frame.
+                let (bar_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(full_w, BAR_H), egui::Sense::hover());
+                let (x0, w) = (bar_rect.min.x, bar_rect.width());
+                let lane = editable.then(|| {
+                    ui.allocate_exact_size(
+                        egui::vec2(full_w, LANE_H),
+                        egui::Sense::click_and_drag(),
+                    )
+                });
+                let ribbon = editable.then(|| {
+                    ui.add_space(3.0);
+                    ui.allocate_exact_size(egui::vec2(full_w, RIBBON_H), egui::Sense::click())
+                });
+
+                // ── Interaction: the strip ───────────────────────────────────────────────────
+                if let (Some((_, resp)), Some(g0)) = (lane.as_ref(), grad.clone()) {
+                    let positions = stop_positions(&g0);
+                    let n_seg = g0.segments.len();
+                    if let Some(p) = resp.interact_pointer_pos() {
+                        let hit = pick_stop(&positions, p.x, x0, w, CATCH_PX);
+                        if resp.drag_started() {
+                            self.coloring.drag_stop = hit;
+                        }
+                        if let (true, Some(i)) = (resp.clicked() || resp.drag_started(), hit) {
+                            self.coloring.sel_stop = i;
+                            self.coloring.sel_segment = segment_for_stop(i, n_seg);
+                        }
+                        // ⭐**Double-click on bare strip inserts a stop there.** `UI-DESIGN.md` §8
+                        // spends the double-click on "edit colour", but with a persistent selection
+                        // the colour swatch is always on screen anyway — so it is better spent on
+                        // the one operation that otherwise has no direct-manipulation route at all.
+                        if resp.double_clicked() && hit.is_none() && count < EDITOR_MAX_STOPS {
+                            let mut g = g0.clone();
+                            if let Some(i) = g.insert_stop(strip_pos(p.x, x0, w)) {
+                                self.store_segments(&g);
+                                self.coloring.sel_stop = i;
+                                self.coloring.sel_segment = segment_for_stop(i, g.segments.len());
+                                grad = self.editable_gradient();
+                                changed = true;
+                            }
+                        }
+                        if let (true, Some(i)) = (resp.secondary_clicked(), hit) {
+                            let mut g = g0.clone();
+                            g.remove_stop(i); // a no-op on an end stop, by contract
+                            if g.stop_count() < count {
+                                self.store_segments(&g);
+                                self.coloring.sel_stop =
+                                    sel_after_remove(self.coloring.sel_stop, i, g.stop_count());
+                                self.coloring.sel_segment =
+                                    segment_for_stop(self.coloring.sel_stop, g.segments.len());
+                                grad = self.editable_gradient();
+                                changed = true;
+                            }
+                        }
+                        if let (true, Some(i)) = (resp.dragged(), self.coloring.drag_stop) {
+                            let mut g = grad.clone().unwrap_or_else(|| g0.clone());
+                            g.set_stop_position(i, strip_pos(p.x, x0, w));
+                            self.store_segments(&g);
+                            grad = self.editable_gradient();
+                            changed = true;
+                        }
+                    }
+                    if resp.drag_stopped() {
+                        self.coloring.drag_stop = None;
+                    }
+                    // Arrow-key nudge, only while the strip itself holds focus — the same keys
+                    // pan the fractal, and stealing them whenever the window is open would be a
+                    // worse bug than the one this fixes.
+                    if resp.has_focus() {
+                        let (l, r, fine) = ui.input(|i| {
+                            (
+                                i.key_pressed(egui::Key::ArrowLeft),
+                                i.key_pressed(egui::Key::ArrowRight),
+                                i.modifiers.shift,
+                            )
+                        });
+                        if l != r {
+                            let step = if l { -nudge_step(fine) } else { nudge_step(fine) };
+                            let i = self.coloring.sel_stop;
+                            if let Some(mut g) = grad.clone() {
+                                if let Some((p, _)) = g.stop(i) {
+                                    g.set_stop_position(i, p + step);
+                                    self.store_segments(&g);
+                                    grad = self.editable_gradient();
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Interaction: the ribbon ──────────────────────────────────────────────────
+                if let (Some((_, resp)), Some(g0)) = (ribbon.as_ref(), grad.clone()) {
+                    if let (true, Some(p)) = (resp.clicked(), resp.interact_pointer_pos()) {
+                        if let Some(i) =
+                            pick_segment(&stop_positions(&g0), strip_pos(p.x, x0, w))
+                        {
+                            self.coloring.sel_segment = i;
+                        }
+                    }
+                }
+
+                // ── Paint ────────────────────────────────────────────────────────────────────
+                //
+                // ⚠Baked AFTER the interactions above, so an edit this frame shows this frame.
+                let lut = self.custom_gradient().bake(fractadyne_color::segment::LUT_SIZE);
+                let pr = ui.painter().clone();
+                paint_gradient(&pr, bar_rect, &lut);
                 pr.rect_stroke(
-                    rect,
+                    bar_rect,
                     2.0,
                     egui::Stroke::new(1.0_f32, BRAND_ACCENT),
                     egui::StrokeKind::Inside,
                 );
-                ui.add_space(6.0);
+                if let (Some((rect, _)), Some(g)) = (lane.as_ref(), grad.as_ref()) {
+                    let sel = self.coloring.sel_stop;
+                    for i in 0..g.stop_count() {
+                        let Some((p, rgb)) = g.stop(i) else { continue };
+                        let x = strip_x(p, x0, w);
+                        let (top, bot) = (rect.min.y, rect.max.y - 2.0);
+                        let half = if i == sel { 6.5 } else { 4.5 };
+                        // The marker carries the stop's own colour, so the strip reads as the
+                        // gradient's handles rather than as a row of identical pins.
+                        pr.add(egui::Shape::convex_polygon(
+                            vec![
+                                egui::pos2(x, top),
+                                egui::pos2(x - half, bot),
+                                egui::pos2(x + half, bot),
+                            ],
+                            stop_color32(rgb),
+                            if i == sel {
+                                egui::Stroke::new(2.0_f32, accent)
+                            } else {
+                                egui::Stroke::new(1.0_f32, weak)
+                            },
+                        ));
+                    }
+                }
+                if let (Some((rect, _)), Some(g)) = (ribbon.as_ref(), grad.as_ref()) {
+                    let rect = *rect;
+                    pr.rect_filled(rect, 2.0, sunken);
+                    for (i, seg) in g.segments.iter().enumerate() {
+                        let (a, b) = (strip_x(seg.left, x0, w), strip_x(seg.right, x0, w));
+                        let cell = egui::Rect::from_min_max(
+                            egui::pos2(a, rect.min.y),
+                            egui::pos2(b, rect.max.y),
+                        );
+                        let selected = i == self.coloring.sel_segment;
+                        if selected {
+                            pr.rect_filled(cell, 0.0, accent.linear_multiply(0.22));
+                        }
+                        if i > 0 {
+                            pr.line_segment(
+                                [egui::pos2(a, rect.min.y), egui::pos2(a, rect.max.y)],
+                                egui::Stroke::new(1.0_f32, weak.linear_multiply(0.6)),
+                            );
+                        }
+                        // ⚠Below ~5 px a curve is noise; the cell still fills and still selects.
+                        if cell.width() >= 5.0 {
+                            paint_factor_curve(
+                                &pr,
+                                cell.shrink(2.0),
+                                seg,
+                                if selected { accent } else { weak },
+                                if selected { 1.6 } else { 1.0 },
+                            );
+                        }
+                    }
+                    pr.rect_stroke(
+                        rect,
+                        2.0,
+                        egui::Stroke::new(1.0_f32, weak),
+                        egui::StrokeKind::Inside,
+                    );
+                }
 
-                // Per-stop rows (color + position + remove) - only while the list is small enough
-                // to be edited by hand. An imported `.map` is 256 entries; drawing 256 colour
-                // pickers is not an editor, it is a hang, so a long palette shows a summary and
-                // the actions that make sense for it instead.
-                // ⭐⭐**P1: the rows are a VIEW OF SEGMENT BOUNDARIES**, and each edit goes through
-                // a segment operation that preserves the blend, colour space and midpoint fraction
-                // of every segment it does not remove. Before this the rows owned a flat stop list
-                // and every keystroke destroyed the segment gradient beside it.
-                let mut remove: Option<usize> = None;
-                let grad = self.editable_gradient();
-                let count = grad.as_ref().map_or(0, |g| g.stop_count());
-                let editable = count <= EDITOR_MAX_STOPS;
                 if count == 0 {
-                    // ⚠A fresh session has no custom gradient, so there is nothing to edit and the
-                    // Curves section below cannot appear. Saying so beats an empty window — the
-                    // editor otherwise shows a preview of the PRESET and no controls at all, which
-                    // reads as broken rather than as "you have not started one yet".
+                    // ⚠A fresh session has no custom gradient, so there is nothing to select.
+                    // Saying so beats an empty window — the editor otherwise shows a preview of
+                    // the PRESET and no controls, which reads as broken rather than as "you have
+                    // not started one yet".
                     ui.label(
-                        egui::RichText::new("No custom gradient yet — \"Copy preset…\" or an import below starts one, and its per-segment curves appear here.")
+                        egui::RichText::new("No custom gradient yet — \"Copy preset…\" or an import below starts one, and its stops and per-segment curves appear here.")
                             .weak()
                             .small(),
                     );
                 }
-                if !editable {
+                if count > EDITOR_MAX_STOPS {
                     ui.label(
                         egui::RichText::new(format!("{count} imported entries - too many to edit stop by stop. Use the preview above, or Copy preset to start over."))
                             .weak()
                             .small(),
                     );
                 }
-                let mut edited: Option<fractadyne_color::segment::Gradient> = None;
-                for i in 0..if editable { count } else { 0 } {
-                    let Some((pos0, rgb0)) = grad.as_ref().and_then(|g| g.stop(i)) else {
-                        continue;
-                    };
-                    ui.horizontal(|ui| {
-                        let mut rgb = rgb0;
-                        if ui.color_edit_button_rgb(&mut rgb).changed() {
-                            let mut g = edited.clone().or_else(|| grad.clone()).unwrap();
-                            g.set_stop_color(i, rgb);
-                            edited = Some(g);
-                        }
-                        let mut pos = pos0;
-                        // ⚠The end stops are pinned: a gradient covers 0..1 by contract, and one
-                        // that stopped short would render a flat clamp instead of the colour the
-                        // user put there. Shown disabled rather than hidden so the row still reads.
-                        let movable = i > 0 && i + 1 < count;
-                        if ui
-                            .add_enabled(
-                                movable,
-                                egui::Slider::new(&mut pos, 0.0..=1.0).text("pos").fixed_decimals(3),
-                            )
-                            .changed()
-                        {
-                            let mut g = edited.clone().or_else(|| grad.clone()).unwrap();
-                            g.set_stop_position(i, pos);
-                            edited = Some(g);
-                        }
-                        if movable
-                            && ui.button(crate::icons::CLOSE).on_hover_text("Remove stop").clicked()
-                        {
-                            remove = Some(i);
-                        }
-                    });
-                }
-                if let Some(i) = remove {
-                    let mut g = edited.clone().or_else(|| grad.clone()).unwrap();
-                    g.remove_stop(i);
-                    edited = Some(g);
-                }
-                if let Some(g) = edited {
-                    self.store_segments(&g);
-                    changed = true;
-                }
 
-                // ⭐⭐**P2: the curves, finally reachable.** Blend function, colour space and
-                // midpoint have rendered, baked and persisted since beta.23 — but the only way to
-                // set one was to import a `.ggr` somebody else authored. One row per SEGMENT (the
-                // span between two stops), so N stops give N-1 rows.
-                if editable && count >= 2 {
-                    if let Some(g) = self.editable_gradient() {
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new("Curves (per segment)").weak().small());
-                        let mut curve_edit: Option<fractadyne_color::segment::Gradient> = None;
-                        for i in 0..g.segments.len() {
-                            let seg = g.segments[i];
+                // ── The selection: one segment and one stop, at a readable size ──────────────
+                if let (true, Some(g)) = (editable, grad.clone()) {
+                    let si = self.coloring.sel_segment.min(g.segments.len().saturating_sub(1));
+                    let seg = g.segments[si];
+                    let mut edit: Option<fractadyne_color::segment::Gradient> = None;
+                    ui.add_space(6.0);
+                    ui.horizontal_top(|ui| {
+                        let (crect, cresp) = ui.allocate_exact_size(
+                            egui::vec2(CANVAS, CANVAS),
+                            egui::Sense::click_and_drag(),
+                        );
+                        let inner = crect.shrink(7.0);
+                        let curve = egui::Rect::from_min_max(
+                            inner.min,
+                            egui::pos2(inner.max.x, inner.max.y - 14.0),
+                        );
+                        let span = (seg.right - seg.left).max(1.0e-6);
+                        let pr = ui.painter().clone();
+                        pr.rect_filled(crect, 3.0, sunken);
+                        pr.rect_stroke(
+                            crect,
+                            3.0,
+                            egui::Stroke::new(1.0_f32, weak),
+                            egui::StrokeKind::Inside,
+                        );
+                        // The identity line: without it "Curved" and "Sine" are two arcs with
+                        // nothing to be curved AGAINST.
+                        pr.line_segment(
+                            [
+                                egui::pos2(curve.min.x, curve.max.y),
+                                egui::pos2(curve.max.x, curve.min.y),
+                            ],
+                            egui::Stroke::new(1.0_f32, weak.linear_multiply(0.45)),
+                        );
+                        paint_factor_curve(&pr, curve, &seg, accent, 2.0);
+                        // ⭐**The consequence, not only the shape**: this segment's own colours
+                        // under its own curve. It is where the HSV-from-a-grey sweep stops being
+                        // a warning and becomes something the user can see — a black → red
+                        // segment reads visibly green in the middle.
+                        let bar = egui::Rect::from_min_max(
+                            egui::pos2(curve.min.x, inner.max.y - 10.0),
+                            egui::pos2(curve.max.x, inner.max.y),
+                        );
+                        let steps = bar.width().ceil().max(1.0) as usize;
+                        for s in 0..steps {
+                            let u = s as f32 / steps as f32;
+                            let c = g.eval(seg.left + u * span);
+                            let x = bar.min.x + u * bar.width();
+                            pr.line_segment(
+                                [egui::pos2(x, bar.min.y), egui::pos2(x, bar.max.y)],
+                                egui::Stroke::new(1.5_f32, stop_color32([c[0], c[1], c[2]])),
+                            );
+                        }
+                        // The midpoint, as a ring ON the curve. ⚠It rides at `factor(mid)`, not
+                        // at 0.5 — a sphere-increasing segment reads 0.866 there, and putting the
+                        // ring at the halfway height would draw it off its own curve.
+                        let frac = ((seg.mid - seg.left) / span).clamp(0.0, 1.0);
+                        pr.circle(
+                            egui::pos2(
+                                curve.min.x + frac * curve.width(),
+                                curve.max.y - seg.factor(seg.mid).clamp(0.0, 1.0) * curve.height(),
+                            ),
+                            5.0,
+                            sunken,
+                            egui::Stroke::new(2.0_f32, accent),
+                        );
+                        if let (true, Some(p)) = (cresp.dragged(), cresp.interact_pointer_pos()) {
+                            let f = ((p.x - curve.min.x) / curve.width().max(1.0)).clamp(0.02, 0.98);
+                            let mut g2 = g.clone();
+                            g2.segments[si].mid = seg.left + f * span;
+                            edit = Some(g2);
+                        }
+                        cresp.on_hover_text(
+                            "The blend curve for the selected segment: how fast the colour travels from the left stop to the right one. Drag the ring to move the midpoint.",
+                        );
+
+                        ui.add_space(8.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Segment {} of {}  ·  {:.3} → {:.3}",
+                                    si + 1,
+                                    g.segments.len(),
+                                    seg.left,
+                                    seg.right
+                                ))
+                                .strong(),
+                            );
+                            ui.add_space(3.0);
                             ui.horizontal(|ui| {
-                                // ⚠The preview draws the REAL blend function via `Segment::factor`,
-                                // not an idealised S: two of the five are not midpoint-symmetric
-                                // (sphere-increasing reads 0.866 at halfway), so a prettified curve
-                                // would misrepresent them.
-                                let (rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(30.0, 16.0),
-                                    egui::Sense::hover(),
+                                // ⚠The hover earns its place: GIMP's "Curved" is `pos^(ln 0.5 /
+                                // ln mid)`, so at a CENTRED midpoint it is exactly linear and the
+                                // canvas draws it lying on the identity line. Without the note
+                                // that reads as the picker being broken.
+                                ui.label("Curve").on_hover_text(
+                                    "How fast the colour travels across this segment. \"Curved\" is shaped by the midpoint — at midpoint 0.50 it is exactly linear.",
                                 );
-                                let pr = ui.painter_at(rect);
-                                pr.rect_stroke(
-                                    rect,
-                                    1.0,
-                                    egui::Stroke::new(1.0_f32, ui.visuals().weak_text_color()),
-                                    egui::StrokeKind::Inside,
-                                );
-                                let accent = crate::theme::ui_accent(ui.ctx());
-                                let mut prev: Option<egui::Pos2> = None;
-                                for k in 0..=14 {
-                                    let u = k as f32 / 14.0;
-                                    let f = seg.factor(seg.left + u * (seg.right - seg.left));
-                                    let pt = egui::pos2(
-                                        rect.min.x + 1.0 + u * (rect.width() - 2.0),
-                                        rect.max.y - 1.0 - f.clamp(0.0, 1.0) * (rect.height() - 2.0),
-                                    );
-                                    if let Some(q) = prev {
-                                        pr.line_segment([q, pt], egui::Stroke::new(1.0_f32, accent));
-                                    }
-                                    prev = Some(pt);
-                                }
-
                                 let mut blend = seg.blend.as_u8();
-                                egui::ComboBox::from_id_salt(("seg_blend", i))
-                                    .width(84.0)
+                                egui::ComboBox::from_id_salt("seg_blend")
+                                    .width(120.0)
                                     .selected_text(blend_label(blend))
                                     .show_ui(ui, |ui| {
                                         for k in 0..5u8 {
@@ -7178,15 +7543,17 @@ impl FractadyneApp {
                                         }
                                     });
                                 if blend != seg.blend.as_u8() {
-                                    let mut g2 = curve_edit.clone().unwrap_or_else(|| g.clone());
-                                    g2.segments[i].blend =
+                                    let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                                    g2.segments[si].blend =
                                         fractadyne_color::segment::Blend::from_u8(blend);
-                                    curve_edit = Some(g2);
+                                    edit = Some(g2);
                                 }
-
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Space");
                                 let mut space = seg.space.as_u8();
-                                egui::ComboBox::from_id_salt(("seg_space", i))
-                                    .width(66.0)
+                                egui::ComboBox::from_id_salt("seg_space")
+                                    .width(120.0)
                                     .selected_text(space_label(space))
                                     .show_ui(ui, |ui| {
                                         for k in 0..3u8 {
@@ -7194,60 +7561,138 @@ impl FractadyneApp {
                                         }
                                     });
                                 if space != seg.space.as_u8() {
-                                    let mut g2 = curve_edit.clone().unwrap_or_else(|| g.clone());
-                                    g2.segments[i].space =
+                                    let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                                    g2.segments[si].space =
                                         fractadyne_color::segment::Space::from_u8(space);
-                                    curve_edit = Some(g2);
+                                    edit = Some(g2);
                                 }
-
-                                // ⚠The midpoint is a FRACTION of the segment (GIMP semantics), so
-                                // the control is 0..1 within the span, not an absolute position.
-                                let span = (seg.right - seg.left).max(1.0e-6);
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Midpoint");
+                                // ⚠A FRACTION of the segment (GIMP semantics), not an absolute
+                                // position — the same number the ring on the canvas moves.
                                 let mut frac = ((seg.mid - seg.left) / span).clamp(0.0, 1.0);
                                 if ui
                                     .add(
                                         egui::DragValue::new(&mut frac)
                                             .speed(0.005)
                                             .range(0.02..=0.98)
-                                            .fixed_decimals(2)
-                                            .prefix("mid "),
+                                            .fixed_decimals(2),
                                     )
                                     .on_hover_text(
                                         "Where the blend reaches halfway, as a fraction of this segment. 0.50 is centred.",
                                     )
                                     .changed()
                                 {
-                                    let mut g2 = curve_edit.clone().unwrap_or_else(|| g.clone());
-                                    g2.segments[i].mid = seg.left + frac.clamp(0.02, 0.98) * span;
-                                    curve_edit = Some(g2);
+                                    let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                                    g2.segments[si].mid =
+                                        seg.left + frac.clamp(0.02, 0.98) * span;
+                                    edit = Some(g2);
                                 }
-
-                                // ⭐⭐The trap a user cannot see coming: an HSV segment with an
-                                // unsaturated endpoint sweeps the WHOLE wheel, because a grey has
-                                // no hue to start from. Measured: black -> red goes through green.
-                                if seg.hue_undefined_endpoint() {
-                                    ui.label(
-                                        egui::RichText::new("⚠")
-                                            .color(ui.visuals().warn_fg_color),
-                                    )
-                                    .on_hover_text(
-                                        "One end of this segment has no hue (black, white or grey), so the sweep starts from red and travels the whole colour wheel. That is legal and sometimes wanted \u{2014} but it is why the middle can be a colour neither end contains.",
-                                    );
+                                if ui.button("Centre").on_hover_text("Back to 0.50").clicked() {
+                                    let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                                    g2.segments[si].mid = seg.left + 0.5 * span;
+                                    edit = Some(g2);
                                 }
                             });
+                            // ⭐⭐The trap a user cannot see coming: an HSV segment with an
+                            // unsaturated endpoint sweeps the WHOLE wheel, because a grey has no
+                            // hue to start from. Measured: black → red goes through green.
+                            if seg.hue_undefined_endpoint() {
+                                ui.label(
+                                    egui::RichText::new("⚠ one end of this segment has no hue")
+                                        .color(ui.visuals().warn_fg_color)
+                                        .small(),
+                                )
+                                .on_hover_text(
+                                    "One end is black, white or grey, so the sweep starts from red and travels the whole colour wheel. That is legal and sometimes wanted \u{2014} but it is why the middle can be a colour neither end contains. The strip under the curve shows what it does.",
+                                );
+                            }
+                        });
+                    });
+
+                    // The selected STOP — one row, where there used to be one row per stop.
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        let i = self.coloring.sel_stop.min(count - 1);
+                        ui.label(egui::RichText::new(format!("Stop {} of {}", i + 1, count)).strong());
+                        let Some((pos0, rgb0)) = g.stop(i) else { return };
+                        let mut rgb = rgb0;
+                        if ui
+                            .color_edit_button_rgb(&mut rgb)
+                            .on_hover_text("The colour at this stop")
+                            .changed()
+                        {
+                            let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                            g2.set_stop_color(i, rgb);
+                            edit = Some(g2);
                         }
-                        if let Some(g) = curve_edit {
-                            self.store_segments(&g);
-                            changed = true;
+                        // ⚠The end stops are pinned: a gradient covers 0..1 by contract, and one
+                        // that stopped short would render a flat clamp instead of the colour the
+                        // user put there. Shown disabled rather than hidden so the row still reads.
+                        let movable = i > 0 && i + 1 < count;
+                        let mut pos = pos0;
+                        if ui
+                            .add_enabled(
+                                movable,
+                                egui::DragValue::new(&mut pos)
+                                    .speed(0.002)
+                                    .range(0.0..=1.0)
+                                    .fixed_decimals(3)
+                                    .prefix("pos "),
+                            )
+                            .changed()
+                        {
+                            let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                            g2.set_stop_position(i, pos);
+                            edit = Some(g2);
                         }
+                        // ⭐The numeric route is not a convenience. At 32 stops the markers sit
+                        // ~15 px apart, so the last few thousandths of a position are simply not
+                        // addressable by dragging one.
+                        let fine = ui.input(|inp| inp.modifiers.shift);
+                        for (label, dir) in [("◂", -1.0_f32), ("▸", 1.0_f32)] {
+                            if ui
+                                .add_enabled(movable, egui::Button::new(label))
+                                .on_hover_text("Nudge this stop (hold Shift for a finer step)")
+                                .clicked()
+                            {
+                                let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                                g2.set_stop_position(i, pos0 + dir * nudge_step(fine));
+                                edit = Some(g2);
+                            }
+                        }
+                        if ui
+                            .add_enabled(
+                                movable,
+                                egui::Button::new(format!("{} Remove", crate::icons::CLOSE)),
+                            )
+                            .on_hover_text("Remove this stop (or right-click its marker)")
+                            .clicked()
+                        {
+                            let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                            g2.remove_stop(i);
+                            self.coloring.sel_stop = sel_after_remove(i, i, g2.stop_count());
+                            self.coloring.sel_segment =
+                                segment_for_stop(self.coloring.sel_stop, g2.segments.len());
+                            edit = Some(g2);
+                        }
+                    });
+
+                    if let Some(g2) = edit {
+                        self.store_segments(&g2);
+                        changed = true;
                     }
                 }
 
-                ui.add_space(4.0);
+                ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if editable
                         && count < EDITOR_MAX_STOPS
-                        && ui.button(format!("{} Add stop", crate::icons::ADD)).clicked()
+                        && ui
+                            .button(format!("{} Add stop", crate::icons::ADD))
+                            .on_hover_text("Split the widest segment (or double-click the strip)")
+                            .clicked()
                     {
                         // ⭐Through the SEGMENT op: splitting preserves the blend and colour space
                         // of the segment it lands in, and on a linear one leaves the picture
@@ -7255,28 +7700,32 @@ impl FractadyneApp {
                         // ⚠Split the WIDEST segment rather than a fixed 0.5: a fixed position lands
                         // on an existing boundary once one is there and the button then silently
                         // does nothing, and the widest gap is where another stop is most useful.
-                        match self.editable_gradient() {
-                            Some(mut g) => {
-                                let at = g
-                                    .segments
-                                    .iter()
-                                    .max_by(|a, b| (a.right - a.left).total_cmp(&(b.right - b.left)))
-                                    .map(|s| 0.5 * (s.left + s.right));
-                                if let Some(at) = at {
-                                    if g.insert_stop(at).is_some() {
-                                        self.store_segments(&g);
-                                    }
-                                }
-                            }
-                            // No custom gradient yet — seed one exactly as the old editor did, so
-                            // "Add stop" on a fresh session still starts a palette.
-                            None => {
-                                self.coloring.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
-                                self.coloring.custom_palette_flat = false;
-                                self.rebuild_segments_from_palette();
+                        if let Some(mut g) = self.editable_gradient() {
+                            let at = g
+                                .segments
+                                .iter()
+                                .max_by(|a, b| (a.right - a.left).total_cmp(&(b.right - b.left)))
+                                .map(|s| 0.5 * (s.left + s.right));
+                            if let Some(i) = at.and_then(|at| g.insert_stop(at)) {
+                                self.store_segments(&g);
+                                // Select what was just made — otherwise the button appears to do
+                                // nothing but move a marker somewhere the controls do not point.
+                                self.coloring.sel_stop = i;
+                                self.coloring.sel_segment =
+                                    segment_for_stop(i, g.segments.len());
+                                changed = true;
                             }
                         }
-                        changed = true;
+                    }
+                    if !editable && count == 0 {
+                        // No custom gradient yet — seed one exactly as the old editor did, so
+                        // "Add stop" on a fresh session still starts a palette.
+                        if ui.button(format!("{} Add stop", crate::icons::ADD)).clicked() {
+                            self.coloring.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
+                            self.coloring.custom_palette_flat = false;
+                            self.rebuild_segments_from_palette();
+                            changed = true;
+                        }
                     }
                     ui.menu_button("Copy preset…", |ui| {
                         for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
@@ -7284,6 +7733,8 @@ impl FractadyneApp {
                                 self.coloring.custom_palette = self.preset_as_stops(i);
                                 self.coloring.custom_palette_flat = false;
                                 self.rebuild_segments_from_palette();
+                                self.coloring.sel_stop = 0;
+                                self.coloring.sel_segment = 0;
                                 changed = true;
                                 ui.close_menu();
                             }
@@ -7291,55 +7742,69 @@ impl FractadyneApp {
                     });
                     ui.toggle_value(&mut self.coloring.paste_open, "Paste…")
                         .on_hover_text("Import a palette from hex colours or 0–255 RGB triples");
-                    if ui
-                        .button("Import .map…")
-                        .on_hover_text("Load a Fractint / Kalles Fraktaler .map palette file (R G B lines, one per entry)")
-                        .clicked()
-                        && self.import_map_palette()
-                    {
-                        changed = true;
-                    }
-                    if ui
-                        .button("Import .ugr…")
-                        .on_hover_text("Load an Ultra Fractal .ugr gradient file (a .ugr usually holds many gradients — you pick one)")
-                        .clicked()
-                        && self.import_ugr_palette()
-                    {
-                        changed = true;
-                    }
-                    if ui
-                        .button("Import .ggr…")
-                        .on_hover_text("Load a GIMP .ggr gradient, with its midpoints, blend curves and colour spaces intact")
-                        .clicked()
-                        && self.import_ggr_palette()
-                    {
-                        changed = true;
-                    }
-                    if ui
-                        .button("Import .ase…")
-                        .on_hover_text("Load an Adobe swatch list (.ase). Swatches have no positions, so they arrive evenly spaced and blended.")
-                        .clicked()
-                        && self.import_ase_palette()
-                    {
-                        changed = true;
-                    }
+                    // ⭐Four import buttons in a row used to set the window's width all by
+                    // themselves. They are file tasks, not editing tasks, so they collapse behind
+                    // one menu the way "Copy preset…" already does.
+                    ui.menu_button("Import ▾", |ui| {
+                        if ui
+                            .button(".map…")
+                            .on_hover_text("Load a Fractint / Kalles Fraktaler .map palette file (R G B lines, one per entry)")
+                            .clicked()
+                        {
+                            changed |= self.import_map_palette();
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button(".ugr…")
+                            .on_hover_text("Load an Ultra Fractal .ugr gradient file (a .ugr usually holds many gradients — you pick one)")
+                            .clicked()
+                        {
+                            changed |= self.import_ugr_palette();
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button(".ggr…")
+                            .on_hover_text("Load a GIMP .ggr gradient, with its midpoints, blend curves and colour spaces intact")
+                            .clicked()
+                        {
+                            changed |= self.import_ggr_palette();
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button(".ase…")
+                            .on_hover_text("Load an Adobe swatch list (.ase). Swatches have no positions, so they arrive evenly spaced and blended.")
+                            .clicked()
+                        {
+                            changed |= self.import_ase_palette();
+                            ui.close_menu();
+                        }
+                    });
                 });
 
                 // ⭐An imported `.ggr` is RICHER than the stop list the editor edits, so editing
                 // stops cannot mean "edit this gradient" — it means replacing it. Say so, and make
                 // the conversion an explicit button rather than a surprise on the first click.
-                if !self.coloring.custom_segments.is_empty() {
+                // ⚠**Gated on the CONTENT, not on "has segments".** Before P3′ this fired whenever
+                // `custom_segments` was non-empty — which meant "came from a `.ggr`" only until P1
+                // made the editor segment-native. After P1 every custom gradient has segments, so
+                // a gradient the user had just copied from a preset advertised midpoints and blend
+                // curves it did not have, and offered to convert it into what it already was. The
+                // screenshot in the P3′ uitest bundle is what made it visible.
+                let rich = grad.as_ref().is_some_and(|g| !g.is_stop_expressible());
+                if rich {
                     ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "Imported gradient: {} segments with midpoints / blend curves / colour spaces.",
-                                self.coloring.custom_segments.len()
-                            ))
-                            .weak()
-                            .small(),
-                        );
-                    });
+                    // ⚠Deliberately NOT inside a `ui.horizontal`. A horizontal layout sets egui's
+                    // wrap mode to Extend, so a label in one never wraps — it just makes the window
+                    // wider, which is how a single sentence of copy came to set the editor's width
+                    // despite the cap above.
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Rich gradient: {} segments carry midpoints, blend curves or colour spaces — more than a plain stop list can hold.",
+                            self.coloring.custom_segments.len()
+                        ))
+                        .weak()
+                        .small(),
+                    );
                     if ui
                         .button("Convert to editable stops")
                         .on_hover_text("Replace it with a plain stop list. This DISCARDS the midpoints, blend curves and hue sweeps a stop list cannot hold.")
@@ -7382,16 +7847,7 @@ impl FractadyneApp {
                                     egui::Sense::click(),
                                 );
                                 let lut = g.to_gradient().bake(fractadyne_color::segment::LUT_SIZE);
-                                let pr = ui.painter_at(rect);
-                                let steps = rect.width().ceil().max(1.0) as usize;
-                                for s in 0..steps {
-                                    let t = s as f32 / steps as f32;
-                                    let x = rect.min.x + t * rect.width();
-                                    pr.line_segment(
-                                        [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
-                                        egui::Stroke::new(1.5_f32, gradient_preview_color(&lut, t)),
-                                    );
-                                }
+                                paint_gradient(&ui.painter_at(rect), rect, &lut);
                                 if resp.clicked() {
                                     pick = Some(i);
                                 }
@@ -7501,7 +7957,12 @@ impl FractadyneApp {
                     egui::RichText::new(if self.coloring.custom_palette_flat {
                         format!("{n} bands · taken in file order; positions are ignored while bands are on.")
                     } else {
-                        format!("{n} stops · positions may overlap; they're sorted automatically.")
+                        // ⚠The old copy here said positions "may overlap; they're sorted
+                        // automatically", which described the flat stop list the editor used to
+                        // own. Since P1 the stops ARE segment boundaries — already ordered, and a
+                        // duplicate position is a deliberate hard edge, not a mess to tidy. The
+                        // space is better spent on the interactions that have no other label.
+                        format!("{n} stops · drag a marker to move it · double-click the strip to add one · right-click a marker to remove it")
                     })
                     .weak()
                     .small(),

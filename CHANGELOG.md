@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The gradient editor is rebuilt around a selection** (beta.30). The gradient bar now carries
+  **draggable stop markers**, and under it a **ribbon** shows one cell per segment with that
+  segment's actual blend curve drawn in it. Click either to select; the selected segment gets a
+  large curve view with a draggable midpoint and a strip of its own colours beneath it, and the
+  selected stop gets a colour swatch, a typed position and a nudge. Drag a marker to move a stop,
+  double-click the strip to add one, right-click a marker to remove it.
+
+  The old editor listed every stop and every segment at once, so nothing on screen could be bigger
+  than a 30x16 pixel thumbnail and the two lists could only be matched up by counting. The bar, the
+  markers and the ribbon now share one horizontal axis, so a stop sits where the picture says it
+  does. Hand-editable gradients go up to 32 stops (was 24), and the four palette import buttons move
+  into a single **Import** menu. Nothing about how a gradient renders has changed.
+
 - **The gradient editor can shape the blend between stops** (beta.29). Each segment of a custom
   gradient now has its own **curve** (linear, curved, sine, or either spherical), its own **colour
   space** (RGB, or a sweep round the hue wheel in either direction), and its own **midpoint** - the

@@ -476,6 +476,29 @@ impl Gradient {
         out
     }
 
+    /// Does a plain stop list describe this gradient exactly — i.e. would [`Self::to_stops`] be
+    /// lossless here?
+    ///
+    /// ⭐⭐**The predicate the editor's "Convert to editable stops" notice needs.** That notice
+    /// used to fire on "the gradient has segments", which meant "it came from a `.ggr`" only until
+    /// P1 made the editor segment-native — after which EVERY custom gradient has segments, so it
+    /// fired for one the user had just copied from a preset and offered to convert it into what it
+    /// already was. What actually matters is whether any segment carries something a stop list
+    /// cannot hold: a non-linear blend, a hue sweep, or an off-centre midpoint.
+    ///
+    /// ⚠The midpoint test is a TOLERANCE, not equality. A centred midpoint is stored as
+    /// `left + 0.5 * (right - left)` and survives f32 arithmetic, a session round trip and a
+    /// segment being re-spanned by a neighbouring drag; an `==` here would report a plain dragged
+    /// gradient as rich for the sake of one ulp.
+    pub fn is_stop_expressible(&self) -> bool {
+        self.segments.iter().all(|s| {
+            let span = s.right - s.left;
+            let centred =
+                span.abs() < f32::EPSILON || ((s.mid - s.left) / span - 0.5).abs() <= 1.0e-3;
+            s.blend == Blend::Linear && s.space == Space::Rgb && centred
+        })
+    }
+
     // ── Editing ─────────────────────────────────────────────────────────────────────────────
     //
     // ⭐**The gradient editor edits SEGMENTS, and a "stop" is a segment boundary.** Before P1 the
