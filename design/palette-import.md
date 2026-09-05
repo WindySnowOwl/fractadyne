@@ -300,9 +300,33 @@ them came out differently from the prediction.
 would drift on every row. The actual drift on `--selftest`: **170/170 checks, 18/18 goldens, all
 PASS** — maxΔ **1** (one 8-bit level) on sixteen, maxΔ 0 on `newton`, and the maxΔ 8 on
 `mandelbrot-1e6` is the figure already in the committed report, i.e. pre-existing. So the
-re-bless plan is unspent, and the old output is still the record. ⚠**The F3 corpus is a separate
-question and has NOT been run** — its rows compare at maxD 0, a hard zero, so a one-level shift
-will show there even though it does not here. That is its own scheduled job (§4's last warning).
+re-bless plan is unspent for THEM, and the old output is still the record.
+
+**The F3 corpus DID go red, exactly as §4 predicted, and was re-blessed** (user decision,
+2026-09-05, after the evidence below). Its rows compare at maxD **0** — a hard zero — so the same
+one-level shift that the goldens absorb inside their tolerance fails every row there. Measured,
+all 38 routine rows, 1280×720 2×SS:
+
+| | |
+|---|---|
+| rows CHANGED | **38 / 38** |
+| maxD | **1** on every row |
+| meanD | **0.00** on every row |
+| differing pixels | **0.004% – 0.182%** (34 px to 1,675 px of 921,600) |
+| depth range covered | 1× to **1.2e1008×** — the shift is depth-independent |
+
+A structural change cannot look like that. The iterate pass was not touched; only `palette()`
+was, and a uniform ±1 on a fraction of a percent of pixels at every depth is the signature of
+rounding, not of different mathematics.
+
+⚠⚠**ROW 39 (the EXTREME Misiurewicz row) WAS NOT RE-BLESSED** — the regenerate skips extremes
+without `--extreme`, and that row alone is ~6,600 s. **Its committed baseline is therefore from
+the PRE-LUT renderer**, so the next `--check --extreme` will report row 39 CHANGED. That is
+expected and is NOT a regression; it needs its own scheduled re-bless.
+
+⭐**The corpus check now reports differing PIXELS as well as maxD**, because maxD saturates (see
+criterion 2 below) and "0/38 CHANGED, maxD 1" reads far more alarming than "0.03% of pixels moved
+by one level" — the same fact.
 
 ⭐**Acceptance criterion 2 needed a different metric than the one it names.** "Bake at 1024 and at
 4096 and compare … if the error does not fall, the bake has a bug" — but maxΔ **saturates at the
