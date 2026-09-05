@@ -1075,6 +1075,18 @@ struct Perf {
     /// is on the frames the user is looking at. Until beta.48 only the offline paths could see
     /// this, and a reference whose BLA skips nothing cost ~1 s a frame unnoticed.
     work_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// Echo sink for the view signature of the frame that SUBMITTED the norm/gradient readings.
+    ///
+    /// ⭐⭐The readings land 2-3 frames after their render, and the signature used to be computed
+    /// from the viewport AT DRAIN TIME — so at a jump the old view's in-flight reading adopted
+    /// under the NEW view's signature, and a decide-once-and-hold mapping could lock onto a range
+    /// measured somewhere else. `0` = nothing echoed yet (a frame that armed no counter readback),
+    /// in which case the drain falls back to the live signature exactly as before.
+    norm_sig_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// This frame's live-normalization signature, computed when the budget is drained and read
+    /// again when the render params are built later in the SAME frame — so the value that travels
+    /// to the GPU is the signature of the render it travels with.
+    norm_sig_submit: [u64; 2],
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
     /// The view signature `norm_range`/`norm_grad` were DECIDED for, and whether that decision
@@ -1287,6 +1299,11 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
+            norm_sig_sink: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            ],
+            norm_sig_submit: [0; 2],
             norm_range: [None, None],
             norm_sig: [0, 0],
             norm_locked: [false, false],

@@ -3223,15 +3223,30 @@ impl FractadyneApp {
             // the signature is the view + the iteration ask. Computed here, applied to BOTH
             // drains below, and the lock is taken when the RANGE adopts (the gradient may
             // arrive on its own; it must not lock a mapping whose range is still the old view's).
-            let nsig = center.0.to_bits()
-                ^ center.1.to_bits().rotate_left(17)
-                ^ log2mag.to_bits().rotate_left(34)
-                ^ (budget_now as u64).rotate_left(51);
+            let nsig = norm_signature(center.0, center.1, log2mag, budget_now);
+            // This frame's signature travels WITH the render it is about to submit and comes back
+            // attached to that render's reading — see `MandelbrotParams::norm_sig`. Stashed here
+            // because `bp_finish_params` (which builds the params) runs later in this same frame.
+            self.perf.norm_sig_submit[vb] = nsig;
+            // ⭐The signature that came BACK with the reading now on the sink. A mismatch means it
+            // was measured at a different view — see `norm_reading_is_current`.
+            let read_sig = self.perf.norm_sig_sink[vb].load(SeqCst);
+            let reading_current = norm_reading_is_current(read_sig, nsig, interacting);
             let nfeed =
                 norm_feed_decision(nsig, self.perf.norm_sig[vb], self.perf.norm_locked[vb], interacting);
             if self.perf.norm_sig[vb] != nsig {
                 self.perf.norm_sig[vb] = nsig;
                 self.perf.norm_locked[vb] = false;
+            }
+            if !reading_current {
+                // Drop it rather than feed it: it describes a view that is no longer on screen.
+                // Clearing (not peeking) so the next frame sees a genuinely fresh one.
+                self.perf.grad_sink[vb].store(0, SeqCst);
+                self.perf.norm_sink[vb].store(u64::MAX, SeqCst);
+                crate::diag::trace(
+                    "req",
+                    format!("norm reading discarded: view={vb} measured at a different view (sig {read_sig:016x} != {nsig:016x})"),
+                );
             }
             let gr = self.perf.grad_sink[vb].swap(0, SeqCst);
             if gr != 0 && nfeed != NormFeed::Hold {
@@ -4267,6 +4282,8 @@ impl FractadyneApp {
             norm_range,
             grad_range,
             work_counters,
+            norm_sig_out: Some(self.perf.norm_sig_sink[vs.min(1)].clone()),
+            norm_sig: self.perf.norm_sig_submit[vs.min(1)],
             tile,
             chunk_range,
             chunk_idx,
@@ -6299,6 +6316,48 @@ pub(crate) enum NormFeed {
 /// refreshes — shares the signature and is held. Pure, so the state machine is testable
 /// without a GPU. Rhymes with the offline sequence fix: decide from the VIEW, never from
 /// render history.
+/// The live-normalization view signature: centre, depth and the iteration ask.
+///
+/// ⭐**ONE definition, used by BOTH the frame that submits a reading and the frame that drains it.**
+/// Two hand-rolled copies of this expression is how a producer and a consumer come to disagree
+/// about what "the same view" means, and the disagreement is invisible until a stale reading adopts.
+///
+/// ⚠Never returns 0, because `0` is the "nothing echoed back yet" sentinel on the readback sink.
+/// The cost is that one signature value in 2^64 collides with another; the benefit is that a real
+/// signature can never be mistaken for "no reading".
+pub(crate) fn norm_signature(cx: f64, cy: f64, log2mag: f64, budget: u32) -> u64 {
+    let sig = cx.to_bits()
+        ^ cy.to_bits().rotate_left(17)
+        ^ log2mag.to_bits().rotate_left(34)
+        ^ (budget as u64).rotate_left(51);
+    if sig == 0 { 1 } else { sig }
+}
+
+/// Does this reading describe the view that is on screen NOW?
+///
+/// ⭐⭐**Attribution, not recovery.** The escape-range and gradient readings land 2-3 frames after
+/// the render that produced them. Their signature used to be computed from the viewport AT DRAIN
+/// TIME, so after a jump the OLD view's in-flight reading was attributed to the NEW view — and the
+/// decide-once-and-hold mapping could lock onto a range measured somewhere else entirely. The field
+/// case (2026-09-04, an e10000 Misiurewicz jump): a shallow `[6, 191]` adopted and LOCKED for a
+/// view whose real escapes sit at `[181573, 182297]`, which under the log mapping is one flat
+/// colour. `norm_hold_break` heals that within one reading; this stops it happening.
+///
+/// ⭐**The race is not rare.** Measured over a real `--autodive 24`: 1,569 fresh readings, and
+/// **63% carried a signature different from the view on screen**. Nearly all of those are motion,
+/// where they are accepted by design — but it is the same in-flight lag that bites when settled.
+///
+/// ⚠**While INTERACTING, every reading counts.** The view changes each frame, so no reading would
+/// ever match and the normalization would starve exactly when it is chasing. Motion already uses
+/// an EMA (`NormFeed::Chase`) precisely because its readings are approximate.
+/// ⚠**`read_sig == 0` means nothing was echoed yet.** Both readings and their signature are
+/// published by the same block of `CounterRead::pump`, so a fresh reading without one can only be a
+/// frame armed before the first signature was ever computed. Accepting is the safe fallback for
+/// that one startup case, and is what shipped before the signature existed.
+pub(crate) fn norm_reading_is_current(read_sig: u64, live_sig: u64, interacting: bool) -> bool {
+    interacting || read_sig == 0 || read_sig == live_sig
+}
+
 pub(crate) fn norm_feed_decision(sig: u64, prev_sig: u64, locked: bool, interacting: bool) -> NormFeed {
     if interacting {
         return NormFeed::Chase;
@@ -6330,6 +6389,8 @@ pub(crate) fn norm_hold_break(held: (f32, f32), reading: (f32, f32)) -> bool {
 
 #[cfg(test)]
 mod norm_hold;
+#[cfg(test)]
+mod norm_attribution;
 
 pub(crate) fn norm_window_feed(
     acc: Option<(f32, f32)>,

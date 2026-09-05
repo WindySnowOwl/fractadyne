@@ -280,6 +280,18 @@ struct CounterRead {
     /// readings measured at a superseded budget (the readback lands ~2 frames late; adapting on a
     /// pre-raise reading falsely reads "the raise didn't help" and latches the interior plateau).
     max_iter: u32,
+    /// The live-normalization view signature of the frame that SUBMITTED this reading.
+    ///
+    /// ⭐⭐**Attribution by construction.** The escape-range and gradient readings land ~2-3 frames
+    /// after the render that produced them, and the app used to compute their signature from the
+    /// viewport AT DRAIN TIME — so at any jump the old view's in-flight reading adopted under the
+    /// NEW view's signature. The decide-once-and-hold mapping could therefore lock onto a range
+    /// measured somewhere else. It healed within one reading, so nothing was visible for long;
+    /// carrying the signature removes the race rather than recovering from it.
+    ///
+    /// Same idea as `px` and `max_iter` above, and recorded in the same breath at copy time so it
+    /// cannot disagree with the counters it accompanies.
+    norm_sig: u64,
 }
 
 impl CounterRead {
@@ -295,6 +307,7 @@ impl CounterRead {
             done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             px: 0,
             max_iter: 0,
+            norm_sig: 0,
         }
     }
 
@@ -311,6 +324,7 @@ impl CounterRead {
         norm_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         grad_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         work_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        norm_sig_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -342,6 +356,13 @@ impl CounterRead {
                             let packed = ((slots[CTR_ESC_MIN] as u64) << 32)
                                 | slots[CTR_ESC_MAX] as u64;
                             o.store(packed, SeqCst);
+                        }
+                        // ⭐The SUBMITTING frame's signature, stored BEFORE the two readings it
+                        // describes so a drain that sees a fresh reading is guaranteed to see the
+                        // signature that goes with it. Both norm and grad come from this same
+                        // armed frame, so one signature covers both.
+                        if let Some(o) = norm_sig_out {
+                            o.store(self.norm_sig, SeqCst);
                         }
                         // Local escape gradient: (Σ×16) << 32 | sample count. `+1` on the count
                         // biases so "published with no samples" is distinguishable from "never
@@ -1213,6 +1234,14 @@ pub struct MandelbrotParams {
     pub grad_range: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Live sink for `(rebase + 1) << 32 | (bla_skip + 1)` — see `CounterRead::pump`.
     pub work_counters: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the view signature of the frame that submitted the norm/gradient readings, echoed
+    /// back with them. See `CounterRead::norm_sig` — this is what makes the live-normalization
+    /// mapping attribute a late reading to the view it was MEASURED at rather than the view that
+    /// happens to be on screen when it lands.
+    pub norm_sig_out: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// This frame's live-normalization view signature, handed to the GPU side purely so it can be
+    /// handed back with the reading. Opaque here: the app owns what it means.
+    pub norm_sig: u64,
     /// Tiled settle: `Some([x, y, w, h])` in BASE pixels renders only that sub-rect of the iteration
     /// texture this frame (scissored, `LoadOp::Load`), leaving the rest intact. The uniforms are
     /// identical to a full-frame render and the fragment coordinates are absolute in the texture, so
@@ -1384,6 +1413,7 @@ impl CallbackTrait for MandelbrotParams {
             self.norm_range.as_ref(),
             self.grad_range.as_ref(),
             self.work_counters.as_ref(),
+            self.norm_sig_out.as_ref(),
         );
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed
@@ -1792,6 +1822,7 @@ impl CallbackTrait for MandelbrotParams {
                 );
                 view.counter_read.px = (size[0] as u64) * (size[1] as u64);
                 view.counter_read.max_iter = self.max_iter;
+                view.counter_read.norm_sig = self.norm_sig;
                 view.counter_read.state = TimingState::Recorded;
             }
             view.last_iter_key = Some(key);
