@@ -628,6 +628,50 @@ pub fn write_exr(
     Ok(())
 }
 
+/// Write four f32 channels to an OpenEXR **verbatim** — no clamp, no transfer curve.
+///
+/// [`write_exr`] is for COLOUR: it applies `srgb_to_linear` to R/G/B because the render buffer
+/// holds display-referred values and EXR is a linear-convention container. That transform
+/// **clamps to [0, 1]**, which is right for a colour and catastrophic for data.
+///
+/// ⭐**This exists because `--render-iter` used the colour writer and silently destroyed its own
+/// payload** (found 2026-09-04). That export's R channel is the smooth iteration count — values
+/// in the hundreds of thousands — so every pixel clamped to 1.0 and `srgb_to_linear(1.0) = 1.0`
+/// left the channel a CONSTANT. Measured on a 1e30× render: R was 1.0 at every one of 65,536
+/// pixels, distinct-value count 1. The normals were squashed into [0, 1] by the same clamp; only
+/// alpha (`log2` distance estimate), the one channel the writer passes through, survived intact.
+/// A raw channel that reads back as a constant is indistinguishable from a renderer that computed
+/// nothing, which is why this went unnoticed.
+///
+/// Use this for anything that is not a colour; use [`write_exr`] for anything that is.
+pub fn write_exr_raw(
+    path: &Path,
+    width: u32,
+    height: u32,
+    rgba: &[f32],
+    metadata: Option<&str>,
+) -> Result<(), ExportError> {
+    use exr::prelude::*;
+    let expected = width as usize * height as usize * 4;
+    if rgba.len() < expected {
+        return Err(ExportError::SizeMismatch { expected, got: rgba.len() });
+    }
+    let w = width as usize;
+    let channels = SpecificChannels::rgba(|pos: Vec2<usize>| {
+        let i = (pos.1 * w + pos.0) * 4;
+        (rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3])
+    });
+    let mut image = Image::from_channels((width as usize, height as usize), channels);
+    if let Some(meta) = metadata {
+        image
+            .attributes
+            .other
+            .insert(Text::from(META_KEYWORD), AttributeValue::Text(Text::from(meta)));
+    }
+    image.write().to_file(path)?;
+    Ok(())
+}
+
 /// Read the embedded Fractadyne view-state metadata from an OpenEXR, if present.
 pub fn read_exr_metadata(path: &Path) -> Result<Option<String>, ExportError> {
     use exr::prelude::*;

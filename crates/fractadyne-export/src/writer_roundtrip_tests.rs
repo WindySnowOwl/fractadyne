@@ -91,6 +91,37 @@ fn png_metadata_roundtrips_verbatim() {
     assert_eq!(read_png_metadata(&q).expect("read meta"), None);
 }
 
+/// ⭐**The raw writer must not touch a single value.** `--render-iter` used the COLOUR writer,
+/// whose `srgb_to_linear` clamps to [0,1]: the smooth-iteration channel holds counts in the
+/// hundreds of thousands, so every pixel clamped to 1.0 and the whole channel read back as a
+/// CONSTANT — indistinguishable from a renderer that computed nothing. The values below are
+/// chosen to fail loudly under that bug: one far above 1, one negative (interior / a signed
+/// normal), and one tiny where the transfer curve is steepest.
+///
+/// Mutation-verified: point this at `write_exr` and it fails with `value 0 changed: 1 != 600008`.
+#[test]
+fn exr_raw_writes_data_verbatim_including_out_of_range_values() {
+    let (w, h) = (3u32, 2u32);
+    let src: Vec<f32> = (0..(w * h) as usize)
+        .flat_map(|i| {
+            let n = i as f32;
+            // R: a real smooth-iteration magnitude. G: negative. B: sub-LSB. A: log2(DE).
+            [600_008.0 + n, -1.0 - n, 0.000_123, -89.5 + n]
+        })
+        .collect();
+    let t = Tmp::new("exr_raw");
+    let p = t.path("raw.exr");
+    write_exr_raw(&p, w, h, &src, None).expect("write");
+    let (rw, rh, got) = read_exr_rgba_f32(&p).expect("read");
+    assert_eq!((rw, rh), (w, h));
+    for (i, (g, s)) in got.iter().zip(src.iter()).enumerate() {
+        assert_eq!(g, s, "value {i} changed: {g} != {s}");
+    }
+    // And the guard that actually names the bug: the iteration channel must not be a constant.
+    let r: Vec<f32> = got.chunks_exact(4).map(|p| p[0]).collect();
+    assert!(r.windows(2).any(|w| w[0] != w[1]), "R collapsed to a constant: {r:?}");
+}
+
 /// EXR is the LINEAR master: RGB is converted out of display space on write, alpha is not.
 /// (An alpha that went through the transfer curve would make every composite subtly wrong.)
 #[test]

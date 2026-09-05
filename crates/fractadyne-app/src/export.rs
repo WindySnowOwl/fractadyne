@@ -789,7 +789,11 @@ impl FractadyneApp {
              B=normal.y, A=log2(distance_estimate_px)",
             self.view_metadata()
         );
-        fractadyne_export::write_exr(path, r.width, r.height, &r.pixels, Some(&meta))?;
+        // RAW, not the colour writer: these channels are DATA (a smooth iteration count in the
+        // hundreds of thousands, signed normals, a log2 distance estimate), and `write_exr`
+        // clamps R/G/B to [0,1] and applies the sRGB transfer. Using it here left the iteration
+        // channel a constant 1.0 — see `write_exr_raw`.
+        fractadyne_export::write_exr_raw(path, r.width, r.height, &r.pixels, Some(&meta))?;
         Ok(format!("Saved iteration EXR {}×{} → {}", r.width, r.height, path.display()))
     }
 
