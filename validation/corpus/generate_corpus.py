@@ -441,9 +441,18 @@ def check_corpus(locs, only=None):
                 continue
             d = np.abs(a - b)
             maxd, meand, std = int(d.max()), float(d.mean()), float(b.std())
+            # ⭐**Count the differing PIXELS, not just the largest difference.** maxD saturates at
+            # the 8-bit output quantum: a change that is pure rounding reports maxD 1 no matter how
+            # much more accurate the renderer gets, so maxD alone cannot tell "quantisation" from
+            # "a real shift that happens to be small". The pixel count can, and it is what showed
+            # the palette-LUT bake was rounding (differing pixels fell 10.9x when the LUT grew 4x
+            # while maxD sat at 1 both times). See design/palette-import.md 5b.
+            npx = int((d.max(axis=2) > 0).sum()) if d.ndim == 3 else int((d > 0).sum())
+            total = a.shape[0] * a.shape[1]
             blank = " BLANK?" if std < 1.0 else ""  # near-uniform frame -> suspect (defensive)
             status = "MATCH" if maxd == 0 else "CHANGED"
-            results.append((slug, status, "maxD %d meanD %.2f std %.1f%s" % (maxd, meand, std, blank)))
+            results.append((slug, status, "maxD %d meanD %.2f diff %d px (%.3f%%) std %.1f%s"
+                            % (maxd, meand, npx, 100.0 * npx / max(total, 1), std, blank)))
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
         shutil.rmtree(cfg, ignore_errors=True)
