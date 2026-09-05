@@ -201,8 +201,19 @@ and growing gently when real frames run cheap, floored at the user's `min_motion
 Compute↔coloring split (§5). Implemented methods (`color_method`, 6): **smooth**, **stripe
 average**, **triangle-inequality average (TIA)**, **orbit trap** (point/cross/circle), **distance
 estimate**, **decomposition**. Plus **duotone** and **binary** two-color modes. Palettes: preset
-gradients (`fractadyne-color`), a custom multi-stop gradient editor (≤8 stops), cyclic with
-cycle/offset, and palette animation (Off / Forward / Reverse / Ping-pong / **Random gradients**).
+gradients (`fractadyne-color`), a custom multi-stop gradient editor, and import from a Fractint /
+Kalles Fraktaler `.map` file (`--palette-map`); cyclic with cycle/offset, plus palette animation
+(Off / Forward / Reverse / Ping-pong / **Random gradients**).
+
+⭐**Every palette goes through one representation.** `fractadyne-color::segment` holds GIMP's
+segment model — per-segment colours, midpoint, blend function and colour space — and bakes it into
+a **1024-entry LUT** that the color pass reads with a single indexed fetch (storage buffer, color
+binding 3). Presets, the editor, duotone/binary, the random animator and every importer converge
+there, so a 256-band `.map`, a curved blend and an eight-stop preset all cost the same to render.
+The old ≤8-stop shader walk is gone; that ceiling was structural, not cosmetic — Fractint's
+`default.map` has 37 hard jumps and eight stops give seven segments. Flatness is a property of the
+*segment*, which is what lets a `.map` keep its bands while a preset in the same model keeps its
+ramps. Design and the measured acceptance evidence: `design/palette-import.md`.
 **Relief lighting** (distance-estimate slope normal) and **distance glow** re-shade in the color pass
 so they don't re-iterate; both hold at any depth via the floatexp derivative.
 

@@ -458,7 +458,54 @@ def check_corpus(locs, only=None):
     return ok == len(results)
 
 
+# Every flag this script accepts. `--only` is the one that takes a value.
+KNOWN_FLAGS = {"--check", "--only", "--skip-renders", "--extreme", "--help", "-h"}
+
+# Deliberately ASCII: this prints to a Windows console under cp1252, where the module docstring's
+# warning glyphs raise UnicodeEncodeError — a help text that crashes is worse than none.
+USAGE = (
+    "Usage: generate_corpus.py [--check] [--only N[,M]] [--skip-renders] [--extreme]\n"
+    "  --check         compare each location against its committed baseline; writes nothing.\n"
+    "                  This is the regression gate and what you usually want.\n"
+    "  (no --check)    RE-RENDERS and OVERWRITES renders/*-fractadyne.png in place. Only after\n"
+    "                  a CHANGED location has been re-checked against Fraktaler-3 by eye.\n"
+    "  --only N[,M]    restrict to the named row(s), by slug prefix.\n"
+    "  --extreme       include the EXTREME-tier rows (row 39 alone is ~6,600 s).\n"
+    "  --skip-renders  write the .kfr/.fdn files and the catalog only.\n"
+)
+
+
+def check_argv():
+    """Reject an unrecognised flag instead of falling through to the destructive default.
+
+    ⛔**This is not tidiness — it cost us the baselines once.** There is no argparse here, so an
+    unknown flag used to be silently ignored and the script ran its DEFAULT action, which is to
+    re-render and OVERWRITE the committed `renders/*-fractadyne.png` in place. A `--help` typed to
+    find out what the flags were regenerated nineteen blessed baselines before it was killed. Worse
+    than the damage (git had them) is what it does to the gate: `--check` compares against those
+    files, so a run that overwrote them first would compare the new renderer against ITSELF and
+    print MATCH. A check that cannot go red is not a gate.
+    """
+    args = sys.argv[1:]
+    skip_next = False
+    for i, a in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+        if a == "--only":
+            skip_next = True  # its value is not a flag
+            if i + 1 >= len(args):
+                sys.exit("--only needs a value, e.g. --only 14,15")
+            continue
+        if a not in KNOWN_FLAGS:
+            sys.exit("unknown argument %r.\n\n%s" % (a, USAGE))
+    if "--help" in args or "-h" in args:
+        print(USAGE)
+        sys.exit(0)
+
+
 def main():
+    check_argv()
     if "--check" in sys.argv:
         only = None
         if "--only" in sys.argv:
