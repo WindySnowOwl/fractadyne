@@ -153,14 +153,45 @@ Ranked by how quietly they produce a wrong picture that survives review:
      happen in gamma space, by design**."* ✅Confirmed: there is no linear→sRGB encode anywhere in
      `mandelbrot.wgsl`.
 
-   ⚠**Prediction that follows, NOT yet reproduced**: a pasted `#808080` becomes the stop 0.2159,
-   which the shader writes to the framebuffer as byte ~55, which the monitor shows as ~`#373737`.
-   Pasted palettes would render one sRGB decode too dark, while the built-in presets — authored by
-   eye against the live view, i.e. as display values — look right. The test to settle it is a
-   paste of a known colour followed by reading the pixel back, and it must be run before either
-   comment is trusted. Whichever way it resolves, **importers must target the space the renderer
-   actually interprets**, and that space needs to be stated once, in one place, rather than
-   asserted twice in opposite directions.
+   ✅⭐⭐**SETTLED BY EXPERIMENT 2026-09-04 — the renderer is display-referred, and
+   `parse_palette_text` is wrong.** Method: a session with a UNIFORM custom palette (every stop
+   the same colour, so palette POSITION cannot influence the result), `--render` at 240×240, then
+   a histogram of the PNG. `light`/`de`/`normalize_live` forced off so nothing modulates the
+   colour. Both runs asserted the `session: … — loaded` line first; two earlier attempts silently
+   fell back to defaults and would have "measured" nothing.
+
+   | stop value written to the session | dominant rendered pixel |
+   |---|---|
+   | **0.2159** — what `parse_palette_text("#808080")` produces | **`#373737`** (49,575 / 57,600 px) |
+   | **0.502** — the DISPLAY value of `#808080` (control) | **`#808080`** (51,196 px) |
+
+   The control settles the mechanism, not merely the direction: **stop values are written straight
+   through to the framebuffer as display bytes.** `srgb8_to_linear(128) = 0.2159`, and
+   `0.2159 × 255 = 55.05 → 55 = 0x37`, matching the observed byte exactly.
+
+   ⇒ **Pasting `#808080` gives you `#373737`.** Every pasted palette is one sRGB decode too dark.
+   The `fractadyne-export` comment is right and the `fractadyne-color` one describes an intent the
+   renderer does not honour. The presets escape the bug because they were authored by eye against
+   the live view, so their numbers are display values by construction — the space only bites where
+   the user has a stated expectation, which is exactly what import is.
+
+   **Two candidate fixes, and they are not equivalent:**
+   - **(a) Stop converting on import** — `parse_palette_text` returns `v / 255`. One line plus
+     inverting `palette_text_converts_srgb_to_linear`, which currently pins the bug. Matches the
+     renderer as designed, and is what the importers below should target.
+   - **(b) Make the renderer linear** — encode sRGB at the end of `fs_color` and treat stops as
+     truly linear. Colour-managed, better gradient midtones, and it would change the appearance of
+     every existing preset and saved palette plus the export path's stated assumptions. A much
+     larger change, and it contradicts a documented deliberate choice ("it matches what the user
+     sees while exploring").
+
+   (a) is right for now; (b) is a separate decision that the LUT work would be the natural moment
+   to revisit. Either way, **state the space once, in one place** — it is currently asserted twice
+   in opposite directions.
+
+   ⚠Not tested: the gradient editor writes `ui.color_edit_button_rgb` values into `custom_palette`
+   with no conversion, so whether the editor's SWATCH matches the rendered colour is a second,
+   separate question.
 
    Separately and regardless: interpolating *in* linear gives different midtones than an
    application that interpolates in sRGB. Matching a reference render means matching the
