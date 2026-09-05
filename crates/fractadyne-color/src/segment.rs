@@ -447,6 +447,142 @@ impl Gradient {
         out
     }
 
+    // ── Editing ─────────────────────────────────────────────────────────────────────────────
+    //
+    // ⭐**The gradient editor edits SEGMENTS, and a "stop" is a segment boundary.** Before P1 the
+    // editor owned a flat `[pos, r, g, b]` list and every edit DESTROYED the segment gradient
+    // beside it, so a curve, a colour space or a midpoint could only ever arrive by importing
+    // somebody else's `.ggr`. These operations are the replacement: each one preserves the blend
+    // function, the colour space and the midpoint FRACTION of every segment it does not remove.
+    //
+    // ⭐⭐**Zero drift is the contract.** On a gradient of `Linear`/`Rgb` segments with centred
+    // midpoints — which is exactly what `from_stops` produces, i.e. every preset, every pasted
+    // palette and every session written before this — each operation gives the same gradient
+    // `from_stops` would give for the edited stop list. `edit_tests.rs` asserts that directly.
+
+    /// Editable stops = segment boundaries. `N` segments have `N + 1`.
+    pub fn stop_count(&self) -> usize {
+        if self.segments.is_empty() { 0 } else { self.segments.len() + 1 }
+    }
+
+    /// Stop `i` as `(position, RGB)`.
+    ///
+    /// ⚠For a gradient with a hard edge the two sides of a boundary hold different colours; this
+    /// reports the LEFT-hand one (the colour arriving at the boundary), which is what a strip marker
+    /// sits on. [`Self::to_stops`] is the lossless view and emits both.
+    pub fn stop(&self, i: usize) -> Option<(f32, [f32; 3])> {
+        let rgb = |c: [f32; 4]| [c[0], c[1], c[2]];
+        match (i, self.segments.len()) {
+            (_, 0) => None,
+            (0, _) => Some((self.segments[0].left, rgb(self.segments[0].left_color))),
+            (i, n) if i == n => {
+                let s = &self.segments[n - 1];
+                Some((s.right, rgb(s.right_color)))
+            }
+            (i, n) if i < n => Some((self.segments[i].left, rgb(self.segments[i].left_color))),
+            _ => None,
+        }
+    }
+
+    /// Recolour stop `i`, updating both segments that meet there.
+    ///
+    /// ⚠This deliberately CLOSES a hard edge at that boundary: setting one colour on a stop the user
+    /// sees as one marker must not leave the other side untouched, or the swatch would disagree with
+    /// the picture. Splitting a boundary back into two colours is a separate, explicit action.
+    pub fn set_stop_color(&mut self, i: usize, rgb: [f32; 3]) {
+        let n = self.segments.len();
+        if n == 0 || i > n {
+            return;
+        }
+        let c = |a: f32| [rgb[0], rgb[1], rgb[2], a];
+        if i > 0 {
+            let alpha = self.segments[i - 1].right_color[3];
+            self.segments[i - 1].right_color = c(alpha);
+        }
+        if i < n {
+            let alpha = self.segments[i].left_color[3];
+            self.segments[i].left_color = c(alpha);
+        }
+    }
+
+    /// Move stop `i` to `pos`, clamped strictly inside its neighbours.
+    ///
+    /// ⭐**Midpoint FRACTIONS are preserved, not midpoint positions.** A segment whose midpoint sits
+    /// halfway must still sit halfway after its span moves — otherwise dragging a neighbouring stop
+    /// would silently reshape a segment the user did not touch, and a centred (default) segment
+    /// would stop matching what `from_stops` produces.
+    /// ⚠The two end stops (0 and `N`) do not move: the gradient covers `0..1` by contract, and a
+    /// gradient that stopped short would render a flat clamp at the end rather than the colour the
+    /// user placed there.
+    pub fn set_stop_position(&mut self, i: usize, pos: f32) {
+        let n = self.segments.len();
+        if n == 0 || i == 0 || i >= n || !pos.is_finite() {
+            return;
+        }
+        const EPS: f32 = 1e-4;
+        let lo = self.segments[i - 1].left + EPS;
+        let hi = self.segments[i].right - EPS;
+        if hi <= lo {
+            return;
+        }
+        let pos = pos.clamp(lo, hi);
+        let (l, r) = (self.segments[i - 1].left, self.segments[i].right);
+        set_span(&mut self.segments[i - 1], l, pos);
+        set_span(&mut self.segments[i], pos, r);
+    }
+
+    /// Insert a stop at `pos`, splitting the segment that contains it. Returns the new stop index.
+    ///
+    /// Both halves inherit the parent's blend and colour space, and the split colour is EVALUATED so
+    /// the boundary joins exactly.
+    /// ⚠**Exact for a `Linear`/`Rgb` segment; approximate for a curved or HSV one** — half of a
+    /// curve is not the same curve, so re-fitting the parent's blend to each half changes the shape
+    /// between the new stops. That is inherent to splitting a parametric segment, and the editor
+    /// should say so rather than pretend; a linear segment (the default everywhere) is unaffected.
+    pub fn insert_stop(&mut self, pos: f32) -> Option<usize> {
+        const EPS: f32 = 1e-4;
+        if !pos.is_finite() {
+            return None;
+        }
+        let idx = self
+            .segments
+            .iter()
+            .position(|s| pos > s.left + EPS && pos < s.right - EPS)?;
+        let parent = self.segments[idx];
+        let split = parent.eval(pos);
+        let (mut a, mut b) = (parent, parent);
+        a.right_color = split;
+        b.left_color = split;
+        set_span(&mut a, parent.left, pos);
+        set_span(&mut b, pos, parent.right);
+        self.segments[idx] = a;
+        self.segments.insert(idx + 1, b);
+        Some(idx + 1)
+    }
+
+    /// Remove interior stop `i`, merging the two segments that meet there into one.
+    ///
+    /// ⚠**The LEFT segment's blend and colour space win**, and the merged midpoint keeps the left
+    /// segment's fraction. Something has to, and choosing the left matches reading order; the
+    /// alternative (whichever segment is wider) is defensible and would be a surprise, since the
+    /// answer would change as the user dragged a neighbour.
+    /// ⚠End stops cannot be removed — see [`Self::set_stop_position`].
+    pub fn remove_stop(&mut self, i: usize) {
+        let n = self.segments.len();
+        if n < 2 || i == 0 || i >= n {
+            return;
+        }
+        let right = self.segments[i];
+        let left = &mut self.segments[i - 1];
+        let frac = span_fraction(left);
+        left.right_color = right.right_color;
+        let (l, r) = (left.left, right.right);
+        left.left = l;
+        left.right = r;
+        left.mid = l + frac * (r - l);
+        self.segments.remove(i);
+    }
+
     /// Every segment is a band — the whole gradient is a lookup table with no ramps.
     /// [`Gradient::bake`] turns this into the LUT's `smooth` flag; see [`Lut`].
     pub fn is_flat(&self) -> bool {
@@ -467,6 +603,26 @@ impl Gradient {
             .collect();
         Lut { entries, smooth: !self.is_flat() }
     }
+}
+
+/// Where the midpoint sits inside a segment, as a fraction of its span. `0.5` is centred, which is
+/// what every default segment is. A zero-width span reports centred rather than dividing by zero.
+fn span_fraction(seg: &Segment) -> f32 {
+    let len = seg.right - seg.left;
+    if len.abs() < f32::EPSILON {
+        0.5
+    } else {
+        ((seg.mid - seg.left) / len).clamp(0.0, 1.0)
+    }
+}
+
+/// Move a segment to a new span, keeping its midpoint at the same FRACTION of it. See
+/// [`Gradient::set_stop_position`] for why the fraction rather than the position is the invariant.
+fn set_span(seg: &mut Segment, left: f32, right: f32) {
+    let frac = span_fraction(seg);
+    seg.left = left;
+    seg.right = right;
+    seg.mid = left + frac * (right - left);
 }
 
 /// An RGB triple as RGBA with opaque alpha — the internal colour shape is RGBA because `.ggr`
@@ -515,5 +671,7 @@ impl Lut {
     }
 }
 
+#[cfg(test)]
+mod edit_tests;
 #[cfg(test)]
 mod segment_tests;

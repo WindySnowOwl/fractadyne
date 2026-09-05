@@ -4245,6 +4245,8 @@ impl FractadyneApp {
                 offset: s.offset,
                 custom_palette: s.custom_palette.clone(),
                 custom_palette_flat: s.custom_palette_flat,
+                // ⚠Migrated below by `rebuild_segments_from_palette` when a legacy session
+                // carries stops but no segments — see that method.
                 custom_segments: s.custom_segments.clone(),
                 use_custom_palette: s.use_custom_palette,
                 palette_editor_open: false,
@@ -4427,6 +4429,17 @@ impl FractadyneApp {
             if same_view && app.install_saved_ref(0, saved) {
                 app.last_saved_ref_id = Some(app.ref_cache[0].orbit_id);
             }
+        }
+        // ⭐⭐**P1 MIGRATION.** A session written before segments became the source of truth carries
+        // a stop list and no segments; build them now so the editor and the renderer both read one
+        // representation. Lossless by construction — `from_stops` produces exactly the
+        // `Linear`/`Rgb`/centred segments the old stop walk rendered — and pinned by
+        // `a_legacy_stop_session_migrates_without_moving` rather than left as an argument.
+        // ⚠Only when segments are ABSENT: a session that already has them (a `.ggr` import, or one
+        // written after P1) must not have them overwritten from the derived stop list, which cannot
+        // express their curves.
+        if app.coloring.custom_segments.is_empty() && !app.coloring.custom_palette.is_empty() {
+            app.rebuild_segments_from_palette();
         }
         app.nav.undo.push(app.snapshot_view()); // baseline for navigation undo
         app
@@ -4642,7 +4655,7 @@ impl FractadyneApp {
                 })
                 .collect();
             self.coloring.custom_palette_flat = false;
-            self.coloring.custom_segments.clear();
+            self.rebuild_segments_from_palette();
             self.coloring.use_custom_palette = true;
             self.coloring.use_binary = false;
             self.coloring.use_duotone = false;
@@ -6581,7 +6594,7 @@ impl FractadyneApp {
                     })
                     .collect();
                 self.coloring.custom_palette_flat = true;
-                self.coloring.custom_segments.clear();
+                self.rebuild_segments_from_palette();
                 let name =
                     path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
                 self.coloring.paste_msg = Some(if m.vga_6bit {
@@ -6670,7 +6683,7 @@ impl FractadyneApp {
             .map(|(pos, c)| [pos, c[0], c[1], c[2]])
             .collect();
         self.coloring.custom_palette_flat = false;
-        self.coloring.custom_segments.clear();
+        self.rebuild_segments_from_palette();
         self.coloring.use_custom_palette = true;
         self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
     }
@@ -6719,7 +6732,7 @@ impl FractadyneApp {
                     })
                     .collect();
                 self.coloring.custom_palette_flat = false;
-                self.coloring.custom_segments.clear();
+                self.rebuild_segments_from_palette();
                 self.coloring.use_custom_palette = true;
                 self.coloring.paste_msg = Some(if n > m {
                     format!("Imported {m} of {n} swatches, evenly spaced.")
@@ -6787,6 +6800,73 @@ impl FractadyneApp {
 
     /// Store a gradient as segments (the lossless path), and keep a stop-list approximation beside
     /// it so "Convert to editable stops" has something to hand the editor.
+    /// Rebuild `custom_segments` from the stop list / band list beside it.
+    ///
+    /// ⭐⭐**P1: `custom_segments` is the source of truth for a custom gradient.** `custom_palette`
+    /// (+ `custom_palette_flat`) is now an INPUT — what a legacy session, a `.map` band import or
+    /// the paste box provides — and every path that writes one calls this so the segment list is
+    /// what actually renders and what the editor edits.
+    ///
+    /// ⚠**Lossless by construction, which is the whole reason this migration is safe**:
+    /// `from_stops` produces `Linear`/`Rgb` segments with centred midpoints, and that is exactly
+    /// what the old stop-walking path rendered. `a_legacy_stop_session_migrates_without_moving`
+    /// asserts it rather than trusting the argument.
+    fn rebuild_segments_from_palette(&mut self) {
+        if self.coloring.custom_palette.is_empty() {
+            self.coloring.custom_segments.clear();
+            return;
+        }
+        let g = self.palette_as_gradient();
+        self.store_segments(&g);
+    }
+
+    /// The stop/band list as a gradient — the conversion the migration and the bands toggle share.
+    fn palette_as_gradient(&self) -> fractadyne_color::segment::Gradient {
+        use fractadyne_color::segment::Gradient;
+        if self.coloring.custom_palette_flat {
+            // A `.map` is a LOOKUP TABLE: entries in file order, positions not consulted.
+            let colors: Vec<[f32; 3]> =
+                self.coloring.custom_palette.iter().map(|s| [s[1], s[2], s[3]]).collect();
+            Gradient::from_bands("Imported", &colors)
+        } else {
+            let stops: Vec<(f32, [f32; 3])> = self
+                .coloring
+                .custom_palette
+                .iter()
+                .map(|s| (s[0], [s[1], s[2], s[3]]))
+                .collect();
+            Gradient::from_stops("Custom", &stops)
+        }
+    }
+
+    /// The custom gradient the editor mutates. `None` when there is none (a preset is showing).
+    fn editable_gradient(&self) -> Option<fractadyne_color::segment::Gradient> {
+        (!self.coloring.custom_segments.is_empty()).then(|| self.custom_gradient())
+    }
+
+    /// Write an edited gradient back, keeping the derived stop list in step.
+    ///
+    /// ⚠The stop list is kept in sync so a session stays readable by a build that predates P1, and
+    /// so "Convert to editable stops" and `.ggr` export have something to read. It is DERIVED —
+    /// nothing reads it back while segments exist.
+    fn store_segments(&mut self, g: &fractadyne_color::segment::Gradient) {
+        self.coloring.custom_segments = g
+            .segments
+            .iter()
+            .map(|s| fractadyne_state::PaletteSegment {
+                left: s.left,
+                mid: s.mid,
+                right: s.right,
+                left_color: s.left_color,
+                right_color: s.right_color,
+                blend: s.blend.as_u8(),
+                space: s.space.as_u8(),
+            })
+            .collect();
+        self.coloring.custom_palette =
+            g.to_stops().into_iter().map(|(pos, c)| [pos, c[0], c[1], c[2]]).collect();
+    }
+
     fn set_custom_segments(&mut self, g: &fractadyne_color::segment::Gradient) {
         self.coloring.custom_segments = g
             .segments
@@ -6810,8 +6890,15 @@ impl FractadyneApp {
 
     fn custom_gradient(&self) -> fractadyne_color::segment::Gradient {
         use fractadyne_color::segment::Gradient;
-        // A `.ggr` import wins: it carries midpoints, blend curves and hue sweeps that the stop
-        // list beside it (kept only as an editable approximation) cannot express.
+        // ⭐**Since P1 the SEGMENTS are the custom gradient.** Every path that can reach the editor
+        // — session load, the GUI imports, paste, preset copy — calls
+        // `rebuild_segments_from_palette` (or `store_segments`) so this branch is the one taken.
+        //
+        // ⚠**The stop/band branches below stay as a SAFETY NET, deliberately.** A render-only path
+        // that sets `custom_palette` without rebuilding (the `--palette-*` CLI flags, which exit
+        // before any editor exists) still renders correctly, and so would a future path that forgot.
+        // They produce exactly what building segments from the same list produces — that is what
+        // makes the migration lossless — so the net can never disagree with the branch above.
         if !self.coloring.custom_segments.is_empty() {
             return Gradient {
                 name: "Imported".into(),
@@ -6947,8 +7034,13 @@ impl FractadyneApp {
                 // to be edited by hand. An imported `.map` is 256 entries; drawing 256 colour
                 // pickers is not an editor, it is a hang, so a long palette shows a summary and
                 // the actions that make sense for it instead.
+                // ⭐⭐**P1: the rows are a VIEW OF SEGMENT BOUNDARIES**, and each edit goes through
+                // a segment operation that preserves the blend, colour space and midpoint fraction
+                // of every segment it does not remove. Before this the rows owned a flat stop list
+                // and every keystroke destroyed the segment gradient beside it.
                 let mut remove: Option<usize> = None;
-                let count = self.coloring.custom_palette.len();
+                let grad = self.editable_gradient();
+                let count = grad.as_ref().map_or(0, |g| g.stop_count());
                 let editable = count <= EDITOR_MAX_STOPS;
                 if !editable {
                     ui.label(
@@ -6957,34 +7049,48 @@ impl FractadyneApp {
                             .small(),
                     );
                 }
+                let mut edited: Option<fractadyne_color::segment::Gradient> = None;
                 for i in 0..if editable { count } else { 0 } {
+                    let Some((pos0, rgb0)) = grad.as_ref().and_then(|g| g.stop(i)) else {
+                        continue;
+                    };
                     ui.horizontal(|ui| {
-                        let mut rgb = [
-                            self.coloring.custom_palette[i][1],
-                            self.coloring.custom_palette[i][2],
-                            self.coloring.custom_palette[i][3],
-                        ];
+                        let mut rgb = rgb0;
                         if ui.color_edit_button_rgb(&mut rgb).changed() {
-                            self.coloring.custom_palette[i][1] = rgb[0];
-                            self.coloring.custom_palette[i][2] = rgb[1];
-                            self.coloring.custom_palette[i][3] = rgb[2];
-                            changed = true;
+                            let mut g = edited.clone().or_else(|| grad.clone()).unwrap();
+                            g.set_stop_color(i, rgb);
+                            edited = Some(g);
                         }
-                        let mut pos = self.coloring.custom_palette[i][0];
+                        let mut pos = pos0;
+                        // ⚠The end stops are pinned: a gradient covers 0..1 by contract, and one
+                        // that stopped short would render a flat clamp instead of the colour the
+                        // user put there. Shown disabled rather than hidden so the row still reads.
+                        let movable = i > 0 && i + 1 < count;
                         if ui
-                            .add(egui::Slider::new(&mut pos, 0.0..=1.0).text("pos").fixed_decimals(3))
+                            .add_enabled(
+                                movable,
+                                egui::Slider::new(&mut pos, 0.0..=1.0).text("pos").fixed_decimals(3),
+                            )
                             .changed()
                         {
-                            self.coloring.custom_palette[i][0] = pos.clamp(0.0, 1.0);
-                            changed = true;
+                            let mut g = edited.clone().or_else(|| grad.clone()).unwrap();
+                            g.set_stop_position(i, pos);
+                            edited = Some(g);
                         }
-                        if count > 2 && ui.button(crate::icons::CLOSE).on_hover_text("Remove stop").clicked() {
+                        if movable
+                            && ui.button(crate::icons::CLOSE).on_hover_text("Remove stop").clicked()
+                        {
                             remove = Some(i);
                         }
                     });
                 }
                 if let Some(i) = remove {
-                    self.coloring.custom_palette.remove(i);
+                    let mut g = edited.clone().or_else(|| grad.clone()).unwrap();
+                    g.remove_stop(i);
+                    edited = Some(g);
+                }
+                if let Some(g) = edited {
+                    self.store_segments(&g);
                     changed = true;
                 }
 
@@ -6994,8 +7100,33 @@ impl FractadyneApp {
                         && count < EDITOR_MAX_STOPS
                         && ui.button(format!("{} Add stop", crate::icons::ADD)).clicked()
                     {
-                        self.coloring.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
-                        self.coloring.custom_segments.clear();
+                        // ⭐Through the SEGMENT op: splitting preserves the blend and colour space
+                        // of the segment it lands in, and on a linear one leaves the picture
+                        // untouched — adding a handle, nothing else.
+                        // ⚠Split the WIDEST segment rather than a fixed 0.5: a fixed position lands
+                        // on an existing boundary once one is there and the button then silently
+                        // does nothing, and the widest gap is where another stop is most useful.
+                        match self.editable_gradient() {
+                            Some(mut g) => {
+                                let at = g
+                                    .segments
+                                    .iter()
+                                    .max_by(|a, b| (a.right - a.left).total_cmp(&(b.right - b.left)))
+                                    .map(|s| 0.5 * (s.left + s.right));
+                                if let Some(at) = at {
+                                    if g.insert_stop(at).is_some() {
+                                        self.store_segments(&g);
+                                    }
+                                }
+                            }
+                            // No custom gradient yet — seed one exactly as the old editor did, so
+                            // "Add stop" on a fresh session still starts a palette.
+                            None => {
+                                self.coloring.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
+                                self.coloring.custom_palette_flat = false;
+                                self.rebuild_segments_from_palette();
+                            }
+                        }
                         changed = true;
                     }
                     ui.menu_button("Copy preset…", |ui| {
@@ -7003,7 +7134,7 @@ impl FractadyneApp {
                             if ui.button(p.name).clicked() {
                                 self.coloring.custom_palette = self.preset_as_stops(i);
                                 self.coloring.custom_palette_flat = false;
-                                self.coloring.custom_segments.clear();
+                                self.rebuild_segments_from_palette();
                                 changed = true;
                                 ui.close_menu();
                             }
@@ -7065,7 +7196,11 @@ impl FractadyneApp {
                         .on_hover_text("Replace it with a plain stop list. This DISCARDS the midpoints, blend curves and hue sweeps a stop list cannot hold.")
                         .clicked()
                     {
-                        self.coloring.custom_segments.clear();
+                        // ⚠Flatten to a plain stop list and rebuild: after P1 the segments ARE the
+                        // gradient, so clearing them alone would leave nothing to render. This is
+                        // the LEGACY path now, and it still states what it discards.
+                        self.coloring.custom_palette_flat = false;
+                        self.rebuild_segments_from_palette();
                         changed = true;
                     }
                 }
@@ -7139,6 +7274,10 @@ impl FractadyneApp {
                     .on_hover_text("Fractint / .map semantics: every entry is a flat colour. Off blends them into a smooth gradient.")
                     .changed()
                 {
+                    // ⚠**Must REBUILD.** Since P1 the segments are what renders, so flipping the
+                    // flag alone would move the checkbox and nothing else — the exact "UI responds,
+                    // picture does not" failure the source-of-truth change was meant to end.
+                    self.rebuild_segments_from_palette();
                     changed = true;
                 }
 
@@ -7188,7 +7327,7 @@ impl FractadyneApp {
                                         })
                                         .collect();
                                     self.coloring.custom_palette_flat = false;
-                                    self.coloring.custom_segments.clear();
+                                    self.rebuild_segments_from_palette();
                                     self.coloring.paste_msg = Some(if got > n {
                                         format!("Imported {n} of {got} colours, sampled evenly across your list ({PASTE_MAX_COLORS} is the limit).")
                                     } else {
