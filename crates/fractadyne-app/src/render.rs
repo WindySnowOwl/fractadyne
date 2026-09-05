@@ -3570,12 +3570,16 @@ impl FractadyneApp {
                     // Under present throttling the wall accumulator measures the
                     // COMPOSITOR (see `present_throttle_step`): a shed on it would floor the
                     // licences off an idle GPU — the 2026-09-04 field log's exact lines.
+                    // ⭐The decision itself is `wall_shed_now` — a pure predicate with its own
+                    // tests, so the rule that runs here and the rule under test cannot drift.
                     let throttled =
                         self.perf.present_throttle >= crate::render::PRESENT_THROTTLE_FRAMES;
-                    let shed = if !shed
-                        && !throttled
-                        && acc >= crate::tunables::cost().tdr_lethal_ms
-                    {
+                    let shed = if wall_shed_now(
+                        shed,
+                        throttled,
+                        acc,
+                        crate::tunables::cost().tdr_lethal_ms,
+                    ) {
                         chunk_band_retreat(&mut self.perf.chunk_bands[vs]);
                         crate::diag::log_line(
                             "render",
@@ -6529,8 +6533,43 @@ pub(crate) fn chunk_band_update(
     }
 }
 
+/// Should an IN-FLIGHT pass shed the band ledger on its accumulated wall time alone?
+///
+/// ⭐⭐The wall-clock retreat's whole decision, as a pure predicate. Until beta.141 the ledger
+/// learned nothing about a pass until it DRAINED (a quick present as proof the queue emptied) or
+/// hit the wedge backstop at `target × 60` — ~24 s at a 400 ms target, long after a device would be
+/// gone. That is the gap the 2026-08-22 field loss fell through: a queue on its way to losing the
+/// device never produces a quick present, so the one pass whose price would shed the licence is
+/// exactly the pass that cannot be priced. Accumulated wall is a conservative LOWER BOUND — if it
+/// has reached the lethal band the pass has *already* been that expensive, no drain required.
+///
+/// It was extracted from `update()` because the item that asked for it recorded the gap plainly:
+/// the decision had **empirical verification (46 observed fires) but no unit test**, being inline
+/// state across frames rather than a predicate. One observed run is not a gate; this is.
+///
+/// Three guards, and each one is a bug that happened:
+/// - ⚠**`shed` latches.** A pass sitting in the band for many frames sheds ONCE — the ledger is
+///   already at the floor, and re-shedding every frame is noise that hides the first one.
+/// - ⚠⚠**`throttled` vetoes.** Under present throttling the accumulator measures the COMPOSITOR,
+///   not the GPU (see `present_throttle_step`), so shedding on it would floor every licence off an
+///   *idle* card. Those are the 2026-09-04 field log's exact lines, and this is the same
+///   present-throttle poisoning of a wall-clock controller that the dual-view Julia saga turned on.
+/// - ⚠A NaN or negative accumulator never sheds, and the `>=` alone is what enforces that: every
+///   comparison against NaN is false, and a negative is below any threshold. ⭐An explicit
+///   `is_finite()` guard was written here first and was WRONG — it also rejected `+∞`, which is the
+///   most lethal reading there is and exactly what this should fire on. The test caught it.
+///
+/// ⭐**Shed, do not release**: this says only what the NEXT pass may ask for. The next dispatch
+/// stays blocked until the genuine drain — "releasing the next dispatch onto a pass that is merely
+/// SLOW is how a 10 s single got company on its way to the TDR".
+pub(crate) fn wall_shed_now(shed: bool, throttled: bool, acc_ms: f64, lethal_ms: f64) -> bool {
+    !shed && !throttled && acc_ms >= lethal_ms
+}
+
 #[cfg(test)]
 mod chunk_bands;
+#[cfg(test)]
+mod wall_shed;
 
 /// `bootstrap` is what `bootstrap_steps` derived for this view and mode.
 pub(crate) fn budget_base(fe_budget: u64, bootstrap: u64) -> u64 {
