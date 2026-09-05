@@ -754,6 +754,9 @@ struct Perf {
     /// ⚠Same up-to-two-frame staleness as `last_sa_skip_v`, and for the same reason. Resolution
     /// moves only when the budget resizes it, so it holds still far better than the chunk window.
     last_res_v: [[u32; 2]; 2],
+    /// Last DPI state a `FRACTADYNE_TRACE=dpi` line reported, so the channel logs CHANGES
+    /// rather than a line per frame. Default zero means the first frame always reports.
+    last_dpi: crate::render::DpiState,
     /// Monotonic frame counter, for resolving adaptive-AA probes (below).
     frame_idx: u64,
     /// Armed adaptive-AA wall-clock probe per view: `(ss rendered, frame armed, max frame-interval
@@ -1208,6 +1211,7 @@ impl Default for Perf {
             last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],
             ts_reading_frame: [0, 0],
+            last_dpi: crate::render::DpiState::default(),
             fe_dispatch_frame: [0, 0],
             wall_fallback: false,
             full_inflight: [0, 0],
@@ -7653,6 +7657,38 @@ impl eframe::App for FractadyneApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_start = Instant::now();
         diag::alive(); // heartbeat: a frame loop that stops arriving here is a hang (D1.4)
+
+        // `FRACTADYNE_TRACE=dpi` — one line per real change of scale factor or window size.
+        //
+        // ⭐For the 2026-09-04 field report: dragging between monitors of different scaling can
+        // resize the window erratically and grow it without bound. We request no resize of our own
+        // outside `--shot`, and eframe is built without `persistence`, so nothing here restores a
+        // geometry — the cause is upstream (winit #4041, Windows 11 24H2+; egui #7648, still open
+        // at egui 0.33.1, so it is NOT fixed by upgrading). What we lacked was any RECORD: nothing
+        // logged scale factor or window size, so a recurrence produced no evidence at all.
+        // ⚠Read the PHYSICAL column. A healthy transition holds the logical size and rescales the
+        // physical one by exactly the new factor; the bug is the physical size ratcheting up
+        // beyond that, and egui #7648 reports the scale factor flipping repeatedly (1.0 ↔ 1.75)
+        // as it happens — which this makes visible as a burst of lines.
+        if diag::trace_on("dpi") {
+            let r = ctx.screen_rect();
+            let now =
+                render::DpiState { ppp: ctx.pixels_per_point(), logical: [r.width(), r.height()] };
+            if render::dpi_changed(self.perf.last_dpi, now) {
+                let (p, w) = (now.physical(), self.perf.last_dpi);
+                diag::trace(
+                    "dpi",
+                    format!(
+                        "scale {:.4} -> {:.4} | logical {:.1}x{:.1} -> {:.1}x{:.1} | \
+                         PHYSICAL {:.0}x{:.0} -> {:.0}x{:.0}",
+                        w.ppp, now.ppp,
+                        w.logical[0], w.logical[1], now.logical[0], now.logical[1],
+                        w.physical()[0], w.physical()[1], p[0], p[1],
+                    ),
+                );
+                self.perf.last_dpi = now;
+            }
+        }
         // Surface a deferred startup warning (e.g. a session saved by a newer build) as a toast,
         // once, on the first frame where the UI exists.
         if let Some(msg) = self.pending_state_warning.take() {

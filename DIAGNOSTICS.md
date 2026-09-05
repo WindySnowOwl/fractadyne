@@ -19,7 +19,7 @@ dir, logs included.
 
 | Var | Values | Effect |
 |-----|--------|--------|
-| `FRACTADYNE_TRACE` | `1` (all) or `req,ref,gpu,tile,glitch,idle` | Stderr + log-file tracing by category (below) |
+| `FRACTADYNE_TRACE` | `1` (all) or `req,ref,gpu,tile,glitch,idle,dpi` | Stderr + log-file tracing by category (below) |
 | `FRACTADYNE_LOG` | `0` | Disables the log file (stderr unchanged) |
 | `FRACTADYNE_PERF` | `1` | Appends per-render perf records to `logs/perf.jsonl` (regression tracking across builds) — plus, during script playback, one `kind:"live"` record per frame (tour time, depth, frame/cpu ms, pipeline lag) for live-judder analysis |
 | `FRACTADYNE_CONFIG_DIR` | path | Relocates config dir (and therefore `logs/`) |
@@ -42,6 +42,7 @@ dir, logs included.
 | `gpu` | live floatexp budget controller | Measured iterate ms per dispatch, budget grow/shrink, convergence; `aimd:` lines show the motion-res controller's real-frame cost signal + resolution decisions |
 | `tile` | live floatexp frame sizing | Per-frame resolution/ss/iterations/steps vs budget, reprojection, tiled-settle grid state |
 | `glitch` | multi-reference correction | Per-run summary: references used, residual glitched px, elapsed |
+| `dpi` | every real change of scale factor or window size | Scale factor, logical size and **physical** size, before → after, one line per change (jitter suppressed). For the monitor-drag resize report: a healthy DPI transition HOLDS the logical size and rescales the physical one by exactly the new factor; the defect is the physical size ratcheting up beyond that, and the upstream reports describe the scale factor flipping repeatedly (1.0 ↔ 1.75) as it happens, which shows here as a burst of lines |
 | `idle` | every frame, while the performance overlay is on | Why the app is still drawing: the quiescence verdict and each input to it (animation/playback clock, per-view tiled-settle and chunk-walk pending, reference build in flight, frames since each view last dispatched). ⭐Answers "a settled app is still burning GPU — what is holding it awake?", which no other channel can: the 2026-09-04 climb-probe loop dispatched a real 36.9 ms pass every 3 frames forever while `tile` reported `iterates=false` (true — the iterate KEY was deduped; the probe re-keys by nonce) |
 
 Always-on prefixes (not gated): `[fd-start]` session header, `[fd-render]` CLI render

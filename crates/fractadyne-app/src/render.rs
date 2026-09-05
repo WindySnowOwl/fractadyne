@@ -6775,6 +6775,40 @@ pub(crate) const PRESENT_THROTTLE_FRAMES: u32 = 5;
 #[cfg(test)]
 mod present_throttle_tests;
 
+/// A window's DPI state for one frame: the scale factor and the LOGICAL size egui reports.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct DpiState {
+    pub ppp: f32,
+    pub logical: [f32; 2],
+}
+
+impl DpiState {
+    /// Physical pixels — what the swapchain is actually sized to, and the number that grows in
+    /// the field report.
+    pub fn physical(&self) -> [f32; 2] {
+        [self.logical[0] * self.ppp, self.logical[1] * self.ppp]
+    }
+}
+
+/// Has the window's DPI state moved enough to be worth a trace line?
+///
+/// Both comparisons are loose on purpose. `pixels_per_point` is a float that can jitter in its
+/// last bits without anything having happened, and the logical size wobbles by fractions of a
+/// point as panels settle; logging either would bury the event under noise. A real monitor change
+/// moves the scale factor by whole steps (1.0 ↔ 1.25 ↔ 1.5 ↔ 1.75) and the size by many pixels.
+///
+/// ⭐Reports the size in PHYSICAL pixels because that is the quantity the user sees grow. A
+/// window dragged between monitors is *supposed* to keep its logical size and change its physical
+/// one; the bug is when the physical size ratchets up past what the new scale factor accounts for.
+pub(crate) fn dpi_changed(prev: DpiState, now: DpiState) -> bool {
+    (prev.ppp - now.ppp).abs() > 1.0e-4
+        || (prev.logical[0] - now.logical[0]).abs() > 0.5
+        || (prev.logical[1] - now.logical[1]).abs() > 0.5
+}
+
+#[cfg(test)]
+mod dpi_trace_tests;
+
 /// One view's activity, as the quiescence test reads it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ViewActivity {
