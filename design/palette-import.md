@@ -142,12 +142,68 @@ Ranked by how quietly they produce a wrong picture that survives review:
    interpolation; UF and GIMP interpolate between stops. Applying our smooth interpolation to a
    `.map` turns 37 hard bands into a smear that no longer resembles the source. The segment model
    handles this by making flatness a property of the *segment*, not a global switch.
-2. ⭐⭐**Colour space.** Our stops are **linear RGB**; every format here is sRGB-ish 8-bit. Import
-   must convert (we already have `srgb8_to_linear`), and — separately — interpolating *in* linear
-   gives different midtones than the source application, which interpolates in sRGB. Matching a
-   reference render means matching the interpolation space, not just the endpoints.
+2. ⭐⭐**Colour space — and we currently contradict ourselves about it.** Two comments in the tree
+   assert opposite things, and both are load-bearing:
+   - `fractadyne-color/src/lib.rs`: *"every stop in this crate is LINEAR"* — and
+     `parse_palette_text` converts sRGB→linear, pinned by the test
+     `palette_text_converts_srgb_to_linear` (`#808080` → 0.2159).
+   - `fractadyne-export/src/lib.rs`: *"The renderer is **display-referred**. `fs_color` writes
+     palette colors (0..1) straight into a **non-sRGB** framebuffer… the bytes the GPU stores ARE
+     the sRGB values the monitor shows… **Palette interpolation and relief lighting therefore also
+     happen in gamma space, by design**."* ✅Confirmed: there is no linear→sRGB encode anywhere in
+     `mandelbrot.wgsl`.
+
+   ⚠**Prediction that follows, NOT yet reproduced**: a pasted `#808080` becomes the stop 0.2159,
+   which the shader writes to the framebuffer as byte ~55, which the monitor shows as ~`#373737`.
+   Pasted palettes would render one sRGB decode too dark, while the built-in presets — authored by
+   eye against the live view, i.e. as display values — look right. The test to settle it is a
+   paste of a known colour followed by reading the pixel back, and it must be run before either
+   comment is trusted. Whichever way it resolves, **importers must target the space the renderer
+   actually interprets**, and that space needs to be stated once, in one place, rather than
+   asserted twice in opposite directions.
+
+   Separately and regardless: interpolating *in* linear gives different midtones than an
+   application that interpolates in sRGB. Matching a reference render means matching the
+   interpolation space, not just the endpoints.
 3. ⭐**Value scaling.** Fractint's 6-bit ×4 maximum of 252; gnofract4d's /256 for UGR. Off-by-a-
    few-percent errors that look like nothing and fail an exactness comparison.
+
+## 5a. Precision: how many bits, and where they actually run out
+
+✅Verified formats through the pipeline:
+
+| Stage | Precision |
+|---|---|
+| Import formats (`.map`, `.ugr`, `.ggr`, hex) | **8 bits/channel** — Fractint effectively **6-bit** (0–63 ×4, max 252) |
+| Palette stops | `[f32; 4]` — **32-bit float** |
+| Iterate + aux textures (`ITER_FORMAT`) | `Rgba32Float` — **32-bit float ×4** (smooth iteration, slope normal, DE) |
+| Offline export target (`EXPORT_FORMAT`) | `Rgba32Float` |
+| Shader colour maths | f32 |
+| **Live display** | `Bgra8Unorm`/`Rgba8Unorm`, non-sRGB — **8 bits/channel**, and **no dither** |
+| **PNG export** | 8 bits/channel **with ordered Bayer dither** (`to_srgb8_dithered`) |
+| **EXR export** | 32-bit float, linear |
+
+**8-bit palette DATA is not a limiting factor.** Endpoints arrive at 8 bits, but everything from
+the stop onward is f32, so the interpolated values between them are continuous; the quantisation
+costs at most ±1/255 at the stops themselves.
+
+**8-bit OUTPUT is a limiting factor**, and we already know it: 256 levels per channel across a
+slow gradient contours visibly, which is why the PNG writer dithers at all (banding was recorded
+as "the #1 newcomer complaint"). ⚠Note the asymmetry that follows from the table: **the exported
+PNG is dithered and the live view is not**, so a gradient can look smoother in the export than it
+did on screen. Worth confirming and, if real, worth a dither in `fs_color` too — it is a few lines
+and the same ±½ LSB trick.
+
+⭐⭐**But the real ceiling for a fractal renderer is not channel depth at all — it is palette
+POSITION resolution.** What matters is how finely the continuous smooth-iteration value can
+address the palette, and two things bound it: the **LUT length** once we bake, and at depth the
+compression of escape values into a narrow band (what `--normalize` and the log scale exist for).
+At a high `cycle` the palette repeats many times across that narrow band, and position
+quantisation shows up long before colour quantisation does.
+
+⇒ **Bake to 1024 entries, not 256**, and interpolate *between* LUT entries rather than
+nearest-fetching — except where a format demands flat bands, which is exactly Fractint's case.
+1024 × 16 B = 16 KB, still comfortably inside a uniform buffer, and trivial as a 1-D texture.
 
 ## 6. Recommended order
 
