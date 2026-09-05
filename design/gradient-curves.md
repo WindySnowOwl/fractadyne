@@ -182,3 +182,87 @@ decision, not a quiet third entry in a dropdown.
    at the depths that matter.
 
 ⚠Steps 1 and 2 are separable and 1 is the risky one. Do not combine them.
+
+---
+
+## 8. DECIDED (user, 2026-09-05) — the plan
+
+**Take the full segment-native editor**, and go beyond GIMP's five. The user's brief: *"the most
+flexibility while still being manageable"*.
+
+### The shape of the answer: parameters, not names
+
+⭐⭐**A registry of 27 extra named curves is not flexibility, it is a worse editor.** Nobody can
+tell "sine" from "sphere-decreasing" in a dropdown, and each new name is another thing to
+document, persist, export and test. Real flexibility per segment comes from a CONTINUOUS parameter:
+one family with a knob covers infinitely many shapes and is one widget.
+
+So the 32 is **numbering space, deliberately under-populated**:
+
+| blend kind | owner | notes |
+|---|---|---|
+| **0–4** | GIMP | linear, curved, sine, sphere-inc, sphere-dec. ⛔**FROZEN** — a file format, in `.ggr` AND in our sessions |
+| **5** | ours | **cubic-Bézier easing**, 4 params. The parametric one |
+| **6–31** | reserved | empty on purpose. Add only on evidence that Bézier cannot express something wanted |
+
+⭐**Why Bézier and not power/gamma**, having recommended gamma in §6: gamma is one float and cannot
+make an S-curve, which is the shape most often wanted ("linger at both ends"). Bézier is four
+floats, subsumes gamma closely, adds ease-in-out and overshoot, and — decisively — has an
+off-the-shelf mental model and widget (CSS `cubic-bezier`, every animation tool). The extra three
+floats cost nothing per segment.
+⭐**The simple knob is a UI affordance over it, not a second storage shape**: a single "bias" slider
+drives symmetric handles for the common case, with presets (ease-in / ease-out / ease-in-out) that
+just write control points. One thing stored, two ways to drive it.
+
+### Storage
+
+```rust
+// fractadyne_state::PaletteSegment gains, both #[serde(default)]:
+blend: u8,                 // KIND (existing) - 0..4 GIMP, 5 bezier, 6..31 reserved
+blend_params: [f32; 4],    // bezier control points; ignored by kinds 0..4
+```
+
+⚠`Blend` in `fractadyne-color` gains a payload variant (`Bezier([f32; 4])`); `from_u8`/`as_u8` keep
+carrying the KIND only, and the params travel beside them. That keeps the existing round-trip test
+honest and keeps `.ggr` import (which only ever produces 0–4) untouched.
+
+### Phases — in this order, and P1 alone first
+
+**P1. Segment-native model.** `custom_segments` becomes the source of truth for a custom gradient;
+stops become a derived view. `custom_palette` is retained for legacy sessions, `.map` bands and the
+paste box, all of which convert on load (`from_stops` / `from_bands`). The editor still renders the
+same rows it does today, derived — **nothing user-visible changes**.
+⚠**This is the risky phase and it ships alone.** Acceptance: an old stop-only session renders
+**byte-identically**, plus selftest 173/173 + 18/18 and corpus 38/38 with **no re-bless**. If
+anything drifts, a default moved and that is a bug.
+
+**P2. Expose what already exists.** Per-segment blend picker, space picker, midpoint control, and a
+curve-preview sparkline. This is the feature; the engine is untouched. ⚠Draw the REAL blend
+function — the two sphere curves are not midpoint-symmetric (0.866 at halfway, pinned by a test).
+Zero drift again: `Linear`/`Rgb`/centred is the default and is exactly what `from_stops` produces.
+
+**P3. The stop strip** (`UI-DESIGN.md` §8: draggable stops, double-click to edit colour, right-click
+to delete). **Cap 32 hand-editable stops** (up from `EDITOR_MAX_STOPS = 24`); above that the
+existing summary fallback stands, because an imported `.map` is 256 entries.
+⚠⚠**No harness drives hover, drag or scroll** — so split the widget: hit-testing, clamping,
+ordering, insert/delete and the stops↔segments round trip are PURE functions with tests, and only
+the pointer plumbing rests on the eye. The window needs widening (~340 → ~520 px); 32 stops on a
+520 px strip is ~16 px apart, which needs click-to-select plus a numeric position field and
+arrow-key nudge to be usable.
+
+**P4. The Bézier curve.** Kind 5, the 2-handle widget, the bias slider, the presets.
+⚠**Re-run the LUT acceptance measurement on a CURVE-HEAVY gradient**: §4 trap 5 — the "error must
+shrink as the LUT grows" evidence (16,372 → 1,496 differing pixels, 1024 → 4096) was taken on
+piecewise-LINEAR gradients, and a curve has more curvature between samples. The harness exists.
+This is the first phase that may move pixels, and only where a user sets a curve.
+
+**P5. `.ggr` export** + a round-trip property test against import. ⚠Kinds ≥ 5 are **approximated
+and must say so** — a silent flatten is the failure this whole design exists to avoid.
+
+### Deferred, with reasons
+
+- **OkLab / OkLCh**: implementable cheaply as another `Space`, but it needs a real sRGB
+  decode/encode round trip and is the first place the display-referred decision costs something.
+  Its own decision, not a quiet fourth entry in a dropdown.
+- **Per-channel curves**: declined (§6) — 3× the parameters and UI for a gain that `cycle` erases.
+- **Alpha**: parsed and stored already; the renderer has no alpha channel. Out of scope.
