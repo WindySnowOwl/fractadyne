@@ -442,3 +442,84 @@ fn a_hard_jump_round_trips_as_a_duplicate_position() {
     let smooth = Gradient::from_stops("s", &[(0.0, [0.0; 3]), (0.5, [1.0; 3]), (1.0, [0.0; 3])]);
     assert_eq!(smooth.to_stops().len(), 3);
 }
+
+/// ⭐**`factor` is the curve the editor's preview draws**, so it must BE the function `eval` uses —
+/// not a second implementation that can drift. Checked by reconstructing a colour from the factor
+/// and requiring it to match what `eval` produced.
+#[test]
+fn the_exposed_factor_is_the_one_eval_uses() {
+    for blend in [
+        Blend::Linear,
+        Blend::Curved,
+        Blend::Sine,
+        Blend::SphereIncreasing,
+        Blend::SphereDecreasing,
+    ] {
+        let seg = Segment {
+            left: 0.2,
+            mid: 0.45, // off-centre, so a wrong normalisation would show
+            right: 0.8,
+            left_color: [0.0, 0.25, 1.0, 1.0],
+            right_color: [1.0, 0.75, 0.0, 1.0],
+            blend,
+            space: Space::Rgb,
+        };
+        let g = Gradient { name: "t".into(), segments: vec![seg] };
+        for i in 0..=20 {
+            let t = 0.2 + (0.6 * i as f32 / 20.0);
+            let f = seg.factor(t);
+            let want = [
+                seg.left_color[0] + (seg.right_color[0] - seg.left_color[0]) * f,
+                seg.left_color[1] + (seg.right_color[1] - seg.left_color[1]) * f,
+                seg.left_color[2] + (seg.right_color[2] - seg.left_color[2]) * f,
+            ];
+            for ch in 0..3 {
+                assert!(
+                    (g.eval(t)[ch] - want[ch]).abs() < 1e-5,
+                    "{blend:?} at t={t}: factor and eval disagree"
+                );
+            }
+        }
+        // Ends are pinned for every curve.
+        assert!(seg.factor(0.2).abs() < 1e-5, "{blend:?} at the left end");
+        assert!((seg.factor(0.8) - 1.0).abs() < 1e-5, "{blend:?} at the right end");
+    }
+    // ⚠And the asymmetry a prettified preview would hide: sphere-increasing is 0.866 at halfway.
+    let s = Segment {
+        left: 0.0, mid: 0.5, right: 1.0,
+        left_color: [0.0; 4], right_color: [1.0; 4],
+        blend: Blend::SphereIncreasing, space: Space::Rgb,
+    };
+    assert!((s.factor(0.5) - 0.75f32.sqrt()).abs() < 1e-5, "got {}", s.factor(0.5));
+}
+
+/// ⭐⭐**The hue-undefined warning fires exactly when the trap applies.** An HSV segment with an
+/// unsaturated endpoint sweeps the whole wheel, because `rgb_to_hsv` reports hue 0 for greys — a
+/// black→red segment goes through green. RGB segments are never affected, and a segment between two
+/// saturated colours is doing what the user asked.
+#[test]
+fn the_hue_undefined_warning_fires_only_where_it_applies() {
+    let seg = |lc: [f32; 4], rc: [f32; 4], space| Segment {
+        left: 0.0, mid: 0.5, right: 1.0,
+        left_color: lc, right_color: rc, blend: Blend::Linear, space,
+    };
+    const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+    const GREY: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+    const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+    const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+    const BLUE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+
+    for (lc, rc, why) in [(BLACK, RED, "black"), (GREY, RED, "grey"), (WHITE, RED, "white"),
+                          (RED, BLACK, "unsaturated on the right")] {
+        assert!(seg(lc, rc, Space::HsvCcw).hue_undefined_endpoint(), "{why} should warn");
+        assert!(seg(lc, rc, Space::HsvCw).hue_undefined_endpoint(), "{why}, clockwise");
+        // ⚠The same endpoints in RGB are perfectly ordinary — the warning is about the SPACE.
+        assert!(!seg(lc, rc, Space::Rgb).hue_undefined_endpoint(), "{why} in RGB must not warn");
+    }
+    // Two saturated colours in HSV is the intended use, not a trap.
+    assert!(!seg(RED, BLUE, Space::HsvCcw).hue_undefined_endpoint());
+    // And the measured consequence is real: black -> red really does pass through green.
+    let g = Gradient { name: "t".into(), segments: vec![seg(BLACK, RED, Space::HsvCcw)] };
+    let c = g.eval(0.25);
+    assert!(c[1] > c[0] && c[1] > c[2], "expected green-dominant at t=0.25, got {c:?}");
+}

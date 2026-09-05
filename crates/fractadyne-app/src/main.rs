@@ -1569,6 +1569,27 @@ const EDITOR_MAX_STOPS: usize = 24;
 /// Most colours the paste box keeps from one paste (a `.map` body is 256).
 const PASTE_MAX_COLORS: usize = 256;
 
+/// Short UI names for the blend kinds. ⚠The NUMBERS are a file format (GIMP's `.ggr` numbering,
+/// also written into sessions); these labels are not, and may be reworded freely.
+fn blend_label(k: u8) -> &'static str {
+    match k {
+        1 => "Curved",
+        2 => "Sine",
+        3 => "Sphere ↑",
+        4 => "Sphere ↓",
+        _ => "Linear",
+    }
+}
+
+/// Short UI names for the colour spaces — the arrows are the direction round the hue wheel.
+fn space_label(k: u8) -> &'static str {
+    match k {
+        1 => "HSV ↺",
+        2 => "HSV ↻",
+        _ => "RGB",
+    }
+}
+
 impl RandomPalette {
     fn new(seed: u32) -> Self {
         let mut s = RandomPalette {
@@ -7042,6 +7063,17 @@ impl FractadyneApp {
                 let grad = self.editable_gradient();
                 let count = grad.as_ref().map_or(0, |g| g.stop_count());
                 let editable = count <= EDITOR_MAX_STOPS;
+                if count == 0 {
+                    // ⚠A fresh session has no custom gradient, so there is nothing to edit and the
+                    // Curves section below cannot appear. Saying so beats an empty window — the
+                    // editor otherwise shows a preview of the PRESET and no controls at all, which
+                    // reads as broken rather than as "you have not started one yet".
+                    ui.label(
+                        egui::RichText::new("No custom gradient yet — \"Copy preset…\" or an import below starts one, and its per-segment curves appear here.")
+                            .weak()
+                            .small(),
+                    );
+                }
                 if !editable {
                     ui.label(
                         egui::RichText::new(format!("{count} imported entries - too many to edit stop by stop. Use the preview above, or Copy preset to start over."))
@@ -7092,6 +7124,123 @@ impl FractadyneApp {
                 if let Some(g) = edited {
                     self.store_segments(&g);
                     changed = true;
+                }
+
+                // ⭐⭐**P2: the curves, finally reachable.** Blend function, colour space and
+                // midpoint have rendered, baked and persisted since beta.23 — but the only way to
+                // set one was to import a `.ggr` somebody else authored. One row per SEGMENT (the
+                // span between two stops), so N stops give N-1 rows.
+                if editable && count >= 2 {
+                    if let Some(g) = self.editable_gradient() {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new("Curves (per segment)").weak().small());
+                        let mut curve_edit: Option<fractadyne_color::segment::Gradient> = None;
+                        for i in 0..g.segments.len() {
+                            let seg = g.segments[i];
+                            ui.horizontal(|ui| {
+                                // ⚠The preview draws the REAL blend function via `Segment::factor`,
+                                // not an idealised S: two of the five are not midpoint-symmetric
+                                // (sphere-increasing reads 0.866 at halfway), so a prettified curve
+                                // would misrepresent them.
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(30.0, 16.0),
+                                    egui::Sense::hover(),
+                                );
+                                let pr = ui.painter_at(rect);
+                                pr.rect_stroke(
+                                    rect,
+                                    1.0,
+                                    egui::Stroke::new(1.0_f32, ui.visuals().weak_text_color()),
+                                    egui::StrokeKind::Inside,
+                                );
+                                let accent = crate::theme::ui_accent(ui.ctx());
+                                let mut prev: Option<egui::Pos2> = None;
+                                for k in 0..=14 {
+                                    let u = k as f32 / 14.0;
+                                    let f = seg.factor(seg.left + u * (seg.right - seg.left));
+                                    let pt = egui::pos2(
+                                        rect.min.x + 1.0 + u * (rect.width() - 2.0),
+                                        rect.max.y - 1.0 - f.clamp(0.0, 1.0) * (rect.height() - 2.0),
+                                    );
+                                    if let Some(q) = prev {
+                                        pr.line_segment([q, pt], egui::Stroke::new(1.0_f32, accent));
+                                    }
+                                    prev = Some(pt);
+                                }
+
+                                let mut blend = seg.blend.as_u8();
+                                egui::ComboBox::from_id_salt(("seg_blend", i))
+                                    .width(84.0)
+                                    .selected_text(blend_label(blend))
+                                    .show_ui(ui, |ui| {
+                                        for k in 0..5u8 {
+                                            ui.selectable_value(&mut blend, k, blend_label(k));
+                                        }
+                                    });
+                                if blend != seg.blend.as_u8() {
+                                    let mut g2 = curve_edit.clone().unwrap_or_else(|| g.clone());
+                                    g2.segments[i].blend =
+                                        fractadyne_color::segment::Blend::from_u8(blend);
+                                    curve_edit = Some(g2);
+                                }
+
+                                let mut space = seg.space.as_u8();
+                                egui::ComboBox::from_id_salt(("seg_space", i))
+                                    .width(66.0)
+                                    .selected_text(space_label(space))
+                                    .show_ui(ui, |ui| {
+                                        for k in 0..3u8 {
+                                            ui.selectable_value(&mut space, k, space_label(k));
+                                        }
+                                    });
+                                if space != seg.space.as_u8() {
+                                    let mut g2 = curve_edit.clone().unwrap_or_else(|| g.clone());
+                                    g2.segments[i].space =
+                                        fractadyne_color::segment::Space::from_u8(space);
+                                    curve_edit = Some(g2);
+                                }
+
+                                // ⚠The midpoint is a FRACTION of the segment (GIMP semantics), so
+                                // the control is 0..1 within the span, not an absolute position.
+                                let span = (seg.right - seg.left).max(1.0e-6);
+                                let mut frac = ((seg.mid - seg.left) / span).clamp(0.0, 1.0);
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut frac)
+                                            .speed(0.005)
+                                            .range(0.02..=0.98)
+                                            .fixed_decimals(2)
+                                            .prefix("mid "),
+                                    )
+                                    .on_hover_text(
+                                        "Where the blend reaches halfway, as a fraction of this segment. 0.50 is centred.",
+                                    )
+                                    .changed()
+                                {
+                                    let mut g2 = curve_edit.clone().unwrap_or_else(|| g.clone());
+                                    g2.segments[i].mid = seg.left + frac.clamp(0.02, 0.98) * span;
+                                    curve_edit = Some(g2);
+                                }
+
+                                // ⭐⭐The trap a user cannot see coming: an HSV segment with an
+                                // unsaturated endpoint sweeps the WHOLE wheel, because a grey has
+                                // no hue to start from. Measured: black -> red goes through green.
+                                if seg.hue_undefined_endpoint() {
+                                    ui.label(
+                                        egui::RichText::new("⚠")
+                                            .color(ui.visuals().warn_fg_color),
+                                    )
+                                    .on_hover_text(
+                                        "One end of this segment has no hue (black, white or grey), so the sweep starts from red and travels the whole colour wheel. That is legal and sometimes wanted \u{2014} but it is why the middle can be a colour neither end contains.",
+                                    );
+                                }
+                            });
+                        }
+                        if let Some(g) = curve_edit {
+                            self.store_segments(&g);
+                            changed = true;
+                        }
+                    }
                 }
 
                 ui.add_space(4.0);

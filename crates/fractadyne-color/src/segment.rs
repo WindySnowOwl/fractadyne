@@ -141,8 +141,14 @@ impl Segment {
         self.left_color == self.right_color
     }
 
-    /// Colour at `t`, which the caller has already established lies in `left..=right`.
-    fn eval(&self, t: f32) -> [f32; 4] {
+    /// How far along the blend `t` sits: `0` at the left endpoint, `1` at the right.
+    ///
+    /// ⭐**This is the curve itself, and the editor's preview must draw THIS** rather than an
+    /// idealised shape. Two of GIMP's five are deliberately not midpoint-symmetric — a
+    /// sphere-increasing segment reads **0.866** at its halfway point, not 0.5 — so a prettified
+    /// preview would misrepresent them. Exposing the real function makes the preview correct by
+    /// construction instead of by a second implementation that can drift.
+    pub fn factor(&self, t: f32) -> f32 {
         // GIMP normalises position and midpoint into the segment's own 0..1 before applying the
         // blend function, so the same `mid` means the same thing in a wide and a narrow segment.
         let len = self.right - self.left;
@@ -151,7 +157,7 @@ impl Segment {
         } else {
             (((self.mid - self.left) / len).clamp(0.0, 1.0), ((t - self.left) / len).clamp(0.0, 1.0))
         };
-        let f = match self.blend {
+        match self.blend {
             Blend::Linear => linear_factor(mid, pos),
             Blend::Curved => curved_factor(mid, pos),
             Blend::Sine => {
@@ -166,7 +172,30 @@ impl Segment {
                 let p = linear_factor(mid, pos);
                 1.0 - (1.0 - p * p).max(0.0).sqrt()
             }
+        }
+    }
+
+    /// Does this segment blend through hue with an endpoint that has no hue to blend from?
+    ///
+    /// ⭐⭐**The trap a user cannot see coming.** `rgb_to_hsv` reports hue 0 for anything
+    /// unsaturated, and an HSV segment whose endpoint hues are equal takes a FULL turn of the
+    /// wheel — so a **black → red** segment passes through green and blue on the way, measured
+    /// green-dominant across a third of its span. The two swatches give no hint of it. The editor
+    /// uses this to warn rather than to forbid: the effect is legitimate and sometimes wanted.
+    pub fn hue_undefined_endpoint(&self) -> bool {
+        if self.space == Space::Rgb {
+            return false;
+        }
+        let sat = |c: [f32; 4]| {
+            let (mx, mn) = (c[0].max(c[1]).max(c[2]), c[0].min(c[1]).min(c[2]));
+            if mx <= 0.0 { 0.0 } else { (mx - mn) / mx }
         };
+        sat(self.left_color) < 1e-3 || sat(self.right_color) < 1e-3
+    }
+
+    /// Colour at `t`, which the caller has already established lies in `left..=right`.
+    fn eval(&self, t: f32) -> [f32; 4] {
+        let f = self.factor(t);
         let (a, b) = (self.left_color, self.right_color);
         // Alpha is always a straight lerp; only the colour triple respects `space`.
         let alpha = a[3] + (b[3] - a[3]) * f;

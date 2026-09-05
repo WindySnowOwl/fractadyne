@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The gradient editor can shape the blend between stops** (beta.29). Each segment of a custom
+  gradient now has its own **curve** (linear, curved, sine, or either spherical), its own **colour
+  space** (RGB, or a sweep round the hue wheel in either direction), and its own **midpoint** - the
+  point where the blend reaches halfway, which you can move without adding a stop. A small preview
+  beside each row draws the actual curve.
+
+  All three have been rendering correctly since beta.23 - but until now the only way to get one was
+  to import a GIMP .ggr that somebody else had authored. Existing gradients are untouched: a plain
+  linear RGB blend is still the default, and every preset, pasted palette and saved session renders
+  exactly as before.
+
+  One thing the editor now warns about: if a segment blends through hue and one end is black, white
+  or grey, that end has no hue to start from, so the sweep begins at red and travels the whole
+  colour wheel. A black-to-red segment passes through green on the way. It is a legitimate effect
+  and sometimes what you want, which is why it is a warning rather than a restriction.
+
 - **The palette importers are now covered by the release self-test** (beta.28). `--selftest` grew
   three checks that render through an imported palette and measure the result, so the three ways
   an importer can be wrong while still looking plausible are caught automatically instead of by
