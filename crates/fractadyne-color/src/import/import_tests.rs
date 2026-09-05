@@ -138,3 +138,152 @@ fn band_edges_land_on_the_file_entries() {
         }
     }
 }
+
+// ================================================================================================
+// Ultra Fractal `.ugr`
+// ================================================================================================
+
+/// Shaped after the real `blatte1.ugr` recorded in `design/palette-import.md` §2 — the free-wrapped
+/// `index=`/`color=` run, the `title=`/`smooth=` prefix, and the separate `opacity:` section.
+const UGR_SAMPLE: &str = "\
+; a header comment UF files carry
+blatte10 {
+gradient:
+  title=\"blatte10\" smooth=no index=0 color=3085069 index=25 color=3216141
+  index=56 color=10761236
+  index=399 color=144
+opacity:
+  smooth=no index=0 opacity=255
+}
+second {
+gradient:
+  title=\"the other one\" smooth=yes rotation=100 index=0 color=255 index=399 color=16711680
+}
+";
+
+/// A `.ugr` holds MANY gradients and an importer must offer all of them — loading "the" gradient
+/// would silently pick one of dozens.
+#[test]
+fn ugr_returns_every_gradient_in_the_file() {
+    let gs = parse_ugr(UGR_SAMPLE).unwrap();
+    assert_eq!(gs.len(), 2);
+    assert_eq!(gs[0].name, "blatte10");
+    assert_eq!(gs[0].title.as_deref(), Some("blatte10"));
+    assert_eq!(gs[1].name, "second");
+    assert_eq!(gs[1].title.as_deref(), Some("the other one"));
+    // The index/colour run pairs up across line breaks — whitespace carries no meaning in a block.
+    assert_eq!(gs[0].stops.len(), 4);
+    assert_eq!(gs[0].stops.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![0, 25, 56, 399]);
+}
+
+/// ⭐⭐**`color=` is packed BGR — red is the LOW byte.** Reading it as RGB swaps red and blue on
+/// every imported gradient and still looks plausible, which is how that bug survives review. These
+/// are the exact integers from the surveyed file plus two unambiguous controls.
+#[test]
+fn ugr_color_is_bgr_not_rgb() {
+    let gs = parse_ugr(UGR_SAMPLE).unwrap();
+    // color=144 = 0x000090 -> red 144, green 0, blue 0. Under an RGB reading it would be BLUE.
+    let last = gs[0].stops[3].1;
+    assert!((last[0] - 144.0 / 255.0).abs() < 1e-6, "red should be the low byte, got {last:?}");
+    assert_eq!(last[1], 0.0);
+    assert_eq!(last[2], 0.0);
+    // color=3085069 = 0x2F130D -> (r, g, b) = (0x0D, 0x13, 0x2F): a dark blue-violet. Read as RGB
+    // it would be (47, 19, 13), a dark BROWN - both plausible, which is the whole hazard.
+    let first = gs[0].stops[0].1;
+    for (ch, want) in [(0, 0x0D), (1, 0x13), (2, 0x2F)] {
+        assert!(
+            (first[ch] - want as f32 / 255.0).abs() < 1e-6,
+            "channel {ch}: {first:?} does not decode 3085069 as BGR"
+        );
+    }
+    // Controls: 255 = 0x0000FF is pure RED here, 16711680 = 0xFF0000 is pure BLUE.
+    let g2 = &parse_ugr(UGR_SAMPLE).unwrap()[1];
+    assert_eq!(g2.stops[0].1, [1.0, 0.0, 0.0]);
+    assert_eq!(g2.stops[1].1, [0.0, 0.0, 1.0]);
+}
+
+/// ⚠We divide by 255, not gnofract4d's 256 — so a full byte reaches pure white instead of
+/// stopping a step short. Stated in `parse_ugr`; pinned here so the choice is deliberate.
+#[test]
+fn ugr_divides_by_255_so_full_is_white() {
+    // 16777215 = 0xFFFFFF.
+    let g = &parse_ugr("w {\ngradient:\nindex=0 color=16777215 index=399 color=0\n}\n").unwrap()[0];
+    assert_eq!(g.stops[0].1, [1.0, 1.0, 1.0]);
+}
+
+/// ⭐Indices run 0–399, so position is `index / 399` — not /255 and not already-normalised.
+#[test]
+fn ugr_index_range_is_0_to_399() {
+    assert_eq!(UGR_INDEX_MAX, 399);
+    let g = parse_ugr(UGR_SAMPLE).unwrap()[0].to_gradient();
+    // index 0 and index 399 are the ends, so the gradient covers 0..1 with no flat clamps.
+    assert_eq!(g.segments.first().unwrap().left, 0.0);
+    assert_eq!(g.segments.last().unwrap().right, 1.0);
+    // index 25 of 399 lands at 0.0627, and the colour there is that stop's colour.
+    let at = g.eval(25.0 / 399.0);
+    let want = parse_ugr(UGR_SAMPLE).unwrap()[0].stops[1].1;
+    for ch in 0..3 {
+        assert!((at[ch] - want[ch]).abs() < 1e-5, "index 25 landed wrong: {at:?} vs {want:?}");
+    }
+}
+
+/// ⚠`rotation=` is applied, with the direction PINNED here because it is not verified against
+/// Ultra Fractal itself. Ignoring a stated field is wrong for certain; applying it with a possibly
+/// wrong sign is recoverable, and this test makes the correction one sign change.
+#[test]
+fn ugr_rotation_shifts_the_ring() {
+    let gs = parse_ugr(UGR_SAMPLE).unwrap();
+    let g2 = &gs[1];
+    assert_eq!(g2.rotation, 100);
+    let plain = Gradient::from_stops("x", &[(0.0, [1.0, 0.0, 0.0]), (1.0, [0.0, 0.0, 1.0])]);
+    let rotated = g2.to_gradient();
+    // Unrotated this gradient runs red -> blue. rotation=100 of 400 moves it a quarter forward, so
+    // the red end now sits at 0.25. Probe just PAST the seam, not on it: red -> blue is not a
+    // seamless palette, so rotating puts a genuine hard jump exactly at 0.25 and sampling there
+    // reads whichever side wins the tie - a test that would be measuring the tie-break, not the
+    // rotation.
+    assert!(plain.eval(0.0)[0] > 0.9 && plain.eval(1.0)[2] > 0.9, "control: red -> blue");
+    let just_past = rotated.eval(0.26);
+    assert!(just_past[0] > 0.9 && just_past[2] < 0.1, "expected red just past 0.25, got {just_past:?}");
+    let just_before = rotated.eval(0.24);
+    assert!(just_before[2] > 0.9 && just_before[0] < 0.1, "expected blue before 0.25, got {just_before:?}");
+    // A rotation must not lose or invent colour: still covers 0..1 contiguously.
+    assert_eq!(rotated.segments.first().unwrap().left, 0.0);
+    assert_eq!(rotated.segments.last().unwrap().right, 1.0);
+    for w in rotated.segments.windows(2) {
+        assert!((w[0].right - w[1].left).abs() < 1e-6, "rotation left a gap");
+    }
+}
+
+/// The `opacity:` section is parsed and kept rather than discarded, and its `index=`/`smooth=`
+/// must not leak into the gradient's own.
+#[test]
+fn ugr_opacity_section_is_separate() {
+    let gs = parse_ugr(UGR_SAMPLE).unwrap();
+    assert_eq!(gs[0].opacity, vec![(0, 1.0)]);
+    assert!(!gs[0].smooth, "smooth=no on the gradient");
+    assert!(gs[1].smooth, "smooth=yes on the gradient");
+    // The opacity section's stops did not become colours.
+    assert_eq!(gs[0].stops.len(), 4);
+}
+
+/// Blocks that are not gradients (a .ugr can sit beside formula/parameter blocks in the same
+/// syntax) are skipped, not treated as an error or as an empty palette.
+#[test]
+fn ugr_skips_non_gradient_blocks() {
+    let text = "notagradient {\n  something=1\n}\nreal {\ngradient:\nindex=0 color=0 index=399 color=255\n}\n";
+    let gs = parse_ugr(text).unwrap();
+    assert_eq!(gs.len(), 1);
+    assert_eq!(gs[0].name, "real");
+}
+
+/// A file with no gradients at all is an error with a reason, not a silent empty import.
+#[test]
+fn ugr_rejects_a_file_with_no_gradients() {
+    assert!(parse_ugr("").is_err());
+    assert!(parse_ugr("just some text\n").is_err());
+    assert!(parse_ugr("empty {\n}\n").is_err());
+    // A colour with no index before it is a malformed block, and says so.
+    let e = parse_ugr("b {\ngradient:\ncolor=255 index=0 color=0\n}\n").unwrap_err();
+    assert!(e.contains("no index="), "got {e:?}");
+}

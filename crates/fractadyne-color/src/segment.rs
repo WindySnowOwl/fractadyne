@@ -292,6 +292,63 @@ impl Gradient {
         Self { name: name.into(), segments }
     }
 
+    /// The same gradient shifted along the position axis by `by`, wrapping at the ends.
+    ///
+    /// Ultra Fractal stores a `rotation=` with each gradient, and a palette is cycled anyway, so
+    /// this is a rotation of a RING rather than a slide of a strip: a segment that ends up
+    /// straddling the seam is **split in two** and the halves re-evaluated, so no colour is lost
+    /// and no flat clamp is invented at the ends. Sorting alone would have silently dropped the
+    /// straddling segment's far half.
+    ///
+    /// The gradient must cover `0..1` for the result to (`from_stops` and friends guarantee it);
+    /// an uncovered one is returned unchanged rather than rotated into nonsense.
+    pub fn rotated(&self, by: f32) -> Self {
+        let by = if by.is_finite() { by.rem_euclid(1.0) } else { 0.0 };
+        if by == 0.0 || self.segments.is_empty() {
+            return self.clone();
+        }
+        let covers = self.segments[0].left <= 0.0
+            && self.segments[self.segments.len() - 1].right >= 1.0;
+        if !covers {
+            return self.clone();
+        }
+        let mut out: Vec<Segment> = Vec::with_capacity(self.segments.len() + 1);
+        for seg in &self.segments {
+            let (l, r) = (seg.left + by, seg.right + by);
+            if r <= 1.0 {
+                out.push(Self::shifted(seg, by, seg.left, seg.right));
+            } else if l >= 1.0 {
+                out.push(Self::shifted(seg, by - 1.0, seg.left, seg.right));
+            } else {
+                // Straddles the seam: keep [left, cut) where it is and wrap [cut, right) to the
+                // front, evaluating the split colour so the join is exact.
+                let cut = seg.left + (1.0 - l);
+                out.push(Self::shifted(seg, by, seg.left, cut));
+                out.push(Self::shifted(seg, by - 1.0, cut, seg.right));
+            }
+        }
+        out.sort_by(|a, b| a.left.total_cmp(&b.left));
+        Self { name: self.name.clone(), segments: out }
+    }
+
+    /// One segment's `[from, to]` sub-span, moved by `by`. The endpoint colours are re-evaluated
+    /// at the cut so a split segment's halves meet exactly; blend and space carry over, and the
+    /// midpoint is re-centred because a partial span no longer has the original's midpoint in it.
+    fn shifted(seg: &Segment, by: f32, from: f32, to: f32) -> Segment {
+        let (a, b) = (seg.eval(from), seg.eval(to));
+        let (l, r) = (from + by, to + by);
+        let whole = from <= seg.left && to >= seg.right;
+        Segment {
+            left: l,
+            mid: if whole { seg.mid + by } else { 0.5 * (l + r) },
+            right: r,
+            left_color: a,
+            right_color: b,
+            blend: if whole { seg.blend } else { Blend::Linear },
+            space: if whole { seg.space } else { Space::Rgb },
+        }
+    }
+
     /// Colour at `t`. Outside the covered range, the nearest endpoint colour; `t` is clamped to
     /// `0..1` first (the caller has already taken `fract`).
     pub fn eval(&self, t: f32) -> [f32; 4] {
@@ -310,6 +367,38 @@ impl Gradient {
             }
         }
         self.segments[self.segments.len() - 1].right_color
+    }
+
+    /// Back to `(position, RGB)` stops — each segment's left edge, plus the last segment's right.
+    ///
+    /// ⭐**A hard jump between two segments becomes a DUPLICATE POSITION**, which is how every
+    /// gradient editor expresses an edge and what [`Self::from_stops`] reads back (a zero-width
+    /// span contributes no segment, so the colour simply changes there). Without it a rotated
+    /// gradient's seam — a real discontinuity, since a palette that is not seamless has one —
+    /// would be quietly smoothed into a ramp across a whole segment. That was caught by the
+    /// round-trip test, not by reading the code.
+    ///
+    /// ⚠**Exact only for a linear-RGB gradient with centred midpoints**, which is what
+    /// [`Self::from_stops`], the `.ugr` importer and [`Self::rotated`] produce. A `.ggr` with
+    /// curved blends, HSV sweeps or shifted midpoints is a SUPERSET of a stop list, so this drops
+    /// what a stop list cannot hold. It exists because the app persists a custom palette as stops;
+    /// when `.ggr` lands, that stored shape has to grow, and this is the seam where it will show.
+    pub fn to_stops(&self) -> Vec<(f32, [f32; 3])> {
+        let rgb = |c: [f32; 4]| [c[0], c[1], c[2]];
+        let mut out: Vec<(f32, [f32; 3])> = Vec::with_capacity(self.segments.len() + 1);
+        for (i, seg) in self.segments.iter().enumerate() {
+            if i > 0 {
+                let prev = &self.segments[i - 1];
+                if prev.right_color != seg.left_color {
+                    out.push((seg.left, rgb(prev.right_color)));
+                }
+            }
+            out.push((seg.left, rgb(seg.left_color)));
+        }
+        if let Some(last) = self.segments.last() {
+            out.push((last.right, rgb(last.right_color)));
+        }
+        out
     }
 
     /// Every segment is a band — the whole gradient is a lookup table with no ramps.

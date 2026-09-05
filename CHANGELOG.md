@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Ultra Fractal `.ugr` gradients now import** (beta.25). Gradient editor -> **Import .ugr...**,
+  or `--palette-ugr FILE` on a command-line render. A .ugr file usually holds many named
+  gradients rather than one, so importing shows you the list with a preview swatch beside each
+  name and you pick; on the command line the first is used unless you name one with
+  `--palette-ugr-name`, and the run tells you which it took. Unlike a .map these interpolate
+  between their control points, and the file's own rotation setting is applied.
+
+  The reason this needed care rather than a quick parser: Ultra Fractal stores each colour as a
+  single decimal number with the **red channel in the low byte** - the reverse of what you would
+  guess. Reading it the obvious way swaps red and blue in every imported gradient and still looks
+  like a perfectly plausible palette, so it is the kind of mistake that survives a review. There
+  is a test that renders a pure-red and a pure-blue gradient through the whole pipeline and checks
+  the pixels come out the right way round.
+
 - **Fractint and Kalles Fraktaler `.map` palettes now import** (beta.24). Gradient editor ->
   **Import .map...**, or `--palette-map FILE` on a command-line render. A `.map` is a lookup
   table indexed by iteration count with no blending between its entries, and the hard colour

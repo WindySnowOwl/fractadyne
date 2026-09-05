@@ -462,6 +462,8 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--palette N", "Preset palette index."),
         Flag("--palette-map FILE", "Colour through a Fractint / Kalles Fraktaler .map palette (R G B lines, one per entry). Imported as hard bands, which is what the format means -- it is a lookup table indexed by iteration count with no blending between entries, and those hard steps are the classic Fractint look. Values are taken exactly as written: Fractint's are 6-bit VGA x4, so its white is 252 rather than 255, and rescaling them would fail a comparison against Fractint's own images."),
         Flag("--palette-map-smooth", "With --palette-map: blend between the file's entries instead of banding them."),
+        Flag("--palette-ugr FILE", "Colour through an Ultra Fractal .ugr gradient file. A .ugr usually holds MANY named gradients; without --palette-ugr-name the first is used and the run says which. Colours are interpolated (unlike .map), indices run 0-399, and the file's rotation is applied."),
+        Flag("--palette-ugr-name NAME", "With --palette-ugr: which gradient to use, by block name or title. An unknown name lists what the file actually contains."),
         Flag("--method NAME", "smooth | stripe | triangle | trap | distance | decomposition."),
         Flag("--stripe-freq N", "Stripe density (stripe method)."),
         Flag("--trap SHAPE", "point | cross | circle (orbit-trap method)."),

@@ -3195,6 +3195,14 @@ struct ColoringConfig {
     paste_open: bool,
     paste_text: String,
     paste_msg: Option<String>,
+    /// Gradients read from an imported `.ugr`, waiting for the user to pick one.
+    ///
+    /// ⭐A `.ugr` holds MANY named gradients, so import cannot mean "load the gradient" the way
+    /// `.map` can — it has to present a list. Transient by design: once a choice is applied it
+    /// lives in `custom_palette` like any other, and a half-finished import is not worth
+    /// persisting.
+    ugr_choices: Vec<fractadyne_color::import::UgrGradient>,
+    ugr_file: String,
     /// Bumps on every gradient/duotone edit so caches (e.g. the minimap thumbnail) refresh (transient).
     palette_rev: u32,
     /// Two-color palette modes sharing the `lo`/`hi` colors (DISPLAY-space RGB), overriding preset/custom:
@@ -4216,6 +4224,8 @@ impl FractadyneApp {
                 paste_open: false,
                 paste_text: String::new(),
                 paste_msg: None,
+                ugr_choices: Vec::new(),
+                ugr_file: String::new(),
                 palette_rev: 0,
                 use_duotone: s.use_duotone,
                 use_binary: s.use_binary,
@@ -4515,6 +4525,55 @@ impl FractadyneApp {
                 })
                 .collect();
             self.coloring.custom_palette_flat = !args.iter().any(|a| a == "--palette-map-smooth");
+            self.coloring.use_custom_palette = true;
+            self.coloring.use_binary = false;
+            self.coloring.use_duotone = false;
+        }
+        // ⭐`--palette-ugr` needs a NAME as well as a file, because a `.ugr` holds many gradients.
+        // Without one the first is used and the run SAYS so — silently picking one of dozens and
+        // reporting nothing is how a scripted comparison ends up measuring the wrong palette.
+        if let Some(path) = val("--palette-ugr") {
+            let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
+                eprintln!("fractadyne: --palette-ugr: cannot read \"{path}\": {e}");
+                crate::exit(2)
+            });
+            let gs = fractadyne_color::import::parse_ugr(&text).unwrap_or_else(|e| {
+                eprintln!("fractadyne: --palette-ugr: \"{path}\" is not a .ugr palette file — {e}");
+                crate::exit(2)
+            });
+            let g = match val("--palette-ugr-name") {
+                Some(want) => gs
+                    .iter()
+                    .find(|g| {
+                        g.name.eq_ignore_ascii_case(want)
+                            || g.title.as_deref().is_some_and(|t| t.eq_ignore_ascii_case(want))
+                    })
+                    .unwrap_or_else(|| {
+                        let names: Vec<&str> = gs.iter().map(|g| g.name.as_str()).collect();
+                        eprintln!(
+                            "fractadyne: --palette-ugr-name: no gradient called \"{want}\" in \"{path}\". It contains: {}",
+                            names.join(", ")
+                        );
+                        crate::exit(2)
+                    }),
+                None => {
+                    if gs.len() > 1 {
+                        eprintln!(
+                            "fractadyne: --palette-ugr: \"{path}\" holds {} gradients; using \"{}\". Pass --palette-ugr-name to choose another.",
+                            gs.len(),
+                            gs[0].name
+                        );
+                    }
+                    &gs[0]
+                }
+            };
+            self.coloring.custom_palette = g
+                .to_gradient()
+                .to_stops()
+                .into_iter()
+                .map(|(pos, c)| [pos, c[0], c[1], c[2]])
+                .collect();
+            self.coloring.custom_palette_flat = false;
             self.coloring.use_custom_palette = true;
             self.coloring.use_binary = false;
             self.coloring.use_duotone = false;
@@ -6470,6 +6529,80 @@ impl FractadyneApp {
         }
     }
 
+    /// Import an Ultra Fractal `.ugr`. Returns whether a palette was applied straight away.
+    ///
+    /// ⭐**A `.ugr` holds many named gradients**, so a single file rarely means a single palette:
+    /// one gradient applies immediately, several open a picker. Loading "the" gradient would
+    /// silently choose one of dozens.
+    fn import_ugr_palette(&mut self) -> bool {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Ultra Fractal gradient", &["ugr"])
+            .add_filter("All files", &["*"])
+            .set_directory(self.dialog_dir_default())
+            .pick_file()
+        else {
+            return false;
+        };
+        self.remember_dir(&path);
+        // A .ugr is text and a large collection can legitimately be a few hundred KB.
+        const UGR_MAX: u64 = 4 * 1024 * 1024;
+        let read = match std::fs::metadata(&path) {
+            Ok(m) if m.len() <= UGR_MAX => std::fs::read_to_string(&path),
+            Ok(_) => Err(std::io::Error::other("far too large to be a .ugr palette file")),
+            Err(e) => Err(e),
+        };
+        self.coloring.paste_open = true;
+        self.coloring.ugr_choices.clear();
+        let text = match read {
+            Ok(t) => t,
+            Err(e) => {
+                self.coloring.paste_msg = Some(format!("Read failed: {e}"));
+                return false;
+            }
+        };
+        self.coloring.ugr_file =
+            path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
+        match fractadyne_color::import::parse_ugr(&text) {
+            Ok(gs) => {
+                let n = gs.len();
+                if n == 1 {
+                    self.apply_ugr_gradient(&gs[0]);
+                    self.coloring.paste_msg =
+                        Some(format!("Imported \"{}\" from {}.", gs[0].name, self.coloring.ugr_file));
+                    true
+                } else {
+                    self.coloring.ugr_choices = gs;
+                    self.coloring.paste_msg = Some(format!(
+                        "{} contains {n} gradients — pick one below.",
+                        self.coloring.ugr_file
+                    ));
+                    false
+                }
+            }
+            Err(e) => {
+                self.coloring.paste_msg = Some(format!("Not a .ugr palette file: {e}"));
+                false
+            }
+        }
+    }
+
+    /// Apply one parsed `.ugr` gradient as the custom palette.
+    ///
+    /// It lands as STOPS, not bands: unlike a `.map`, a UF gradient interpolates between its
+    /// control points. `to_gradient` has already mapped `index / 399` and applied `rotation`, and
+    /// `to_stops` carries any hard edge back as a duplicate position.
+    fn apply_ugr_gradient(&mut self, g: &fractadyne_color::import::UgrGradient) {
+        self.coloring.custom_palette = g
+            .to_gradient()
+            .to_stops()
+            .into_iter()
+            .map(|(pos, c)| [pos, c[0], c[1], c[2]])
+            .collect();
+        self.coloring.custom_palette_flat = false;
+        self.coloring.use_custom_palette = true;
+        self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
+    }
+
     fn custom_gradient(&self) -> fractadyne_color::segment::Gradient {
         use fractadyne_color::segment::Gradient;
         if self.coloring.custom_palette.is_empty() {
@@ -6658,7 +6791,76 @@ impl FractadyneApp {
                     {
                         changed = true;
                     }
+                    if ui
+                        .button("Import .ugr…")
+                        .on_hover_text("Load an Ultra Fractal .ugr gradient file (a .ugr usually holds many gradients — you pick one)")
+                        .clicked()
+                        && self.import_ugr_palette()
+                    {
+                        changed = true;
+                    }
                 });
+
+                // ⭐The `.ugr` picker. A .ugr holds MANY named gradients, so import shows a list
+                // rather than choosing for the user. Each row previews itself, because a name like
+                // "blatte10" says nothing about what the gradient looks like.
+                if !self.coloring.ugr_choices.is_empty() {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} gradients in {}",
+                                self.coloring.ugr_choices.len(),
+                                self.coloring.ugr_file
+                            ))
+                            .weak()
+                            .small(),
+                        );
+                        if ui.button("Close list").clicked() {
+                            self.coloring.ugr_choices.clear();
+                        }
+                    });
+                    let mut pick: Option<usize> = None;
+                    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                        for (i, g) in self.coloring.ugr_choices.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                let (rect, resp) = ui.allocate_exact_size(
+                                    egui::vec2(90.0, 14.0),
+                                    egui::Sense::click(),
+                                );
+                                let lut = g.to_gradient().bake(fractadyne_color::segment::LUT_SIZE);
+                                let pr = ui.painter_at(rect);
+                                let steps = rect.width().ceil().max(1.0) as usize;
+                                for s in 0..steps {
+                                    let t = s as f32 / steps as f32;
+                                    let x = rect.min.x + t * rect.width();
+                                    pr.line_segment(
+                                        [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
+                                        egui::Stroke::new(1.5_f32, gradient_preview_color(&lut, t)),
+                                    );
+                                }
+                                if resp.clicked() {
+                                    pick = Some(i);
+                                }
+                                let label = g.title.as_deref().unwrap_or(&g.name);
+                                if ui.selectable_label(false, label).clicked() {
+                                    pick = Some(i);
+                                }
+                            });
+                        }
+                    });
+                    if let Some(i) = pick {
+                        let g = self.coloring.ugr_choices[i].clone();
+                        self.apply_ugr_gradient(&g);
+                        self.coloring.paste_msg = Some(format!(
+                            "Imported \"{}\" from {}.",
+                            g.title.as_deref().unwrap_or(&g.name),
+                            self.coloring.ugr_file
+                        ));
+                        self.coloring.ugr_choices.clear();
+                        changed = true;
+                    }
+                }
                 // ⭐⭐The one control that decides whether an imported `.map` looks like Fractint.
                 // The format is a lookup table indexed by iteration count with NO blending between
                 // entries, and the hard steps that produces are the classic look - so import sets

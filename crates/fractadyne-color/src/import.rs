@@ -3,8 +3,8 @@
 //! Layer 1 of `design/palette-import.md` §4. Each importer's whole job is to produce a segment
 //! gradient; nothing here touches the GPU, and nothing past here knows what format a palette came
 //! from. `.map` is first because it is the simplest and because Fractint's `default.map` is a
-//! ready-made fixture with a documented structure. `.ugr`, `.ggr` and the swatch-list formats
-//! belong beside it.
+//! ready-made fixture with a documented structure. `.ggr` and the swatch-list formats belong
+//! beside `.map` and `.ugr`.
 
 use crate::segment::Gradient;
 
@@ -100,6 +100,205 @@ pub fn parse_map(text: &str) -> Result<MapPalette, String> {
         max = max.max(b);
     }
     Ok(MapPalette { colors, vga_6bit: multiple_of_4 && max == 252 })
+}
+
+// ================================================================================================
+// Ultra Fractal `.ugr`
+// ================================================================================================
+
+/// Highest index an Ultra Fractal gradient uses. ⭐**400 positions, `0..=399`** — not 0–255 and not
+/// 0–1, which is the first thing to get wrong about the format.
+pub const UGR_INDEX_MAX: u32 = 399;
+
+/// One named gradient out of a `.ugr` file.
+///
+/// ⚠A `.ugr` holds **many** gradients, so an importer must offer a LIST to choose from; loading
+/// "the" gradient would silently pick one of dozens.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UgrGradient {
+    /// The block's identifier — `blatte10` in `blatte10 { ... }`. This is what a picker shows.
+    pub name: String,
+    /// The optional `title="..."` inside the block. Usually the same as `name`, occasionally nicer.
+    pub title: Option<String>,
+    /// `(index 0..=399, DISPLAY-space RGB)`, in file order.
+    pub stops: Vec<(u32, [f32; 3])>,
+    /// The `opacity:` section's `(index, alpha 0..1)` — parsed and carried so the data is not
+    /// thrown away, though the renderer's palette has no alpha channel today.
+    pub opacity: Vec<(u32, f32)>,
+    /// `rotation=` in index units, i.e. `0..=399`.
+    pub rotation: u32,
+    /// The file's `smooth=yes|no`.
+    ///
+    /// ⚠**Recorded, not honoured.** Ultra Fractal's smooth mode is a spline through the control
+    /// points, which is not a per-segment blend function and so is not expressible in the model
+    /// this crate uses; gnofract4d has the same limitation and also imports linearly. Silently
+    /// mapping it onto `Blend::Curved` would look like support for something we do not do.
+    pub smooth: bool,
+}
+
+impl UgrGradient {
+    /// One linear RGB segment per adjacent index pair, position = `index / 399`, then the file's
+    /// `rotation` applied.
+    pub fn to_gradient(&self) -> Gradient {
+        let stops: Vec<(f32, [f32; 3])> = self
+            .stops
+            .iter()
+            .map(|(i, c)| ((*i).min(UGR_INDEX_MAX) as f32 / UGR_INDEX_MAX as f32, *c))
+            .collect();
+        let g = Gradient::from_stops(self.title.clone().unwrap_or_else(|| self.name.clone()), &stops);
+        if self.rotation == 0 {
+            g
+        } else {
+            // ⚠**Direction unverified against Ultra Fractal itself.** Applying a stated field with
+            // a possibly-wrong sign is still better than ignoring it (ignoring it is wrong for
+            // certain), and `ugr_rotation_shifts_the_ring` pins the current direction so a
+            // correction is one sign change plus one test edit rather than an archaeology job.
+            g.rotated(self.rotation as f32 / (UGR_INDEX_MAX + 1) as f32)
+        }
+    }
+}
+
+/// Parse an Ultra Fractal `.ugr`, returning every gradient in the file, in file order.
+///
+/// The format is free-form: a `name { ... }` block containing a `gradient:` section of interleaved
+/// `index=`/`color=` pairs wrapped across as many lines as it likes, optional `title=`, `smooth=`
+/// and `rotation=`, and a separate `opacity:` section. Whitespace and line breaks carry no meaning
+/// inside a block, so this tokenises rather than reading line by line.
+///
+/// ⭐⭐**`color=` is a decimal integer packed BGR — `0xBBGGRR`, red is the LOW byte.** Verified from
+/// gnofract4d's decoder (`icolor & 0xFF` → red, `(icolor >> 16) & 0xFF` → blue). Reading it as RGB
+/// swaps red and blue on every imported gradient and **still looks plausible**, which is exactly
+/// how that bug survives a review.
+///
+/// ⚠gnofract4d divides those bytes by **256.0**; we divide by **255.0**, so our import is a hair
+/// brighter than theirs and, unlike theirs, reaches pure white.
+pub fn parse_ugr(text: &str) -> Result<Vec<UgrGradient>, String> {
+    let toks = ugr_tokens(text);
+    let mut out: Vec<UgrGradient> = Vec::new();
+    let mut i = 0usize;
+    while i < toks.len() {
+        // A block opens with `name {`. Anything before that is a stray token; skip it rather than
+        // failing, because .ugr files in the wild carry headers and comments we do not model.
+        if i + 1 >= toks.len() || toks[i + 1] != "{" {
+            i += 1;
+            continue;
+        }
+        let name = toks[i].clone();
+        i += 2;
+        let mut g = UgrGradient {
+            name,
+            title: None,
+            stops: Vec::new(),
+            opacity: Vec::new(),
+            rotation: 0,
+            smooth: false,
+        };
+        // `index=` applies to whichever section we are in: it pairs with the NEXT `color=` in the
+        // gradient section and the next `opacity=` in the opacity section.
+        let mut in_opacity = false;
+        let mut pending: Option<u32> = None;
+        while i < toks.len() && toks[i] != "}" {
+            let t = &toks[i];
+            if t == "gradient:" {
+                in_opacity = false;
+                pending = None;
+            } else if t == "opacity:" {
+                in_opacity = true;
+                pending = None;
+            } else if let Some(v) = t.strip_prefix("index=") {
+                pending = Some(ugr_u32(v, "index")?);
+            } else if let Some(v) = t.strip_prefix("color=") {
+                let packed = ugr_u32(v, "color")?;
+                let idx = pending.take().ok_or_else(|| {
+                    format!("{}: a color= with no index= before it", g.name)
+                })?;
+                // BGR: red is the low byte.
+                let b = |shift: u32| ((packed >> shift) & 0xFF) as f32 / 255.0;
+                g.stops.push((idx, [b(0), b(8), b(16)]));
+            } else if let Some(v) = t.strip_prefix("opacity=") {
+                let a = ugr_u32(v, "opacity")?;
+                if let Some(idx) = pending.take() {
+                    g.opacity.push((idx, (a.min(255) as f32) / 255.0));
+                }
+            } else if let Some(v) = t.strip_prefix("rotation=") {
+                g.rotation = ugr_u32(v, "rotation")? % (UGR_INDEX_MAX + 1);
+            } else if let Some(v) = t.strip_prefix("smooth=") {
+                if !in_opacity {
+                    g.smooth = v.eq_ignore_ascii_case("yes") || v == "1";
+                }
+            } else if let Some(v) = t.strip_prefix("title=") {
+                if !in_opacity {
+                    g.title = Some(v.trim_matches('"').to_string());
+                }
+            }
+            i += 1;
+        }
+        i += 1; // past the closing brace
+        if g.stops.len() >= 2 {
+            g.stops.sort_by_key(|(idx, _)| *idx);
+            out.push(g);
+        }
+        // A block with fewer than two colours is not a gradient (UF files carry formula and
+        // parameter blocks in the same syntax); skipping it is what lets a mixed file load.
+    }
+    if out.is_empty() {
+        return Err(
+            "no gradients found - a .ugr holds `name { gradient: index=.. color=.. }` blocks"
+                .to_string(),
+        );
+    }
+    Ok(out)
+}
+
+/// Split a `.ugr` into tokens: `{`, `}`, `gradient:`, `opacity:`, and `key=value` (a quoted value
+/// keeps its spaces). `;` starts a comment.
+fn ugr_tokens(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    let push = |cur: &mut String, out: &mut Vec<String>| {
+        if !cur.is_empty() {
+            out.push(std::mem::take(cur));
+        }
+    };
+    for line in text.lines() {
+        // Comments run to end of line — but a `;` inside a quoted title is not a comment.
+        let mut quoted = false;
+        let line = match line.char_indices().find(|(_, c)| {
+            if *c == '"' {
+                quoted = !quoted;
+            }
+            *c == ';' && !quoted
+        }) {
+            Some((at, _)) => &line[..at],
+            None => line,
+        };
+        for c in line.chars() {
+            match c {
+                '"' => {
+                    in_quote = !in_quote;
+                    cur.push(c);
+                }
+                '{' | '}' if !in_quote => {
+                    push(&mut cur, &mut out);
+                    out.push(c.to_string());
+                }
+                c if c.is_whitespace() && !in_quote => push(&mut cur, &mut out),
+                c => cur.push(c),
+            }
+        }
+        // A block name sits on its own line before `{`; a wrapped `index=`/`color=` run does not
+        // care about the break. Either way the token ends at the newline.
+        push(&mut cur, &mut out);
+        in_quote = false; // a quote never spans lines in this format
+    }
+    out
+}
+
+fn ugr_u32(v: &str, what: &str) -> Result<u32, String> {
+    v.trim()
+        .parse::<u32>()
+        .map_err(|_| format!("{what}={v:?} is not a whole number"))
 }
 
 #[cfg(test)]

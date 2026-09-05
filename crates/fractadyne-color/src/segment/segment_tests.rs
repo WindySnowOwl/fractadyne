@@ -336,3 +336,109 @@ fn presets_convert_to_contiguous_gradients() {
         }
     }
 }
+
+/// ⭐**Rotating a gradient rotates a RING, not a strip.** A segment that ends up straddling the
+/// t = 1 / t = 0 seam must be SPLIT and both halves kept: sorting alone would drop the far half and
+/// leave a flat clamp where colour used to be.
+#[test]
+fn rotation_splits_the_straddling_segment() {
+    let g = Gradient::from_stops("t", &[(0.0, [0.0; 3]), (1.0, [1.0; 3])]);
+    let r = g.rotated(0.25);
+    // One segment in, two out — the split.
+    assert_eq!(g.segments.len(), 1);
+    assert_eq!(r.segments.len(), 2);
+    // Still covers 0..1 with no gaps, so nothing was lost or invented.
+    assert_eq!(r.segments.first().unwrap().left, 0.0);
+    assert_eq!(r.segments.last().unwrap().right, 1.0);
+    for w in r.segments.windows(2) {
+        assert!((w[0].right - w[1].left).abs() < 1e-6, "gap at the split");
+    }
+    // The colour that was at 0 is now at 0.25 (probed just past, since black->white is not
+    // seamless and 0.25 is a genuine discontinuity).
+    assert!(r.eval(0.26)[0] < 0.05, "the ramp's dark end did not move to 0.25");
+    assert!(r.eval(0.24)[0] > 0.95, "the ramp's bright end did not wrap to just below 0.25");
+    // Every value the original held is still somewhere in the rotated ring.
+    for i in 0..=20 {
+        let want = g.eval(i as f32 / 20.0)[0];
+        let found = (0..=400).any(|k| (r.eval(k as f32 / 400.0)[0] - want).abs() < 0.02);
+        assert!(found, "value {want} vanished from the rotated gradient");
+    }
+    // A full turn, and a zero turn, are both the identity.
+    assert_eq!(g.rotated(0.0), g);
+    assert_eq!(g.rotated(1.0), g);
+    // Non-finite input does not produce a NaN gradient.
+    assert!(g.rotated(f32::NAN).eval(0.5).iter().all(|v| v.is_finite()));
+}
+
+/// Stops survive a round trip through the segment model, so the app can keep persisting a custom
+/// palette as stops — including after a rotation, which is what `.ugr` import needs.
+#[test]
+fn stops_round_trip_through_segments() {
+    let stops = vec![
+        (0.0, [0.1, 0.2, 0.3]),
+        (0.4, [0.9, 0.1, 0.2]),
+        (1.0, [0.3, 0.7, 0.5]),
+    ];
+    let g = Gradient::from_stops("t", &stops);
+    let back = g.to_stops();
+    assert_eq!(back.len(), stops.len());
+    for (a, b) in back.iter().zip(&stops) {
+        assert!((a.0 - b.0).abs() < 1e-6, "position {a:?} vs {b:?}");
+        for ch in 0..3 {
+            assert!((a.1[ch] - b.1[ch]).abs() < 1e-6, "colour {a:?} vs {b:?}");
+        }
+    }
+    // Rebuilding from the round-tripped stops gives the same gradient.
+    assert_eq!(Gradient::from_stops("t", &back), g);
+    // And a rotated gradient's stops rebuild it too (this is what .ugr rotation relies on).
+    let r = g.rotated(0.3);
+    let rebuilt = Gradient::from_stops("t", &r.to_stops());
+    for i in 0..=50 {
+        let t = i as f32 / 50.0;
+        for ch in 0..3 {
+            assert!(
+                (rebuilt.eval(t)[ch] - r.eval(t)[ch]).abs() < 1e-5,
+                "rotated round trip diverged at t={t}"
+            );
+        }
+    }
+}
+
+/// ⭐A hard jump survives the stop round trip as a DUPLICATE POSITION. The app persists a custom
+/// palette as stops, so without this a rotated (or otherwise discontinuous) gradient would come
+/// back from a restart with its edge smoothed into a ramp — silently, and only visible as "the
+/// colours look softer than when I imported them".
+#[test]
+fn a_hard_jump_round_trips_as_a_duplicate_position() {
+    let g = Gradient {
+        name: "jump".into(),
+        segments: vec![
+            Segment::linear(0.0, 0.5, [1.0, 0.0, 0.0, 1.0], [1.0, 1.0, 0.0, 1.0]),
+            // Starts at BLUE where the previous ended at yellow — a genuine edge.
+            Segment::linear(0.5, 1.0, [0.0, 0.0, 1.0, 1.0], [0.0, 1.0, 1.0, 1.0]),
+        ],
+    };
+    let stops = g.to_stops();
+    let at_half: Vec<_> = stops.iter().filter(|(p, _)| (*p - 0.5).abs() < 1e-6).collect();
+    assert_eq!(at_half.len(), 2, "the edge did not become a duplicate position: {stops:?}");
+    assert_eq!(at_half[0].1, [1.0, 1.0, 0.0], "first of the pair closes the old segment");
+    assert_eq!(at_half[1].1, [0.0, 0.0, 1.0], "second of the pair opens the new one");
+
+    // Rebuilt, the edge is still an edge — yellow just below, blue just above.
+    let back = Gradient::from_stops("jump", &stops);
+    assert!(back.eval(0.49)[1] > 0.9 && back.eval(0.49)[2] < 0.1, "should still be yellow below");
+    assert!(back.eval(0.51)[2] > 0.9 && back.eval(0.51)[1] < 0.1, "should still be blue above");
+    // And it matches the original everywhere away from the edge itself.
+    for i in 0..=100 {
+        let t = i as f32 / 100.0;
+        if (t - 0.5).abs() < 0.01 {
+            continue;
+        }
+        for ch in 0..3 {
+            assert!((back.eval(t)[ch] - g.eval(t)[ch]).abs() < 1e-5, "diverged at t={t}");
+        }
+    }
+    // A continuous gradient gains no spurious duplicates.
+    let smooth = Gradient::from_stops("s", &[(0.0, [0.0; 3]), (0.5, [1.0; 3]), (1.0, [0.0; 3])]);
+    assert_eq!(smooth.to_stops().len(), 3);
+}

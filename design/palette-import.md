@@ -379,6 +379,36 @@ this bar*: Fractint writes its own images with the same ×4, so its white pixels
 rescaling would fail every comparison against a Fractint render by ~1.2%. The importer reports the
 table as 6-bit in the UI message instead, so the user knows why their white is not 255.
 
+### `.ugr` import (beta.25)
+
+`parse_ugr` → a list of `UgrGradient`, each `to_gradient()`-able. The editor shows a picker with a
+preview swatch per row (a name like `blatte10` says nothing about what it looks like); the CLI is
+**`--palette-ugr FILE`** / **`--palette-ugr-name NAME`**, first-gradient default, and it PRINTS
+which it took — silently choosing one of dozens is how a scripted comparison measures the wrong
+palette.
+
+⭐⭐**§2's BGR warning is now verified at the PIXEL, not just in the parser.** `color=255` renders
+RED and `color=16711680` renders BLUE through the full pipeline; under the natural RGB reading
+those swap, and the result still looks like a plausible palette. That is the whole reason the
+warning was written down, so the test renders rather than asserting on a parse.
+
+Decisions inside it, all stated rather than silent:
+
+| | |
+|---|---|
+| `index` | `/399`, matching gnofract4d's segment-per-adjacent-pair reading; ends clamp |
+| byte scale | **`/255`**, not gnofract4d's `/256` — so ours reaches pure white and theirs does not |
+| `rotation=` | **applied**, direction ⚠UNVERIFIED against UF; pinned by a test so a fix is one sign |
+| `smooth=yes` | **recorded, not honoured** — UF's smooth is a spline through control points, not a per-segment blend function. gnofract4d imports linearly for the same reason |
+| `opacity:` | parsed and carried, though the renderer's palette has no alpha today |
+| non-gradient blocks | skipped, so a file mixing formula/parameter blocks still loads |
+
+⭐**A rotation exposed a real hole in the model, found by a round-trip test rather than by
+reading**: rotating a non-seamless gradient creates a genuine DISCONTINUITY, and `to_stops` was
+smoothing it into a ramp on the way into the session file. A hard edge is now carried as a
+DUPLICATE POSITION — which is how every gradient editor expresses one, and which `from_stops`
+already read back correctly. `Gradient::rotated` also SPLITS the segment that straddles the seam
+rather than sorting and losing its far half.
 ⚠**Still outstanding for §7's bar**: an actual Fractint render of `default.map` to compare
 against. What is proven today is that the bands are exact and that the file's values reach the
 framebuffer unaltered; what is NOT proven is that our iteration→palette-index mapping matches
