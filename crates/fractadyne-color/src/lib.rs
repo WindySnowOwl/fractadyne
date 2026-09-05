@@ -5,6 +5,8 @@
 //! to loop seamlessly (first and last colors match). A data-driven LUT / custom
 //! gradient editor comes later (UI-DESIGN.md §6, §8); these presets are the start.
 
+pub mod segment;
+
 /// Max stops the GPU uniform carries (must match `fractadyne-gpu`).
 pub const MAX_STOPS: usize = 8;
 

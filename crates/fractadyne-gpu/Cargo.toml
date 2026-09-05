@@ -7,6 +7,7 @@ description = "GPU rendering for Fractadyne (wgpu via egui_wgpu). M0: direct Man
 
 [dependencies]
 fractadyne-core.workspace = true
+fractadyne-color.workspace = true   # LUT_SIZE: the palette bake and the shader must agree
 egui.workspace = true
 egui-wgpu.workspace = true   # re-exports wgpu, so our wgpu version matches eframe's
 bytemuck.workspace = true

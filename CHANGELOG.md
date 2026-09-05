@@ -12,6 +12,25 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Palettes are now baked into a 1024-entry lookup table, and the eight-stop ceiling is gone**
+  (beta.23). Every palette in the app - the built-in presets, the gradient editor, duotone and
+  binary, the morphing random gradient - now goes through one representation: a list of gradient
+  SEGMENTS, each with its own colours, midpoint, blend curve and colour space, evaluated into a
+  1024-entry table that the shader reads with a single lookup. Before this, a palette was at most
+  eight colour stops walked in the shader, which is not enough to hold a real palette file: the
+  standard Fractint palette alone has 37 hard colour jumps, so an eight-stop rendition of it was
+  not a lower-fidelity version, it was a different palette. Segments can also be FLAT, which is
+  how a Fractint `.map` keeps the hard bands that define its look instead of being smeared into a
+  gradient. Nothing about the existing palettes changed visibly - measured across the 18 golden
+  images, the largest difference is one 8-bit level on a fraction of a percent of pixels, and
+  quadrupling the table size cuts even those by 11x, which is what says the difference is
+  rounding and not a mistake. This is the groundwork for importing palettes from other
+  applications (`.map`, `.ugr`, `.ggr`); see `design/palette-import.md`.
+
+- **The gradient editor's preview bar now shows the colour that will actually render** (beta.23).
+  It was gamma-encoding the preview - a leftover from the same wrong assumption that made pasted
+  palettes too dark - so every swatch looked markedly lighter than the pixels it stood for.
+
 - **Pasted palettes now render as the colours you pasted** (beta.21). Paste `#808080` into the
   gradient editor and you got `#373737` back - every imported palette arrived one sRGB decode
   too dark. The import path converted colours to linear light, but the renderer writes palette

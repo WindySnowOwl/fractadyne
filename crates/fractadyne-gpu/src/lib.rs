@@ -17,6 +17,10 @@ mod export;
 pub use export::*;
 pub mod timing;
 
+/// The Rust/WGSL uniform-layout gate — see the module's own docs.
+#[cfg(test)]
+mod uniform_layout_tests;
+
 // RGBA: r = smooth iteration value, g/b = slope normal (x,y), a = reserved (DE).
 pub(crate) const ITER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
@@ -66,7 +70,8 @@ pub(crate) struct IterUniforms {
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ColorUniforms {
-    pub(crate) stop_count: u32,
+    /// Entries in the baked palette LUT bound at `@group(0) @binding(3)`.
+    pub(crate) lut_len: u32,
     pub(crate) cycle: f32,
     pub(crate) offset: f32,
     pub(crate) ss: u32,
@@ -87,9 +92,10 @@ pub(crate) struct ColorUniforms {
     pub(crate) vig_soft: f32,
     pub(crate) vig_center: [f32; 2], // screen uv
     pub(crate) vig_radius: f32,
-    pub(crate) _pad_vig: f32,
+    /// 1 = interpolate between LUT entries, 0 = nearest (hard bands, e.g. a Fractint `.map`).
+    /// Reuses what was `_pad_vig`; keep it in step with `ColorU` in the WGSL.
+    pub(crate) lut_smooth: u32,
     pub(crate) interior_col: [f32; 4],
-    pub(crate) stops: [[f32; 4]; 8],
     pub(crate) out_res: [f32; 2], // output rect size in px; with `reproject`, aspect-fits a frozen frame
     /// Palette-range mapping: 0 = linear, 1 = log (see `ColorU` in the WGSL). These reuse what
     /// was `_pad_out`, so the uniform's size and alignment are unchanged — keep them last and
@@ -386,6 +392,11 @@ struct ViewResources {
     /// Async counters readback state (see [`CounterRead`]).
     counter_read: CounterRead,
     orbit_cap: u32,
+    /// The baked palette LUT (color binding 3). Fixed capacity, rewritten each frame like the
+    /// color uniform beside it — 16 KB a frame is nothing next to the iterate pass, and a
+    /// dirty-flag would have to track the random-palette animator, the editor and every preset
+    /// swap to save it.
+    lut_buf: wgpu::Buffer,
     color_bg: wgpu::BindGroup,
     tex_view: wgpu::TextureView,
     aux_view: wgpu::TextureView,
@@ -538,6 +549,7 @@ pub(crate) fn make_color_bg(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     color_uniform: &wgpu::Buffer,
+    lut_buf: &wgpu::Buffer,
     tex_view: &wgpu::TextureView,
     aux_view: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
@@ -554,8 +566,39 @@ pub(crate) fn make_color_bg(
                 binding: 2,
                 resource: wgpu::BindingResource::TextureView(aux_view),
             },
+            wgpu::BindGroupEntry { binding: 3, resource: lut_buf.as_entire_binding() },
         ],
     })
+}
+
+/// Storage buffer for the baked palette LUT, sized for the largest table we bake.
+///
+/// Fixed size rather than sized-to-fit: the buffer lives in a bind group, and resizing it would
+/// mean rebuilding every bind group that holds it whenever the palette changed length — a preset
+/// swap should not touch GPU object lifetimes. 16 KB is negligible and `lut_len` bounds the reads.
+pub(crate) fn make_lut_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("fractadyne.palette_lut"),
+        size: (fractadyne_color::segment::LUT_SIZE * 16) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// Upload a baked LUT, truncated to what the buffer holds. Returns `(len, smooth)` for the
+/// uniform, so the count the shader bounds its reads with can never disagree with what was
+/// actually written.
+pub(crate) fn write_lut(
+    queue: &wgpu::Queue,
+    buf: &wgpu::Buffer,
+    entries: &[[f32; 4]],
+    smooth: bool,
+) -> (u32, u32) {
+    let n = entries.len().min(fractadyne_color::segment::LUT_SIZE);
+    if n > 0 {
+        queue.write_buffer(buf, 0, bytemuck::cast_slice(&entries[..n]));
+    }
+    (n as u32, smooth as u32)
 }
 
 pub(crate) fn fullscreen_pipeline(
@@ -656,7 +699,8 @@ pub(crate) fn iter_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLa
 }
 
 /// Bind-group layout for the **color** pass: uniforms (0) + the iteration texture (1) + the aux
-/// statistics texture (2). Identical for the live view and every export path.
+/// statistics texture (2) + the baked palette LUT (3). Identical for the live view and every
+/// export path — and shared with the seed pass, which binds all four and reads only the textures.
 pub(crate) fn color_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -670,7 +714,21 @@ pub(crate) fn color_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupL
     };
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("fractadyne.color_bgl"),
-        entries: &[uniform_bgl_entry(), tex_entry(1), tex_entry(2)],
+        entries: &[
+            uniform_bgl_entry(),
+            tex_entry(1),
+            tex_entry(2),
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
     })
 }
 
@@ -956,8 +1014,9 @@ impl ViewResources {
         let size = [1u32, 1u32];
         let tex_view = make_iter_texture(device, size);
         let aux_view = make_iter_texture(device, size);
+        let lut_buf = make_lut_buffer(device);
         let color_bg =
-            make_color_bg(device, color_bgl, &color_uniform, &tex_view, &aux_view);
+            make_color_bg(device, color_bgl, &color_uniform, &lut_buf, &tex_view, &aux_view);
 
         Self {
             timing: IterTiming::new(device),
@@ -969,6 +1028,7 @@ impl ViewResources {
             orbit_buf,
             counters_buf,
             orbit_cap,
+            lut_buf,
             color_bg,
             tex_view,
             aux_view,
@@ -993,7 +1053,7 @@ impl ViewResources {
         self.tex_view = make_iter_texture(device, size);
         self.aux_view = make_iter_texture(device, size);
         self.color_bg = make_color_bg(
-            device, color_bgl, &self.color_uniform, &self.tex_view, &self.aux_view,
+            device, color_bgl, &self.color_uniform, &self.lut_buf, &self.tex_view, &self.aux_view,
         );
         self.size = size;
         self.last_iter_key = None;
@@ -1019,10 +1079,13 @@ impl ViewResources {
         let old_tex = std::mem::replace(&mut self.tex_view, make_iter_texture(device, size));
         let old_aux = std::mem::replace(&mut self.aux_view, make_iter_texture(device, size));
         self.color_bg = make_color_bg(
-            device, color_bgl, &self.color_uniform, &self.tex_view, &self.aux_view,
+            device, color_bgl, &self.color_uniform, &self.lut_buf, &self.tex_view, &self.aux_view,
         );
-        // fs_seed reads only the texture bindings; the uniform slot is filled to satisfy the layout.
-        let seed_bg = make_color_bg(device, color_bgl, &self.color_uniform, &old_tex, &old_aux);
+        // fs_seed reads only the texture bindings; the uniform and LUT slots are filled to satisfy
+        // the shared layout.
+        let seed_bg = make_color_bg(
+            device, color_bgl, &self.color_uniform, &self.lut_buf, &old_tex, &old_aux,
+        );
         {
             let attach = |v| Some(wgpu::RenderPassColorAttachment {
                 view: v,
@@ -1223,8 +1286,13 @@ pub struct MandelbrotParams {
     /// Defaults to 0, so every existing caller keeps the classic affine mapping untouched.
     pub norm_mode: u32,
     pub norm_lo: f32,
-    pub stop_count: u32,
-    pub stops: [[f32; 4]; 8],
+    /// The baked palette: `LUT_SIZE` display-space RGBA entries, entry `i` holding the gradient at
+    /// `(i + 0.5) / len`. Produced by `fractadyne_color::segment::Gradient::bake`, which is the
+    /// only thing in the tree that knows what a stop, a blend function or a `.map` band is.
+    pub lut: Arc<Vec<[f32; 4]>>,
+    /// `false` = nearest-fetch the LUT (hard bands — Fractint `.map` semantics), `true` =
+    /// interpolate between entries. See `Lut::smooth`.
+    pub lut_smooth: bool,
     /// Slope/relief lighting from the distance-estimate normal.
     pub light: u32,
     pub light_angle: f32,
@@ -1378,7 +1446,7 @@ impl CallbackTrait for MandelbrotParams {
                 pass.set_bind_group(0, &view.color_bg, &[]);
                 pass.draw(0..3, 0..1);
             }
-            let bg = make_color_bg(device, color_bgl, &view.color_uniform, &ht, &ha);
+            let bg = make_color_bg(device, color_bgl, &view.color_uniform, &view.lut_buf, &ht, &ha);
             view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1) });
         }
         // The gate only engages while the app asserts it AND a snapshot exists (a cold start has
@@ -1399,9 +1467,12 @@ impl CallbackTrait for MandelbrotParams {
             ss
         };
 
-        // Coloring uniform is cheap — refresh every frame so recolor is instant.
+        // Coloring uniform is cheap — refresh every frame so recolor is instant. The LUT goes up
+        // with it, and `write_lut` hands back the length it actually wrote so the count the shader
+        // bounds its reads with can never disagree with the buffer's contents.
+        let (lut_len, lut_smooth) = write_lut(queue, &view.lut_buf, &self.lut, self.lut_smooth);
         let cu = ColorUniforms {
-            stop_count: self.stop_count,
+            lut_len,
             cycle: self.cycle,
             offset: self.offset,
             ss: color_ss,
@@ -1424,9 +1495,8 @@ impl CallbackTrait for MandelbrotParams {
             vig_soft: self.vignette.soft,
             vig_center: self.vignette.center,
             vig_radius: self.vignette.radius,
-            _pad_vig: 0.0,
+            lut_smooth,
             interior_col: self.interior_col,
-            stops: self.stops,
             // For a reprojection the frozen iteration texture may have been rendered at a REDUCED
             // resolution (motion `res_scale`) — which now happens mid-dive since v0.1.58/59 refresh
             // floatexp while moving. The color-pass aspect-fit is `fit = out_res / screen_dim` where

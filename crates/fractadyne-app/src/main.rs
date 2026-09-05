@@ -1659,26 +1659,18 @@ fn mandel_escapes(cx: f64, cy: f64, max: u32) -> Option<u32> {
     None
 }
 
-/// Sample packed gradient stops (`[r, g, b, pos]`, ascending) at `t∈0..1` — mirrors the
-/// shader's `palette()` — and gamma-encode to a display `Color32`.
-fn sample_stops(stops: &[[f32; 4]; fractadyne_color::MAX_STOPS], n: u32, t: f32) -> egui::Color32 {
-    let t = t.fract();
-    let mut col = [stops[0][0], stops[0][1], stops[0][2]];
-    let n = n.max(1) as usize;
-    for i in 0..n.saturating_sub(1) {
-        let (a, b) = (stops[i], stops[i + 1]);
-        if t >= a[3] && t <= b[3] {
-            let f = (t - a[3]) / (b[3] - a[3]).max(1.0e-6);
-            col = [
-                a[0] + (b[0] - a[0]) * f,
-                a[1] + (b[1] - a[1]) * f,
-                a[2] + (b[2] - a[2]) * f,
-            ];
-            break;
-        }
-    }
-    let g = |c: f32| (c.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0 + 0.5) as u8;
-    egui::Color32::from_rgb(g(col[0]), g(col[1]), g(col[2]))
+/// The editor's gradient preview colour at `t∈0..1`.
+///
+/// ⭐⭐**This is a SWATCH of what will render, so it must not transform the colour.** It used to
+/// gamma-encode (`c^(1/2.2)`), a leftover from the belief that stops were linear — which made
+/// every swatch markedly lighter than the pixel it stood for (the display-referred 0.502 previewed
+/// at 186, rendered at 128). The renderer writes stop values straight into a non-sRGB framebuffer,
+/// so the preview is the value × 255 and nothing else. Sampling goes through the same `Lut` the
+/// GPU fetches from, so a preview cannot drift from a render by construction.
+fn gradient_preview_color(lut: &fractadyne_color::segment::Lut, t: f32) -> egui::Color32 {
+    let c = lut.sample(t);
+    let g = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    egui::Color32::from_rgb(g(c[0]), g(c[1]), g(c[2]))
 }
 
 /// One frame of palette animation: the new `(offset, direction)` for `mode` after advancing by
@@ -6311,29 +6303,44 @@ impl FractadyneApp {
 
     // Autopilot (toggle_autopilot / autopilot_step / autopilot_pick_target) moved to autopilot.rs.
 
-    /// Stops uploaded to the GPU: the morphing random gradient when in Random mode,
-    /// otherwise the selected preset.
-    fn active_stops(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
+    /// The palette in play, as a segment gradient.
+    ///
+    /// ⭐**Every palette source in the app converges here**, and nothing downstream branches on
+    /// which one it was: the morphing random gradient, binary, duotone, the custom editor and the
+    /// presets all become one [`Gradient`](fractadyne_color::segment::Gradient), which
+    /// [`Self::active_lut`] bakes into the table the shader fetches from. That is the point of the
+    /// design in `design/palette-import.md` §4 — the eight-stop uniform walk is gone, so a
+    /// 256-band `.map` or a curved GIMP blend costs exactly what a preset costs.
+    fn active_gradient(&self) -> fractadyne_color::segment::Gradient {
+        use fractadyne_color::segment::Gradient;
         if self.anim.palette_anim == PaletteAnim::Random {
-            self.anim.random_palette.current()
+            let (packed, n) = self.anim.random_palette.current();
+            Gradient::from_packed("Random", &packed, n)
         } else if self.coloring.use_binary {
-            // Flat exterior: a single stop of the `hi` color (interior uses `lo`).
-            let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
-            out[0] = [self.coloring.duotone_hi[0], self.coloring.duotone_hi[1], self.coloring.duotone_hi[2], 0.0];
-            (out, 1)
+            // Flat exterior: one colour everywhere (interior uses `lo`). A single stop makes a
+            // flat gradient, which bakes to a nearest-fetch LUT — no interpolation to smear.
+            Gradient::from_stops("Binary", &[(0.0, self.coloring.duotone_hi)])
         } else if self.coloring.use_duotone {
             // Smooth two-color ramp lo → hi → lo (seamless under cycling).
             let (lo, hi) = (self.coloring.duotone_lo, self.coloring.duotone_hi);
-            let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
-            out[0] = [lo[0], lo[1], lo[2], 0.0];
-            out[1] = [hi[0], hi[1], hi[2], 0.5];
-            out[2] = [lo[0], lo[1], lo[2], 1.0];
-            (out, 3)
+            Gradient::from_stops("Duotone", &[(0.0, lo), (0.5, hi), (1.0, lo)])
         } else if self.coloring.use_custom_palette {
-            self.pack_custom()
+            self.custom_gradient()
         } else {
-            fractadyne_color::PRESETS[self.coloring.palette_idx].packed()
+            let p = &fractadyne_color::PRESETS[self.coloring.palette_idx];
+            Gradient::from_stops(p.name, p.stops)
         }
+    }
+
+    /// The baked palette handed to the GPU: `(entries, smooth)`.
+    ///
+    /// Baked on demand rather than cached — 1024 evaluations of a handful of segments is a few
+    /// microseconds, and a cache would have to be invalidated by the random-palette animator, the
+    /// editor, every preset swap and every duotone toggle. A stale palette cache is exactly the
+    /// class of bug that is invisible until someone reports "the colours don't change".
+    fn active_lut(&self) -> (std::sync::Arc<Vec<[f32; 4]>>, bool) {
+        let lut = self.active_gradient().bake(fractadyne_color::segment::LUT_SIZE);
+        (std::sync::Arc::new(lut.entries), lut.smooth)
     }
 
     /// In-set (interior) color for the GPU. Binary/duotone use the chosen `lo` color so the
@@ -6346,21 +6353,21 @@ impl FractadyneApp {
         }
     }
 
-    /// Pack the custom gradient into the GPU stop format `[r, g, b, pos]` (sorted by
-    /// position, count clamped to `MAX_STOPS`). Falls back to a preset if empty.
-    fn pack_custom(&self) -> ([[f32; 4]; fractadyne_color::MAX_STOPS], u32) {
+    /// The custom gradient as a [`Gradient`](fractadyne_color::segment::Gradient), for the editor's
+    /// preview bar. Falls back to the selected preset when the editor is empty, so the preview
+    /// shows what would actually render.
+    fn custom_gradient(&self) -> fractadyne_color::segment::Gradient {
         if self.coloring.custom_palette.is_empty() {
-            return fractadyne_color::PRESETS[self.coloring.palette_idx].packed();
+            let p = &fractadyne_color::PRESETS[self.coloring.palette_idx];
+            return fractadyne_color::segment::Gradient::from_stops(p.name, p.stops);
         }
-        let mut stops = self.coloring.custom_palette.clone();
-        stops.sort_by(|a, b| a[0].total_cmp(&b[0]));
-        let n = stops.len().clamp(1, fractadyne_color::MAX_STOPS);
-        let mut out = [[0.0f32; 4]; fractadyne_color::MAX_STOPS];
-        for (i, slot) in out.iter_mut().enumerate() {
-            let s = stops[i.min(n - 1)];
-            *slot = [s[1], s[2], s[3], s[0]];
-        }
-        (out, n as u32)
+        let stops: Vec<(f32, [f32; 3])> = self
+            .coloring
+            .custom_palette
+            .iter()
+            .map(|s| (s[0], [s[1], s[2], s[3]]))
+            .collect();
+        fractadyne_color::segment::Gradient::from_stops("Custom", &stops)
     }
 
     /// The given preset's stops as editable `[pos, r, g, b]` rows (to seed the editor).
@@ -6430,7 +6437,9 @@ impl FractadyneApp {
             .default_width(340.0)
             .show(ctx, |ui| {
                 // Live gradient preview bar.
-                let (packed, n) = self.pack_custom();
+                // Preview through the same bake the GPU fetches from — see
+                // `gradient_preview_color`; a preview computed any other way is free to drift.
+                let lut = self.custom_gradient().bake(fractadyne_color::segment::LUT_SIZE);
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
                 let pr = ui.painter_at(rect);
@@ -6438,7 +6447,7 @@ impl FractadyneApp {
                 for s in 0..steps {
                     let t = s as f32 / steps as f32;
                     let x = rect.min.x + t * rect.width();
-                    let col = sample_stops(&packed, n, t);
+                    let col = gradient_preview_color(&lut, t);
                     pr.line_segment(
                         [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
                         egui::Stroke::new(1.5_f32, col),

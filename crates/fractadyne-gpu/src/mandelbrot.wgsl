@@ -2118,7 +2118,7 @@ fn fs_resolve(in: VsOut) -> FragOut {
 
 // ---------------- coloring pass (samples the iteration texture) ----------------
 struct ColorU {
-    stop_count: u32,
+    lut_len: u32, // entries in the baked palette LUT at binding 3 (see `palette()`)
     cycle: f32,
     offset: f32,
     ss: u32, // supersampling factor (iteration texture is screen × ss)
@@ -2139,9 +2139,10 @@ struct ColorU {
     vig_soft: f32,     // soft-edge width (uv height fraction)
     vig_center: vec2<f32>, // spotlight centre in screen uv (0..1)
     vig_radius: f32,   // spotlight radius (uv height fraction)
-    _pad_vig: f32,
+    // 1 = interpolate between LUT entries, 0 = nearest (hard bands). Occupies what used to be
+    // `_pad_vig`, so removing the stop array below is the only size change this struct has taken.
+    lut_smooth: u32,
     interior_col: vec4<f32>, // color for in-set (non-escaping) pixels; rgb in xyz
-    stops: array<vec4<f32>, 8>, // rgb + position
     out_res: vec2<f32>, // output rect size (px); with reproject, aspect-fits a frozen (old-size) frame
     // Palette-range mapping. 0 = linear (`cycle`/`offset` alone, the classic affine map);
     // 1 = LOG, where the escape value is compressed as log(v - norm_lo + 1) BEFORE the affine map.
@@ -2152,6 +2153,12 @@ struct ColorU {
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
 @group(0) @binding(2) var aux_tex: texture_2d<f32>;
+// The baked palette (rgb + alpha per entry). A STORAGE buffer, not a uniform array: 1024 entries
+// is 16 KB, which is exactly the downlevel `max_uniform_buffer_binding_size`, so a uniform would
+// have left no room for the rest of `ColorU` on a conservative adapter. Not a texture either —
+// the fetch below does its own wrap and its own nearest/linear choice, so a sampler would only add
+// a binding and take the choice away.
+@group(0) @binding(3) var<storage, read> lut: array<vec4<f32>>;
 
 // ---------------------------------------------------------------------------
 // Seed pass (tiled settle): nearest-neighbour upscale of the previous
@@ -2179,19 +2186,31 @@ fn fs_seed(in: VsOut) -> SeedOut {
     return out;
 }
 
+// One indexed fetch into the baked LUT. Everything a palette can be — an 8-stop preset, a curved
+// GIMP segment, an HSV sweep, a 256-band Fractint `.map` — arrives here already evaluated, so this
+// costs the same for all of them and the shader never learns what a blend function is.
+//
+// Entry `i` holds the gradient at `(i + 0.5) / n` (texel centres — `Gradient::bake` in
+// `fractadyne-color` is the other half of this contract, and `Lut::sample` is this function in
+// Rust). `lut_smooth == 0` nearest-fetches, which is what keeps a `.map`'s bands hard; anything
+// else interpolates, which is what gives a deep view palette-POSITION resolution at a high cycle.
+// Indices WRAP rather than clamp: the palette is cycled by `fract`, so t = 1 and t = 0 are
+// neighbours on screen.
 fn palette(t_in: f32) -> vec3<f32> {
-    let t = fract(t_in);
-    var col = cu.stops[0].xyz;
-    for (var i: u32 = 0u; i + 1u < cu.stop_count; i = i + 1u) {
-        let a = cu.stops[i];
-        let b = cu.stops[i + 1u];
-        if (t >= a.w && t <= b.w) {
-            let f = (t - a.w) / max(b.w - a.w, 1e-6);
-            col = mix(a.xyz, b.xyz, f);
-            break;
-        }
+    let n = i32(cu.lut_len);
+    if (n <= 0) {
+        return vec3<f32>(0.0, 0.0, 0.0);
     }
-    return col;
+    let t = fract(t_in);
+    if (cu.lut_smooth == 0u) {
+        return lut[clamp(i32(t * f32(n)), 0, n - 1)].xyz;
+    }
+    let x = t * f32(n) - 0.5;
+    let i0 = i32(floor(x));
+    let f = x - floor(x);
+    let a = lut[((i0 % n) + n) % n].xyz;
+    let b = lut[(((i0 + 1) % n) + n) % n].xyz;
+    return mix(a, b, f);
 }
 
 // Map one texel (main + aux statistics) to a color, per the selected method.

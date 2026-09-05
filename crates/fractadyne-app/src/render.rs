@@ -2236,7 +2236,7 @@ impl FractadyneApp {
         let jcxh = jcx as f32;
         let jcyh = jcy as f32;
         let julia_c = [jcxh, jcyh, (jcx - jcxh as f64) as f32, (jcy - jcyh as f64) as f32];
-        let (stops, stop_count) = self.active_stops();
+        let (lut, lut_smooth) = self.active_lut();
         // The effective render manifest: kept globally for crash reports (D1.3) and printed
         // under the `req` trace category. This is the record that killed F8 — it states what
         // a render was *actually* asked to do, not what the caller believed.
@@ -2300,8 +2300,8 @@ impl FractadyneApp {
                 let vi = (self.dual && julia) as usize;
                 self.live_norm_cycle_offset(vi).map_or(0.0, |m| m.lo)
             },
-            stop_count,
-            stops,
+            lut,
+            lut_smooth,
             light: self.effects.light as u32,
             light_angle: self.effects.light_angle,
             light_height: self.effects.light_height,
@@ -3997,8 +3997,8 @@ impl FractadyneApp {
         julia_c: [f32; 4],
         span_mantissa: fractadyne_core::SpanMantissa,
         delta_exp: i32,
-        stops: [[f32; 4]; 8],
-        stop_count: u32,
+        lut: std::sync::Arc<Vec<[f32; 4]>>,
+        lut_smooth: bool,
         sa: fractadyne_core::SeriesSkip,
         bla: std::sync::Arc<Vec<[f32; 4]>>,
         bla_on: u32,
@@ -4292,8 +4292,8 @@ impl FractadyneApp {
             offset: offset_eff,
             norm_mode: nm.mode,
             norm_lo: nm.lo,
-            stop_count,
-            stops,
+            lut,
+            lut_smooth,
             light: self.effects.light as u32,
             light_angle: self.effects.light_angle,
             light_height: self.effects.light_height,
@@ -4496,7 +4496,7 @@ impl FractadyneApp {
             } else {
                 (center_bf, center, span, magnification, log2mag, eff_iter, aa_target, None)
             };
-        let (stops, stop_count) = self.active_stops();
+        let (lut, lut_smooth) = self.active_lut();
         let (cx, cy) = center;
         // Extended-range scale → shared base-2 exponent + O(1) span mantissas, so nothing
         // underflows/overflows past ~1e308× (the per-pixel δ stays O(1); the GPU re-applies
@@ -5976,8 +5976,8 @@ impl FractadyneApp {
             julia_c,
             span_mantissa,
             delta_exp,
-            stops,
-            stop_count,
+            lut,
+            lut_smooth,
             sa,
             bla,
             bla_on,

@@ -85,8 +85,11 @@ pub struct ExportRequest {
     /// Palette-range mapping: 0 = linear (`cycle`/`offset` alone), 1 = log about `norm_lo`.
     pub norm_mode: u32,
     pub norm_lo: f32,
-    pub stop_count: u32,
-    pub stops: [[f32; 4]; 8],
+    /// The baked palette LUT and its fetch mode — see [`crate::RenderParams::lut`].
+    /// ⚠Both `ColorU` definitions consume this; an export that kept the old shape would silently
+    /// render through a different palette than the live view.
+    pub lut: Arc<Vec<[f32; 4]>>,
+    pub lut_smooth: bool,
     pub light: u32,
     pub light_angle: f32,
     pub light_height: f32,
@@ -563,9 +566,12 @@ fn render_export_impl(
     });
     let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
 
-    // Coloring uniform is constant across tiles; step is the full-resolution step.
+    // Coloring uniform is constant across tiles; step is the full-resolution step. So is the
+    // palette LUT beside it — one write, then every tile colors through the same table.
+    let lut_buf = crate::make_lut_buffer(device);
+    let (lut_len, lut_smooth) = crate::write_lut(queue, &lut_buf, &req.lut, req.lut_smooth);
     let cu = ColorUniforms {
-        stop_count: req.stop_count,
+        lut_len,
         cycle: req.cycle,
         offset: req.offset,
         ss,
@@ -586,9 +592,8 @@ fn render_export_impl(
         vig_soft: req.vignette.soft,
         vig_center: req.vignette.center,
         vig_radius: req.vignette.radius,
-        _pad_vig: 0.0,
+        lut_smooth,
         interior_col: req.interior_col,
-        stops: req.stops,
         out_res: [w as f32, h as f32],
         norm_mode: req.norm_mode,
         norm_lo: req.norm_lo,
@@ -676,7 +681,7 @@ fn render_export_impl(
             });
             let color_view = color_tex.create_view(&wgpu::TextureViewDescriptor::default());
             let color_bg =
-                make_color_bg(device, &color_bgl, &color_uniform, &iter_view, &aux_view);
+                make_color_bg(device, &color_bgl, &color_uniform, &lut_buf, &iter_view, &aux_view);
 
             let unpadded_bpr = tw * bpp;
             let padded_bpr = unpadded_bpr.div_ceil(align) * align;
@@ -2350,8 +2355,10 @@ pub fn color_iter_buffer(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    let lut_buf = crate::make_lut_buffer(device);
+    let (lut_len, lut_smooth) = crate::write_lut(queue, &lut_buf, &req.lut, req.lut_smooth);
     let cu = ColorUniforms {
-        stop_count: req.stop_count,
+        lut_len,
         cycle: req.cycle,
         offset: req.offset,
         ss: 1,
@@ -2372,9 +2379,8 @@ pub fn color_iter_buffer(
         vig_soft: req.vignette.soft,
         vig_center: req.vignette.center,
         vig_radius: req.vignette.radius,
-        _pad_vig: 0.0,
+        lut_smooth,
         interior_col: req.interior_col,
-        stops: req.stops,
         out_res: [w as f32, h as f32],
         norm_mode: req.norm_mode,
         norm_lo: req.norm_lo,
@@ -2416,7 +2422,8 @@ pub fn color_iter_buffer(
     write(&aux_tex, &vec![0.0_f32; (w as usize) * (h as usize) * 4]);
     let iter_view = iter_tex.create_view(&wgpu::TextureViewDescriptor::default());
     let aux_view = aux_tex.create_view(&wgpu::TextureViewDescriptor::default());
-    let color_bg = make_color_bg(device, &color_bgl, &color_uniform, &iter_view, &aux_view);
+    let color_bg =
+        make_color_bg(device, &color_bgl, &color_uniform, &lut_buf, &iter_view, &aux_view);
 
     let color_tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("coloriter.out"),
