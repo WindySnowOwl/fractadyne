@@ -424,6 +424,43 @@ the widget rather than a reason to skip tests:
   ⚠It also found a **stowaway**: `uitest_close_all` never closed the Diagnostics window, which had
   been standing behind every screenshot from step 15 on, invisible only because the window in front
   happened to be wide enough to cover it.
+- ✅**P3″ — what using it asked for. SHIPPED beta.31.** The author ran the beta.30 editor and came
+  back with four things; all four are in, plus the bug report that came with them.
+
+  ⭐⭐**"The drag points sometimes hang up where they stop moving" — DIAGNOSED, and the first
+  diagnosis was wrong.** `Response::drag_started()` does not fire until the pointer has passed
+  egui's drag threshold, and the editor hit-tested `interact_pointer_pos()` *at that moment* — a
+  point already several pixels from the press. The fix is to hit-test the **press origin**. ⚠The
+  first write-up blamed the 6 px threshold itself; the test's own guard assertion failed and showed
+  that 6 px is *not* enough to leave a 9 px catch radius at 15.8 px spacing. **The threshold is a
+  LOWER bound, not the drift** — the drift is however far a flick travelled in the frame that
+  crossed it, so it is unbounded. ⭐And the silent-cancel case needs *few* stops, not many: at the
+  32-stop cap the catch zones overlap everywhere, so a drift always grabs *something* (merely the
+  wrong thing), whereas on the 7-stop gradient in the report most of the strip is dead band and the
+  drag is cancelled with no feedback at all. Both regimes are pinned in `gradient_strip.rs`.
+
+  - **Ring view.** ⭐The justification is not decoration: a palette is *cycled*, so it is
+    topologically a circle, and the ring is the only view in which the **seam** exists. On a bar the
+    two ends are as far apart as they can be; in the render they are adjacent, so a hard edge there
+    is invisible in the editor that made it. Hit-testing is by **arc length**, not by angle, so the
+    catch zone stays the same physical size as the bar's — and it **wraps**, or the stop at the seam
+    becomes unclickable from one side. The annulus is drawn through the same `Lut` as the bar.
+  - **An add lane above the bar** whose *line* is the click target ("click where you want it"),
+    with a `⊕` at the end for the widest gap — the one thing a button can decide. The old
+    double-click-on-bare-strip stays as the fast route.
+  - **A `⊖` under the selected marker**, tracking it. ⚠Interior stops only: the two ends are pinned
+    by contract, so a `⊖` there would be an offer the editor cannot honour.
+  - **Save / Cancel over a named library** (`gradients.toml`, beside `bookmarks.toml`).
+    ⭐⭐**Stored as SEGMENTS, never stops** — a stop-list library would reload, render, and look
+    right while having dropped every midpoint, curve and hue sweep, which are the only properties
+    that make a gradient worth saving. `gradient_library.rs` pins the round trip **through the bake**
+    (what the GPU fetches, so a field that survives the file but is misread on the way back still
+    fails) and carries a **control** proving that storing stops instead would have changed the
+    picture. ⚠**Cancel reverts; the window's ✕ does not** — closing a window is not a statement
+    about the work in it, and every edit here is already live in the view.
+
+  ⭐Zero drift again: selftest 173/173 + 18/18, corpus 38/38 maxD 0. Tests app 254 → 260.
+
 - **P4′ — kind 5.** `blend_params: [f32; 4]` on `PaletteSegment` (`#[serde(default)]`), the
   `Blend::Bezier([f32;4])` payload variant, the handles going live, the bias slider and presets.
   ⚠First phase that may move pixels, and only where a user sets a curve.

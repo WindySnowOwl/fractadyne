@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A ring view, an add line, and a saved gradient library** (beta.31). The gradient editor gains a
+  **Ring** view: a palette is *cycled*, so it is really a circle, and the ring is the only place the
+  **seam** — the join the renderer crosses on every sweep — can be seen at all. A gradient that
+  looks fine end-to-end on a bar can have a hard edge there. Stops drag round the ring exactly as
+  they slide along the bar.
+
+  Above the bar there is now a **line you can click anywhere to add a stop at that point**, with a
+  **+** at its end for "somewhere sensible", and a **−** under the selected stop to remove it.
+  Gradients can be **named and saved** to a library that persists between sessions, keeping their
+  curves, midpoints and colour spaces intact; **Cancel** discards everything done since the editor
+  was opened. (Closing the window with ✕ keeps your changes — only Cancel reverts.)
+
+  **Fixed: dragging a stop sometimes did nothing.** The editor decided which marker you had grabbed
+  *after* the pointer had already started moving, so a quick drag could pick up the neighbouring
+  stop — or, on a gradient with few stops, nothing at all, leaving the marker sitting still.
+
 - **The gradient editor is rebuilt around a selection** (beta.30). The gradient bar now carries
   **draggable stop markers**, and under it a **ribbon** shows one cell per segment with that
   segment's actual blend curve drawn in it. Click either to select; the selected segment gets a

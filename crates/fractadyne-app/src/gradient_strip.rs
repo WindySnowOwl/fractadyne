@@ -6,13 +6,26 @@
 //! rather than visibly wrong. `design/gradient-curves.md` §9.5.
 
 use super::{
-    nudge_step, pick_segment, pick_stop, sel_after_remove, segment_for_stop, strip_pos, strip_x,
-    EDITOR_MAX_STOPS,
+    nudge_step, pick_segment, pick_stop, pick_stop_ring, ring_point, ring_pos, sel_after_remove,
+    segment_for_stop, strip_pos, strip_x, wrapped_distance, EDITOR_MAX_STOPS,
 };
 
 /// The strip the editor actually draws: a ~490 px content width inside the 520 px window.
 const X0: f32 = 12.0;
 const W: f32 = 490.0;
+
+/// egui's pointer travel before a press becomes a drag.
+///
+/// ⭐⭐**Why the editor hit-tests the PRESS ORIGIN.** `Response::drag_started()` does not fire
+/// until the pointer has moved at least this far, so hit-testing at `interact_pointer_pos()` in
+/// that frame asks about a point that is *somewhere else*. ⚠⚠**And this is only the LOWER bound**:
+/// the drift is however far the pointer travelled in the frame that crossed it, so an ordinary
+/// flick — tens of pixels in one 60 Hz frame — lands arbitrarily far away.
+///
+/// ⚠It lives here, in the tests, because that is the only place it is *used*: it mirrors a
+/// number egui owns, and reasoning about the size of the gap is a test's job. The production
+/// consequence is recorded on `ColoringConfig::drag_stop`.
+const DRAG_THRESHOLD_PX: f32 = 6.0;
 
 #[test]
 fn position_and_pixel_round_trip_and_clamp() {
@@ -143,4 +156,140 @@ fn the_fine_nudge_is_finer_than_a_pixel_and_the_coarse_one_is_not() {
     let fine = nudge_step(true) * W;
     assert!(coarse > 2.0, "a coarse nudge that moves under 2 px reads as nothing happening");
     assert!(fine < 1.0, "the fine nudge exists to reach positions a drag cannot address");
+}
+
+/// ⭐⭐**The reported bug, pinned as arithmetic.** "The drag points sometimes hang up where they
+/// stop moving": `Response::drag_started()` does not fire until the pointer has already travelled
+/// egui's drag threshold, so hit-testing at `interact_pointer_pos()` in that frame asks about a
+/// point ~6 px from where the user pressed. At the 32-stop cap that is enough to name the WRONG
+/// marker, or — landing mid-gap — no marker at all, which cancels the drag silently and leaves the
+/// stop exactly where it was. The editor therefore hit-tests the PRESS ORIGIN.
+///
+/// ⚠This is a test about a gap between two positions, not about egui: it shows that the answer
+/// changes, which is the fact that makes using the wrong one a bug.
+///
+/// ⚠⚠**The first version of this test asserted the wrong premise** — that the 6 px threshold alone
+/// carries the pointer out of the marker's 9 px catch zone. It does not (15.8 − 9 = 6.8 > 6), and
+/// the assertion failed, which is the useful part: **the threshold is a LOWER bound, not the
+/// drift.** The drift is however far the pointer moved in the frame that crossed it, so a flick is
+/// unbounded. That is the real mechanism, and it is why the fix cannot be "widen the catch radius".
+#[test]
+fn the_drag_threshold_re_targets_the_marker_so_the_press_origin_is_the_one_to_test() {
+    let n = EDITOR_MAX_STOPS;
+    let positions: Vec<f32> = (0..n).map(|i| i as f32 / (n - 1) as f32).collect();
+    let spacing = W / (n - 1) as f32;
+    let radius = 9.0_f32;
+    assert!(
+        spacing * 0.55 > DRAG_THRESHOLD_PX,
+        "vacuous unless the probed drift ({} px) is past the threshold ({DRAG_THRESHOLD_PX} px) — \
+         i.e. actually reachable by the time `drag_started` fires",
+        spacing * 0.55
+    );
+    let press = strip_x(positions[5], X0, W);
+    assert_eq!(pick_stop(&positions, press, X0, W, radius), Some(5), "the press names marker 5");
+
+    // Drifting toward the next marker: past the halfway point the nearest marker is 6, so a
+    // hit-test after the threshold grabs the neighbour.
+    let drifted = press + spacing * 0.55;
+    assert_eq!(
+        pick_stop(&positions, drifted, X0, W, radius),
+        Some(6),
+        "post-threshold this names the WRONG marker — the drag would move a stop the user never \
+         grabbed"
+    );
+
+    // ⭐⭐**The silent-cancel case needs FEW stops, not many** — and few stops is the common case.
+    // At the 32-stop cap the catch zones overlap everywhere (spacing 15.8 < 2 × 9), so a drift
+    // always names *something*, merely the wrong thing. On a 7-stop gradient — the shape actually
+    // being edited in the bug report — the gaps are ~82 px, so most of the strip is dead band: a
+    // flick lands on nothing, `drag_stop` is cleared, and the stop sits still for the whole
+    // gesture with no feedback at all. That is the reported hang.
+    let few: Vec<f32> = (0..7).map(|i| i as f32 / 6.0).collect();
+    let few_spacing = W / 6.0;
+    assert!(
+        few_spacing * 0.5 > radius,
+        "vacuous unless a {few_spacing} px gap actually leaves a dead band outside both radii"
+    );
+    let press = strip_x(few[2], X0, W);
+    assert_eq!(pick_stop(&few, press, X0, W, radius), Some(2), "the press names stop 2");
+    assert_eq!(
+        pick_stop(&few, press + few_spacing * 0.5, X0, W, radius),
+        None,
+        "post-threshold this names NOTHING — the drag is cancelled and the stop never moves"
+    );
+    // Even a modest one-frame flick is already past every marker's zone.
+    assert_eq!(pick_stop(&few, press + 20.0, X0, W, radius), None, "a 20 px flick lands nowhere");
+}
+
+#[test]
+fn ring_positions_and_points_round_trip_with_the_seam_at_twelve_oclock() {
+    let (cx, cy, r) = (200.0_f32, 150.0_f32, 80.0_f32);
+    for i in 0..64 {
+        let p = i as f32 / 64.0;
+        let (x, y) = ring_point(cx, cy, r, p);
+        let back = ring_pos(cx, cy, x, y);
+        assert!(wrapped_distance(back, p) < 1e-4, "{p} → ({x},{y}) → {back}");
+    }
+    // ⭐The seam — where a cycled palette jumps from 1.0 back to 0.0 — sits at the TOP, which is
+    // the whole reason to offer the ring at all.
+    let (x, y) = ring_point(cx, cy, r, 0.0);
+    assert!((x - cx).abs() < 1e-3 && y < cy, "position 0 must be straight up, got ({x},{y})");
+    // Clockwise: a quarter turn is to the RIGHT, not the left.
+    let (x, y) = ring_point(cx, cy, r, 0.25);
+    assert!(x > cx && (y - cy).abs() < 1e-3, "0.25 must be at 3 o'clock, got ({x},{y})");
+    assert!((ring_pos(cx, cy, cx + r, cy) - 0.25).abs() < 1e-4);
+    assert!((ring_pos(cx, cy, cx, cy + r) - 0.5).abs() < 1e-4, "0.5 is 6 o'clock");
+    // Degenerate: the centre has no angle and must not produce a NaN position.
+    assert_eq!(ring_pos(cx, cy, cx, cy), 0.0);
+    assert!(ring_pos(cx, cy, cx, cy).is_finite());
+}
+
+/// ⭐⭐**A ring has no ends.** The stop nearest the seam must be reachable from BOTH sides, which
+/// a linear distance cannot do — it reports 0.99 and 0.01 as 98 hundredths apart.
+#[test]
+fn ring_hit_testing_wraps_across_the_seam() {
+    assert!((wrapped_distance(0.99, 0.01) - 0.02).abs() < 1e-6);
+    assert!((wrapped_distance(0.01, 0.99) - 0.02).abs() < 1e-6, "symmetric");
+    assert!((wrapped_distance(0.0, 0.5) - 0.5).abs() < 1e-6, "the far side is half a turn");
+
+    let (cx, cy, r) = (200.0_f32, 150.0_f32, 80.0_f32);
+    let positions = [0.0, 0.3, 0.62, 0.97];
+    // Just anticlockwise of the seam: nearest is the 0.97 stop. ⚠A LINEAR distance ranks 0.0 as
+    // 0.98 away here and would hand back stop 3 as well — the wrap only shows on the other side.
+    let (x, y) = ring_point(cx, cy, r, 0.98);
+    assert_eq!(pick_stop_ring(&positions, cx, cy, r, x, y, 12.0), Some(3));
+    // Just clockwise of the seam: 0.0 wins, and the 0.97 stop must still be REACHABLE from here —
+    // a linear distance puts it 0.974 away, outside any sane radius, so it becomes unclickable
+    // from this side. That asymmetry is exactly how the bug hides.
+    let (x, y) = ring_point(cx, cy, r, 0.004);
+    assert_eq!(pick_stop_ring(&positions, cx, cy, r, x, y, 12.0), Some(0));
+    // ⭐**The discriminating probe.** At 0.995 the wrapped distances are 0.005 to stop 0 (across
+    // the seam) and 0.025 to stop 3 — so stop 0 wins. A LINEAR metric ranks stop 0 as 0.995 away
+    // and hands back stop 3, i.e. the stop at the seam becomes unreachable from the near side.
+    let (x, y) = ring_point(cx, cy, r, 0.995);
+    assert!(
+        wrapped_distance(0.995, 0.0) < wrapped_distance(0.995, 0.97),
+        "the probe must actually be nearer the seam stop, or this proves nothing"
+    );
+    assert_eq!(pick_stop_ring(&positions, cx, cy, r, x, y, 12.0), Some(0));
+    // Out in open arc, nothing is grabbed — which is what lets a click there mean "insert here".
+    let (x, y) = ring_point(cx, cy, r, 0.45);
+    assert_eq!(pick_stop_ring(&positions, cx, cy, r, x, y, 12.0), None);
+    // ⚠The catch zone is ARC LENGTH, so the same 12 px covers a much LARGER slice of a small ring:
+    // 0.02 of a turn is ~10 px at r=80 (a hit) and ~2.5 px at r=20 (a hit by a wide margin).
+    // Getting this backwards — treating the radius as an angle — would make a small ring
+    // unusable and a large one over-grabby.
+    let (x, y) = ring_point(cx, cy, r, 0.32);
+    assert_eq!(pick_stop_ring(&positions, cx, cy, r, x, y, 12.0), Some(1), "0.02 turn ≈ 10 px");
+    let (x, y) = ring_point(cx, cy, 20.0, 0.36);
+    assert_eq!(
+        pick_stop_ring(&positions, cx, cy, 20.0, x, y, 12.0),
+        Some(1),
+        "0.06 of a turn is only ~7.5 px of arc on a 20 px ring, so it is still a hit"
+    );
+    assert_eq!(
+        pick_stop_ring(&positions, cx, cy, r, ring_point(cx, cy, r, 0.36).0, ring_point(cx, cy, r, 0.36).1, 12.0),
+        None,
+        "the SAME angle on the big ring is ~30 px of arc — a miss. Angle alone cannot decide this."
+    );
 }

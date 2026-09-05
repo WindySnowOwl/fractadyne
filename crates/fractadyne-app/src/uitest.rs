@@ -44,6 +44,10 @@ enum Screen {
     ResetConfirm,
     Notice,
     PaletteEditor,
+    /// The same editor in RING view. ⭐A palette is cycled, so the ring is the only place the
+    /// SEAM is visible — and it is a whole second interaction geometry (hit-testing by arc
+    /// rather than by x), so a screenshot of the bar says nothing about it.
+    PaletteEditorRing,
     /// Dual view on one formula, then the SAME dual view on another — checklist steps 45-46, and
     /// the field report behind them: switching formula while dual left the parameter pane showing
     /// the previous formula. The pair is the check; neither screen means anything alone.
@@ -647,6 +651,7 @@ fn build_steps() -> Vec<Step> {
         screen("reset-confirm", Screen::ResetConfirm),
         screen("notice", Screen::Notice),
         screen("palette-editor", Screen::PaletteEditor),
+        screen("palette-editor-ring", Screen::PaletteEditorRing),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -1119,6 +1124,16 @@ impl FractadyneApp {
                 // rather than only the stop rows it shares with every other run.
                 self.coloring.paste_open = true;
                 self.coloring.paste_text = "#000000, #8b1a1a, #ff8800, #ffe6b3".to_string();
+                self.coloring.ring_view = false;
+                self.coloring.gradient_name = "Ember rework".to_string();
+            }
+            // The same seeded gradient, shown as a ring. ⚠The paste box stays SHUT here so the
+            // ring is what the screenshot is of — the bar step already covers that section, and a
+            // step that shows two things at once reviews neither.
+            Screen::PaletteEditorRing => {
+                self.uitest_open_screen(ctx, Screen::PaletteEditor);
+                self.coloring.paste_open = false;
+                self.coloring.ring_view = true;
             }
         }
     }

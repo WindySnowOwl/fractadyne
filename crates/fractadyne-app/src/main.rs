@@ -1678,6 +1678,64 @@ fn nudge_step(fine: bool) -> f32 {
     if fine { 0.001 } else { 0.01 }
 }
 
+/// Signed-free distance between two ring positions, taking the short way round the seam.
+///
+/// ⚠A ring has no ends: `0.99` and `0.01` are two hundredths apart, not ninety-eight. Comparing
+/// them linearly is the bug that makes the marker nearest the seam unclickable from one side.
+fn wrapped_distance(a: f32, b: f32) -> f32 {
+    let d = (a - b).abs().rem_euclid(1.0);
+    d.min(1.0 - d)
+}
+
+/// Pointer → position on the ring: `0` at twelve o'clock, increasing CLOCKWISE.
+///
+/// ⭐Clockwise from the top because that is how a colour wheel and a clock both read, and because
+/// it puts the palette's seam — the `1.0 → 0.0` join that a cycled palette crosses on every
+/// sweep — at the top where it can be seen. Showing that seam is the entire point of the ring
+/// view. The centre itself has no angle and reports `0`.
+fn ring_pos(cx: f32, cy: f32, x: f32, y: f32) -> f32 {
+    let (dx, dy) = (x - cx, y - cy);
+    if dx == 0.0 && dy == 0.0 {
+        return 0.0;
+    }
+    // atan2(dx, -dy) is 0 straight up and grows clockwise, which is what we want; the usual
+    // atan2(dy, dx) is 0 to the right and grows anticlockwise in screen space.
+    (dx.atan2(-dy) / std::f32::consts::TAU).rem_euclid(1.0)
+}
+
+/// Position → the point on a ring of radius `r`. Inverse of [`ring_pos`].
+fn ring_point(cx: f32, cy: f32, r: f32, pos: f32) -> (f32, f32) {
+    let a = pos.rem_euclid(1.0) * std::f32::consts::TAU;
+    (cx + r * a.sin(), cy - r * a.cos())
+}
+
+/// The stop nearest the pointer on the ring, if one is within `radius` pixels of arc.
+///
+/// ⚠Measured as ARC LENGTH at the marker radius, not as an angle, so the catch zone is the same
+/// physical size as the bar's and does not shrink when the ring does. Nearest-wins and
+/// lower-index-on-tie, for the same reasons as [`pick_stop`].
+fn pick_stop_ring(
+    positions: &[f32],
+    cx: f32,
+    cy: f32,
+    r: f32,
+    x: f32,
+    y: f32,
+    radius: f32,
+) -> Option<usize> {
+    let at = ring_pos(cx, cy, x, y);
+    let arc = r * std::f32::consts::TAU;
+    positions
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (i, wrapped_distance(at, p) * arc))
+        .filter(|&(_, d)| d <= radius)
+        .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+        .map(|(i, _)| i)
+}
+
+#[cfg(test)]
+mod gradient_library;
 #[cfg(test)]
 mod gradient_strip;
 
@@ -1698,6 +1756,32 @@ fn paint_gradient(
             [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
             egui::Stroke::new(1.5_f32, gradient_preview_color(lut, t)),
         );
+    }
+}
+
+/// Persisted segments → the colour crate's gradient.
+///
+/// ⚠The `blend`/`space` numbers are a FILE FORMAT (GIMP's `.ggr` numbering, also written into our
+/// sessions and now into the gradient library), so this conversion goes through `Blend::from_u8` /
+/// `Space::from_u8` rather than casting — those two are where the mapping is pinned by a test.
+fn segments_to_gradient(
+    name: &str,
+    segments: &[fractadyne_state::PaletteSegment],
+) -> fractadyne_color::segment::Gradient {
+    fractadyne_color::segment::Gradient {
+        name: name.into(),
+        segments: segments
+            .iter()
+            .map(|s| fractadyne_color::segment::Segment {
+                left: s.left,
+                mid: s.mid,
+                right: s.right,
+                left_color: s.left_color,
+                right_color: s.right_color,
+                blend: fractadyne_color::segment::Blend::from_u8(s.blend),
+                space: fractadyne_color::segment::Space::from_u8(s.space),
+            })
+            .collect(),
     }
 }
 
@@ -3139,6 +3223,40 @@ struct BookmarkFile {
     bookmark: Vec<Bookmark>,
 }
 
+/// One entry in the user's gradient library.
+///
+/// ⭐**Stored as SEGMENTS, never as stops.** A stop list cannot hold a midpoint, a blend curve or
+/// a hue sweep, so saving one would silently flatten exactly the gradients worth saving — the same
+/// trap `custom_segments` exists to avoid. `PaletteSegment` already round-trips through a session
+/// file, so the library inherits that guarantee rather than inventing a second encoding.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct SavedGradient {
+    name: String,
+    #[serde(default)]
+    segment: Vec<fractadyne_state::PaletteSegment>,
+}
+
+/// TOML wrapper for the gradient library (`[[gradient]]` array), beside `bookmarks.toml`.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct GradientFile {
+    #[serde(default)]
+    gradient: Vec<SavedGradient>,
+}
+
+/// Everything **Cancel** puts back — the gradient exactly as it stood when the editor opened.
+///
+/// ⚠It has to carry `use_custom` too: opening the editor on a preset and then touching anything
+/// switches the palette over to custom, so restoring only the gradient would leave the view on a
+/// custom palette the user had cancelled out of.
+#[derive(Clone)]
+struct GradientBaseline {
+    segments: Vec<fractadyne_state::PaletteSegment>,
+    palette: Vec<[f32; 4]>,
+    flat: bool,
+    use_custom: bool,
+    name: String,
+}
+
 /// A navigation history entry (location only) for undo/redo.
 #[derive(Clone)]
 struct ViewSnapshot {
@@ -3396,7 +3514,24 @@ struct ColoringConfig {
     /// Which marker the pointer grabbed, for the length of one drag. `None` between drags, and set
     /// only on `drag_started` — re-hit-testing every frame would let a fast drag hand the pointer
     /// to whichever marker it swept past.
+    /// ⚠⚠**Latched from the PRESS ORIGIN, not from the pointer position at `drag_started`.** See
+    /// `gradient_strip::DRAG_THRESHOLD_PX`: that callback does not fire until the pointer has
+    /// already moved — by an unbounded amount, since a flick covers tens of pixels in one frame —
+    /// so hit-testing where it currently is grabs the neighbouring stop, or, on a gradient with
+    /// few widely-spaced stops, nothing at all, which cancels the drag silently. That was the
+    /// reported "drag points sometimes hang up where they stop moving".
     drag_stop: Option<usize>,
+    /// Show the gradient as a RING rather than a bar.
+    ///
+    /// ⭐A palette is *cycled*, so it is topologically a circle: the ring is the only view in which
+    /// the seam — the `1.0 → 0.0` join the renderer crosses on every sweep — is visible at all. A
+    /// gradient that looks fine on a bar can have a hard edge there.
+    ring_view: bool,
+    /// The name in the Save field (transient; the saved copy carries its own).
+    gradient_name: String,
+    /// What **Cancel** restores. Captured the first frame the editor is open and cleared when it
+    /// closes, so it is always "as it was when you opened it" rather than "as of some earlier edit".
+    editor_baseline: Option<GradientBaseline>,
     /// Gradient editor's "Paste…" section: expanded, the pasted text, and the last result
     /// message. Session-transient by design — a half-typed import is not worth persisting.
     paste_open: bool,
@@ -3643,6 +3778,8 @@ struct FractadyneApp {
     gallery: GalleryState,
     /// Bookmarks (saved views), persisted to the config dir; + window/input state.
     bookmarks: Vec<Bookmark>,
+    /// The user's saved gradients, loaded from `gradients.toml` beside the bookmarks.
+    saved_gradients: Vec<SavedGradient>,
     bookmark_name: String,
     /// A just-added bookmark whose thumbnail still needs rendering (deferred to `update`,
     /// where the GPU is available and the current view still matches the bookmark).
@@ -4399,6 +4536,7 @@ impl FractadyneApp {
             },
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             bookmarks: Self::load_bookmarks(),
+            saved_gradients: Self::load_saved_gradients(),
             pending_thumb: None,
             heal_thumb: None,
             thumb_shot: None,
@@ -4434,6 +4572,9 @@ impl FractadyneApp {
                 sel_stop: 0,
                 sel_segment: 0,
                 drag_stop: None,
+                ring_view: false,
+                gradient_name: String::new(),
+                editor_baseline: None,
                 paste_open: false,
                 paste_text: String::new(),
                 paste_msg: None,
@@ -5091,6 +5232,56 @@ impl FractadyneApp {
         directories::UserDirs::new()
             .and_then(|u| u.picture_dir().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::path::PathBuf::from("."))
+    }
+
+    fn gradients_path() -> Option<std::path::PathBuf> {
+        fractadyne_state::config_dir().map(|d| d.join("gradients.toml"))
+    }
+
+    /// Load the saved gradient library (empty if none / unreadable), same shape as the bookmarks.
+    fn load_saved_gradients() -> Vec<SavedGradient> {
+        Self::gradients_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|t| toml::from_str::<GradientFile>(&t).ok())
+            .map(|f| f.gradient)
+            .unwrap_or_default()
+    }
+
+    /// Persist the gradient library. A write failure loses durable user data, so it is surfaced as
+    /// a toast rather than swallowed — the same contract `save_bookmarks` keeps.
+    fn save_gradient_library(&mut self) {
+        let Some(path) = Self::gradients_path() else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let file = GradientFile { gradient: self.saved_gradients.clone() };
+        match toml::to_string_pretty(&file).map(|t| std::fs::write(&path, t)) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => self.pending_toast = Some(format!("Couldn't save gradients: {e}")),
+            Err(e) => self.pending_toast = Some(format!("Couldn't serialize gradients: {e}")),
+        }
+    }
+
+    /// Save the current gradient into the library under `name`, replacing any entry of that name.
+    ///
+    /// ⚠**Replace, not append.** Saving twice under one name must mean "update it"; appending would
+    /// grow a list of identically-named entries the picker could not tell apart.
+    fn save_gradient_as(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() || self.coloring.custom_segments.is_empty() {
+            return;
+        }
+        let entry =
+            SavedGradient { name: name.to_string(), segment: self.coloring.custom_segments.clone() };
+        match self.saved_gradients.iter().position(|g| g.name == name) {
+            Some(i) => self.saved_gradients[i] = entry,
+            None => self.saved_gradients.push(entry),
+        }
+        self.saved_gradients.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        self.save_gradient_library();
+        self.pending_toast = Some(format!("Saved gradient \"{name}\"."));
     }
 
     /// Directory to open a file dialog in: the last one the user browsed to (if it still exists),
@@ -7084,23 +7275,7 @@ impl FractadyneApp {
         // They produce exactly what building segments from the same list produces — that is what
         // makes the migration lossless — so the net can never disagree with the branch above.
         if !self.coloring.custom_segments.is_empty() {
-            return Gradient {
-                name: "Imported".into(),
-                segments: self
-                    .coloring
-                    .custom_segments
-                    .iter()
-                    .map(|s| fractadyne_color::segment::Segment {
-                        left: s.left,
-                        mid: s.mid,
-                        right: s.right,
-                        left_color: s.left_color,
-                        right_color: s.right_color,
-                        blend: fractadyne_color::segment::Blend::from_u8(s.blend),
-                        space: fractadyne_color::segment::Space::from_u8(s.space),
-                    })
-                    .collect(),
-            };
+            return segments_to_gradient("Imported", &self.coloring.custom_segments);
         }
         if self.coloring.custom_palette.is_empty() {
             let p = &fractadyne_color::PRESETS[self.coloring.palette_idx];
@@ -7182,18 +7357,38 @@ impl FractadyneApp {
     /// Before this it drew one row per stop and one row per segment, so every parameter of every
     /// segment was resident at once and nothing could be drawn large enough to read — the curve
     /// preview that exists to compensate for undecodable blend names was **30×16 px**, and the two
-    /// lists could only be aligned by counting. Now three surfaces share **one x-axis**: the baked
+    /// lists could only be aligned by counting. Now the surfaces share **one axis**: the baked
     /// gradient, the markers that sit on it, and a ribbon of per-segment curves; clicking either a
     /// marker or a cell selects, and the selection alone gets full-size controls.
     ///
+    /// ⭐**P3″ adds the four things the author asked for after using it**: a RING view (a palette
+    /// is cycled, so it is topologically a circle and the seam only exists in that view), an ADD
+    /// lane above the bar whose line is itself the click target, a REMOVE control under the
+    /// selection, and Save / Cancel over a named gradient library.
+    ///
     /// ⚠**No model change lives here.** Every edit goes through the same `Gradient` operations P1
-    /// introduced, so P3′ must not move a pixel of any existing gradient.
+    /// introduced, so the editor must not move a pixel of any existing gradient.
     fn palette_editor_window(&mut self, ctx: &egui::Context) {
         if !self.coloring.palette_editor_open {
             return;
         }
+        // ⭐**Cancel needs a baseline, and it has to be taken HERE.** The editor is opened from
+        // three places (menu, panel, keyboard); capturing on first-frame-open means none of them
+        // can forget to, and it is always "as it was when you opened it" rather than as of some
+        // earlier edit.
+        if self.coloring.editor_baseline.is_none() {
+            self.coloring.editor_baseline = Some(GradientBaseline {
+                segments: self.coloring.custom_segments.clone(),
+                palette: self.coloring.custom_palette.clone(),
+                flat: self.coloring.custom_palette_flat,
+                use_custom: self.coloring.use_custom_palette,
+                name: self.coloring.gradient_name.clone(),
+            });
+        }
         let mut open = self.coloring.palette_editor_open;
         let mut changed = false;
+        let mut cancelled = false;
+        let mut close_after = false;
         egui::Window::new("Gradient editor")
             .open(&mut open)
             .resizable(false)
@@ -7206,11 +7401,16 @@ impl FractadyneApp {
                 // instead, and makes the strip a KNOWN width, which is what the ~15 px marker
                 // spacing at the 32-stop cap is calculated against.
                 ui.set_max_width(496.0);
-                // Strip height, marker lane, segment ribbon, and the selected segment's canvas.
+
+                // Add lane, gradient bar, marker lane, remove lane, segment ribbon, curve canvas,
+                // and the ring that replaces the first four.
+                const ADD_H: f32 = 15.0;
                 const BAR_H: f32 = 30.0;
                 const LANE_H: f32 = 17.0;
+                const REM_H: f32 = 15.0;
                 const RIBBON_H: f32 = 34.0;
                 const CANVAS: f32 = 168.0;
+                const RING_H: f32 = 216.0;
                 // How near a marker the pointer must be to grab it. ⚠At the 32-stop cap the
                 // markers are ~15 px apart, so these ranges OVERLAP — which is exactly why
                 // `pick_stop` takes the nearest rather than the first in range.
@@ -7236,17 +7436,50 @@ impl FractadyneApp {
                         self.coloring.sel_segment.min(g.segments.len().saturating_sub(1));
                 }
 
-                // ── Allocate the three aligned surfaces ──────────────────────────────────────
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("View").weak().small());
+                    ui.selectable_value(&mut self.coloring.ring_view, false, "Bar")
+                        .on_hover_text("A straight strip — best for placing stops precisely");
+                    ui.selectable_value(&mut self.coloring.ring_view, true, "Ring")
+                        .on_hover_text(
+                            "A ring, because the palette is CYCLED: the join at the top is the seam the renderer crosses on every sweep, and a gradient that looks fine on a bar can have a hard edge there.",
+                        );
+                });
+                ui.add_space(3.0);
+
+                // ⭐⭐**The press origin, not the pointer position.** `drag_started` does not fire
+                // until the pointer has already moved past egui's threshold — and the drift is
+                // unbounded, being however far a flick travelled in one frame. Hit-testing where
+                // the pointer IS grabs the neighbouring stop, or (on a gradient with few, widely
+                // spaced stops) nothing at all, which cancels the drag silently and leaves the
+                // stop sitting still. That was the reported "drag points hang up". See
+                // `gradient_strip.rs`, which pins the size of that gap.
+                let press = ui.input(|i| i.pointer.press_origin());
+
+                let ring = self.coloring.ring_view;
+                // ── Allocate ────────────────────────────────────────────────────────────────
                 //
                 // Allocated first, interacted with second, painted third. A drag therefore edits
                 // and REDRAWS in the same frame; painting as we allocate would leave every marker
-                // trailing the pointer by one frame.
-                let (bar_rect, _) =
-                    ui.allocate_exact_size(egui::vec2(full_w, BAR_H), egui::Sense::hover());
-                let (x0, w) = (bar_rect.min.x, bar_rect.width());
-                let lane = editable.then(|| {
+                // trailing the pointer by one.
+                let add_lane = (editable && !ring).then(|| {
+                    ui.allocate_exact_size(egui::vec2(full_w, ADD_H), egui::Sense::click())
+                });
+                let bar = (!ring).then(|| {
+                    ui.allocate_exact_size(egui::vec2(full_w, BAR_H), egui::Sense::hover()).0
+                });
+                let lane = (editable && !ring).then(|| {
                     ui.allocate_exact_size(
                         egui::vec2(full_w, LANE_H),
+                        egui::Sense::click_and_drag(),
+                    )
+                });
+                let rem_lane = (editable && !ring).then(|| {
+                    ui.allocate_exact_size(egui::vec2(full_w, REM_H), egui::Sense::click())
+                });
+                let ring_area = ring.then(|| {
+                    ui.allocate_exact_size(
+                        egui::vec2(full_w, RING_H),
                         egui::Sense::click_and_drag(),
                     )
                 });
@@ -7255,29 +7488,91 @@ impl FractadyneApp {
                     ui.allocate_exact_size(egui::vec2(full_w, RIBBON_H), egui::Sense::click())
                 });
 
-                // ── Interaction: the strip ───────────────────────────────────────────────────
+                // ⚠The strip's x-axis is shared by the bar, both lanes and the RIBBON — and in
+                // ring mode the first three do not exist, so the ribbon has to be able to define
+                // it. Everything here is allocated at `full_w`, so any of them gives the same
+                // answer; taking it from a real rect rather than from `full_w` alone keeps the
+                // ribbon aligned with the markers when a future layout indents one of them.
+                let (x0, w) = match bar
+                    .or(add_lane.as_ref().map(|(r, _)| *r))
+                    .or(ribbon.as_ref().map(|(r, _)| *r))
+                {
+                    Some(r) => (r.min.x, r.width()),
+                    None => (ui.min_rect().min.x, full_w),
+                };
+                // The ring's geometry, shared by its interaction and its painting.
+                let ring_geo = ring_area.as_ref().map(|(r, _)| {
+                    let c = r.center();
+                    let outer = (r.height() * 0.5 - 14.0).max(20.0);
+                    (c.x, c.y, outer)
+                });
+
+                // ── Interaction: add lane (the line above the bar IS the button) ─────────────
+                if let (Some((rect, resp)), Some(g0)) = (add_lane.as_ref(), grad.clone()) {
+                    // ⭐The `+` glyph sits at the right end as the affordance; the LINE is the
+                    // target, because "click where you want it" is the whole point — a button
+                    // would have to guess the position, which is what `Add stop` already does.
+                    let plus_hit = resp
+                        .interact_pointer_pos()
+                        .is_some_and(|p| p.x > rect.max.x - 18.0);
+                    if let (true, Some(p)) = (resp.clicked(), press.or(resp.interact_pointer_pos()))
+                    {
+                        if count < EDITOR_MAX_STOPS {
+                            let mut g = g0.clone();
+                            let at = if plus_hit {
+                                // The `+` itself has no position, so it splits the widest gap —
+                                // the same rule as the `Add stop` button.
+                                g.segments
+                                    .iter()
+                                    .max_by(|a, b| {
+                                        (a.right - a.left).total_cmp(&(b.right - b.left))
+                                    })
+                                    .map(|s| 0.5 * (s.left + s.right))
+                                    .unwrap_or(0.5)
+                            } else {
+                                strip_pos(p.x, x0, w)
+                            };
+                            if let Some(i) = g.insert_stop(at) {
+                                self.store_segments(&g);
+                                self.coloring.sel_stop = i;
+                                self.coloring.sel_segment =
+                                    segment_for_stop(i, g.segments.len());
+                                grad = self.editable_gradient();
+                                changed = true;
+                            }
+                        }
+                    }
+                    resp.clone().on_hover_text(
+                        "Click anywhere on this line to add a stop there. The + adds one in the widest gap.",
+                    );
+                }
+
+                // ── Interaction: the marker lane ────────────────────────────────────────────
                 if let (Some((_, resp)), Some(g0)) = (lane.as_ref(), grad.clone()) {
                     let positions = stop_positions(&g0);
                     let n_seg = g0.segments.len();
+                    // ⚠`press` for HIT-TESTING (what did the user grab), the live pointer for
+                    // POSITION (where are they putting it). Conflating the two is the bug.
+                    let hit = press
+                        .or_else(|| resp.interact_pointer_pos())
+                        .and_then(|p| pick_stop(&positions, p.x, x0, w, CATCH_PX));
+                    if resp.drag_started() {
+                        self.coloring.drag_stop = hit;
+                    }
+                    if let (true, Some(i)) = (resp.clicked() || resp.drag_started(), hit) {
+                        self.coloring.sel_stop = i;
+                        self.coloring.sel_segment = segment_for_stop(i, n_seg);
+                    }
                     if let Some(p) = resp.interact_pointer_pos() {
-                        let hit = pick_stop(&positions, p.x, x0, w, CATCH_PX);
-                        if resp.drag_started() {
-                            self.coloring.drag_stop = hit;
-                        }
-                        if let (true, Some(i)) = (resp.clicked() || resp.drag_started(), hit) {
-                            self.coloring.sel_stop = i;
-                            self.coloring.sel_segment = segment_for_stop(i, n_seg);
-                        }
-                        // ⭐**Double-click on bare strip inserts a stop there.** `UI-DESIGN.md` §8
-                        // spends the double-click on "edit colour", but with a persistent selection
-                        // the colour swatch is always on screen anyway — so it is better spent on
-                        // the one operation that otherwise has no direct-manipulation route at all.
+                        // ⭐**Double-click on bare strip inserts a stop there**, kept alongside the
+                        // add lane: the lane is the discoverable route, this is the fast one.
                         if resp.double_clicked() && hit.is_none() && count < EDITOR_MAX_STOPS {
                             let mut g = g0.clone();
                             if let Some(i) = g.insert_stop(strip_pos(p.x, x0, w)) {
                                 self.store_segments(&g);
                                 self.coloring.sel_stop = i;
-                                self.coloring.sel_segment = segment_for_stop(i, g.segments.len());
+                                self.coloring.sel_segment =
+                                    segment_for_stop(i, g.segments.len());
                                 grad = self.editable_gradient();
                                 changed = true;
                             }
@@ -7332,7 +7627,99 @@ impl FractadyneApp {
                     }
                 }
 
-                // ── Interaction: the ribbon ──────────────────────────────────────────────────
+                // ── Interaction: the remove lane (a ⊖ under the selection) ──────────────────
+                if let (Some((rect, resp)), Some(g0)) = (rem_lane.as_ref(), grad.clone()) {
+                    let i = self.coloring.sel_stop;
+                    let removable = i > 0 && i + 1 < count;
+                    let at = g0.stop(i).map(|(p, _)| strip_x(p, x0, w));
+                    if let (true, true, Some(px), Some(p)) =
+                        (resp.clicked(), removable, at, press.or(resp.interact_pointer_pos()))
+                    {
+                        // ⚠A generous target: the glyph is 7 px across and it tracks a marker the
+                        // user may have just dragged, so the click zone is the width of the
+                        // marker's own catch radius rather than the drawn circle.
+                        if (p.x - px).abs() <= CATCH_PX && rect.contains(p) {
+                            let mut g = g0.clone();
+                            g.remove_stop(i);
+                            if g.stop_count() < count {
+                                self.store_segments(&g);
+                                self.coloring.sel_stop = sel_after_remove(i, i, g.stop_count());
+                                self.coloring.sel_segment =
+                                    segment_for_stop(self.coloring.sel_stop, g.segments.len());
+                                grad = self.editable_gradient();
+                                changed = true;
+                            }
+                        }
+                    }
+                    if removable {
+                        resp.clone().on_hover_text("Remove the selected stop");
+                    }
+                }
+
+                // ── Interaction: the ring ───────────────────────────────────────────────────
+                if let (Some((_, resp)), Some((cx, cy, r)), Some(g0)) =
+                    (ring_area.as_ref(), ring_geo, grad.clone())
+                {
+                    let positions = stop_positions(&g0);
+                    let n_seg = g0.segments.len();
+                    let hit = press.or_else(|| resp.interact_pointer_pos()).and_then(|p| {
+                        pick_stop_ring(&positions, cx, cy, r, p.x, p.y, CATCH_PX + 3.0)
+                    });
+                    if resp.drag_started() {
+                        self.coloring.drag_stop = hit;
+                    }
+                    if let (true, Some(i)) = (resp.clicked() || resp.drag_started(), hit) {
+                        self.coloring.sel_stop = i;
+                        self.coloring.sel_segment = segment_for_stop(i, n_seg);
+                    }
+                    if let Some(p) = resp.interact_pointer_pos() {
+                        let at = ring_pos(cx, cy, p.x, p.y);
+                        if resp.clicked() && hit.is_none() {
+                            if let Some(i) = pick_segment(&positions, at) {
+                                self.coloring.sel_segment = i;
+                            }
+                        }
+                        if resp.double_clicked() && hit.is_none() && count < EDITOR_MAX_STOPS {
+                            let mut g = g0.clone();
+                            if let Some(i) = g.insert_stop(at) {
+                                self.store_segments(&g);
+                                self.coloring.sel_stop = i;
+                                self.coloring.sel_segment =
+                                    segment_for_stop(i, g.segments.len());
+                                grad = self.editable_gradient();
+                                changed = true;
+                            }
+                        }
+                        if let (true, Some(i)) = (resp.secondary_clicked(), hit) {
+                            let mut g = g0.clone();
+                            g.remove_stop(i);
+                            if g.stop_count() < count {
+                                self.store_segments(&g);
+                                self.coloring.sel_stop =
+                                    sel_after_remove(self.coloring.sel_stop, i, g.stop_count());
+                                self.coloring.sel_segment =
+                                    segment_for_stop(self.coloring.sel_stop, g.segments.len());
+                                grad = self.editable_gradient();
+                                changed = true;
+                            }
+                        }
+                        if let (true, Some(i)) = (resp.dragged(), self.coloring.drag_stop) {
+                            let mut g = grad.clone().unwrap_or_else(|| g0.clone());
+                            g.set_stop_position(i, at);
+                            self.store_segments(&g);
+                            grad = self.editable_gradient();
+                            changed = true;
+                        }
+                    }
+                    if resp.drag_stopped() {
+                        self.coloring.drag_stop = None;
+                    }
+                    resp.clone().on_hover_text(
+                        "Drag a marker round the ring to move its stop · double-click open ring to add one · right-click a marker to remove it. The join at the top is the palette's seam.",
+                    );
+                }
+
+                // ── Interaction: the ribbon ─────────────────────────────────────────────────
                 if let (Some((_, resp)), Some(g0)) = (ribbon.as_ref(), grad.clone()) {
                     if let (true, Some(p)) = (resp.clicked(), resp.interact_pointer_pos()) {
                         if let Some(i) =
@@ -7348,13 +7735,44 @@ impl FractadyneApp {
                 // ⚠Baked AFTER the interactions above, so an edit this frame shows this frame.
                 let lut = self.custom_gradient().bake(fractadyne_color::segment::LUT_SIZE);
                 let pr = ui.painter().clone();
-                paint_gradient(&pr, bar_rect, &lut);
-                pr.rect_stroke(
-                    bar_rect,
-                    2.0,
-                    egui::Stroke::new(1.0_f32, BRAND_ACCENT),
-                    egui::StrokeKind::Inside,
-                );
+                if let Some(rect) = bar {
+                    paint_gradient(&pr, rect, &lut);
+                    pr.rect_stroke(
+                        rect,
+                        2.0,
+                        egui::Stroke::new(1.0_f32, BRAND_ACCENT),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                if let (Some((rect, _)), Some(g)) = (add_lane.as_ref(), grad.as_ref()) {
+                    // The line, a tick under every existing stop (so the lane reads as belonging
+                    // to the strip below it), and the ⊕ at the right end.
+                    let y = rect.center().y;
+                    let right = rect.max.x - 20.0;
+                    pr.line_segment(
+                        [egui::pos2(rect.min.x, y), egui::pos2(right, y)],
+                        egui::Stroke::new(1.0_f32, weak),
+                    );
+                    for i in 0..g.stop_count() {
+                        if let Some((p, _)) = g.stop(i) {
+                            let x = strip_x(p, x0, w);
+                            pr.line_segment(
+                                [egui::pos2(x, y - 3.0), egui::pos2(x, y + 3.0)],
+                                egui::Stroke::new(1.0_f32, weak.linear_multiply(0.7)),
+                            );
+                        }
+                    }
+                    let c = egui::pos2(rect.max.x - 8.0, y);
+                    pr.circle_stroke(c, 6.0, egui::Stroke::new(1.4_f32, accent));
+                    pr.line_segment(
+                        [egui::pos2(c.x - 3.0, c.y), egui::pos2(c.x + 3.0, c.y)],
+                        egui::Stroke::new(1.4_f32, accent),
+                    );
+                    pr.line_segment(
+                        [egui::pos2(c.x, c.y - 3.0), egui::pos2(c.x, c.y + 3.0)],
+                        egui::Stroke::new(1.4_f32, accent),
+                    );
+                }
                 if let (Some((rect, _)), Some(g)) = (lane.as_ref(), grad.as_ref()) {
                     let sel = self.coloring.sel_stop;
                     for i in 0..g.stop_count() {
@@ -7369,6 +7787,90 @@ impl FractadyneApp {
                                 egui::pos2(x, top),
                                 egui::pos2(x - half, bot),
                                 egui::pos2(x + half, bot),
+                            ],
+                            stop_color32(rgb),
+                            if i == sel {
+                                egui::Stroke::new(2.0_f32, accent)
+                            } else {
+                                egui::Stroke::new(1.0_f32, weak)
+                            },
+                        ));
+                    }
+                }
+                if let (Some((rect, _)), Some(g)) = (rem_lane.as_ref(), grad.as_ref()) {
+                    let i = self.coloring.sel_stop;
+                    // ⚠Only for an interior stop. The two ends are pinned by contract, so a ⊖
+                    // there would be an offer the editor cannot honour.
+                    if i > 0 && i + 1 < count {
+                        if let Some((p, _)) = g.stop(i) {
+                            let c = egui::pos2(strip_x(p, x0, w), rect.center().y);
+                            pr.circle_stroke(c, 6.0, egui::Stroke::new(1.4_f32, accent));
+                            pr.line_segment(
+                                [egui::pos2(c.x - 3.0, c.y), egui::pos2(c.x + 3.0, c.y)],
+                                egui::Stroke::new(1.4_f32, accent),
+                            );
+                        }
+                    }
+                }
+                if let (Some((rect, _)), Some((cx, cy, outer)), Some(g)) =
+                    (ring_area.as_ref(), ring_geo, grad.as_ref())
+                {
+                    let _ = rect;
+                    let inner = outer * 0.60;
+                    // ⭐The annulus is drawn as wedges through the SAME `Lut` the GPU fetches
+                    // from, exactly like the bar — one sampling path, so the two views cannot
+                    // disagree about what the gradient looks like.
+                    const WEDGES: usize = 240;
+                    for k in 0..WEDGES {
+                        let (t0, t1) = (k as f32 / WEDGES as f32, (k + 1) as f32 / WEDGES as f32);
+                        let (ax, ay) = ring_point(cx, cy, outer, t0);
+                        let (bx, by) = ring_point(cx, cy, outer, t1);
+                        let (cx2, cy2) = ring_point(cx, cy, inner, t1);
+                        let (dx, dy) = ring_point(cx, cy, inner, t0);
+                        pr.add(egui::Shape::convex_polygon(
+                            vec![
+                                egui::pos2(ax, ay),
+                                egui::pos2(bx, by),
+                                egui::pos2(cx2, cy2),
+                                egui::pos2(dx, dy),
+                            ],
+                            gradient_preview_color(&lut, 0.5 * (t0 + t1)),
+                            egui::Stroke::NONE,
+                        ));
+                    }
+                    pr.circle_stroke(
+                        egui::pos2(cx, cy),
+                        outer,
+                        egui::Stroke::new(1.0_f32, BRAND_ACCENT),
+                    );
+                    pr.circle_stroke(
+                        egui::pos2(cx, cy),
+                        inner,
+                        egui::Stroke::new(1.0_f32, BRAND_ACCENT),
+                    );
+                    // ⭐⭐**The seam.** This is the join a cycled palette crosses on every sweep
+                    // and the one thing the bar cannot show: on a bar the two ends are as far
+                    // apart as they can be, while in the render they are adjacent.
+                    pr.line_segment(
+                        [
+                            egui::pos2(cx, cy - inner + 1.0),
+                            egui::pos2(cx, cy - outer - 8.0),
+                        ],
+                        egui::Stroke::new(1.5_f32, ui.visuals().warn_fg_color),
+                    );
+                    let sel = self.coloring.sel_stop;
+                    for i in 0..g.stop_count() {
+                        let Some((p, rgb)) = g.stop(i) else { continue };
+                        // Markers point INWARD from just outside the ring, so they never cover the
+                        // colour they stand for.
+                        let (tipx, tipy) = ring_point(cx, cy, outer + 1.0, p);
+                        let (b1x, b1y) = ring_point(cx, cy, outer + 10.0, p - 0.012);
+                        let (b2x, b2y) = ring_point(cx, cy, outer + 10.0, p + 0.012);
+                        pr.add(egui::Shape::convex_polygon(
+                            vec![
+                                egui::pos2(tipx, tipy),
+                                egui::pos2(b1x, b1y),
+                                egui::pos2(b2x, b2y),
                             ],
                             stop_color32(rgb),
                             if i == sel {
@@ -7423,7 +7925,7 @@ impl FractadyneApp {
                     // the PRESET and no controls, which reads as broken rather than as "you have
                     // not started one yet".
                     ui.label(
-                        egui::RichText::new("No custom gradient yet — \"Copy preset…\" or an import below starts one, and its stops and per-segment curves appear here.")
+                        egui::RichText::new("No custom gradient yet — \"Copy preset…\", an import or a saved gradient below starts one, and its stops and per-segment curves appear here.")
                             .weak()
                             .small(),
                     );
@@ -7667,7 +8169,7 @@ impl FractadyneApp {
                                 movable,
                                 egui::Button::new(format!("{} Remove", crate::icons::CLOSE)),
                             )
-                            .on_hover_text("Remove this stop (or right-click its marker)")
+                            .on_hover_text("Remove this stop (or click the ⊖ under it)")
                             .clicked()
                         {
                             let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
@@ -7691,7 +8193,7 @@ impl FractadyneApp {
                         && count < EDITOR_MAX_STOPS
                         && ui
                             .button(format!("{} Add stop", crate::icons::ADD))
-                            .on_hover_text("Split the widest segment (or double-click the strip)")
+                            .on_hover_text("Split the widest segment (or click the line above the gradient)")
                             .clicked()
                     {
                         // ⭐Through the SEGMENT op: splitting preserves the blend and colour space
@@ -7781,9 +8283,105 @@ impl FractadyneApp {
                     });
                 });
 
-                // ⭐An imported `.ggr` is RICHER than the stop list the editor edits, so editing
-                // stops cannot mean "edit this gradient" — it means replacing it. Say so, and make
-                // the conversion an explicit button rather than a surprise on the first click.
+                // ── The gradient library: name, Save, the saved list, and Cancel ─────────────
+                //
+                // ⭐**Saved as SEGMENTS** (`SavedGradient`), never as stops — a stop list cannot
+                // hold a midpoint, a blend curve or a hue sweep, so saving one would flatten
+                // exactly the gradients worth keeping.
+                ui.add_space(4.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.coloring.gradient_name)
+                            .desired_width(150.0)
+                            .hint_text("my gradient"),
+                    );
+                    let name = self.coloring.gradient_name.trim().to_string();
+                    let can_save = !name.is_empty() && !self.coloring.custom_segments.is_empty();
+                    let overwrites = self.saved_gradients.iter().any(|g| g.name == name);
+                    if ui
+                        .add_enabled(can_save, egui::Button::new(if overwrites { "Update" } else { "Save" }))
+                        .on_hover_text(if can_save {
+                            "Save this gradient to your library, with its curves and colour spaces intact"
+                        } else {
+                            "Give the gradient a name first"
+                        })
+                        .clicked()
+                    {
+                        self.save_gradient_as(&name);
+                    }
+                    ui.menu_button(format!("Saved ({}) ▾", self.saved_gradients.len()), |ui| {
+                        if self.saved_gradients.is_empty() {
+                            ui.label(egui::RichText::new("Nothing saved yet").weak().small());
+                        }
+                        let mut load: Option<usize> = None;
+                        let mut drop: Option<usize> = None;
+                        egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                            for (i, sg) in self.saved_gradients.iter().enumerate() {
+                                ui.horizontal(|ui| {
+                                    // Each row previews itself — a name says nothing about what a
+                                    // gradient looks like, the lesson the `.ugr` picker already
+                                    // learned.
+                                    let (rect, resp) = ui.allocate_exact_size(
+                                        egui::vec2(84.0, 14.0),
+                                        egui::Sense::click(),
+                                    );
+                                    let g = segments_to_gradient(&sg.name, &sg.segment);
+                                    paint_gradient(
+                                        &ui.painter_at(rect),
+                                        rect,
+                                        &g.bake(fractadyne_color::segment::LUT_SIZE),
+                                    );
+                                    if resp.clicked() || ui.selectable_label(false, &sg.name).clicked() {
+                                        load = Some(i);
+                                    }
+                                    if ui
+                                        .small_button(crate::icons::CLOSE)
+                                        .on_hover_text("Delete this saved gradient")
+                                        .clicked()
+                                    {
+                                        drop = Some(i);
+                                    }
+                                });
+                            }
+                        });
+                        if let Some(i) = load {
+                            let sg = self.saved_gradients[i].clone();
+                            self.coloring.custom_segments = sg.segment.clone();
+                            self.coloring.custom_palette_flat = false;
+                            // ⚠Keep the derived stop list in step, exactly as `store_segments`
+                            // does — a loaded gradient must be indistinguishable from an edited
+                            // one, or "Convert to editable stops" would read a stale list.
+                            let g = segments_to_gradient(&sg.name, &sg.segment);
+                            self.store_segments(&g);
+                            self.coloring.gradient_name = sg.name;
+                            self.coloring.sel_stop = 0;
+                            self.coloring.sel_segment = 0;
+                            changed = true;
+                            ui.close_menu();
+                        }
+                        if let Some(i) = drop {
+                            self.saved_gradients.remove(i);
+                            self.save_gradient_library();
+                        }
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // ⚠**Cancel reverts, the window's ✕ does not.** Closing a window is not a
+                        // statement about the work in it, and every edit here is already live in
+                        // the view — so silently undoing on ✕ would throw away work the user
+                        // watched themselves make.
+                        if ui
+                            .button("Cancel")
+                            .on_hover_text("Discard every change made since this window was opened, and close it")
+                            .clicked()
+                        {
+                            cancelled = true;
+                            close_after = true;
+                        }
+                    });
+                });
+
                 // ⚠**Gated on the CONTENT, not on "has segments".** Before P3′ this fired whenever
                 // `custom_segments` was non-empty — which meant "came from a `.ggr`" only until P1
                 // made the editor segment-native. After P1 every custom gradient has segments, so
@@ -7961,8 +8559,14 @@ impl FractadyneApp {
                         // automatically", which described the flat stop list the editor used to
                         // own. Since P1 the stops ARE segment boundaries — already ordered, and a
                         // duplicate position is a deliberate hard edge, not a mess to tidy. The
-                        // space is better spent on the interactions that have no other label.
-                        format!("{n} stops · drag a marker to move it · double-click the strip to add one · right-click a marker to remove it")
+                        // space is better spent on the interactions that have no other label —
+                        // and those differ between the two views, so the hint has to as well
+                        // rather than telling a ring user to click a strip that is not there.
+                        if self.coloring.ring_view {
+                            format!("{n} stops · drag a marker round the ring to move its stop · double-click open ring to add one · right-click a marker to remove it · the mark at the top is the seam")
+                        } else {
+                            format!("{n} stops · click the line above the gradient to add one there · drag a marker to move it · ⊖ or right-click removes")
+                        }
                     })
                     .weak()
                     .small(),
@@ -7971,6 +8575,32 @@ impl FractadyneApp {
         if changed {
             self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
             self.coloring.use_custom_palette = true;
+        }
+        // ⭐**Cancel restores the baseline wholesale**, including `use_custom_palette`: opening the
+        // editor on a preset and touching anything switches the palette over to custom, so putting
+        // back only the gradient would strand the view on a custom palette the user cancelled out
+        // of. It runs AFTER the `changed` block above for exactly that reason.
+        if cancelled {
+            if let Some(b) = self.coloring.editor_baseline.clone() {
+                self.coloring.custom_segments = b.segments;
+                self.coloring.custom_palette = b.palette;
+                self.coloring.custom_palette_flat = b.flat;
+                self.coloring.use_custom_palette = b.use_custom;
+                self.coloring.gradient_name = b.name;
+                self.coloring.sel_stop = 0;
+                self.coloring.sel_segment = 0;
+                self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
+            }
+        }
+        if close_after {
+            open = false;
+        }
+        // ⚠Dropped whenever the window closes — by ✕, by Cancel, or by the menu toggle — so the
+        // next open captures the state as it is THEN. A baseline that outlived one session of the
+        // window would make Cancel undo edits the user had already accepted by closing it.
+        if !open {
+            self.coloring.editor_baseline = None;
+            self.coloring.drag_stop = None;
         }
         self.coloring.palette_editor_open = open;
     }
