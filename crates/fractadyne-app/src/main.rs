@@ -1542,6 +1542,16 @@ struct RandomPalette {
 
 const RAND_STOPS: usize = 6;
 
+/// Most stops the gradient editor draws a per-stop row for.
+///
+/// ⚠A UI limit, **not** a palette limit — the eight-stop ceiling that used to be both went away
+/// with the LUT bake. An imported `.map` is 256 entries and rendering 256 colour pickers is a hang,
+/// so above this the editor shows the preview and a summary instead of rows.
+const EDITOR_MAX_STOPS: usize = 24;
+
+/// Most colours the paste box keeps from one paste (a `.map` body is 256).
+const PASTE_MAX_COLORS: usize = 256;
+
 impl RandomPalette {
     fn new(seed: u32) -> Self {
         let mut s = RandomPalette {
@@ -3174,6 +3184,9 @@ struct ColoringConfig {
     /// Custom gradient (editor): stops as `[pos, r, g, b]` (DISPLAY-space RGB). When `use_custom_palette`
     /// is set, this overrides the preset selection.
     custom_palette: Vec<[f32; 4]>,
+    /// Read `custom_palette` as BANDS (flat, no interpolation) instead of gradient stops — what a
+    /// Fractint `.map` import sets. See `fractadyne_color::import::MapPalette::bands`.
+    custom_palette_flat: bool,
     use_custom_palette: bool,
     /// Palette editor window open (transient UI).
     palette_editor_open: bool,
@@ -4197,6 +4210,7 @@ impl FractadyneApp {
                 cycle: s.cycle,
                 offset: s.offset,
                 custom_palette: s.custom_palette.clone(),
+                custom_palette_flat: s.custom_palette_flat,
                 use_custom_palette: s.use_custom_palette,
                 palette_editor_open: false,
                 paste_open: false,
@@ -4476,6 +4490,35 @@ impl FractadyneApp {
             self.coloring.use_duotone = false;
             self.coloring.use_custom_palette = false;
         }
+        // ⭐**`--palette-map` is what makes the import verifiable.** `design/palette-import.md` §7
+        // sets the bar at "render through the imported palette and compare against the source
+        // application's own render of the same palette" — which needs a headless render through a
+        // `.map`, not a GUI click. `--palette-map-smooth` blends the same entries instead of
+        // banding them, so both readings can be compared against the same fixture.
+        if let Some(path) = val("--palette-map") {
+            let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
+                eprintln!("fractadyne: --palette-map: cannot read \"{path}\": {e}");
+                crate::exit(2)
+            });
+            let m = fractadyne_color::import::parse_map(&text).unwrap_or_else(|e| {
+                eprintln!("fractadyne: --palette-map: \"{path}\" is not a .map palette — {e}");
+                crate::exit(2)
+            });
+            let n = m.colors.len();
+            self.coloring.custom_palette = m
+                .colors
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let pos = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
+                    [pos, c[0], c[1], c[2]]
+                })
+                .collect();
+            self.coloring.custom_palette_flat = !args.iter().any(|a| a == "--palette-map-smooth");
+            self.coloring.use_custom_palette = true;
+            self.coloring.use_binary = false;
+            self.coloring.use_duotone = false;
+        }
         if args.iter().any(|a| a == "--binary") {
             self.coloring.use_binary = true;
             self.coloring.use_duotone = false;
@@ -4629,6 +4672,7 @@ impl FractadyneApp {
             trap_type: self.coloring.trap_type.key().to_string(),
             minimap: self.dialogs.minimap,
             custom_palette: self.coloring.custom_palette.clone(),
+            custom_palette_flat: self.coloring.custom_palette_flat,
             use_custom_palette: self.coloring.use_custom_palette,
             use_duotone: self.coloring.use_duotone,
             use_binary: self.coloring.use_binary,
@@ -6356,10 +6400,89 @@ impl FractadyneApp {
     /// The custom gradient as a [`Gradient`](fractadyne_color::segment::Gradient), for the editor's
     /// preview bar. Falls back to the selected preset when the editor is empty, so the preview
     /// shows what would actually render.
+    /// Import a Fractint / Kalles Fraktaler `.map` palette from disk. Returns whether it applied.
+    ///
+    /// ⭐It lands as **bands** (`custom_palette_flat`), which is what the format means: a lookup
+    /// table indexed by iteration count with no interpolation between entries. The checkbox beside
+    /// the button smooths it if the user wants a ramp out of the same colours - but that is their
+    /// call, taken after seeing the faithful version, not a default this code makes for them.
+    ///
+    /// ⚠The 6-bit VGA case (`vga_6bit`) is REPORTED, never rescaled: Fractint's files carry
+    /// 0-63 written out x4, so their white is 252, and Fractint's own images carry the same 252.
+    /// See `fractadyne_color::import::MapPalette`.
+    fn import_map_palette(&mut self) -> bool {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Fractint / KF palette", &["map"])
+            .add_filter("All files", &["*"])
+            .set_directory(self.dialog_dir_default())
+            .pick_file()
+        else {
+            return false;
+        };
+        self.remember_dir(&path);
+        // A `.map` is at most 256 short lines; anything far larger is not one, and checking the
+        // size before reading keeps a mistaken pick from being an out-of-memory.
+        const MAP_MAX: u64 = 64 * 1024;
+        let read = match std::fs::metadata(&path) {
+            Ok(m) if m.len() <= MAP_MAX => std::fs::read_to_string(&path),
+            Ok(_) => Err(std::io::Error::other("far too large to be a .map palette")),
+            Err(e) => Err(e),
+        };
+        let text = match read {
+            Ok(t) => t,
+            Err(e) => {
+                self.coloring.paste_msg = Some(format!("Read failed: {e}"));
+                self.coloring.paste_open = true;
+                return false;
+            }
+        };
+        match fractadyne_color::import::parse_map(&text) {
+            Ok(m) => {
+                let n = m.colors.len();
+                // Positions are recorded evenly even though the banded reading ignores them, so
+                // unticking "Hard bands" yields the sensible smooth gradient rather than a pile
+                // of stops at zero.
+                self.coloring.custom_palette = m
+                    .colors
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        let pos = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
+                        [pos, c[0], c[1], c[2]]
+                    })
+                    .collect();
+                self.coloring.custom_palette_flat = true;
+                let name =
+                    path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
+                self.coloring.paste_msg = Some(if m.vga_6bit {
+                    format!("Imported {n} entries from {name} - a 6-bit VGA table (white is 252, not 255), kept as written so it matches Fractint's own output.")
+                } else {
+                    format!("Imported {n} entries from {name}, as hard bands.")
+                });
+                self.coloring.paste_open = true;
+                true
+            }
+            Err(e) => {
+                self.coloring.paste_msg = Some(format!("Not a .map palette: {e}"));
+                self.coloring.paste_open = true;
+                false
+            }
+        }
+    }
+
     fn custom_gradient(&self) -> fractadyne_color::segment::Gradient {
+        use fractadyne_color::segment::Gradient;
         if self.coloring.custom_palette.is_empty() {
             let p = &fractadyne_color::PRESETS[self.coloring.palette_idx];
-            return fractadyne_color::segment::Gradient::from_stops(p.name, p.stops);
+            return Gradient::from_stops(p.name, p.stops);
+        }
+        if self.coloring.custom_palette_flat {
+            // ⭐A `.map` import: the entries are a LOOKUP TABLE, so they become one flat band each
+            // in file order and the stored positions are not consulted. Blending them would smear
+            // exactly the hard steps the format is defined by.
+            let colors: Vec<[f32; 3]> =
+                self.coloring.custom_palette.iter().map(|s| [s[1], s[2], s[3]]).collect();
+            return Gradient::from_bands("Imported", &colors);
         }
         let stops: Vec<(f32, [f32; 3])> = self
             .coloring
@@ -6367,7 +6490,7 @@ impl FractadyneApp {
             .iter()
             .map(|s| (s[0], [s[1], s[2], s[3]]))
             .collect();
-        fractadyne_color::segment::Gradient::from_stops("Custom", &stops)
+        Gradient::from_stops("Custom", &stops)
     }
 
     /// The given preset's stops as editable `[pos, r, g, b]` rows (to seed the editor).
@@ -6461,10 +6584,21 @@ impl FractadyneApp {
                 );
                 ui.add_space(6.0);
 
-                // Per-stop rows (color + position + remove).
+                // Per-stop rows (color + position + remove) - only while the list is small enough
+                // to be edited by hand. An imported `.map` is 256 entries; drawing 256 colour
+                // pickers is not an editor, it is a hang, so a long palette shows a summary and
+                // the actions that make sense for it instead.
                 let mut remove: Option<usize> = None;
                 let count = self.coloring.custom_palette.len();
-                for i in 0..count {
+                let editable = count <= EDITOR_MAX_STOPS;
+                if !editable {
+                    ui.label(
+                        egui::RichText::new(format!("{count} imported entries - too many to edit stop by stop. Use the preview above, or Copy preset to start over."))
+                            .weak()
+                            .small(),
+                    );
+                }
+                for i in 0..if editable { count } else { 0 } {
                     ui.horizontal(|ui| {
                         let mut rgb = [
                             self.coloring.custom_palette[i][1],
@@ -6497,7 +6631,8 @@ impl FractadyneApp {
 
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    if self.coloring.custom_palette.len() < fractadyne_color::MAX_STOPS
+                    if editable
+                        && count < EDITOR_MAX_STOPS
                         && ui.button(format!("{} Add stop", crate::icons::ADD)).clicked()
                     {
                         self.coloring.custom_palette.push([0.5, 1.0, 1.0, 1.0]);
@@ -6507,6 +6642,7 @@ impl FractadyneApp {
                         for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
                             if ui.button(p.name).clicked() {
                                 self.coloring.custom_palette = self.preset_as_stops(i);
+                                self.coloring.custom_palette_flat = false;
                                 changed = true;
                                 ui.close_menu();
                             }
@@ -6514,7 +6650,26 @@ impl FractadyneApp {
                     });
                     ui.toggle_value(&mut self.coloring.paste_open, "Paste…")
                         .on_hover_text("Import a palette from hex colours or 0–255 RGB triples");
+                    if ui
+                        .button("Import .map…")
+                        .on_hover_text("Load a Fractint / Kalles Fraktaler .map palette file (R G B lines, one per entry)")
+                        .clicked()
+                        && self.import_map_palette()
+                    {
+                        changed = true;
+                    }
                 });
+                // ⭐⭐The one control that decides whether an imported `.map` looks like Fractint.
+                // The format is a lookup table indexed by iteration count with NO blending between
+                // entries, and the hard steps that produces are the classic look - so import sets
+                // this, and clearing it is a deliberate choice to smooth the same colours instead.
+                if ui
+                    .checkbox(&mut self.coloring.custom_palette_flat, "Hard bands (no blending between entries)")
+                    .on_hover_text("Fractint / .map semantics: every entry is a flat colour. Off blends them into a smooth gradient.")
+                    .changed()
+                {
+                    changed = true;
+                }
 
                 // Paste-a-palette. The cheapest possible bridge to the existing palette cultures:
                 // no file format to agree on, no dialog, and it covers "I found a palette on the
@@ -6540,10 +6695,12 @@ impl FractadyneApp {
                             match fractadyne_color::parse_palette_text(&self.coloring.paste_text) {
                                 Ok(colors) => {
                                     let got = colors.len();
-                                    let used = fractadyne_color::resample_colors(
-                                        &colors,
-                                        fractadyne_color::MAX_STOPS,
-                                    );
+                                    // ⭐**Barely any resampling any more.** This used to throw
+                                    // away everything past the EIGHTH colour, because that is what
+                                    // the GPU uniform carried; the LUT bake lifted that ceiling, so
+                                    // a pasted 256-entry `.map` body now arrives whole.
+                                    let used =
+                                        fractadyne_color::resample_colors(&colors, PASTE_MAX_COLORS);
                                     // Spread the imported colours evenly; a single colour becomes
                                     // one stop at 0 rather than dividing by zero.
                                     let n = used.len();
@@ -6559,12 +6716,9 @@ impl FractadyneApp {
                                             [pos, c[0], c[1], c[2]]
                                         })
                                         .collect();
+                                    self.coloring.custom_palette_flat = false;
                                     self.coloring.paste_msg = Some(if got > n {
-                                        format!(
-                                            "Imported {n} of {got} colours — the gradient carries \
-                                             {} stops, sampled evenly across your list.",
-                                            fractadyne_color::MAX_STOPS
-                                        )
+                                        format!("Imported {n} of {got} colours, sampled evenly across your list ({PASTE_MAX_COLORS} is the limit).")
                                     } else {
                                         format!("Imported {n} colours.")
                                     });
@@ -6582,12 +6736,13 @@ impl FractadyneApp {
                         ui.label(egui::RichText::new(m).weak().small());
                     }
                 }
+                let n = self.coloring.custom_palette.len();
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{}/{} stops · positions may overlap; they're sorted automatically.",
-                        self.coloring.custom_palette.len(),
-                        fractadyne_color::MAX_STOPS
-                    ))
+                    egui::RichText::new(if self.coloring.custom_palette_flat {
+                        format!("{n} bands · taken in file order; positions are ignored while bands are on.")
+                    } else {
+                        format!("{n} stops · positions may overlap; they're sorted automatically.")
+                    })
                     .weak()
                     .small(),
                 );

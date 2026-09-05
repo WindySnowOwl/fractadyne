@@ -12,6 +12,25 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Fractint and Kalles Fraktaler `.map` palettes now import** (beta.24). Gradient editor ->
+  **Import .map...**, or `--palette-map FILE` on a command-line render. A `.map` is a lookup
+  table indexed by iteration count with no blending between its entries, and the hard colour
+  steps that produces are the classic Fractint look - so that is how it imports, with a **Hard
+  bands** checkbox to blend the same colours into a smooth gradient instead if you prefer it.
+  Checked end to end rather than by eye: a 16-entry file renders to exactly its 16 colours and
+  nothing in between, while the same file with `--palette-map-smooth` gives 253 shades.
+
+  One thing worth knowing about Fractint's own files: their colour values are 6-bit, written out
+  multiplied by four, so their white is **252 and not 255**. Fractadyne detects this, says so when
+  it imports, and deliberately leaves the values alone - Fractint's own saved images carry the
+  same 252, so 'correcting' them to 255 would make every side-by-side comparison wrong by about a
+  percent.
+
+- **The paste box no longer throws away everything past the eighth colour** (beta.24). It used to
+  sample your list down to eight stops because that is all the renderer could carry; it now keeps
+  up to 256. The gradient editor shows per-stop rows for hand-editable palettes and a summary for
+  a long imported one.
+
 - **Palettes are now baked into a 1024-entry lookup table, and the eight-stop ceiling is gone**
   (beta.23). Every palette in the app - the built-in presets, the gradient editor, duotone and
   binary, the morphing random gradient - now goes through one representation: a list of gradient

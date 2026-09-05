@@ -104,6 +104,23 @@ fn a_custom_palette_survives_a_restart() {
     let r = roundtrip(&s);
     assert!(r.use_custom_palette);
     assert_eq!(r.custom_palette, stops, "the custom gradient did not round-trip");
+    // An editor-authored gradient is stops, never bands.
+    assert!(!r.custom_palette_flat);
+}
+
+/// ⭐An imported `.map` is the same `custom_palette` field read as BANDS, and losing that one flag
+/// across a restart would silently smooth a Fractint palette into a gradient — the exact
+/// substitution `design/palette-import.md` exists to prevent. It defaults to `false`, so a session
+/// written before palette import existed still reads its stops as stops.
+#[test]
+fn an_imported_map_stays_banded_across_a_restart() {
+    let s = SessionState {
+        custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [0.5, 0.0, 1.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
+        custom_palette_flat: true,
+        use_custom_palette: true,
+        ..SessionState::default()
+    };
+    assert!(roundtrip(&s).custom_palette_flat, "the .map banding flag did not round-trip");
 }
 
 // A legacy file (only the original required fields) must still load, filling new fields

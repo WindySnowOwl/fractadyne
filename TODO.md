@@ -731,9 +731,36 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
-- [ ] ▶⭐⭐**NEXT SESSION — PALETTE LUT + SEGMENT MODEL (the import feature).** Design, format
+- [ ] ▶⭐⭐**PALETTE IMPORT — LUT + SEGMENT MODEL DONE (beta.23), `.map` DONE (beta.24). REMAINING: `.ugr`, `.ggr`, `.ase`/`.cs`, and the F3 corpus re-check.** Design, format
   details and the fidelity traps are all in **`design/palette-import.md`**; read it first, it was
   written from real files and gnofract4d's working parser, not from documentation prose.
+
+  ✅**SHIPPED beta.23**: the segment model (`fractadyne-color/src/segment.rs`), the 1024-entry
+  bake, and the GPU change — the palette is a storage buffer at colour binding 3, both `ColorU`
+  definitions moved together, and the ≤8-stop shader walk is deleted. ✅**SHIPPED beta.24**: `.map`
+  import (`import.rs`), the gradient editor's **Import .map…** + *Hard bands* checkbox, and
+  **`--palette-map FILE`** / **`--palette-map-smooth`** for scripted verification.
+
+  ⭐⭐**The predicted re-bless DID NOT HAPPEN and is not needed**: `--selftest` came back
+  **170/170 + 18/18 PASS**, drift maxD **1** (one 8-bit level), and the maxD 8 on `mandelbrot-1e6`
+  is the pre-existing figure from the committed report. ⚠**The F3 corpus has NOT been run** — its
+  rows compare at maxD **0**, a hard zero, so a one-level shift WILL show there even though it
+  does not in the goldens. That check (and any re-bless it justifies) is the next job, and the
+  design doc's warning stands: blessing is far more expensive than checking and row 39 alone took
+  ~6,600 s, so re-check the routine 38 first and schedule the extreme row separately.
+
+  ⭐**Acceptance criterion 2 needed a metric it did not name.** maxD SATURATES at the output
+  quantum — at 4096 entries the goldens still read maxD 1, identically — so "the error did not
+  fall" would have read as a failure on a correct bake. Counting DIFFERING PIXELS shows it:
+  **16,372 → 1,496 going 1024 → 4096, a 10.9× fall**, every difference one level. Measured, not
+  argued. Full numbers in `design/palette-import.md` §5b.
+
+  ⚠**Still open against the design doc's verification bar (§7)**: we have no Fractint render of
+  `default.map` to compare against. What is proven is that a `.map`'s bands reach the framebuffer
+  EXACTLY (a 16-entry fixture rendered to exactly its 16 levels, zero off-palette values in
+  159,993 px, with `--palette-map-smooth` giving 253 as the control). What is NOT proven is that
+  our iteration→palette-index mapping matches Fractint's — a different claim, and only a
+  side-by-side settles it.
 
   **Decided (user, 2026-09-05): ONE path — everything bakes to the LUT.** Presets, the custom
   gradient editor and every import go through it; the ≤8-stop shader walk goes away. The

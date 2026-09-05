@@ -1,13 +1,31 @@
-//! Palettes and coloring for Fractadyne (M1).
+//! Palettes and coloring for Fractadyne.
 //!
-//! A palette is a small list of gradient stops in `0..1`. The renderer interpolates
-//! between them in-shader, cycled by the smooth iteration value. Stops are chosen
-//! to loop seamlessly (first and last colors match). A data-driven LUT / custom
-//! gradient editor comes later (UI-DESIGN.md §6, §8); these presets are the start.
+//! Three layers, per `design/palette-import.md` §4:
+//!
+//! 1. [`import`] — a palette FILE (`.map` today) becomes a gradient. Format knowledge stops here.
+//! 2. [`segment`] — the gradient model itself (GIMP's: per-segment colours, midpoint, blend
+//!    function and colour space), a superset of every format we care about, plus the bake that
+//!    turns one into the [`segment::LUT_SIZE`]-entry table the shader reads.
+//! 3. This module — the built-in [`PRESETS`] and the tolerant paste parser
+//!    ([`parse_palette_text`]), both of which are just short stop lists feeding layer 2.
+//!
+//! ⚠**Every colour here is DISPLAY-referred, and that was measured** — see [`srgb8_to_stop`].
+//!
+//! Presets are chosen to loop seamlessly (first and last colors match), because the palette is
+//! cycled by the smooth iteration value and a mismatched pair shows as a hard seam.
 
+pub mod import;
 pub mod segment;
 
-/// Max stops the GPU uniform carries (must match `fractadyne-gpu`).
+/// Width of the packed `[[r, g, b, pos]; N]` stop array.
+///
+/// ⚠**No longer a palette limit.** It was the GPU uniform's capacity, and so a hard ceiling on
+/// every palette in the app — which is what made a real palette file structurally impossible to
+/// represent (Fractint's `default.map` has 37 hard jumps; eight stops give seven segments).
+/// Palettes now bake to a [`segment::LUT_SIZE`]-entry LUT and the shader carries no stops at all.
+/// What survives is this fixed-width array as a convenient shape for a SHORT stop list: the
+/// presets and the random palette animator still use it, and [`segment::Gradient::from_packed`]
+/// converts it.
 pub const MAX_STOPS: usize = 8;
 
 /// One 8-bit channel → the `0..1` a stop holds. A plain divide, **not** an sRGB decode.
@@ -142,9 +160,12 @@ pub fn parse_palette_text(text: &str) -> Result<Vec<[f32; 3]>, String> {
 
 /// Reduce a colour list to at most `n` evenly spaced stops, always keeping the first and last.
 ///
-/// A `.map` file carries 256 baked entries and the GPU uniform carries eight, so importing one
-/// is necessarily lossy; sampling evenly across the list (rather than truncating to the first
-/// eight, which would import only the palette's dark end) preserves the gradient's overall shape.
+/// Sampling evenly across the list (rather than truncating to the first `n`, which would import
+/// only the palette's dark end) preserves the gradient's overall shape.
+///
+/// ⚠This used to be called with `MAX_STOPS`, which threw away everything past the EIGHTH colour of
+/// every import. The LUT bake lifted that ceiling; `n` is now a generosity limit rather than a
+/// hardware one, and a 256-entry `.map` body passes through untouched.
 pub fn resample_colors(colors: &[[f32; 3]], n: usize) -> Vec<[f32; 3]> {
     let n = n.max(1);
     if colors.len() <= n {

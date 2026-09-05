@@ -168,6 +168,12 @@ pub struct SessionState {
     /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
+    /// Read `custom_palette` as **bands** (one flat colour per entry, no interpolation) rather
+    /// than as gradient stops — Fractint `.map` semantics, set by importing one. `false` for
+    /// every session written before palette import existed, which is the right reading of an
+    /// editor-authored gradient.
+    #[serde(default)]
+    pub custom_palette_flat: bool,
     /// Use the custom gradient instead of the selected preset.
     #[serde(default)]
     pub use_custom_palette: bool,
@@ -432,6 +438,7 @@ impl Default for SessionState {
             trap_type: default_trap_type(),
             minimap: false,
             custom_palette: Vec::new(),
+            custom_palette_flat: false,
             use_custom_palette: false,
             use_duotone: false,
             use_binary: false,

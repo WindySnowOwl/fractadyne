@@ -290,6 +290,75 @@ quantisation shows up long before colour quantisation does.
 nearest-fetching — except where a format demands flat bands, which is exactly Fractint's case.
 1024 × 16 B = 16 KB, still comfortably inside a uniform buffer, and trivial as a 1-D texture.
 
+## 5b. BUILT 2026-09-05 — what shipped, and what the numbers actually were
+
+Steps 1–3 of §6 landed in **beta.23** and step 2 of the order (`.map`) in **beta.24**. Recording
+the measurements here because §4's acceptance criteria were written as predictions and two of
+them came out differently from the prediction.
+
+**The goldens did NOT need a re-bless.** §4 budgeted a deliberate one and warned the F3 corpus
+would drift on every row. The actual drift on `--selftest`: **170/170 checks, 18/18 goldens, all
+PASS** — maxΔ **1** (one 8-bit level) on sixteen, maxΔ 0 on `newton`, and the maxΔ 8 on
+`mandelbrot-1e6` is the figure already in the committed report, i.e. pre-existing. So the
+re-bless plan is unspent, and the old output is still the record. ⚠**The F3 corpus is a separate
+question and has NOT been run** — its rows compare at maxD 0, a hard zero, so a one-level shift
+will show there even though it does not here. That is its own scheduled job (§4's last warning).
+
+⭐**Acceptance criterion 2 needed a different metric than the one it names.** "Bake at 1024 and at
+4096 and compare … if the error does not fall, the bake has a bug" — but maxΔ **saturates at the
+output quantum**: at 4096 the goldens still reported maxΔ 1, identically, because a value within
+1e-5 of a rounding boundary still rounds the other way. Counting DIFFERING PIXELS shows what maxΔ
+cannot:
+
+| LUT entries | differing pixels, all 18 goldens | largest difference |
+|---|---|---|
+| 1024 | 16,372 | 1 level |
+| 4096 | 1,496 | 1 level |
+
+A **10.9× fall** for a 4× LUT. The error is quantisation, and 1024 is comfortably enough.
+⭐The lesson generalises: *a metric that saturates cannot show a trend*, and "the number did not
+move" would have read as a failed criterion here when the bake was in fact correct.
+
+✅**Criterion 3 (a flat `.map` keeps its bands) verified END TO END**, not just in the bake. A
+16-entry `.map` of distinct greys rendered through `--palette-map` at 400×400: **exactly the 16
+declared levels, zero off-palette values** across 159,993 exterior pixels — and the PNG writer's
+ordered dither did not smear them, because a `v/255` entry is exactly representable. The control
+that makes this mean something: the *same file* with `--palette-map-smooth` gives **253** distinct
+levels. Without it, "few colours" would have been indistinguishable from "few colours in the
+image".
+
+✅Criterion 4: `BLESSED-GPU.txt` untouched — nothing was re-blessed.
+
+**Also fixed on the way past**: the gradient editor's preview bar was gamma-encoding (`c^(1/2.2)`),
+the last survivor of the "stops are linear" belief §5 disproved, so every swatch read markedly
+lighter than the pixel it stood for (0.502 previewed at 186, rendered at 128). It now samples the
+same baked LUT the GPU fetches from, which closes the ⚠ left open at the end of §5's trap 2.
+
+**And a gate that did not exist**: the Rust `ColorUniforms` and the WGSL `ColorU` describe the
+same opaque bytes, and nothing checked it — a field added to one alone builds, runs, and colours
+every pixel from the wrong offsets. `uniform_layout_tests` now parses the WGSL struct, lays it out
+under WGSL's rules and compares sizes; verified it goes red by adding one `f32` to the shader
+alone. That is the mechanical form of §4's "**both `ColorU` definitions must change together**".
+
+### What `.map` import does, and the one decision inside it
+
+`fractadyne_color::import::parse_map` → `MapPalette` → `bands()` (the default) or `smooth()`.
+Reachable from the gradient editor (**Import .map…**, plus a *Hard bands* checkbox) and from the
+CLI as **`--palette-map FILE`** / **`--palette-map-smooth`**. The CLI form exists because §7's
+verification bar — compare against the source application's own render — needs a headless render
+through a `.map`, which a GUI button cannot give a script.
+
+⭐**The 6-bit VGA table is DETECTED and REPORTED, and deliberately not rescaled.** §5 trap 3 flags
+Fractint's ×4 maximum of 252 as an off-by-a-few-percent error waiting to happen, and the tempting
+fix is to rescale 252 → 255 since 63 meant full intensity on a VGA DAC. That would be wrong *for
+this bar*: Fractint writes its own images with the same ×4, so its white pixels ARE 252, and
+rescaling would fail every comparison against a Fractint render by ~1.2%. The importer reports the
+table as 6-bit in the UI message instead, so the user knows why their white is not 255.
+
+⚠**Still outstanding for §7's bar**: an actual Fractint render of `default.map` to compare
+against. What is proven today is that the bands are exact and that the file's values reach the
+framebuffer unaltered; what is NOT proven is that our iteration→palette-index mapping matches
+Fractint's. Those are different claims and only a side-by-side settles the second.
 ## 6. Recommended order
 
 1. **Segment model + LUT bake + the GPU change.** Nothing else is possible without it, and it

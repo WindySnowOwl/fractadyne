@@ -153,16 +153,27 @@ pub(crate) fn help_options(ui: &mut egui::Ui) {
         ui,
         "Palette chooses a preset gradient, your Custom one, or a two-color mode. \"Edit \
          gradient…\" opens an editor where each color stop has a color and a position (0–1); add \
-         up to eight stops or copy a preset to start from.",
+         stops, copy a preset to start from, or import a palette file.",
     );
     help_p(
         ui,
         "\"Paste…\" in the gradient editor imports a palette you found elsewhere. It accepts hex \
          colors with or without a leading # (#ff8800, ff8800, or the short #f80) and plain 0–255 \
          RGB triples such as \"255 136 0\" — the format Fractint and Kalles Fraktaler .map files \
-         use — separated by commas, spaces or new lines. Paste more than eight colors and they \
-         are sampled evenly down to eight, keeping the first and last so the gradient's shape \
+         use — separated by commas, spaces or new lines. Up to 256 colors are kept; a longer \
+         list is sampled evenly down to 256, keeping the first and last so the gradient's shape \
          survives.",
+    );
+    help_p(
+        ui,
+        "\"Import .map…\" beside it loads a Fractint or Kalles Fraktaler .map palette file. Those \
+         are lookup tables indexed by iteration count with no blending between entries, and the \
+         hard color steps that produces are what the classic Fractint look is made of — so that \
+         is how they import, with a \"Hard bands\" checkbox to blend the same colors into a \
+         smooth gradient instead. Fractint's own files store 6-bit color values multiplied by \
+         four, so their white is 252 rather than 255; Fractadyne says so when it imports one and \
+         leaves the values exactly as written, because Fractint's own saved images carry the \
+         same 252.",
     );
     help_p(
         ui,
@@ -449,6 +460,8 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--ss N", "Supersampling 1–8."),
         Flag("--iter N", "Maximum iterations."),
         Flag("--palette N", "Preset palette index."),
+        Flag("--palette-map FILE", "Colour through a Fractint / Kalles Fraktaler .map palette (R G B lines, one per entry). Imported as hard bands, which is what the format means -- it is a lookup table indexed by iteration count with no blending between entries, and those hard steps are the classic Fractint look. Values are taken exactly as written: Fractint's are 6-bit VGA x4, so its white is 252 rather than 255, and rescaling them would fail a comparison against Fractint's own images."),
+        Flag("--palette-map-smooth", "With --palette-map: blend between the file's entries instead of banding them."),
         Flag("--method NAME", "smooth | stripe | triangle | trap | distance | decomposition."),
         Flag("--stripe-freq N", "Stripe density (stripe method)."),
         Flag("--trap SHAPE", "point | cross | circle (orbit-trap method)."),
