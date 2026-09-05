@@ -175,6 +175,24 @@ Ranked by how quietly they produce a wrong picture that survives review:
    the live view, so their numbers are display values by construction — the space only bites where
    the user has a stated expectation, which is exactly what import is.
 
+   ✅**FIXED 2026-09-05 — fix (a) applied.** `parse_palette_text` now returns `v / 255`
+   (`srgb8_to_stop`), the space the renderer actually interprets. Verified end to end: the value
+   the fixed parser produces for `#808080` (0.50196…) rendered as **#808080**. The test that
+   pinned the bug (`palette_text_converts_srgb_to_linear`, asserting 0.2159) is inverted and
+   renamed `palette_text_is_display_referred_not_linear`, and the "linear RGB" claims in
+   `fractadyne-color`, `fractadyne-state` and `main.rs` now say DISPLAY-space. Fix (b) below
+   remains the open architectural alternative.
+
+   ⭐⭐**A second bug fell out of writing the test: a `.map` triple was being read as three hex
+   shorthands.** `168 168 168` is a real line in Fractint's `default.map` (the VGA light grey) and
+   each token is also three valid hex digits, so the "hex tokens win" rule turned one grey into
+   THREE `#114488` colours. **Every `.map` line whose three values all land in 100–255 was
+   silently mis-imported** — in the one external format this parser already advertised. Fixed by
+   preferring the integer reading when every token is pure decimal, the count is a multiple of
+   three, and all values are ≤255; shorthand containing a letter (`f80`) or a lone token (`128`)
+   still takes the hex path. Pinned by `map_triples_beat_bare_hex_shorthand` using the exact greys
+   and whites from `default.map`.
+
    **Two candidate fixes, and they are not equivalent:**
    - **(a) Stop converting on import** — `parse_palette_text` returns `v / 255`. One line plus
      inverting `palette_text_converts_srgb_to_linear`, which currently pins the bug. Matches the

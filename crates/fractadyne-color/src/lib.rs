@@ -8,20 +8,29 @@
 /// Max stops the GPU uniform carries (must match `fractadyne-gpu`).
 pub const MAX_STOPS: usize = 8;
 
-/// One 8-bit sRGB channel → linear. Pasted colours are written by humans and tools in sRGB
-/// (`#ff8800`, `255 136 0`), while every stop in this crate is LINEAR — mixing the two silently
-/// produces a washed-out gradient rather than an error, so the conversion lives here next to the
-/// parser that needs it.
-fn srgb8_to_linear(v: u8) -> f32 {
-    let c = v as f32 / 255.0;
-    if c <= 0.040_45 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
+/// One 8-bit channel → the `0..1` a stop holds. A plain divide, **not** an sRGB decode.
+///
+/// ⭐⭐**Stops are DISPLAY-REFERRED, and this was measured, not assumed** (2026-09-04). The
+/// renderer writes palette colours straight into a **non-sRGB** framebuffer, so a stop's value IS
+/// the byte the monitor shows (`fractadyne-export`'s module docs spell out why: the live view is
+/// WYSIWYG and palette interpolation happens in gamma space on purpose).
+///
+/// This used to apply the sRGB→linear transfer, on the stated belief that "every stop in this
+/// crate is LINEAR". The renderer never honoured it, so the conversion was pure loss: a pasted
+/// `#808080` became the stop 0.2159, which reached the framebuffer as byte 55 and displayed as
+/// **`#373737`** — every imported palette one decode too dark. Verified with a uniform custom
+/// palette rendered through `--render`: stop 0.2159 → `#373737`, and the control, stop 0.502 →
+/// `#808080`. The built-in presets never showed it because they were authored by eye against the
+/// live view, so their numbers were already display values.
+///
+/// ⚠So any future palette importer (`.map`, `.ugr`, `.ggr` — see `design/palette-import.md`)
+/// targets THIS space. If the renderer is ever made linear, this is one of the two places that
+/// must change with it; the other is the shader's final write.
+fn srgb8_to_stop(v: u8) -> f32 {
+    v as f32 / 255.0
 }
 
-/// Parse a pasted palette into linear-RGB colours, in the order given.
+/// Parse a pasted palette into DISPLAY-space colours (see `srgb8_to_stop`), in the order given.
 ///
 /// Deliberately format-tolerant rather than format-specific: the goal ("I found a palette on the
 /// web") is defeated by a format war, so this accepts what people actually paste —
@@ -74,15 +83,32 @@ pub fn parse_palette_text(text: &str) -> Result<Vec<[f32; 3]>, String> {
         if tokens.is_empty() {
             continue;
         }
-        let hexes: Vec<[u8; 3]> = tokens.iter().filter_map(|t| hex_token(t)).collect();
+        // ⭐⭐**A `.map` TRIPLE OUTRANKS BARE HEX SHORTHAND.** `168 168 168` is a real line in
+        // Fractint's `default.map` (the VGA light grey) and every token is also three valid hex
+        // digits, so the hex-wins rule below read it as THREE `#114488` colours. Any `.map` line
+        // whose three values all land in 100–255 was silently mis-imported — in the very format
+        // this parser advertises. Bare 3-digit shorthand made only of DECIMAL digits is
+        // vanishingly rare next to a `.map` triple, and anyone who means it can write `#128`;
+        // a shorthand containing a letter (`f80`) is unambiguous and still takes the hex path.
+        let pure_decimal = tokens.iter().all(|t| t.chars().all(|c| c.is_ascii_digit()));
+        let map_triple = pure_decimal
+            && tokens.len() % 3 == 0
+            && !tokens.is_empty()
+            && tokens.iter().all(|t| t.parse::<u32>().is_ok_and(|v| v <= 255));
+
+        let hexes: Vec<[u8; 3]> = if map_triple {
+            Vec::new()
+        } else {
+            tokens.iter().filter_map(|t| hex_token(t)).collect()
+        };
         // A line counts as hex only if EVERY token parsed — a half-parsed line is a malformed
         // line, and silently keeping the half that worked is how a wrong palette gets imported.
         if !hexes.is_empty() && hexes.len() == tokens.len() {
             out.extend(hexes.iter().map(|c| {
                 [
-                    srgb8_to_linear(c[0]),
-                    srgb8_to_linear(c[1]),
-                    srgb8_to_linear(c[2]),
+                    srgb8_to_stop(c[0]),
+                    srgb8_to_stop(c[1]),
+                    srgb8_to_stop(c[2]),
                 ]
             }));
             continue;
@@ -94,9 +120,9 @@ pub fn parse_palette_text(text: &str) -> Result<Vec<[f32; 3]>, String> {
             }
             for c in ints.chunks(3) {
                 out.push([
-                    srgb8_to_linear(c[0] as u8),
-                    srgb8_to_linear(c[1] as u8),
-                    srgb8_to_linear(c[2] as u8),
+                    srgb8_to_stop(c[0] as u8),
+                    srgb8_to_stop(c[1] as u8),
+                    srgb8_to_stop(c[2] as u8),
                 ]);
             }
             continue;
@@ -134,7 +160,10 @@ pub fn resample_colors(colors: &[[f32; 3]], n: usize) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// A named gradient palette: ascending `(position 0..1, linear RGB 0..1)` stops.
+/// A named gradient palette: ascending `(position 0..1, DISPLAY-space RGB 0..1)` stops.
+///
+/// ⚠Display-referred, not linear: the shader writes these values straight into a non-sRGB
+/// framebuffer, so a stop IS the byte shown. See `srgb8_to_stop` for the measurement.
 pub struct Palette {
     pub name: &'static str,
     pub stops: &'static [(f32, [f32; 3])],

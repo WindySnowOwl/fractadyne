@@ -43,12 +43,50 @@ fn palette_text_accepts_common_shapes() {
     assert_eq!(parse_palette_text("255 0 0 0 255 0").unwrap().len(), 2);
 }
 
-/// sRGB is converted to linear, not copied through. Mid-grey is the cheap tell: 128/255 is
-/// ~0.502 in sRGB but ~0.216 in linear, and getting this wrong washes out every import.
+/// ⭐⭐**A pasted colour must render as the colour that was pasted.** Stops are DISPLAY-referred
+/// — the shader writes them straight into a non-sRGB framebuffer — so `#808080` is the stop
+/// 128/255, NOT its linear decode.
+///
+/// This test previously asserted the opposite (0.2159, the sRGB→linear value) and so pinned a
+/// real bug in place: measured end to end through `--render`, a uniform palette at 0.2159
+/// rendered as **#373737**, while the control at 0.502 rendered as **#808080**. Every imported
+/// palette was one sRGB decode too dark; the presets escaped it only because they were authored
+/// by eye against the live view. See `srgb8_to_stop` and `design/palette-import.md`.
 #[test]
-fn palette_text_converts_srgb_to_linear() {
+fn palette_text_is_display_referred_not_linear() {
     let c = parse_palette_text("#808080").unwrap();
-    assert!((c[0][0] - 0.2159).abs() < 1e-3, "got {}", c[0][0]);
+    assert!((c[0][0] - 128.0 / 255.0).abs() < 1e-6, "got {}", c[0][0]);
+    // The value that used to be produced, named so the regression is unmistakable.
+    assert!((c[0][0] - 0.2159).abs() > 0.2, "regressed to the linear decode: {}", c[0][0]);
+    // A 0-255 triple must land on exactly the same stop as the equivalent hex.
+    assert_eq!(parse_palette_text("128 128 128").unwrap()[0], c[0]);
+}
+
+/// ⭐⭐**A `.map` triple must not be read as three hex shorthands.** `168 168 168` is a real line
+/// in Fractint's `default.map`, and each token is also three valid hex digits — so the
+/// "hex tokens win" rule turned it into THREE `#114488` colours. Every `.map` line whose values
+/// all land in 100–255 was silently mis-imported, in the format this parser advertises support
+/// for. These are the exact greys and whites out of `default.map`.
+#[test]
+fn map_triples_beat_bare_hex_shorthand() {
+    for (line, want) in [
+        ("168 168 168", 168.0 / 255.0),
+        ("128 128 128", 128.0 / 255.0),
+        ("252 252 252", 252.0 / 255.0), // Fractint's white: 6-bit 63 x4, not 255
+    ] {
+        let c = parse_palette_text(line).unwrap();
+        assert_eq!(c.len(), 1, "{line:?} produced {} colours, not one", c.len());
+        for ch in 0..3 {
+            assert!((c[0][ch] - want).abs() < 1e-6, "{line:?} ch{ch} = {}", c[0][ch]);
+        }
+    }
+    // A whole run of .map lines still yields one colour per line.
+    let m = parse_palette_text("168 168 168\n84 84 252\n252 252 252\n").unwrap();
+    assert_eq!(m.len(), 3);
+    // …while shorthand that CANNOT be a decimal triple keeps the hex reading.
+    assert_eq!(parse_palette_text("f80").unwrap()[0], parse_palette_text("#ff8800").unwrap()[0]);
+    assert_eq!(parse_palette_text("128").unwrap().len(), 1); // lone token: still hex shorthand
+    assert!((parse_palette_text("128").unwrap()[0][0] - 17.0 / 255.0).abs() < 1e-6);
 }
 
 /// Malformed input is rejected with a reason rather than silently half-imported.

@@ -165,14 +165,14 @@ pub struct SessionState {
     /// Show the minimap overview ("you are here").
     #[serde(default)]
     pub minimap: bool,
-    /// Custom gradient stops `[pos, r, g, b]` (linear RGB) from the gradient editor.
+    /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
     /// Use the custom gradient instead of the selected preset.
     #[serde(default)]
     pub use_custom_palette: bool,
     /// Duotone palette (two-color ramp) / binary palette (flat in-set vs out-of-set),
-    /// sharing the two colors (linear RGB).
+    /// sharing the two colors (DISPLAY-space RGB).
     #[serde(default)]
     pub use_duotone: bool,
     #[serde(default)]

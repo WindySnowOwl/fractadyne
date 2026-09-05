@@ -3175,7 +3175,7 @@ struct ColoringConfig {
     cycle: f32,
     /// Palette offset slider (0..1).
     offset: f32,
-    /// Custom gradient (editor): stops as `[pos, r, g, b]` (linear RGB). When `use_custom_palette`
+    /// Custom gradient (editor): stops as `[pos, r, g, b]` (DISPLAY-space RGB). When `use_custom_palette`
     /// is set, this overrides the preset selection.
     custom_palette: Vec<[f32; 4]>,
     use_custom_palette: bool,
@@ -3188,7 +3188,7 @@ struct ColoringConfig {
     paste_msg: Option<String>,
     /// Bumps on every gradient/duotone edit so caches (e.g. the minimap thumbnail) refresh (transient).
     palette_rev: u32,
-    /// Two-color palette modes sharing the `lo`/`hi` colors (linear RGB), overriding preset/custom:
+    /// Two-color palette modes sharing the `lo`/`hi` colors (DISPLAY-space RGB), overriding preset/custom:
     /// **duotone** maps the value to a smooth `lo → hi → lo` ramp; **binary** paints a flat `hi`
     /// exterior with a flat `lo` interior (just in-set vs out-of-set).
     use_duotone: bool,

@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Pasted palettes now render as the colours you pasted** (beta.21). Paste `#808080` into the
+  gradient editor and you got `#373737` back - every imported palette arrived one sRGB decode
+  too dark. The import path converted colours to linear light, but the renderer writes palette
+  values straight to the screen unconverted (deliberately - it is what makes the live view
+  WYSIWYG), so the conversion was pure loss. The built-in presets were never affected, because
+  they were tuned by eye against the live view in the first place; only imports, where you have
+  an expectation about the colour, showed it.
+
+- **Palette lines like `168 168 168` import as one colour again** (beta.21). Those three values
+  are also three valid hex digits each, so a line of them was read as three separate `#114488`
+  swatches - meaning any Fractint or Kalles Fraktaler `.map` line whose values all fall between
+  100 and 255 was silently mangled, in the one external palette format the paste box already
+  claimed to accept. Plain `R G B` triples now win over bare 3-digit hex shorthand; `f80` and a
+  lone `128` still read as hex.
+
 - **The accelerated (MPFR) build is now available for Linux too** (beta.19, shipped in
   beta.20). Deep-zoom
   reference orbits computed with MPFR/GMP are 2.5-6.4x faster than the pure-Rust library at
