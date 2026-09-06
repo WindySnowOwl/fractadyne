@@ -17,27 +17,15 @@
 
 use fractadyne_color::segment::{hsv_to_rgb, rgb_to_hsv};
 
-/// How the numbers are shown. Names the user's vocabulary, not the implementation's.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum NumberMode {
-    /// 0–255 per channel — what hex expands to, and what every other tool reports.
-    #[default]
-    Bytes,
-    /// 0.0–1.0 per channel — what the renderer actually stores.
-    Unit,
-    /// `#rrggbb`.
-    Hex,
-}
-
-impl NumberMode {
-    fn label(self) -> &'static str {
-        match self {
-            NumberMode::Bytes => "Range 0–255",
-            NumberMode::Unit => "Range 0–1",
-            NumberMode::Hex => "Hex",
-        }
-    }
-}
+/// The three ways the same colour is written, all shown at once.
+///
+/// ⭐⭐**No mode toggle.** The first version made these a picker — `Range 0-255` / `Range 0-1` /
+/// `Hex` — which is one click away from whichever one you actually wanted, every time. They are
+/// three renderings of ONE value and they cost three short rows, so all three are on screen and
+/// all three are editable.
+/// ⚠The labels stay in the user's vocabulary, not the implementation's: egui's stock picker calls
+/// these `U8` and `F`, which are exactly right and mean nothing without its source.
+pub(crate) const ROW_LABELS: [&str; 3] = ["0–255", "0–1", "Hex"];
 
 /// What one frame of the popup decided.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -137,14 +125,15 @@ fn hue_strip(ui: &mut egui::Ui, width: f32, h: &mut f32) -> bool {
 /// ⚠**Hue is carried in `Ui` memory, not derived from the colour every frame.** A grey has no
 /// hue — `rgb_to_hsv` reports 0 for anything unsaturated — so recomputing it would snap the hue
 /// cursor to red the moment the user dragged the square to the left edge, and they would lose the
-/// hue they were working in. Same for value at black.
-pub(crate) fn picker_body(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    rgb: &mut [f32; 3],
-    mode: &mut NumberMode,
-) -> PickerOutcome {
-    const W: f32 = 208.0;
+/// hue they were working in.
+pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -> PickerOutcome {
+    const W: f32 = 216.0;
+    // ⚠**The popup is only as wide as its content.** Without this the frame inherits the parent's
+    // available width and the separator and the right-aligned button row stretch to fill it,
+    // leaving a band of empty panel several times wider than anything in it.
+    ui.set_max_width(W);
+    ui.spacing_mut().item_spacing.y = 4.0;
+
     let (h0, s0, v0) = rgb_to_hsv(*rgb);
     let mut h = ui.data_mut(|d| d.get_temp::<f32>(id.with("h")).unwrap_or(h0));
     if s0 > 1.0e-4 {
@@ -152,77 +141,82 @@ pub(crate) fn picker_body(
     }
     let (mut s, mut v) = (s0, v0);
 
-    let mut changed = false;
+    // ⭐**A large patch of the colour itself.** The swatch that opens this popup is 34×18 and is
+    // usually behind the popup once it is open; a colour is the thing being chosen, so it gets
+    // room to be looked at.
+    let (patch, _) = ui.allocate_exact_size(egui::vec2(W, 44.0), egui::Sense::hover());
+    ui.painter().rect_filled(patch, 3.0, crate::stop_color32(*rgb));
+    ui.painter().rect_stroke(
+        patch,
+        3.0,
+        egui::Stroke::new(1.0_f32, ui.visuals().weak_text_color()),
+        egui::StrokeKind::Inside,
+    );
+
+    // ── The same colour in all three notations, each editable ────────────────────────────────
     ui.horizontal(|ui| {
-        for m in [NumberMode::Bytes, NumberMode::Unit, NumberMode::Hex] {
-            if ui.selectable_label(*mode == m, m.label()).clicked() {
-                *mode = m;
+        ui.label(egui::RichText::new(ROW_LABELS[0]).weak().small());
+        for (i, name) in ["R", "G", "B"].into_iter().enumerate() {
+            let mut b = (rgb[i].clamp(0.0, 1.0) * 255.0 + 0.5) as i32;
+            if ui
+                .add(egui::DragValue::new(&mut b).range(0..=255).prefix(name).speed(1.0))
+                .changed()
+            {
+                rgb[i] = b as f32 / 255.0;
             }
         }
     });
-    ui.horizontal(|ui| match *mode {
-        NumberMode::Hex => {
-            let hid = id.with("hex");
-            let mut text = ui
-                .data_mut(|d| d.get_temp::<String>(hid).unwrap_or_else(|| crate::hex_of(*rgb)));
-            let r = ui.add(
-                egui::TextEdit::singleline(&mut text)
-                    .desired_width(90.0)
-                    .font(egui::TextStyle::Monospace),
-            );
-            if r.has_focus() || r.changed() {
-                ui.data_mut(|d| d.insert_temp(hid, text.clone()));
-            } else {
-                ui.data_mut(|d| d.remove_temp::<String>(hid));
-            }
-            if r.changed() {
-                if let Some(c) = crate::parse_hex_rgb(&text) {
-                    *rgb = c;
-                    changed = true;
-                }
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(ROW_LABELS[1]).weak().small());
+        for (i, name) in ["R", "G", "B"].into_iter().enumerate() {
+            let mut f = rgb[i];
+            if ui
+                .add(
+                    egui::DragValue::new(&mut f)
+                        .range(0.0..=1.0)
+                        .prefix(name)
+                        .speed(0.005)
+                        .fixed_decimals(3),
+                )
+                .changed()
+            {
+                rgb[i] = f;
             }
         }
-        NumberMode::Bytes => {
-            for (i, name) in ["R", "G", "B"].into_iter().enumerate() {
-                let mut b = (rgb[i].clamp(0.0, 1.0) * 255.0 + 0.5) as i32;
-                if ui.add(egui::DragValue::new(&mut b).range(0..=255).prefix(name).speed(1.0)).changed() {
-                    rgb[i] = b as f32 / 255.0;
-                    changed = true;
-                }
-            }
+    });
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(ROW_LABELS[2]).weak().small());
+        let hid = id.with("hex");
+        let mut text =
+            ui.data_mut(|d| d.get_temp::<String>(hid).unwrap_or_else(|| crate::hex_of(*rgb)));
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .desired_width(78.0)
+                .font(egui::TextStyle::Monospace),
+        );
+        // ⚠Held only while focused, or the field would re-render the current colour's full hex
+        // over what the user is halfway through typing.
+        if r.has_focus() || r.changed() {
+            ui.data_mut(|d| d.insert_temp(hid, text.clone()));
+        } else {
+            ui.data_mut(|d| d.remove_temp::<String>(hid));
         }
-        NumberMode::Unit => {
-            for (i, name) in ["R", "G", "B"].into_iter().enumerate() {
-                let mut f = rgb[i];
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut f)
-                            .range(0.0..=1.0)
-                            .prefix(name)
-                            .speed(0.005)
-                            .fixed_decimals(3),
-                    )
-                    .changed()
-                {
-                    rgb[i] = f;
-                    changed = true;
-                }
+        if r.changed() {
+            if let Some(c) = crate::parse_hex_rgb(&text) {
+                *rgb = c;
             }
         }
     });
 
     if sv_square(ui, W, h, &mut s, &mut v) {
         *rgb = hsv_to_rgb(h, s, v);
-        changed = true;
     }
     if hue_strip(ui, W, &mut h) {
         *rgb = hsv_to_rgb(h, s, v);
-        changed = true;
     }
     ui.data_mut(|d| d.insert_temp(id.with("h"), h));
-    let _ = changed;
 
-    ui.add_space(4.0);
+    ui.add_space(2.0);
     ui.separator();
     let mut out = PickerOutcome::Open;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -232,16 +226,16 @@ pub(crate) fn picker_body(
         {
             out = PickerOutcome::Cancel;
         }
-        if crate::theme::confirm_button(ui, "OK")
-            .on_hover_text("Keep this colour")
-            .clicked()
-        {
+        if crate::theme::confirm_button(ui, "OK").on_hover_text("Keep this colour").clicked() {
             out = PickerOutcome::Accept;
         }
     });
     out
 }
 
+// ⚠**`#[cfg(test)]` was lost when the `#[path]` attribute was added**, so this file was
+// compiling into the RELEASE binary — caught by "unused import" warnings that could only
+// appear if a test-only module was being built for real.
 #[cfg(test)]
 #[path = "color_picker_tests.rs"]
 mod color_picker_tests;

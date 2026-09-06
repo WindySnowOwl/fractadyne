@@ -4,7 +4,7 @@
 //! drag-driven in this app does. What does not is the naming the user reads and the HSV round trip
 //! the two of them ride on.
 
-use super::NumberMode;
+use super::ROW_LABELS;
 use fractadyne_color::segment::{hsv_to_rgb, rgb_to_hsv};
 
 /// ⭐⭐**The whole reason this picker exists.** egui's stock one labels its two numeric modes `U8`
@@ -12,20 +12,17 @@ use fractadyne_color::segment::{hsv_to_rgb, rgb_to_hsv};
 /// nothing to someone who has not read egui's source. These names have to say what the numbers
 /// ARE, and a test is the only thing that stops them drifting back toward jargon.
 #[test]
-fn the_mode_names_are_in_the_users_vocabulary_not_the_implementations() {
-    assert_eq!(NumberMode::Bytes.label(), "Range 0–255");
-    assert_eq!(NumberMode::Unit.label(), "Range 0–1");
-    assert_eq!(NumberMode::Hex.label(), "Hex");
-    for m in [NumberMode::Bytes, NumberMode::Unit, NumberMode::Hex] {
-        let l = m.label();
+fn the_row_labels_are_in_the_users_vocabulary_not_the_implementations() {
+    assert_eq!(ROW_LABELS, ["0–255", "0–1", "Hex"]);
+    for l in ROW_LABELS {
         assert!(!l.is_empty());
         // ⛔The specific jargon that was replaced, plus the family it came from.
         for banned in ["U8", "u8", "F32", "f32", "linear", "gamma", "sRGB"] {
             assert!(!l.contains(banned), "{l:?} leaks the implementation's word {banned:?}");
         }
     }
-    // 0–255 is the default: it is what hex expands to and what every neighbouring tool reports.
-    assert_eq!(NumberMode::default(), NumberMode::Bytes);
+    // ⭐All three are on screen at once — there is no mode to be in the wrong one of.
+    assert_eq!(ROW_LABELS.len(), 3);
 }
 
 /// The square and the strip both round-trip through HSV, so a colour dragged and left alone has to

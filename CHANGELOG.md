@@ -12,6 +12,11 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The colour picker shows all three notations at once** (beta.46). 0–255, 0–1 and hex are on
+  screen together and every one of them is editable, so there is no mode to be in the wrong one
+  of. A large patch of the chosen colour sits at the top, and the popup is now only as wide as its
+  contents — it had been stretching to the width of the panel behind it.
+
 - **A colour picker that speaks plainly** (beta.45). The picker now offers **Range 0–255**,
   **Range 0–1** and **Hex**, and closes with **OK** or **Cancel** - Cancel putting back the colour
   it opened with, so a colour you were only trying costs nothing.

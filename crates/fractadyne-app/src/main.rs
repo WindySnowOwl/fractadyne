@@ -1890,18 +1890,13 @@ fn color_field(
     }
     if ui.memory(|m| m.is_popup_open(popup)) {
         let mut edited = rgb;
-        let mut mode = ui
-            .data_mut(|d| d.get_temp::<crate::color_picker::NumberMode>(popup.with("mode")))
-            .unwrap_or_default();
         let area = egui::Area::new(popup)
             .order(egui::Order::Foreground)
             .fixed_pos(sw.rect.left_bottom() + egui::vec2(0.0, 4.0))
             .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    crate::color_picker::picker_body(ui, popup, &mut edited, &mut mode)
-                })
+                egui::Frame::popup(ui.style())
+                    .show(ui, |ui| crate::color_picker::picker_body(ui, popup, &mut edited))
             });
-        ui.data_mut(|d| d.insert_temp(popup.with("mode"), mode));
         let outcome = area.inner.inner;
         if edited != rgb {
             out = Some(edited);
