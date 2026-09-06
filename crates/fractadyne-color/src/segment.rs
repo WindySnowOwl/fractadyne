@@ -680,6 +680,36 @@ impl Gradient {
         })
     }
 
+    /// Does the colour at `1.0` already equal the colour at `0.0`?
+    ///
+    /// ⭐**The property that decides whether a CYCLED palette has a visible seam.** The renderer
+    /// takes `fract()` of the palette coordinate, so `t = 1` and `t = 0` are adjacent pixels on
+    /// screen; if the two ends differ, every sweep shows a hard edge there. On a bar the two ends
+    /// are as far apart as they can be, which is why this is easy to miss and why the ring view
+    /// exists.
+    pub fn is_seamless(&self) -> bool {
+        match (self.segments.first(), self.segments.last()) {
+            (Some(a), Some(b)) => a.left_color == b.right_color,
+            _ => true,
+        }
+    }
+
+    /// Force the end to match the start, so a cycled palette has no seam.
+    ///
+    /// ⚠**The END moves, not the start.** Position 0 is where the eye lands first and where a
+    /// preset's defining colour usually sits, so pulling the start toward the end would change the
+    /// gradient's identity to fix its join. Moving the end is the smaller edit and the reversible
+    /// one — the user can always recolour it afterwards.
+    /// ⚠Alpha travels with it: a seam in opacity is a seam.
+    pub fn make_seamless(&mut self) {
+        let Some(&first) = self.segments.first() else {
+            return;
+        };
+        if let Some(last) = self.segments.last_mut() {
+            last.right_color = first.left_color;
+        }
+    }
+
     // ── Editing ─────────────────────────────────────────────────────────────────────────────
     //
     // ⭐**The gradient editor edits SEGMENTS, and a "stop" is a segment boundary.** Before P1 the
@@ -862,6 +892,82 @@ fn set_span(seg: &mut Segment, left: f32, right: f32) {
 /// carries per-endpoint alpha and dropping it at import would be unrecoverable.
 fn rgba(c: [f32; 3]) -> [f32; 4] {
     [c[0], c[1], c[2], 1.0]
+}
+
+
+/// Write a gradient as a GIMP `.ggr` file — the interchange format for "save and share".
+///
+/// ⭐**The internal model IS GIMP's**, so this is a formatter rather than a conversion: every
+/// midpoint, blend curve and colour space survives, which is what makes a saved gradient openable
+/// in GIMP, Krita, Inkscape and back in here without loss.
+///
+/// ⚠⚠**Blend kind 5 (our Bézier) has no `.ggr` number, and this is where that costs something.**
+/// It is written as GIMP's nearest expressible curve, and [`ggr_lossy_segments`] counts which
+/// segments were approximated so the UI can say so.
+/// ⭐**An IDENTITY Bézier is exempt and is written as plain linear**, because it is linear to
+/// within **~1e-4** — a quarter of the 1/255 the output can even express. ⚠Not *bit*-identical:
+/// the ease solves `x(u) = t` numerically, so it lands within a rounding error of the straight
+/// line rather than on it. Visually exact, which is the property that matters here; the tests
+/// compare with a tolerance for exactly this reason.
+/// Without the exemption a gradient nobody had bent would still be reported as lossy, and a
+/// warning that fires when nothing was lost is a warning people learn to skip.
+pub fn write_ggr(g: &Gradient) -> String {
+    let mut out = String::from("GIMP Gradient\n");
+    let name = if g.name.trim().is_empty() { "Fractadyne" } else { g.name.trim() };
+    // ⚠A newline in a name would forge a segment count line. GIMP reads `Name:` to end of line.
+    let name: String = name.chars().filter(|c| *c != '\n' && *c != '\r').collect();
+    out.push_str(&format!("Name: {name}\n"));
+    out.push_str(&format!("{}\n", g.segments.len()));
+    for s in &g.segments {
+        let c = |v: [f32; 4]| {
+            format!("{:.6} {:.6} {:.6} {:.6}", v[0], v[1], v[2], v[3])
+        };
+        out.push_str(&format!(
+            "{:.6} {:.6} {:.6} {} {} {} {}\n",
+            s.left,
+            s.mid,
+            s.right,
+            c(s.left_color),
+            c(s.right_color),
+            ggr_blend_number(s.blend),
+            s.space.as_u8(),
+        ));
+    }
+    out
+}
+
+/// The `.ggr` blend number to write for a blend, approximating anything GIMP has no number for.
+///
+/// ⚠Kinds 0–4 are GIMP's own and pass through. Kind 5 becomes **linear** — not because linear is a
+/// good fit for an arbitrary cubic, but because it is the only choice that is exactly right for the
+/// identity case and honestly neutral for the rest; guessing "curved" would claim a shape the file
+/// does not carry.
+fn ggr_blend_number(b: Blend) -> u8 {
+    match b {
+        Blend::Bezier(_) => 0,
+        other => other.as_u8(),
+    }
+}
+
+/// How many segments `write_ggr` would have to approximate, for the UI to warn with.
+///
+/// ⭐An identity Bézier does not count: it round-trips exactly. See [`write_ggr`].
+pub fn ggr_lossy_segments(g: &Gradient) -> usize {
+    g.segments
+        .iter()
+        .filter(|s| match s.blend {
+            Blend::Bezier(p) => !bezier_is_identity(p),
+            _ => false,
+        })
+        .count()
+}
+
+/// Is this Bézier the straight line, to within what the format's 6 decimal places could record?
+pub fn bezier_is_identity(p: [f32; 4]) -> bool {
+    (0..=16).all(|k| {
+        let t = k as f32 / 16.0;
+        (bezier_ease(p, t) - t).abs() < 1.0e-4
+    })
 }
 
 /// A baked palette: `entries.len()` colours plus how the renderer should fetch between them.

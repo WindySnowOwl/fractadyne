@@ -3611,6 +3611,15 @@ struct ColoringConfig {
     /// ⭐The colours people want in a palette are usually somewhere ELSE — a photo, another
     /// fractal program, a palette on a web page — so this reaches outside our own window.
     eyedrop: Option<crate::eyedropper::Pick>,
+    /// Keep the gradient SEAMLESS: the colour at 1.0 held equal to the colour at 0.0.
+    ///
+    /// ⭐The renderer takes `fract()` of the palette coordinate, so 1 and 0 are adjacent pixels on
+    /// screen — a mismatch there is a hard edge on every sweep of a cycled palette. Held as an
+    /// editing MODE rather than applied once, because any later edit to the first stop would
+    /// otherwise re-open the seam silently.
+    /// ⚠Transient by design: the fix lives in the COLOURS, which persist. A stored flag would
+    /// claim authority over a gradient that may since have been edited elsewhere.
+    seamless: bool,
     /// Show the gradient as a RING rather than a bar.
     ///
     /// ⭐A palette is *cycled*, so it is topologically a circle: the ring is the only view in which
@@ -4664,6 +4673,7 @@ impl FractadyneApp {
                 drag_stop: None,
                 drag_handle: None,
                 eyedrop: None,
+                seamless: false,
                 ring_view: false,
                 gradient_name: String::new(),
                 editor_baseline: None,
@@ -7215,6 +7225,67 @@ impl FractadyneApp {
         }
     }
 
+    /// Export the current gradient as a GIMP `.ggr` file — "save and share".
+    ///
+    /// ⭐**`.ggr` and not a format of our own.** The segment model was taken FROM GIMP, so this
+    /// loses nothing a `.ggr` can hold, and the file opens in GIMP, Krita and Inkscape as well as
+    /// coming back in here. A private format would make "share" mean "share with yourself".
+    /// ⚠**It says when it approximated.** Bézier segments a user has actually bent have no `.ggr`
+    /// number; those are written as linear and the toast names how many. A silent flatten is the
+    /// failure this whole area was designed to avoid.
+    fn export_ggr_palette(&mut self) -> bool {
+        let Some(g) = self.editable_gradient() else {
+            self.coloring.paste_msg = Some("No custom gradient to save yet.".to_string());
+            self.coloring.paste_open = true;
+            return false;
+        };
+        let stem: String = {
+            let name = self.coloring.gradient_name.trim();
+            let name = if name.is_empty() { "gradient" } else { name };
+            // ⚠A name reaches this from a free-text field; anything a path separator could use is
+            // replaced rather than escaped, so the suggested filename cannot walk out of the folder
+            // the user chose.
+            name.chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
+                .collect()
+        };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("GIMP gradient", &["ggr"])
+            .set_file_name(format!("{stem}.ggr"))
+            .set_directory(self.dialog_dir_default())
+            .save_file()
+        else {
+            return false;
+        };
+        self.remember_dir(&path);
+        let mut g = g;
+        g.name = if self.coloring.gradient_name.trim().is_empty() {
+            stem.clone()
+        } else {
+            self.coloring.gradient_name.trim().to_string()
+        };
+        let lossy = fractadyne_color::segment::ggr_lossy_segments(&g);
+        let text = fractadyne_color::segment::write_ggr(&g);
+        self.coloring.paste_open = true;
+        match std::fs::write(&path, text) {
+            Ok(()) => {
+                let where_ = path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
+                self.coloring.paste_msg = Some(if lossy == 0 {
+                    format!("Saved \"{where_}\" — midpoints, blend curves and colour spaces all intact.")
+                } else {
+                    format!(
+                        "Saved \"{where_}\" — but {lossy} segment(s) use a Bézier curve, which the .ggr format cannot express. Those were written as straight blends; the copy in your library keeps the curves."
+                    )
+                });
+                true
+            }
+            Err(e) => {
+                self.coloring.paste_msg = Some(format!("Couldn't write {}: {e}", path.display()));
+                false
+            }
+        }
+    }
+
     /// Import a GIMP `.ggr` gradient. Returns whether it applied.
     ///
     /// ⭐**The only importer that loses nothing**: `.ggr` is the format the segment model was taken
@@ -8156,16 +8227,24 @@ impl FractadyneApp {
                         inner,
                         egui::Stroke::new(1.0_f32, BRAND_ACCENT),
                     );
-                    // ⭐⭐**The seam.** This is the join a cycled palette crosses on every sweep
-                    // and the one thing the bar cannot show: on a bar the two ends are as far
-                    // apart as they can be, while in the render they are adjacent.
-                    pr.line_segment(
-                        [
-                            egui::pos2(cx, cy - inner + 1.0),
-                            egui::pos2(cx, cy - outer - RING_TRACK_GAP - 4.0),
-                        ],
-                        egui::Stroke::new(1.5_f32, ui.visuals().warn_fg_color),
-                    );
+                    // ⭐⭐**The seam, marked from OUTSIDE the colour.** This is the join a cycled
+                    // palette crosses on every sweep and the one thing the bar cannot show: on a
+                    // bar the two ends are as far apart as they can be, while in the render they
+                    // are adjacent.
+                    // ⚠⚠**It used to be drawn straight THROUGH the annulus, covering the very
+                    // transition it exists to point at** — the one place on the ring where you
+                    // need to see the colour is the one place a 1.5 px line was sitting. Now it is
+                    // two ticks that stop at the ring's edges, so the join itself is unobstructed
+                    // and the eye still knows where to look.
+                    for (r0, r1) in [
+                        (outer + 2.0, outer + RING_TRACK_GAP - 3.0),
+                        (inner - 7.0, inner - 1.5),
+                    ] {
+                        pr.line_segment(
+                            [egui::pos2(cx, cy - r0), egui::pos2(cx, cy - r1)],
+                            egui::Stroke::new(1.5_f32, ui.visuals().warn_fg_color),
+                        );
+                    }
                     // ⭐**The add track** — the ring's answer to the bar's add line. Drawn as a
                     // dotted circle so it reads as a rail rather than as part of the gradient,
                     // with a tick under every existing stop for the same reason the bar's lane
@@ -8484,7 +8563,15 @@ impl FractadyneApp {
                                     .width(120.0)
                                     .selected_text(blend_label(blend))
                                     .show_ui(ui, |ui| {
-                                        for k in 0..=5u8 {
+                                        // ⭐**Bézier first, then Linear, then GIMP's other
+                                        // four.** The list order is presentation only — the
+                                        // NUMBERS are a file format (GIMP's `.ggr` blend types,
+                                        // also written into every saved session and the gradient
+                                        // library), so they stay 0–5 whatever order they are
+                                        // shown in. Bézier leads because it is the one you can
+                                        // actually shape; the named curves are presets by
+                                        // comparison.
+                                        for k in [5u8, 0, 1, 2, 3, 4] {
                                             let r =
                                                 ui.selectable_value(&mut blend, k, blend_label(k));
                                             // ⭐⭐**Say HOW approximate before they commit.** The
@@ -8787,7 +8874,7 @@ impl FractadyneApp {
                             changed = true;
                         }
                     }
-                    ui.menu_button("Copy preset…", |ui| {
+                    ui.menu_button(format!("{} Copy preset…", crate::icons::COPY), |ui| {
                         for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
                             if ui.button(p.name).clicked() {
                                 self.coloring.custom_palette = self.preset_as_stops(i);
@@ -8800,14 +8887,24 @@ impl FractadyneApp {
                             }
                         }
                     });
-                    ui.toggle_value(&mut self.coloring.paste_open, "Paste…")
+                    ui.toggle_value(&mut self.coloring.paste_open, format!("{} Paste…", crate::icons::PASTE))
                         .on_hover_text("Import a palette from hex colours or 0–255 RGB triples");
                     // ⭐Four import buttons in a row used to set the window's width all by
                     // themselves. They are file tasks, not editing tasks, so they collapse behind
                     // one menu the way "Copy preset…" already does.
-                    ui.menu_button("Import ▾", |ui| {
+                    // ⭐**Save to a FILE, beside the library.** The library keeps a gradient for
+                    // this machine; a `.ggr` is the copy you can send someone, back up, or open in
+                    // GIMP. Both are "save", so they sit together.
+                    if ui
+                        .button(format!("{} Save .ggr…", crate::icons::SAVE))
+                        .on_hover_text("Write this gradient to a GIMP .ggr file — readable by GIMP, Krita and Inkscape, and by this editor")
+                        .clicked()
+                    {
+                        changed |= self.export_ggr_palette();
+                    }
+                    ui.menu_button(format!("{} Import ▾", crate::icons::IMPORT), |ui| {
                         if ui
-                            .button(".map…")
+                            .button(format!("{} .map…", crate::icons::IMPORT))
                             .on_hover_text("Load a Fractint / Kalles Fraktaler .map palette file (R G B lines, one per entry)")
                             .clicked()
                         {
@@ -8815,7 +8912,7 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui
-                            .button(".ugr…")
+                            .button(format!("{} .ugr…", crate::icons::IMPORT))
                             .on_hover_text("Load an Ultra Fractal .ugr gradient file (a .ugr usually holds many gradients — you pick one)")
                             .clicked()
                         {
@@ -8823,7 +8920,7 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui
-                            .button(".ggr…")
+                            .button(format!("{} .ggr…", crate::icons::IMPORT))
                             .on_hover_text("Load a GIMP .ggr gradient, with its midpoints, blend curves and colour spaces intact")
                             .clicked()
                         {
@@ -8831,7 +8928,7 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui
-                            .button(".ase…")
+                            .button(format!("{} .ase…", crate::icons::IMPORT))
                             .on_hover_text("Load an Adobe swatch list (.ase). Swatches have no positions, so they arrive evenly spaced and blended.")
                             .clicked()
                         {
@@ -9009,6 +9106,40 @@ impl FractadyneApp {
                             self.coloring.ugr_file
                         ));
                         self.coloring.ugr_choices.clear();
+                        changed = true;
+                    }
+                }
+                // ⭐**Seamless: hold the end equal to the start**, so a cycled palette has no
+                // hard edge where it wraps. A MODE and not a one-shot button: applying it once and
+                // walking away would let the very next edit to the first stop re-open the seam
+                // without saying so, which is the failure the ring view exists to make visible.
+                if let Some(g) = self.editable_gradient() {
+                    let was = self.coloring.seamless;
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.coloring.seamless, "Seamless (end matches start)")
+                            .on_hover_text(
+                                "A palette is cycled, so position 1 and position 0 are next to each other on screen. With this on, the last stop's colour is held equal to the first — the ring view shows the join at the top.",
+                            );
+                        // ⚠Only when it is OFF and there is a seam: with the box ticked there is
+                        // nothing to report, and reporting it anyway would train the eye to ignore
+                        // the line.
+                        if !self.coloring.seamless && !g.is_seamless() {
+                            ui.label(
+                                egui::RichText::new("⚠ ends differ")
+                                    .color(ui.visuals().warn_fg_color)
+                                    .small(),
+                            )
+                            .on_hover_text(
+                                "The colour at the end of the gradient is not the colour at the start, so a cycled palette shows a hard edge where it wraps.",
+                            );
+                        }
+                    });
+                    // Applied on the frame it is switched on AND on every frame after, since an
+                    // edit to the first stop moves the target the last one has to match.
+                    if self.coloring.seamless && (!was || !g.is_seamless()) {
+                        let mut g2 = g.clone();
+                        g2.make_seamless();
+                        self.store_segments(&g2);
                         changed = true;
                     }
                 }

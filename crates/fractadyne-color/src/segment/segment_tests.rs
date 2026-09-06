@@ -749,3 +749,182 @@ fn lut_error_still_shrinks_as_the_table_grows_on_a_curve_heavy_gradient() {
          table may no longer be big enough now that segments can be arbitrary cubics"
     );
 }
+
+/// ⭐⭐**A cycled palette's seam is invisible on a bar and unavoidable in the render.** The shader
+/// takes `fract()` of the palette coordinate, so `t = 1` and `t = 0` are adjacent pixels; if the
+/// ends differ, every sweep of the palette shows a hard edge there. This pins both the detector
+/// and the fix, including that the fix moves the END and leaves everything else alone.
+#[test]
+fn seamlessness_is_detected_and_can_be_forced() {
+    let stops = [
+        (0.0_f32, [0.1_f32, 0.2, 0.3]),
+        (0.4, [0.9, 0.1, 0.2]),
+        (0.75, [0.2, 0.6, 0.9]),
+        (1.0, [1.0, 1.0, 0.0]),
+    ];
+    let g = Gradient::from_stops("t", &stops);
+    assert!(!g.is_seamless(), "the probe gradient must NOT be seamless, or this proves nothing");
+
+    let mut fixed = g.clone();
+    fixed.make_seamless();
+    assert!(fixed.is_seamless());
+    // ⚠**Compared with a tolerance, and the reason is worth knowing.** `is_seamless` compares the
+    // stored endpoints exactly, but `eval(1.0)` runs the lerp `a + (b - a) * 1.0`, which is not
+    // bit-identically `b` — measured 0.19999999 against 0.2. The seam is closed to well within the
+    // 1/255 the renderer can express; demanding bit-equality here would be testing f32, not the
+    // feature.
+    approx(fixed.eval(1.0), fixed.eval(0.0), 1.0e-6, "the two ends must now be the same colour");
+
+    // ⚠**The END moved, not the start.** Position 0 is where a preset's defining colour sits;
+    // pulling the start toward the end would change the gradient's identity to fix its join.
+    assert_eq!(fixed.eval(0.0), g.eval(0.0), "the start must be untouched");
+    assert_ne!(fixed.eval(1.0), g.eval(1.0), "the end must be the thing that moved");
+
+    // ⭐Everything BETWEEN the ends is untouched — only the final segment's right endpoint moves,
+    // so a seamless toggle cannot quietly restyle the middle of someone's gradient.
+    assert_eq!(fixed.segments.len(), g.segments.len());
+    for i in 0..g.segments.len() - 1 {
+        assert_eq!(fixed.segments[i], g.segments[i], "segment {i} changed");
+    }
+    let (a, b) = (g.segments.last().unwrap(), fixed.segments.last().unwrap());
+    assert_eq!((a.left, a.mid, a.right, a.left_color), (b.left, b.mid, b.right, b.left_color));
+
+    // Idempotent, and a no-op on something already seamless.
+    let mut again = fixed.clone();
+    again.make_seamless();
+    assert_eq!(again, fixed);
+
+    // Degenerate inputs must not panic: an empty gradient is vacuously seamless.
+    let mut empty = Gradient { name: "e".into(), segments: vec![] };
+    assert!(empty.is_seamless());
+    empty.make_seamless();
+    assert!(empty.segments.is_empty());
+}
+
+/// ⚠**Alpha counts.** A gradient whose ends match in RGB but differ in opacity still has a seam,
+/// and `make_seamless` has to close that one too — otherwise the checkbox would claim a job done
+/// that a future alpha-aware renderer would show is not.
+#[test]
+fn a_seam_in_alpha_is_still_a_seam() {
+    let mut g = Gradient {
+        name: "t".into(),
+        segments: vec![Segment {
+            left: 0.0,
+            mid: 0.5,
+            right: 1.0,
+            left_color: [0.2, 0.4, 0.6, 1.0],
+            right_color: [0.2, 0.4, 0.6, 0.25],
+            blend: Blend::Linear,
+            space: Space::Rgb,
+        }],
+    };
+    assert!(!g.is_seamless(), "same RGB, different alpha, is not seamless");
+    g.make_seamless();
+    assert!(g.is_seamless());
+    assert_eq!(g.segments[0].right_color[3], 1.0);
+}
+
+/// ⭐⭐**"Save and share" only means anything if it ROUND-TRIPS.** A `.ggr` writer that produces a
+/// plausible file nobody can read back is worse than none, so this writes a gradient using every
+/// feature the format carries, parses it with our own importer, and compares the BAKE — what the
+/// GPU fetches — rather than the text.
+#[test]
+fn a_ggr_written_here_reads_back_identically() {
+    let g = Gradient {
+        name: "Round trip".into(),
+        segments: vec![
+            Segment {
+                left: 0.0,
+                mid: 0.08,
+                right: 0.3,
+                left_color: [0.0, 0.0, 0.0, 1.0],
+                right_color: [0.9, 0.1, 0.2, 1.0],
+                blend: Blend::SphereIncreasing,
+                space: Space::Rgb,
+            },
+            Segment {
+                left: 0.3,
+                mid: 0.55,
+                right: 1.0,
+                left_color: [0.9, 0.1, 0.2, 1.0],
+                right_color: [0.2, 0.6, 0.9, 1.0],
+                blend: Blend::Sine,
+                space: Space::HsvCw,
+            },
+        ],
+    };
+    assert_eq!(crate::segment::ggr_lossy_segments(&g), 0, "kinds 0-4 are GIMP's own — lossless");
+    let text = crate::segment::write_ggr(&g);
+    assert!(text.starts_with("GIMP Gradient\nName: Round trip\n2\n"), "header:\n{text}");
+    let back = crate::import::parse_ggr(&text).expect("our own output must parse");
+    assert_eq!(g.bake(LUT_SIZE), back.bake(LUT_SIZE), "the gradient came back different");
+    assert_eq!(back.segments[0].blend, Blend::SphereIncreasing);
+    assert_eq!(back.segments[1].space, Space::HsvCw);
+    assert!((back.segments[0].mid - 0.08).abs() < 1.0e-5, "the midpoint must survive");
+}
+
+/// ⭐⭐**An identity Bézier is written as plain linear and reported as LOSSLESS**, because it *is*
+/// linear — bit-identically. Without that exemption every gradient made in the editor would warn
+/// about approximation that did not happen, and a warning that fires when nothing was lost is one
+/// people learn to skip.
+#[test]
+fn an_unbent_bezier_exports_as_linear_and_a_bent_one_is_reported() {
+    let seg = |b: Blend| Gradient {
+        name: "b".into(),
+        segments: vec![Segment {
+            left: 0.0,
+            mid: 0.5,
+            right: 1.0,
+            left_color: [0.0, 0.0, 0.0, 1.0],
+            right_color: [1.0, 1.0, 1.0, 1.0],
+            blend: b,
+            space: Space::Rgb,
+        }],
+    };
+    // Both spellings of the identity, including the all-zero serde default.
+    for p in [BEZIER_IDENTITY, [0.0; 4]] {
+        let g = seg(Blend::Bezier(p));
+        assert!(crate::segment::bezier_is_identity(p), "{p:?} should read as the identity");
+        assert_eq!(crate::segment::ggr_lossy_segments(&g), 0, "an unbent curve loses nothing");
+        let back = crate::import::parse_ggr(&crate::segment::write_ggr(&g)).unwrap();
+        assert_eq!(back.segments[0].blend, Blend::Linear, "written as GIMP's linear");
+        // ⚠**Compared with a tolerance, and my own comment was wrong until this failed.** The
+        // identity Bézier is linear to ~1e-4, not bit-identically: the ease solves `x(u) = t`
+        // numerically and lands within a rounding error of the straight line. 1e-4 is a quarter
+        // of the 1/255 the output can express, so it is visually exact — which is the property
+        // the exemption actually needs.
+        let (a, b) = (g.bake(LUT_SIZE), back.bake(LUT_SIZE));
+        assert_eq!(a.entries.len(), b.entries.len());
+        let worst = a
+            .entries
+            .iter()
+            .zip(&b.entries)
+            .flat_map(|(x, y)| (0..4).map(move |c| (x[c] - y[c]).abs()))
+            .fold(0.0_f32, f32::max);
+        assert!(worst < 1.0 / 255.0, "an unbent curve drifted by {worst}, more than one output level");
+    }
+    // A bent one is counted, and the count is what the UI warns from.
+    let bent = seg(Blend::Bezier([0.9, 0.0, 0.1, 1.0]));
+    assert!(!crate::segment::bezier_is_identity([0.9, 0.0, 0.1, 1.0]));
+    assert_eq!(crate::segment::ggr_lossy_segments(&bent), 1);
+    // ⚠And it really is lossy — the control that stops this being a warning about nothing.
+    let back = crate::import::parse_ggr(&crate::segment::write_ggr(&bent)).unwrap();
+    assert_ne!(bent.bake(LUT_SIZE), back.bake(LUT_SIZE), "a bent curve must actually differ");
+}
+
+/// ⚠A newline in a gradient's name would forge the segment-count line and produce a file that
+/// parses as something else entirely. Names come from `.ggr` files and from a user's text field,
+/// so neither is trusted.
+#[test]
+fn a_hostile_name_cannot_forge_the_file() {
+    let g = Gradient {
+        name: "evil\n99\n0 0 1 0 0 0 1 1 1 1 1 0 0".into(),
+        segments: vec![Segment::linear(0.0, 1.0, [0.0; 4], [1.0; 4])],
+    };
+    let back = crate::import::parse_ggr(&crate::segment::write_ggr(&g))
+        .expect("must still be a valid file");
+    assert_eq!(back.segments.len(), 1, "the name must not inject segments");
+    // An empty name still produces a valid file rather than a blank `Name:` GIMP may reject.
+    let anon = Gradient { name: "   ".into(), segments: vec![Segment::linear(0.0, 1.0, [0.0; 4], [1.0; 4])] };
+    assert!(crate::segment::write_ggr(&anon).contains("Name: Fractadyne"));
+}

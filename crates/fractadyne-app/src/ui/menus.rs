@@ -597,7 +597,7 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         if ui
-                            .button("Import .kfr…")
+                            .button(format!("{} Import .kfr…", crate::icons::IMPORT))
                             .on_hover_text("Load a Kalles Fraktaler location file")
                             .clicked()
                         {

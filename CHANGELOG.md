@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Save a gradient to a file, force it seamless, and see the seam** (beta.39).
+  **Save .ggr…** writes the current gradient to a GIMP gradient file - openable in GIMP, Krita and
+  Inkscape as well as back in here, with its midpoints, blend curves and colour spaces intact. If
+  any segment uses a Bezier curve, which the format cannot express, it says so rather than
+  flattening in silence.
+
+  **Seamless (end matches start)** holds the last stop's colour equal to the first, so a cycled
+  palette has no hard edge where it wraps - and when it is off, the editor says when the ends
+  differ. In the ring view the seam mark at twelve o'clock no longer draws THROUGH the colour: it
+  is two small ticks either side, so the join it points at is actually visible.
+
+  Copy, Paste and Import buttons gained their standard icons, and the curve list now leads with
+  **Bezier** - the one you can shape - ahead of the five named presets.
+
 - **Green checks, red crosses, right-aligned** (beta.38). Confirm buttons carry a green check and
   cancel buttons a red X, across every dialog, and the action rows sit at the bottom right.
 

@@ -117,6 +117,12 @@ pub(crate) const CONFIRM: &str = "\u{e06c}";
 /// Lucide `copy` - copy-to-clipboard buttons (replaces a clipboard emoji)
 pub(crate) const COPY: &str = "\u{e09e}";
 
+/// Lucide `clipboard-paste` - paste-from-clipboard buttons
+pub(crate) const PASTE: &str = "\u{e3e8}";
+
+/// Lucide `file-input` - import-a-palette-file buttons
+pub(crate) const IMPORT: &str = "\u{e0c5}";
+
 /// Lucide `refresh-cw` - re-run / check again
 pub(crate) const REFRESH: &str = "\u{e145}";
 

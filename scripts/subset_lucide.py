@@ -46,6 +46,8 @@ ICONS = [
     ("DUAL",        "columns-2",    "toolbar: dual linked view toggle"),
     ("CONFIRM",     "check",        "the affirmative half of a confirm/cancel pair"),
     ("COPY",        "copy",         "copy-to-clipboard buttons (replaces a clipboard emoji)"),
+    ("PASTE",       "clipboard-paste", "paste-from-clipboard buttons"),
+    ("IMPORT",      "file-input",   "import-a-palette-file buttons"),
     ("REFRESH",     "refresh-cw",   "re-run / check again"),
     ("PICK",        "pipette",      "gradient editor: eyedropper, and the picking cursor"),
     ("VIEW_BAR",    "rectangle-horizontal", "gradient editor: bar view"),
