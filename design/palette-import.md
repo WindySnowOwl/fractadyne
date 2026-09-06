@@ -530,5 +530,13 @@ Fractint's. Those are different claims and only a side-by-side settles the secon
   exactness, not "it loads" — render through the imported palette and compare against the source
   application's own render of the same palette. `default.map` plus a Fractint render is the first
   such fixture; a `.ugr` plus an Ultra Fractal render would be the second.
+  ✅**Discharged as far as a repo can discharge it (2026-09-06)**: it cannot be closed by code,
+  because every automated palette check here closes a loop with ITSELF — the importers are gated
+  against fixtures this repo wrote, and the `.ggr` round trip parses our own output with our own
+  parser. That proves **consistency, not correctness**: a byte order or an index convention we have
+  wrong in *both* directions passes all of them. So the bar now lives where it can actually be met,
+  as **manual checklist area "Palette interchange", steps 131–138** — `.ggr` opened in GIMP and in a
+  second reader, a `.ggr` authored in GIMP imported back, `.ugr` rotation direction against Ultra
+  Fractal, and a real Adobe `.ase`. See `design/checklist-automation.md`.
 - ⚠KF `.kfp` and the colour keys inside `.kfr` are unverified. Worth a look, since we already
   parse `.kfr` for locations and ignore its colour data.

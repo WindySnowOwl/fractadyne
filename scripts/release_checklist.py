@@ -546,6 +546,63 @@ STEPS = [
     ("Stability",
      "Switch fractal type, colour method and palette rapidly several times in a row.",
      "No crash and no stuck frame; the final selection is what renders."),
+
+    # ------------------------------------------------- palette interchange (other applications)
+    # ⭐⭐These exist because our automated palette checks all close a loop with OURSELVES: the
+    # importers are gated against fixtures this repo wrote, and the .ggr round trip parses our own
+    # output with our own parser. That proves CONSISTENCY, never CORRECTNESS — a byte order or an
+    # index convention we have wrong in both directions passes every one of them. Only another
+    # application can say whether the file means to it what it means to us.
+    ("Palette interchange",
+     "In the gradient editor, build or load a gradient, give it a name and press 'Save .ggr…'. "
+     "Then press 'Import .ggr…' and load the file you just wrote.",
+     "It comes back looking identical - same colours, same midpoints, same curves. The editor does "
+     "NOT report it as approximated unless a segment uses a Bézier curve you actually bent."),
+    ("Palette interchange",
+     "⭐Open that exported .ggr in GIMP (drop it in the gradients folder, or File ▸ Open in the "
+     "Gradients dock) and compare it with the editor's preview bar side by side. Mark BLOCKED if "
+     "GIMP is not available.",
+     "GIMP lists it, the name is the one you typed, and the ramp matches ours - including where "
+     "each midpoint sits and where a curved segment bends. This is the one direction no test here "
+     "can check: our round trip parses our own output with our own parser, which would agree with "
+     "itself even if the format were wrong."),
+    ("Palette interchange",
+     "⭐Open the SAME file in a second application that reads .ggr - Krita (Gradients docker) or "
+     "Inkscape. Mark BLOCKED if neither is available.",
+     "It loads and matches. A second reader matters because GIMP authored this format and is "
+     "forgiving of files shaped the way it writes them; a second implementation is where a "
+     "tolerated quirk shows up as a difference."),
+    ("Palette interchange",
+     "In the editor set one segment's Curve to Bézier and drag a control point well off the "
+     "diagonal, then 'Save .ggr…' again and re-import it.",
+     "The save message NAMES how many segments it had to approximate. On re-import those segments "
+     "are straight blends, and the shape you drew is gone. That is the format's limit, not a bug - "
+     "what is being checked is that it SAID so rather than flattening in silence."),
+    ("Palette interchange",
+     "⭐In GIMP, author a gradient that uses a curved (not linear) segment, an HSV-anticlockwise "
+     "segment and a midpoint dragged well off centre. Save it and import it here. Mark BLOCKED if "
+     "GIMP is not available.",
+     "All three survive: the curve bends the same way, the hue sweep goes the long way round, and "
+     "the midpoint sits where GIMP put it. ⚠Every .ggr fixture in the test suite was written by "
+     "this repo, so a file authored elsewhere is the only real test of the parser."),
+    ("Palette interchange",
+     "⭐Load a .ugr gradient that carries a 'rotation=' value, and compare the result against the "
+     "same gradient shown in Ultra Fractal. Mark BLOCKED if Ultra Fractal is not available.",
+     "The colours are rotated the same way round. ⚠The rotation is applied but its DIRECTION has "
+     "never been checked against the source application - a sign error here still produces a "
+     "plausible palette, which is why only a comparison can catch it."),
+    ("Palette interchange",
+     "⭐Import a real Adobe .ase swatch file - one exported from Photoshop or Illustrator, not one "
+     "written for this test. Mark BLOCKED if you have none.",
+     "It loads as an evenly spaced gradient, OR is rejected with a specific reason. ⚠Either outcome "
+     "is information: this is the ONE importer written from the published layout rather than "
+     "against a real file, and its own fixtures share the parser's understanding of the format. A "
+     "rejection is worth reporting, not working around."),
+    ("Palette interchange",
+     "Save a gradient into the library (type a name, press Save), quit the application, relaunch "
+     "it, open the gradient editor and load that entry from the 'Saved' menu.",
+     "It is still there after the restart and comes back with its curves, midpoints and colour "
+     "spaces intact - not flattened to plain stops."),
     ("Sign-off",
      "Review every FAIL and BLOCKED row above with the release decision in mind.",
      "Either all rows PASS, or each non-PASS has an agreed decision (fix before release / accept "
@@ -708,6 +765,14 @@ ENFORCERS = [
     ("Stability", "partial:test:both_views_quiet_and_nothing_animating_is_quiescent"),
     ("Stability", "harness:--torture"),
     ("Stability", "partial:selftest:rapid-switching-settles-on-the-final-choice"),
+    ("Palette interchange", "partial:test:a_ggr_written_here_reads_back_identically"),
+    ("Palette interchange", "manual"),
+    ("Palette interchange", "manual"),
+    ("Palette interchange", "partial:test:an_unbent_bezier_exports_as_linear_and_a_bent_one_is_reported"),
+    ("Palette interchange", "manual"),
+    ("Palette interchange", "manual"),
+    ("Palette interchange", "manual"),
+    ("Palette interchange", "partial:test:a_saved_gradient_round_trips_through_toml_without_flattening"),
     ("Sign-off", "process"),
 ]
 

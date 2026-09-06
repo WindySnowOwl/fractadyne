@@ -246,11 +246,31 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 128 | A | `--torture` / `--autodive` sustained session; no device loss, no watchdog restart. |
 | 129 | B | 18 switches of formula × method × palette, then the frame must be IDENTICAL to a clean render of the final selection — and DIFFERENT from a render of another selection, so the equality cannot pass by everything looking alike (measured meanΔ 51.98 apart). ⚠Partial: this catches a stale app FIELD, not a stale GPU cache — the export path builds a fresh reference every time, so a `invalidate_refs`-is-a-no-op mutant passes. The live half stays human. |
 
-### Sign-off (131)
+### Palette interchange (131–138)
+
+⭐⭐**Why a whole area of mostly-manual rows.** Every automated palette check in this repo closes a
+loop with ITSELF: the importers are gated against fixtures this repo wrote, and the `.ggr` round
+trip parses our own output with our own parser. That proves **consistency, not correctness** — a
+byte order or an index convention we have wrong in *both* directions passes all of them. Only
+another application can say whether the file means to it what it means to us. `palette-import.md`
+§7 has been carrying this as an open verification bar; these rows are it.
 
 | # | class | enforcer |
 |---|---|---|
-| 131 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
+| 131 | B | `a_ggr_written_here_reads_back_identically` — writes a gradient using every feature the format carries, re-parses it and compares the BAKE. ⚠Partial, and the limit is the point: it is our writer against our reader. |
+| 132 | M | Open the exported `.ggr` in **GIMP**. No machine here can hold another application's opinion of the file. |
+| 133 | M | Open it in a **second** reader (Krita / Inkscape). ⭐GIMP authored the format and forgives files shaped the way it writes them; a second implementation is where a tolerated quirk becomes a difference. |
+| 134 | B | `an_unbent_bezier_exports_as_linear_and_a_bent_one_is_reported` — pins that a bent curve is COUNTED as approximated and an unbent one is not. ⚠Partial: the count is enforced, that the message reaches the user's eye is not. |
+| 135 | M | Import a `.ggr` **authored in GIMP** carrying a curve, an HSV sweep and an off-centre midpoint. ⚠Every `.ggr` fixture in the suite was written by this repo, so a file from elsewhere is the only real test of the parser. |
+| 136 | M | `.ugr` `rotation=` **direction**, against Ultra Fractal. ⚠Applied but never checked against the source application — a sign error still yields a plausible palette. |
+| 137 | M | A **real** Adobe `.ase`. ⚠The one importer written from the published layout rather than against a real file; its fixtures share the parser's understanding, so they prove consistency only. |
+| 138 | B | `a_saved_gradient_round_trips_through_toml_without_flattening` — the library keeps segments, not stops. ⚠Partial: the restart itself is human. |
+
+### Sign-off (139)
+
+| # | class | enforcer |
+|---|---|---|
+| 139 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
 
 ---
 
