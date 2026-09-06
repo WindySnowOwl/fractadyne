@@ -8976,7 +8976,7 @@ impl FractadyneApp {
                             .weak()
                             .small(),
                         );
-                        if ui.button(format!("{} Close list", crate::icons::CLOSE)).clicked() {
+                        if crate::theme::cancel_button(ui, "Close list").clicked() {
                             self.coloring.ugr_choices.clear();
                         }
                     });
@@ -9048,7 +9048,7 @@ impl FractadyneApp {
                             .hint_text("#000000, #8b1a1a, #ff8800, #ffe6b3"),
                     );
                     ui.horizontal(|ui| {
-                        if ui.button(format!("{} Apply", crate::icons::CONFIRM)).clicked() {
+                        if crate::theme::confirm_button(ui, "Apply").clicked() {
                             match fractadyne_color::parse_palette_text(&self.coloring.paste_text) {
                                 Ok(colors) => {
                                     let got = colors.len();
@@ -9124,7 +9124,21 @@ impl FractadyneApp {
                 // order; `UI-DESIGN.md` §8.2 states it for every dialog.
                 ui.add_space(6.0);
                 ui.separator();
-                ui.horizontal(|ui| {
+                // ⭐**Right-aligned**, and the order is written BACKWARDS on purpose: a
+                // right-to-left layout places the first widget rightmost, so Cancel is added
+                // first to end up on the right and OK reads first. `UI-DESIGN.md` §8.2.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // ⚠**Cancel reverts, the window's ✕ does not.** Closing a window is
+                    // not a statement about the work in it, and every edit here is
+                    // already live in the view — so silently undoing on ✕ would throw
+                    // away work the user watched themselves make.
+                    if crate::theme::cancel_button(ui, "Cancel")
+                        .on_hover_text("Discard every change made since this window was opened, and close it")
+                        .clicked()
+                    {
+                        cancelled = true;
+                        close_after = true;
+                    }
                     // ⭐⭐**The affirmative was MISSING, and its absence was not
                     // neutral.** The editor is modeless — every edit is already live in
                     // the view — so it did not strictly NEED an accept. But the only
@@ -9135,23 +9149,10 @@ impl FractadyneApp {
                     // ⚠It does exactly what ✕ does — close, keep, drop the Cancel
                     // baseline — and that is the point: the safe exit should be the
                     // obvious one.
-                    if ui
-                        .button(format!("{} OK", crate::icons::CONFIRM))
+                    if crate::theme::confirm_button(ui, "OK")
                         .on_hover_text("Keep these changes and close the editor")
                         .clicked()
                     {
-                        close_after = true;
-                    }
-                    // ⚠**Cancel reverts, the window's ✕ does not.** Closing a window is
-                    // not a statement about the work in it, and every edit here is
-                    // already live in the view — so silently undoing on ✕ would throw
-                    // away work the user watched themselves make.
-                    if ui
-                        .button(format!("{} Cancel", crate::icons::CLOSE))
-                        .on_hover_text("Discard every change made since this window was opened, and close it")
-                        .clicked()
-                    {
-                        cancelled = true;
                         close_after = true;
                     }
                 });

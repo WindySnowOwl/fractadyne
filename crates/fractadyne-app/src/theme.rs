@@ -11,6 +11,22 @@ use eframe::egui;
 pub(crate) const BRAND_ACCENT: egui::Color32 = egui::Color32::from_rgb(0xE0, 0xA0, 0x30);
 pub(crate) const BRAND_TEXT: egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE7, 0xEA);
 
+/// Semantic colours for an affirmative and a destructive action, per theme.
+///
+/// ⭐⭐**These are NOT the tokens `UI-DESIGN.md` §9 lists, and the difference is measured.** That
+/// table gives success `#5BBF7A` and error `#E0584B`, which are fine on a panel and fail on a
+/// BUTTON: against the pressed-widget fill `#454952` the red reads **2.43:1**, under even the 3.0
+/// floor for "must be told apart", and the green reads 3.94. A check mark that disappears when you
+/// press the button is worse than no check mark. The values below were chosen by measuring every
+/// surface each theme draws a widget on — see `theme_tests::semantic_colours_are_legible`.
+///
+/// ⚠**`DANGER_DARK` clears 3.0, not 4.5**, and cannot: reaching 4.5:1 against `#454952` needs a
+/// relative luminance of 0.456, which in red is pink. Gated at its measured floor, like the accent.
+pub(crate) const OK_DARK: egui::Color32 = egui::Color32::from_rgb(0x6F, 0xD4, 0x8E);
+pub(crate) const OK_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x1B, 0x6B, 0x2F);
+pub(crate) const DANGER_DARK: egui::Color32 = egui::Color32::from_rgb(0xF0, 0x79, 0x6A);
+pub(crate) const DANGER_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xB0, 0x20, 0x20);
+
 /// Linear RGBA interpolation between two colors (`t` in 0..1).
 pub(crate) fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
     let t = t.clamp(0.0, 1.0);
@@ -81,6 +97,9 @@ struct Palette {
     accent: egui::Color32,
     /// Text selection background (amber tint).
     selection: egui::Color32,
+    /// Affirmative (a confirm's check) and destructive (a cancel's ✕) icon tints.
+    ok: egui::Color32,
+    danger: egui::Color32,
     dark_mode: bool,
 }
 
@@ -98,6 +117,8 @@ impl Palette {
             text: rgb(0xE6, 0xE7, 0xEA),
             accent: rgb(0xE0, 0xA0, 0x30),
             selection: rgb(0x4A, 0x38, 0x14),
+            ok: OK_DARK,
+            danger: DANGER_DARK,
             dark_mode: true,
         }
     }
@@ -114,6 +135,8 @@ impl Palette {
             text: rgb(0x2A, 0x2B, 0x2E),
             accent: rgb(0xB9, 0x82, 0x12),
             selection: rgb(0xF0, 0xE3, 0xBC),
+            ok: OK_LIGHT,
+            danger: DANGER_LIGHT,
             dark_mode: false,
         }
     }
@@ -149,6 +172,57 @@ pub(crate) fn contrast_ratio(a: egui::Color32, b: egui::Color32) -> f32 {
 /// Stored in `Visuals::hyperlink_color` by [`apply_theme`].
 pub(crate) fn ui_accent(ctx: &egui::Context) -> egui::Color32 {
     ctx.style().visuals.hyperlink_color
+}
+
+/// The active theme's affirmative green / destructive red.
+///
+/// ⚠Keyed off `dark_mode` rather than stashed in `Visuals`, because egui has a slot for an error
+/// colour and none for a success one — putting half the pair in `Visuals` and half in a constant
+/// is how the two drift apart.
+/// ⭐Read back out of the `Palette` rather than from the constants directly, so the values the UI
+/// draws with are the same fields the contrast test measures. Reading the constants here instead
+/// left `Palette::ok` unread outside tests — a gate measuring a value nothing used.
+fn palette_for(ctx: &egui::Context) -> Palette {
+    if ctx.style().visuals.dark_mode { Palette::dark() } else { Palette::light() }
+}
+
+pub(crate) fn ok_color(ctx: &egui::Context) -> egui::Color32 {
+    palette_for(ctx).ok
+}
+
+pub(crate) fn danger_color(ctx: &egui::Context) -> egui::Color32 {
+    palette_for(ctx).danger
+}
+
+/// A button whose ICON is tinted and whose label keeps the ordinary text colour.
+///
+/// ⭐**Only the glyph is coloured.** Tinting the whole button green would make the label itself
+/// fail the contrast floor on some fills and would read as a coloured button rather than a
+/// labelled action; the icon is what carries the signal, so the icon is what gets the colour.
+/// ⚠The label deliberately takes `text_color()` at build time rather than being left to the
+/// widget: a `LayoutJob` carries its own colours, so egui will not tint it on hover.
+fn tinted_icon_button(ui: &mut egui::Ui, icon: &str, tint: egui::Color32, label: &str) -> egui::Response {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    job.append(icon, 0.0, egui::TextFormat { font_id: font.clone(), color: tint, ..Default::default() });
+    job.append(
+        &format!(" {label}"),
+        0.0,
+        egui::TextFormat { font_id: font, color: ui.visuals().text_color(), ..Default::default() },
+    );
+    ui.button(job)
+}
+
+/// The affirmative half of a confirm/cancel pair — a GREEN check plus its label.
+pub(crate) fn confirm_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let c = ok_color(ui.ctx());
+    tinted_icon_button(ui, crate::icons::CONFIRM, c, label)
+}
+
+/// The dismiss half — a RED ✕ plus its label.
+pub(crate) fn cancel_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let c = danger_color(ui.ctx());
+    tinted_icon_button(ui, crate::icons::CLOSE, c, label)
 }
 
 /// Register the Spline Sans (UI) + Spline Sans Mono (numeric / data) brand typefaces, keeping
@@ -233,6 +307,9 @@ pub(crate) fn apply_theme(ctx: &egui::Context, mode: ThemeMode) {
     v.extreme_bg_color = p.window; // text-edit / slider-trough backing
     v.faint_bg_color = p.surface; // striped/group backgrounds
     v.hyperlink_color = p.accent; // doubles as the theme accent (see `ui_accent`)
+    // egui draws its own error text in this; keeping it the same red means a validation
+    // message and a Cancel icon are the same colour rather than two opinions about red.
+    v.error_fg_color = p.danger;
     v.selection.bg_fill = p.selection;
     v.selection.stroke = egui::Stroke::new(1.0_f32, p.accent);
 

@@ -474,8 +474,7 @@ impl FractadyneApp {
                         if ui.button("Stop render").clicked() {
                             stop = true;
                         }
-                    } else if ui
-                        .button(format!("{} Render", crate::icons::CONFIRM))
+                    } else if crate::theme::confirm_button(ui, "Render")
                         .on_hover_text("Start rendering the frame sequence")
                         .clicked()
                     {
@@ -491,8 +490,7 @@ impl FractadyneApp {
                     // ⚠Only when idle: while a render runs, "Stop render" IS the abandon action
                     // and a second one beside it would be two words for one thing.
                     if !running
-                        && ui
-                            .button(format!("{} Cancel", crate::icons::CLOSE))
+                        && crate::theme::cancel_button(ui, "Cancel")
                             .on_hover_text("Close without rendering")
                             .clicked()
                     {

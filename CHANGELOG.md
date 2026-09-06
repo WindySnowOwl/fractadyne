@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Green checks, red crosses, right-aligned** (beta.38). Confirm buttons carry a green check and
+  cancel buttons a red X, across every dialog, and the action rows sit at the bottom right.
+
+  ⚠The colours are not the ones this project's own design tokens specified. Those (`#5BBF7A`
+  green, `#E0584B` red) look right on a panel and fail on a BUTTON: against the pressed-button
+  fill the red measures 2.43:1, below even the floor for "must be told apart". A check mark that
+  vanishes when you press the button is worse than no check mark, so both colours were re-picked
+  by measuring every surface either theme draws a widget on, and a test now holds them there.
+
+  ⭐The green and the red are almost the same LIGHTNESS - 1.04:1 in the light theme - so to a
+  red-green colour-blind reader they are the same mark. The colour is redundant reinforcement
+  only; the check and the cross are different SHAPES, and that is what carries the meaning.
+
 - **Every dialog now has a consistent way to accept or back out** (beta.37). The gradient editor
   gains an **OK** button - previously the only labelled way out was Cancel, which reverts, so
   keeping your work meant clicking the window's X and hoping. Its OK and Cancel have also moved to

@@ -327,7 +327,7 @@ impl FractadyneApp {
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    go = ui.button(format!("{} Go", crate::icons::CONFIRM)).clicked();
+                    go = crate::theme::confirm_button(ui, "Go").clicked();
                     if ui.button(format!("{} Copy", crate::icons::COPY)).on_hover_text("Copy this location to the clipboard").clicked() {
                         copy = true;
                     }
@@ -343,8 +343,7 @@ impl FractadyneApp {
                     // on, so pushing Go below the feature section would separate it from its own
                     // inputs. `UI-DESIGN.md` §8.2 records this as the one place the bottom rule
                     // does not apply, rather than pretending it does.
-                    if ui
-                        .button(format!("{} Cancel", crate::icons::CLOSE))
+                    if crate::theme::cancel_button(ui, "Cancel")
                         .on_hover_text("Close without going anywhere")
                         .clicked()
                     {
@@ -481,8 +480,7 @@ impl FractadyneApp {
                                 // longer (k, p) scales that again. Abandoning is enough: the
                                 // worker owns no shared state, so dropping its channel lets it
                                 // finish into nothing.
-                                if ui
-                                    .button(format!("{} Cancel", crate::icons::CLOSE))
+                                if crate::theme::cancel_button(ui, "Cancel")
                                     .on_hover_text(
                                         "Stop waiting. The solve itself runs to completion in the \
                                          background and its answer is discarded — nothing is left \
@@ -568,7 +566,7 @@ impl FractadyneApp {
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    apply = ui.button(format!("{} Apply", crate::icons::CONFIRM)).on_hover_text("Jump to the location in the box").clicked();
+                    apply = crate::theme::confirm_button(ui, "Apply").on_hover_text("Jump to the location in the box").clicked();
                     copy = ui.button(format!("{} Copy", crate::icons::COPY)).on_hover_text("Copy the text to the clipboard").clicked();
                     if ui.button("Use current").clicked() {
                         self.share.text = self.view_metadata();
@@ -843,7 +841,7 @@ impl FractadyneApp {
                 );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    cancel = ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked();
+                    cancel = crate::theme::cancel_button(ui, "Cancel").clicked();
                     if ui
                         .add(egui::Button::new(
                             egui::RichText::new("Reset everything").color(egui::Color32::WHITE),
@@ -970,7 +968,7 @@ impl FractadyneApp {
                     if ui.button(format!("{} Save tour…", crate::icons::SAVE)).clicked() {
                         save = true;
                     }
-                    if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
+                    if crate::theme::cancel_button(ui, "Cancel").clicked() {
                         self.dialogs.script_export_open = false;
                     }
                 });
@@ -1205,7 +1203,7 @@ impl FractadyneApp {
                                     ui.label(egui::RichText::new(format!("{zoom}×")).weak().small());
                                 }
                                 ui.horizontal(|ui| {
-                                    if ui.button(format!("{} Go", crate::icons::CONFIRM)).clicked() {
+                                    if crate::theme::confirm_button(ui, "Go").clicked() {
                                         jump = Some(i);
                                     }
                                     if ui.button(crate::icons::DELETE).on_hover_text("Delete").clicked() {
@@ -1288,12 +1286,12 @@ impl FractadyneApp {
                     });
                 });
                 ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button(format!("{} Run", crate::icons::CONFIRM)).clicked() {
-                        run_now = true;
-                    }
-                    if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::theme::cancel_button(ui, "Cancel").clicked() {
                         self.dialogs.bench_dialog_open = false;
+                    }
+                    if crate::theme::confirm_button(ui, "Run").clicked() {
+                        run_now = true;
                     }
                 });
                 if self.bench.cfg.standard {
@@ -1352,7 +1350,7 @@ impl FractadyneApp {
                     ui.label(format!("last pass: {f:.1} fps"));
                 }
                 ui.add_space(4.0);
-                if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
+                if crate::theme::cancel_button(ui, "Cancel").clicked() {
                     cancel = true;
                 }
             });
@@ -1391,7 +1389,7 @@ impl FractadyneApp {
                     }
                     // The notice's only way out, so it carries the same X as every Cancel — it is
                     // the dismiss gesture whatever the word on it says.
-                    if ui.button(format!("{} Close", crate::icons::CLOSE)).clicked() {
+                    if crate::theme::cancel_button(ui, "Close").clicked() {
                         close_clicked = true;
                     }
                 });
@@ -1778,7 +1776,7 @@ impl FractadyneApp {
                     } else {
                         ui.label("Rendering…");
                         ui.add(egui::ProgressBar::new(p as f32 / 1000.0).show_percentage());
-                        if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
+                        if crate::theme::cancel_button(ui, "Cancel").clicked() {
                             self.export.cancel
                                 .store(true, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -1793,8 +1791,7 @@ impl FractadyneApp {
                     }
                 } else {
                     ui.horizontal(|ui| {
-                        if ui
-                            .button(format!("{} Export", crate::icons::CONFIRM))
+                        if crate::theme::confirm_button(ui, "Export")
                             .on_hover_text("Render and save into the folder above (auto-named)")
                             .clicked()
                         {
@@ -1812,8 +1809,7 @@ impl FractadyneApp {
                         // ✕, which is the same gesture as "I am done" and says nothing about
                         // intent. (The `Cancel` above is a different button — it aborts a render
                         // in flight, and the two are mutually exclusive branches.)
-                        if ui
-                            .button(format!("{} Cancel", crate::icons::CLOSE))
+                        if crate::theme::cancel_button(ui, "Cancel")
                             .on_hover_text("Close without exporting")
                             .clicked()
                         {

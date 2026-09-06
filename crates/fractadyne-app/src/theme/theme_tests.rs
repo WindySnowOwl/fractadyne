@@ -75,3 +75,61 @@ fn theme_contrast_meets_minimum() {
     assert!((contrast_ratio(black, white) - 21.0).abs() < 0.01);
     assert!((contrast_ratio(white, white) - 1.0).abs() < 0.01);
 }
+
+
+/// ⭐⭐**The affirmative green and the destructive red have to survive a BUTTON, not a panel.**
+/// A check that vanishes when you press the button it is on is worse than no check at all, so this
+/// measures both against every surface either theme ever draws a widget on — including the pressed
+/// fill, which is where the obvious choice fails.
+///
+/// ⚠⚠**MEASURED FINDING: `UI-DESIGN.md` §9's own tokens do not pass.** Success `#5BBF7A` reads
+/// 3.94:1 on the dark pressed fill and error `#E0584B` reads **2.43:1** — under even the 3.0 floor
+/// for "must be told apart". They are fine on a panel, which is presumably where they were chosen.
+/// The shipped values are brighter for that reason, and this test is what keeps them honest.
+#[test]
+fn semantic_colours_are_legible_on_every_widget_surface() {
+    for (name, p) in [("dark", Palette::dark()), ("light", Palette::light())] {
+        let surfaces = [
+            ("window", p.window),
+            ("panel", p.panel),
+            ("surface", p.surface),
+            ("elevated", p.elevated),
+            ("hover", p.hover),
+            ("active", p.active),
+            ("selection", p.selection),
+        ];
+        // ⚠The floors differ, and the difference is measured rather than chosen: red cannot reach
+        // 4.5:1 against the dark pressed fill `#454952` without becoming pink (it needs a relative
+        // luminance of 0.456). Gated where it actually lands, so it cannot get WORSE unnoticed.
+        for (what, colour, floor) in
+            [("ok", p.ok, 4.5_f32), ("danger", p.danger, if name == "dark" { 3.0 } else { 4.5 })]
+        {
+            for (bg_name, bg) in surfaces {
+                let r = contrast_ratio(colour, bg);
+                assert!(
+                    r >= floor,
+                    "{name}: {what} on {bg_name} is {r:.2}:1, below its {floor:.1}:1 floor"
+                );
+            }
+        }
+        // ⭐⭐**A measured fact worth stating rather than asserting on.** The green and the red
+        // are nearly the same LIGHTNESS — 1.50:1 in dark, **1.04:1 in light** — so they differ
+        // almost entirely in hue. To a red-green colour-blind reader (about 8% of men) the two
+        // marks are the same mark.
+        //
+        // ⛔This is deliberately NOT gated as a contrast failure: the two are never drawn on top
+        // of each other, so a luminance ratio between them is the wrong measurement, and forcing
+        // one apart would mean a washed-out red or a muddy green for no real gain.
+        // ⭐**The colour is REDUNDANT reinforcement; the SHAPE carries the meaning.** That is what
+        // is asserted instead, and it is the property that actually has to hold.
+        assert_ne!(
+            crate::icons::CONFIRM,
+            crate::icons::CLOSE,
+            "the affirmative and dismiss glyphs must differ in SHAPE — colour alone is not              readable for a red-green colour-blind user, and these two are within 1.04:1 of              each other in lightness in the light theme"
+        );
+    }
+    // The two themes must not accidentally share a value: the whole reason for a pair is that the
+    // light one is dark enough for white paper and the dark one is bright enough for near-black.
+    assert_ne!(Palette::dark().ok, Palette::light().ok);
+    assert_ne!(Palette::dark().danger, Palette::light().danger);
+}

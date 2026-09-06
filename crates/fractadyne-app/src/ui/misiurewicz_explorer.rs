@@ -552,11 +552,10 @@ impl crate::FractadyneApp {
                                     .weak()
                                     .monospace(),
                                 );
-                                if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
+                                if crate::theme::cancel_button(ui, "Cancel").clicked() {
                                     cancel_jump = true;
                                 }
-                            } else if ui
-                                .button(format!("{} Solve & jump", crate::icons::CONFIRM))
+                            } else if crate::theme::confirm_button(ui, "Solve & jump")
                                 .on_hover_text(
                                     "Newton-solve this exact point to the precision the asked \
                                      depth needs (from its stored coordinate as the seed), then \
