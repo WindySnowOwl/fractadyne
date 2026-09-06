@@ -12,6 +12,13 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Menu sections look like sections** (beta.54). File ▸ Settings set its four headings —
+  Frame-rate cap, UI scale, Theme, Updates — in the same font, weight and colour as their own
+  options, flush at the same margin. A heading that matches the rows below it is not a heading, it
+  is the first row, and the only thing grouping *60 FPS* with *Frame-rate cap* rather than with
+  *80%* was a separator line. Headings are now dimmed and a size smaller, and their options are
+  indented under them. Written down as `UI-DESIGN.md` §8.3 so the next section inherits it.
+
 - **Rotating over and over no longer inflates the gradient** (beta.53). Each rotation cuts a new
   boundary in at the seam, and nothing removed the previous one: ten separate rotations took a
   3-segment gradient to **12**, growing without bound until the editor started refusing stops you

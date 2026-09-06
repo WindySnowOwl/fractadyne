@@ -336,6 +336,34 @@ to both halves.
 
 ---
 
+### 8.3 Sections inside a menu (standard, 0.2.41-beta.54)
+
+**A heading set in the same font, weight and colour as the rows below it is not a heading — it is
+the first row.** File ▸ Settings had four ("Frame-rate cap", "UI scale (font size)", "Theme",
+"Updates") sitting flush with their own options, so the only thing grouping *60 FPS* with
+*Frame-rate cap* rather than with *80%* was the separator lines, and the reader had to reconstruct
+the structure from gaps (user-reported, 2026-09-06).
+
+The rule, applied by `menus.rs::menu_section` so a new section cannot reinvent it:
+
+- The heading is **dimmed and one size smaller** (`RichText::small().weak()`), so it reads as a
+  label rather than as something clickable.
+- Its options are **indented** under it.
+
+**Two cues, not one**, because either alone is weak: dimming can be subtle in a light theme, and
+indentation alone leaves the heading looking like a disabled entry. ⚠The heading is deliberately
+*quieter* than its options — inverting that (a bold heading over dimmed rows) is wrong here, because
+in a menu the options are what the user came to click.
+
+⚠`indent`'s vertical rule is switched off: at four sections it is four lines of chrome in a small
+popup, and the indent already carries the grouping.
+
+⚠**Separators stay** between sections. They and the indentation do different jobs — the separator
+says "a new group starts", the indent says "these belong to that heading" — and the old menu proved
+that separators alone are not enough.
+
+---
+
 ## 9. Visual System / Theme Tokens (dark-first)
 
 Concrete starting values; **[DECIDE]** the accent. Neutral, low-chroma chrome.

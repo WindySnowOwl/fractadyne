@@ -2,6 +2,33 @@
 //! `impl FractadyneApp` blocks moved verbatim from `main.rs`.
 use crate::*;
 
+/// A titled group of choices inside a menu: a dimmed, smaller heading with its options **indented
+/// underneath it**.
+///
+/// ⭐⭐**A heading set in the same font, weight and colour as the rows below it is not a heading —
+/// it is the first row.** File ▸ Settings had four of them ("Frame-rate cap", "UI scale", "Theme",
+/// "Updates") sitting flush with their own options, so the only thing grouping "60 FPS" with
+/// "Frame-rate cap" rather than with "80%" was the separator lines, and the eye had to reconstruct
+/// the structure from gaps (user, 2026-09-06).
+///
+/// Two cues rather than one, because either alone is weak: the heading is **dimmed and small** so
+/// it reads as a label rather than something clickable, and the options are **indented** so the
+/// grouping is spatial and survives a theme where the dimming is subtle. ⚠The heading is
+/// deliberately quieter than its options — in a menu the options are what you came to click.
+///
+/// ⚠`indent`'s vertical rule is turned off: at four sections it is four lines of chrome in a small
+/// popup, and the indent already carries the grouping.
+fn menu_section<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.label(egui::RichText::new(title).small().weak());
+    ui.visuals_mut().indent_has_left_vline = false;
+    ui.spacing_mut().indent = 14.0;
+    ui.indent(title, add).inner
+}
+
 impl FractadyneApp {
     /// One row of the Color ▸ Palette submenu: a swatch of the gradient, then its name. Returns
     /// whether the row was clicked — either half of it.
@@ -200,58 +227,62 @@ impl FractadyneApp {
                         // (File → Preferences/Settings); they sat under View until 2026-08-13,
                         // where only display TOGGLES belong.
                         ui.menu_button(format!("{}  Settings", crate::icons::SETTINGS), |ui| {
-                            ui.label("Frame-rate cap");
-                            for (label, val) in [
-                                ("Uncapped", None),
-                                ("30 FPS", Some(30.0)),
-                                ("60 FPS", Some(60.0)),
-                                ("120 FPS", Some(120.0)),
-                            ] {
-                                if ui.selectable_label(self.fps_cap == val, label).clicked() {
-                                    self.fps_cap = val;
-                                }
-                            }
-                            ui.separator();
-                            ui.label("UI scale (font size)");
-                            for (label, val) in [
-                                ("80%", 0.8_f32),
-                                ("90%", 0.9),
-                                ("100%", 1.0),
-                                ("110%", 1.1),
-                                ("125%", 1.25),
-                                ("150%", 1.5),
-                            ] {
-                                if ui
-                                    .selectable_label((self.ui_scale - val).abs() < 0.01, label)
-                                    .clicked()
-                                {
-                                    self.ui_scale = val;
-                                }
-                            }
-                            ui.separator();
-                            ui.label("Theme");
-                            for m in [ThemeMode::Dark, ThemeMode::Light] {
-                                if ui.selectable_label(self.theme == m, m.label()).clicked() {
-                                    self.theme = m;
-                                    apply_theme(ui.ctx(), m);
-                                }
-                            }
-                            ui.separator();
-                            ui.label("Updates");
-                            ui.horizontal(|ui| {
-                                for t in crate::update::UpdateTrack::ALL {
-                                    ui.selectable_value(&mut self.update_track, t, t.label())
-                                        .on_hover_text(match t {
-                                            crate::update::UpdateTrack::Stable => "Latest stable release",
-                                            crate::update::UpdateTrack::Beta => "Latest build including pre-releases",
-                                        });
+                            menu_section(ui, "Frame-rate cap", |ui| {
+                                for (label, val) in [
+                                    ("Uncapped", None),
+                                    ("30 FPS", Some(30.0)),
+                                    ("60 FPS", Some(60.0)),
+                                    ("120 FPS", Some(120.0)),
+                                ] {
+                                    if ui.selectable_label(self.fps_cap == val, label).clicked() {
+                                        self.fps_cap = val;
+                                    }
                                 }
                             });
-                            ui.checkbox(
-                                &mut self.update_check_on_launch,
-                                "Check for updates on launch",
-                            )
-                            .on_hover_text("Otherwise, check manually via Help → Check for updates.");
+                            ui.separator();
+                            menu_section(ui, "UI scale (font size)", |ui| {
+                                for (label, val) in [
+                                    ("80%", 0.8_f32),
+                                    ("90%", 0.9),
+                                    ("100%", 1.0),
+                                    ("110%", 1.1),
+                                    ("125%", 1.25),
+                                    ("150%", 1.5),
+                                ] {
+                                    if ui
+                                        .selectable_label((self.ui_scale - val).abs() < 0.01, label)
+                                        .clicked()
+                                    {
+                                        self.ui_scale = val;
+                                    }
+                                }
+                            });
+                            ui.separator();
+                            menu_section(ui, "Theme", |ui| {
+                                for m in [ThemeMode::Dark, ThemeMode::Light] {
+                                    if ui.selectable_label(self.theme == m, m.label()).clicked() {
+                                        self.theme = m;
+                                        apply_theme(ui.ctx(), m);
+                                    }
+                                }
+                            });
+                            ui.separator();
+                            menu_section(ui, "Updates", |ui| {
+                                ui.horizontal(|ui| {
+                                    for t in crate::update::UpdateTrack::ALL {
+                                        ui.selectable_value(&mut self.update_track, t, t.label())
+                                            .on_hover_text(match t {
+                                                crate::update::UpdateTrack::Stable => "Latest stable release",
+                                                crate::update::UpdateTrack::Beta => "Latest build including pre-releases",
+                                            });
+                                    }
+                                });
+                                ui.checkbox(
+                                    &mut self.update_check_on_launch,
+                                    "Check for updates on launch",
+                                )
+                                .on_hover_text("Otherwise, check manually via Help → Check for updates.");
+                            });
                         });
                         ui.separator();
                         if ui
