@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **An eyedropper that reaches the whole screen** (beta.34). Next to the selected stop's colour
+  there is now a **Pick** button: press it, move the pointer to any colour **anywhere on your
+  desktop** — a photograph, another fractal program, a palette on a web page — and click to take it.
+  A banner shows the colour under the cursor as you move, and Esc cancels. Restricting a dropper to
+  the application's own window would make it a novelty; the colours worth stealing are somewhere
+  else.
+
+  ⚠**Windows only.** Reading a pixel from another application needs a platform screen-capture API;
+  the Windows build has one, X11 would need an extra dependency, and Wayland deliberately forbids it
+  without a permission portal. On other platforms the button is disabled and says why rather than
+  quietly doing nothing.
+
 - **Curve control points you can drag in both directions, and colour values beside every swatch**
   (beta.33). A segment's blend can now be a **Bézier** curve with **two control points that move in
   x and y**, so you shape the curve directly instead of nudging a midpoint along one axis. Presets

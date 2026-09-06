@@ -65,6 +65,7 @@ mod autopilot;
 mod cli;
 mod diag;
 mod error;
+mod eyedropper;
 mod export;
 mod bench_matrix;
 mod fractal;
@@ -3604,6 +3605,12 @@ struct ColoringConfig {
     /// length of one drag. Latched from the press origin like `drag_stop`, and for the same
     /// reason.
     drag_handle: Option<u8>,
+    /// An eyedropper pick in progress: sample the screen under the OS cursor until the user
+    /// clicks or presses Escape. `None` when not picking.
+    ///
+    /// ⭐The colours people want in a palette are usually somewhere ELSE — a photo, another
+    /// fractal program, a palette on a web page — so this reaches outside our own window.
+    eyedrop: Option<crate::eyedropper::Pick>,
     /// Show the gradient as a RING rather than a bar.
     ///
     /// ⭐A palette is *cycled*, so it is topologically a circle: the ring is the only view in which
@@ -4656,6 +4663,7 @@ impl FractadyneApp {
                 sel_segment: 0,
                 drag_stop: None,
                 drag_handle: None,
+                eyedrop: None,
                 ring_view: false,
                 gradient_name: String::new(),
                 editor_baseline: None,
@@ -7454,8 +7462,96 @@ impl FractadyneApp {
     ///
     /// ⚠**No model change lives here.** Every edit goes through the same `Gradient` operations P1
     /// introduced, so the editor must not move a pixel of any existing gradient.
+    /// Advance an in-progress eyedropper pick by one frame, and draw the picking overlay.
+    ///
+    /// ⭐⭐**The full-screen overlay is not decoration — it is the INPUT GUARD.** While picking,
+    /// the click that takes the colour is detected from the OS, not from egui; if the pointer
+    /// happens to be over our own window, egui would ALSO deliver that click to whatever is
+    /// underneath — zooming the fractal, or dragging a stop, at the same moment as the pick. A
+    /// foreground `Area` that senses clicks absorbs them, so one gesture cannot mean two things.
+    fn poll_eyedropper(&mut self, ctx: &egui::Context) {
+        use crate::eyedropper::{self, PickStep};
+        let Some(pick) = self.coloring.eyedrop else {
+            return;
+        };
+        // The pointer is elsewhere, so nothing will wake us: drive the polling ourselves.
+        ctx.request_repaint();
+        let esc = eyedropper::escape_down() || ctx.input(|i| i.key_down(egui::Key::Escape));
+        let sample = eyedropper::sample_under_cursor();
+        match eyedropper::step(pick, eyedropper::primary_button_down(), esc, sample) {
+            PickStep::Take(c) => {
+                self.coloring.eyedrop = None;
+                if let Some(mut g) = self.editable_gradient() {
+                    let i = self.coloring.sel_stop.min(g.stop_count().saturating_sub(1));
+                    g.set_stop_color(i, c);
+                    self.store_segments(&g);
+                    self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
+                    self.coloring.use_custom_palette = true;
+                }
+            }
+            PickStep::Cancel => self.coloring.eyedrop = None,
+            PickStep::Continue(p) => {
+                self.coloring.eyedrop = Some(p);
+                ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+                let screen = ctx.screen_rect();
+                egui::Area::new(egui::Id::new("eyedropper_overlay"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(screen.min)
+                    .show(ctx, |ui| {
+                        ui.allocate_response(screen.size(), egui::Sense::click_and_drag());
+                        // A banner rather than a cursor-following swatch: the pointer is over
+                        // another application, and drawing next to it would mean an overlay window
+                        // tracking the cursor across the desktop — far more machinery, and it
+                        // would cover the very pixel being sampled.
+                        let pr = ui.painter();
+                        let text = match p.preview {
+                            Some(c) => format!("Picking a colour  ·  {}  ·  click to take it, Esc to cancel", hex_of(c)),
+                            None => "Picking a colour  ·  click to take it, Esc to cancel".to_string(),
+                        };
+                        let galley = pr.layout_no_wrap(
+                            text,
+                            egui::FontId::proportional(14.0),
+                            ui.visuals().strong_text_color(),
+                        );
+                        let pad = egui::vec2(12.0, 8.0);
+                        let sw = 22.0_f32;
+                        let size = galley.size() + pad * 2.0 + egui::vec2(sw + 8.0, 0.0);
+                        let rect = egui::Rect::from_center_size(
+                            egui::pos2(screen.center().x, screen.min.y + 46.0),
+                            size,
+                        );
+                        pr.rect_filled(rect, 6.0, ui.visuals().window_fill);
+                        pr.rect_stroke(
+                            rect,
+                            6.0,
+                            egui::Stroke::new(1.0_f32, BRAND_ACCENT),
+                            egui::StrokeKind::Inside,
+                        );
+                        if let Some(c) = p.preview {
+                            let s = egui::Rect::from_min_size(
+                                rect.min + pad,
+                                egui::vec2(sw, galley.size().y),
+                            );
+                            pr.rect_filled(s, 3.0, stop_color32(c));
+                            pr.rect_stroke(
+                                s,
+                                3.0,
+                                egui::Stroke::new(1.0_f32, ui.visuals().weak_text_color()),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        pr.galley(rect.min + pad + egui::vec2(sw + 8.0, 0.0), galley, egui::Color32::PLACEHOLDER);
+                    });
+            }
+        }
+    }
+
     fn palette_editor_window(&mut self, ctx: &egui::Context) {
+        self.poll_eyedropper(ctx);
         if !self.coloring.palette_editor_open {
+            // A pick cannot outlive the window it feeds — otherwise the overlay would keep the
+            // whole app captured with no visible way back.
+            self.coloring.eyedrop = None;
             return;
         }
         // ⭐**Cancel needs a baseline, and it has to be taken HERE.** The editor is opened from
@@ -8531,6 +8627,21 @@ impl FractadyneApp {
                             egui::RichText::new(format!("{r8:>3} {g8:>3} {b8:>3}")).monospace(),
                         )
                         .on_hover_text("Red, green and blue as 0–255 — the bytes this colour is written as");
+                        // ⭐**The eyedropper reaches the WHOLE SCREEN, not just this window.** The
+                        // colours people want in a fractal palette come from a photograph, another
+                        // fractal program, a palette on a web page — restricting it to our own
+                        // window would make it a novelty.
+                        let can_pick = crate::eyedropper::supported();
+                        let pick_btn = ui.add_enabled(can_pick, egui::Button::new("Pick"));
+                        if let Some(why) = crate::eyedropper::unsupported_reason() {
+                            pick_btn.clone().on_disabled_hover_text(why);
+                        }
+                        if pick_btn
+                            .on_hover_text("Eyedropper — take a colour from anywhere on screen. Move the pointer to the colour you want and click; Esc cancels.")
+                            .clicked()
+                        {
+                            self.coloring.eyedrop = Some(crate::eyedropper::Pick::default());
+                        }
                         // ⚠The end stops are pinned: a gradient covers 0..1 by contract, and one
                         // that stopped short would render a flat clamp instead of the colour the
                         // user put there. Shown disabled rather than hidden so the row still reads.
