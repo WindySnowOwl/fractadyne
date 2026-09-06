@@ -12,6 +12,17 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A segment shows both of its colours** (beta.42). The segment panel now has an **Ends** row
+  with the colour at each end of the selected segment - swatch and hex, both editable. Previously
+  there was one colour on screen and it was often neither end of the segment you were looking at:
+  selecting a segment never moved the stop selection, so the panel could read "Segment 3 of 10 ·
+  0.001→0.150" above a colour belonging to stop 1. Selecting a segment now selects its own start,
+  so the two halves of the panel always describe the same place.
+
+  Editing either end still keeps the join with the neighbouring segment closed - the two segments
+  meeting at a stop share that colour. Gradients CAN carry a hard edge there (an imported one
+  may), but opening one stays a deliberate act rather than a side effect of recolouring.
+
 - **The gradient shows which segment you are editing** (beta.41). Selecting a segment now marks
   its span on the gradient itself: a bracket under it in the bar view, an arc across its sector in
   the ring view, with ticks closing both ends. The segment controls said "Segment 2 of 5 ·

@@ -1836,6 +1836,38 @@ fn parse_hex_rgb(s: &str) -> Option<[f32; 3]> {
 #[cfg(test)]
 mod color_values;
 
+/// A swatch + editable hex field for one colour. Returns the new colour when it changed.
+///
+/// ⭐**Shared by the segment's two endpoints and by the selected stop**, so the three cannot drift
+/// into three different ideas of how a colour is edited.
+/// ⚠The hex field keeps its half-typed text in `Ui` memory while focused, or the next frame would
+/// re-render the current colour's full hex over what the user is in the middle of typing.
+fn color_field(ui: &mut egui::Ui, id: egui::Id, rgb: [f32; 3], tip: &str) -> Option<[f32; 3]> {
+    let mut out = None;
+    let mut c = rgb;
+    if ui.color_edit_button_rgb(&mut c).on_hover_text(tip).changed() {
+        out = Some(c);
+    }
+    let mut hex = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_else(|| hex_of(rgb)));
+    let r = ui.add(
+        egui::TextEdit::singleline(&mut hex)
+            .desired_width(72.0)
+            .font(egui::TextStyle::Monospace)
+            .hint_text("#rrggbb"),
+    );
+    if r.has_focus() || r.changed() {
+        ui.data_mut(|d| d.insert_temp(id, hex.clone()));
+    } else {
+        ui.data_mut(|d| d.remove_temp::<String>(id));
+    }
+    if r.changed() {
+        if let Some(p) = parse_hex_rgb(&hex) {
+            out = Some(p);
+        }
+    }
+    out
+}
+
 /// A DISPLAY-referred stop colour as an egui colour.
 ///
 /// ⚠**No gamma transform**, for the reason [`gradient_preview_color`] spells out: the renderer
@@ -8064,6 +8096,12 @@ impl FractadyneApp {
                         if resp.clicked() && hit.is_none() && !on_plus && !on_minus && !on_track {
                             if let Some(i) = pick_segment(&positions, at) {
                                 self.coloring.sel_segment = i;
+                            // ⚠**The stop selection has to follow.** Selecting a segment used to
+                            // leave `sel_stop` wherever it was, so the panel could read
+                            // "Segment 3 of 10 · 0.001→0.150" over a stop row for stop 1 — a
+                            // colour belonging to neither end of the segment on screen. Segment
+                            // `i`'s left endpoint IS stop `i`.
+                            self.coloring.sel_stop = i;
                             }
                         }
                         // ⚠Guarded against the track and the buttons too: a double-click on
@@ -8122,6 +8160,12 @@ impl FractadyneApp {
                             pick_segment(&stop_positions(&g0), strip_pos(p.x, x0, w))
                         {
                             self.coloring.sel_segment = i;
+                            // ⚠**The stop selection has to follow.** Selecting a segment used to
+                            // leave `sel_stop` wherever it was, so the panel could read
+                            // "Segment 3 of 10 · 0.001→0.150" over a stop row for stop 1 — a
+                            // colour belonging to neither end of the segment on screen. Segment
+                            // `i`'s left endpoint IS stop `i`.
+                            self.coloring.sel_stop = i;
                         }
                     }
                 }
@@ -8612,6 +8656,39 @@ impl FractadyneApp {
                                 ))
                                 .strong(),
                             );
+                            // ⭐⭐**A SEGMENT HAS TWO ENDS, and until now the editor showed one
+                            // colour that was often neither of them.** `Segment` owns `left_color`
+                            // and `right_color`; a "stop" is a derived view of the boundary where
+                            // two segments meet, and `Gradient::stop` is documented as LOSSY —
+                            // across a hard edge it reports only the left-hand colour. So the
+                            // model's answer to "segments or stops?" is segments, and this is the
+                            // panel finally saying so.
+                            //
+                            // ⚠**Both ends still edit through `set_stop_color`, which CLOSES the
+                            // join.** Writing `left_color` directly would let a stray click open a
+                            // hard edge between two segments the user thought were continuous —
+                            // expressible in the model, invisible in this panel, and impossible to
+                            // undo without noticing it. Splitting a join stays a deliberate,
+                            // separate action rather than a side effect of recolouring.
+                            ui.horizontal(|ui| {
+                                ui.label("Ends").on_hover_text(
+                                    "The colours at the start and end of this segment. Each is shared with the neighbouring segment, so editing one keeps the join closed.",
+                                );
+                                for (k, tip) in [
+                                    (si, "Colour at the start of this segment"),
+                                    (si + 1, "Colour at the end of this segment"),
+                                ] {
+                                    if let Some((_, rgb)) = g.stop(k) {
+                                        let id = ui.id().with(("seg_end", k));
+                                        if let Some(c) = color_field(ui, id, rgb, tip) {
+                                            let mut g2 =
+                                                edit.clone().unwrap_or_else(|| g.clone());
+                                            g2.set_stop_color(k, c);
+                                            edit = Some(g2);
+                                        }
+                                    }
+                                }
+                            });
                             ui.add_space(3.0);
                             ui.horizontal(|ui| {
                                 // ⚠The hover earns its place: GIMP's "Curved" is `pos^(ln 0.5 /

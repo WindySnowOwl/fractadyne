@@ -1107,8 +1107,12 @@ impl FractadyneApp {
                 self.coloring.custom_palette_flat = false;
                 self.rebuild_segments_from_palette();
                 self.coloring.use_custom_palette = true;
-                self.coloring.sel_stop = 2;
-                self.coloring.sel_segment = 2;
+                // ⚠Kept CONSISTENT: segment `i`'s left endpoint is stop `i`, and the click
+                // handlers maintain that. Seeding them apart would screenshot a state the UI
+                // cannot actually reach — "Segment 3" over a stop belonging to neither of its
+                // ends, which is the very incoherence beta.42 fixed.
+                self.coloring.sel_stop = 1;
+                self.coloring.sel_segment = 1;
                 // Non-default curves on a few segments, so the ribbon shows VARIETY rather than a
                 // row of identical diagonals — a ribbon of linear cells cannot show whether the
                 // per-segment curve is being drawn at all.
@@ -1132,8 +1136,10 @@ impl FractadyneApp {
                     }
                 }
                 // Select the Bézier segment, so the detail panel below the strip is showing the
-                // thing this step was extended to cover.
+                // thing this step was extended to cover, and keep the stop selection on that
+                // segment's own left endpoint — the invariant the click handlers maintain.
                 self.coloring.sel_segment = 1;
+                self.coloring.sel_stop = 1;
                 // Expand the paste-import section and seed it, so the walk covers that UI too
                 // rather than only the stop rows it shares with every other run.
                 self.coloring.paste_open = true;
