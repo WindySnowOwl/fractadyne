@@ -36,6 +36,12 @@ pub(crate) enum PickerOutcome {
     Accept,
     /// Put back the colour the popup opened with.
     Cancel,
+    /// Start the screen eyedropper and drop what it takes into THIS field.
+    ///
+    /// ⭐The stop row has a Pick button, but the picker is where you are when you decide a colour
+    /// is wrong — sending the user back out to a different button to sample one is the kind of
+    /// detour that makes a tool feel like several tools.
+    Pick,
 }
 
 /// The saturation/value square for a fixed hue.
@@ -153,13 +159,42 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
         egui::StrokeKind::Inside,
     );
 
-    // ── The same colour in all three notations, each editable ────────────────────────────────
+    // ── One table: R/G/B as column headers, one row per notation ─────────────────────────────
+    //
+    // ⭐**Every cell is `add_sized`, and that is the whole trick.** Laid out as three independent
+    // `horizontal` rows the values wandered — a two-digit `115` and a five-character `0.450` are
+    // different widths, so nothing under "G" lined up with anything else under "G". ⚠And
+    // `allocate_ui_with_layout` does NOT fix it: it shrinks to its content, so asking for a 56 px
+    // cell and putting a narrow label in it still gives a narrow cell. That was the first attempt
+    // and the columns came out 23 px apart in the header and 72 px apart in the rows.
+    // `add_sized` forces the width and centres the widget in it, which is what a column is.
+    const LABEL_W: f32 = 44.0;
+    const COL_W: f32 = 56.0;
+    let head = |ui: &mut egui::Ui, t: &str| {
+        ui.add_sized(
+            [COL_W, 14.0],
+            egui::Label::new(egui::RichText::new(t).weak().small()),
+        );
+    };
+    let row_label = |ui: &mut egui::Ui, t: &str| {
+        ui.add_sized(
+            [LABEL_W, 20.0],
+            egui::Label::new(egui::RichText::new(t).weak().small()),
+        );
+    };
+
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(ROW_LABELS[0]).weak().small());
-        for (i, name) in ["R", "G", "B"].into_iter().enumerate() {
+        ui.add_sized([LABEL_W, 14.0], egui::Label::new(""));
+        for name in ["R", "G", "B"] {
+            head(ui, name);
+        }
+    });
+    ui.horizontal(|ui| {
+        row_label(ui, ROW_LABELS[0]);
+        for i in 0..3 {
             let mut b = (rgb[i].clamp(0.0, 1.0) * 255.0 + 0.5) as i32;
             if ui
-                .add(egui::DragValue::new(&mut b).range(0..=255).prefix(name).speed(1.0))
+                .add_sized([COL_W, 20.0], egui::DragValue::new(&mut b).range(0..=255).speed(1.0))
                 .changed()
             {
                 rgb[i] = b as f32 / 255.0;
@@ -167,16 +202,13 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
         }
     });
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(ROW_LABELS[1]).weak().small());
-        for (i, name) in ["R", "G", "B"].into_iter().enumerate() {
+        row_label(ui, ROW_LABELS[1]);
+        for i in 0..3 {
             let mut f = rgb[i];
             if ui
-                .add(
-                    egui::DragValue::new(&mut f)
-                        .range(0.0..=1.0)
-                        .prefix(name)
-                        .speed(0.005)
-                        .fixed_decimals(3),
+                .add_sized(
+                    [COL_W, 20.0],
+                    egui::DragValue::new(&mut f).range(0.0..=1.0).speed(0.005).fixed_decimals(3),
                 )
                 .changed()
             {
@@ -184,26 +216,61 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
             }
         }
     });
+    // ⭐⭐**Hex reads as three bytes and edits as one string.** Split into columns it lines up
+    // with the two rows above — `73 05 05` under R, G and B — which is the whole point of the
+    // table. But a hex value is TYPED as `#730505`, one token, so the moment it is being edited it
+    // collapses back to a single field. Display and entry want different shapes; each gets the one
+    // it wants instead of both compromising.
+    let editing_id = id.with("hexedit");
+    let focus_id = id.with("hexfocus");
+    let editing = ui.data_mut(|d| d.get_temp::<bool>(editing_id).unwrap_or(false));
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(ROW_LABELS[2]).weak().small());
-        let hid = id.with("hex");
-        let mut text =
-            ui.data_mut(|d| d.get_temp::<String>(hid).unwrap_or_else(|| crate::hex_of(*rgb)));
-        let r = ui.add(
-            egui::TextEdit::singleline(&mut text)
-                .desired_width(78.0)
-                .font(egui::TextStyle::Monospace),
-        );
-        // ⚠Held only while focused, or the field would re-render the current colour's full hex
-        // over what the user is halfway through typing.
-        if r.has_focus() || r.changed() {
-            ui.data_mut(|d| d.insert_temp(hid, text.clone()));
+        row_label(ui, ROW_LABELS[2]);
+        if editing {
+            let hid = id.with("hex");
+            let mut text =
+                ui.data_mut(|d| d.get_temp::<String>(hid).unwrap_or_else(|| crate::hex_of(*rgb)));
+            let r = ui.add_sized(
+                [COL_W * 3.0, 20.0],
+                egui::TextEdit::singleline(&mut text).font(egui::TextStyle::Monospace),
+            );
+            // ⚠Focus is requested the frame AFTER the field appears — on the frame the user clicks
+            // the display, the field does not exist yet, so there is nothing to focus.
+            if ui.data_mut(|d| d.get_temp::<bool>(focus_id).unwrap_or(false)) {
+                r.request_focus();
+                ui.data_mut(|d| d.insert_temp(focus_id, false));
+            }
+            if r.changed() {
+                if let Some(c) = crate::parse_hex_rgb(&text) {
+                    *rgb = c;
+                }
+            }
+            if r.has_focus() || r.changed() {
+                ui.data_mut(|d| d.insert_temp(hid, text.clone()));
+            } else {
+                // Focus gone: drop the draft and go back to the aligned display.
+                ui.data_mut(|d| {
+                    d.remove_temp::<String>(hid);
+                    d.insert_temp(editing_id, false);
+                });
+            }
         } else {
-            ui.data_mut(|d| d.remove_temp::<String>(hid));
-        }
-        if r.changed() {
-            if let Some(c) = crate::parse_hex_rgb(&text) {
-                *rgb = c;
+            let mut clicked = false;
+            for b in crate::rgb_bytes(*rgb) {
+                clicked |= ui
+                    .add_sized(
+                        [COL_W, 20.0],
+                        egui::Label::new(egui::RichText::new(format!("{b:02x}")).monospace())
+                            .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text("Click to type a hex value")
+                    .clicked();
+            }
+            if clicked {
+                ui.data_mut(|d| {
+                    d.insert_temp(editing_id, true);
+                    d.insert_temp(focus_id, true);
+                });
             }
         }
     });
@@ -229,6 +296,20 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
         if crate::theme::confirm_button(ui, "OK").on_hover_text("Keep this colour").clicked() {
             out = PickerOutcome::Accept;
         }
+        // ⚠On the far LEFT of the row: it is not a commit, and sitting beside OK it would be read
+        // as one. The picker stays open while sampling, so the colour arrives here to be judged.
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            if ui
+                .add_enabled(
+                    crate::eyedropper::supported(),
+                    egui::Button::new(format!("{} Pick", crate::icons::PICK)),
+                )
+                .on_hover_text("Take a colour from anywhere on screen")
+                .clicked()
+            {
+                out = PickerOutcome::Pick;
+            }
+        });
     });
     out
 }

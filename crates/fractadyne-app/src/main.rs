@@ -1911,7 +1911,21 @@ fn color_field(
                 }
                 ui.memory_mut(|m| m.close_popup());
             }
+            // ⚠`color_field` is a free function with no access to the app, so it cannot start
+            // the pick itself. It leaves a REQUEST naming this popup, and `poll_eyedropper` —
+            // which does have `self` — picks it up. The popup stays open throughout.
+            crate::color_picker::PickerOutcome::Pick => {
+                // ⚠Wrapped in `Option`: egui's `remove_temp` needs `Default`, and `Id` has none.
+                ui.data_mut(|d| {
+                    d.insert_temp(egui::Id::new("eyedrop_request"), Some(popup))
+                });
+            }
             crate::color_picker::PickerOutcome::Open => {}
+        }
+        // What the eyedropper took, if it was this field that asked for it.
+        if let Some(c) = ui.data_mut(|d| d.get_temp::<[f32; 3]>(popup.with("picked"))) {
+            ui.data_mut(|d| d.remove_temp::<[f32; 3]>(popup.with("picked")));
+            out = Some(c);
         }
     }
     let mut hex = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_else(|| hex_of(rgb)));
@@ -3709,6 +3723,9 @@ struct ColoringConfig {
     /// ⭐The colours people want in a palette are usually somewhere ELSE — a photo, another
     /// fractal program, a palette on a web page — so this reaches outside our own window.
     eyedrop: Option<crate::eyedropper::Pick>,
+    /// Which colour field asked for the pick, if not the selected stop. The sampled colour is
+    /// handed back through `Ui` memory at `<id>.with("picked")`.
+    eyedrop_into: Option<egui::Id>,
     /// Keep the gradient SEAMLESS: the colour at 1.0 held equal to the colour at 0.0.
     ///
     /// ⭐The renderer takes `fract()` of the palette coordinate, so 1 and 0 are adjacent pixels on
@@ -4771,6 +4788,7 @@ impl FractadyneApp {
                 drag_stop: None,
                 drag_handle: None,
                 eyedrop: None,
+                eyedrop_into: None,
                 seamless: false,
                 ring_view: false,
                 gradient_name: String::new(),
@@ -7640,6 +7658,18 @@ impl FractadyneApp {
     /// foreground `Area` that senses clicks absorbs them, so one gesture cannot mean two things.
     fn poll_eyedropper(&mut self, ctx: &egui::Context) {
         use crate::eyedropper::{self, PickStep};
+        // A colour picker popup asking to sample into itself (see `color_field`).
+        if let Some(Some(target)) =
+            ctx.data_mut(|d| d.get_temp::<Option<egui::Id>>(egui::Id::new("eyedrop_request")))
+        {
+            ctx.data_mut(|d| {
+                d.remove_temp::<Option<egui::Id>>(egui::Id::new("eyedrop_request"));
+            });
+            if self.coloring.eyedrop.is_none() {
+                self.coloring.eyedrop = Some(eyedropper::Pick::default());
+                self.coloring.eyedrop_into = Some(target);
+            }
+        }
         let Some(pick) = self.coloring.eyedrop else {
             return;
         };
@@ -7650,7 +7680,11 @@ impl FractadyneApp {
         match eyedropper::step(pick, eyedropper::primary_button_down(), esc, sample) {
             PickStep::Take(c) => {
                 self.coloring.eyedrop = None;
-                if let Some(mut g) = self.editable_gradient() {
+                // Asked for by a picker popup: hand it back there rather than applying it to the
+                // selected stop, so the user can still judge it and Cancel out.
+                if let Some(target) = self.coloring.eyedrop_into.take() {
+                    ctx.data_mut(|d| d.insert_temp(target.with("picked"), c));
+                } else if let Some(mut g) = self.editable_gradient() {
                     let i = self.coloring.sel_stop.min(g.stop_count().saturating_sub(1));
                     g.set_stop_color(i, c);
                     self.store_segments(&g);
@@ -7658,7 +7692,10 @@ impl FractadyneApp {
                     self.coloring.use_custom_palette = true;
                 }
             }
-            PickStep::Cancel => self.coloring.eyedrop = None,
+            PickStep::Cancel => {
+                self.coloring.eyedrop = None;
+                self.coloring.eyedrop_into = None;
+            }
             PickStep::Continue(p) => {
                 self.coloring.eyedrop = Some(p);
                 let screen = ctx.screen_rect();

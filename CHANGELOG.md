@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The picker's values are a table, and it has its own eyedropper** (beta.47). R, G and B are
+  column headers once at the top, with a row per notation underneath, so the same channel lines up
+  across 0–255, 0–1 and hex. Hex reads as three aligned bytes and collapses to a single
+  `#rrggbb` field the moment you click it to type — a value that is read per-channel but typed as
+  one token.
+
+  A **Pick** button in the picker samples a colour from anywhere on screen straight into it,
+  without going back out to the stop row. The picker stays open, so what it takes can still be
+  judged and cancelled.
+
 - **The colour picker shows all three notations at once** (beta.46). 0–255, 0–1 and hex are on
   screen together and every one of them is editable, so there is no mode to be in the wrong one
   of. A large patch of the chosen colour sits at the top, and the popup is now only as wide as its
