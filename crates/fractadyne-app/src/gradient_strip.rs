@@ -8,7 +8,7 @@
 use super::{
     nudge_step, pick_segment, pick_stop, pick_stop_ring, ring_point, ring_pos, sel_after_remove,
     on_ring_track, ribbon_cell, segment_for_stop, strip_pos, strip_x, wrapped_distance,
-    EDITOR_MAX_STOPS,
+    wrapped_step, EDITOR_MAX_STOPS,
 };
 
 /// The strip the editor actually draws: a ~490 px content width inside the 520 px window.
@@ -378,4 +378,67 @@ fn every_segment_is_reachable_in_the_ribbon_however_narrow_it_is() {
     assert_eq!(ribbon_cell(X0 - 500.0, X0, W, 4), Some(0), "left of the strip is the first cell");
     assert_eq!(ribbon_cell(X0 + W + 500.0, X0, W, 4), Some(3), "right of it is the last");
     assert_eq!(ribbon_cell(X0 + W, X0, W, 4), Some(3), "the far edge must not index past the end");
+}
+
+// ── Rotation drag ───────────────────────────────────────────────────────────────────────────────
+
+/// ⚠⚠**The step that crosses the seam is the whole reason this function exists.** A rotation drag
+/// reads the pointer as a gradient position, which wraps, so nudging past 1.0 reads `0.98 → 0.02`.
+/// Subtracting plainly calls that −0.96 and throws the gradient almost a full turn backwards — at
+/// the seam, which is the one place the ring view exists to let people work.
+#[test]
+fn a_rotation_step_across_the_seam_is_small_and_keeps_its_direction() {
+    // Forwards over the top.
+    let f = wrapped_step(0.98, 0.02);
+    assert!(f > 0.0, "crossing the seam forwards must read forwards, got {f}");
+    assert!((f - 0.04).abs() < 1e-6, "and it must be the SHORT way: {f}");
+    // Backwards over the top.
+    let b = wrapped_step(0.02, 0.98);
+    assert!(b < 0.0, "crossing the seam backwards must read backwards, got {b}");
+    assert!((b + 0.04).abs() < 1e-6, "and short: {b}");
+    // ⚠The guard that makes the two assertions above meaningful: a naive subtraction really does
+    // get these wrong, and by nearly a whole turn. Without this the test would pass against an
+    // implementation that simply returned `now - prev`.
+    assert!((0.02_f32 - 0.98).abs() > 0.9, "the naive answer must be the large, wrong one");
+}
+
+/// Ordinary steps that do not go near the seam are left exactly alone — the wrap correction must not
+/// be paying for itself with a distortion everywhere else.
+#[test]
+fn an_ordinary_rotation_step_is_untouched() {
+    for (prev, now) in [(0.1_f32, 0.2_f32), (0.5, 0.3), (0.0, 0.49), (0.75, 0.76)] {
+        let s = wrapped_step(prev, now);
+        assert!((s - (now - prev)).abs() < 1e-7, "{prev}->{now} should be plain subtraction, got {s}");
+    }
+}
+
+/// ⭐**Summing the wrapped steps is what lets a drag go round more than once.** Each step is wrapped
+/// into ±half a turn, but the running total is not, so three laps read as three turns. A rotation
+/// computed as `now − press_origin` could never express more than half a turn in either direction,
+/// which is why the drag accumulates instead.
+#[test]
+fn accumulated_steps_can_exceed_a_full_turn_in_either_direction() {
+    let lap = |from: f32, dir: f32| {
+        // Twelve frames per lap, three laps — a plausible number of frames for a real drag.
+        let mut prev = from;
+        let mut accum = 0.0_f32;
+        for k in 1..=36 {
+            let now = (from + dir * k as f32 / 12.0).rem_euclid(1.0);
+            accum += wrapped_step(prev, now);
+            prev = now;
+        }
+        accum
+    };
+    assert!((lap(0.3, 1.0) - 3.0).abs() < 1e-4, "three laps forwards must total +3, got {}", lap(0.3, 1.0));
+    assert!((lap(0.3, -1.0) + 3.0).abs() < 1e-4, "three laps backwards must total −3, got {}", lap(0.3, -1.0));
+}
+
+/// A frame in which the pointer did not move contributes nothing — the editor uses exactly this to
+/// decide whether to rebake the palette, so a non-zero answer here would rebake every idle frame of
+/// a held drag.
+#[test]
+fn a_still_pointer_contributes_no_rotation() {
+    for p in [0.0_f32, 0.25, 0.5, 0.999] {
+        assert_eq!(wrapped_step(p, p), 0.0, "a still pointer at {p} must contribute nothing");
+    }
 }

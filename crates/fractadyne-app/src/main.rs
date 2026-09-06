@@ -1710,6 +1710,29 @@ fn wrapped_distance(a: f32, b: f32) -> f32 {
     d.min(1.0 - d)
 }
 
+/// The SIGNED step from `prev` to `now` on the wrapped 0..1 axis, taking the short way round.
+///
+/// ⚠⚠**This is what makes a rotation drag survive the seam.** Gradient position wraps, so a pointer
+/// crossing 1.0 reads `0.98 → 0.02`; a plain subtraction calls that −0.96 and spins the gradient
+/// almost a full turn backwards at exactly the place the ring view exists to let people work.
+///
+/// ⭐**Summing these per frame is also what lets a drag go round more than once.** Each step is
+/// wrapped, but the running total is not, so three laps of the ring are three turns rather than the
+/// half-turn a `now − press_origin` comparison could ever express.
+///
+/// ⚠A step of exactly half a turn in one frame is genuinely ambiguous — no information distinguishes
+/// the two directions — and resolves positive. It needs a pointer to cross half the gradient between
+/// two frames, at which point the user is flicking, not aiming.
+fn wrapped_step(prev: f32, now: f32) -> f32 {
+    let mut step = now - prev;
+    if step > 0.5 {
+        step -= 1.0;
+    } else if step < -0.5 {
+        step += 1.0;
+    }
+    step
+}
+
 /// Pointer → position on the ring: `0` at twelve o'clock, increasing CLOCKWISE.
 ///
 /// ⭐Clockwise from the top because that is how a colour wheel and a clock both read, and because
@@ -3689,6 +3712,20 @@ struct RenderConfig {
     finish_sound: bool,
 }
 
+/// A rotation drag in progress. See [`ColoringConfig::rot_drag`].
+#[derive(Clone)]
+struct RotDrag {
+    /// Where the pointer was last frame, as a gradient position in `0..1`.
+    prev: f32,
+    /// Total turn since the press, **unwrapped** — so a drag can go round the ring more than once,
+    /// and past the seam in either direction, without the rotation snapping back half a turn.
+    accum: f32,
+    /// The gradient as it was when the drag began. `accum` is applied to THIS every frame, never to
+    /// last frame's result: rotating splits the segment left straddling the seam, so accumulating
+    /// would split once per frame.
+    base: Vec<fractadyne_state::PaletteSegment>,
+}
+
 /// How a pixel is *colored* (not animated): the active palette (preset index / custom gradient /
 /// duotone / binary), the cycle-density & offset sliders, the two-color lo/hi endpoints, and the
 /// coloring method + its per-method params. `palette_editor_open` / `palette_rev` are the editor's
@@ -3742,6 +3779,21 @@ struct ColoringConfig {
     /// length of one drag. Latched from the press origin like `drag_stop`, and for the same
     /// reason.
     drag_handle: Option<u8>,
+    /// A rotation drag in progress: the gradient position the pointer grabbed, and the segments as
+    /// they were when it did.
+    ///
+    /// ⭐**A drag that grabbed no marker rotates the whole gradient** — in the bar and in the ring
+    /// alike. It is a gesture that was doing nothing at all before, so it steals none, and a palette
+    /// is cycled, which makes "where does the seam fall" a real question the user can only answer by
+    /// moving everything at once.
+    ///
+    /// ⚠⚠**The baseline is why this stores the segments and not just an angle.** Each
+    /// `Gradient::rotate` may split the segment left straddling the seam, so applying one small
+    /// rotation per frame would split once per frame and a two-second drag would shred the gradient
+    /// into hundreds of segments. Rotating the ORIGINAL by the total delta splits at most once, no
+    /// matter how long the drag lasts. ⚠Latched from the PRESS ORIGIN for the same reason
+    /// `drag_stop` is.
+    rot_drag: Option<RotDrag>,
     /// An eyedropper pick in progress: sample the screen under the OS cursor until the user
     /// clicks or presses Escape. `None` when not picking.
     ///
@@ -4811,6 +4863,7 @@ impl FractadyneApp {
                 sel_stop: 0,
                 sel_segment: 0,
                 drag_stop: None,
+                rot_drag: None,
                 drag_handle: None,
                 eyedrop: None,
                 eyedrop_into: None,
@@ -5550,6 +5603,35 @@ impl FractadyneApp {
         self.coloring.use_custom_palette = true;
         self.coloring.use_duotone = false;
         self.coloring.use_binary = false;
+    }
+
+    /// Begin a rotation drag, latching the gradient as it is now as the baseline. `at` is the
+    /// gradient position under the **press origin**.
+    fn rotate_drag_start(&mut self, at: f32) {
+        self.coloring.rot_drag = Some(RotDrag {
+            prev: at,
+            accum: 0.0,
+            base: self.coloring.custom_segments.clone(),
+        });
+    }
+
+    /// One frame of a rotation drag: `at` is where the pointer is now, in gradient position.
+    /// Returns whether the gradient moved. A no-op when no rotation drag is in progress.
+    fn rotate_drag_to(&mut self, at: f32) -> bool {
+        let Some(mut d) = self.coloring.rot_drag.clone() else {
+            return false;
+        };
+        let step = wrapped_step(d.prev, at);
+        d.prev = at;
+        d.accum += step;
+        let moved = step != 0.0;
+        if moved {
+            let mut g = segments_to_gradient(&self.coloring.gradient_name, &d.base);
+            g.rotate(d.accum);
+            self.store_segments(&g);
+        }
+        self.coloring.rot_drag = Some(d);
+        moved
     }
 
     /// Which saved gradient the view is currently showing, if any. See [`live_saved_index`].
@@ -8094,6 +8176,15 @@ impl FractadyneApp {
                         .and_then(|p| pick_stop(&positions, p.x, x0, w, CATCH_PX));
                     if resp.drag_started() {
                         self.coloring.drag_stop = hit;
+                        // ⭐**A drag that grabbed no marker rotates the whole gradient.** On the bar
+                        // it reads as sliding the strip under its own scale; what leaves one end
+                        // comes back at the other, because a palette is cycled and the strip is a
+                        // ring cut open at the seam.
+                        if hit.is_none() {
+                            if let Some(p) = press.or_else(|| resp.interact_pointer_pos()) {
+                                self.rotate_drag_start(strip_pos(p.x, x0, w));
+                            }
+                        }
                     }
                     if let (true, Some(i)) = (resp.clicked() || resp.drag_started(), hit) {
                         self.coloring.sel_stop = i;
@@ -8132,10 +8223,16 @@ impl FractadyneApp {
                             self.store_segments(&g);
                             grad = self.editable_gradient();
                             changed = true;
+                        } else if resp.dragged() && self.coloring.rot_drag.is_some() {
+                            if self.rotate_drag_to(strip_pos(p.x, x0, w)) {
+                                grad = self.editable_gradient();
+                                changed = true;
+                            }
                         }
                     }
                     if resp.drag_stopped() {
                         self.coloring.drag_stop = None;
+                        self.coloring.rot_drag = None;
                     }
                     // Arrow-key nudge, only while the strip itself holds focus — the same keys
                     // pan the fractal, and stealing them whenever the window is open would be a
@@ -8161,6 +8258,9 @@ impl FractadyneApp {
                             }
                         }
                     }
+                    resp.clone().on_hover_text(
+                        "Drag a marker to move its stop · drag the strip itself to ROTATE the whole gradient, wrapping at the seam · double-click to add a stop, right-click a marker to remove it · arrow keys nudge the selection (Shift for fine).",
+                    );
                 }
 
                 // ── Interaction: the remove lane (a ⊖ under the selection) ──────────────────
@@ -8203,6 +8303,29 @@ impl FractadyneApp {
                     });
                     if resp.drag_started() {
                         self.coloring.drag_stop = hit;
+                        // ⭐**Grab the ring anywhere but a marker and it spins.** ⚠Tested against
+                        // the PRESS ORIGIN, and against the track and the two hole buttons as well
+                        // as the markers: those are click targets, and a press that slips a few
+                        // pixels off one must do nothing rather than rotate the gradient the user
+                        // was trying to add a stop to.
+                        if hit.is_none() {
+                            if let Some(p) = press.or_else(|| resp.interact_pointer_pos()) {
+                                let on_ctl = p.distance(egui::pos2(cx - RING_BTN_DX, cy))
+                                    <= RING_BTN_HIT
+                                    || p.distance(egui::pos2(cx + RING_BTN_DX, cy)) <= RING_BTN_HIT
+                                    || on_ring_track(
+                                        cx,
+                                        cy,
+                                        r + RING_TRACK_GAP,
+                                        p.x,
+                                        p.y,
+                                        RING_TRACK_TOL,
+                                    );
+                                if !on_ctl {
+                                    self.rotate_drag_start(ring_pos(cx, cy, p.x, p.y));
+                                }
+                            }
+                        }
                     }
                     if let (true, Some(i)) = (resp.clicked() || resp.drag_started(), hit) {
                         self.coloring.sel_stop = i;
@@ -8320,13 +8443,19 @@ impl FractadyneApp {
                             self.store_segments(&g);
                             grad = self.editable_gradient();
                             changed = true;
+                        } else if resp.dragged() && self.coloring.rot_drag.is_some() {
+                            if self.rotate_drag_to(at) {
+                                grad = self.editable_gradient();
+                                changed = true;
+                            }
                         }
                     }
                     if resp.drag_stopped() {
                         self.coloring.drag_stop = None;
+                        self.coloring.rot_drag = None;
                     }
                     resp.clone().on_hover_text(
-                        "Click the outer track to add a stop at that point, or ⊕ in the middle to add one in the widest gap · ⊖ removes the selected stop · drag a marker round the ring to move its stop. The mark at the top is the palette's seam, where a cycled palette wraps.",
+                        "Drag the ring itself to ROTATE the whole gradient — what passes the seam comes back round the other side · drag a marker to move its stop · click the outer track to add a stop there, or ⊕ in the middle to add one in the widest gap · ⊖ removes the selected stop. The mark at the top is the palette's seam, where a cycled palette wraps.",
                     );
                 }
 
@@ -9680,6 +9809,9 @@ impl FractadyneApp {
             self.coloring.editor_baseline = None;
             self.coloring.drag_stop = None;
             self.coloring.drag_handle = None;
+            // ⚠Its `base` is a whole gradient held across frames; a stale one would rotate the NEXT
+            // gradient from the previous one's segments the moment a drag resumed.
+            self.coloring.rot_drag = None;
         }
         self.coloring.palette_editor_open = open;
     }

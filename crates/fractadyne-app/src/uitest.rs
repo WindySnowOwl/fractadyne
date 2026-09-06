@@ -1162,16 +1162,20 @@ impl FractadyneApp {
                 // library entry that is actually selected; going through
                 // `promote_linear_to_bezier` rather than hand-writing the result means the seed
                 // cannot drift from what the editor does.
-                if self.saved_gradients.is_empty() {
-                    if let Some(mut g) = self.editable_gradient() {
-                        g.promote_linear_to_bezier();
-                        self.store_segments(&g);
-                    }
-                    self.saved_gradients = vec![crate::SavedGradient {
-                        name: "Ember rework".to_string(),
-                        segment: self.coloring.custom_segments.clone(),
-                    }];
+                //
+                // ⚠**Unconditional, both halves.** Guarding on "the library is empty" made this
+                // seed correct only on the FIRST editor step: every later one rebuilds
+                // `custom_segments` from the preset again (unpromoted), so the promoted library
+                // entry no longer matched and the ring step photographed "Custom" where the bar
+                // step showed the gradient's name.
+                if let Some(mut g) = self.editable_gradient() {
+                    g.promote_linear_to_bezier();
+                    self.store_segments(&g);
                 }
+                self.saved_gradients = vec![crate::SavedGradient {
+                    name: "Ember rework".to_string(),
+                    segment: self.coloring.custom_segments.clone(),
+                }];
             }
             // The same seeded gradient, shown as a ring. ⚠The paste box stays SHUT here so the
             // ring is what the screenshot is of — the bar step already covers that section, and a

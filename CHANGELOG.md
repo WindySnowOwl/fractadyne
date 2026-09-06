@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Drag to rotate the gradient** (beta.51). Grab the ring anywhere but a marker and it spins;
+  grab the bar's strip and it slides, with what leaves one end returning at the other. A palette is
+  cycled, so *where the seam falls* is a real choice — and until now the only way to make it was to
+  drag every stop individually, which is not the same edit and cannot be done evenly.
+
+  This rotates the **gradient**, not the view: it saves with the gradient, exports to `.ggr`, and
+  survives a restart. (The Offset slider remains the separate, non-destructive render-time knob, and
+  stacks on top.) It is exact for ordinary gradients; only a curved segment the new seam happens to
+  cut through is approximated, and the segment count grows by at most one per rotation — none at all
+  when the seam lands on an existing stop.
+
+  Fixed alongside it: a rotation left a sub-pixel sliver uncovered at each end, showing as a hairline
+  of the wrong colour exactly at the seam. That defect was also reaching **`.ugr` imports**, which
+  have been applying Ultra Fractal's `rotation=` through the same code all along.
+
 - **Saved gradients are palettes** (beta.50). A gradient you saved now appears under **Color ▸
   Palette** and in the Controls panel's Palette dropdown, beside Ember, Ice, Nebula and Grayscale —
   one click to apply. Until now the library was reachable only from inside the gradient editor, so

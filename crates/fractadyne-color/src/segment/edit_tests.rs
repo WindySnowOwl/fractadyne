@@ -291,3 +291,133 @@ fn stop_expressible_tracks_content_not_the_mere_presence_of_segments() {
     shifted.segments[2].mid = s.left + 0.8 * (s.right - s.left);
     assert!(!shifted.is_stop_expressible(), "an off-centre midpoint is not expressible as stops");
 }
+
+// ── Rotation ────────────────────────────────────────────────────────────────────────────────────
+
+/// The colour a rotated gradient shows at `t` must be the colour the original showed at `t - delta`,
+/// wrapped. This is the definition of rotation, and everything below is a corner of it.
+fn assert_rotated_by(orig: &Gradient, rotated: &Gradient, delta: f32, tol: f32, what: &str) {
+    for i in 0..=400 {
+        let t = i as f32 / 400.0;
+        // ⚠Skip a hair either side of the seam and of the sample point's pre-image: both land on a
+        // hard boundary where the two gradients legitimately pick different sides of a jump.
+        let src = (t - delta).rem_euclid(1.0);
+        if t < 1.0e-3 || t > 1.0 - 1.0e-3 || src < 1.0e-3 || src > 1.0 - 1.0e-3 {
+            continue;
+        }
+        for ch in 0..3 {
+            let (a, b) = (rotated.eval(t)[ch], orig.eval(src)[ch]);
+            assert!(
+                (a - b).abs() <= tol,
+                "{what}: at t={t} (from {src}) channel {ch} read {a}, expected {b}"
+            );
+        }
+    }
+}
+
+/// ⭐⭐**Rotating a linearly-blended gradient is EXACT.** This is the case that matters: it is what
+/// every preset is, what `from_stops` builds, and what the editor's Bézier promotion produces. If
+/// rotation could not be lossless here it would be a destructive edit dressed up as a view control,
+/// and dragging the ring back and forth would slowly dissolve the user's gradient.
+#[test]
+fn rotating_a_linear_gradient_is_exact() {
+    let g = plain();
+    for delta in [0.05_f32, 0.25, 0.5, 0.731, 0.99] {
+        let mut r = g.clone();
+        r.rotate(delta);
+        assert_rotated_by(&g, &r, delta, 1.0e-5, &format!("rotate({delta})"));
+    }
+}
+
+/// ⚠**At most ONE new segment, and none when the seam lands on a stop.** Rotation cuts where the
+/// new seam falls; a rotation that lands exactly on an existing boundary has nothing to cut. Without
+/// this, dragging the ring would inflate the segment list toward `EDITOR_MAX_STOPS` and the editor
+/// would start refusing stops the user never added.
+#[test]
+fn rotation_adds_at_most_one_segment_and_none_when_it_lands_on_a_stop() {
+    let g = plain();
+    let n = g.segments.len();
+
+    let mut r = g.clone();
+    r.rotate(0.137);
+    assert_eq!(r.segments.len(), n + 1, "a cut through a segment splits exactly one of them");
+
+    // `plain` has stops at 0.35 and 0.7. Rotating by 1 - 0.7 puts the seam exactly on the 0.7 stop.
+    let mut onto = g.clone();
+    onto.rotate(1.0 - 0.7);
+    assert_eq!(onto.segments.len(), n, "landing on an existing stop must not cut anything");
+    assert_rotated_by(&g, &onto, 0.3, 1.0e-5, "rotate onto a stop");
+}
+
+/// A rotation that is a whole number of turns is the identity — including the `0.0` case, which has
+/// to be caught before the cut, or an exact no-op would still split a segment.
+#[test]
+fn a_whole_turn_changes_nothing() {
+    let g = plain();
+    for delta in [0.0_f32, 1.0, -1.0, 2.0] {
+        let mut r = g.clone();
+        r.rotate(delta);
+        assert_eq!(r.segments.len(), g.segments.len(), "rotate({delta}) must not cut");
+        same_gradient(&g, &r, &format!("rotate({delta})"));
+    }
+}
+
+/// Rotating forward then back returns the original picture. ⚠The segment COUNT does not come back —
+/// the two cuts are real — which is why the editor rotates from a pre-drag baseline rather than
+/// accumulating; this pins the colours, which is what the user sees.
+#[test]
+fn rotating_there_and_back_restores_the_picture() {
+    let g = plain();
+    let mut r = g.clone();
+    r.rotate(0.42);
+    r.rotate(-0.42);
+    same_gradient(&g, &r, "rotate(0.42) then rotate(-0.42)");
+}
+
+/// The gradient still COVERS 0..1 after rotating, with no sliver left uncovered at either end.
+/// ⚠A last segment ending at 0.99999994 is invisible in every test that samples on a grid and shows
+/// up as a hairline of the wrong colour at the seam — the one place a rotation puts the user's eye.
+#[test]
+fn a_rotated_gradient_still_covers_the_whole_range() {
+    for delta in [0.05_f32, 0.3333, 0.5, 0.87] {
+        let mut r = plain();
+        r.rotate(delta);
+        assert_eq!(r.segments.first().unwrap().left, 0.0, "delta={delta}: a gap at the bottom");
+        assert_eq!(r.segments.last().unwrap().right, 1.0, "delta={delta}: a gap at the top");
+        for w in r.segments.windows(2) {
+            assert!(
+                (w[1].left - w[0].right).abs() < 1.0e-6,
+                "delta={delta}: a gap between segments at {}",
+                w[0].right
+            );
+            assert!(w[0].right > w[0].left, "delta={delta}: a segment collapsed or inverted");
+        }
+        for s in &r.segments {
+            assert!(s.mid >= s.left && s.mid <= s.right, "delta={delta}: a midpoint left its span");
+        }
+    }
+}
+
+/// ⚠**Rotation carries the rich properties a stop list cannot hold** — a segment that is not cut
+/// must arrive with its curve, its colour space and its midpoint FRACTION intact. The one segment
+/// the new seam cuts is the approximate case, and it is approximate in exactly the way adding a stop
+/// there already is; this checks the others are untouched.
+#[test]
+fn rotation_preserves_the_curves_of_the_segments_it_does_not_cut() {
+    let g = rich(); // segments [0, 0.5] Sine/HsvCcw and [0.5, 1] SphereIncreasing/Rgb
+    let mut r = g.clone();
+    // Land the seam exactly on the 0.5 stop, so NOTHING is cut and both segments must survive whole.
+    r.rotate(0.5);
+    assert_eq!(r.segments.len(), 2, "landing on the stop must not cut");
+    // The two have swapped ends; each keeps its own blend, space and span.
+    assert_eq!(r.segments[0].blend, Blend::SphereIncreasing);
+    assert_eq!(r.segments[0].space, Space::Rgb);
+    assert_eq!(r.segments[1].blend, Blend::Sine);
+    assert_eq!(r.segments[1].space, Space::HsvCcw);
+    // The midpoint FRACTION rides along: the second segment was mid 0.1 in span [0, 0.5] = 0.2 of
+    // the way across, and must still be 0.2 of the way across wherever it has landed.
+    let s = r.segments[1];
+    let frac = (s.mid - s.left) / (s.right - s.left);
+    assert!((frac - 0.2).abs() < 1.0e-5, "the midpoint fraction moved: {frac}");
+    assert_rotated_by(&g, &r, 0.5, 1.0e-4, "rotate a rich gradient onto a stop");
+}

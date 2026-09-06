@@ -631,6 +631,19 @@ impl Gradient {
             }
         }
         out.sort_by(|a, b| a.left.total_cmp(&b.left));
+        // ⚠**Snap the two ends to exact 0 and 1.** `seg.left + by - 1.0` reaches 0 only up to f32
+        // rounding, so the first segment can start at 6e-8 and the last end at 0.99999994 — leaving
+        // slivers `eval` answers with the nearest endpoint colour instead of the covered gradient.
+        // At the seam, which is exactly where a rotation puts the user's eye, that is a hairline of
+        // the wrong colour. ⚠Endpoints only: shifting the whole segment would move its colours.
+        if let Some(f) = out.first_mut() {
+            f.left = 0.0;
+            f.mid = f.mid.clamp(f.left, f.right);
+        }
+        if let Some(l) = out.last_mut() {
+            l.right = 1.0;
+            l.mid = l.mid.clamp(l.left, l.right);
+        }
         Self { name: self.name.clone(), segments: out }
     }
 
@@ -763,6 +776,32 @@ impl Gradient {
         if let Some(last) = self.segments.last_mut() {
             last.right_color = first.left_color;
         }
+    }
+
+    /// Rotate the whole gradient by `delta` turns, wrapping at the seam. `+0.25` moves every colour
+    /// a quarter of the way toward 1.0; what falls off the end comes back at 0.0.
+    ///
+    /// ⭐⭐**A palette is CYCLED, so it is topologically a circle and rotating it is a meaningful
+    /// edit** — it chooses where the seam falls, which is the one thing the ring view exists to
+    /// show. This is an edit to the GRADIENT, not a view offset: it saves to the library, exports to
+    /// `.ggr`, and survives a restart. (`ColoringConfig::offset` is the separate, non-destructive
+    /// render-time knob, and it stacks on top of this.)
+    ///
+    /// ⭐**In-place spelling of [`Self::rotated`], which the `.ugr` importer already needed** — a
+    /// `rotation=` in an Ultra Fractal gradient is the same operation an editor drag performs, so
+    /// there is one implementation and the drag inherits its properties:
+    /// - The segment count grows by **at most one**: only a segment left straddling the seam is
+    ///   split, and a rotation landing on an existing stop splits nothing.
+    /// - It is **EXACT for a gradient whose segments blend linearly** — the overwhelmingly common
+    ///   case, what `from_stops` builds, and what the editor's Bézier promotion produces. A segment
+    ///   the seam cuts through loses its curve (the halves become linear), because no cubic half of
+    ///   a sine is a sine; an uncut segment keeps its curve, space and midpoint fraction.
+    ///
+    /// ⚠**Callers should rotate from a pre-drag BASELINE, not accumulate frame by frame.** Each
+    /// call may split, so rotating a hundred times in a hundred frames would split a hundred times;
+    /// rotating the original by the total delta splits once.
+    pub fn rotate(&mut self, delta: f32) {
+        *self = self.rotated(delta);
     }
 
     // ── Editing ─────────────────────────────────────────────────────────────────────────────
