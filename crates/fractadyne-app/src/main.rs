@@ -1634,6 +1634,26 @@ fn pick_stop(positions: &[f32], x: f32, x0: f32, w: f32, radius: f32) -> Option<
         .map(|(i, _)| i)
 }
 
+/// The ribbon is a LIST of segments, one equal-width cell each — not a map of the gradient.
+///
+/// ⭐⭐**Proportional cells make narrow segments unreachable, which is a correctness bug and not a
+/// cosmetic one.** A gradient with segments at `0.000→0.001` gives them a tenth of a percent of a
+/// ~500 px strip: half a pixel. They drew, and they could not be seen, numbered or clicked — the
+/// ribbon appeared to start at segment 3, and the only way to select 1 or 2 was to already have
+/// them selected. Equal cells degrade uniformly instead of making *some* segments impossible.
+///
+/// ⚠**This is the one place the editor's shared x-axis is deliberately broken**, so it is worth
+/// saying what pays for it: position is already carried by the bar, by the markers on it, and by
+/// the bracket marking the selected span — three times over. The ribbon's job is "pick a segment
+/// and see its curve", and proportional width serves neither.
+fn ribbon_cell(x: f32, x0: f32, w: f32, n: usize) -> Option<usize> {
+    if n == 0 || w <= 0.0 {
+        return None;
+    }
+    let t = ((x - x0) / w).clamp(0.0, 1.0);
+    Some(((t * n as f32) as usize).min(n - 1))
+}
+
 /// Which segment a position names, given the `N + 1` sorted segment boundaries.
 ///
 /// ⚠A position outside the covered range resolves to the nearest END segment rather than to
@@ -8171,9 +8191,10 @@ impl FractadyneApp {
                 // ── Interaction: the ribbon ─────────────────────────────────────────────────
                 if let (Some((_, resp)), Some(g0)) = (ribbon.as_ref(), grad.clone()) {
                     if let (true, Some(p)) = (resp.clicked(), resp.interact_pointer_pos()) {
-                        if let Some(i) =
-                            pick_segment(&stop_positions(&g0), strip_pos(p.x, x0, w))
-                        {
+                        // ⚠By CELL, not by position: the cells are equal width, so mapping the
+                        // click through `strip_pos` would select whichever segment happens to
+                        // cover that fraction of the gradient — not the one under the pointer.
+                        if let Some(i) = ribbon_cell(p.x, x0, w, g0.segments.len()) {
                             self.coloring.sel_segment = i;
                             // ⚠**The stop selection has to follow.** Selecting a segment used to
                             // leave `sel_stop` wherever it was, so the panel could read
@@ -8462,8 +8483,12 @@ impl FractadyneApp {
                 if let (Some((rect, _)), Some(g)) = (ribbon.as_ref(), grad.as_ref()) {
                     let rect = *rect;
                     pr.rect_filled(rect, 2.0, sunken);
+                    let cells = g.segments.len().max(1) as f32;
                     for (i, seg) in g.segments.iter().enumerate() {
-                        let (a, b) = (strip_x(seg.left, x0, w), strip_x(seg.right, x0, w));
+                        // ⭐Equal width — see `ribbon_cell` for why this deliberately does not
+                        // track the gradient's own spacing.
+                        let a = x0 + w * (i as f32) / cells;
+                        let b = x0 + w * (i as f32 + 1.0) / cells;
                         let cell = egui::Rect::from_min_max(
                             egui::pos2(a, rect.min.y),
                             egui::pos2(b, rect.max.y),

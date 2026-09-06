@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Fixed: narrow segments were missing from the segment list** (beta.44). The row of segment
+  curves gave each segment a share of the width proportional to how much of the gradient it
+  covered - so a segment spanning 0.000 to 0.001 got half a pixel. It could not be seen, numbered
+  or clicked: the list appeared to start at segment 3, and the first two were selectable only if
+  they already were. Every segment now gets an equal cell.
+
+  The row is a LIST of segments, not a map of the gradient - position is already shown by the bar,
+  by the markers on it, and by the bracket marking the selected span.
+
 - **The start and end colours sit at the start and the end** (beta.43), under the curve view whose
   width IS the selected segment - flanking the strip of that segment's own colours. They were a
   row to the RIGHT of it, so "start" and "end" were both to the right of the thing they were the

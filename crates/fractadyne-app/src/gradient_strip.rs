@@ -7,7 +7,8 @@
 
 use super::{
     nudge_step, pick_segment, pick_stop, pick_stop_ring, ring_point, ring_pos, sel_after_remove,
-    on_ring_track, segment_for_stop, strip_pos, strip_x, wrapped_distance, EDITOR_MAX_STOPS,
+    on_ring_track, ribbon_cell, segment_for_stop, strip_pos, strip_x, wrapped_distance,
+    EDITOR_MAX_STOPS,
 };
 
 /// The strip the editor actually draws: a ~490 px content width inside the 520 px window.
@@ -325,4 +326,56 @@ fn the_ring_add_track_is_a_band_not_a_disc() {
     // And well outside is a miss, so a click in the window's margin does nothing.
     let (x, y) = ring_point(cx, cy, track + 30.0, 0.4);
     assert!(!on_ring_track(cx, cy, track, x, y, tol));
+}
+
+
+/// ⭐⭐**The bug this exists to prevent, reported from a real gradient.** With cells sized in
+/// proportion to each segment's SPAN, a gradient whose first two segments cover `0.000→0.001` gave
+/// them a tenth of a percent of a ~490 px strip — **half a pixel each**. They drew, and could not
+/// be seen, numbered or clicked: the ribbon appeared to start at segment 3, and segments 1 and 2
+/// were selectable only if they already were.
+///
+/// ⚠The old behaviour is reproduced here as the CONTROL, so this cannot pass by accident: the same
+/// click that `pick_segment` resolves to segment 2 of 10 must resolve, by cell, to the cell the
+/// pointer is actually over.
+#[test]
+fn every_segment_is_reachable_in_the_ribbon_however_narrow_it_is() {
+    // Ten segments; the first two are vanishingly narrow, as in the report.
+    let bounds = [0.0_f32, 0.0005, 0.001, 0.15, 0.3, 0.45, 0.6, 0.72, 0.84, 0.93, 1.0];
+    let n = bounds.len() - 1;
+    assert_eq!(n, 10);
+
+    // Proportional cells: segments 0 and 1 are sub-pixel, which is the defect.
+    for i in 0..2 {
+        let px = (bounds[i + 1] - bounds[i]) * W;
+        assert!(px < 1.0, "segment {i} must be sub-pixel for this test to mean anything ({px} px)");
+    }
+
+    // Equal cells: every segment gets the same share, and each is reachable at its own centre.
+    let cell_w = W / n as f32;
+    assert!(cell_w > 40.0, "ten cells across {W} px should be comfortably clickable");
+    for i in 0..n {
+        let centre = X0 + cell_w * (i as f32 + 0.5);
+        assert_eq!(ribbon_cell(centre, X0, W, n), Some(i), "cell {i} at its own centre");
+        // And the edges belong to the cells they close, so no gap between them is dead.
+        let just_in = X0 + cell_w * i as f32 + 0.5;
+        assert_eq!(ribbon_cell(just_in, X0, W, n), Some(i), "left edge of cell {i}");
+    }
+
+    // ⚠**The control**: the same pointer position under the OLD rule selects something else
+    // entirely — proof that this test would fail if the proportional mapping came back.
+    let probe = X0 + cell_w * 0.5; // dead centre of cell 0
+    assert_eq!(ribbon_cell(probe, X0, W, n), Some(0));
+    assert_eq!(
+        pick_segment(&bounds, strip_pos(probe, X0, W)),
+        Some(2),
+        "under the old proportional rule this same click landed on index 2 — labelled \"Segment          3\" in the UI, which is exactly what the report described: a ribbon that appeared to          start at 3 because 1 and 2 were half a pixel wide"
+    );
+
+    // Degenerate inputs resolve rather than panic or divide by zero.
+    assert_eq!(ribbon_cell(X0, X0, W, 0), None);
+    assert_eq!(ribbon_cell(X0, X0, 0.0, 4), None);
+    assert_eq!(ribbon_cell(X0 - 500.0, X0, W, 4), Some(0), "left of the strip is the first cell");
+    assert_eq!(ribbon_cell(X0 + W + 500.0, X0, W, 4), Some(3), "right of it is the last");
+    assert_eq!(ribbon_cell(X0 + W, X0, W, 4), Some(3), "the far edge must not index past the end");
 }

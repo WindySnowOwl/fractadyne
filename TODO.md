@@ -788,7 +788,8 @@ Mockups: [design/mockups/](design/mockups/).
      stop rows and curve rows could only be aligned by counting). Shipped as the **A+B hybrid** —
      draggable stop strip · a segment RIBBON (one cell per segment, the real factor curve, click to
      select) · the selected segment magnified into a canvas with a draggable midpoint ring and a
-     strip of its own colours — **all three sharing ONE x-axis**; stop list collapsed to the
+     strip of its own colours — **sharing ONE x-axis**; ⚠the RIBBON was later made equal-width
+     (beta.44) because proportional cells make a sub-pixel segment unreachable; stop list collapsed to the
      SELECTED stop; imports behind `Import ▾`; cap 24→32; width capped at 496 pt.
      ⭐**Zero drift measured**: selftest 173/173 + 18/18, corpus 38/38 maxD 0, no re-bless.
      ⭐⭐**Three P1-era bugs only the screenshot found** (the "Imported gradient" notice firing for

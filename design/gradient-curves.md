@@ -340,10 +340,13 @@ reads the same bake the preview already builds.
 └────────────────────────────────────────────┘
 ```
 
-⭐**The three rows share one x-axis** (rows 1 and 2 exactly; row 3 is the selected cell magnified),
-which is fault 2 and fault 1 fixed by construction rather than by a label. Selection replaces the
-18-widget wall with one segment's controls at a legible size — fault 3 and 4. The strip, the ribbon
-and the canvas are all drag surfaces — fault 5.
+⭐**The bar and its markers share one x-axis** (rows 1 and 2 exactly; row 3 is the selected cell
+magnified), which is fault 2 and fault 1 fixed by construction rather than by a label.
+⚠⚠**The RIBBON was made EQUAL-WIDTH in beta.44** and no longer shares that axis. Proportional
+cells sized by span make a narrow segment UNREACHABLE: a real gradient with segments at
+`0.000→0.001` gave them half a pixel each on a ~490 px strip, so the ribbon appeared to start
+at segment 3 and 1–2 could only be selected if they already were. Position is carried three
+times over — by the bar, its markers, and the selected-span bracket — so the ribbon is a LIST.
 
 The stop list collapses from N rows to **the selected stop's** colour swatch + numeric position +
 delete. ⚠Keep the numeric field: 32 stops on a 520 px strip is ~16 px apart, so click-to-select plus
