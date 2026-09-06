@@ -7839,6 +7839,17 @@ impl FractadyneApp {
                 // notice — and every copy edit silently resized it. Capping makes long labels WRAP
                 // instead, and makes the strip a KNOWN width, which is what the ~15 px marker
                 // spacing at the 32-stop cap is calculated against.
+                // ⭐⭐**The content scrolls; the action row does NOT.** On a short display the
+                // editor is taller than the screen, and egui simply clips a window that does not
+                // fit — so OK and Cancel, which live at the bottom, were the first things to go.
+                // A dialog whose commit you cannot reach is worse than one that is cramped.
+                // ⚠The scroll area is capped against the SCREEN, not given a constant, so it uses
+                // whatever height there is and only scrolls when there genuinely is not enough.
+                let max_scroll = (ui.ctx().screen_rect().height() - 150.0).max(240.0);
+                egui::ScrollArea::vertical()
+                    .max_height(max_scroll)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
                 ui.set_max_width(496.0);
 
                 // Add lane, gradient bar, marker lane, remove lane, segment ribbon, curve canvas,
@@ -8644,191 +8655,10 @@ impl FractadyneApp {
                     // Hoisted out of the canvas closure: the controls column beside it
                     // needs the same span.
                     let span = (seg.right - seg.left).max(1.0e-6);
-                    ui.horizontal_top(|ui| {
-                      ui.vertical(|ui| {
-                        let (crect, cresp) = ui.allocate_exact_size(
-                            egui::vec2(CANVAS, CANVAS),
-                            egui::Sense::click_and_drag(),
-                        );
-                        let inner = crect.shrink(7.0);
-                        let curve = egui::Rect::from_min_max(
-                            inner.min,
-                            egui::pos2(inner.max.x, inner.max.y - 14.0),
-                        );
-                        let pr = ui.painter().clone();
-                        pr.rect_filled(crect, 3.0, sunken);
-                        pr.rect_stroke(
-                            crect,
-                            3.0,
-                            egui::Stroke::new(1.0_f32, weak),
-                            egui::StrokeKind::Inside,
-                        );
-                        let yr = curve_y_range(seg.blend);
-                        let bez = match seg.blend {
-                            fractadyne_color::segment::Blend::Bezier(p) => Some(p),
-                            _ => None,
-                        };
-                        // The identity line: without it "Curved" and "Sine" are two arcs with
-                        // nothing to be curved AGAINST.
-                        pr.line_segment(
-                            [
-                                egui::pos2(curve.min.x, curve_y(curve, yr, 0.0)),
-                                egui::pos2(curve.max.x, curve_y(curve, yr, 1.0)),
-                            ],
-                            egui::Stroke::new(1.0_f32, weak.linear_multiply(0.45)),
-                        );
-                        // ⚠With headroom on, 0 and 1 are no longer the box edges — so they need
-                        // drawing, or an overshooting curve has nothing to be over.
-                        if bez.is_some() {
-                            for v in [0.0_f32, 1.0] {
-                                let y = curve_y(curve, yr, v);
-                                pr.line_segment(
-                                    [egui::pos2(curve.min.x, y), egui::pos2(curve.max.x, y)],
-                                    egui::Stroke::new(1.0_f32, weak.linear_multiply(0.35)),
-                                );
-                            }
-                        }
-                        paint_factor_curve(&pr, curve, &seg, accent, 2.0, yr);
-                        // ⭐**The consequence, not only the shape**: this segment's own colours
-                        // under its own curve. It is where the HSV-from-a-grey sweep stops being
-                        // a warning and becomes something the user can see — a black → red
-                        // segment reads visibly green in the middle.
-                        let bar = egui::Rect::from_min_max(
-                            egui::pos2(curve.min.x, inner.max.y - 10.0),
-                            egui::pos2(curve.max.x, inner.max.y),
-                        );
-                        let steps = bar.width().ceil().max(1.0) as usize;
-                        for s in 0..steps {
-                            let u = s as f32 / steps as f32;
-                            let c = g.eval(seg.left + u * span);
-                            let x = bar.min.x + u * bar.width();
-                            pr.line_segment(
-                                [egui::pos2(x, bar.min.y), egui::pos2(x, bar.max.y)],
-                                egui::Stroke::new(1.5_f32, stop_color32([c[0], c[1], c[2]])),
-                            );
-                        }
-                        // ⭐⭐**P4′: for kind 5 the canvas carries two control points that move in
-                        // X AND Y.** That is the whole difference from a midpoint, which is a
-                        // one-dimensional quantity by construction — it says *when* the blend
-                        // reaches halfway, and no amount of dragging it up or down can mean
-                        // anything. A handle with two degrees of freedom changes the SHAPE.
-                        let handle_pos = |p: [f32; 4], k: usize| {
-                            egui::pos2(
-                                curve.min.x + p[k * 2].clamp(0.0, 1.0) * curve.width(),
-                                curve_y(curve, yr, p[k * 2 + 1]),
-                            )
-                        };
-                        if let Some(p) = bez {
-                            // Each handle tethered to the endpoint it belongs to, the way every
-                            // curve editor draws them — without the tether the two dots are
-                            // unattributed and the curve looks like it has four control points.
-                            for (k, anchor) in [(0usize, 0.0_f32), (1, 1.0)] {
-                                let a = egui::pos2(
-                                    curve.min.x + anchor * curve.width(),
-                                    curve_y(curve, yr, anchor),
-                                );
-                                let h = handle_pos(p, k);
-                                pr.line_segment([a, h], egui::Stroke::new(1.0_f32, weak));
-                                pr.circle(h, 5.0, sunken, egui::Stroke::new(2.0_f32, accent));
-                            }
-                        } else {
-                            // The midpoint, as a ring ON the curve. ⚠It rides at `factor(mid)`,
-                            // not at 0.5 — a sphere-increasing segment reads 0.866 there, and
-                            // putting the ring at the halfway height would draw it off its own
-                            // curve.
-                            let frac = ((seg.mid - seg.left) / span).clamp(0.0, 1.0);
-                            pr.circle(
-                                egui::pos2(
-                                    curve.min.x + frac * curve.width(),
-                                    curve_y(curve, yr, seg.factor(seg.mid)),
-                                ),
-                                5.0,
-                                sunken,
-                                egui::Stroke::new(2.0_f32, accent),
-                            );
-                        }
-                        // ⚠**Latched on the PRESS ORIGIN**, for the same reason the stop markers
-                        // are: `drag_started` fires only after the pointer has already moved, so
-                        // hit-testing where it currently is grabs the other handle — or neither,
-                        // which is what "the drag point gets stuck" looked like.
-                        if cresp.drag_started() {
-                            self.coloring.drag_handle = bez.and_then(|p| {
-                                let at = press.or_else(|| cresp.interact_pointer_pos())?;
-                                let (d0, d1) =
-                                    (at.distance(handle_pos(p, 0)), at.distance(handle_pos(p, 1)));
-                                let k = usize::from(d1 < d0);
-                                (d0.min(d1) <= 14.0).then_some(k as u8)
-                            });
-                        }
-                        if cresp.drag_stopped() {
-                            self.coloring.drag_handle = None;
-                        }
-                        if let (true, Some(at)) = (cresp.dragged(), cresp.interact_pointer_pos()) {
-                            let mut g2 = g.clone();
-                            match (bez, self.coloring.drag_handle) {
-                                (Some(mut p), Some(k)) => {
-                                    let k = usize::from(k);
-                                    // ⚠x is clamped to 0..1 because x(u) must stay monotone for
-                                    // the ease to be a function at all; y is deliberately free
-                                    // within the box, and the COLOUR is what gets clamped.
-                                    p[k * 2] = ((at.x - curve.min.x) / curve.width().max(1.0))
-                                        .clamp(0.0, 1.0);
-                                    p[k * 2 + 1] = curve_value(curve, yr, at.y);
-                                    g2.segments[si].blend =
-                                        fractadyne_color::segment::Blend::Bezier(p);
-                                    edit = Some(g2);
-                                }
-                                (None, _) => {
-                                    let f = ((at.x - curve.min.x) / curve.width().max(1.0))
-                                        .clamp(0.02, 0.98);
-                                    g2.segments[si].mid = seg.left + f * span;
-                                    edit = Some(g2);
-                                }
-                                _ => {}
-                            }
-                        }
-                        // ⭐⭐**The two end colours sit AT the two ends**, under the canvas whose
-                        // x-axis IS this segment: start under the left edge, end under the right,
-                        // flanking the strip of the segment's own colours. They were previously a
-                        // row in the controls column to the RIGHT of the canvas, so "start" and
-                        // "end" were both to the right of the thing they were the ends OF — the
-                        // labels carried the whole meaning and the layout argued against them.
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(CANVAS, 22.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.spacing_mut().item_spacing.x = 3.0;
-                                for (k, tip, right) in [
-                                    (si, "Colour at the START of this segment", false),
-                                    (si + 1, "Colour at the END of this segment", true),
-                                ] {
-                                    // ⚠The second pair is pushed to the far edge, so the gap
-                                    // between them is the segment, not a spacing constant.
-                                    if right {
-                                        ui.add_space(
-                                            (ui.available_width() - END_FIELD_W).max(0.0),
-                                        );
-                                    }
-                                    if let Some((_, rgb)) = g.stop(k) {
-                                        let id = egui::Id::new(if right { "seg_end_hi" } else { "seg_end_lo" });
-                                        if let Some(c) = color_field(ui, id, rgb, tip, 74.0) {
-                                            let mut g2 =
-                                                edit.clone().unwrap_or_else(|| g.clone());
-                                            g2.set_stop_color(k, c);
-                                            edit = Some(g2);
-                                        }
-                                    }
-                                }
-                            },
-                        );
-                        cresp.on_hover_text(if bez.is_some() {
-                            "The blend curve for the selected segment. Drag either control point — in x AND y — to reshape it. The faint lines are 0 and 1; a curve may pass outside them, and the colour is clamped rather than the curve."
-                        } else {
-                            "The blend curve for the selected segment: how fast the colour travels from the left stop to the right one. Drag the ring to move the midpoint, or switch the curve to Bézier for a control point that moves in both directions."
-                        });
-                      });
-
-                        ui.add_space(8.0);
+                    // ⭐**Controls above, canvas below and FULL WIDTH.** They were side by
+                    // side, which made the canvas a narrow square and pushed the two end
+                    // colours under it into a column too tight for their hex values. The
+                    // curve is the thing being shaped, so it gets the width.
                         ui.vertical(|ui| {
                             ui.label(
                                 egui::RichText::new(format!(
@@ -8996,7 +8826,193 @@ impl FractadyneApp {
                                 );
                             }
                         });
-                    });
+                    ui.add_space(4.0);
+                      ui.vertical(|ui| {
+                        // ⭐Full width of the editor, fixed height. The curve is the thing
+                        // being shaped, so it gets the room; the ends row below inherits the
+                        // same width, which puts the two colours genuinely at the two ends.
+                        let cw = ui.available_width();
+                        let (crect, cresp) = ui.allocate_exact_size(
+                            egui::vec2(cw, CANVAS),
+                            egui::Sense::click_and_drag(),
+                        );
+                        let inner = crect.shrink(7.0);
+                        let curve = egui::Rect::from_min_max(
+                            inner.min,
+                            egui::pos2(inner.max.x, inner.max.y - 14.0),
+                        );
+                        let pr = ui.painter().clone();
+                        pr.rect_filled(crect, 3.0, sunken);
+                        pr.rect_stroke(
+                            crect,
+                            3.0,
+                            egui::Stroke::new(1.0_f32, weak),
+                            egui::StrokeKind::Inside,
+                        );
+                        let yr = curve_y_range(seg.blend);
+                        let bez = match seg.blend {
+                            fractadyne_color::segment::Blend::Bezier(p) => Some(p),
+                            _ => None,
+                        };
+                        // The identity line: without it "Curved" and "Sine" are two arcs with
+                        // nothing to be curved AGAINST.
+                        pr.line_segment(
+                            [
+                                egui::pos2(curve.min.x, curve_y(curve, yr, 0.0)),
+                                egui::pos2(curve.max.x, curve_y(curve, yr, 1.0)),
+                            ],
+                            egui::Stroke::new(1.0_f32, weak.linear_multiply(0.45)),
+                        );
+                        // ⚠With headroom on, 0 and 1 are no longer the box edges — so they need
+                        // drawing, or an overshooting curve has nothing to be over.
+                        if bez.is_some() {
+                            for v in [0.0_f32, 1.0] {
+                                let y = curve_y(curve, yr, v);
+                                pr.line_segment(
+                                    [egui::pos2(curve.min.x, y), egui::pos2(curve.max.x, y)],
+                                    egui::Stroke::new(1.0_f32, weak.linear_multiply(0.35)),
+                                );
+                            }
+                        }
+                        paint_factor_curve(&pr, curve, &seg, accent, 2.0, yr);
+                        // ⭐**The consequence, not only the shape**: this segment's own colours
+                        // under its own curve. It is where the HSV-from-a-grey sweep stops being
+                        // a warning and becomes something the user can see — a black → red
+                        // segment reads visibly green in the middle.
+                        let bar = egui::Rect::from_min_max(
+                            egui::pos2(curve.min.x, inner.max.y - 10.0),
+                            egui::pos2(curve.max.x, inner.max.y),
+                        );
+                        let steps = bar.width().ceil().max(1.0) as usize;
+                        for s in 0..steps {
+                            let u = s as f32 / steps as f32;
+                            let c = g.eval(seg.left + u * span);
+                            let x = bar.min.x + u * bar.width();
+                            pr.line_segment(
+                                [egui::pos2(x, bar.min.y), egui::pos2(x, bar.max.y)],
+                                egui::Stroke::new(1.5_f32, stop_color32([c[0], c[1], c[2]])),
+                            );
+                        }
+                        // ⭐⭐**P4′: for kind 5 the canvas carries two control points that move in
+                        // X AND Y.** That is the whole difference from a midpoint, which is a
+                        // one-dimensional quantity by construction — it says *when* the blend
+                        // reaches halfway, and no amount of dragging it up or down can mean
+                        // anything. A handle with two degrees of freedom changes the SHAPE.
+                        let handle_pos = |p: [f32; 4], k: usize| {
+                            egui::pos2(
+                                curve.min.x + p[k * 2].clamp(0.0, 1.0) * curve.width(),
+                                curve_y(curve, yr, p[k * 2 + 1]),
+                            )
+                        };
+                        if let Some(p) = bez {
+                            // Each handle tethered to the endpoint it belongs to, the way every
+                            // curve editor draws them — without the tether the two dots are
+                            // unattributed and the curve looks like it has four control points.
+                            for (k, anchor) in [(0usize, 0.0_f32), (1, 1.0)] {
+                                let a = egui::pos2(
+                                    curve.min.x + anchor * curve.width(),
+                                    curve_y(curve, yr, anchor),
+                                );
+                                let h = handle_pos(p, k);
+                                pr.line_segment([a, h], egui::Stroke::new(1.0_f32, weak));
+                                pr.circle(h, 5.0, sunken, egui::Stroke::new(2.0_f32, accent));
+                            }
+                        } else {
+                            // The midpoint, as a ring ON the curve. ⚠It rides at `factor(mid)`,
+                            // not at 0.5 — a sphere-increasing segment reads 0.866 there, and
+                            // putting the ring at the halfway height would draw it off its own
+                            // curve.
+                            let frac = ((seg.mid - seg.left) / span).clamp(0.0, 1.0);
+                            pr.circle(
+                                egui::pos2(
+                                    curve.min.x + frac * curve.width(),
+                                    curve_y(curve, yr, seg.factor(seg.mid)),
+                                ),
+                                5.0,
+                                sunken,
+                                egui::Stroke::new(2.0_f32, accent),
+                            );
+                        }
+                        // ⚠**Latched on the PRESS ORIGIN**, for the same reason the stop markers
+                        // are: `drag_started` fires only after the pointer has already moved, so
+                        // hit-testing where it currently is grabs the other handle — or neither,
+                        // which is what "the drag point gets stuck" looked like.
+                        if cresp.drag_started() {
+                            self.coloring.drag_handle = bez.and_then(|p| {
+                                let at = press.or_else(|| cresp.interact_pointer_pos())?;
+                                let (d0, d1) =
+                                    (at.distance(handle_pos(p, 0)), at.distance(handle_pos(p, 1)));
+                                let k = usize::from(d1 < d0);
+                                (d0.min(d1) <= 14.0).then_some(k as u8)
+                            });
+                        }
+                        if cresp.drag_stopped() {
+                            self.coloring.drag_handle = None;
+                        }
+                        if let (true, Some(at)) = (cresp.dragged(), cresp.interact_pointer_pos()) {
+                            let mut g2 = g.clone();
+                            match (bez, self.coloring.drag_handle) {
+                                (Some(mut p), Some(k)) => {
+                                    let k = usize::from(k);
+                                    // ⚠x is clamped to 0..1 because x(u) must stay monotone for
+                                    // the ease to be a function at all; y is deliberately free
+                                    // within the box, and the COLOUR is what gets clamped.
+                                    p[k * 2] = ((at.x - curve.min.x) / curve.width().max(1.0))
+                                        .clamp(0.0, 1.0);
+                                    p[k * 2 + 1] = curve_value(curve, yr, at.y);
+                                    g2.segments[si].blend =
+                                        fractadyne_color::segment::Blend::Bezier(p);
+                                    edit = Some(g2);
+                                }
+                                (None, _) => {
+                                    let f = ((at.x - curve.min.x) / curve.width().max(1.0))
+                                        .clamp(0.02, 0.98);
+                                    g2.segments[si].mid = seg.left + f * span;
+                                    edit = Some(g2);
+                                }
+                                _ => {}
+                            }
+                        }
+                        // ⭐⭐**The two end colours sit AT the two ends**, under the canvas whose
+                        // x-axis IS this segment: start under the left edge, end under the right,
+                        // flanking the strip of the segment's own colours. They were previously a
+                        // row in the controls column to the RIGHT of the canvas, so "start" and
+                        // "end" were both to the right of the thing they were the ends OF — the
+                        // labels carried the whole meaning and the layout argued against them.
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(cw, 22.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = 3.0;
+                                for (k, tip, right) in [
+                                    (si, "Colour at the START of this segment", false),
+                                    (si + 1, "Colour at the END of this segment", true),
+                                ] {
+                                    // ⚠The second pair is pushed to the far edge, so the gap
+                                    // between them is the segment, not a spacing constant.
+                                    if right {
+                                        ui.add_space(
+                                            (ui.available_width() - END_FIELD_W).max(0.0),
+                                        );
+                                    }
+                                    if let Some((_, rgb)) = g.stop(k) {
+                                        let id = egui::Id::new(if right { "seg_end_hi" } else { "seg_end_lo" });
+                                        if let Some(c) = color_field(ui, id, rgb, tip, 74.0) {
+                                            let mut g2 =
+                                                edit.clone().unwrap_or_else(|| g.clone());
+                                            g2.set_stop_color(k, c);
+                                            edit = Some(g2);
+                                        }
+                                    }
+                                }
+                            },
+                        );
+                        cresp.on_hover_text(if bez.is_some() {
+                            "The blend curve for the selected segment. Drag either control point — in x AND y — to reshape it. The faint lines are 0 and 1; a curve may pass outside them, and the colour is clamped rather than the curve."
+                        } else {
+                            "The blend curve for the selected segment: how fast the colour travels from the left stop to the right one. Drag the ring to move the midpoint, or switch the curve to Bézier for a control point that moves in both directions."
+                        });
+                      });
 
                     // The selected STOP — one row, where there used to be one row per stop.
                     ui.add_space(4.0);
@@ -9518,7 +9534,9 @@ impl FractadyneApp {
                     .small(),
                 );
 
-                // ⭐⭐**The action row is the LAST thing in the window, and it was not.**
+                });
+
+                // ⭐⭐**The action row is the LAST thing in the window, and it was not.**
                 // OK and Cancel sat in the middle of the editor with the rich-gradient
                 // notice, the bands checkbox, the paste box and the stop hint all BELOW
                 // them — so the way out of the dialog was buried among its contents. A

@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **OK and Cancel stay reachable on a short screen** (beta.48). The gradient editor's contents now
+  scroll and its buttons do not: on a display too short for the whole window, the bottom was simply
+  clipped away, taking OK and Cancel with it. A dialog whose commit you cannot reach is worse than
+  one that is cramped.
+
+  The segment's Curve, Space and Ease controls have moved **above** the curve editor, which now
+  spans the full width of the window — they were side by side, which left the curve a narrow
+  square and squeezed the two end colours beneath it. The ends now sit at the two ends of
+  something the width of the gradient.
+
 - **The picker's values are a table, and it has its own eyedropper** (beta.47). R, G and B are
   column headers once at the top, with a row per notation underneath, so the same channel lines up
   across 0–255, 0–1 and hex. Hex reads as three aligned bytes and collapses to a single
