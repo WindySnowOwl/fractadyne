@@ -289,6 +289,51 @@ one is the yes".
 not look like the rest of the set — the exact problem §8's icon row exists to solve. Every icon
 comes from the Lucide subset via `icons.rs`; see the header of that file for how to add one.
 
+### 8.2 Dialog accept / cancel (standard + audit, 0.2.41-beta.37)
+
+**The rule.** A dialog's actions are the **last thing in the window**, in one `ui.horizontal` after
+a separator, **affirmative first, Cancel second** (Windows reading order, which is what the app
+already used everywhere it had both). The affirmative is named after what it does — *Run*, *Export*,
+*Render*, *Go*, *Save tour…* — and only a dialog with nothing better to call it uses **OK**.
+
+⭐**Which dialogs get a Cancel: the ones that would CHANGE something.** A dialog that only presents
+information is dismissed by its title-bar ✕, and adding a second way to do exactly that is noise.
+A dialog that commits something needs a *named* way not to — otherwise backing out and finishing
+are the same gesture, and the user has to infer which one the ✕ meant.
+
+⚠**A progress cancel is not a dialog cancel.** While a render or a solve is running, the affirmative
+is *replaced* by an abort (`Cancel`, `Stop render`) in the same slot — an `if/else`, never both at
+once. Export, Render tour, Benchmark and the Misiurewicz explorer all already did this correctly.
+
+**Audit, 2026-09-06** — every window in the app:
+
+| dialog | affirmative | cancel | notes |
+|---|---|---|---|
+| Gradient editor | **OK** | Cancel | ⭐both **added/moved in beta.36–37**: the row sat mid-window with the paste box and hints below it |
+| Export image | Export / Save as… | **Cancel (added)** | idle row had no named way out |
+| Render tour | Render | **Cancel (added)** | `Stop render` replaces Render while running |
+| Go to location | Go | **Cancel (added)** | ⚠see below — the row is deliberately not last |
+| Benchmark | Run | Cancel | ✅already correct |
+| Tour from current view | Save tour… | Cancel | ✅already correct |
+| Misiurewicz explorer | Solve & jump | *(progress)* Cancel | ✅if/else, correct |
+| Reset application state | Reset everything | Cancel | ⛔**deliberate exception**: Cancel is FIRST |
+| Running benchmark… | — | Cancel | progress only ✅ |
+| Notice | — | Close | ✅ |
+| Help · Welcome · Gallery · Bookmarks · Diagnostics · Benchmark results · Share · Report | — | *(title bar ✕)* | ✅present information; nothing to abandon |
+
+⛔**The destructive exception, and why it is not fixed to match.** *Reset application state* puts
+**Cancel first** and the red *Reset everything* second — the reverse of every other dialog. Making
+it consistent would move the button that permanently deletes every bookmark, thumbnail and the
+saved session into the position the eye reaches first. **Consistency is not worth aiming a
+destructive action at the reader**, so the reversal stays, alongside §8.1's rule that this button
+gets no check mark either.
+
+⚠**The one place the bottom rule does not apply.** *Go to location* is really two tools sharing a
+frame: paste a coordinate and **Go**, or open *Go to feature* and solve one. Each action sits with
+the fields it acts on, so pushing **Go** below the feature section would separate it from its own
+inputs. Recorded here rather than pretended away — if that window is ever split, the rule applies
+to both halves.
+
 ---
 
 ## 9. Visual System / Theme Tokens (dark-first)

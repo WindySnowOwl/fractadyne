@@ -280,6 +280,7 @@ impl FractadyneApp {
         }
         let mut open = self.goto.open;
         let mut go = false;
+        let mut close_goto = false;
         let mut copy = false;
         let mut poi: Option<usize> = None;
         let mut find_feat = false;
@@ -335,6 +336,19 @@ impl FractadyneApp {
                         self.goto.y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
                         self.goto.zoom = fmt_zoom_field(self.viewport.log2_magnification());
                         self.goto.msg = None;
+                    }
+                    // ⚠**Not the last row in this window, and that is deliberate.** The Go-to
+                    // dialog is really two tools sharing a frame: paste a coordinate and Go, or
+                    // open "Go to feature" and solve one. Each action sits with the fields it acts
+                    // on, so pushing Go below the feature section would separate it from its own
+                    // inputs. `UI-DESIGN.md` §8.2 records this as the one place the bottom rule
+                    // does not apply, rather than pretending it does.
+                    if ui
+                        .button(format!("{} Cancel", crate::icons::CLOSE))
+                        .on_hover_text("Close without going anywhere")
+                        .clicked()
+                    {
+                        close_goto = true;
                     }
                 });
                 ui.label(
@@ -517,7 +531,7 @@ impl FractadyneApp {
             self.apply_goto(); // clears goto_open on success
         }
         // Closed if the user hit the window's ✕ (open=false) or Go succeeded.
-        self.goto.open = open && self.goto.open;
+        self.goto.open = open && self.goto.open && !close_goto;
     }
 
     /// "Share location" (.fdn) dialog — copy/paste/apply/save/load a self-contained location.
@@ -1558,6 +1572,7 @@ impl FractadyneApp {
         let mut open = self.export.open;
         let mut do_export = false;
         let mut do_export_as = false;
+        let mut close_export = false;
         egui::Window::new("Export image")
             .open(&mut open)
             .resizable(false)
@@ -1792,6 +1807,18 @@ impl FractadyneApp {
                         {
                             do_export_as = true;
                         }
+                        // ⚠**A dialog that will CHANGE something needs a named way not to.** The
+                        // idle row offered only the two commits; backing out meant the title-bar
+                        // ✕, which is the same gesture as "I am done" and says nothing about
+                        // intent. (The `Cancel` above is a different button — it aborts a render
+                        // in flight, and the two are mutually exclusive branches.)
+                        if ui
+                            .button(format!("{} Cancel", crate::icons::CLOSE))
+                            .on_hover_text("Close without exporting")
+                            .clicked()
+                        {
+                            close_export = true;
+                        }
                     });
                 }
                 if let Some(s) = &self.export.status {
@@ -1799,7 +1826,7 @@ impl FractadyneApp {
                     ui.label(s);
                 }
             });
-        self.export.open = open;
+        self.export.open = open && !close_export;
         if do_export {
             if let Some((dev, q)) = gpu {
                 // Save straight into the chosen folder with an auto (timestamped) name.

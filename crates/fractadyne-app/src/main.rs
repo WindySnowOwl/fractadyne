@@ -8924,20 +8924,6 @@ impl FractadyneApp {
                             self.save_gradient_library();
                         }
                     });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // ⚠**Cancel reverts, the window's ✕ does not.** Closing a window is not a
-                        // statement about the work in it, and every edit here is already live in
-                        // the view — so silently undoing on ✕ would throw away work the user
-                        // watched themselves make.
-                        if ui
-                            .button(format!("{} Cancel", crate::icons::CLOSE))
-                            .on_hover_text("Discard every change made since this window was opened, and close it")
-                            .clicked()
-                        {
-                            cancelled = true;
-                            close_after = true;
-                        }
-                    });
                 });
 
                 // ⚠**Gated on the CONTENT, not on "has segments".** Before P3′ this fired whenever
@@ -9129,6 +9115,46 @@ impl FractadyneApp {
                     .weak()
                     .small(),
                 );
+
+                // ⭐⭐**The action row is the LAST thing in the window, and it was not.**
+                // OK and Cancel sat in the middle of the editor with the rich-gradient
+                // notice, the bands checkbox, the paste box and the stop hint all BELOW
+                // them — so the way out of the dialog was buried among its contents. A
+                // dialog's commit and abandon belong at the bottom, together, in that
+                // order; `UI-DESIGN.md` §8.2 states it for every dialog.
+                ui.add_space(6.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    // ⭐⭐**The affirmative was MISSING, and its absence was not
+                    // neutral.** The editor is modeless — every edit is already live in
+                    // the view — so it did not strictly NEED an accept. But the only
+                    // labelled way out was Cancel, which reverts; keeping your work
+                    // meant clicking the window's ✕, which reads as dismissal rather
+                    // than commitment. A dialog whose only named exit undoes your work
+                    // is asking you to trust an unlabelled one.
+                    // ⚠It does exactly what ✕ does — close, keep, drop the Cancel
+                    // baseline — and that is the point: the safe exit should be the
+                    // obvious one.
+                    if ui
+                        .button(format!("{} OK", crate::icons::CONFIRM))
+                        .on_hover_text("Keep these changes and close the editor")
+                        .clicked()
+                    {
+                        close_after = true;
+                    }
+                    // ⚠**Cancel reverts, the window's ✕ does not.** Closing a window is
+                    // not a statement about the work in it, and every edit here is
+                    // already live in the view — so silently undoing on ✕ would throw
+                    // away work the user watched themselves make.
+                    if ui
+                        .button(format!("{} Cancel", crate::icons::CLOSE))
+                        .on_hover_text("Discard every change made since this window was opened, and close it")
+                        .clicked()
+                    {
+                        cancelled = true;
+                        close_after = true;
+                    }
+                });
             });
         if changed {
             self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);

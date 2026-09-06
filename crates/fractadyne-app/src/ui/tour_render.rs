@@ -161,6 +161,7 @@ impl FractadyneApp {
         let running = self.tour_render.child.is_some();
         let mut open = self.tour_render.open;
         let (mut go, mut stop, mut browse, mut copy_cmd) = (false, false, false, false);
+        let mut close_dialog = false;
 
         // ABOVE the tour overlays. Captions and callouts paint into `Order::Middle` layers, which
         // is also where a Window lives, and they are painted after it — so during playback the
@@ -487,9 +488,19 @@ impl FractadyneApp {
                     {
                         copy_cmd = true;
                     }
+                    // ⚠Only when idle: while a render runs, "Stop render" IS the abandon action
+                    // and a second one beside it would be two words for one thing.
+                    if !running
+                        && ui
+                            .button(format!("{} Cancel", crate::icons::CLOSE))
+                            .on_hover_text("Close without rendering")
+                            .clicked()
+                    {
+                        close_dialog = true;
+                    }
                 });
             });
-        self.tour_render.open = open;
+        self.tour_render.open = open && !close_dialog;
 
         if browse {
             // Seed at the current output path if it exists, else the shared last-used directory.

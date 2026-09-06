@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Every dialog now has a consistent way to accept or back out** (beta.37). The gradient editor
+  gains an **OK** button - previously the only labelled way out was Cancel, which reverts, so
+  keeping your work meant clicking the window's X and hoping. Its OK and Cancel have also moved to
+  the bottom of the window, where they were previously buried above the paste box and the hints.
+
+  Export image, Render tour and Go to location gained a **Cancel**; each could change something and
+  offered no named way not to. Every dialog's actions are now last in the window, affirmative
+  first, Cancel second. Windows that only show you something - Help, Gallery, Bookmarks,
+  Diagnostics, benchmark results - are still closed with the title-bar X, since there is nothing
+  there to abandon.
+
+  Two deliberate exceptions, both recorded in `UI-DESIGN.md` §8.2: **Reset application state keeps
+  Cancel on the left**, because making it match would move the button that deletes all your saved
+  data into the position the eye reaches first; and **Go to location** keeps its Go beside the
+  coordinate fields it acts on rather than below the feature-finder underneath it.
+
 - **A button-icon standard, applied across the app** (beta.36). The affirmative half of every
   confirm/cancel pair now carries a check mark - Run, Apply, Go, Export, Render, Solve & jump -
   so a dialog's yes and no are recognisable before either is read. Copy, Save and Refresh buttons
