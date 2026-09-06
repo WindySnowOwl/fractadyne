@@ -8139,6 +8139,29 @@ impl FractadyneApp {
                         egui::Stroke::new(1.0_f32, BRAND_ACCENT),
                         egui::StrokeKind::Inside,
                     );
+                    // ⭐⭐**Which span am I editing?** The ribbon highlights the selected cell, but
+                    // the ribbon is a row of abstract curves — nothing tied the segment controls to
+                    // a PLACE on the gradient, so "Segment 2 of 5 · 0.150→0.400" was a pair of
+                    // numbers you had to convert yourself. This is a bracket under that span on the
+                    // gradient itself.
+                    // ⚠**A bracket, not a wash.** A translucent overlay across the span would
+                    // tint the very colours the user is judging. This costs the bottom 3 px of a
+                    // 30 px bar — the ring's version sits in clear space and costs nothing — which
+                    // is a fair price for the span being readable off the gradient itself.
+                    if let Some(seg) = grad
+                        .as_ref()
+                        .and_then(|g| g.segments.get(self.coloring.sel_segment))
+                    {
+                        let (a, b) = (strip_x(seg.left, x0, w), strip_x(seg.right, x0, w));
+                        let y = rect.max.y - 2.0;
+                        let st = egui::Stroke::new(3.0_f32, accent);
+                        pr.line_segment([egui::pos2(a, y), egui::pos2(b, y)], st);
+                        // End ticks, so a segment narrower than the stroke is still two marks
+                        // rather than one dot.
+                        for x in [a, b] {
+                            pr.line_segment([egui::pos2(x, y), egui::pos2(x, y - 6.0)], st);
+                        }
+                    }
                 }
                 if let (Some((rect, _)), Some(g)) = (add_lane.as_ref(), grad.as_ref()) {
                     // The line, a tick under every existing stop (so the lane reads as belonging
@@ -8312,9 +8335,35 @@ impl FractadyneApp {
                             );
                         }
                     }
-                    let sel = self.coloring.sel_stop;
-                    for i in 0..g.stop_count() {
-                        let Some((p, rgb)) = g.stop(i) else { continue };
+                    // ⭐**The SECTOR being edited**, as an arc just inside the hole's edge —
+                    // clean empty space, so the indicator never sits on the colour it points at.
+                    // Radial ticks close both ends, which is what makes a narrow sector read as a
+                    // span rather than as a dash.
+                    if let Some(seg) = g.segments.get(self.coloring.sel_segment) {
+                        let ar = inner - 4.0;
+                        let steps = ((seg.right - seg.left) * 240.0).ceil().max(2.0) as usize;
+                        let pts: Vec<egui::Pos2> = (0..=steps)
+                            .map(|k| {
+                                let t = seg.left
+                                    + (seg.right - seg.left) * (k as f32 / steps as f32);
+                                let (x, y) = ring_point(cx, cy, ar, t);
+                                egui::pos2(x, y)
+                            })
+                            .collect();
+                        let st = egui::Stroke::new(3.0_f32, accent);
+                        pr.add(egui::Shape::line(pts, st));
+                        for t in [seg.left, seg.right] {
+                            let (x0a, y0a) = ring_point(cx, cy, ar - 4.0, t);
+                            let (x1a, y1a) = ring_point(cx, cy, ar + 4.0, t);
+                            pr.line_segment(
+                                [egui::pos2(x0a, y0a), egui::pos2(x1a, y1a)],
+                                st,
+                            );
+                        }
+                    }
+                    let sel = self.coloring.sel_stop;
+                    for i in 0..g.stop_count() {
+                        let Some((p, rgb)) = g.stop(i) else { continue };
                         // Markers point INWARD from just outside the ring, so they never cover the
                         // colour they stand for.
                         let (tipx, tipy) = ring_point(cx, cy, outer + 1.0, p);

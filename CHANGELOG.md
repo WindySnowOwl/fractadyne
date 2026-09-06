@@ -12,6 +12,11 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The gradient shows which segment you are editing** (beta.41). Selecting a segment now marks
+  its span on the gradient itself: a bracket under it in the bar view, an arc across its sector in
+  the ring view, with ticks closing both ends. The segment controls said "Segment 2 of 5 ·
+  0.150→0.400" and left you to work out where that was.
+
 - **Every segment is editable the moment you select it** (beta.40). Opening the gradient editor
   now converts plain linear segments to unbent Bezier curves, so each one already has two
   draggable control points instead of needing to be converted first. It looks and renders exactly
