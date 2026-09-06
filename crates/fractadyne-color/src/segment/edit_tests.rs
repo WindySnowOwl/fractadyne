@@ -421,3 +421,73 @@ fn rotation_preserves_the_curves_of_the_segments_it_does_not_cut() {
     assert!((frac - 0.2).abs() < 1.0e-5, "the midpoint fraction moved: {frac}");
     assert_rotated_by(&g, &r, 0.5, 1.0e-4, "rotate a rich gradient onto a stop");
 }
+
+/// ⭐⭐**Rotating repeatedly must not inflate the segment list.** Each rotation cuts a new boundary
+/// in at the seam, so before `dissolve_boundary_if_invisible` existed ten separate drags took a
+/// 3-segment gradient to **12** — unbounded up to `EDITOR_MAX_STOPS`, at which point the editor
+/// starts refusing stops the user never added. ⚠This is the thing that actually degrades under
+/// repeated editing: over the same ten rotations the numeric drift was 0.0001 of a u8 level, four
+/// orders of magnitude below one output step.
+#[test]
+fn rotating_over_and_over_does_not_grow_the_segment_list() {
+    let g0 = plain();
+    let n = g0.segments.len();
+    let mut g = g0.clone();
+    for k in 1..=24 {
+        g.rotate(0.1);
+        assert!(
+            g.segments.len() <= n + 1,
+            "after {k} rotations the list had grown to {} from {n}",
+            g.segments.len()
+        );
+    }
+}
+
+/// ⚠**The guard that makes the test above mean something.** Dissolving must not be free to fire
+/// anywhere: a boundary carrying a real colour edge, or joining two different curves, is CONTENT and
+/// has to survive rotation. Without this, "the count stays flat" could be achieved by quietly
+/// eating the user's stops.
+#[test]
+fn rotation_never_dissolves_a_boundary_that_carries_content() {
+    // A hard edge in the middle: the two sides of 0.5 hold different colours.
+    let mut hard = plain();
+    hard.segments[1].right_color = [0.0, 0.0, 0.0, 1.0];
+    let edges = hard.segments.len();
+    let mut g = hard.clone();
+    for _ in 0..8 {
+        g.rotate(0.137);
+    }
+    assert!(
+        g.segments.len() >= edges,
+        "a hard edge was dissolved away: {} < {edges}",
+        g.segments.len()
+    );
+    // And the edge itself is still there — somewhere, since it has rotated.
+    let jump = g.segments.windows(2).any(|w| {
+        (0..3).any(|ch| (w[0].right_color[ch] - w[1].left_color[ch]).abs() > 0.01)
+    });
+    assert!(jump, "the hard edge stopped being a hard edge");
+
+    // Same for a curve change across a boundary, with matching colours: still content.
+    let mut curved = plain();
+    curved.segments[1].blend = Blend::SphereIncreasing;
+    let before = curved.segments.len();
+    let mut g2 = curved.clone();
+    for _ in 0..8 {
+        g2.rotate(0.137);
+    }
+    assert!(g2.segments.len() >= before, "a curve boundary was dissolved away");
+}
+
+/// Dissolving must not move a single pixel — that is the whole licence for doing it.
+#[test]
+fn dissolving_keeps_the_picture_identical() {
+    let g0 = plain();
+    let mut g = g0.clone();
+    for _ in 0..10 {
+        g.rotate(0.1);
+    }
+    // Ten times 0.1 is one whole turn, so the picture must be the original's, away from the seam
+    // where a ~1e-7 position error puts a sample on the wrong side of a jump.
+    assert_rotated_by(&g0, &g, 0.0, 1.0e-3, "ten 0.1 rotations");
+}

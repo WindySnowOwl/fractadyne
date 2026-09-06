@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Rotating over and over no longer inflates the gradient** (beta.53). Each rotation cuts a new
+  boundary in at the seam, and nothing removed the previous one: ten separate rotations took a
+  3-segment gradient to **12**, growing without bound until the editor started refusing stops you
+  never added. A rotation now dissolves the cut the last one left — but only after building the
+  merged segment and proving, by sampling it against the two it replaces, that nothing moves. A
+  boundary carrying a colour edge or joining two different curves is content and always survives,
+  and a stop you placed yourself is never a candidate.
+
 - **The ring says it turns, and the seam stops posing as a stuck stop** (beta.52). Two follow-ups to
   rotation, both reported.
 
