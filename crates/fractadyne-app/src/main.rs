@@ -8258,6 +8258,14 @@ impl FractadyneApp {
                             }
                         }
                     }
+                    // The same grab cursor as the ring, for the same reason.
+                    if self.coloring.rot_drag.is_some() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    } else if let (true, Some(p)) = (resp.hovered(), ui.ctx().pointer_hover_pos()) {
+                        if pick_stop(&positions, p.x, x0, w, CATCH_PX).is_none() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                        }
+                    }
                     resp.clone().on_hover_text(
                         "Drag a marker to move its stop · drag the strip itself to ROTATE the whole gradient, wrapping at the seam · double-click to add a stop, right-click a marker to remove it · arrow keys nudge the selection (Shift for fine).",
                     );
@@ -8454,8 +8462,28 @@ impl FractadyneApp {
                         self.coloring.drag_stop = None;
                         self.coloring.rot_drag = None;
                     }
+                    // ⭐The cursor is the affordance that says WHERE: an open hand over the band
+                    // that rotates, a closed one while it is turning. The curved arrows in the hole
+                    // say what the gesture does; without the cursor they would not say where to put
+                    // the pointer.
+                    if self.coloring.rot_drag.is_some() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    } else if let (true, Some(p)) =
+                        (resp.hovered(), ui.ctx().pointer_hover_pos())
+                    {
+                        let d = p.distance(egui::pos2(cx, cy));
+                        let on_band = d <= r + 12.0 && d >= r * 0.55;
+                        let on_marker =
+                            pick_stop_ring(&stop_positions(&g0), cx, cy, r, p.x, p.y, CATCH_PX + 3.0)
+                                .is_some();
+                        let on_track =
+                            on_ring_track(cx, cy, r + RING_TRACK_GAP, p.x, p.y, RING_TRACK_TOL);
+                        if on_band && !on_marker && !on_track {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                        }
+                    }
                     resp.clone().on_hover_text(
-                        "Drag the ring itself to ROTATE the whole gradient — what passes the seam comes back round the other side · drag a marker to move its stop · click the outer track to add a stop there, or ⊕ in the middle to add one in the widest gap · ⊖ removes the selected stop. The mark at the top is the palette's seam, where a cycled palette wraps.",
+                        "Drag the ring itself to ROTATE the whole gradient — what passes the seam comes back round the other side · drag a marker to move its stop · click the outer track to add a stop there, or ⊕ in the middle to add one in the widest gap · ⊖ removes the selected stop. The hollow mark at the top is the seam, where a cycled palette wraps; it stays put because it IS the join, and the colours turn under it.",
                     );
                 }
 
@@ -8702,6 +8730,52 @@ impl FractadyneApp {
                             );
                         }
                     }
+                    // ⭐⭐**The rotate affordance.** Dragging the ring body spins the gradient, and
+                    // a drag on a plain surface advertises nothing — the gesture was invisible
+                    // (user, 2026-09-06). Two curved arrows chasing each other round the hole say
+                    // "this turns"; the grab cursor on the band says where. ⚠Purely a HINT: it is
+                    // not a button, because the thing you drag is the ring itself, and a control
+                    // that looked clickable here would compete with the ⊕/⊖ above it.
+                    {
+                        let hint = weak.linear_multiply(if self.coloring.rot_drag.is_some() {
+                            1.0
+                        } else {
+                            0.6
+                        });
+                        // ⚠**Below the ⊕/⊖ row, not around it.** The first attempt drew two arcs
+                        // circling the middle of the hole and they ran straight through both
+                        // buttons — three controls' worth of line art in a 50 px circle. One glyph,
+                        // clear of everything, says the same thing.
+                        let (gx, gy) = (cx, cy + inner * 0.52);
+                        let hr = 8.0_f32;
+                        let st = egui::Stroke::new(1.3_f32, hint);
+                        let pts: Vec<egui::Pos2> = (0..=26)
+                            .map(|k| {
+                                let t = 0.10 + 0.80 * (k as f32 / 26.0);
+                                let (x, y) = ring_point(gx, gy, hr, t);
+                                egui::pos2(x, y)
+                            })
+                            .collect();
+                        let tip = *pts.last().unwrap();
+                        let prev = pts[pts.len() - 2];
+                        pr.add(egui::Shape::line(pts, st));
+                        // Arrowhead: two short barbs off the tangent at the leading end.
+                        let (vx, vy) = (tip.x - prev.x, tip.y - prev.y);
+                        let n = (vx * vx + vy * vy).sqrt().max(1.0e-3);
+                        let (ux, uy) = (vx / n, vy / n);
+                        for s in [-1.0_f32, 1.0] {
+                            pr.line_segment(
+                                [
+                                    tip,
+                                    egui::pos2(
+                                        tip.x - 4.0 * ux + s * 2.8 * uy,
+                                        tip.y - 4.0 * uy - s * 2.8 * ux,
+                                    ),
+                                ],
+                                st,
+                            );
+                        }
+                    }
                     // ⭐**The SECTOR being edited**, as an arc just inside the hole's edge —
                     // clean empty space, so the indicator never sits on the colour it points at.
                     // Radial ticks close both ends, which is what makes a narrow sector read as a
@@ -8729,26 +8803,85 @@ impl FractadyneApp {
                         }
                     }
                     let sel = self.coloring.sel_stop;
+                    // ⚠⚠**The last stop is at 1.0 and the first is at 0.0, which on a RING are the
+                    // SAME ANGLE.** Drawing both put two triangles exactly on top of each other at
+                    // twelve o'clock — and since the seam boundary is structural (the segment list
+                    // must cover 0..1, so rotating cuts a new boundary in at the seam), that pile
+                    // was a marker that could never move. It read as "the first stop doesn't
+                    // rotate" (user, 2026-09-06), when in fact every stop the user placed DOES
+                    // rotate and this was the cut arriving underneath them.
+                    //
+                    // ⭐So the ring draws the seam ONCE, and draws it as what it is: a stop marker
+                    // when the seam carries a real colour edge — content the user must be able to
+                    // see and grab — and the dimmed seam mark when it does not, because then there
+                    // is nothing there but the place the list happens to start.
+                    // ⚠**Drawing only.** Both indices stay hit-testable, so nothing that was
+                    // grabbable stops being grabbable; and the segment panel's Ends row reaches
+                    // either colour regardless.
+                    let seam_is_an_edge = !g.is_seamless();
+                    let last = g.stop_count().saturating_sub(1);
                     for i in 0..g.stop_count() {
                         let Some((p, rgb)) = g.stop(i) else { continue };
+                        // ⚠**The far end of the seam pair is never drawn** — it is at the same
+                        // angle as stop 0, so a second triangle there can only hide behind the
+                        // first. When the seam carries a colour edge, stop 0's marker is drawn
+                        // SPLIT below instead, showing both sides of the join in one shape.
+                        if i == last {
+                            continue;
+                        }
+                        let is_seam = i == 0;
                         // Markers point INWARD from just outside the ring, so they never cover the
                         // colour they stand for.
                         let (tipx, tipy) = ring_point(cx, cy, outer + 1.0, p);
                         let (b1x, b1y) = ring_point(cx, cy, outer + 10.0, p - 0.012);
                         let (b2x, b2y) = ring_point(cx, cy, outer + 10.0, p + 0.012);
-                        pr.add(egui::Shape::convex_polygon(
-                            vec![
-                                egui::pos2(tipx, tipy),
-                                egui::pos2(b1x, b1y),
-                                egui::pos2(b2x, b2y),
-                            ],
-                            stop_color32(rgb),
-                            if i == sel {
-                                egui::Stroke::new(2.0_f32, accent)
-                            } else {
-                                egui::Stroke::new(1.0_f32, weak)
-                            },
-                        ));
+                        let (tip, b1, b2) = (
+                            egui::pos2(tipx, tipy),
+                            egui::pos2(b1x, b1y),
+                            egui::pos2(b2x, b2y),
+                        );
+                        let stroke = if i == sel {
+                            egui::Stroke::new(2.0_f32, accent)
+                        } else if is_seam && !seam_is_an_edge {
+                            egui::Stroke::new(1.0_f32, weak.linear_multiply(0.55))
+                        } else {
+                            egui::Stroke::new(1.0_f32, weak)
+                        };
+                        if is_seam && seam_is_an_edge {
+                            // ⭐**A hard edge at the seam, shown as one SPLIT marker.** `b1` is a
+                            // hair anticlockwise of the seam — the colour ARRIVING at 1.0 — and
+                            // `b2` a hair clockwise, the colour LEAVING 0.0. Painting the halves
+                            // separately is the only way one marker can state a discontinuity, and
+                            // a hard edge at the seam is the defect the ring view exists to reveal.
+                            let mid = egui::pos2(0.5 * (b1.x + b2.x), 0.5 * (b1.y + b2.y));
+                            let arriving = g.stop(last).map(|(_, c)| c).unwrap_or(rgb);
+                            pr.add(egui::Shape::convex_polygon(
+                                vec![tip, b1, mid],
+                                stop_color32(arriving),
+                                egui::Stroke::NONE,
+                            ));
+                            pr.add(egui::Shape::convex_polygon(
+                                vec![tip, mid, b2],
+                                stop_color32(rgb),
+                                egui::Stroke::NONE,
+                            ));
+                            pr.add(egui::Shape::convex_polygon(
+                                vec![tip, b1, b2],
+                                egui::Color32::TRANSPARENT,
+                                stroke,
+                            ));
+                        } else {
+                            pr.add(egui::Shape::convex_polygon(
+                                vec![tip, b1, b2],
+                                if is_seam {
+                                    // Hollow: the seam is a place, not a colour.
+                                    egui::Color32::TRANSPARENT
+                                } else {
+                                    stop_color32(rgb)
+                                },
+                                stroke,
+                            ));
+                        }
                     }
                 }
                 if let (Some((rect, _)), Some(g)) = (ribbon.as_ref(), grad.as_ref()) {

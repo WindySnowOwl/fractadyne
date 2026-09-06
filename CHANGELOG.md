@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The ring says it turns, and the seam stops posing as a stuck stop** (beta.52). Two follow-ups to
+  rotation, both reported.
+
+  The ring drew a stop marker at 12 o'clock that never moved, which read as "the first stop doesn't
+  rotate". Every stop you place *does* rotate; that marker was two overlapping triangles — the first
+  and last stops sit at 0.0 and 1.0, which on a ring are the same angle — and the seam boundary is
+  structural, so rotating cuts a fresh one in underneath them. The ring now draws the seam **once**:
+  hollow and dimmed when it carries no colour edge (it is a place, not a colour), and as a **split
+  marker** when it does, one half showing the colour arriving and the other the colour leaving. A
+  hard edge at the seam is the defect the ring view exists to reveal, so the marker states it.
+
+  Rotation also had no affordance. A curved arrow now sits in the ring's hole, and both views show a
+  grab cursor over the part that turns.
+
 - **Drag to rotate the gradient** (beta.51). Grab the ring anywhere but a marker and it spins;
   grab the bar's strip and it slides, with what leaves one end returning at the other. A palette is
   cycled, so *where the seam falls* is a real choice — and until now the only way to make it was to
