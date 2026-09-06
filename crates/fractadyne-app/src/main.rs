@@ -64,6 +64,7 @@ mod alloc;
 mod autopilot;
 mod cli;
 mod diag;
+mod color_picker;
 mod error;
 mod eyedropper;
 mod export;
@@ -1870,9 +1871,53 @@ fn color_field(
     hex_width: f32,
 ) -> Option<[f32; 3]> {
     let mut out = None;
-    let mut c = rgb;
-    if ui.color_edit_button_rgb(&mut c).on_hover_text(tip).changed() {
-        out = Some(c);
+    // ⭐**Our picker, not egui's swatch button.** egui's popup labels its numeric modes `U8` and
+    // `F`, offers no hex, and has no way to back out — see `color_picker.rs`.
+    let sw = ui.allocate_response(egui::vec2(34.0, 18.0), egui::Sense::click());
+    ui.painter().rect_filled(sw.rect, 2.0, stop_color32(rgb));
+    ui.painter().rect_stroke(
+        sw.rect,
+        2.0,
+        egui::Stroke::new(1.0_f32, ui.visuals().weak_text_color()),
+        egui::StrokeKind::Inside,
+    );
+    let popup = id.with("popup");
+    if sw.clone().on_hover_text(tip).clicked() {
+        // ⚠The colour as it stands NOW is what Cancel restores — captured on opening, so a
+        // cancelled experiment puts back what was there before it started, not some later state.
+        ui.data_mut(|d| d.insert_temp(popup.with("was"), rgb));
+        ui.memory_mut(|m| m.toggle_popup(popup));
+    }
+    if ui.memory(|m| m.is_popup_open(popup)) {
+        let mut edited = rgb;
+        let mut mode = ui
+            .data_mut(|d| d.get_temp::<crate::color_picker::NumberMode>(popup.with("mode")))
+            .unwrap_or_default();
+        let area = egui::Area::new(popup)
+            .order(egui::Order::Foreground)
+            .fixed_pos(sw.rect.left_bottom() + egui::vec2(0.0, 4.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    crate::color_picker::picker_body(ui, popup, &mut edited, &mut mode)
+                })
+            });
+        ui.data_mut(|d| d.insert_temp(popup.with("mode"), mode));
+        let outcome = area.inner.inner;
+        if edited != rgb {
+            out = Some(edited);
+        }
+        match outcome {
+            crate::color_picker::PickerOutcome::Accept => {
+                ui.memory_mut(|m| m.close_popup());
+            }
+            crate::color_picker::PickerOutcome::Cancel => {
+                if let Some(was) = ui.data_mut(|d| d.get_temp::<[f32; 3]>(popup.with("was"))) {
+                    out = Some(was);
+                }
+                ui.memory_mut(|m| m.close_popup());
+            }
+            crate::color_picker::PickerOutcome::Open => {}
+        }
     }
     let mut hex = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_else(|| hex_of(rgb)));
     let r = ui.add(
@@ -8733,7 +8778,7 @@ impl FractadyneApp {
                                         );
                                     }
                                     if let Some((_, rgb)) = g.stop(k) {
-                                        let id = ui.id().with(("seg_end", k));
+                                        let id = egui::Id::new(if right { "seg_end_hi" } else { "seg_end_lo" });
                                         if let Some(c) = color_field(ui, id, rgb, tip, 74.0) {
                                             let mut g2 =
                                                 edit.clone().unwrap_or_else(|| g.clone());
@@ -8927,47 +8972,24 @@ impl FractadyneApp {
                         let i = self.coloring.sel_stop.min(count - 1);
                         ui.label(egui::RichText::new(format!("Stop {} of {}", i + 1, count)).strong());
                         let Some((pos0, rgb0)) = g.stop(i) else { return };
-                        let mut rgb = rgb0;
-                        if ui
-                            .color_edit_button_rgb(&mut rgb)
-                            .on_hover_text("The colour at this stop — click to pick, or type a hex value beside it")
-                            .changed()
-                        {
+                        // ⭐Through the same helper the segment's two ends use, so all three
+                        // colour editors in this window share one picker and one hex field.
+                        // ⚠A STABLE id, not `ui.id()`-derived: the popup's state has to survive
+                        // layout changes, and a fixed one is also what lets `--uitest` open it.
+                        if let Some(c) = color_field(
+                            ui,
+                            egui::Id::new("stop_color"),
+                            rgb0,
+                            "The colour at this stop — click the swatch to pick, or type a hex value beside it",
+                            72.0,
+                        ) {
                             let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
-                            g2.set_stop_color(i, rgb);
+                            g2.set_stop_color(i, c);
                             edit = Some(g2);
                         }
-                        // ⭐**The numbers beside the swatch.** A swatch says which colour, never
-                        // WHICH colour — and every other tool in this space (Fractint `.map`, a
-                        // `.ugr`, a palette off the web) speaks in hex or 0–255 triples, so the
-                        // editor has to as well or the user has to leave it to find out what they
-                        // have. The field is editable, which is also the only way to enter an
-                        // exact colour: a picker cannot be aimed at #8b1a1a.
-                        // ⚠**Only overwritten when it is not being edited**, or the field would
-                        // fight the user's keystrokes: typing "#f" would be re-rendered as the
-                        // current colour's full hex on the very next frame.
-                        let hex_id = ui.id().with(("stop_hex", i));
-                        let mut hex = ui.data_mut(|d| {
-                            d.get_temp::<String>(hex_id).unwrap_or_else(|| hex_of(rgb0))
-                        });
-                        let hex_resp = ui.add(
-                            egui::TextEdit::singleline(&mut hex)
-                                .desired_width(72.0)
-                                .font(egui::TextStyle::Monospace)
-                                .hint_text("#rrggbb"),
-                        );
-                        if hex_resp.has_focus() || hex_resp.changed() {
-                            ui.data_mut(|d| d.insert_temp(hex_id, hex.clone()));
-                        } else {
-                            ui.data_mut(|d| d.remove_temp::<String>(hex_id));
-                        }
-                        if hex_resp.changed() {
-                            if let Some(c) = parse_hex_rgb(&hex) {
-                                let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
-                                g2.set_stop_color(i, c);
-                                edit = Some(g2);
-                            }
-                        }
+                        // ⚠The hex field that used to sit here is gone: `color_field` above
+                        // now draws the swatch AND the hex together, and leaving this one
+                        // behind put the same value on screen twice.
                         let [r8, g8, b8] = rgb_bytes(rgb0);
                         ui.label(
                             egui::RichText::new(format!("{r8:>3} {g8:>3} {b8:>3}")).monospace(),

@@ -473,7 +473,7 @@ fn curved_factor(mid: f32, pos: f32) -> f32 {
 }
 
 /// RGB (0..1) → HSV, hue in `0..1`. Matches GIMP's convention so `.ggr` HSV segments reproduce.
-fn rgb_to_hsv(c: [f32; 3]) -> (f32, f32, f32) {
+pub fn rgb_to_hsv(c: [f32; 3]) -> (f32, f32, f32) {
     let max = c[0].max(c[1]).max(c[2]);
     let min = c[0].min(c[1]).min(c[2]);
     let d = max - min;
@@ -490,7 +490,7 @@ fn rgb_to_hsv(c: [f32; 3]) -> (f32, f32, f32) {
 }
 
 /// HSV (hue in `0..1`) → RGB (0..1).
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
+pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
     let s = s.clamp(0.0, 1.0);
     let h6 = h.rem_euclid(1.0) * 6.0;
     let i = h6.floor();

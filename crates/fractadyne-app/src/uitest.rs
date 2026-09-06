@@ -48,6 +48,8 @@ enum Screen {
     /// SEAM is visible — and it is a whole second interaction geometry (hit-testing by arc
     /// rather than by x), so a screenshot of the bar says nothing about it.
     PaletteEditorRing,
+    /// The colour picker popup, which no walk can reach by clicking.
+    ColorPicker,
     /// Dual view on one formula, then the SAME dual view on another — checklist steps 45-46, and
     /// the field report behind them: switching formula while dual left the parameter pane showing
     /// the previous formula. The pair is the check; neither screen means anything alone.
@@ -652,6 +654,7 @@ fn build_steps() -> Vec<Step> {
         screen("notice", Screen::Notice),
         screen("palette-editor", Screen::PaletteEditor),
         screen("palette-editor-ring", Screen::PaletteEditorRing),
+        screen("color-picker", Screen::ColorPicker),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -1154,6 +1157,16 @@ impl FractadyneApp {
                 self.uitest_open_screen(ctx, Screen::PaletteEditor);
                 self.coloring.paste_open = false;
                 self.coloring.ring_view = true;
+            }
+            // ⭐The colour picker is a POPUP — nothing in the walk can click a swatch, so
+            // the one surface whose labels this step exists to review would never appear.
+            // Opened directly by its (deliberately stable) id.
+            Screen::ColorPicker => {
+                self.uitest_open_screen(ctx, Screen::PaletteEditor);
+                self.coloring.paste_open = false;
+                ctx.memory_mut(|m| {
+                    m.open_popup(egui::Id::new("stop_color").with("popup"));
+                });
             }
         }
     }

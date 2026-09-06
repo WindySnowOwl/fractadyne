@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A colour picker that speaks plainly** (beta.45). The picker now offers **Range 0–255**,
+  **Range 0–1** and **Hex**, and closes with **OK** or **Cancel** - Cancel putting back the colour
+  it opened with, so a colour you were only trying costs nothing.
+
+  The stock picker labelled its two numeric modes `U8` and `F`, which are the internal names for
+  "gamma byte" and "linear float": precise, and meaningless unless you have read the toolkit's
+  source. It also had no hex field, while the gradient editor around it speaks hex throughout, and
+  no way to back out of a colour.
+
 - **Fixed: narrow segments were missing from the segment list** (beta.44). The row of segment
   curves gave each segment a share of the width proportional to how much of the gradient it
   covered - so a segment spanning 0.000 to 0.001 got half a pixel. It could not be seen, numbered
