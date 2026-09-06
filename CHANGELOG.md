@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The editor speaks the picker's language** (beta.49). Both ends of the selected segment now show
+  all three notations — hex, 0–255 and 0–1 — as the colour picker does, instead of hex alone. The
+  editor was quietly teaching that a colour *is* a hex string while the picker it opens teaches
+  three; two dialogs onto the same colour should not disagree about what a colour looks like.
+
+  Curve, Space and the ease preset (or the midpoint, when the segment is not a Bézier) now share a
+  single row above the canvas. They were three stacked rows for what is one decision about one
+  segment, and stacking them pushed the curve down toward the clipping the previous release fixed.
+
 - **OK and Cancel stay reachable on a short screen** (beta.48). The gradient editor's contents now
   scroll and its buttons do not: on a display too short for the whole window, the bottom was simply
   clipped away, taking OK and Cancel with it. A dialog whose commit you cannot reach is worse than

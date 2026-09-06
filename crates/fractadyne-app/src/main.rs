@@ -7859,11 +7859,6 @@ impl FractadyneApp {
                 const LANE_H: f32 = 17.0;
                 const REM_H: f32 = 15.0;
                 const RIBBON_H: f32 = 34.0;
-                // Width of one end field: egui's colour button plus spacing plus a monospace
-                // `#rrggbb`. ⚠**Measured, not guessed** — the first two attempts sized it from an
-                // assumed 26 px swatch and egui's is ~40, so the SECOND field kept being clipped
-                // by the layout rather than by its own width (`#e64d05` → `#e64d0`).
-                const END_FIELD_W: f32 = 40.0 + 3.0 + 74.0;
                 // ⚠240, not the original 168: the row of TWO colour fields under it has
                 // to fit, and 168 clipped the second one mid-hex. 200 still truncated
                 // `#e64d05` to `#e64c` — a monospace `#rrggbb` needs ~74 px, and there
@@ -8684,7 +8679,7 @@ impl FractadyneApp {
                                 // `fit_to` samples.
                                 let shape = |t: f32| seg.factor(seg.left + t * span);
                                 egui::ComboBox::from_id_salt("seg_blend")
-                                    .width(120.0)
+                                    .width(96.0)
                                     .selected_text(blend_label(blend))
                                     .show_ui(ui, |ui| {
                                         // ⭐**Bézier first, then Linear, then GIMP's other
@@ -8732,12 +8727,14 @@ impl FractadyneApp {
                                     };
                                     edit = Some(g2);
                                 }
-                            });
-                            ui.horizontal(|ui| {
+                                // ⚠No row break: Curve, Space and the third control share
+                                // ONE line. Three half-empty rows above a full-width canvas
+                                // wasted the height the canvas wanted.
+                                ui.add_space(6.0);
                                 ui.label("Space");
                                 let mut space = seg.space.as_u8();
                                 egui::ComboBox::from_id_salt("seg_space")
-                                    .width(120.0)
+                                    .width(96.0)
                                     .selected_text(space_label(space))
                                     .show_ui(ui, |ui| {
                                         for k in 0..3u8 {
@@ -8750,7 +8747,7 @@ impl FractadyneApp {
                                         fractadyne_color::segment::Space::from_u8(space);
                                     edit = Some(g2);
                                 }
-                            });
+                                ui.add_space(6.0);
                             // ⭐⭐**Kind 5 has no midpoint row, because kind 5 IGNORES `mid`**
                             // (§9.4 decision 1) — the handles already say where the curve reaches
                             // halfway. Leaving a live-looking control that changed nothing would
@@ -8758,7 +8755,6 @@ impl FractadyneApp {
                             // already been bitten by twice. The stored value is untouched, so
                             // switching back to kinds 0–4 restores it.
                             if let fractadyne_color::segment::Blend::Bezier(p) = seg.blend {
-                                ui.horizontal(|ui| {
                                     ui.label("Ease").on_hover_text(
                                         "Presets write the two control points; drag them on the curve for anything else. A Bézier has no midpoint — its handles say where it reaches halfway.",
                                     );
@@ -8775,16 +8771,7 @@ impl FractadyneApp {
                                             edit = Some(g2);
                                         }
                                     }
-                                });
-                            }
-                            ui.horizontal(|ui| {
-                                let is_bez = matches!(
-                                    seg.blend,
-                                    fractadyne_color::segment::Blend::Bezier(_)
-                                );
-                                if is_bez {
-                                    return;
-                                }
+                            } else {
                                 ui.label("Midpoint");
                                 // ⚠A FRACTION of the segment (GIMP semantics), not an absolute
                                 // position — the same number the ring on the canvas moves.
@@ -8811,6 +8798,7 @@ impl FractadyneApp {
                                     g2.segments[si].mid = seg.left + 0.5 * span;
                                     edit = Some(g2);
                                 }
+                            }
                             });
                             // ⭐⭐The trap a user cannot see coming: an HSV segment with an
                             // unsaturated endpoint sweeps the WHOLE wheel, because a grey has no
@@ -8979,34 +8967,63 @@ impl FractadyneApp {
                         // row in the controls column to the RIGHT of the canvas, so "start" and
                         // "end" were both to the right of the thing they were the ends OF — the
                         // labels carried the whole meaning and the layout argued against them.
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(cw, 22.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.spacing_mut().item_spacing.x = 3.0;
-                                for (k, tip, right) in [
-                                    (si, "Colour at the START of this segment", false),
-                                    (si + 1, "Colour at the END of this segment", true),
-                                ] {
-                                    // ⚠The second pair is pushed to the far edge, so the gap
-                                    // between them is the segment, not a spacing constant.
-                                    if right {
-                                        ui.add_space(
-                                            (ui.available_width() - END_FIELD_W).max(0.0),
-                                        );
-                                    }
-                                    if let Some((_, rgb)) = g.stop(k) {
-                                        let id = egui::Id::new(if right { "seg_end_hi" } else { "seg_end_lo" });
-                                        if let Some(c) = color_field(ui, id, rgb, tip, 74.0) {
-                                            let mut g2 =
-                                                edit.clone().unwrap_or_else(|| g.clone());
-                                            g2.set_stop_color(k, c);
-                                            edit = Some(g2);
-                                        }
-                                    }
+                        // ⭐⭐**Both ends carry all three notations**, the same 0–255 / 0–1 / hex
+                        // the colour picker shows — a value should not change form depending on
+                        // which surface you read it from.
+                        // ⚠A COLUMN each rather than one long row: 0–255 and 0–1 and hex side by
+                        // side is ~420 px per colour, and two of those do not fit a 480 px editor.
+                        // Stacked, each end is ~200 px and both fit with room between them.
+                        ui.horizontal_top(|ui| {
+                            for (k, tip, right) in [
+                                (si, "Colour at the START of this segment", false),
+                                (si + 1, "Colour at the END of this segment", true),
+                            ] {
+                                // The second column is pushed to the far edge, so the gap between
+                                // them is the segment, not a spacing constant.
+                                if right {
+                                    ui.add_space((ui.available_width() - 206.0).max(0.0));
                                 }
-                            },
-                        );
+                                let Some((_, rgb)) = g.stop(k) else { continue };
+                                let mut out: Option<[f32; 3]> = None;
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 2.0;
+                                    ui.horizontal(|ui| {
+                                        let id = egui::Id::new(if right {
+                                            "seg_end_hi"
+                                        } else {
+                                            "seg_end_lo"
+                                        });
+                                        out = color_field(ui, id, rgb, tip, 74.0);
+                                    });
+                                    let b = rgb_bytes(rgb);
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{:>3} {:>3} {:>3}",
+                                            b[0], b[1], b[2]
+                                        ))
+                                        .monospace()
+                                        .weak()
+                                        .small(),
+                                    )
+                                    .on_hover_text("Red, green and blue as 0–255");
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{:.3} {:.3} {:.3}",
+                                            rgb[0], rgb[1], rgb[2]
+                                        ))
+                                        .monospace()
+                                        .weak()
+                                        .small(),
+                                    )
+                                    .on_hover_text("The same colour as 0–1, which is what the renderer stores");
+                                });
+                                if let Some(c) = out {
+                                    let mut g2 = edit.clone().unwrap_or_else(|| g.clone());
+                                    g2.set_stop_color(k, c);
+                                    edit = Some(g2);
+                                }
+                            }
+                        });
                         cresp.on_hover_text(if bez.is_some() {
                             "The blend curve for the selected segment. Drag either control point — in x AND y — to reshape it. The faint lines are 0 and 1; a curve may pass outside them, and the colour is clamped rather than the curve."
                         } else {
