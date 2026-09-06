@@ -162,15 +162,22 @@ impl FractadyneApp {
                             });
                     });
                 }
+                // ⭐**The collapsed label NAMES a saved gradient rather than saying "Custom".** The
+                // whole reason to save one is to refer to it later; a control that can only report
+                // the slot it occupies makes the library invisible from here.
+                let live_saved = self.live_saved_gradient();
                 let pal_name = if self.coloring.use_binary {
                     "Binary (set)"
                 } else if self.coloring.use_duotone {
                     "Duotone"
+                } else if let Some(i) = live_saved {
+                    self.saved_gradients[i].name.as_str()
                 } else if self.coloring.use_custom_palette {
                     "Custom"
                 } else {
                     fractadyne_color::PRESETS[self.coloring.palette_idx].name
                 };
+                let pal_name = pal_name.to_string();
                 labelled(ui, "Palette", |ui| {
                     egui::ComboBox::from_id_salt("panel_palette")
                         .selected_text(pal_name)
@@ -184,7 +191,25 @@ impl FractadyneApp {
                                     self.coloring.use_binary = false;
                                 }
                             }
-                            if ui.selectable_label(self.coloring.use_custom_palette, format!("Custom {}", crate::icons::EDIT)).clicked() {
+                            // The user's saved gradients, on the same footing as the presets — the
+                            // Color ▸ Palette menu carries the identical list, and the two are the
+                            // same control on two surfaces.
+                            if !self.saved_gradients.is_empty() {
+                                ui.separator();
+                                let mut apply = None;
+                                for (i, sg) in self.saved_gradients.iter().enumerate() {
+                                    if ui.selectable_label(live_saved == Some(i), &sg.name).clicked() {
+                                        apply = Some(i);
+                                    }
+                                }
+                                if let Some(i) = apply {
+                                    self.apply_saved_gradient(i);
+                                }
+                                ui.separator();
+                            }
+                            // ⚠Ticked only when the custom palette is not one of the saved entries
+                            // above, or picking a saved gradient would check two rows at once.
+                            if ui.selectable_label(self.coloring.use_custom_palette && live_saved.is_none(), format!("Custom {}", crate::icons::EDIT)).clicked() {
                                 if self.coloring.custom_palette.is_empty() {
                                     self.coloring.custom_palette = self.preset_as_stops(self.coloring.palette_idx);
                                 }

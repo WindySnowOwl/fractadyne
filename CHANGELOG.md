@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Saved gradients are palettes** (beta.50). A gradient you saved now appears under **Color ▸
+  Palette** and in the Controls panel's Palette dropdown, beside Ember, Ice, Nebula and Grayscale —
+  one click to apply. Until now the library was reachable only from inside the gradient editor, so
+  using a gradient you had already saved meant opening a modal editor to pick a colour scheme, while
+  the four built-in presets sat one click away in the menu. Saving a gradient is the act of saying
+  "I want this again"; the menu is where "again" happens.
+
+  Every row draws the gradient it names, presets included — a name like "test3" says nothing about
+  what it looks like. The Palette dropdown now shows the gradient's **name** rather than the word
+  "Custom", and the check mark follows the segments rather than the name, so it disappears the
+  moment you edit a saved gradient instead of claiming the saved one is still on screen.
+
 - **The editor speaks the picker's language** (beta.49). Both ends of the selected segment now show
   all three notations — hex, 0–255 and 0–1 — as the colour picker does, instead of hex alone. The
   editor was quietly teaching that a colour *is* a hex string while the picker it opens teaches

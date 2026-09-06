@@ -7,7 +7,7 @@
 //! and nothing about the UI would reveal it: you would only find out by saving a curved gradient,
 //! reloading it a week later, and wondering why it had gone flat.
 
-use super::{segments_to_gradient, GradientFile, SavedGradient};
+use super::{live_saved_index, segments_to_gradient, GradientFile, SavedGradient};
 use fractadyne_color::segment::{Blend, Gradient, Segment, Space, LUT_SIZE};
 
 /// A gradient that uses every property a stop list cannot hold.
@@ -133,4 +133,44 @@ fn the_library_is_keyed_by_name() {
     assert_eq!(lib[0].segment.len(), 1, "and it must be the second gradient that survived");
     upsert(&mut lib, as_saved(&rich(), "two"));
     assert_eq!(lib.len(), 2, "a different name is a different entry");
+}
+
+/// ⭐⭐**The Color ▸ Palette menu's check mark is a claim about the PICTURE, not about a name.**
+/// This is the rule that makes it true, and the case that breaks the obvious implementation: a
+/// saved gradient that has been loaded and then EDITED still carries its saved name, so a name-only
+/// match would keep the tick on it — telling the user the saved gradient is on screen when it is
+/// their unsaved edit of it, and implying reopening the entry would change nothing.
+#[test]
+fn the_menu_tick_follows_the_segments_and_not_the_name() {
+    let saved = vec![as_saved(&rich(), "rich"), as_saved(&plain(), "plain")];
+
+    // The live palette IS the second entry.
+    let live = saved[1].segment.clone();
+    assert_eq!(live_saved_index(&saved, true, &live), Some(1));
+
+    // ⚠**The case with a wrong twin.** One segment edited — the name a UI would still be showing is
+    // unchanged, and the gradient is no longer what was saved.
+    let mut edited = live.clone();
+    edited[0].right_color = [0.1, 0.2, 0.3, 1.0];
+    assert_ne!(edited, live, "the guard: this probe must actually differ, or it proves nothing");
+    assert_eq!(
+        live_saved_index(&saved, true, &edited),
+        None,
+        "an edited copy still carries the saved NAME — matching on it would tick the wrong row"
+    );
+
+    // A preset is never a match, whatever the stale segment list behind it happens to hold.
+    assert_eq!(
+        live_saved_index(&saved, false, &live),
+        None,
+        "the tick says which row the palette came from, and a preset came from the preset row"
+    );
+
+    // Nothing saved, nothing ticked — the menu simply omits the group.
+    assert_eq!(live_saved_index(&[], true, &live), None);
+}
+
+/// A second gradient, distinct from [`rich`], for the library-with-two-entries cases.
+fn plain() -> Gradient {
+    Gradient::from_stops("plain", &[(0.0, [0.0, 0.0, 0.2]), (1.0, [0.8, 0.9, 1.0])])
 }

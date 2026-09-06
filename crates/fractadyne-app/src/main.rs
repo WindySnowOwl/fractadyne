@@ -1819,6 +1819,31 @@ fn segments_to_gradient(
     }
 }
 
+/// Which entry of the saved-gradient library `live` currently IS, if any — the check mark rule for
+/// the Color ▸ Palette menu.
+///
+/// ⚠⚠**Compares the SEGMENTS, not the name.** `gradient_name` survives editing: load "Ember rework",
+/// drag a stop, and the name is still "Ember rework" while the picture is not. A name-only test
+/// would leave the tick on that entry, telling the user a saved gradient is on screen when what is
+/// on screen is their unsaved edit of it — and, worse, implying that reopening it would change
+/// nothing.
+///
+/// ⚠A preset is never a match, whatever it holds: `use_custom` gates the whole thing, because the
+/// tick has to say which row the palette came FROM, and a preset came from the preset row.
+///
+/// ⚠Two entries saved with identical segments under different names report the first. There is
+/// nothing to tell them apart by — they render the same, and the tick is a claim about the picture.
+fn live_saved_index(
+    saved: &[SavedGradient],
+    use_custom: bool,
+    live: &[fractadyne_state::PaletteSegment],
+) -> Option<usize> {
+    if !use_custom {
+        return None;
+    }
+    saved.iter().position(|sg| sg.segment == live)
+}
+
 /// A stop colour's 0–255 bytes — the numbers a user recognises, and the ones the renderer writes.
 ///
 /// ⚠**Rounded, not truncated.** `(v * 255.0) as u8` turns 0.5 into 127 and makes the hex a user
@@ -5502,6 +5527,40 @@ impl FractadyneApp {
         self.pending_toast = Some(format!("Saved gradient \"{name}\"."));
     }
 
+    /// Make saved gradient `i` the live palette.
+    ///
+    /// ⭐**Shared by the Color ▸ Palette menu and the editor's own "Saved" picker**, which is the
+    /// whole point of extracting it: applying a saved gradient is not just "set the segments", it
+    /// also means leaving Duotone/Binary and switching the palette over to custom. A second inline
+    /// copy of that is exactly where one of those flags gets forgotten.
+    ///
+    /// `store_segments` bumps `palette_rev`, so the view rebakes without a separate nudge here.
+    fn apply_saved_gradient(&mut self, i: usize) {
+        let Some(sg) = self.saved_gradients.get(i).cloned() else {
+            return;
+        };
+        self.coloring.custom_palette_flat = false;
+        // ⚠Keep the derived stop list in step — a loaded gradient must be indistinguishable from an
+        // edited one, or "Convert to editable stops" would read a stale list.
+        let g = segments_to_gradient(&sg.name, &sg.segment);
+        self.store_segments(&g);
+        self.coloring.gradient_name = sg.name;
+        self.coloring.sel_stop = 0;
+        self.coloring.sel_segment = 0;
+        self.coloring.use_custom_palette = true;
+        self.coloring.use_duotone = false;
+        self.coloring.use_binary = false;
+    }
+
+    /// Which saved gradient the view is currently showing, if any. See [`live_saved_index`].
+    fn live_saved_gradient(&self) -> Option<usize> {
+        live_saved_index(
+            &self.saved_gradients,
+            self.coloring.use_custom_palette,
+            &self.coloring.custom_segments,
+        )
+    }
+
     /// Directory to open a file dialog in: the last one the user browsed to (if it still exists),
     /// else `fallback`. Gives every open/save dialog a shared, persisted memory. `fallback` is a
     /// closure so the per-category default (e.g. Pictures) is only computed on a fresh install.
@@ -8540,9 +8599,9 @@ impl FractadyneApp {
                             );
                         }
                     }
-                    let sel = self.coloring.sel_stop;
-                    for i in 0..g.stop_count() {
-                        let Some((p, rgb)) = g.stop(i) else { continue };
+                    let sel = self.coloring.sel_stop;
+                    for i in 0..g.stop_count() {
+                        let Some((p, rgb)) = g.stop(i) else { continue };
                         // Markers point INWARD from just outside the ring, so they never cover the
                         // colour they stand for.
                         let (tipx, tipy) = ring_point(cx, cy, outer + 1.0, p);
@@ -9306,17 +9365,7 @@ impl FractadyneApp {
                             }
                         });
                         if let Some(i) = load {
-                            let sg = self.saved_gradients[i].clone();
-                            self.coloring.custom_segments = sg.segment.clone();
-                            self.coloring.custom_palette_flat = false;
-                            // ⚠Keep the derived stop list in step, exactly as `store_segments`
-                            // does — a loaded gradient must be indistinguishable from an edited
-                            // one, or "Convert to editable stops" would read a stale list.
-                            let g = segments_to_gradient(&sg.name, &sg.segment);
-                            self.store_segments(&g);
-                            self.coloring.gradient_name = sg.name;
-                            self.coloring.sel_stop = 0;
-                            self.coloring.sel_segment = 0;
+                            self.apply_saved_gradient(i);
                             changed = true;
                             ui.close_menu();
                         }
@@ -9553,7 +9602,7 @@ impl FractadyneApp {
 
                 });
 
-                // ⭐⭐**The action row is the LAST thing in the window, and it was not.**
+                // ⭐⭐**The action row is the LAST thing in the window, and it was not.**
                 // OK and Cancel sat in the middle of the editor with the rich-gradient
                 // notice, the bands checkbox, the paste box and the stop hint all BELOW
                 // them — so the way out of the dialog was buried among its contents. A

@@ -3,6 +3,33 @@
 use crate::*;
 
 impl FractadyneApp {
+    /// One row of the Color ▸ Palette submenu: a swatch of the gradient, then its name. Returns
+    /// whether the row was clicked — either half of it.
+    ///
+    /// ⭐**A gradient row previews itself.** The rule the `.ugr` picker and the editor's Saved
+    /// picker both arrived at independently: a name like "blatte10" says nothing about what the
+    /// gradient looks like, and a user's library is full of names only they chose. The presets draw
+    /// the same swatch so the submenu does not read as two different kinds of list.
+    fn palette_menu_row(
+        ui: &mut egui::Ui,
+        g: &fractadyne_color::segment::Gradient,
+        name: &str,
+        selected: bool,
+    ) -> bool {
+        let mut hit = false;
+        ui.horizontal(|ui| {
+            let (rect, resp) =
+                ui.allocate_exact_size(egui::vec2(48.0, 12.0), egui::Sense::click());
+            crate::paint_gradient(
+                &ui.painter_at(rect),
+                rect,
+                &g.bake(fractadyne_color::segment::LUT_SIZE),
+            );
+            hit = resp.clicked() || ui.selectable_label(selected, name).clicked();
+        });
+        hit
+    }
+
     /// Top menu bar + toolbar (File / Fractal / View / Tools / Bookmarks / Locations / Help)
     /// plus the icon toolbar. Takes the `gpu` handle for the quick-export toolbar action.
     /// The bookmarks menu: add-current first, then Manage, then the recent bookmarks with
@@ -335,14 +362,17 @@ impl FractadyneApp {
                             let is_preset = !self.coloring.use_custom_palette
                                 && !self.coloring.use_duotone
                                 && !self.coloring.use_binary;
+                            let live_saved = self.live_saved_gradient();
                             for (i, p) in fractadyne_color::PRESETS.iter().enumerate() {
-                                if ui
-                                    .selectable_label(
-                                        is_preset && self.coloring.palette_idx == i,
-                                        p.name,
-                                    )
-                                    .clicked()
-                                {
+                                let g = fractadyne_color::segment::Gradient::from_stops(
+                                    p.name, p.stops,
+                                );
+                                if Self::palette_menu_row(
+                                    ui,
+                                    &g,
+                                    p.name,
+                                    is_preset && self.coloring.palette_idx == i,
+                                ) {
                                     self.coloring.palette_idx = i;
                                     self.coloring.use_custom_palette = false;
                                     self.coloring.use_duotone = false;
@@ -350,9 +380,42 @@ impl FractadyneApp {
                                     ui.close_menu();
                                 }
                             }
+                            // ⭐**The user's own gradients belong beside the built-in ones.** A
+                            // gradient saved in the editor used to be reachable only from inside
+                            // the editor, so choosing one meant opening a modal to pick a palette
+                            // while the four presets sat one click away in this menu. Saving it was
+                            // already the act of saying "I want this again".
+                            if !self.saved_gradients.is_empty() {
+                                ui.separator();
+                                let mut apply = None;
+                                // ⚠A library has no size limit, so the list scrolls. egui clips a
+                                // menu that does not fit the screen rather than scrolling it, and
+                                // the entries it clips are simply gone.
+                                egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                                    for (i, sg) in self.saved_gradients.iter().enumerate() {
+                                        let g = crate::segments_to_gradient(&sg.name, &sg.segment);
+                                        if Self::palette_menu_row(
+                                            ui,
+                                            &g,
+                                            &sg.name,
+                                            live_saved == Some(i),
+                                        ) {
+                                            apply = Some(i);
+                                        }
+                                    }
+                                });
+                                if let Some(i) = apply {
+                                    self.apply_saved_gradient(i);
+                                    ui.close_menu();
+                                }
+                            }
                             ui.separator();
+                            // ⚠Ticked only when the custom palette is NOT one of the saved entries
+                            // above — otherwise picking a saved gradient would put a check mark on
+                            // two rows, since a saved gradient IS the custom palette. "Custom" here
+                            // means the unsaved one.
                             if ui
-                                .selectable_label(self.coloring.use_custom_palette, format!("Custom {}", crate::icons::EDIT))
+                                .selectable_label(self.coloring.use_custom_palette && live_saved.is_none(), format!("Custom {}", crate::icons::EDIT))
                                 .clicked()
                             {
                                 if self.coloring.custom_palette.is_empty() {

@@ -1149,6 +1149,29 @@ impl FractadyneApp {
                 self.coloring.paste_text = "#000000, #8b1a1a, #ff8800, #ffe6b3".to_string();
                 self.coloring.ring_view = false;
                 self.coloring.gradient_name = "Ember rework".to_string();
+                // ⚠**Seed the LIBRARY too, or "Saved (0) ▾" is all this walk has ever shown of
+                // it** — the same empty-state trap that let this step photograph an editor with no
+                // gradient in it for months. In memory only: `save_gradient_library` is not called,
+                // so the harness writes nothing to the user's config.
+                //
+                // ⚠⚠**Promote FIRST, through the editor's own call.** Opening the editor promotes
+                // Linear segments to identity Béziers, so a library entry cloned from the
+                // pre-promotion segments would not match the live gradient a frame later — and the
+                // "which saved gradient is this?" tick, which compares SEGMENTS, would correctly
+                // report none. Seeding the post-promotion state is what makes this step show a
+                // library entry that is actually selected; going through
+                // `promote_linear_to_bezier` rather than hand-writing the result means the seed
+                // cannot drift from what the editor does.
+                if self.saved_gradients.is_empty() {
+                    if let Some(mut g) = self.editable_gradient() {
+                        g.promote_linear_to_bezier();
+                        self.store_segments(&g);
+                    }
+                    self.saved_gradients = vec![crate::SavedGradient {
+                        name: "Ember rework".to_string(),
+                        segment: self.coloring.custom_segments.clone(),
+                    }];
+                }
             }
             // The same seeded gradient, shown as a ring. ⚠The paste box stays SHUT here so the
             // ring is what the screenshot is of — the bar step already covers that section, and a
