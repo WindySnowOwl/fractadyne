@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.41-beta.34 (build 2613)
-- **Generated:** 2026-09-06 02:11:00 UTC (unix 1788660660)
+- **Version:** 0.2.41-beta.35 (build 2617)
+- **Generated:** 2026-09-06 02:24:37 UTC (unix 1788661477)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64

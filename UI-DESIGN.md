@@ -260,6 +260,35 @@ Reaffirming "avoid custom controls" — nearly everything maps to a stock widget
 > the most-touched custom surface. Keep it conventional (Photoshop/Inkscape-style
 > stop strip): draggable stops, double-click to edit color, right-click to delete.
 
+### 8.1 When a button gets an icon (standard, 0.2.41-beta.36)
+
+⭐⭐**An icon on every button is the same as an icon on none.** If the whole row is decorated,
+nothing is marked, and the reader is back to reading labels — having paid for the width. So the
+rule is by ROLE, and most buttons are deliberately left plain.
+
+| role | icon | examples |
+|---|---|---|
+| **Affirmative commit** of a decision — the half paired with a Cancel | `CONFIRM` ✓ | Apply, Run, Go, Export, Render, Solve & jump |
+| **Dismiss / abandon / close** | `CLOSE` ✕ | Cancel (×9), Close, Close list |
+| **Established task verb** | its own glyph | Copy, Save…, Refresh / Run again…, Add stop, Remove, Pick |
+| **Destructive commit** | ⛔**none — keep the red fill** | Reset everything |
+| Opens another surface (`…`) with no verb of its own | none | Manage…, Diagnostics…, Benchmark… |
+| Dense inline control in a packed row | none | Centre, Auto, Clear, ◂ ▸, Linear/In/Out, `.map…` |
+
+⭐⭐**The destructive row is the one that matters.** A check mark reads as endorsement — "this is
+the safe one" — so putting it on *Reset everything*, which permanently deletes every saved
+bookmark and the session, would be the icon actively arguing for the wrong choice. Destructive
+confirms already carry a red fill and white text; that IS their marking, and adding a tick would
+dilute it. **The check is for affirmatives, not for "the button on the right".**
+
+⚠**A specific verb beats the generic affirmative.** *Save tour…* is the affirmative half of its
+dialog, and it still takes `SAVE` rather than `CONFIRM` — "what it does" is more useful than "this
+one is the yes".
+
+⚠**Never a raw emoji.** Two Copy buttons used 📋, which comes from a different font family and did
+not look like the rest of the set — the exact problem §8's icon row exists to solve. Every icon
+comes from the Lucide subset via `icons.rs`; see the header of that file for how to add one.
+
 ---
 
 ## 9. Visual System / Theme Tokens (dark-first)

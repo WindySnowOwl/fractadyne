@@ -769,7 +769,7 @@ pub(crate) fn help_licenses(ui: &mut egui::Ui) {
          https://crates.io/crates/option-ext.",
     );
     ui.add_space(6.0);
-    if ui.button("📋 Copy all notices").clicked() {
+    if ui.button(format!("{} Copy all notices", crate::icons::COPY)).clicked() {
         ui.ctx().copy_text(NOTICES.to_string());
     }
     ui.add_space(6.0);
@@ -855,7 +855,7 @@ pub(crate) fn help_about(ui: &mut egui::Ui) {
                 .monospace()
                 .small(),
         );
-        if ui.small_button("📋").on_hover_text("Copy path").clicked() {
+        if ui.small_button(crate::icons::COPY).on_hover_text("Copy path").clicked() {
             ui.ctx().copy_text(fractadyne_state::state_location_display());
         }
     });

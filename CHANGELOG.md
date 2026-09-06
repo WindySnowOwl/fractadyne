@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A button-icon standard, applied across the app** (beta.36). The affirmative half of every
+  confirm/cancel pair now carries a check mark - Run, Apply, Go, Export, Render, Solve & jump -
+  so a dialog's yes and no are recognisable before either is read. Copy, Save and Refresh buttons
+  carry their own icons, and the two clipboard emoji left in the Help window are gone: they came
+  from a different font and never matched the rest of the set.
+
+  Most buttons deliberately stay plain. An icon on every button marks nothing, so the rule is by
+  role and is written down in `UI-DESIGN.md` §8.1. One exception is worth stating: **destructive
+  confirmations do not get a check.** A tick reads as endorsement, and *Reset everything*
+  permanently deletes your bookmarks and session - it keeps its red fill, which is the marking
+  that actually belongs on it.
+
 - **Icons for the dropper, the two gradient views, and every Cancel** (beta.35). The eyedropper
   button now carries a pipette, the Bar and Ring view toggles carry a bar and a ring, and every
   Cancel or Close button in the application carries the same X, so the way out of a dialog looks

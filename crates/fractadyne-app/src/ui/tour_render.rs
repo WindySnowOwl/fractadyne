@@ -474,14 +474,14 @@ impl FractadyneApp {
                             stop = true;
                         }
                     } else if ui
-                        .button("Render")
+                        .button(format!("{} Render", crate::icons::CONFIRM))
                         .on_hover_text("Start rendering the frame sequence")
                         .clicked()
                     {
                         go = true;
                     }
                     if ui
-                        .button("Copy command")
+                        .button(format!("{} Copy command", crate::icons::COPY))
                         .on_hover_text("Copy the equivalent command line to the clipboard")
                         .clicked()
                     {

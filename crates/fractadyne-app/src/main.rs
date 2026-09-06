@@ -9062,7 +9062,7 @@ impl FractadyneApp {
                             .hint_text("#000000, #8b1a1a, #ff8800, #ffe6b3"),
                     );
                     ui.horizontal(|ui| {
-                        if ui.button("Apply").clicked() {
+                        if ui.button(format!("{} Apply", crate::icons::CONFIRM)).clicked() {
                             match fractadyne_color::parse_palette_text(&self.coloring.paste_text) {
                                 Ok(colors) => {
                                     let got = colors.len();

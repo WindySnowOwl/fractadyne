@@ -326,8 +326,8 @@ impl FractadyneApp {
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    go = ui.button("Go").clicked();
-                    if ui.button("Copy").on_hover_text("Copy this location to the clipboard").clicked() {
+                    go = ui.button(format!("{} Go", crate::icons::CONFIRM)).clicked();
+                    if ui.button(format!("{} Copy", crate::icons::COPY)).on_hover_text("Copy this location to the clipboard").clicked() {
                         copy = true;
                     }
                     if ui.button("Use current").clicked() {
@@ -554,8 +554,8 @@ impl FractadyneApp {
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    apply = ui.button("Apply").on_hover_text("Jump to the location in the box").clicked();
-                    copy = ui.button("Copy").on_hover_text("Copy the text to the clipboard").clicked();
+                    apply = ui.button(format!("{} Apply", crate::icons::CONFIRM)).on_hover_text("Jump to the location in the box").clicked();
+                    copy = ui.button(format!("{} Copy", crate::icons::COPY)).on_hover_text("Copy the text to the clipboard").clicked();
                     if ui.button("Use current").clicked() {
                         self.share.text = self.view_metadata();
                         self.share.msg = None;
@@ -712,10 +712,10 @@ impl FractadyneApp {
                         )
                         .clicked();
                     copy = ui
-                        .button("Copy report")
+                        .button(format!("{} Copy report", crate::icons::COPY))
                         .on_hover_text("Copy everything to the clipboard")
                         .clicked();
-                    save = ui.button("Save report…").on_hover_text("Save as a .txt to attach").clicked();
+                    save = ui.button(format!("{} Save report…", crate::icons::SAVE)).on_hover_text("Save as a .txt to attach").clicked();
                 });
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Or by email:").weak().small());
@@ -953,7 +953,7 @@ impl FractadyneApp {
                 );
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Save tour…").clicked() {
+                    if ui.button(format!("{} Save tour…", crate::icons::SAVE)).clicked() {
                         save = true;
                     }
                     if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
@@ -1191,7 +1191,7 @@ impl FractadyneApp {
                                     ui.label(egui::RichText::new(format!("{zoom}×")).weak().small());
                                 }
                                 ui.horizontal(|ui| {
-                                    if ui.button("Go").clicked() {
+                                    if ui.button(format!("{} Go", crate::icons::CONFIRM)).clicked() {
                                         jump = Some(i);
                                     }
                                     if ui.button(crate::icons::DELETE).on_hover_text("Delete").clicked() {
@@ -1275,7 +1275,7 @@ impl FractadyneApp {
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Run").clicked() {
+                    if ui.button(format!("{} Run", crate::icons::CONFIRM)).clicked() {
                         run_now = true;
                     }
                     if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
@@ -1372,7 +1372,7 @@ impl FractadyneApp {
                 ui.monospace(&body);
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Copy").clicked() {
+                    if ui.button(format!("{} Copy", crate::icons::COPY)).clicked() {
                         ui.ctx().copy_text(body.clone());
                     }
                     // The notice's only way out, so it carries the same X as every Cancel — it is
@@ -1408,7 +1408,7 @@ impl FractadyneApp {
                     ui.monospace(&r);
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Copy").clicked() {
+                        if ui.button(format!("{} Copy", crate::icons::COPY)).clicked() {
                             ui.ctx().copy_text(r.clone());
                         }
                         if ui.button("Save…").clicked() {
@@ -1422,7 +1422,7 @@ impl FractadyneApp {
                                 bench_save = Some(std::fs::write(path, &r));
                             }
                         }
-                        if ui.button("Run again…").clicked() {
+                        if ui.button(format!("{} Run again…", crate::icons::REFRESH)).clicked() {
                             run_again = true;
                         }
                     });
@@ -1473,7 +1473,7 @@ impl FractadyneApp {
                             do_rescan = true;
                         }
                     }
-                    if ui.button("Refresh").clicked() {
+                    if ui.button(format!("{} Refresh", crate::icons::REFRESH)).clicked() {
                         do_rescan = true;
                     }
                     ui.label(
@@ -1779,14 +1779,14 @@ impl FractadyneApp {
                 } else {
                     ui.horizontal(|ui| {
                         if ui
-                            .button("Export")
+                            .button(format!("{} Export", crate::icons::CONFIRM))
                             .on_hover_text("Render and save into the folder above (auto-named)")
                             .clicked()
                         {
                             do_export = true;
                         }
                         if ui
-                            .button("Save as…")
+                            .button(format!("{} Save as…", crate::icons::SAVE))
                             .on_hover_text("Choose the file name and location")
                             .clicked()
                         {

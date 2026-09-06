@@ -556,7 +556,7 @@ impl crate::FractadyneApp {
                                     cancel_jump = true;
                                 }
                             } else if ui
-                                .button("Solve & jump")
+                                .button(format!("{} Solve & jump", crate::icons::CONFIRM))
                                 .on_hover_text(
                                     "Newton-solve this exact point to the precision the asked \
                                      depth needs (from its stored coordinate as the seed), then \

@@ -111,6 +111,15 @@ pub(crate) const DELETE: &str = "\u{e18e}";
 /// Lucide `columns-2` - toolbar: dual linked view toggle
 pub(crate) const DUAL: &str = "\u{e098}";
 
+/// Lucide `check` - the affirmative half of a confirm/cancel pair
+pub(crate) const CONFIRM: &str = "\u{e06c}";
+
+/// Lucide `copy` - copy-to-clipboard buttons (replaces a clipboard emoji)
+pub(crate) const COPY: &str = "\u{e09e}";
+
+/// Lucide `refresh-cw` - re-run / check again
+pub(crate) const REFRESH: &str = "\u{e145}";
+
 /// Lucide `pipette` - gradient editor: eyedropper, and the picking cursor
 pub(crate) const PICK: &str = "\u{e13b}";
 
