@@ -44,6 +44,9 @@ ICONS = [
     ("ADD",         "plus",         "gradient editor: add stop"),
     ("DELETE",      "trash-2",      "bookmarks browser: delete"),
     ("DUAL",        "columns-2",    "toolbar: dual linked view toggle"),
+    ("PICK",        "pipette",      "gradient editor: eyedropper, and the picking cursor"),
+    ("VIEW_BAR",    "rectangle-horizontal", "gradient editor: bar view"),
+    ("VIEW_RING",   "circle",       "gradient editor: ring view"),
 ]
 
 info = json.load(io.open(os.path.join(TMP, "info.json"), encoding="utf-8"))

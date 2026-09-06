@@ -31,6 +31,11 @@ const SOURCES: &[(&str, &str)] = &[
     ("central.rs", include_str!("ui/central.rs")),
     ("help.rs", include_str!("help.rs")),
     ("icons.rs", include_str!("icons.rs")),
+    // ⚠⚠**`main.rs` was NOT scanned, and it draws UI text.** The gradient editor's `⊕`/`⊖`
+    // affordances, its hint lines and its tooltips all live here, so the one file with the most
+    // recently-written glyphs was the one file this check could not see. Adding it is the whole
+    // point of the module: a glyph is only safe if something looked for a font that can draw it.
+    ("main.rs", include_str!("main.rs")),
 ];
 
 fn covered() -> BTreeSet<u32> {

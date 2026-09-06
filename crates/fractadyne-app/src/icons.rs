@@ -110,3 +110,12 @@ pub(crate) const DELETE: &str = "\u{e18e}";
 
 /// Lucide `columns-2` - toolbar: dual linked view toggle
 pub(crate) const DUAL: &str = "\u{e098}";
+
+/// Lucide `pipette` - gradient editor: eyedropper, and the picking cursor
+pub(crate) const PICK: &str = "\u{e13b}";
+
+/// Lucide `rectangle-horizontal` - gradient editor: bar view
+pub(crate) const VIEW_BAR: &str = "\u{e376}";
+
+/// Lucide `circle` - gradient editor: ring view
+pub(crate) const VIEW_RING: &str = "\u{e076}";

@@ -552,7 +552,7 @@ impl crate::FractadyneApp {
                                     .weak()
                                     .monospace(),
                                 );
-                                if ui.button("Cancel").clicked() {
+                                if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
                                     cancel_jump = true;
                                 }
                             } else if ui

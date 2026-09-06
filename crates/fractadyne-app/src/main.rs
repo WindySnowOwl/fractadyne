@@ -7492,8 +7492,22 @@ impl FractadyneApp {
             PickStep::Cancel => self.coloring.eyedrop = None,
             PickStep::Continue(p) => {
                 self.coloring.eyedrop = Some(p);
-                ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
                 let screen = ctx.screen_rect();
+                // ⭐⭐**A real eyedropper cursor, and only where one is possible.** Inside our own
+                // window we hide the system cursor and draw the pipette glyph ourselves, with its
+                // tip on the sampled pixel. Outside it, the pointer is over ANOTHER application's
+                // window and that application owns the cursor — the only way to change it there is
+                // `SetSystemCursor`, which swaps it desktop-wide and leaves the user's cursor
+                // broken if we crash before restoring it. Not worth a cursor.
+                // ⚠There is no eyedropper in the CSS/winit cursor set either, so `Crosshair` is
+                // the honest fallback rather than a second-best pipette.
+                let pointer = ctx
+                    .input(|i| i.pointer.hover_pos().or_else(|| i.pointer.latest_pos()))
+                    .filter(|p| screen.contains(*p));
+                ctx.set_cursor_icon(match pointer {
+                    Some(_) => egui::CursorIcon::None,
+                    None => egui::CursorIcon::Crosshair,
+                });
                 egui::Area::new(egui::Id::new("eyedropper_overlay"))
                     .order(egui::Order::Foreground)
                     .fixed_pos(screen.min)
@@ -7541,6 +7555,26 @@ impl FractadyneApp {
                             );
                         }
                         pr.galley(rect.min + pad + egui::vec2(sw + 8.0, 0.0), galley, egui::Color32::PLACEHOLDER);
+
+                        // The drawn cursor. ⚠Rendered TWICE — a dark copy one pixel down-right,
+                        // then the accent on top — because it floats over the user's own gradient
+                        // and a single-colour glyph disappears against half of it. The glyph's
+                        // bottom-left is the pipette's tip, so that corner sits on the pointer and
+                        // the sample it names is the pixel under it.
+                        if let Some(at) = pointer {
+                            for (off, col) in [
+                                (egui::vec2(1.0, 1.0), egui::Color32::from_black_alpha(180)),
+                                (egui::Vec2::ZERO, BRAND_ACCENT),
+                            ] {
+                                pr.text(
+                                    at + off,
+                                    egui::Align2::LEFT_BOTTOM,
+                                    crate::icons::PICK,
+                                    egui::FontId::proportional(20.0),
+                                    col,
+                                );
+                            }
+                        }
                     });
             }
         }
@@ -7630,9 +7664,17 @@ impl FractadyneApp {
 
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("View").weak().small());
-                    ui.selectable_value(&mut self.coloring.ring_view, false, "Bar")
+                    ui.selectable_value(
+                        &mut self.coloring.ring_view,
+                        false,
+                        format!("{} Bar", crate::icons::VIEW_BAR),
+                    )
                         .on_hover_text("A straight strip — best for placing stops precisely");
-                    ui.selectable_value(&mut self.coloring.ring_view, true, "Ring")
+                    ui.selectable_value(
+                        &mut self.coloring.ring_view,
+                        true,
+                        format!("{} Ring", crate::icons::VIEW_RING),
+                    )
                         .on_hover_text(
                             "A ring, because the palette is CYCLED: the join at the top is the seam the renderer crosses on every sweep, and a gradient that looks fine on a bar can have a hard edge there.",
                         );
@@ -8632,7 +8674,10 @@ impl FractadyneApp {
                         // fractal program, a palette on a web page — restricting it to our own
                         // window would make it a novelty.
                         let can_pick = crate::eyedropper::supported();
-                        let pick_btn = ui.add_enabled(can_pick, egui::Button::new("Pick"));
+                        let pick_btn = ui.add_enabled(
+                            can_pick,
+                            egui::Button::new(format!("{} Pick", crate::icons::PICK)),
+                        );
                         if let Some(why) = crate::eyedropper::unsupported_reason() {
                             pick_btn.clone().on_disabled_hover_text(why);
                         }
@@ -8885,7 +8930,7 @@ impl FractadyneApp {
                         // the view — so silently undoing on ✕ would throw away work the user
                         // watched themselves make.
                         if ui
-                            .button("Cancel")
+                            .button(format!("{} Cancel", crate::icons::CLOSE))
                             .on_hover_text("Discard every change made since this window was opened, and close it")
                             .clicked()
                         {
@@ -8945,7 +8990,7 @@ impl FractadyneApp {
                             .weak()
                             .small(),
                         );
-                        if ui.button("Close list").clicked() {
+                        if ui.button(format!("{} Close list", crate::icons::CLOSE)).clicked() {
                             self.coloring.ugr_choices.clear();
                         }
                     });

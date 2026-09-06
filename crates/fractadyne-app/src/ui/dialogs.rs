@@ -468,7 +468,7 @@ impl FractadyneApp {
                                 // worker owns no shared state, so dropping its channel lets it
                                 // finish into nothing.
                                 if ui
-                                    .button("Cancel")
+                                    .button(format!("{} Cancel", crate::icons::CLOSE))
                                     .on_hover_text(
                                         "Stop waiting. The solve itself runs to completion in the \
                                          background and its answer is discarded — nothing is left \
@@ -829,7 +829,7 @@ impl FractadyneApp {
                 );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    cancel = ui.button("Cancel").clicked();
+                    cancel = ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked();
                     if ui
                         .add(egui::Button::new(
                             egui::RichText::new("Reset everything").color(egui::Color32::WHITE),
@@ -956,7 +956,7 @@ impl FractadyneApp {
                     if ui.button("Save tour…").clicked() {
                         save = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
                         self.dialogs.script_export_open = false;
                     }
                 });
@@ -1278,7 +1278,7 @@ impl FractadyneApp {
                     if ui.button("Run").clicked() {
                         run_now = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
                         self.dialogs.bench_dialog_open = false;
                     }
                 });
@@ -1338,7 +1338,7 @@ impl FractadyneApp {
                     ui.label(format!("last pass: {f:.1} fps"));
                 }
                 ui.add_space(4.0);
-                if ui.button("Cancel").clicked() {
+                if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
                     cancel = true;
                 }
             });
@@ -1375,7 +1375,9 @@ impl FractadyneApp {
                     if ui.button("Copy").clicked() {
                         ui.ctx().copy_text(body.clone());
                     }
-                    if ui.button("Close").clicked() {
+                    // The notice's only way out, so it carries the same X as every Cancel — it is
+                    // the dismiss gesture whatever the word on it says.
+                    if ui.button(format!("{} Close", crate::icons::CLOSE)).clicked() {
                         close_clicked = true;
                     }
                 });
@@ -1761,7 +1763,7 @@ impl FractadyneApp {
                     } else {
                         ui.label("Rendering…");
                         ui.add(egui::ProgressBar::new(p as f32 / 1000.0).show_percentage());
-                        if ui.button("Cancel").clicked() {
+                        if ui.button(format!("{} Cancel", crate::icons::CLOSE)).clicked() {
                             self.export.cancel
                                 .store(true, std::sync::atomic::Ordering::Relaxed);
                         }

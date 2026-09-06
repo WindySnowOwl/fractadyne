@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Icons for the dropper, the two gradient views, and every Cancel** (beta.35). The eyedropper
+  button now carries a pipette, the Bar and Ring view toggles carry a bar and a ring, and every
+  Cancel or Close button in the application carries the same X, so the way out of a dialog looks
+  the same everywhere.
+
+  While picking, the pointer becomes a pipette **inside the Fractadyne window**. Outside it the
+  cursor belongs to whichever application you are hovering over and cannot be changed without
+  replacing the desktop-wide cursor, which would stay broken if Fractadyne stopped unexpectedly;
+  there it stays a crosshair.
+
 - **An eyedropper that reaches the whole screen** (beta.34). Next to the selected stop's colour
   there is now a **Pick** button: press it, move the pointer to any colour **anywhere on your
   desktop** — a photograph, another fractal program, a palette on a web page — and click to take it.
