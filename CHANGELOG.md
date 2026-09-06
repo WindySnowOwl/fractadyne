@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The start and end colours sit at the start and the end** (beta.43), under the curve view whose
+  width IS the selected segment - flanking the strip of that segment's own colours. They were a
+  row to the RIGHT of it, so "start" and "end" were both to the right of the thing they were the
+  ends of.
+
+  **Segments and the selected stop now carry their numbers** on the picture: each ribbon cell shows
+  its segment number, and the selected marker shows its stop number, so "Segment 2 of 5" and
+  "Stop 2 of 6" can be found without counting.
+
+  **Fixed: a single click in the editor appeared to do nothing.** Every edit here is applied after
+  the gradient has already been drawn that frame, and a lone click - the Seamless checkbox, an ease
+  preset, Centre, the curve and space pickers - had no reason to schedule another one. The change
+  landed and the picture did not move until something else happened to cause a repaint. Dragging
+  never showed it, because a drag repaints continuously.
+
 - **A segment shows both of its colours** (beta.42). The segment panel now has an **Ends** row
   with the colour at each end of the selected segment - swatch and hex, both editable. Previously
   there was one colour on screen and it was often neither end of the segment you were looking at:

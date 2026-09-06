@@ -1842,7 +1842,13 @@ mod color_values;
 /// into three different ideas of how a colour is edited.
 /// ⚠The hex field keeps its half-typed text in `Ui` memory while focused, or the next frame would
 /// re-render the current colour's full hex over what the user is in the middle of typing.
-fn color_field(ui: &mut egui::Ui, id: egui::Id, rgb: [f32; 3], tip: &str) -> Option<[f32; 3]> {
+fn color_field(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    rgb: [f32; 3],
+    tip: &str,
+    hex_width: f32,
+) -> Option<[f32; 3]> {
     let mut out = None;
     let mut c = rgb;
     if ui.color_edit_button_rgb(&mut c).on_hover_text(tip).changed() {
@@ -1851,7 +1857,7 @@ fn color_field(ui: &mut egui::Ui, id: egui::Id, rgb: [f32; 3], tip: &str) -> Opt
     let mut hex = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_else(|| hex_of(rgb)));
     let r = ui.add(
         egui::TextEdit::singleline(&mut hex)
-            .desired_width(72.0)
+            .desired_width(hex_width)
             .font(egui::TextStyle::Monospace)
             .hint_text("#rrggbb"),
     );
@@ -7745,7 +7751,16 @@ impl FractadyneApp {
                 const LANE_H: f32 = 17.0;
                 const REM_H: f32 = 15.0;
                 const RIBBON_H: f32 = 34.0;
-                const CANVAS: f32 = 168.0;
+                // Width of one end field: egui's colour button plus spacing plus a monospace
+                // `#rrggbb`. ⚠**Measured, not guessed** — the first two attempts sized it from an
+                // assumed 26 px swatch and egui's is ~40, so the SECOND field kept being clipped
+                // by the layout rather than by its own width (`#e64d05` → `#e64d0`).
+                const END_FIELD_W: f32 = 40.0 + 3.0 + 74.0;
+                // ⚠240, not the original 168: the row of TWO colour fields under it has
+                // to fit, and 168 clipped the second one mid-hex. 200 still truncated
+                // `#e64d05` to `#e64c` — a monospace `#rrggbb` needs ~74 px, and there
+                // are two of them plus their swatches.
+                const CANVAS: f32 = 240.0;
                 const RING_H: f32 = 230.0;
                 // The ring's furniture, all measured out from the annulus's outer edge: markers
                 // sit in `outer+1 .. outer+11` pointing inward, and the ADD TRACK is the circle
@@ -8258,6 +8273,22 @@ impl FractadyneApp {
                                 egui::Stroke::new(1.0_f32, weak)
                             },
                         ));
+                        // ⭐The stop number the panel names, on the marker itself. ⚠Only for the
+                        // SELECTED one: at the 32-stop cap the markers are ~15 px apart and a
+                        // number under every one is a row of unreadable digits — the panel says
+                        // which stop it means, so the picture only has to answer "where is that
+                        // one?".
+                        if i == sel {
+                            // ⚠BESIDE the marker, not under it: the remove lane's ⊖ tracks the
+                            // same x, so a number centred below the triangle lands on top of it.
+                            pr.text(
+                                egui::pos2(x + half + 2.0, top),
+                                egui::Align2::LEFT_TOP,
+                                format!("{}", i + 1),
+                                egui::FontId::proportional(9.0),
+                                accent,
+                            );
+                        }
                     }
                 }
                 if let (Some((rect, _)), Some(g)) = (rem_lane.as_ref(), grad.as_ref()) {
@@ -8448,6 +8479,19 @@ impl FractadyneApp {
                             );
                         }
                         // ⚠Below ~5 px a curve is noise; the cell still fills and still selects.
+                        // ⭐**The number the panel says.** "Segment 2 of 5" was a label with
+                        // nothing on the picture carrying the same 2, so correlating the two meant
+                        // counting cells. ⚠Only where it fits: below ~18 px the digits would
+                        // overlap the curve they are meant to annotate.
+                        if cell.width() >= 18.0 {
+                            pr.text(
+                                egui::pos2(cell.center().x, cell.min.y + 1.0),
+                                egui::Align2::CENTER_TOP,
+                                format!("{}", i + 1),
+                                egui::FontId::proportional(9.0),
+                                if selected { accent } else { weak },
+                            );
+                        }
                         if cell.width() >= 5.0 {
                             paint_factor_curve(
                                 &pr,
@@ -8495,7 +8539,11 @@ impl FractadyneApp {
                     let seg = g.segments[si];
                     let mut edit: Option<fractadyne_color::segment::Gradient> = None;
                     ui.add_space(6.0);
+                    // Hoisted out of the canvas closure: the controls column beside it
+                    // needs the same span.
+                    let span = (seg.right - seg.left).max(1.0e-6);
                     ui.horizontal_top(|ui| {
+                      ui.vertical(|ui| {
                         let (crect, cresp) = ui.allocate_exact_size(
                             egui::vec2(CANVAS, CANVAS),
                             egui::Sense::click_and_drag(),
@@ -8505,7 +8553,6 @@ impl FractadyneApp {
                             inner.min,
                             egui::pos2(inner.max.x, inner.max.y - 14.0),
                         );
-                        let span = (seg.right - seg.left).max(1.0e-6);
                         let pr = ui.painter().clone();
                         pr.rect_filled(crect, 3.0, sunken);
                         pr.rect_stroke(
@@ -8638,11 +8685,46 @@ impl FractadyneApp {
                                 _ => {}
                             }
                         }
+                        // ⭐⭐**The two end colours sit AT the two ends**, under the canvas whose
+                        // x-axis IS this segment: start under the left edge, end under the right,
+                        // flanking the strip of the segment's own colours. They were previously a
+                        // row in the controls column to the RIGHT of the canvas, so "start" and
+                        // "end" were both to the right of the thing they were the ends OF — the
+                        // labels carried the whole meaning and the layout argued against them.
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(CANVAS, 22.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = 3.0;
+                                for (k, tip, right) in [
+                                    (si, "Colour at the START of this segment", false),
+                                    (si + 1, "Colour at the END of this segment", true),
+                                ] {
+                                    // ⚠The second pair is pushed to the far edge, so the gap
+                                    // between them is the segment, not a spacing constant.
+                                    if right {
+                                        ui.add_space(
+                                            (ui.available_width() - END_FIELD_W).max(0.0),
+                                        );
+                                    }
+                                    if let Some((_, rgb)) = g.stop(k) {
+                                        let id = ui.id().with(("seg_end", k));
+                                        if let Some(c) = color_field(ui, id, rgb, tip, 74.0) {
+                                            let mut g2 =
+                                                edit.clone().unwrap_or_else(|| g.clone());
+                                            g2.set_stop_color(k, c);
+                                            edit = Some(g2);
+                                        }
+                                    }
+                                }
+                            },
+                        );
                         cresp.on_hover_text(if bez.is_some() {
                             "The blend curve for the selected segment. Drag either control point — in x AND y — to reshape it. The faint lines are 0 and 1; a curve may pass outside them, and the colour is clamped rather than the curve."
                         } else {
                             "The blend curve for the selected segment: how fast the colour travels from the left stop to the right one. Drag the ring to move the midpoint, or switch the curve to Bézier for a control point that moves in both directions."
                         });
+                      });
 
                         ui.add_space(8.0);
                         ui.vertical(|ui| {
@@ -8656,39 +8738,6 @@ impl FractadyneApp {
                                 ))
                                 .strong(),
                             );
-                            // ⭐⭐**A SEGMENT HAS TWO ENDS, and until now the editor showed one
-                            // colour that was often neither of them.** `Segment` owns `left_color`
-                            // and `right_color`; a "stop" is a derived view of the boundary where
-                            // two segments meet, and `Gradient::stop` is documented as LOSSY —
-                            // across a hard edge it reports only the left-hand colour. So the
-                            // model's answer to "segments or stops?" is segments, and this is the
-                            // panel finally saying so.
-                            //
-                            // ⚠**Both ends still edit through `set_stop_color`, which CLOSES the
-                            // join.** Writing `left_color` directly would let a stray click open a
-                            // hard edge between two segments the user thought were continuous —
-                            // expressible in the model, invisible in this panel, and impossible to
-                            // undo without noticing it. Splitting a join stays a deliberate,
-                            // separate action rather than a side effect of recolouring.
-                            ui.horizontal(|ui| {
-                                ui.label("Ends").on_hover_text(
-                                    "The colours at the start and end of this segment. Each is shared with the neighbouring segment, so editing one keeps the join closed.",
-                                );
-                                for (k, tip) in [
-                                    (si, "Colour at the start of this segment"),
-                                    (si + 1, "Colour at the end of this segment"),
-                                ] {
-                                    if let Some((_, rgb)) = g.stop(k) {
-                                        let id = ui.id().with(("seg_end", k));
-                                        if let Some(c) = color_field(ui, id, rgb, tip) {
-                                            let mut g2 =
-                                                edit.clone().unwrap_or_else(|| g.clone());
-                                            g2.set_stop_color(k, c);
-                                            edit = Some(g2);
-                                        }
-                                    }
-                                }
-                            });
                             ui.add_space(3.0);
                             ui.horizontal(|ui| {
                                 // ⚠The hover earns its place: GIMP's "Curved" is `pos^(ln 0.5 /
@@ -9434,6 +9483,13 @@ impl FractadyneApp {
         if changed {
             self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
             self.coloring.use_custom_palette = true;
+            // ⭐⭐**Every edit in this window lands AFTER the gradient was painted this
+            // frame**, so the result is only visible on the NEXT one. A drag repaints
+            // continuously and hides that; a single click has no reason to schedule another
+            // frame, so the model changed and the picture did not — the checkbox, the ease
+            // presets, Centre and the curve/space pickers all appeared to do nothing until
+            // something else happened to cause a repaint. This is the frame they need.
+            ctx.request_repaint();
         }
         // ⭐**Cancel restores the baseline wholesale**, including `use_custom_palette`: opening the
         // editor on a preset and touching anything switches the palette over to custom, so putting
