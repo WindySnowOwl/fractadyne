@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Every segment is editable the moment you select it** (beta.40). Opening the gradient editor
+  now converts plain linear segments to unbent Bezier curves, so each one already has two
+  draggable control points instead of needing to be converted first. It looks and renders exactly
+  the same until you actually move a handle.
+
+  ⚠Segments whose midpoint has been moved off centre are left as they were: that shape has a kink
+  in it, which no Bezier curve can follow, and quietly reshaping someone's segment would be worse
+  than leaving the extra step in. Those still convert on request, and say how close the fit is.
+
 - **Save a gradient to a file, force it seamless, and see the seam** (beta.39).
   **Save .ggr…** writes the current gradient to a GIMP gradient file - openable in GIMP, Krita and
   Inkscape as well as back in here, with its midpoints, blend curves and colour spaces intact. If

@@ -7663,6 +7663,23 @@ impl FractadyneApp {
         // three places (menu, panel, keyboard); capturing on first-frame-open means none of them
         // can forget to, and it is always "as it was when you opened it" rather than as of some
         // earlier edit.
+        // ⭐**Bézier by default, applied where it is observable.** Every plain segment becomes an
+        // unbent Bézier the moment the editor opens, so selecting any of them shows draggable
+        // handles rather than a named curve you must convert first. It renders identically — the
+        // identity ease is answered exactly — and it happens HERE, not in `Segment::linear`,
+        // because doing it in the constructor put it on the goldens' path and drifted the corpus
+        // to 8/38 on a midpoint rounding difference. See `segment::DEFAULT_BLEND`.
+        // ⚠Inside the baseline guard, so it runs once per opening and Cancel can undo it.
+        if self.coloring.editor_baseline.is_none() {
+            if let Some(mut g) = self.editable_gradient() {
+                let before = self.coloring.custom_segments.clone();
+                g.promote_linear_to_bezier();
+                self.store_segments(&g);
+                if self.coloring.custom_segments != before {
+                    self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
+                }
+            }
+        }
         if self.coloring.editor_baseline.is_none() {
             self.coloring.editor_baseline = Some(GradientBaseline {
                 segments: self.coloring.custom_segments.clone(),

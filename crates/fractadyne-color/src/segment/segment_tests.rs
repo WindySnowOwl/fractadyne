@@ -928,3 +928,39 @@ fn a_hostile_name_cannot_forge_the_file() {
     let anon = Gradient { name: "   ".into(), segments: vec![Segment::linear(0.0, 1.0, [0.0; 4], [1.0; 4])] };
     assert!(crate::segment::write_ggr(&anon).contains("Name: Fractadyne"));
 }
+
+/// ⭐⭐**Promoting to Bézier must be invisible, and it must know when to refuse.**
+///
+/// ⚠⚠**The refusal is the important half.** `Blend::Linear` with an OFF-CENTRE midpoint is
+/// piecewise linear with a kink, and no cubic reproduces a kink — promoting one would silently
+/// reshape somebody's segment. Those keep `Linear`.
+#[test]
+fn promoting_linear_segments_to_bezier_changes_nothing_and_skips_the_kinked_ones() {
+    let mut g = Gradient::from_stops(
+        "t",
+        &[(0.0, [0.0, 0.0, 0.0]), (0.35, [0.9, 0.1, 0.2]), (0.7, [0.2, 0.6, 0.9]), (1.0, [1.0; 3])],
+    );
+    // A curved segment and an off-centre linear one, neither of which may be touched.
+    g.segments[1].blend = Blend::Sine;
+    let s = g.segments[2];
+    g.segments[2].mid = s.left + 0.2 * (s.right - s.left);
+    let before = g.clone();
+
+    g.promote_linear_to_bezier();
+    assert_eq!(g.segments[0].blend, Blend::Bezier(BEZIER_IDENTITY), "a centred linear must promote");
+    assert_eq!(g.segments[1].blend, Blend::Sine, "a named curve must be left alone");
+    assert_eq!(g.segments[2].blend, Blend::Linear, "an off-centre linear has a KINK — leave it");
+
+    // ⭐The whole point: the picture does not move. Compared bit-for-bit, because the identity
+    // ease is answered exactly rather than solved — which is what makes this safe to do at all.
+    assert_eq!(before.bake(LUT_SIZE), g.bake(LUT_SIZE), "promotion moved a pixel");
+    // Idempotent — reopening the editor must not keep churning the gradient.
+    let once = g.clone();
+    g.promote_linear_to_bezier();
+    assert_eq!(once, g);
+    // And it stays expressible as stops, so the "rich gradient" notice does not start crying wolf.
+    let mut plain = Gradient::from_stops("p", &[(0.0, [0.0; 3]), (1.0, [1.0; 3])]);
+    assert!(plain.is_stop_expressible());
+    plain.promote_linear_to_bezier();
+    assert!(plain.is_stop_expressible(), "an unbent Bézier is still just a stop list");
+}

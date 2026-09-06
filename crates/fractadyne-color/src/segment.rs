@@ -55,6 +55,42 @@ pub enum Blend {
 /// the fit in `Blend::fit_to` a closed form rather than an optimisation.
 pub const BEZIER_IDENTITY: [f32; 4] = [1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0];
 
+/// The blend an EDITED segment gets: an unbent Bézier, so its control points are draggable the
+/// moment you select it, with no "convert this to an editable curve" step in the way.
+///
+/// ⚠⚠**Applied when a gradient enters the EDITOR, not by `Segment::linear`, and the reason is
+/// MEASURED.** Making it the constructor's default drifted the F3 corpus to **8/38** — maxD 1 on
+/// 10–20 px of 800k. Not from the curve: `bezier_ease` answers the identity exactly. From the
+/// MIDPOINT. `Segment::linear` stores `mid = 0.5 * (left + right)`, and `factor` normalises it as
+/// `(mid - left) / (right - left)`, which in f32 is **not exactly 0.5** — 0.49999997 for a
+/// 0.35..0.70 span. So `Blend::Linear` carries a hair of midpoint asymmetry that a Bézier, which
+/// ignores `mid` by design, does not, and every golden was blessed with that asymmetry in it.
+///
+/// ⭐Promoting on entry to the editor gets the same result where it is OBSERVABLE — every segment
+/// you can select has handles — while the render paths the goldens and corpus exercise never see
+/// it. Zero drift, proven by the corpus rather than argued for.
+pub const DEFAULT_BLEND: Blend = Blend::Bezier(BEZIER_IDENTITY);
+
+impl Gradient {
+    /// Convert plain linear segments to unbent Béziers, so the editor can offer draggable handles
+    /// on every one of them. Anything already curved, swept, or off-centre is left exactly alone.
+    ///
+    /// ⚠**Centred midpoints only.** `Blend::Linear` with an off-centre midpoint is piecewise
+    /// linear with a KINK, and no cubic reproduces a kink — promoting one would silently reshape
+    /// the segment. Those keep `Linear`; the user can convert them from the picker, which reports
+    /// how far the fit lands.
+    pub fn promote_linear_to_bezier(&mut self) {
+        for s in &mut self.segments {
+            let len = s.right - s.left;
+            let centred =
+                len.abs() < f32::EPSILON || (((s.mid - s.left) / len) - 0.5).abs() <= 1.0e-4;
+            if s.blend == Blend::Linear && centred {
+                s.blend = DEFAULT_BLEND;
+            }
+        }
+    }
+}
+
 impl Blend {
     /// GIMP's `.ggr` blend-type number, which is also what a session file stores.
     ///
@@ -194,6 +230,17 @@ pub fn bezier_ease(p: [f32; 4], t: f32) -> f32 {
     }
     if t >= 1.0 {
         return 1.0;
+    }
+    // ⭐⭐**The identity is answered EXACTLY, not solved.** Both canonical spellings return `t`
+    // itself rather than `bez(1/3, 2/3, u)` for a numerically-solved `u`, which lands ~1e-7 away.
+    //
+    // ⚠⚠**This is what makes a Bézier-by-default segment ZERO DRIFT.** Once every plain segment
+    // stores kind 5, an unbent curve is on the path of every preset, every import and every
+    // golden — and 1e-7 is small only until a value sits that close to a rounding boundary, at
+    // which point one pixel in one image flips a level and the corpus (which compares at maxD 0)
+    // fails. Cheap equality on the two spellings costs nothing and removes the question.
+    if p == BEZIER_IDENTITY || p == [0.0; 4] {
+        return t;
     }
     // Newton from u = t, which is the exact answer whenever x is the identity — the common case.
     let mut u = t;
@@ -676,7 +723,15 @@ impl Gradient {
             let span = s.right - s.left;
             let centred =
                 span.abs() < f32::EPSILON || ((s.mid - s.left) / span - 0.5).abs() <= 1.0e-3;
-            s.blend == Blend::Linear && s.space == Space::Rgb && centred
+            // ⭐An identity Bézier is a straight line, so it is as expressible as `Linear` —
+            // and since it is now the DEFAULT, treating it as rich would mark every ordinary
+            // gradient as carrying curves it does not have.
+            let straight = match s.blend {
+                Blend::Linear => true,
+                Blend::Bezier(p) => bezier_is_identity(p),
+                _ => false,
+            };
+            straight && s.space == Space::Rgb && centred
         })
     }
 
