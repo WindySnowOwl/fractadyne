@@ -589,6 +589,21 @@ fn requested_texture_dim(adapter_max: u32) -> u32 {
     adapter_max
 }
 
+/// How long after a scale-factor change the window's logical size is held.
+///
+/// ⚠**Measured**: the second, spurious application of the scale landed 76–220 ms after the change
+/// across seven observed transitions. A second is comfortably past that and short enough that a
+/// deliberate resize a moment later is never fought.
+const DPI_HOLD_SECS: f64 = 1.0;
+
+/// How much growth counts as the doubled scale rather than a user drag.
+///
+/// ⚠The smallest ratio observed was **1.20** (a 1.5× / 1.25× pair). This trips well below that so
+/// the correction still fires on a closer pair — 1.5 / 1.25 is the tightest common Windows
+/// combination, but 1.25 / 1.0 would be 1.25 and 2.0 / 1.75 only 1.14 — while staying far enough
+/// above zero that ordinary layout jitter never reaches it.
+const DPI_GROWTH_TRIP: f32 = 1.06;
+
 #[cfg(test)]
 mod wgpu_error_policy;
 
@@ -4160,6 +4175,9 @@ struct FractadyneApp {
     /// Last logged `(width_pt, height_pt, pixels_per_point)`, so the size log records CHANGES
     /// rather than a line per frame.
     last_window_geom: Option<(f32, f32, f32)>,
+    /// After a scale-factor change: the logical size to hold, and the time the guard expires.
+    /// See the correction beside the geometry log.
+    dpi_hold: Option<(f32, f32, f64)>,
     /// Window/panel open-flags + the right-panel & minimap toggles (see [`DialogState`]).
     dialogs: DialogState,
     /// "Report an issue" dialog state (Help → Report an issue…).
@@ -4922,6 +4940,7 @@ impl FractadyneApp {
                 .map(|rs| rs.device.limits().max_texture_dimension_2d)
                 .unwrap_or(0),
             last_window_geom: None,
+            dpi_hold: None,
             suppress_autosave: false,
             pending_state_warning,
             minimap_tex: None,
@@ -11186,6 +11205,7 @@ impl eframe::App for FractadyneApp {
                 (w - now.0).abs() > 0.5 || (h - now.1).abs() > 0.5 || (p - now.2).abs() > 1.0e-3
             });
             if moved {
+                let prev = self.last_window_geom;
                 self.last_window_geom = Some(now);
                 diag::log_line(
                     "dpi",
@@ -11199,6 +11219,50 @@ impl eframe::App for FractadyneApp {
                         self.max_texture_dim,
                     ),
                 );
+                // ⭐⭐**Undo the doubled DPI application that makes the window grow.**
+                //
+                // Measured, 2026-09-07 (`fd-dpi` log of a beta.63 session): dragging between a
+                // 1.5× and a 1.25× monitor multiplied the window's LOGICAL size by 1.20 on each
+                // round trip — 1850 → 2224 → 2672 → 3209 → 3854 pt — and between 1.5× and 1.0× by
+                // 1.50: 3854 → 5789 → 8691 pt (13037 px). **The growth factor is exactly the ratio
+                // of the two monitors' scale factors**, i.e. the scale change is applied twice.
+                //
+                // ⚠**The second application lands 80–220 ms later, at CONSTANT scale** — the
+                // scale-change frame itself is correct, and a later frame inflates it. So this
+                // cannot key off the scale change alone; it remembers the logical size from before
+                // the change and puts it back if a later frame has grown it.
+                //
+                // A DPI change is *supposed* to preserve logical size — that is what keeps a window
+                // looking the same size to the user — so restoring it is the correct behaviour, not
+                // a hack around it. ⚠**Growth only, and only briefly**: it never shrinks a window
+                // the user is enlarging, and the guard expires, so a deliberate resize a moment
+                // later is untouched.
+                match prev {
+                    // The scale itself changed: remember the size to hold, and when to stop caring.
+                    Some((pw, ph, pp)) if (pp - ppp).abs() > 1.0e-3 => {
+                        self.dpi_hold = Some((pw, ph, ctx.input(|i| i.time) + DPI_HOLD_SECS));
+                    }
+                    // Same scale, but the size moved — the late second application, if it grew.
+                    _ => {
+                        if let Some((hw, hh, until)) = self.dpi_hold {
+                            if ctx.input(|i| i.time) <= until
+                                && (now.0 > hw * DPI_GROWTH_TRIP || now.1 > hh * DPI_GROWTH_TRIP)
+                            {
+                                diag::log_line(
+                                    "dpi",
+                                    &format!(
+                                        "window grew {:.2}× at constant scale — restoring {hw:.0}x{hh:.0} pt",
+                                        now.0 / hw.max(1.0)
+                                    ),
+                                );
+                                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
+                                    egui::vec2(hw, hh),
+                                ));
+                                self.dpi_hold = None;
+                            }
+                        }
+                    }
+                }
             }
         }
         // Rasterize the export watermark once from the font atlas (main thread — the export worker

@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The window-growth bug, measured — and corrected** (beta.64). The size logging added last
+  release caught it in the act. Dragging between monitors multiplies the window's size by **the
+  ratio of the two screens' scale factors**, every round trip: between a 150% and a 125% display it
+  grew 1850 → 2224 → 2672 → 3209 → 3854 points, each step exactly 1.20×; between 150% and 100% it went
+  3854 → 5789 → 8691, each exactly 1.50×. The scale change is being applied twice, and the second
+  application arrives a fraction of a second *after* the change, once the window is back at a steady
+  scale.
+
+  A display change is supposed to leave a window the same apparent size. Fractadyne now holds it to
+  that: it remembers the size from before the change and restores it if a later frame has inflated
+  it. Growth only, and only for a second afterwards — a window you resize yourself is never fought.
+
+  ⚠The underlying fault is still upstream and unfixed; this corrects the result rather than the
+  cause. On the run that produced these numbers the window reached 13037 pixels **without crashing**,
+  which is last release's headroom fix doing its job.
+
 - **The monitor-drag crash: the ceiling it hit was ours** (beta.61–63). Three crash reports, all the
   same shape — dragging between screens of different scaling runs a window-growth bug, the window
   reaches a size the graphics device won't make a drawing surface for (**9374**, then **11441**
