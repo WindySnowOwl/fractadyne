@@ -693,7 +693,10 @@ impl RenderMode {
 }
 
 /// Lightweight per-frame performance/diagnostic tracking, shown in an overlay.
-/// On by default for now; toggle via the View menu or the `--no-perf` CLI flag.
+///
+/// ⚠**`enabled` is OFF by default and persisted** (`SessionState::perf_panel`) — the real value is
+/// resolved where the app is built, from the session plus `--perf` / `--no-perf`. Toggle it from
+/// View ▸ Performance panel or the toolbar button.
 struct Perf {
     enabled: bool,
     /// Height (px) of the bottom status bar as of the last frame — instrumentation for `--uitest`,
@@ -1190,7 +1193,9 @@ impl Perf {
 impl Default for Perf {
     fn default() -> Self {
         Self {
-            enabled: true,
+            // ⚠The real answer comes from the session; this only covers the paths that build a
+            // `Perf` without one (tests, `..Perf::default()` spreads).
+            enabled: false,
             status_bar_h: 0.0,
             layout: LayoutRects::default(),
             status_bar_texts: Vec::new(),
@@ -4905,8 +4910,20 @@ impl FractadyneApp {
                 },
             },
             perf: Perf {
-                // Default on; `--no-perf` disables, `--perf` forces on.
-                enabled: !std::env::args().any(|a| a == "--no-perf"),
+                // ⭐**Off unless the user has asked for it**, remembered in the session so the
+                // asking happens once. ⚠An explicit flag outranks the stored answer without
+                // changing it — `--no-perf` for a screenshot, `--perf` for a harness that wants the
+                // diagnostics in frame, neither of which should redecide what the user prefers.
+                enabled: {
+                    let args: Vec<String> = std::env::args().collect();
+                    if args.iter().any(|a| a == "--no-perf") {
+                        false
+                    } else if args.iter().any(|a| a == "--perf") {
+                        true
+                    } else {
+                        s.perf_panel
+                    }
+                },
                 ..Perf::default()
             },
             render_cfg: RenderConfig {
@@ -5442,6 +5459,7 @@ impl FractadyneApp {
             duotone_lo: self.coloring.duotone_lo,
             duotone_hi: self.coloring.duotone_hi,
             right_panel_open: self.dialogs.right_panel_open,
+            perf_panel: self.perf.enabled,
             fractal: self.fractal.name().to_string(),
             julia_mode: self.julia_mode,
             julia_c_re: self.julia_c.0,

@@ -412,3 +412,40 @@ fn a_session_without_segments_still_uses_its_stops() {
     assert!(r.custom_segments.is_empty());
     assert_eq!(r.custom_palette.len(), 2);
 }
+
+/// ⭐⭐**The Performance panel is OFF for a new user and remembered once turned on.**
+///
+/// Its readouts (`mode perturb df32`, `precision 84 bit`, `orbit len 12833`) are diagnostics that
+/// read as an error report to someone who has just opened a fractal viewer, and it gates a periodic
+/// repaint that stops an idle deep view from idling — so off is the right first-run answer.
+///
+/// ⚠But off-by-default is only tolerable if turning it ON STICKS. eframe is built without
+/// `persistence`, so egui discards every collapsing section's state on exit; this field is the app's
+/// own storage, and without it the panel would switch itself back on at every launch — which is the
+/// complaint that started this, in reverse.
+#[test]
+fn the_performance_panel_is_off_by_default_and_its_answer_survives_a_restart() {
+    assert!(!SessionState::default().perf_panel, "a new user must not meet the diagnostics panel");
+
+    let on = SessionState { perf_panel: true, ..Default::default() };
+    assert!(roundtrip(&on).perf_panel, "turning it on must survive a restart");
+
+    let off = SessionState { perf_panel: false, ..Default::default() };
+    assert!(!roundtrip(&off).perf_panel, "turning it off must survive a restart too");
+}
+
+/// ⚠**A session written before this field existed must load, and load as OFF.** `#[serde(default)]`
+/// is what makes that true; without it every older session file becomes UNREADABLE and the user
+/// silently loses their view, their palette and their bookmarks' companion state at once.
+#[test]
+fn a_session_from_before_the_performance_field_still_loads() {
+    let text = toml::to_string_pretty(&SessionState::default()).expect("serialize");
+    let older: String = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("perf_panel"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!older.contains("perf_panel"), "the guard: the field must really be absent");
+    let back: SessionState = toml::from_str(&older).expect("an older session must still parse");
+    assert!(!back.perf_panel);
+}

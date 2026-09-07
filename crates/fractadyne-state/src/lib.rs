@@ -231,6 +231,20 @@ pub struct SessionState {
     /// Whether the right-hand control panel is shown.
     #[serde(default = "default_true")]
     pub right_panel_open: bool,
+    /// Whether the Performance section is shown at the bottom of the control panel.
+    ///
+    /// ⭐**Off by default, and persisted so turning it on is a decision you make once.** Its
+    /// readouts (`mode perturb df32`, `precision 84 bit`, `orbit len 12833`) are diagnostics: they
+    /// read as an error report to someone who has just opened a fractal viewer, and they were the
+    /// largest block on a first-run panel. ⚠It also gates a periodic repaint that refreshes them,
+    /// so leaving it off lets an idle deep view actually idle.
+    ///
+    /// ⚠**This is the only control-panel section whose state survives a restart.** eframe is built
+    /// without `persistence`, so egui throws away every `CollapsingHeader`'s open/closed state on
+    /// exit — the other sections reopen at their `default_open` every launch. This one is persisted
+    /// by the app because turning the panel off and having it come back is the specific complaint.
+    #[serde(default)]
+    pub perf_panel: bool,
     /// Active fractal family (name, e.g. "Mandelbrot", "Burning Ship") — so the view you
     /// left is fully restored (the center/zoom already are).
     #[serde(default = "default_fractal")]
@@ -487,6 +501,7 @@ impl Default for SessionState {
             duotone_lo: default_duotone_lo(),
             duotone_hi: default_duotone_hi(),
             right_panel_open: true,
+            perf_panel: false,
             fractal: default_fractal(),
             julia_mode: false,
             julia_c_re: default_julia_c_re(),

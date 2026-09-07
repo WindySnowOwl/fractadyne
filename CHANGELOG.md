@@ -12,6 +12,23 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The Performance panel is off until you ask for it** (beta.57). It was expanded at the bottom of
+  the control panel on every launch, and its readouts — `mode perturb df32`, `precision 84 bit`,
+  `orbit len 12833`, `SA skip 8` — are diagnostics. To someone who has just opened a fractal viewer
+  they don't read as "healthy", they read as an error report nobody explained. It was also the
+  largest open block on the panel, sitting where the eye lands last.
+
+  It now starts off, and **your answer is remembered**: turn it on from the toolbar button or
+  View ▸ Performance panel and it stays on. That matters more than it sounds — the toggle never used
+  to persist at all, so anyone who turned it off got it back at the next launch. `--perf` and
+  `--no-perf` still override for a single run without changing what you prefer.
+
+  A side benefit: the panel gated a repeating repaint to refresh those numbers, which is why an idle
+  deep view never quite idled. With it off, it does.
+
+  The other sections are unchanged — Navigate, Coloring and Quality stay open; Effects, Overlays,
+  Advanced and About stay collapsed.
+
 - **Closing the terminal window is no longer reported as a crash** (beta.56). Fractadyne arms a
   marker while the GUI runs and disarms it on a clean exit; anything that skips the disarm is
   reported on the next launch with *"Fractadyne didn't shut down cleanly"* and a saved report. That
