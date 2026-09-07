@@ -591,12 +591,17 @@ fn requested_texture_dim(adapter_max: u32) -> u32 {
 
 /// How long the scale factor must hold still before the size correction is applied.
 ///
-/// ⚠**Both bounds are measured.** It must exceed the *second, spurious* application of the scale,
-/// which landed **76–220 ms** after the change across seven observed transitions — correct sooner
-/// and there is nothing to correct yet. And it must ride out the boundary flip-flop, where Windows
-/// changed the scale every **40–110 ms** for seconds while the window straddled two monitors;
-/// anything shorter fires mid-bounce, which is what made the window feel stuck.
-const DPI_SETTLE_SECS: f64 = 0.35;
+/// ⚠**Every bound is measured, and the first two guesses were too short.** It must exceed the
+/// *second, spurious* application of the scale (**76–220 ms** after the change) or there is nothing
+/// to correct yet. And it must ride out the boundary flip-flop, where Windows re-assigns the monitor
+/// every **40–110 ms** while the window straddles the edge — but those bursts contain *gaps of up to
+/// ~500 ms*, so 0.35 s still fired mid-bounce. A full second clears the longest observed gap and
+/// lands the single correction after the window has been dropped.
+const DPI_SETTLE_SECS: f64 = 1.0;
+
+/// Give up on an anchor this old. A burst that never settles has outlived its usefulness, and
+/// restoring a size from a minute ago would be its own surprise.
+const DPI_ANCHOR_MAX_SECS: f64 = 20.0;
 
 /// How much growth counts as the doubled scale rather than a user drag.
 ///
@@ -4177,9 +4182,11 @@ struct FractadyneApp {
     /// Last logged `(width_pt, height_pt, pixels_per_point)`, so the size log records CHANGES
     /// rather than a line per frame.
     last_window_geom: Option<(f32, f32, f32)>,
-    /// After a scale-factor change: the logical size to hold, and the time the guard expires.
-    /// See the correction beside the geometry log.
-    dpi_hold: Option<(f32, f32, f64)>,
+    /// After a scale-factor change: the logical size to restore, when the scale LAST changed (the
+    /// settle clock, refreshed by every flip) and when the anchor was FIRST set (its expiry clock,
+    /// which is not — or a burst that never settles would hold an anchor for ever). See the
+    /// correction beside the geometry log.
+    dpi_hold: Option<(f32, f32, f64, f64)>,
     /// Window/panel open-flags + the right-panel & minimap toggles (see [`DialogState`]).
     dialogs: DialogState,
     /// "Report an issue" dialog state (Help → Report an issue…).
@@ -11244,8 +11251,10 @@ impl eframe::App for FractadyneApp {
                 // it left, not the already-inflated one from halfway through.
                 if let Some((pw, ph, pp)) = prev {
                     if (pp - ppp).abs() > 1.0e-3 {
-                        let anchor = self.dpi_hold.map_or((pw, ph), |(w, h, _)| (w, h));
-                        self.dpi_hold = Some((anchor.0, anchor.1, ctx.input(|i| i.time)));
+                        let t = ctx.input(|i| i.time);
+                        let (aw, ah, born) =
+                            self.dpi_hold.map_or((pw, ph, t), |(w, h, _, b)| (w, h, b));
+                        self.dpi_hold = Some((aw, ah, t, born));
                     }
                 }
             }
@@ -11263,16 +11272,27 @@ impl eframe::App for FractadyneApp {
             //
             // ⚠The anchor deliberately survives the whole burst, so a bounce that compounds ×1.2
             // several times is undone in one step rather than chased.
-            if let Some((hw, hh, since)) = self.dpi_hold {
+            if let Some((hw, hh, since, born)) = self.dpi_hold {
                 let now_t = ctx.input(|i| i.time);
-                if now_t - since > DPI_SETTLE_SECS {
+                if now_t - born > DPI_ANCHOR_MAX_SECS {
+                    // A burst that has flipped for this long is no longer one crossing; the size it
+                    // started at is not the size to put back.
+                    self.dpi_hold = None;
+                } else if now_t - since > DPI_SETTLE_SECS {
                     let (cw, ch) = (ctx.screen_rect().width(), ctx.screen_rect().height());
-                    // ⚠Growth only: a window the user has made SMALLER is theirs, not ours.
-                    if cw > hw * DPI_GROWTH_TRIP || ch > hh * DPI_GROWTH_TRIP {
+                    // ⚠⚠**Both directions.** The doubled application multiplies the logical size by
+                    // the scale RATIO whichever way the window travels, so crossing one way inflates
+                    // it and the other way deflates it by the same factor. Correcting only growth
+                    // (the first version) left the shrink uncorrected, and a real session walked a
+                    // window from 1280 down to **425 points** that way — the same bug, wearing the
+                    // opposite sign. A DPI change should preserve logical size in either direction.
+                    let grew = cw > hw * DPI_GROWTH_TRIP || ch > hh * DPI_GROWTH_TRIP;
+                    let shrank = cw * DPI_GROWTH_TRIP < hw || ch * DPI_GROWTH_TRIP < hh;
+                    if grew || shrank {
                         diag::log_line(
                             "dpi",
                             &format!(
-                                "settled {:.2}× larger after a scale change — restoring {hw:.0}x{hh:.0} pt",
+                                "settled {:.2}× after a scale change — restoring {hw:.0}x{hh:.0} pt",
                                 cw / hw.max(1.0)
                             ),
                         );

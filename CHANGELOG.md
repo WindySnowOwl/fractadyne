@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The window also shrank, and that is now corrected too** (beta.66). The size distortion works in
+  both directions — crossing to a lower-scale display shrinks the window by the same factor that
+  crossing back inflates it — and only growth was being undone. A real session walked a window from
+  1280 points down to 425 that way. Both directions are restored now.
+
+  The wait before correcting also went from a third of a second to a full second: the flip-flop at a
+  monitor boundary contains gaps of up to half a second, so the shorter wait was still landing
+  mid-crossing.
+
+  ⚠**The bouncing itself is Windows**, not Fractadyne — while a window straddles the boundary
+  Windows keeps re-deciding which screen owns it, changing the display scale every few tens of
+  milliseconds. Nothing here can stop that; what these releases fix is Fractadyne adding to it, and
+  the window's size drifting further with every crossing.
+
 - **The size correction waits for the window to settle** (beta.65). The correction added last
   release works — a real drag shows it undoing the growth every time — but it was firing *during* the
   drag, and that made the window harder to move. At a monitor boundary Windows flips the display
