@@ -407,6 +407,30 @@ impl crate::FractadyneApp {
         req.width = 144;
         req.height = 90;
         req.ss = 2;
+        // ⭐⭐**A thumbnail must not inherit the LIVE view's normalization.** The request builder
+        // fills `cycle`/`offset`/`norm_mode`/`norm_lo` from `live_norm_cycle_offset`, which maps the
+        // palette across the escape range measured *on the view the user is looking at*. Every
+        // thumbnail here is a different location at a different (shallow) depth, so that band is
+        // meaningless for it: the whole exterior falls into one end of it and the thumbnail comes
+        // out a single flat colour with only the boundary filaments lit.
+        //
+        // ⚠That is the failure `live_norm_cycle_offset` already documents for a shallow view under a
+        // deep view's mapping — reported here as "most thumbnails are now mostly red rectangles"
+        // (user, 2026-09-07) once their live view was deep enough to start normalizing. Reproduced
+        // by putting the live view into that state and rendering the gallery.
+        //
+        // ⚠**Normalization is per-view by construction**, so the honest thing for a foreign view is
+        // to use none: the user's own cycle and offset, unmapped. A gallery is a catalogue of
+        // places, and every tile must be readable on its own terms.
+        // ⚠**`color_cycle()`, NOT `coloring.cycle`** — these four lines must reproduce the builder's
+        // *un-normalized* branch exactly, and its cycle fallback is the depth-scaled
+        // `self.color_cycle()`. Substituting the raw slider value made every thumbnail a set of
+        // broad smooth bands instead of legible filigree; caught by diffing the gallery against the
+        // previous walk, which is the only reason it did not ship as a second bug.
+        req.cycle = self.color_cycle();
+        req.offset = self.coloring.offset;
+        req.norm_mode = 0;
+        req.norm_lo = 0.0;
         let progress = AtomicU32::new(0);
         let cancel = AtomicBool::new(false);
         let res = fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel).ok()?;

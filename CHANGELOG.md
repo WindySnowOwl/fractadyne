@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Misiurewicz explorer thumbnails no longer come out as flat rectangles** (beta.67). Once the
+  view you were looking at got deep enough for "Normalize deep colors" to engage, every thumbnail in
+  the gallery inherited *that* view's colour mapping — a range measured on a deep field, applied to
+  shallow previews of somewhere else entirely. The whole exterior of each thumbnail fell into one end
+  of the range, leaving a flat rectangle with only the boundary filaments lit.
+
+  Normalisation describes one view; a gallery is a catalogue of different places at different depths,
+  so the thumbnails now use the plain palette instead of borrowing it. Nothing else about them
+  changed — with the feature inactive the gallery renders pixel-for-pixel as before.
+
 - **The window also shrank, and that is now corrected too** (beta.66). The size distortion works in
   both directions — crossing to a lower-scale display shrinks the window by the same factor that
   crossing back inflates it — and only growth was being undone. A real session walked a window from
