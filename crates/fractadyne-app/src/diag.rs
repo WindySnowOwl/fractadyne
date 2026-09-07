@@ -212,6 +212,7 @@ pub(crate) fn init(args: &[String]) {
     );
 
     install_panic_hook();
+    install_console_ctrl_handler();
     // The watchdog is NOT started here: the pre-GUI CLI modes (--crosscheck-f3,
     // --validate-deep, …) do minutes of legitimate silent bignum work and would trip it.
     // `FractadyneApp::new` starts it for every update()-driven mode (GUI and CLI renders).
@@ -616,6 +617,67 @@ fn report_unclean_previous_session() {
     write_crash_report_at(&msg, "<previous session>");
     PREV_UNCLEAN.store(true, std::sync::atomic::Ordering::Relaxed);
 }
+
+/// Treat a console-initiated shutdown as a clean one.
+///
+/// ⭐⭐**Closing the terminal window is not a crash, and saying it was devalues the times it is.**
+/// The GUI arms a `session.running` marker that only [`end_session`] disarms, so any death that
+/// skips it is reported on the next launch — with a crash report file written for it. That backstop
+/// is right for the deaths nothing else can see (a `__fastfail`, an access violation, a device
+/// loss), but the console window hosting a console-subsystem GUI is something a user closes **on
+/// purpose**, and it was landing in the same bucket (user-reported, 2026-09-06). A user who is told
+/// "it crashed" every time they close a window stops reading the message that matters.
+///
+/// ⚠**Windows tells us first.** `CTRL_CLOSE_EVENT` arrives with a grace period (seconds) before the
+/// process is terminated, which is ample for one `remove_file` — so this is a real distinction we
+/// can draw, not a guess. ⚠**A hard kill still reports**, and must: `TerminateProcess` (Task
+/// Manager, `Stop-Process -Force`, a harness cleaning up) delivers no event, so the marker survives
+/// and the next launch says so. That is the honest split — *we were told* versus *we were shot*.
+///
+/// ⚠Returns FALSE from the handler on purpose: the cleanup is done, and the default handler should
+/// go on terminating the process exactly as it did before. This changes what is RECORDED, not what
+/// happens.
+#[cfg(windows)]
+fn install_console_ctrl_handler() {
+    const CTRL_C_EVENT: u32 = 0;
+    const CTRL_BREAK_EVENT: u32 = 1;
+    const CTRL_CLOSE_EVENT: u32 = 2;
+    const CTRL_LOGOFF_EVENT: u32 = 5;
+    const CTRL_SHUTDOWN_EVENT: u32 = 6;
+
+    unsafe extern "system" {
+        fn SetConsoleCtrlHandler(
+            handler: Option<unsafe extern "system" fn(u32) -> i32>,
+            add: i32,
+        ) -> i32;
+    }
+
+    unsafe extern "system" fn on_ctrl(event: u32) -> i32 {
+        let what = match event {
+            CTRL_C_EVENT => "Ctrl+C",
+            CTRL_BREAK_EVENT => "Ctrl+Break",
+            CTRL_CLOSE_EVENT => "console window closed",
+            CTRL_LOGOFF_EVENT => "session logoff",
+            CTRL_SHUTDOWN_EVENT => "system shutdown",
+            _ => return 0,
+        };
+        // The log still tells the whole story — this is not pretending nothing happened, it is
+        // recording what DID happen instead of guessing "crash".
+        log_line("exit", &format!("{what} — shutting down (not a crash)"));
+        end_session();
+        0
+    }
+
+    // SAFETY: a plain Win32 registration of a `extern "system"` fn with no arguments of ours; the
+    // handler runs on an OS-injected thread and only removes a file and appends a log line, both of
+    // which take their own locks.
+    unsafe {
+        SetConsoleCtrlHandler(Some(on_ctrl), 1);
+    }
+}
+
+#[cfg(not(windows))]
+fn install_console_ctrl_handler() {}
 
 fn install_panic_hook() {
     let default = std::panic::take_hook();

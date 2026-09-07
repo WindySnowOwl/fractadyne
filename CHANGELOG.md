@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Closing the terminal window is no longer reported as a crash** (beta.56). Fractadyne arms a
+  marker while the GUI runs and disarms it on a clean exit; anything that skips the disarm is
+  reported on the next launch with *"Fractadyne didn't shut down cleanly"* and a saved report. That
+  backstop is right for the deaths nothing else can see, but the console window hosting the app is
+  something you close **on purpose**, and it was landing in the same bucket. Being told it crashed
+  every time you close a window is how you learn to ignore the message that matters.
+
+  Windows announces a console close before terminating the process, so that announcement is now
+  handled: Ctrl+C, Ctrl+Break, closing the window, logoff and shutdown all disarm the marker and
+  record what actually happened instead. **A hard kill still reports** — Task Manager's End Task and
+  `Stop-Process -Force` deliver no announcement at all, so the marker survives and the next launch
+  says so, which is the honest answer in that case.
+
 - **The console output is opt-in** (beta.55). The `[fd-…]` diagnostic lines are useful, and they
   were printed at everyone whether they wanted them or not. They are now **on whenever Fractadyne is
   given any argument** — so every headless render, harness and validation script keeps exactly the
