@@ -176,6 +176,15 @@ pub(crate) struct RecomputeResult {
     orbit_tail: Option<fractadyne_core::OrbitTail>,
     /// The view's `orbit_id` when this build was spawned (see `RecomputeInputs::spawn_orbit_id`).
     spawn_orbit_id: u64,
+    /// True when this came from EXTENDING a cached reference ([`try_reuse_reference`]) rather than
+    /// picking and building a fresh one.
+    ///
+    /// ⚠**Exists so an A/B on reuse cannot pass vacuously.** Reuse declines silently — wrong
+    /// precision, drifted point, no prefix — and falls back to a fresh build, so "fresh and reused
+    /// render the same" is trivially true when the reused arm never reused anything. Every check
+    /// that compares the two must assert this first. (The same rule the chunking A/Bs learned:
+    /// assert the mechanism RAN before believing a null result.)
+    reused: bool,
 }
 
 /// A cached reference the worker may EXTEND instead of rebuilding from scratch: the prior orbit's
@@ -644,6 +653,9 @@ fn finish_reference(
         coarse_stage: false,
         orbit_tail,
         spawn_orbit_id: inp.spawn_orbit_id,
+        // The reuse path sets this on the way out; every other caller of `finish_reference` built
+        // the orbit from a fresh pick.
+        reused: false,
     }
 }
 
@@ -714,7 +726,7 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
         );
     }
     let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
-    Some(finish_reference(
+    let mut res = finish_reference(
         reuse.point.clone(),
         o,
         len,
@@ -724,7 +736,9 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
         inp.do_sa,
         inp,
         ref_ms,
-    ))
+    );
+    res.reused = true;
+    Some(res)
 }
 
 /// Off-thread cold-start build with a PROGRESSIVE fast path. Picks the reference once, then — when
@@ -1996,8 +2010,133 @@ impl FractadyneApp {
             bla_dc_max,
             stripe_freq: self.coloring.stripe_freq as f64,
             trap_type: self.coloring.trap_type as u32,
-            reuse: None, // one-shot export: always a fresh build
+            // ⭐⭐**MEASURED, and deliberately left OFF.** A GUI export could hand the worker the
+            // live view's resident reference and EXTEND it instead of picking and building a
+            // fresh one — `try_reuse_reference` does exactly that for the live path, and the
+            // saving looked large because `pick_reference` is documented as ~7 s of a ~15 s
+            // extreme-depth render.
+            //
+            // It is not, for an export. Measured by the `RefReuse` selftest case on a 200k-iter
+            // orbit: **175 ms fresh vs 159 ms extend at 1e30x, 218 vs 195 at 1e100x** — about a
+            // tenth of the REFERENCE build, which is itself a fraction of an export. The pick is
+            // the only part reuse skips, and next to iterating 180,000 bignum steps it is small;
+            // the 7-of-15-seconds case is one where the pick dominates, not a deep export.
+            //
+            // ⚠A fresh build is also the SIMPLER contract: an export then depends on nothing but
+            // its own request, so a GUI export and a headless `--render` of the same location
+            // cannot diverge. Buying ~10% of one phase is not worth giving that up.
+            //
+            // ⭐The plumbing and the gate both exist, so flipping this is a one-line experiment
+            // with a check standing under it — see `selfcheck_reference_reuse`.
+            reuse: None,
             spawn_orbit_id: 0, // export never installs into a live cache
+        }
+    }
+
+    /// ⭐⭐**Does a REUSED reference render the same image as a freshly picked one?**
+    ///
+    /// `try_reuse_reference`'s doc asserts it does — *"perturbation is invariant to which valid
+    /// in-view reference is used, so a reused reference renders the same image as a fresh one"* —
+    /// and, two sentences later, that *"the render isn't perfectly invariant there"* at extreme
+    /// depth. Both cannot be true, and nothing measured which. This does.
+    ///
+    /// ⚠⚠**Nothing else can.** The F3 corpus and the goldens run headless `--render`, where there
+    /// is no live view and `reuse` is always `None`, so they cannot see this path at all — 38/38
+    /// maxD 0 would stay green however wrong reuse got. A check that cannot go red is not a gate.
+    ///
+    /// Returns `(pass, human-readable result)`.
+    pub(crate) fn selfcheck_reference_reuse(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        vp: &Viewport,
+        size: u32,
+        short_iter: u32,
+    ) -> (bool, String) {
+        use std::sync::atomic::{AtomicBool, AtomicU32};
+        let Some(inp_a) = self.export_reference_inputs_for(vp, false, IterBudget::current(self)) else {
+            return (false, "no reference for this view (direct path) — nothing to compare".into());
+        };
+        let a = recompute_worker(inp_a);
+        // ⚠The control must be a genuine fresh pick, or "they match" says nothing.
+        if a.reused {
+            return (false, "the CONTROL arm reused a reference; it must be a fresh pick".into());
+        }
+        // ⚠⚠**The reuse arm must start SHORT, or the extension is never exercised.** Seeding it
+        // from the full-length reference made `extend_reference_orbit` a no-op (measured: orbit
+        // 813 → 813) and the check passed while proving nothing about extending. A live reference
+        // is deliberately shorter than an export's ask — that asymmetry IS the case under test.
+        let short = IterBudget { max_iter: short_iter, auto_iter: false };
+        let Some(inp_s) = self.export_reference_inputs_for(vp, false, short) else {
+            return (false, "could not build the short (live-like) reference inputs".into());
+        };
+        let sref = recompute_worker(inp_s);
+        let Some(tail) = sref.orbit_tail.clone() else {
+            return (false, "the short orbit ESCAPED, so there is no tail to extend from".into());
+        };
+        let short_len = sref.orbit_len;
+        let Some(mut inp_b) = self.export_reference_inputs_for(vp, false, IterBudget::current(self)) else {
+            return (false, "could not rebuild the inputs for the reuse arm".into());
+        };
+        inp_b.reuse = Some(ReuseRef {
+            point: sref.rp.clone(),
+            prefix: sref.orbit.clone(),
+            tail,
+            prec: sref.prec,
+        });
+        let b = recompute_worker(inp_b);
+        // ⚠⚠**THE NON-VACUITY GUARD.** Reuse declines silently — wrong precision, drifted point,
+        // no prefix — and falls back to a fresh build, in which case both arms are the same build
+        // and agreeing proves nothing. This is the chunking lesson in a new costume: assert the
+        // mechanism RAN before believing a null result.
+        if !b.reused {
+            return (false, "reuse DECLINED — the comparison would have been vacuous".into());
+        }
+        // ⚠And it must have GROWN: reuse that hands back the prefix untouched tests nothing.
+        if b.orbit_len <= short_len {
+            return (
+                false,
+                format!(
+                    "reuse did not EXTEND (orbit {short_len} to {}) - short(iter={} len={} partial={}) fresh(iter={} len={} partial={})",
+                    b.orbit_len, sref.iter, sref.orbit_len, sref.partial, a.iter, a.orbit_len, a.partial,
+                ),
+            );
+        }
+        // The measurement this whole exercise is for: what a GUI export would SAVE by extending
+        // the live reference instead of picking and building a fresh one.
+        let (fresh_ms, ext_ms) = (a.ref_ms, b.ref_ms);
+        let mut req_a = self.build_export_request(vp, false, RefSource::ProbeOnly(Box::new(a)));
+        let mut req_b = self.build_export_request(vp, false, RefSource::ProbeOnly(Box::new(b)));
+        // ⚠`ProbeOnly` is taken unconditionally and leaves `req_max_iter` at `eff_iter`, so the two
+        // requests differ in the REFERENCE and in nothing else — which is the whole point.
+        for r in [&mut req_a, &mut req_b] {
+            r.width = size;
+            r.height = size;
+            r.ss = 1;
+        }
+        let progress = AtomicU32::new(0);
+        let cancel = AtomicBool::new(false);
+        let ra = fractadyne_gpu::render_export(device, queue, &req_a, &progress, &cancel);
+        let rb = fractadyne_gpu::render_export(device, queue, &req_b, &progress, &cancel);
+        match (ra, rb) {
+            (Ok(x), Ok(y)) if x.pixels.len() == y.pixels.len() => {
+                let diffs = x
+                    .pixels
+                    .iter()
+                    .zip(y.pixels.iter())
+                    .filter(|(p, q)| p.to_bits() != q.to_bits())
+                    .count();
+                (
+                    diffs == 0,
+                    format!(
+                        "extended {short_len} to {} (fresh {}); {diffs} of {} texels differ; reference {fresh_ms:.0}ms fresh vs {ext_ms:.0}ms extend",
+                        req_b.orbit_len,
+                        req_a.orbit_len,
+                        x.pixels.len()
+                    ),
+                )
+            }
+            _ => (false, "render failed".into()),
         }
     }
 

@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A gate under reference reuse, and a measurement that settled a question** (beta.68). A deep
+  export rebuilds its reference orbit from scratch even though the view on screen already has one.
+  The machinery to extend the existing orbit instead has always been there — the live view uses it —
+  so the question was whether an export should.
+
+  Measured: **175 ms fresh against 159 ms extending** at 1e30×, and 218 against 195 at 1e100×. About
+  a tenth of the reference build, which is itself a fraction of an export. Reuse only skips choosing
+  the reference point, and next to iterating 180,000 arbitrary-precision steps that is small. So the
+  export still builds its own, which also keeps a simpler promise: an export depends on nothing but
+  itself, and cannot render differently depending on what you had been looking at.
+
+  The self-test gained the check that settled it (174 now): a reference extended from a short one
+  renders **bit-identically** to a freshly chosen one. That claim was written down in the code but
+  never verified, and nothing else could — headless renders have no live view to reuse from, so the
+  corpus and goldens cannot see that path at all.
+
 - **Misiurewicz explorer thumbnails no longer come out as flat rectangles** (beta.67). Once the
   view you were looking at got deep enough for "Normalize deep colors" to engage, every thumbnail in
   the gallery inherited *that* view's colour mapping — a range measured on a deep field, applied to

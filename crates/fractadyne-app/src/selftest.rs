@@ -719,6 +719,42 @@ impl FractadyneApp {
         // 1280x720 ss=2 corpus geometry, where tile 0 landed at 415 ms against the pricer's 400 ms
         // threshold — i.e. a TIMING-marginal reproduction, unfit for a gate. The corpus itself
         // covers that; this case covers the structural property on every run.
+        // (D5) ⭐⭐**Reference REUSE renders the same image as a fresh pick.** The GUI export
+        // could skip `pick_reference` — documented as ~7 s of a ~15 s extreme-depth render — by
+        // extending the reference the live view already holds, and `try_reuse_reference` exists to
+        // do exactly that. Its doc claims perturbation is invariant to which valid in-view
+        // reference is used, and then says the render "isn't perfectly invariant" at extreme
+        // depth. Both cannot be true; nothing measured which.
+        //
+        // ⚠⚠**No other gate can see this.** The F3 corpus and the goldens run headless `--render`,
+        // where there is no live view and `reuse` is always `None` — 38/38 maxD 0 stays green
+        // however wrong the reuse path gets. This is the only thing standing under it.
+        if want("ref-reuse") {
+            let mag = 1.0e30;
+            const RRX: &str = "-0.743643887037158704752191506114774";
+            const RRY: &str = "0.131825904205311970493132056385139";
+            let mut vp = Viewport::new(N as f64, N as f64);
+            vp.center_x = fractadyne_core::parse_bf(RRX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(RRY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+            vp.precision = fractadyne_core::precision_for_magnification(mag);
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            self.render_cfg.max_iter = 200_000;
+            self.render_cfg.auto_iter = false;
+            let (pass, result) = self.selfcheck_reference_reuse(device, queue, &vp, N as u32, 20_000);
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "RefReuse",
+                name: "a reused reference renders the same as a fresh pick".into(),
+                params: "corpus07 1e30x, 200k iter, extend vs fresh pick".into(),
+                result,
+                threshold: "reuse engaged AND 0 texels differ",
+                pass,
+            });
+        }
+
         if want("iter-chunk") {
             let mag = 1.0e24;
             const C6X: &str = "-0.7436438870371587047521915061147707";
