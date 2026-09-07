@@ -915,6 +915,13 @@ impl FractadyneApp {
                 // Home view (so the status bar shows a normal centre readout), then resize. winit
                 // applies the new inner size over the next frame or two — hence the longer settle.
                 self.uitest_open_screen(ctx, Screen::Home);
+                // ⭐**The minimap is ON for the resize steps, because the two faults meet there.**
+                // The status bar wraps to a second line only when the window is narrow, and the
+                // minimap is anchored above it — so a minimap sitting on top of the readouts is
+                // invisible at any width these steps used to run at, and invisible to the minimap
+                // step, which runs wide. Neither step could see it alone (user-reported,
+                // 2026-09-07).
+                self.dialogs.minimap = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(win.w, win.h)));
                 match win.action {
                     WindowAction::Resize => {}

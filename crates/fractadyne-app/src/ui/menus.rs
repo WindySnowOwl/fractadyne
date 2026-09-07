@@ -862,28 +862,36 @@ impl FractadyneApp {
                 // go through `set_show_mode`, so the three surfaces cannot disagree about what
                 // state a click lands in — clicking Julia while dual is on now leaves dual
                 // rather than being greyed out, which is what the button appears to promise.
-                ui.add_enabled_ui(self.fractal.supports_julia(), |ui| {
-                    if ui
-                        .selectable_label(self.julia_mode, "Julia")
-                        .on_hover_text("Show the Julia set of this formula, filling the window")
-                        .clicked()
-                    {
-                        let m = if self.julia_mode { crate::ShowMode::Set } else { crate::ShowMode::Julia };
-                        self.set_show_mode(m);
-                    }
-                });
+                // ⚠⚠**`add_enabled` on the widget, NOT `add_enabled_ui` around it.** The whole top
+                // bar is one `horizontal_wrapped`, but `add_enabled_ui` builds a nested `Ui` that
+                // the parent places as a single unit — so at a width where this button no longer
+                // fits, it is CLIPPED at the window edge instead of wrapping to the next line
+                // (user-reported, 2026-09-07). `add_enabled` adds one widget to the row that is
+                // doing the wrapping, so it wraps like everything beside it.
+                if ui
+                    .add_enabled(
+                        self.fractal.supports_julia(),
+                        egui::SelectableLabel::new(self.julia_mode, "Julia"),
+                    )
+                    .on_hover_text("Show the Julia set of this formula, filling the window")
+                    .clicked()
+                {
+                    let m = if self.julia_mode { crate::ShowMode::Set } else { crate::ShowMode::Julia };
+                    self.set_show_mode(m);
+                }
                 // Dual pairs a formula with its Julia set, so it's only meaningful where a Julia
                 // exists (Newton has no free parameter → no Julia → no dual).
-                ui.add_enabled_ui(self.fractal.supports_julia(), |ui| {
-                    if ui
-                        .selectable_label(self.dual, crate::icons::DUAL)
-                        .on_hover_text("Both, linked: the set on the left, the Julia of the cursor's point on the right")
-                        .clicked()
-                    {
-                        let m = if self.dual { crate::ShowMode::Set } else { crate::ShowMode::Both };
-                        self.set_show_mode(m);
-                    }
-                });
+                if ui
+                    .add_enabled(
+                        self.fractal.supports_julia(),
+                        egui::SelectableLabel::new(self.dual, crate::icons::DUAL),
+                    )
+                    .on_hover_text("Both, linked: the set on the left, the Julia of the cursor's point on the right")
+                    .clicked()
+                {
+                    let m = if self.dual { crate::ShowMode::Set } else { crate::ShowMode::Both };
+                    self.set_show_mode(m);
+                }
                 ui.separator();
                 // ── File / I-O: open & browse, then save ──────────────────────────────
                 if ui.button(crate::icons::OPEN).on_hover_text("Open a view or location (PNG / EXR, .fdn, .kfr)").clicked() {
@@ -915,34 +923,36 @@ impl FractadyneApp {
                 }
                 // Click-to-zoom tool (single view): arm left-click = dive into the point,
                 // right-click = back out; drag still pans. Factor set in Settings ▸ Navigation.
-                ui.add_enabled_ui(!self.dual, |ui| {
-                    if ui
-                        .selectable_label(self.click_zoom, crate::icons::CLICK_ZOOM)
-                        .on_hover_text(format!(
-                            "Click-to-zoom ({:.0}×): left-click dives into the point, \
-                             right-click backs out (drag still pans). Factor in Settings ▸ Navigation.",
-                            self.render_cfg.click_zoom_factor
-                        ))
-                        .clicked()
-                    {
-                        self.click_zoom = !self.click_zoom;
-                    }
-                });
+                if ui
+                    .add_enabled(
+                        !self.dual,
+                        egui::SelectableLabel::new(self.click_zoom, crate::icons::CLICK_ZOOM),
+                    )
+                    .on_hover_text(format!(
+                        "Click-to-zoom ({:.0}×): left-click dives into the point, \
+                         right-click backs out (drag still pans). Factor in Settings ▸ Navigation.",
+                        self.render_cfg.click_zoom_factor
+                    ))
+                    .clicked()
+                {
+                    self.click_zoom = !self.click_zoom;
+                }
                 // Auto-zoom (autopilot): highlighted while running; click to start/stop. Single view only.
-                ui.add_enabled_ui(!self.dual, |ui| {
-                    let running = self.autopilot.active;
-                    if ui
-                        .selectable_label(running, crate::icons::AUTOPILOT)
-                        .on_hover_text(if running {
-                            "Auto-zoom is running — click to stop"
-                        } else {
-                            "Auto-zoom: dive toward detail (A)"
-                        })
-                        .clicked()
-                    {
-                        self.toggle_autopilot(ctx);
-                    }
-                });
+                let running = self.autopilot.active;
+                if ui
+                    .add_enabled(
+                        !self.dual,
+                        egui::SelectableLabel::new(running, crate::icons::AUTOPILOT),
+                    )
+                    .on_hover_text(if running {
+                        "Auto-zoom is running — click to stop"
+                    } else {
+                        "Auto-zoom: dive toward detail (A)"
+                    })
+                    .clicked()
+                {
+                    self.toggle_autopilot(ctx);
+                }
                 if ui.button(crate::icons::RESET_VIEW).on_hover_text("Reset view (instant)").clicked() {
                     self.reset_view();
                 }

@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Two narrow-window layout faults** (beta.60). At some widths a toolbar button was **clipped at
+  the window edge instead of wrapping** to the second row — the Julia, dual-view, click-to-zoom and
+  auto-zoom buttons, which are the four that grey themselves out. Each was wrapped in a nested
+  layout that the row placed as a single unit, so it could not participate in the wrapping going on
+  around it. They are plain widgets in that row now and wrap with everything else.
+
+  And **the minimap could cover the status bar**. It was pinned a fixed distance above the bottom of
+  the window, but the status bar wraps to two lines when the window is narrow and is then taller
+  than that distance. It now clears whatever the bottom of the window actually holds, so it cannot
+  drift out of step again.
+
+  The two only meet when the window is narrow *and* the minimap is on, which no test did — the
+  resize steps ran with it off and the minimap step runs wide. The resize steps turn it on now.
+
 - **Every dialog now has a named way out, and its buttons are where you expect** (beta.59). A sweep
   of all 21 windows. Action rows are right-aligned at the bottom, through one shared helper rather
   than by hand, so **Running benchmark…** puts its Cancel where every other dialog puts its actions,

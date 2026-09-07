@@ -629,8 +629,17 @@ impl FractadyneApp {
         let mut pan: Option<(f64, f64)> = None;
         let mut zoom: Option<f64> = None;
         let mut grabbed = false;
+        // ⚠**Clear whatever the bottom panels actually occupy this frame, not a fixed 34 px.**
+        // The status bar is a `horizontal_wrapped`, so at a narrow window it wraps to two lines and
+        // grows past the constant this used to assume — and the minimap then sat on top of the
+        // readouts (user-reported, 2026-09-07). `screen_rect` minus `available_rect` IS the height
+        // of the panels already added, whatever they are, so this cannot drift as the bar changes.
+        // ⚠Depends on the status bar being added BEFORE the central panel draws this, which is the
+        // order `update()` uses; were that ever reversed the gap would read 0 and the overlap would
+        // come back.
+        let bottom_gap = (ctx.screen_rect().bottom() - ctx.available_rect().bottom()).max(0.0) + 8.0;
         egui::Area::new(egui::Id::new("fractadyne.minimap"))
-            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(10.0, -34.0))
+            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(10.0, -bottom_gap))
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .stroke(egui::Stroke::new(1.0_f32, BRAND_ACCENT))
