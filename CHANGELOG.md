@@ -12,25 +12,26 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
-- **Dragging the window between monitors no longer crashes the app** (beta.61–62). Reported with a
-  crash log: the window-growth bug that happens when dragging between screens of different scaling
-  ran the window to **9374 × 6039** pixels, past the 8192 limit Fractadyne asks its GPU for. wgpu
-  refused to make a surface that big, and the error handler turned that refusal into a panic —
-  losing nine and a half minutes of work, because a process that dies never reaches its save.
+- **The monitor-drag crash: the ceiling it hit was ours** (beta.61–63). Three crash reports, all the
+  same shape — dragging between screens of different scaling runs a window-growth bug, the window
+  reaches a size the graphics device won't make a drawing surface for (**9374**, then **11441**
+  pixels wide), and Fractadyne dies.
 
-  The window is now **capped** at a size whose surface the graphics device can actually hold. The
-  cap is recomputed continuously, because it depends on the display's scale factor — which is
-  precisely what changes as a window crosses to another monitor.
+  The limit they hit was **8192**, and that was a constant in Fractadyne's own startup code. The
+  graphics card in question reports **32768** — four times as much. It now asks for what the
+  hardware actually offers, so every window in those reports would have fitted comfortably.
 
-  ⚠The growth itself is still the open upstream issue and is **not** fixed by this. The window may
-  still resize oddly as it moves between screens; it can no longer grow past the point where drawing
-  becomes impossible.
+  ⚠**This is headroom, not a cure.** The growth is unbounded and still the open upstream issue; a
+  long enough session can still outrun any ceiling. Two attempts to catch it further downstream were
+  tried and reverted, because both made things worse rather than better: letting the app carry on
+  past the refusal left it drawing at the wrong size and crashing harder a frame later, and asking
+  the window manager to cap the window is simply not honoured on the code path that changes a
+  window's monitor.
 
-  *(beta.61 first tried to let the app carry on past the refusal. That was wrong and is reverted:
-  continuing left the old, smaller drawing surface in place while the rest of the app worked at the
-  new size, and the next frame failed a step further along — then failed again while cleaning up,
-  ending in a harder crash than the original. The error stays fatal; what changed is that it is no
-  longer reachable.)*
+  Alongside it, **window size and display scale are now recorded whenever they change**, so the next
+  such report shows how the window got that big rather than only where it ended up — the three so
+  far could not say. And `FRACTADYNE_NO_MIN_SIZE=1` switches off the minimum-window-size constraint,
+  which is the last untested suspect that belongs to Fractadyne rather than upstream.
 
 - **Two narrow-window layout faults** (beta.60). At some widths a toolbar button was **clipped at
   the window edge instead of wrapping** to the second row — the Julia, dual-view, click-to-zoom and

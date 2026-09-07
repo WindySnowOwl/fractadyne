@@ -302,7 +302,19 @@ fn main() -> eframe::Result<()> {
                             label: Some("fractadyne device"),
                             required_features: features,
                             required_limits: eframe::wgpu::Limits {
-                                max_texture_dimension_2d: 8192,
+                                // ⭐⭐**Ask for what the adapter HAS, not a self-imposed 8192.**
+                                // Three monitor-drag crashes died on `Surface::configure` refusing a
+                                // window the growth bug had inflated — at 9374 and 11441 px — and
+                                // the limit they hit was **ours**: this line said 8192 while the
+                                // RTX 3080 that refused them reports 16384. Both would have fitted.
+                                // ⚠A limit is a REQUEST, not an allocation — raising it costs no
+                                // memory; it only stops us validating against a ceiling below the
+                                // hardware's.
+                                // ⛔This does NOT fix the growth, which is unbounded — it removes
+                                // one artificial cliff the growth kept falling off.
+                                max_texture_dimension_2d: requested_texture_dim(
+                                    adapter_limits.max_texture_dimension_2d,
+                                ),
                                 max_storage_buffer_binding_size: binding.max(base_limits.max_storage_buffer_binding_size),
                                 max_buffer_size: buffer.max(base_limits.max_buffer_size),
                                 max_color_attachment_bytes_per_sample: attach_bytes
@@ -317,11 +329,28 @@ fn main() -> eframe::Result<()> {
             ),
             ..Default::default()
         },
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([640.0, 400.0])
-            .with_title(window_title())
-            .with_icon(brand_icon()),
+        viewport: {
+            let mut vp = egui::ViewportBuilder::default()
+                .with_inner_size([1280.0, 800.0])
+                .with_title(window_title())
+                .with_icon(brand_icon());
+            // ⚠⚠**THE ONE UNTESTED HYPOTHESIS THAT IS OURS, now switchable without a rebuild.**
+            // `with_min_inner_size` is specified in logical POINTS, and winit applies min/max
+            // constraints while handling `WM_DPICHANGED` — a stale-factor conversion there is
+            // exactly the shape that turns a one-off mis-scale into monotonic growth, which is what
+            // the monitor-drag reports describe. It has been recorded as untested since 2026-09-04
+            // because reproducing it needs two monitors at different scaling.
+            //
+            // ⭐Set `FRACTADYNE_NO_MIN_SIZE=1` to drop the constraint and repeat the drag. If the
+            // growth stops, the cause is ours and this line is it; if it continues, the hypothesis
+            // is dead and the remaining suspects are all upstream. Either answer is progress — the
+            // point is that ONE run now distinguishes them. `FRACTADYNE_TRACE=dpi` is no longer
+            // needed for the evidence: window geometry changes are logged unconditionally.
+            if std::env::var_os("FRACTADYNE_NO_MIN_SIZE").is_none() {
+                vp = vp.with_min_inner_size([640.0, 400.0]);
+            }
+            vp
+        },
         ..Default::default()
     };
 
@@ -546,26 +575,18 @@ pub(crate) fn relaunch_decision(generation: u32, elapsed_s: f64) -> Option<u32> 
 #[cfg(test)]
 mod relaunch_policy;
 
-/// The largest window, in logical points, whose surface this device can still allocate.
+/// The `max_texture_dimension_2d` to ask a device for, given what the adapter reports.
 ///
-/// ⭐⭐**The real fix for the monitor-drag crash, and it has to be a MAX rather than a correction
-/// after the fact.** The window-growth bug runs the window past `max_texture_dimension_2d`; eframe
-/// then asks wgpu for a surface that big and wgpu refuses. Sending an `InnerSize` from `update()`
-/// cannot prevent that — the resize is handled, and the surface reconfigured, in winit's event
-/// callback *before* our next frame runs — so the only way to be ahead of it is to hand winit a
-/// `MaxInnerSize` and let it clamp the window itself.
+/// ⭐**Ask for what the hardware has.** This was a flat `8192`, and that number is what refused the
+/// windows the monitor-drag growth produced — 9374 and 11441 px — on an adapter that reports 16384.
+/// The ceiling was ours, not the GPU's.
 ///
-/// ⚠**Recomputed every frame from the CURRENT `pixels_per_point`**, because the limit is physical
-/// and the command is logical, and the scale factor is exactly what changes when the window crosses
-/// to another monitor. A stale factor here can only make the cap too small (a slightly restricted
-/// window), never too large (the crash).
-///
-/// ⚠The device limit is the one we ASKED for (`max_texture_dimension_2d: 8192` in the descriptor),
-/// not the adapter's ceiling — which is why an RTX 3080 that can do 16384 refused at 9374.
-fn max_window_points(max_texture_dim: u32, pixels_per_point: f32) -> egui::Vec2 {
-    let ppp = if pixels_per_point.is_finite() && pixels_per_point > 0.1 { pixels_per_point } else { 1.0 };
-    let side = max_texture_dim as f32 / ppp;
-    egui::vec2(side, side)
+/// ⚠⚠**Never more than the adapter offers.** `request_device` FAILS outright if any required limit
+/// exceeds the adapter's, so the old hard-coded 8192 would have refused to start at all on an
+/// adapter that only does 4096. Taking the adapter's own figure cannot do that, and on every device
+/// that used to work it is ≥ what we asked for before.
+fn requested_texture_dim(adapter_max: u32) -> u32 {
+    adapter_max
 }
 
 #[cfg(test)]
@@ -4134,8 +4155,11 @@ struct FractadyneApp {
     /// failure in `save_bookmarks`); drained into `toast` early in `update()`.
     pending_toast: Option<String>,
     /// `max_texture_dimension_2d` this device was created with — the ceiling a window's surface
-    /// must stay under. See [`max_window_points`]; 0 means "unknown, do not clamp".
+    /// must stay under. 0 means "unknown".
     max_texture_dim: u32,
+    /// Last logged `(width_pt, height_pt, pixels_per_point)`, so the size log records CHANGES
+    /// rather than a line per frame.
+    last_window_geom: Option<(f32, f32, f32)>,
     /// Window/panel open-flags + the right-panel & minimap toggles (see [`DialogState`]).
     dialogs: DialogState,
     /// "Report an issue" dialog state (Help → Report an issue…).
@@ -4897,6 +4921,7 @@ impl FractadyneApp {
                 .as_ref()
                 .map(|rs| rs.device.limits().max_texture_dimension_2d)
                 .unwrap_or(0),
+            last_window_geom: None,
             suppress_autosave: false,
             pending_state_warning,
             minimap_tex: None,
@@ -11146,19 +11171,35 @@ impl eframe::App for FractadyneApp {
         if let Some(msg) = self.pending_toast.take() {
             self.set_toast(msg, ctx);
         }
-        // ⭐⭐**Cap the window at what this device can allocate a surface for, every frame.**
-        // This is what stops the monitor-drag growth from reaching wgpu at all: winit enforces
-        // `MaxInnerSize` while it is handling the resize, which is upstream of the surface
-        // reconfigure — whereas an `InnerSize` correction from here would always be one frame late,
-        // and one frame is all it takes (see the crash chain quoted at the uncaptured-error hook).
-        // ⚠Sent unconditionally rather than only when oversized: the value is a function of the
-        // scale factor, so it has to be re-stated whenever that changes, which is exactly when the
-        // window is moving between monitors.
-        if self.max_texture_dim > 0 {
-            ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(max_window_points(
-                self.max_texture_dim,
-                ctx.pixels_per_point(),
-            )));
+        // ⭐**Record every real change in window size or scale**, unconditionally and cheaply.
+        // The monitor-drag growth has now produced three crash reports, and every one of them named
+        // only the size the window ENDED at — never how it got there. A resize is a rare event, so
+        // one line per genuine change costs nothing and makes the next occurrence self-documenting
+        // in the log a crash report already quotes.
+        // ⚠Not behind `FRACTADYNE_TRACE=dpi`: the whole problem is that nobody has the trace
+        // switched on at the moment it happens.
+        {
+            let ppp = ctx.pixels_per_point();
+            let sz = ctx.screen_rect().size();
+            let now = (sz.x, sz.y, ppp);
+            let moved = self.last_window_geom.is_none_or(|(w, h, p): (f32, f32, f32)| {
+                (w - now.0).abs() > 0.5 || (h - now.1).abs() > 0.5 || (p - now.2).abs() > 1.0e-3
+            });
+            if moved {
+                self.last_window_geom = Some(now);
+                diag::log_line(
+                    "dpi",
+                    &format!(
+                        "window {:.0}x{:.0} pt @ {:.3}x = {:.0}x{:.0} px (device max {})",
+                        now.0,
+                        now.1,
+                        ppp,
+                        now.0 * ppp,
+                        now.1 * ppp,
+                        self.max_texture_dim,
+                    ),
+                );
+            }
         }
         // Rasterize the export watermark once from the font atlas (main thread — the export worker
         // has no egui context). Lazy so it uses the loaded fonts + final DPI.

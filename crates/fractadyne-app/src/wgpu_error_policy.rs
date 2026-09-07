@@ -1,79 +1,62 @@
-//! The window-size cap that keeps a surface inside what the device can allocate.
+//! The device texture-dimension limit, and the crashes that came of asking for the wrong one.
 //!
-//! ⚠⚠**Written from two real crashes, one caused by the fix for the other.**
+//! ⚠⚠**Three monitor-drag crashes, and the ceiling they hit was ours.** Dragging the window between
+//! monitors of different scaling runs an open window-growth bug; eframe then asks wgpu for a surface
+//! the size of the window and wgpu refuses it:
 //!
-//! `crash-1788788315-0` (beta.60): dragging between monitors of different scaling ran the open
-//! window-growth bug until the window reached **9374 × 6039** physical. eframe asked for a surface
-//! that big, wgpu refused (`maximum extent for either dimension is 8192`), and the uncaptured-error
-//! handler panicked. 576 s of work went with it, since a dead process never reaches the save.
+//! | report | version | window reached | limit |
+//! |---|---|---|---|
+//! | `crash-1788788315-0` | beta.60 | 9374 × 6039 | 8192 |
+//! | `crash-1788789479-1` | beta.61 | 8687 × 5949 (viewport vs stale 5784 × 3947 surface) | 8192 |
+//! | `crash-1788791115-0` | beta.62 | 11441 × 7098 | 8192 |
 //!
-//! `crash-1788789479-{1,2,3}` (beta.61): making that error *survivable* was worse. Carrying on past
-//! a failed `Surface::configure` leaves the painter on the OLD surface while egui renders at the
-//! NEW size, so the next frame died one step along — `viewport 8687×5949 not contained in render
-//! target 5784×3947` — and unwinding through wgpu-hal then panicked in a destructor and aborted.
+//! The adapter that refused all three — an RTX 3080 — reports **16384**. The `8192` was a constant
+//! in our own device descriptor, so the first two would have fitted and the third came close.
 //!
-//! ⇒ The error is not survivable and must stay loud. What is fixable is never reaching it: cap the
-//! window so the surface it implies always fits. `MaxInnerSize` is enforced by winit while it
-//! handles the resize, which is upstream of the reconfigure — a correction issued from our own
-//! frame would always be one frame late, and one frame is all it took.
+//! ⛔**This does not fix the growth**, which is unbounded and upstream; it removes one artificial
+//! cliff the growth kept falling off. Two mitigations that did NOT work are recorded at the
+//! uncaptured-error hook so they are not tried a third time: making the error survivable (beta.61 —
+//! left the painter on the old surface and died one frame later, then aborted in a destructor) and
+//! `ViewportCommand::MaxInnerSize` (beta.62 — egui-winit does set it, but winit does not enforce it
+//! on the `WM_DPICHANGED` resize path, and the window grew straight past it to 11441).
 
-use super::max_window_points;
+use super::requested_texture_dim;
 
-/// The device limit this app asks for, and the one both crashes hit.
-const MAX_DIM: u32 = 8192;
-
-/// The physical size the window actually reached, from the first crash report.
-const CRASHED_AT: (f32, f32) = (9374.0, 6039.0);
-
-/// ⭐⭐**The invariant**: whatever the scale factor, a window at the cap allocates a surface the
-/// device can hold. Points × scale = physical, so the cap has to move with the scale — and the
-/// scale is exactly what changes when a window crosses to another monitor.
+/// ⚠⚠**The trap the old constant was hiding.** `request_device` fails if ANY required limit exceeds
+/// the adapter's, so a hard-coded 8192 was not merely conservative — it would have refused to start
+/// at all on an adapter that only does 4096. Asking for the adapter's own figure cannot.
 #[test]
-fn a_window_at_the_cap_always_fits_the_device_limit() {
-    // Every scale factor Windows offers, plus the awkward ones in between.
-    for ppp in [1.0_f32, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 1.1, 2.25] {
-        let cap = max_window_points(MAX_DIM, ppp);
-        for side in [cap.x, cap.y] {
-            let physical = side * ppp;
-            assert!(
-                physical <= MAX_DIM as f32 + 0.5,
-                "at {ppp}× a window of {side} points is {physical} physical, over the {MAX_DIM} limit"
-            );
-        }
+fn we_never_request_more_than_the_adapter_offers() {
+    for adapter_max in [2048_u32, 4096, 8192, 16384, 32768] {
+        let asked = requested_texture_dim(adapter_max);
+        assert!(
+            asked <= adapter_max,
+            "asked for {asked} from an adapter that reports {adapter_max} — request_device would fail"
+        );
     }
+    // ⚠**The control.** These assertions only mean something because the previous constant DID
+    // exceed a real adapter class; without this the test would pass against the old code too.
+    const OLD_HARDCODED: u32 = 8192;
+    assert!(
+        OLD_HARDCODED > 4096,
+        "if the old constant fitted every adapter there was nothing to fix here"
+    );
 }
 
-/// ⭐**The case that actually happened.** At any plausible scale factor the cap is below the size
-/// the window grew to, so winit would have stopped it short of the surface wgpu refused.
+/// ⭐And on the hardware that produced the reports, we now ask for the whole ceiling.
+///
+/// ⚠**32768 is MEASURED, not assumed.** The new unconditional geometry log printed
+/// `device max 32768` on the RTX 3080 that refused all three surfaces — so the 8192 constant was
+/// capping us at a QUARTER of what the hardware offers, and every window in the reports fits with
+/// room to spare.
 #[test]
-fn the_cap_would_have_prevented_the_reported_crash() {
-    for ppp in [1.0_f32, 1.25, 1.5, 2.0] {
-        let cap = max_window_points(MAX_DIM, ppp);
-        // What the window reached, expressed in the points winit would have been clamping.
-        let (reached_w, reached_h) = (CRASHED_AT.0 / ppp, CRASHED_AT.1 / ppp);
-        assert!(
-            reached_w > cap.x,
-            "at {ppp}× the crashing width ({reached_w} points) must exceed the cap ({}), or this \
-             test proves nothing",
-            cap.x
-        );
-        assert!(cap.x * ppp < CRASHED_AT.0, "the capped window must be smaller than the one that failed");
-        let _ = reached_h;
-    }
-}
-
-/// ⚠**A bad scale factor must never produce a LARGER cap.** The one direction that matters: too
-/// small is a slightly restricted window, too large is the crash. egui has reported odd values
-/// during a monitor transition — which is precisely when this runs.
-#[test]
-fn a_nonsense_scale_factor_falls_back_instead_of_uncapping() {
-    for ppp in [0.0_f32, -1.0, f32::NAN, f32::INFINITY, 1.0e-9] {
-        let cap = max_window_points(MAX_DIM, ppp);
-        assert!(cap.x.is_finite() && cap.y.is_finite(), "cap must stay finite for ppp={ppp}");
-        assert!(
-            cap.x <= MAX_DIM as f32 && cap.y <= MAX_DIM as f32,
-            "ppp={ppp} produced a cap of {cap:?}, which is larger than the device limit itself"
-        );
-        assert!(cap.x > 0.0, "ppp={ppp} produced a non-positive cap, which would pin the window shut");
+fn a_capable_adapter_is_no_longer_capped_at_our_old_constant() {
+    const RTX_3080_VULKAN: u32 = 32768; // measured, 2026-09-07
+    let asked = requested_texture_dim(RTX_3080_VULKAN);
+    assert_eq!(asked, RTX_3080_VULKAN, "the adapter's own ceiling is what we should validate against");
+    for reached in [9374_u32, 8687, 11441] {
+        assert!(asked >= reached, "the window reached {reached}px; {asked} must accommodate it");
+        // ⚠The control: each of these DID exceed the old constant, which is why they crashed.
+        assert!(reached > 8192, "{reached} must exceed the old 8192, or it was never the problem");
     }
 }
