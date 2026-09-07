@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Every dialog now has a named way out, and its buttons are where you expect** (beta.59). A sweep
+  of all 21 windows. Action rows are right-aligned at the bottom, through one shared helper rather
+  than by hand, so **Running benchmark…** puts its Cancel where every other dialog puts its actions,
+  and **Benchmark results** lines up Copy · Save… · Run again… · Close — with Save… carrying an icon
+  like every other save in the app.
+
+  **Help, Gallery, Diagnostics, Report an issue, Bookmarks, Benchmark results, Share location and
+  Faster deep zoom had no way to close them but the title-bar ✕.** They all have a Close now. The ✕
+  is a window-manager affordance, not a statement of intent — the word is what tells you whether
+  closing abandons anything. **Export image**'s row was left-aligned and is now right-aligned like
+  the rest.
+
 - **The Benchmark window stops stretching to fill the app** (beta.58). It opened at its natural size
   and then grew until it spanned the whole window, leaving Run and Cancel stranded in the middle of
   a field of empty space. The bottom action row was claiming all the height left in the window and

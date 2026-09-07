@@ -336,6 +336,7 @@ impl FractadyneApp {
             return;
         }
         let mut open = self.diagnostics.open;
+        let mut close = false;
         let running = self.diagnostics.running;
         let mut start: Option<DiagTest> = None;
         let mut open_artifact: Option<PathBuf> = None;
@@ -469,9 +470,16 @@ impl FractadyneApp {
                         if console { "console output ON (from Diagnostics)" } else { "console output OFF (from Diagnostics)" },
                     );
                 }
+
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                        close = true;
+                    }
+                });
             });
 
-        self.diagnostics.open = open;
+        self.diagnostics.open = open && !close;
         if let Some(t) = start {
             self.start_diagnostic(t);
         }

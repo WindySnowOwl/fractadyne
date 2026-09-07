@@ -336,6 +336,15 @@ to both halves.
 
 ---
 
+**⭐⭐EVERY dialog gets a named way out, not just the title-bar ✕ (0.2.41-beta.59, author's call).**
+This **replaces** the earlier rule that information-only windows should keep the ✕ alone as "a second
+control doing exactly what ✕ does is noise". The ✕ is a window-manager affordance, not a statement
+of intent, and it is small, cornered and identical whether the window would change something or not.
+The word is what tells the reader what closing means: **Close** when nothing is pending (Help,
+Gallery, Diagnostics, Report an issue, Bookmarks, Benchmark results, Share location, Faster deep
+zoom, the notice dialog), **Cancel** when something would be abandoned. A window with no ✕ at all —
+`Running benchmark…` — needs its Cancel more than any of them, since it is the only exit.
+
 **⚠⚠Use `theme::action_row`, never a bare `with_layout` (0.2.41-beta.58).** A right-aligned row
 written as `ui.with_layout(Layout::right_to_left(Align::Center), …)` hands its child the whole
 `available_rect_before_wrap()`, centres the buttons inside *that*, and then allocates the child's

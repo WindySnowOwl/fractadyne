@@ -10070,6 +10070,7 @@ impl FractadyneApp {
         let releases = "https://github.com/WindySnowOwl/fractadyne/releases";
 
         let mut open = self.dialogs.accelerated_open;
+        let mut close = false;
         egui::Window::new("Faster deep zoom")
             .open(&mut open)
             .collapsible(false)
@@ -10164,8 +10165,15 @@ impl FractadyneApp {
                         .small(),
                     );
                 }
+                ui.add_space(6.0);
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                        close = true;
+                    }
+                });
             });
-        self.dialogs.accelerated_open = open;
+        self.dialogs.accelerated_open = open && !close;
     }
 
     fn help_window(&mut self, ctx: &egui::Context) {
@@ -10179,6 +10187,7 @@ impl FractadyneApp {
         // the title-bar close button off-screen).
         let max_h = (ctx.screen_rect().height() - 80.0).max(360.0);
         let max_w = (ctx.screen_rect().width() - 40.0).max(480.0);
+        let mut close = false;
         egui::Window::new("Fractadyne Help")
             .open(&mut open)
             .default_size([800.0, 560.0])
@@ -10238,8 +10247,16 @@ impl FractadyneApp {
                         },
                     );
                 });
+                // ⚠OUTSIDE the two-column split, so it stays put while the content pane scrolls —
+                // the same reason the gradient editor's OK/Cancel sit outside its ScrollArea.
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                        close = true;
+                    }
+                });
             });
-        self.dialogs.help_open = open;
+        self.dialogs.help_open = open && !close;
     }
 
     /// Set a transient status toast (auto-fades after a few seconds).
@@ -10354,15 +10371,21 @@ impl FractadyneApp {
                     {
                         download = true;
                     }
-                    if ui.button("Remind me later").clicked() {
-                        later = true;
-                    }
                 });
                 ui.add_space(6.0);
                 ui.hyperlink_to(
                     egui::RichText::new(format!("{url} \u{2197}")).small(),
                     &url,
                 );
+                // ⚠The link belongs with the description it elaborates; the window's own actions
+                // are the row below, where every other dialog puts them.
+                ui.add_space(6.0);
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    if ui.button("Remind me later").clicked() {
+                        later = true;
+                    }
+                });
             });
         if download {
             ctx.open_url(egui::OpenUrl::new_tab(url));

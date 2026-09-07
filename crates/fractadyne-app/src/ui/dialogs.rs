@@ -539,6 +539,7 @@ impl FractadyneApp {
         }
         let mut open = self.share.open;
         let (mut copy, mut apply, mut save, mut load) = (false, false, false, false);
+        let mut close = false;
         egui::Window::new("Share location")
             .open(&mut open)
             .resizable(true)
@@ -565,15 +566,24 @@ impl FractadyneApp {
                     ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA0, 0x30), m);
                 }
                 ui.add_space(4.0);
+                // The tools that act ON the text box stay with it; the window's own actions are
+                // the row below.
                 ui.horizontal(|ui| {
-                    apply = crate::theme::confirm_button(ui, "Apply").on_hover_text("Jump to the location in the box").clicked();
                     copy = ui.button(format!("{} Copy", crate::icons::COPY)).on_hover_text("Copy the text to the clipboard").clicked();
                     if ui.button("Use current").clicked() {
                         self.share.text = self.view_metadata();
                         self.share.msg = None;
                     }
-                    save = ui.button("Save .fdn…").clicked();
+                    save = ui.button(format!("{} Save .fdn…", crate::icons::SAVE)).clicked();
                     load = ui.button("Load .fdn…").clicked();
+                });
+                ui.add_space(6.0);
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                        close = true;
+                    }
+                    apply = crate::theme::confirm_button(ui, "Apply").on_hover_text("Jump to the location in the box").clicked();
                 });
             });
         if copy {
@@ -589,7 +599,7 @@ impl FractadyneApp {
         if apply {
             self.apply_share_text(ctx); // clears share_open on success
         }
-        self.share.open = open && self.share.open;
+        self.share.open = open && self.share.open && !close;
     }
 
     /// "Report an issue" dialog (Help → Report an issue…): a description + selectable artifacts
@@ -753,6 +763,16 @@ impl FractadyneApp {
                     .weak()
                     .small(),
                 );
+                ui.add_space(6.0);
+                ui.separator();
+                // ⚠**Close, not Cancel.** Nothing here is pending — every button above acts
+                // immediately (opens a browser, writes a file, fills the clipboard) — so there is
+                // nothing to abandon; this only dismisses the window.
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                        self.report.open = false;
+                    }
+                });
             });
         if github {
             ctx.copy_text(self.build_report());
@@ -840,8 +860,12 @@ impl FractadyneApp {
                     .small(),
                 );
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    cancel = crate::theme::cancel_button(ui, "Cancel").clicked();
+                ui.separator();
+                // ⚠**Cancel stays LEFT of the destructive button, which is the reverse of every
+                // other dialog and is deliberate** (`UI-DESIGN.md` §8.2): matching the usual order
+                // would put "Reset everything" where the eye and the cursor arrive first. Added
+                // right-to-left, so Reset is added first to land rightmost.
+                crate::theme::action_row(ui, |ui| {
                     if ui
                         .add(egui::Button::new(
                             egui::RichText::new("Reset everything").color(egui::Color32::WHITE),
@@ -850,6 +874,7 @@ impl FractadyneApp {
                     {
                         confirm = true;
                     }
+                    cancel = crate::theme::cancel_button(ui, "Cancel").clicked();
                 });
             });
         if confirm {
@@ -964,12 +989,13 @@ impl FractadyneApp {
                     .small(),
                 );
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button(format!("{} Save tour…", crate::icons::SAVE)).clicked() {
-                        save = true;
-                    }
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
                     if crate::theme::cancel_button(ui, "Cancel").clicked() {
                         self.dialogs.script_export_open = false;
+                    }
+                    if ui.button(format!("{} Save tour…", crate::icons::SAVE)).clicked() {
+                        save = true;
                     }
                 });
             });
@@ -1149,6 +1175,7 @@ impl FractadyneApp {
         let mut jump: Option<usize> = None;
         let mut delete: Option<usize> = None;
         let mut changed = false;
+        let mut close = false;
         // Pre-load thumbnail textures (mutable) before the immutable draw loop below.
         let thumb_ids: Vec<String> = self.bookmarks.iter().map(|b| b.thumb.clone()).collect();
         for id in &thumb_ids {
@@ -1215,6 +1242,12 @@ impl FractadyneApp {
                         ui.separator();
                     }
                 });
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                        close = true;
+                    }
+                });
             });
         if let Some(i) = jump {
             self.bookmark_jump(i); // restores the view + arms heal-on-jump for a missing thumb
@@ -1232,7 +1265,7 @@ impl FractadyneApp {
         if changed {
             self.save_bookmarks();
         }
-        self.dialogs.bookmarks_open = open;
+        self.dialogs.bookmarks_open = open && !close;
     }
 
     /// Benchmark configuration dialog — pick current-settings vs standardized (resolution/depth/
@@ -1356,9 +1389,15 @@ impl FractadyneApp {
                     ui.label(format!("last pass: {f:.1} fps"));
                 }
                 ui.add_space(4.0);
-                if crate::theme::cancel_button(ui, "Cancel").clicked() {
-                    cancel = true;
-                }
+                // ⚠**This window has no title-bar ✕** (no `.open()`), by design: dismissing a run
+                // is cancelling it, and a ✕ that silently abandoned a benchmark mid-dive would be a
+                // second, quieter way to do something that deserves saying. Cancel is the only exit,
+                // which is exactly why it belongs where every other dialog's actions are.
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
             });
         if cancel {
             if let Some(run) = self.bench.std.take() {
@@ -1389,14 +1428,16 @@ impl FractadyneApp {
             .show(ctx, |ui| {
                 ui.monospace(&body);
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button(format!("{} Copy", crate::icons::COPY)).clicked() {
-                        ui.ctx().copy_text(body.clone());
-                    }
+                ui.separator();
+                // ⚠Added right-to-left: Close first so it lands rightmost, reading "Copy · Close".
+                crate::theme::action_row(ui, |ui| {
                     // The notice's only way out, so it carries the same X as every Cancel — it is
                     // the dismiss gesture whatever the word on it says.
                     if crate::theme::cancel_button(ui, "Close").clicked() {
                         close_clicked = true;
+                    }
+                    if ui.button(format!("{} Copy", crate::icons::COPY)).clicked() {
+                        ui.ctx().copy_text(body.clone());
                     }
                 });
             });
@@ -1412,6 +1453,7 @@ impl FractadyneApp {
         }
         let mut open = self.dialogs.bench_open;
         let mut run_again = false;
+        let mut close = false;
         // Captured inside the egui closure (which borrows `self`), surfaced as a toast after it.
         // The saved directory is likewise captured out and folded into the shared dialog memory
         // once the closure's borrow of `self` ends.
@@ -1425,11 +1467,19 @@ impl FractadyneApp {
                 if let Some(r) = self.bench.report.clone() {
                     ui.monospace(&r);
                     ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.button(format!("{} Copy", crate::icons::COPY)).clicked() {
-                            ui.ctx().copy_text(r.clone());
+                    ui.separator();
+                    // ⚠**Added right-to-left, so this reads BACKWARDS**: the first widget lands
+                    // rightmost. Visually it comes out Copy · Save… · Run again… · Close — the
+                    // dismiss last, the way every other dialog ends (`UI-DESIGN.md` §8.2).
+                    crate::theme::action_row(ui, |ui| {
+                        if ui.button(format!("{} Close", crate::icons::CLOSE)).clicked() {
+                            close = true;
                         }
-                        if ui.button("Save…").clicked() {
+                        if ui.button(format!("{} Run again…", crate::icons::REFRESH)).clicked() {
+                            run_again = true;
+                        }
+                        // ⭐SAVE, not CONFIRM: §8.1 gives an established task verb its own glyph.
+                        if ui.button(format!("{} Save…", crate::icons::SAVE)).clicked() {
                             if let Some(path) = rfd::FileDialog::new()
                                 .add_filter("Text", &["txt"])
                                 .set_directory(&start_dir)
@@ -1440,15 +1490,21 @@ impl FractadyneApp {
                                 bench_save = Some(std::fs::write(path, &r));
                             }
                         }
-                        if ui.button(format!("{} Run again…", crate::icons::REFRESH)).clicked() {
-                            run_again = true;
+                        if ui.button(format!("{} Copy", crate::icons::COPY)).clicked() {
+                            ui.ctx().copy_text(r.clone());
                         }
                     });
                 } else {
                     ui.label("No benchmark has been run yet.");
+                    ui.separator();
+                    crate::theme::action_row(ui, |ui| {
+                        if ui.button(format!("{} Close", crate::icons::CLOSE)).clicked() {
+                            close = true;
+                        }
+                    });
                 }
             });
-        self.dialogs.bench_open = open;
+        self.dialogs.bench_open = open && !close;
         if let Some(d) = bench_save_dir {
             self.remember_dir(&d);
         }
@@ -1476,6 +1532,7 @@ impl FractadyneApp {
         let mut open = self.gallery.open;
         let mut to_open: Option<String> = None;
         let mut do_rescan = false;
+        let mut close = false;
         egui::Window::new("Gallery")
             .open(&mut open)
             .default_size([540.0, 620.0])
@@ -1542,8 +1599,14 @@ impl FractadyneApp {
                         ui.separator();
                     }
                 });
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                        close = true;
+                    }
+                });
             });
-        self.gallery.open = open;
+        self.gallery.open = open && !close;
         if do_rescan {
             self.scan_gallery();
         }
@@ -1796,12 +1859,15 @@ impl FractadyneApp {
                         ui.label(egui::RichText::new(format!("Elapsed: {t}")).weak().small());
                     }
                 } else {
-                    ui.horizontal(|ui| {
-                        if crate::theme::confirm_button(ui, "Export")
-                            .on_hover_text("Render and save into the folder above (auto-named)")
+                    ui.separator();
+                    // ⚠Added right-to-left, so this reads BACKWARDS: Cancel first to
+                    // land rightmost, giving "Export · Save as… · Cancel".
+                    crate::theme::action_row(ui, |ui| {
+                        if crate::theme::cancel_button(ui, "Cancel")
+                            .on_hover_text("Close without exporting")
                             .clicked()
                         {
-                            do_export = true;
+                            close_export = true;
                         }
                         if ui
                             .button(format!("{} Save as…", crate::icons::SAVE))
@@ -1810,16 +1876,11 @@ impl FractadyneApp {
                         {
                             do_export_as = true;
                         }
-                        // ⚠**A dialog that will CHANGE something needs a named way not to.** The
-                        // idle row offered only the two commits; backing out meant the title-bar
-                        // ✕, which is the same gesture as "I am done" and says nothing about
-                        // intent. (The `Cancel` above is a different button — it aborts a render
-                        // in flight, and the two are mutually exclusive branches.)
-                        if crate::theme::cancel_button(ui, "Cancel")
-                            .on_hover_text("Close without exporting")
+                        if crate::theme::confirm_button(ui, "Export")
+                            .on_hover_text("Render and save into the folder above (auto-named)")
                             .clicked()
                         {
-                            close_export = true;
+                            do_export = true;
                         }
                     });
                 }
