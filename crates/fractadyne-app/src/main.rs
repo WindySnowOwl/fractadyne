@@ -9893,7 +9893,7 @@ impl FractadyneApp {
                 // ⭐**Right-aligned**, and the order is written BACKWARDS on purpose: a
                 // right-to-left layout places the first widget rightmost, so Cancel is added
                 // first to end up on the right and OK reads first. `UI-DESIGN.md` §8.2.
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                crate::theme::action_row(ui, |ui| {
                     // ⚠**Cancel reverts, the window's ✕ does not.** Closing a window is
                     // not a statement about the work in it, and every edit here is
                     // already live in the view — so silently undoing on ✕ would throw

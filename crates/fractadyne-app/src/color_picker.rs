@@ -286,7 +286,7 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
     ui.add_space(2.0);
     ui.separator();
     let mut out = PickerOutcome::Open;
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    crate::theme::action_row(ui, |ui| {
         if crate::theme::cancel_button(ui, "Cancel")
             .on_hover_text("Put back the colour this picker opened with")
             .clicked()

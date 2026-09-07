@@ -336,6 +336,18 @@ to both halves.
 
 ---
 
+**⚠⚠Use `theme::action_row`, never a bare `with_layout` (0.2.41-beta.58).** A right-aligned row
+written as `ui.with_layout(Layout::right_to_left(Align::Center), …)` hands its child the whole
+`available_rect_before_wrap()`, centres the buttons inside *that*, and then allocates the child's
+`min_rect` — which now stretches from the top of the remaining space down past the buttons. In an
+auto-sizing `Window` the parent grows to contain it, which enlarges the available rect, which
+enlarges the claim. **The Benchmark window opened at its natural size and then stretched to the full
+height of the app, with Run/Cancel stranded in the middle of the empty space.** All four action rows
+were written that way; only Benchmark had little enough content for the feedback to run away, so the
+other three were latent. `action_row` pins the height to one row. Width still comes from
+`available_width`, which is stable — a window settles at its widest content and the row matches it;
+only the height feeds back.
+
 ### 8.3 Sections inside a menu (standard, 0.2.41-beta.54)
 
 **A heading set in the same font, weight and colour as the rows below it is not a heading — it is

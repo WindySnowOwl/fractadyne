@@ -247,7 +247,7 @@ impl FractadyneApp {
                             .weak()
                             .small(),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::theme::action_row(ui, |ui| {
                         if ui
                             .add(egui::Button::new(
                                 egui::RichText::new("Get started").color(egui::Color32::WHITE),
@@ -1285,15 +1285,12 @@ impl FractadyneApp {
                         ui.add(egui::Slider::new(&mut self.bench.cfg.passes, 2..=200).text("passes"));
                     });
                 });
-                ui.separator();
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::theme::cancel_button(ui, "Cancel").clicked() {
-                        self.dialogs.bench_dialog_open = false;
-                    }
-                    if crate::theme::confirm_button(ui, "Run").clicked() {
-                        run_now = true;
-                    }
-                });
+                // ⚠**Above the action row, not below it.** This sentence describes what Run is
+                // about to do, so it belongs with the settings it summarises — and `UI-DESIGN.md`
+                // §8.2 puts the actions LAST. It was underneath, which nobody could see while the
+                // window was stretching itself to the full height of the app: the buttons floated
+                // in the middle and this line sat somewhere below them. Fixing the growth is what
+                // made the ordering visible.
                 if self.bench.cfg.standard {
                     let (w, h) = self.bench.cfg.res.dims();
                     ui.add_space(2.0);
@@ -1303,6 +1300,15 @@ impl FractadyneApp {
                         self.bench.cfg.depth.zoom_log10(),
                     ));
                 }
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Cancel").clicked() {
+                        self.dialogs.bench_dialog_open = false;
+                    }
+                    if crate::theme::confirm_button(ui, "Run").clicked() {
+                        run_now = true;
+                    }
+                });
             });
         self.dialogs.bench_dialog_open = open;
         if run_now {

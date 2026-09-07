@@ -225,6 +225,33 @@ pub(crate) fn cancel_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     tinted_icon_button(ui, crate::icons::CLOSE, c, label)
 }
 
+/// A dialog's bottom action row: right-aligned, one row tall. Add the affirmative LAST — the layout
+/// runs right to left, so the first widget added ends up rightmost (`UI-DESIGN.md` §8.2).
+///
+/// ⚠⚠**The height must be pinned, and this exists because it wasn't.** A bare
+/// `ui.with_layout(Layout::right_to_left(Align::Center), …)` gives its child the whole
+/// `available_rect_before_wrap()`, centres the buttons in *that*, and then allocates the child's
+/// `min_rect` — which now reaches from the top of the remaining space down past the buttons. In an
+/// auto-sizing `Window` the parent grows to contain that, which enlarges the available rect, which
+/// enlarges the claim: **the Benchmark window opened small and then stretched to the full height of
+/// the app, with Run/Cancel stranded in the middle of the empty space** (user-reported,
+/// 2026-09-07). All four action rows in the app were written that way; only this one had little
+/// enough content for the feedback to run away.
+///
+/// ⚠Width still comes from `available_width` — that direction is stable, because a window's width
+/// settles at its widest content and the row simply matches it. Only the height feeds back.
+pub(crate) fn action_row<R>(
+    ui: &mut egui::Ui,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let h = ui.spacing().interact_size.y.max(ui.spacing().button_padding.y * 2.0 + 14.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), h),
+        egui::Layout::right_to_left(egui::Align::Center),
+        add,
+    )
+}
+
 /// Register the Spline Sans (UI) + Spline Sans Mono (numeric / data) brand typefaces, keeping
 /// egui's defaults as fallbacks for glyphs they lack (math arrows like →, emoji). Call once at
 /// startup, before [`apply_theme`].

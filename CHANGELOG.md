@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The Benchmark window stops stretching to fill the app** (beta.58). It opened at its natural size
+  and then grew until it spanned the whole window, leaving Run and Cancel stranded in the middle of
+  a field of empty space. The bottom action row was claiming all the height left in the window and
+  centring the buttons inside it; the window then grew to contain the claim, which made the next
+  frame's claim larger still.
+
+  All four of the app's action rows were written that way — Benchmark was simply the one with little
+  enough content for the feedback to run away, so the other three were latent. They now share one
+  helper that pins the row to a single row's height.
+
+  Fixing it exposed a second fault the growth had been hiding: the sentence describing what Run will
+  do sat *below* the buttons. It now sits with the settings it summarises, and the actions are last,
+  as every other dialog has them.
+
 - **The Performance panel is off until you ask for it** (beta.57). It was expanded at the bottom of
   the control panel on every launch, and its readouts — `mode perturb df32`, `precision 84 bit`,
   `orbit len 12833`, `SA skip 8` — are diagnostics. To someone who has just opened a fractal viewer
