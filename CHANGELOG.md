@@ -12,20 +12,25 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
-- **Dragging the window between monitors no longer crashes the app** (beta.61). Reported with a
+- **Dragging the window between monitors no longer crashes the app** (beta.61–62). Reported with a
   crash log: the window-growth bug that happens when dragging between screens of different scaling
-  ran the window to **9374 × 6039** pixels, past the 8192 limit this GPU can allocate a surface for.
-  wgpu refused, and Fractadyne's error handler turned that refusal into a panic — losing nine and a
-  half minutes of work, because a process that dies never reaches its save.
+  ran the window to **9374 × 6039** pixels, past the 8192 limit Fractadyne asks its GPU for. wgpu
+  refused to make a surface that big, and the error handler turned that refusal into a panic —
+  losing nine and a half minutes of work, because a process that dies never reaches its save.
 
-  Nothing was actually broken: the *window geometry* caused it from outside the program, and making
-  the window smaller fixes it. That one class of error is now survivable — the app keeps running,
-  autosaving as usual, and says what happened instead of vanishing. Every other rendering error
-  still fails loudly, which is deliberate: those are bugs in our own drawing and must not be
-  swallowed.
+  The window is now **capped** at a size whose surface the graphics device can actually hold. The
+  cap is recomputed continuously, because it depends on the display's scale factor — which is
+  precisely what changes as a window crosses to another monitor.
 
-  ⚠The growth itself is still the open upstream issue and is **not** fixed by this — but it now
-  costs you a resize instead of your session.
+  ⚠The growth itself is still the open upstream issue and is **not** fixed by this. The window may
+  still resize oddly as it moves between screens; it can no longer grow past the point where drawing
+  becomes impossible.
+
+  *(beta.61 first tried to let the app carry on past the refusal. That was wrong and is reverted:
+  continuing left the old, smaller drawing surface in place while the rest of the app worked at the
+  new size, and the next frame failed a step further along — then failed again while cleaning up,
+  ending in a harder crash than the original. The error stays fatal; what changed is that it is no
+  longer reachable.)*
 
 - **Two narrow-window layout faults** (beta.60). At some widths a toolbar button was **clipped at
   the window edge instead of wrapping** to the second row — the Julia, dual-view, click-to-zoom and

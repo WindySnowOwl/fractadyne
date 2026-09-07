@@ -254,19 +254,6 @@ pub(crate) fn log_line(cat: &str, msg: &str) {
 /// while the app runs — the third of the three ways the user asked for.
 static CONSOLE: AtomicBool = AtomicBool::new(true);
 
-/// Raised when the window grew past what the GPU can allocate a surface for. Polled by the app so
-/// it can say so, since the symptom on its own — a window that stops painting — explains nothing.
-static OVERSIZED_SURFACE: AtomicBool = AtomicBool::new(false);
-
-pub(crate) fn note_oversized_surface() {
-    OVERSIZED_SURFACE.store(true, Ordering::Relaxed);
-}
-
-/// Take the flag, if it is set. Consuming, so one episode produces one message.
-pub(crate) fn take_oversized_surface() -> bool {
-    OVERSIZED_SURFACE.swap(false, Ordering::Relaxed)
-}
-
 pub(crate) fn console_on() -> bool {
     CONSOLE.load(Ordering::Relaxed)
 }

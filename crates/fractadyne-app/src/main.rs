@@ -546,21 +546,26 @@ pub(crate) fn relaunch_decision(generation: u32, elapsed_s: f64) -> Option<u32> 
 #[cfg(test)]
 mod relaunch_policy;
 
-/// Can the app survive this wgpu uncaptured error, or is it a broken invariant that must be loud?
+/// The largest window, in logical points, whose surface this device can still allocate.
 ///
-/// ⭐⭐**Exactly one class is survivable: a surface larger than the GPU can allocate.** The window
-/// geometry causes it from outside the program, nothing is corrupt, and shrinking the window fixes
-/// it — so killing the process (which loses the session, since a kill skips the save) is far worse
-/// than the blank window the user would otherwise get for a moment. Every other validation error is
-/// a bug in our own rendering — a bad bind group, a mismatched layout — and the gates depend on
-/// those still panicking.
+/// ⭐⭐**The real fix for the monitor-drag crash, and it has to be a MAX rather than a correction
+/// after the fact.** The window-growth bug runs the window past `max_texture_dimension_2d`; eframe
+/// then asks wgpu for a surface that big and wgpu refuses. Sending an `InnerSize` from `update()`
+/// cannot prevent that — the resize is handled, and the surface reconfigured, in winit's event
+/// callback *before* our next frame runs — so the only way to be ahead of it is to hand winit a
+/// `MaxInnerSize` and let it clamp the window itself.
 ///
-/// ⚠Matched on the message because that is all wgpu gives an uncaptured-error handler; the two
-/// alternatives are OR-ed because wgpu has worded this differently across versions and the cost of
-/// a miss is a crash.
-fn is_survivable_wgpu_error(msg: &str) -> bool {
-    msg.contains("maximum supported texture size")
-        || (msg.contains("Surface") && msg.contains("width and height"))
+/// ⚠**Recomputed every frame from the CURRENT `pixels_per_point`**, because the limit is physical
+/// and the command is logical, and the scale factor is exactly what changes when the window crosses
+/// to another monitor. A stale factor here can only make the cap too small (a slightly restricted
+/// window), never too large (the crash).
+///
+/// ⚠The device limit is the one we ASKED for (`max_texture_dimension_2d: 8192` in the descriptor),
+/// not the adapter's ceiling — which is why an RTX 3080 that can do 16384 refused at 9374.
+fn max_window_points(max_texture_dim: u32, pixels_per_point: f32) -> egui::Vec2 {
+    let ppp = if pixels_per_point.is_finite() && pixels_per_point > 0.1 { pixels_per_point } else { 1.0 };
+    let side = max_texture_dim as f32 / ppp;
+    egui::vec2(side, side)
 }
 
 #[cfg(test)]
@@ -4128,6 +4133,9 @@ struct FractadyneApp {
     /// A toast queued from a context without an `egui::Context` (e.g. a bookmark auto-save
     /// failure in `save_bookmarks`); drained into `toast` early in `update()`.
     pending_toast: Option<String>,
+    /// `max_texture_dimension_2d` this device was created with — the ceiling a window's surface
+    /// must stay under. See [`max_window_points`]; 0 means "unknown, do not clamp".
+    max_texture_dim: u32,
     /// Window/panel open-flags + the right-panel & minimap toggles (see [`DialogState`]).
     dialogs: DialogState,
     /// "Report an issue" dialog state (Help → Report an issue…).
@@ -4315,25 +4323,20 @@ impl FractadyneApp {
                 relaunch_after_device_loss();
                 crate::exit(2);
             }
-            // ⭐⭐**A surface bigger than the GPU can allocate is an EXTERNAL condition, not a
-            // broken invariant — so it must not kill the process.** Reported 2026-09-07: dragging
-            // the window between monitors of different scaling ran the open window-growth bug
-            // (see the monitor-drag notes) until the window reached 9374×6039 physical, past this
-            // adapter's 8192 limit; eframe called `Surface::configure`, wgpu rejected it, and this
-            // handler turned that into a panic. Nine and a half minutes of work went with it —
-            // and the session is not saved on a kill, so it went for real.
+            // ⛔⭐⭐**DO NOT make the oversized-surface error survivable here. It was tried in
+            // beta.61 and it is WORSE.** Letting `Surface::configure` fail and carrying on leaves
+            // the painter with the OLD surface while egui renders at the NEW window size, so the
+            // very next frame dies one step further along — measured, beta.61,
+            // `crash-1788789479-*`:
             //
-            // Nothing here is corrupt: the window geometry did it, and making the window smaller
-            // fixes it. The app keeps running (egui simply cannot paint at that size) and the
-            // 1-second autosave keeps working, so the view survives to the next launch.
+            //   -1  RenderPass::end / set_viewport: viewport 8687×5949 not contained in
+            //       render target 5784×3947          ← the stale surface, exactly
+            //   -2  wgpu-hal: SurfaceSemaphores still in use by a SurfaceTexture (unwinding)
+            //   -3  panic in a destructor during cleanup → ABORT
             //
-            // ⚠**Deliberately NOT a blanket "don't panic".** Every other validation error is a
-            // program bug — a bad bind group, a mismatched layout — and the gates depend on those
-            // being loud. This is the one class caused from outside the program.
-            if is_survivable_wgpu_error(&msg) {
-                diag::note_oversized_surface();
-                return;
-            }
+            // A clean panic with a crash report is better than an abort during unwinding, so this
+            // stays loud. The fix is not to survive the failure but to never reach it — see
+            // `max_window_points`, which caps the window before winit ever asks for the surface.
             panic!("wgpu uncaptured error: {e}");
         }));
         // The device-lost CALLBACK must also restart — not just the uncaptured-error path above.
@@ -4889,6 +4892,11 @@ impl FractadyneApp {
                 .then(|| {
                     "Recovered from a graphics device reset — your view was restored.".to_string()
                 }),
+            max_texture_dim: cc
+                .wgpu_render_state
+                .as_ref()
+                .map(|rs| rs.device.limits().max_texture_dimension_2d)
+                .unwrap_or(0),
             suppress_autosave: false,
             pending_state_warning,
             minimap_tex: None,
@@ -11138,15 +11146,19 @@ impl eframe::App for FractadyneApp {
         if let Some(msg) = self.pending_toast.take() {
             self.set_toast(msg, ctx);
         }
-        // ⭐**Say why the window stopped painting.** Raised from the wgpu uncaptured-error callback,
-        // which has no `egui::Context`. Without this the symptom is a window that has simply gone
-        // blank, which explains nothing and looks far worse than what it is.
-        if diag::take_oversized_surface() {
-            self.set_toast(
-                "The window is larger than this GPU can draw — make it smaller, or move it back \
-                 to one screen. Nothing was lost.",
-                ctx,
-            );
+        // ⭐⭐**Cap the window at what this device can allocate a surface for, every frame.**
+        // This is what stops the monitor-drag growth from reaching wgpu at all: winit enforces
+        // `MaxInnerSize` while it is handling the resize, which is upstream of the surface
+        // reconfigure — whereas an `InnerSize` correction from here would always be one frame late,
+        // and one frame is all it takes (see the crash chain quoted at the uncaptured-error hook).
+        // ⚠Sent unconditionally rather than only when oversized: the value is a function of the
+        // scale factor, so it has to be re-stated whenever that changes, which is exactly when the
+        // window is moving between monitors.
+        if self.max_texture_dim > 0 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(max_window_points(
+                self.max_texture_dim,
+                ctx.pixels_per_point(),
+            )));
         }
         // Rasterize the export watermark once from the font atlas (main thread — the export worker
         // has no egui context). Lazy so it uses the loaded fonts + final DPI.
