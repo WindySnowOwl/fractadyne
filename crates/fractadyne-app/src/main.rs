@@ -589,12 +589,14 @@ fn requested_texture_dim(adapter_max: u32) -> u32 {
     adapter_max
 }
 
-/// How long after a scale-factor change the window's logical size is held.
+/// How long the scale factor must hold still before the size correction is applied.
 ///
-/// ⚠**Measured**: the second, spurious application of the scale landed 76–220 ms after the change
-/// across seven observed transitions. A second is comfortably past that and short enough that a
-/// deliberate resize a moment later is never fought.
-const DPI_HOLD_SECS: f64 = 1.0;
+/// ⚠**Both bounds are measured.** It must exceed the *second, spurious* application of the scale,
+/// which landed **76–220 ms** after the change across seven observed transitions — correct sooner
+/// and there is nothing to correct yet. And it must ride out the boundary flip-flop, where Windows
+/// changed the scale every **40–110 ms** for seconds while the window straddled two monitors;
+/// anything shorter fires mid-bounce, which is what made the window feel stuck.
+const DPI_SETTLE_SECS: f64 = 0.35;
 
 /// How much growth counts as the doubled scale rather than a user drag.
 ///
@@ -11237,31 +11239,46 @@ impl eframe::App for FractadyneApp {
                 // a hack around it. ⚠**Growth only, and only briefly**: it never shrinks a window
                 // the user is enlarging, and the guard expires, so a deliberate resize a moment
                 // later is untouched.
-                match prev {
-                    // The scale itself changed: remember the size to hold, and when to stop caring.
-                    Some((pw, ph, pp)) if (pp - ppp).abs() > 1.0e-3 => {
-                        self.dpi_hold = Some((pw, ph, ctx.input(|i| i.time) + DPI_HOLD_SECS));
+                // On a scale change, ANCHOR the size from before it — but only the first time in a
+                // burst, so a window flip-flopping at a monitor boundary keeps the size it had when
+                // it left, not the already-inflated one from halfway through.
+                if let Some((pw, ph, pp)) = prev {
+                    if (pp - ppp).abs() > 1.0e-3 {
+                        let anchor = self.dpi_hold.map_or((pw, ph), |(w, h, _)| (w, h));
+                        self.dpi_hold = Some((anchor.0, anchor.1, ctx.input(|i| i.time)));
                     }
-                    // Same scale, but the size moved — the late second application, if it grew.
-                    _ => {
-                        if let Some((hw, hh, until)) = self.dpi_hold {
-                            if ctx.input(|i| i.time) <= until
-                                && (now.0 > hw * DPI_GROWTH_TRIP || now.1 > hh * DPI_GROWTH_TRIP)
-                            {
-                                diag::log_line(
-                                    "dpi",
-                                    &format!(
-                                        "window grew {:.2}× at constant scale — restoring {hw:.0}x{hh:.0} pt",
-                                        now.0 / hw.max(1.0)
-                                    ),
-                                );
-                                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
-                                    egui::vec2(hw, hh),
-                                ));
-                                self.dpi_hold = None;
-                            }
-                        }
+                }
+            }
+
+            // ⭐⭐**Correct only once the scale has SETTLED — never mid-drag.**
+            //
+            // The first version restored the size the instant it saw growth, and the log of a real
+            // drag (2026-09-07) showed why that is wrong: at a monitor boundary Windows flip-flops
+            // the DPI every 40–110 ms for seconds at a time, and a size change while the window
+            // straddles the edge can shift which monitor owns most of it — so correcting there feeds
+            // the very oscillation the user feels as the window "sticking in the middle and bouncing"
+            // (their report, and it fired **42 times** in one drag). Waiting for the scale to hold
+            // still keeps us out of that loop entirely: during the bounce we touch nothing, and the
+            // one correction lands after the window has come to rest on a monitor.
+            //
+            // ⚠The anchor deliberately survives the whole burst, so a bounce that compounds ×1.2
+            // several times is undone in one step rather than chased.
+            if let Some((hw, hh, since)) = self.dpi_hold {
+                let now_t = ctx.input(|i| i.time);
+                if now_t - since > DPI_SETTLE_SECS {
+                    let (cw, ch) = (ctx.screen_rect().width(), ctx.screen_rect().height());
+                    // ⚠Growth only: a window the user has made SMALLER is theirs, not ours.
+                    if cw > hw * DPI_GROWTH_TRIP || ch > hh * DPI_GROWTH_TRIP {
+                        diag::log_line(
+                            "dpi",
+                            &format!(
+                                "settled {:.2}× larger after a scale change — restoring {hw:.0}x{hh:.0} pt",
+                                cw / hw.max(1.0)
+                            ),
+                        );
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(hw, hh)));
                     }
+                    self.dpi_hold = None;
                 }
             }
         }

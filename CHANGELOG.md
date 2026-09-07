@@ -12,6 +12,17 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The size correction waits for the window to settle** (beta.65). The correction added last
+  release works — a real drag shows it undoing the growth every time — but it was firing *during* the
+  drag, and that made the window harder to move. At a monitor boundary Windows flips the display
+  scale back and forth every 40–110 ms for seconds at a time, and resizing a window that straddles
+  the edge can change which screen owns it, feeding the very oscillation that makes it feel stuck.
+  It fired 42 times in one crossing.
+
+  It now waits for the scale to hold still before correcting, so nothing touches the window while it
+  is between screens; the single correction lands once it has come to rest. A crossing that bounced
+  several times is undone in one step rather than chased.
+
 - **The window-growth bug, measured — and corrected** (beta.64). The size logging added last
   release caught it in the act. Dragging between monitors multiplies the window's size by **the
   ratio of the two screens' scale factors**, every round trip: between a 150% and a 125% display it
