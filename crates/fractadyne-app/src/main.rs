@@ -546,6 +546,26 @@ pub(crate) fn relaunch_decision(generation: u32, elapsed_s: f64) -> Option<u32> 
 #[cfg(test)]
 mod relaunch_policy;
 
+/// Can the app survive this wgpu uncaptured error, or is it a broken invariant that must be loud?
+///
+/// ⭐⭐**Exactly one class is survivable: a surface larger than the GPU can allocate.** The window
+/// geometry causes it from outside the program, nothing is corrupt, and shrinking the window fixes
+/// it — so killing the process (which loses the session, since a kill skips the save) is far worse
+/// than the blank window the user would otherwise get for a moment. Every other validation error is
+/// a bug in our own rendering — a bad bind group, a mismatched layout — and the gates depend on
+/// those still panicking.
+///
+/// ⚠Matched on the message because that is all wgpu gives an uncaptured-error handler; the two
+/// alternatives are OR-ed because wgpu has worded this differently across versions and the cost of
+/// a miss is a crash.
+fn is_survivable_wgpu_error(msg: &str) -> bool {
+    msg.contains("maximum supported texture size")
+        || (msg.contains("Surface") && msg.contains("width and height"))
+}
+
+#[cfg(test)]
+mod wgpu_error_policy;
+
 /// A session's saved zoom, validated. `None` means "unusable — open at the default view instead".
 ///
 /// The session restore was an ENTRY POINT WITHOUT A GUARD, the same shape as the tour `zoom` string
@@ -4294,6 +4314,25 @@ impl FractadyneApp {
                 diag::write_crash_report(&format!("wgpu device lost: {msg}"));
                 relaunch_after_device_loss();
                 crate::exit(2);
+            }
+            // ⭐⭐**A surface bigger than the GPU can allocate is an EXTERNAL condition, not a
+            // broken invariant — so it must not kill the process.** Reported 2026-09-07: dragging
+            // the window between monitors of different scaling ran the open window-growth bug
+            // (see the monitor-drag notes) until the window reached 9374×6039 physical, past this
+            // adapter's 8192 limit; eframe called `Surface::configure`, wgpu rejected it, and this
+            // handler turned that into a panic. Nine and a half minutes of work went with it —
+            // and the session is not saved on a kill, so it went for real.
+            //
+            // Nothing here is corrupt: the window geometry did it, and making the window smaller
+            // fixes it. The app keeps running (egui simply cannot paint at that size) and the
+            // 1-second autosave keeps working, so the view survives to the next launch.
+            //
+            // ⚠**Deliberately NOT a blanket "don't panic".** Every other validation error is a
+            // program bug — a bad bind group, a mismatched layout — and the gates depend on those
+            // being loud. This is the one class caused from outside the program.
+            if is_survivable_wgpu_error(&msg) {
+                diag::note_oversized_surface();
+                return;
             }
             panic!("wgpu uncaptured error: {e}");
         }));
@@ -11098,6 +11137,16 @@ impl eframe::App for FractadyneApp {
         // auto-save failure in `save_bookmarks`).
         if let Some(msg) = self.pending_toast.take() {
             self.set_toast(msg, ctx);
+        }
+        // ⭐**Say why the window stopped painting.** Raised from the wgpu uncaptured-error callback,
+        // which has no `egui::Context`. Without this the symptom is a window that has simply gone
+        // blank, which explains nothing and looks far worse than what it is.
+        if diag::take_oversized_surface() {
+            self.set_toast(
+                "The window is larger than this GPU can draw — make it smaller, or move it back \
+                 to one screen. Nothing was lost.",
+                ctx,
+            );
         }
         // Rasterize the export watermark once from the font atlas (main thread — the export worker
         // has no egui context). Lazy so it uses the loaded fonts + final DPI.

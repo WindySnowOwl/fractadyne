@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Dragging the window between monitors no longer crashes the app** (beta.61). Reported with a
+  crash log: the window-growth bug that happens when dragging between screens of different scaling
+  ran the window to **9374 × 6039** pixels, past the 8192 limit this GPU can allocate a surface for.
+  wgpu refused, and Fractadyne's error handler turned that refusal into a panic — losing nine and a
+  half minutes of work, because a process that dies never reaches its save.
+
+  Nothing was actually broken: the *window geometry* caused it from outside the program, and making
+  the window smaller fixes it. That one class of error is now survivable — the app keeps running,
+  autosaving as usual, and says what happened instead of vanishing. Every other rendering error
+  still fails loudly, which is deliberate: those are bugs in our own drawing and must not be
+  swallowed.
+
+  ⚠The growth itself is still the open upstream issue and is **not** fixed by this — but it now
+  costs you a resize instead of your session.
+
 - **Two narrow-window layout faults** (beta.60). At some widths a toolbar button was **clipped at
   the window edge instead of wrapping** to the second row — the Julia, dual-view, click-to-zoom and
   auto-zoom buttons, which are the four that grey themselves out. Each was wrapped in a nested
